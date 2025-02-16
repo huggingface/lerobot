@@ -183,8 +183,8 @@ def start_learner_threads(
     resume_interaction_step: int | None = None,
     shutdown_event: Event | None = None,
 ) -> None:
-    actor_ip = cfg.actor_learner_config.actor_ip
-    port = cfg.actor_learner_config.port
+    host = cfg.actor_learner_config.learner_host
+    port = cfg.actor_learner_config.learner_port
 
     transition_thread = Thread(
         target=add_actor_information_and_train,
@@ -207,9 +207,15 @@ def start_learner_threads(
 
     transition_thread.start()
 
-    server = start_learner_server(
-        policy, policy_lock, actor_ip, port, 15, shutdown_event
+    service = learner_service.LearnerService(
+        shutdown_event,
+        policy,
+        policy_lock,
+        cfg.actor_learner_config.policy_parameters_push_frequency,
+        transition_queue,
+        interaction_message_queue,
     )
+    server = start_learner_server(service, host, port)
 
     shutdown_event.wait()
     server.stop(learner_service.STUTDOWN_TIMEOUT)
@@ -220,12 +226,9 @@ def start_learner_threads(
 
 
 def start_learner_server(
-    policy: nn.Module,
-    policy_lock: Lock,
+    service: learner_service.LearnerService,
     host="0.0.0.0",
     port=50051,
-    seconds_between_pushes=5,
-    shutdown_event: Event | None = None,
 ) -> grpc.server:
     server = grpc.server(
         ThreadPoolExecutor(max_workers=learner_service.MAX_WORKERS),
@@ -235,9 +238,7 @@ def start_learner_server(
         ],
     )
     hilserl_pb2_grpc.add_LearnerServiceServicer_to_server(
-        learner_service.LearnerService(
-            shutdown_event, policy, policy_lock, seconds_between_pushes
-        ),
+        service,
         server,
     )
     server.add_insecure_port(f"{host}:{port}")

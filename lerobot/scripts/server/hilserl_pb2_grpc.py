@@ -48,7 +48,7 @@ class LearnerServiceStub(object):
                 _registered_method=True)
         self.ReceiveTransitions = channel.stream_unary(
                 '/hil_serl.LearnerService/ReceiveTransitions',
-                request_serializer=hilserl__pb2.Transition.SerializeToString,
+                request_serializer=hilserl__pb2.ActorInformation.SerializeToString,
                 response_deserializer=hilserl__pb2.Empty.FromString,
                 _registered_method=True)
 
@@ -92,7 +92,7 @@ def add_LearnerServiceServicer_to_server(servicer, server):
             ),
             'ReceiveTransitions': grpc.stream_unary_rpc_method_handler(
                     servicer.ReceiveTransitions,
-                    request_deserializer=hilserl__pb2.Transition.FromString,
+                    request_deserializer=hilserl__pb2.ActorInformation.FromString,
                     response_serializer=hilserl__pb2.Empty.SerializeToString,
             ),
     }
@@ -177,7 +177,7 @@ class LearnerService(object):
             request_iterator,
             target,
             '/hil_serl.LearnerService/ReceiveTransitions',
-            hilserl__pb2.Transition.SerializeToString,
+            hilserl__pb2.ActorInformation.SerializeToString,
             hilserl__pb2.Empty.FromString,
             options,
             channel_credentials,

@@ -24,7 +24,7 @@ service LearnerService {
   // Actor -> Learner to store transitions
   rpc SendInteractionMessage(InteractionMessage) returns (Empty);
   rpc StreamParameters(Empty) returns (stream Parameters);
-  rpc ReceiveTransitions(stream Transition) returns (Empty);
+  rpc ReceiveTransitions(stream ActorInformation) returns (Empty);
 }
 
 message ActorInformation {

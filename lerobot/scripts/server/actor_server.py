@@ -47,6 +47,7 @@ from lerobot.scripts.server.buffer import (
     Transition,
     move_state_dict_to_device,
     move_transition_to_device,
+    bytes_buffer_size,
 )
 from lerobot.scripts.server.gym_manipulator import get_classifier, make_robot_env
 from lerobot.scripts.server import learner_service
@@ -83,51 +84,56 @@ def receive_policy(
     shutdown_event: Event,
     parameters_queue: queue.Queue,
 ):
-    while not shutdown_event.is_set():
-        bytes_buffer = io.BytesIO()
-        step = 0
-        try:
-            for model_update in learner_client.StreamParameters(hilserl_pb2.Empty()):
-                if (
-                    model_update.transfer_state
-                    == hilserl_pb2.TransferState.TRANSFER_BEGIN
-                ):
-                    bytes_buffer.seek(0)
-                    bytes_buffer.truncate(0)
-                    bytes_buffer.write(model_update.data)
-                    logging.info("Received model update at step 0")
-                    step = 0
-                    continue
-                elif (
-                    model_update.transfer_state
-                    == hilserl_pb2.TransferState.TRANSFER_MIDDLE
-                ):
-                    bytes_buffer.write(model_update.data)
-                    step += 1
-                    logging.info(f"Received model update at step {step}")
-                elif (
-                    model_update.transfer_state
-                    == hilserl_pb2.TransferState.TRANSFER_END
-                ):
-                    bytes_buffer.write(model_update.data)
-                    logging.info("Received model update at step end")
+    logging.info("[ACTOR] Start receiving parameters from the Learner")
+    bytes_buffer = io.BytesIO()
+    step = 0
+    try:
+        for model_update in learner_client.StreamParameters(hilserl_pb2.Empty()):
+            if shutdown_event.is_set():
+                logging.info("[ACTOR] Shutting down policy streaming receiver")
+                return hilserl_pb2.Empty()
 
-                    state_dict = torch.load(bytes_buffer, weights_only=True)
+            if model_update.transfer_state == hilserl_pb2.TransferState.TRANSFER_BEGIN:
+                bytes_buffer.seek(0)
+                bytes_buffer.truncate(0)
+                bytes_buffer.write(model_update.parameter_bytes)
+                logging.info("Received model update at step 0")
+                step = 0
+                continue
+            elif (
+                model_update.transfer_state == hilserl_pb2.TransferState.TRANSFER_MIDDLE
+            ):
+                bytes_buffer.write(model_update.parameter_bytes)
+                step += 1
+                logging.info(f"Received model update at step {step}")
+            elif model_update.transfer_state == hilserl_pb2.TransferState.TRANSFER_END:
+                bytes_buffer.write(model_update.parameter_bytes)
+                logging.info(
+                    f"Received model update at step end size {bytes_buffer_size(bytes_buffer)}"
+                )
 
-                    bytes_buffer.seek(0)
-                    bytes_buffer.truncate(0)
+                state_dict = torch.load(bytes_buffer)
 
-                    logging.info("Model updated")
+                bytes_buffer.seek(0)
+                bytes_buffer.truncate(0)
 
-                    parameters_queue.put(state_dict)
+                logging.info("Model updated")
 
-        except grpc.RpcError as e:
-            logging.error(f"[ACTOR] gRPC error: {e}")
+                parameters_queue.put(state_dict)
+
+    except grpc.RpcError as e:
+        logging.error(f"[ACTOR] gRPC error: {e}")
+
+    return hilserl_pb2.Empty()
 
 
 def transitions_stream(shutdown_event: Event, message_queue: queue.Queue):
     while not shutdown_event.is_set():
-        message = message_queue.get(block=True)
+        try:
+            message = message_queue.get(block=True, timeout=5)
+        except queue.Empty:
+            logging.debug("[ACTOR] Transition queue is empty")
+            continue
 
         if message.transition is not None:
             transition_to_send_to_learner: list[Transition] = [
@@ -157,11 +163,13 @@ def transitions_stream(shutdown_event: Event, message_queue: queue.Queue):
 
         yield response
 
+    return hilserl_pb2.Empty()
+
 
 def send_transitions(
     learner_client: hilserl_pb2_grpc.LearnerServiceStub,
     shutdown_event: Event,
-    transition_queue: queue.Queue,
+    message_queue: queue.Queue,
 ):
     """
     Streams data from the actor to the learner.
@@ -180,13 +188,22 @@ def send_transitions(
     Yields:
         hilserl_pb2.ActorInformation: The response message containing either transition data or an interaction message.
     """
-    learner_client.StreamTransitions(transitions_stream(shutdown_event, message_queue))
+    try:
+        learner_client.ReceiveTransitions(
+            transitions_stream(shutdown_event, message_queue)
+        )
+    except grpc.RpcError as e:
+        logging.error(f"[ACTOR] gRPC error: {e}")
 
     logging.info("[ACTOR] Finished streaming transitions")
 
 
 @lru_cache(maxsize=1)
-def learner_service_client(host="127.0.0.1", port=50051):
+def learner_service_client(
+    host="127.0.0.1", port=50051
+) -> tuple[hilserl_pb2_grpc.LearnerServiceStub, grpc.Channel]:
+    import json
+
     """
     Returns a client for the learner service.
 
@@ -212,18 +229,20 @@ def learner_service_client(host="127.0.0.1", port=50051):
         ]
     }
 
+    service_config_json = json.dumps(service_config)
+
     channel = grpc.insecure_channel(
         f"{host}:{port}",
         options=[
             ("grpc.max_receive_message_length", learner_service.MAX_MESSAGE_SIZE),
             ("grpc.max_send_message_length", learner_service.MAX_MESSAGE_SIZE),
             ("grpc.enable_retries", 1),
-            ("grpc.service_config", service_config),
+            ("grpc.service_config", service_config_json),
         ],
     )
-    result = hilserl_pb2_grpc.LearnerServiceStub(channel)
+    stub = hilserl_pb2_grpc.LearnerServiceStub(channel)
     logging.info("[LEARNER] Learner service client created")
-    return result
+    return stub, channel
 
 
 def update_policy_parameters(policy: SACPolicy, parameters_queue: queue.Queue, device):
@@ -302,7 +321,7 @@ def act_with_policy(
     for interaction_step in range(cfg.training.online_steps):
         if shutdown_event.is_set():
             logging.info("[ACTOR] Shutdown signal received. Exiting...")
-            break
+            return
 
         if interaction_step >= cfg.training.online_step_before_learning:
             # Time policy inference and check if it meets FPS requirement
@@ -461,11 +480,14 @@ def actor_cli(cfg: dict):
     signal.signal(signal.SIGHUP, signal_handler)  # Terminal closed/Hangup
     signal.signal(signal.SIGQUIT, signal_handler)  # Ctrl+\
 
-    learner_client = learner_service_client()
+    learner_client, grpc_channel = learner_service_client(
+        host=cfg.actor_learner_config.learner_host,
+        port=cfg.actor_learner_config.learner_port,
+    )
 
     receive_policy_thread = Thread(
         target=receive_policy,
-        args=(learner_client, shutdown_event),
+        args=(learner_client, shutdown_event, parameters_queue),
         daemon=True,
     )
 
@@ -497,9 +519,16 @@ def actor_cli(cfg: dict):
     policy_thread.start()
     receive_policy_thread.start()
 
+    shutdown_event.wait()
+    logging.info("[ACTOR] Shutdown event received")
+    grpc_channel.close()
+
     policy_thread.join()
+    logging.info("[ACTOR] Policy thread joined")
     transitions_thread.join()
+    logging.info("[ACTOR] Transitions thread joined")
     receive_policy_thread.join()
+    logging.info("[ACTOR] Receive policy thread joined")
 
 
 if __name__ == "__main__":
