@@ -38,7 +38,7 @@ jobs:
         env:
           ALL_CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
         run: |
-          echo "matrix=${ALL_CHANGED_FILES}" >> $GITHUB_OUTPUT
+          echo "matrix=$(echo '${ALL_CHANGED_FILES}' | jq -R -s 'split("\n") | map(select(. != ""))')" >> $GITHUB_OUTPUT
 
 
   build_modified_dockerfiles:
