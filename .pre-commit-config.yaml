@@ -24,13 +24,9 @@ repos:
         args: [--fix]
       - id: ruff-format
   - repo: https://github.com/python-poetry/poetry
-    rev: 1.8.5
+    rev: 2.1.0
     hooks:
       - id: poetry-check
-      - id: poetry-lock
-        args:
-          - "--check"
-          - "--no-update"
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.23.3
     hooks:

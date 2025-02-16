@@ -130,7 +130,7 @@ Follow these steps to start contributing:
    🚨 **Do not** work on the `main` branch.
 
 4. for development, we use `poetry` instead of just `pip` to easily track our dependencies.
-   If you don't have it already, follow the [instructions](https://python-poetry.org/docs/#installation) to install it.
+   If you don't have it already, follow the [instructions](https://python-poetry.org/docs/#installation) to install it (use a version >=2.1.0).
 
    Set up a development environment with conda or miniconda:
    ```bash
@@ -144,12 +144,12 @@ Follow these steps to start contributing:
 
    You can also install the project with all its dependencies (including environments):
    ```bash
-   poetry install --sync --all-extras
+   poetry sync --all-extras
    ```
 
    > **Note:** If you don't install simulation environments with `--all-extras`, the tests that require them will be skipped when running the pytest suite locally. However, they *will* be tested in the CI. In general, we advise you to install everything and test locally before pushing.
 
-   Whichever command you chose to install the project (e.g. `poetry install --sync --all-extras`), you should run it again when pulling code with an updated version of `pyproject.toml` and `poetry.lock` in order to synchronize your virtual environment with the new dependencies.
+   Whichever command you chose to install the project (e.g. `poetry sync --all-extras`), you should run it again when pulling code with an updated version of `pyproject.toml` and `poetry.lock` in order to synchronize your virtual environment with the new dependencies.
 
    The equivalent of `pip install some-package`, would just be:
    ```bash
