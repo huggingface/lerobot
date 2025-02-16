@@ -24,12 +24,24 @@ on:
 
 permissions: {}
 
+env:
+  UV_VERSION: "0.6.0"
+
 jobs:
   pytest:
     name: Pytest
     runs-on: ubuntu-latest
     env:
       MUJOCO_GL: egl
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - "3.10"
+          # TODO(aliberts): Test on more python versions when tests are faster and don't donwload stuff
+          # - "3.11"
+          # - "3.12"
+
     steps:
       - uses: actions/checkout@v4
         with:
@@ -42,25 +54,18 @@ jobs:
           sudo apt-get update && \
           sudo apt-get install -y libegl1-mesa-dev ffmpeg portaudio19-dev
 
-      - name: Install poetry
-        run: |
-          pipx install poetry && poetry config virtualenvs.in-project true
-          echo "${{ github.workspace }}/.venv/bin" >> $GITHUB_PATH
-
-      # TODO(rcadene, aliberts): python 3.12 seems to be used in the tests, not python 3.10
-      - name: Set up Python 3.10
-        uses: actions/setup-python@v5
+      - name: Install uv and python
+        uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.10"
-          cache: "poetry"
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ matrix.python-version }}
 
-      - name: Install poetry dependencies
-        run: |
-          poetry install --all-extras
+      - name: Install lerobot (all extras)
+        run: uv sync --all-extras
 
       - name: Test with pytest
         run: |
-          pytest tests -v --cov=./lerobot --durations=0 \
+          uv run pytest tests -v --cov=./lerobot --durations=0 \
             -W ignore::DeprecationWarning:imageio_ffmpeg._utils:7 \
             -W ignore::UserWarning:torch.utils.data.dataloader:558 \
             -W ignore::UserWarning:gymnasium.utils.env_checker:247 \
@@ -80,24 +85,18 @@ jobs:
       - name: Install apt dependencies
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
-      - name: Install poetry
-        run: |
-          pipx install poetry && poetry config virtualenvs.in-project true
-          echo "${{ github.workspace }}/.venv/bin" >> $GITHUB_PATH
-
-      # TODO(rcadene, aliberts): python 3.12 seems to be used in the tests, not python 3.10
-      - name: Set up Python 3.10
-        uses: actions/setup-python@v5
+      - name: Install uv and python
+        uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.10"
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ matrix.python-version }}
 
-      - name: Install poetry dependencies
-        run: |
-          poetry install --extras "test"
+      - name: Install lerobot
+        run: uv sync --extra "test"
 
       - name: Test with pytest
         run: |
-          pytest tests -v --cov=./lerobot --durations=0 \
+          uv run pytest tests -v --cov=./lerobot --durations=0 \
             -W ignore::DeprecationWarning:imageio_ffmpeg._utils:7 \
             -W ignore::UserWarning:torch.utils.data.dataloader:558 \
             -W ignore::UserWarning:gymnasium.utils.env_checker:247 \
@@ -120,20 +119,14 @@ jobs:
           sudo apt-get update && \
           sudo apt-get install -y libegl1-mesa-dev portaudio19-dev
 
-      - name: Install poetry
-        run: |
-          pipx install poetry && poetry config virtualenvs.in-project true
-          echo "${{ github.workspace }}/.venv/bin" >> $GITHUB_PATH
-
-      - name: Set up Python 3.10
-        uses: actions/setup-python@v5
+      - name: Install uv and python
+        uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.10"
-          cache: "poetry"
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ matrix.python-version }}
 
-      - name: Install poetry dependencies
-        run: |
-          poetry install --all-extras
+      - name: Install lerobot (all extras)
+        run: uv sync --all-extras
 
       - name: Test end-to-end
         run: |
