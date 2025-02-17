@@ -206,9 +206,8 @@ def start_learner_threads(
 
     server_thread.start()
     transition_thread.start()
-    # param_push_thread.start()
-
-    # param_push_thread.join()
+    param_push_thread.start()
+    param_push_thread.join()
     transition_thread.join()
     server_thread.join()
 
