@@ -2,10 +2,10 @@
 
 PYTHON_PATH := $(shell which python)
 
-# If Poetry is installed, redefine PYTHON_PATH to use the Poetry-managed Python
-POETRY_CHECK := $(shell command -v poetry)
-ifneq ($(POETRY_CHECK),)
-	PYTHON_PATH := $(shell poetry run which python)
+# If uv is installed and a virtual environment exists, use it
+UV_CHECK := $(shell command -v uv)
+ifneq ($(UV_CHECK),)
+	PYTHON_PATH := $(shell .venv/bin/python)
 endif
 
 export PATH := $(dir $(PYTHON_PATH)):$(PATH)
