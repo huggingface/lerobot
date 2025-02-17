@@ -205,6 +205,18 @@ def hf_transform_to_torch(items_dict: dict[torch.Tensor | None]):
     return items_dict
 
 
+def item_to_torch(item: dict):
+    for key, value in item.items():
+        if isinstance(value, PILImage.Image):
+            to_tensor = transforms.ToTensor()
+            item[key] = to_tensor(value)
+        elif value is None or isinstance(value, str):
+            pass
+        else:
+            item[key] = torch.tensor(value)
+    return item
+
+
 def _get_major_minor(version: str) -> tuple[int]:
     split = version.strip("v").split(".")
     return int(split[0]), int(split[1])
