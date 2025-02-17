@@ -38,7 +38,7 @@ jobs:
         env:
           ALL_CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
         run: |
-          echo "$ALL_CHANGED_FILES" | jq -c . > safe_matrix.json
+          echo "$ALL_CHANGED_FILES" > safe_matrix.json
           echo "matrix=$(cat safe_matrix.json)" >> $GITHUB_OUTPUT
 
       - name: debug
