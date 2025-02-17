@@ -9,7 +9,6 @@ import torch
 import zmq
 
 from lerobot.common.robot_devices.cameras.utils import make_cameras_from_configs
-from lerobot.common.robot_devices.motors.configs import FeetechMotorsBusConfig
 from lerobot.common.robot_devices.motors.feetech import FeetechMotorsBus, TorqueMode
 from lerobot.common.robot_devices.robots.configs import MobileSO100RobotConfig
 from lerobot.common.robot_devices.robots.mobileso100 import MobileSO100
@@ -20,22 +19,8 @@ cameras = make_cameras_from_configs(config.cameras)
 for _, cam in cameras.items():
     cam.connect()
 
-motor_config = FeetechMotorsBusConfig(
-    port="/dev/ttyACM0",
-    motors={
-        # Arm joints
-        "shoulder_pan": [1, "sts3215"],
-        "shoulder_lift": [2, "sts3215"],
-        "elbow_flex": [3, "sts3215"],
-        "wrist_flex": [4, "sts3215"],
-        "wrist_roll": [5, "sts3215"],
-        "gripper": [6, "sts3215"],
-        # Wheel motors (not calibrated)
-        "wheel_1": (7, "sts3215"),
-        "wheel_2": (8, "sts3215"),
-        "wheel_3": (9, "sts3215"),
-    },
-)
+# Use Feetech config from mobile_so100["main"]
+motor_config = config.mobile_so100["main"]
 motors_bus = FeetechMotorsBus(motor_config)
 motors_bus.connect()
 
@@ -46,11 +31,11 @@ robot = MobileSO100(motors_bus)
 context = zmq.Context()
 cmd_socket = context.socket(zmq.PULL)
 cmd_socket.setsockopt(zmq.CONFLATE, 1)
-cmd_socket.bind("tcp://*:5555")  # TODO(pepijn): Add from config
+cmd_socket.bind(f"tcp://*:{config.port}")
 
 video_socket = context.socket(zmq.PUSH)
 video_socket.setsockopt(zmq.CONFLATE, 1)
-video_socket.bind("tcp://*:5556")
+video_socket.bind(f"tcp://*:{config.video_port}")
 
 print("Robot server started, waiting for commands and streaming video...")
 
@@ -114,7 +99,7 @@ def camera_capture_loop(stop_event):
                 local_dict[cam_name] = ""
         with images_lock:
             latest_images_dict.update(local_dict)
-        time.sleep(0.02)
+        time.sleep(0.01)
 
 
 stop_event = threading.Event()
@@ -206,7 +191,7 @@ try:
             print(f"Average loop frequency: {freq_hz:.2f} Hz over {iteration_count} iterations")
 
         # Important to sleep otherwise overload cpu
-        time.sleep(0.02)
+        time.sleep(0.01)
 
 except KeyboardInterrupt:
     print("Shutting down robot server.")

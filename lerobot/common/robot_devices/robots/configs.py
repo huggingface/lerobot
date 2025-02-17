@@ -429,7 +429,7 @@ class So100RobotConfig(ManipulatorRobotConfig):
     leader_arms: dict[str, MotorsBusConfig] = field(
         default_factory=lambda: {
             "main": FeetechMotorsBusConfig(
-                port="/dev/tty.usbmodem58760431091",
+                port="/dev/tty.usbmodem585A0077581",
                 motors={
                     # name: (index, model)
                     "shoulder_pan": [1, "sts3215"],
@@ -446,7 +446,7 @@ class So100RobotConfig(ManipulatorRobotConfig):
     follower_arms: dict[str, MotorsBusConfig] = field(
         default_factory=lambda: {
             "main": FeetechMotorsBusConfig(
-                port="/dev/tty.usbmodem585A0076891",
+                port="/dev/tty.usbmodem585A0080521",
                 motors={
                     # name: (index, model)
                     "shoulder_pan": [1, "sts3215"],
@@ -525,19 +525,18 @@ class MobileSO100RobotConfig(RobotConfig):
     max_relative_target: int | None = None
 
     # Network Configuration
-    ip: str = "172.17.133.91"
+    ip: str = "192.168.0.193"
     port: int = 5555
     video_port: int = 5556
 
     cameras: dict[str, CameraConfig] = field(
         default_factory=lambda: {
-            "mobile_wrist": OpenCVCameraConfig(
-                camera_index="/dev/video0", fps=30, width=640, height=480, color_mode="bgr"
-            ),
+            "mobile": OpenCVCameraConfig(camera_index="/dev/video0", fps=30, width=640, height=480),
+            "mobile2": OpenCVCameraConfig(camera_index="/dev/video2", fps=30, width=640, height=480),
         }
     )
 
-    calibration_dir: str = ".cache/calibration/so100"
+    calibration_dir: str = ".cache/calibration/mobile_so100"
 
     leader_arms: dict[str, MotorsBusConfig] = field(
         default_factory=lambda: {
@@ -556,10 +555,10 @@ class MobileSO100RobotConfig(RobotConfig):
         }
     )
 
-    follower_arms: dict[str, MotorsBusConfig] = field(
+    mobile_so100: dict[str, MotorsBusConfig] = field(
         default_factory=lambda: {
             "main": FeetechMotorsBusConfig(
-                port="",
+                port="/dev/ttyACM0",
                 motors={
                     # name: (index, model)
                     "shoulder_pan": [1, "sts3215"],
@@ -568,6 +567,9 @@ class MobileSO100RobotConfig(RobotConfig):
                     "wrist_flex": [4, "sts3215"],
                     "wrist_roll": [5, "sts3215"],
                     "gripper": [6, "sts3215"],
+                    "wheel_1": (7, "sts3215"),
+                    "wheel_2": (8, "sts3215"),
+                    "wheel_3": (9, "sts3215"),
                 },
             ),
         }

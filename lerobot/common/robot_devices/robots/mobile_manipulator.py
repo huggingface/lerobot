@@ -41,14 +41,22 @@ class MobileManipulator:
 
         # For teleoperation, the leader arm (local) is used to record the desired arm pose.
         self.leader_arms = make_motors_buses_from_configs(self.config.leader_arms)
-        # Although follower arms are configured, on the laptop we do not read them locally.
-        self.follower_arms = make_motors_buses_from_configs(self.config.follower_arms)
 
         self.cameras = make_cameras_from_configs(self.config.cameras)
 
         self.is_connected = False
 
         self.last_frames = {}
+        self.last_present_speed = {}
+        self.last_remote_arm_state = torch.zeros(6, dtype=torch.float32)
+
+        # Define three speed levels and a current index
+        self.speed_levels = [
+            {"xy": 0.1, "theta": 30},  # slow
+            {"xy": 0.25, "theta": 60},  # medium
+            {"xy": 0.4, "theta": 90},  # fast
+        ]
+        self.speed_index = 0  # Start at slow
 
         # ZeroMQ context and sockets.
         self.context = None
@@ -88,7 +96,14 @@ class MobileManipulator:
 
     @property
     def motor_features(self) -> dict:
-        follower_arm_names = self.get_motor_names(self.follower_arms)
+        follower_arm_names = [
+            "shoulder_pan",
+            "shoulder_lift",
+            "elbow_flex",
+            "wrist_flex",
+            "wrist_roll",
+            "gripper",
+        ]
         observations = ["x_mm", "y_mm", "theta"]
         combined_names = follower_arm_names + observations
         return {
@@ -119,8 +134,6 @@ class MobileManipulator:
     @property
     def available_arms(self):
         available = []
-        for name in self.follower_arms:
-            available.append(get_arm_id(name, "follower"))
         for name in self.leader_arms:
             available.append(get_arm_id(name, "leader"))
         return available
@@ -142,6 +155,16 @@ class MobileManipulator:
             elif key.char == "q":
                 self.running = False
                 return False
+
+            elif key.char == "r":
+                # Increase speed index, clamp at 2 (fast)
+                self.speed_index = min(self.speed_index + 1, 2)
+                print(f"Speed index increased to {self.speed_index}")
+            elif key.char == "f":
+                # Decrease speed index, clamp at 0 (slow)
+                self.speed_index = max(self.speed_index - 1, 0)
+                print(f"Speed index decreased to {self.speed_index}")
+
         except AttributeError:
             if key == keyboard.Key.esc:
                 self.running = False
@@ -217,24 +240,25 @@ class MobileManipulator:
             calibration = load_or_run_calibration_(name, arm, "leader")
             arm.set_calibration(calibration)
 
-    def _get_video_frames(self):
+    def _get_data(self):
         """
-        Polls the video socket for up to 15 ms. If data arrives, we decode only
-        the *latest* message (discard older ones), returning frames, speeds, etc.
+        Polls the video socket for up to 15 ms. If data arrives, decode only
+        the *latest* message, returning frames, speed, and arm state. If
+        nothing arrives for any field, use the last known values.
         """
         frames = {}
         present_speed = {}
-        remote_arm_state = None
+        remote_arm_state_tensor = torch.zeros(6, dtype=torch.float32)
 
-        # Poll for up to 15 ms
+        # Poll up to 15 ms
         poller = zmq.Poller()
         poller.register(self.video_socket, zmq.POLLIN)
         socks = dict(poller.poll(15))
         if self.video_socket not in socks or socks[self.video_socket] != zmq.POLLIN:
-            # Nothing arrived
-            return frames, present_speed, remote_arm_state
+            # No new data arrived → reuse ALL old data
+            return (self.last_frames, self.last_present_speed, self.last_remote_arm_state)
 
-        # Receive all messages, keep only the last
+        # Drain all messages, keep only the last
         last_msg = None
         while True:
             try:
@@ -243,17 +267,19 @@ class MobileManipulator:
             except zmq.Again:
                 break
 
-        # If we never set last_msg, no data was read
         if not last_msg:
-            return frames, present_speed, remote_arm_state
+            # No new message → also reuse old
+            return (self.last_frames, self.last_present_speed, self.last_remote_arm_state)
 
         # Decode only the final message
         try:
             observation = json.loads(last_msg)
-            images_dict = observation.get("images", {})
-            present_speed = observation.get("present_speed", {})
-            remote_arm_state = observation.get("follower_arm_state", None)
 
+            images_dict = observation.get("images", {})
+            new_speed = observation.get("present_speed", {})
+            new_arm_state = observation.get("follower_arm_state", None)
+
+            # Convert images
             for cam_name, image_b64 in images_dict.items():
                 if image_b64:
                     jpg_data = base64.b64decode(image_b64)
@@ -262,10 +288,28 @@ class MobileManipulator:
                     if frame_candidate is not None:
                         frames[cam_name] = frame_candidate
 
+            # If remote_arm_state is None and frames is None there is no message then use the previous message
+            if new_arm_state is not None and frames is not None:
+                self.last_frames = frames
+
+                remote_arm_state_tensor = torch.tensor(new_arm_state, dtype=torch.float32)
+                self.last_remote_arm_state = remote_arm_state_tensor
+
+                present_speed = new_speed
+                self.last_present_speed = new_speed
+            else:
+                frames = self.last_frames
+
+                remote_arm_state_tensor = self.last_remote_arm_state
+
+                present_speed = self.last_present_speed
+
         except Exception as e:
             print(f"[DEBUG] Error decoding video message: {e}")
+            # If decode fails, fall back to old data
+            return (self.last_frames, self.last_present_speed, self.last_remote_arm_state)
 
-        return frames, present_speed, remote_arm_state
+        return frames, present_speed, remote_arm_state_tensor
 
     def _process_present_speed(self, present_speed: dict) -> torch.Tensor:
         state_tensor = torch.zeros(3, dtype=torch.int32)
@@ -285,6 +329,10 @@ class MobileManipulator:
         if not self.is_connected:
             raise RobotDeviceNotConnectedError("MobileManipulator is not connected. Run `connect()` first.")
 
+        speed_setting = self.speed_levels[self.speed_index]
+        xy_speed = speed_setting["xy"]  # e.g. 0.1, 0.25, or 0.4
+        theta_speed = speed_setting["theta"]  # e.g. 30, 60, or 90
+
         # Prepare to assign the position of the leader to the follower
         arm_positions = []
         for name in self.leader_arms:
@@ -298,17 +346,17 @@ class MobileManipulator:
         y_cmd = 0.0  # m/s lateral
         theta_cmd = 0.0  # deg/s rotation
         if self.pressed_keys["forward"]:
-            x_cmd -= 0.1  # TODO(pepijn): Increase back (max 0.4)
+            x_cmd -= xy_speed
         if self.pressed_keys["backward"]:
-            x_cmd += 0.1
+            x_cmd += xy_speed
         if self.pressed_keys["left"]:
-            y_cmd -= 0.1
+            y_cmd -= xy_speed
         if self.pressed_keys["right"]:
-            y_cmd += 0.1
+            y_cmd += xy_speed
         if self.pressed_keys["rotate_left"]:
-            theta_cmd += 30  # TODO(pepijn): Increase back (max 90)
+            theta_cmd += theta_speed
         if self.pressed_keys["rotate_right"]:
-            theta_cmd -= 30
+            theta_cmd -= theta_speed
 
         wheel_commands = self.body_to_wheel_raw(x_cmd, y_cmd, theta_cmd)
 
@@ -343,12 +391,7 @@ class MobileManipulator:
         if not self.is_connected:
             raise RobotDeviceNotConnectedError("Not connected. Run `connect()` first.")
 
-        frames, present_speed, remote_arm_state = self._get_video_frames()
-        if remote_arm_state is not None:
-            remote_arm_state_tensor = torch.tensor(remote_arm_state, dtype=torch.float32)
-        else:
-            # Instead of an empty tensor, create a default tensor of the expected shape.
-            remote_arm_state_tensor = torch.zeros(6, dtype=torch.float32)
+        frames, present_speed, remote_arm_state_tensor = self._get_data()
 
         present_speed_dict = {
             "wheel_1": int(present_speed.get("1", 0)),
@@ -364,14 +407,8 @@ class MobileManipulator:
 
         obs_dict = {"observation.state": combined_state_tensor}
 
-        if not frames:
-            frames = self.last_frames
-        else:
-            self.last_frames = frames
-
         # Loop over each configured camera
         for cam_name, cam in self.cameras.items():
-            # Try to get the frame received for this camera
             frame = frames.get(cam_name, None)
             if frame is None:
                 # Create a black image using the camera's configured width, height, and channels
