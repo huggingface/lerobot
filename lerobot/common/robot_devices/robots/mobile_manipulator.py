@@ -1,12 +1,13 @@
 import base64
 import json
+import os
+import sys
 from pathlib import Path
 
 import cv2
 import numpy as np
 import torch
 import zmq
-from pynput import keyboard
 
 from lerobot.common.robot_devices.cameras.utils import make_cameras_from_configs
 from lerobot.common.robot_devices.motors.feetech import TorqueMode
@@ -15,6 +16,22 @@ from lerobot.common.robot_devices.robots.configs import MobileSO100RobotConfig
 from lerobot.common.robot_devices.robots.feetech_calibration import run_arm_manual_calibration
 from lerobot.common.robot_devices.robots.utils import get_arm_id
 from lerobot.common.robot_devices.utils import RobotDeviceNotConnectedError
+
+PYNPUT_AVAILABLE = True
+try:
+    # Only import if there's a valid X server or if we're not on a Pi
+    if ("DISPLAY" not in os.environ) and ("linux" in sys.platform):
+        print("No DISPLAY set. Skipping pynput import.")
+        raise ImportError("pynput blocked intentionally due to no display.")
+
+    from pynput import keyboard
+except ImportError:
+    keyboard = None
+    PYNPUT_AVAILABLE = False
+except Exception as e:
+    keyboard = None
+    PYNPUT_AVAILABLE = False
+    print(f"Could not import pynput: {e}")
 
 
 class MobileManipulator:
@@ -41,6 +58,8 @@ class MobileManipulator:
 
         # For teleoperation, the leader arm (local) is used to record the desired arm pose.
         self.leader_arms = make_motors_buses_from_configs(self.config.leader_arms)
+
+        self.follower_arms = make_motors_buses_from_configs(self.config.follower_arms)
 
         self.cameras = make_cameras_from_configs(self.config.cameras)
 
@@ -73,11 +92,17 @@ class MobileManipulator:
             "rotate_left": False,
             "rotate_right": False,
         }
-        self.listener = keyboard.Listener(
-            on_press=self.on_press,
-            on_release=self.on_release,
-        )
-        self.listener.start()
+
+        if PYNPUT_AVAILABLE:
+            print("pynput is available - enabling local keyboard listener.")
+            self.listener = keyboard.Listener(
+                on_press=self.on_press,
+                on_release=self.on_release,
+            )
+            self.listener.start()
+        else:
+            print("pynput not available - skipping local keyboard listener.")
+            self.listener = None
 
     def get_motor_names(self, arms: dict[str, MotorsBus]) -> list:
         return [f"{arm}_{motor}" for arm, bus in arms.items() for motor in bus.motors]
@@ -136,6 +161,8 @@ class MobileManipulator:
         available = []
         for name in self.leader_arms:
             available.append(get_arm_id(name, "leader"))
+        for name in self.follower_arms:
+            available.append(get_arm_id(name, "follower"))
         return available
 
     def on_press(self, key):
@@ -193,8 +220,7 @@ class MobileManipulator:
             raise ValueError("MobileManipulator has no leader arm to connect.")
         for name in self.leader_arms:
             print(f"Connecting {name} leader arm.")
-            self.leader_arms[name].connect()
-            self.leader_arms[name].write("Torque_Enable", TorqueMode.DISABLED.value)
+            self.calibrate_leader()
 
         # Set up ZeroMQ sockets to communicate with the remote mobile robot.
         self.context = zmq.Context()
@@ -211,34 +237,56 @@ class MobileManipulator:
         )
         self.is_connected = True
 
-        self.activate_calibration()
+    def load_or_run_calibration_(self, name, arm, arm_type):
+        arm_id = get_arm_id(name, arm_type)
+        arm_calib_path = self.calibration_dir / f"{arm_id}.json"
 
-    def activate_calibration(self):
-        """After calibration all motors function in human interpretable ranges.
-        Rotations are expressed in degrees in nominal range of [-180, 180],
-        and linear motions (like gripper of Aloha) in nominal range of [0, 100].
-        """
+        if arm_calib_path.exists():
+            with open(arm_calib_path) as f:
+                calibration = json.load(f)
+        else:
+            print(f"Missing calibration file '{arm_calib_path}'")
+            calibration = run_arm_manual_calibration(arm, self.robot_type, name, arm_type)
+            print(f"Calibration is done! Saving calibration file '{arm_calib_path}'")
+            arm_calib_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(arm_calib_path, "w") as f:
+                json.dump(calibration, f)
 
-        def load_or_run_calibration_(name, arm, arm_type):
-            arm_id = get_arm_id(name, arm_type)
-            arm_calib_path = self.calibration_dir / f"{arm_id}.json"
+        return calibration
 
-            if arm_calib_path.exists():
-                with open(arm_calib_path) as f:
-                    calibration = json.load(f)
-            else:
-                print(f"Missing calibration file '{arm_calib_path}'")
-                calibration = run_arm_manual_calibration(arm, self.robot_type, name, arm_type)
-                print(f"Calibration is done! Saving calibration file '{arm_calib_path}'")
-                arm_calib_path.parent.mkdir(parents=True, exist_ok=True)
-                with open(arm_calib_path, "w") as f:
-                    json.dump(calibration, f)
-
-            return calibration
-
+    def calibrate_leader(self):
         for name, arm in self.leader_arms.items():
-            calibration = load_or_run_calibration_(name, arm, "leader")
+            # Connect the bus
+            arm.connect()
+
+            # Disable torque on all motors
+            for motor_id in arm.motors:
+                arm.write("Torque_Enable", TorqueMode.DISABLED.value, motor_id)
+
+            # Now run calibration
+            calibration = self.load_or_run_calibration_(name, arm, "leader")
             arm.set_calibration(calibration)
+
+    def calibrate_follower(self):
+        for name, bus in self.follower_arms.items():
+            bus.connect()
+
+            # Disable torque on all motors
+            for motor_id in bus.motors:
+                bus.write("Torque_Enable", 0, motor_id)
+
+            # Then filter out wheels
+            arm_only_dict = {k: v for k, v in bus.motors.items() if not k.startswith("wheel_")}
+            if not arm_only_dict:
+                continue
+
+            original_motors = bus.motors
+            bus.motors = arm_only_dict
+
+            calibration = self.load_or_run_calibration_(name, bus, "follower")
+            bus.set_calibration(calibration)
+
+            bus.motors = original_motors
 
     def _get_data(self):
         """
@@ -466,14 +514,15 @@ class MobileManipulator:
             self.video_socket.close()
         if self.context:
             self.context.term()
-        self.listener.stop()
+        if PYNPUT_AVAILABLE:
+            self.listener.stop()
         self.is_connected = False
         print("[INFO] Disconnected from remote robot.")
 
     def __del__(self):
         if getattr(self, "is_connected", False):
             self.disconnect()
-        if self.listener:
+        if PYNPUT_AVAILABLE:
             self.listener.stop()
 
     @staticmethod

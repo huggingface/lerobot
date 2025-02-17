@@ -188,6 +188,16 @@ def calibrate(robot: Robot, cfg: CalibrateControlConfig):
     if robot.is_connected:
         robot.disconnect()
 
+    if robot.robot_type.startswith("mobile_so100") and "main_follower" in arms:
+        print("Calibrating only the mobile_so100 follower arm 'main_follower'...")
+        robot.calibrate_follower()
+        return
+
+    if robot.robot_type.startswith("mobile_so100") and "main_leader" in arms:
+        print("Calibrating only the mobile_so100 leader arm 'main_leader'...")
+        robot.calibrate_leader()
+        return
+
     # Calling `connect` automatically runs calibration
     # when the calibration file is missing
     robot.connect()

@@ -303,10 +303,34 @@ python lerobot/scripts/control_robot.py \
 # F. Teleoperate
 TODO: ssh into pi, start script to run run_mobile_so100.py. Then run teleoperate command on laptop.
 
+```
+python lerobot/scripts/run_mobile_so100.py
+```
+
+And
+```
+python lerobot/scripts/control_robot.py \
+  --robot.type=mobile_so100 \
+  --control.type=teleoperate
+```
 ## Troubleshoot communication
 TODO: Add now to troubleshoot connection. Ping ip address, ssh into pi (to check ip), check if config file is the same. Make sure ip address is correctly set.
 
 # G. Record a dataset
+```
+python lerobot/scripts/control_robot.py \
+  --robot.type=mobile_so100 \
+  --control.type=record \
+  --control.fps=30 \
+  --control.single_task="Grasp a lego block and put it in the bin." \
+  --control.repo_id=${HF_USER}/mobileso100_test \
+  --control.tags='["tutorial"]' \
+  --control.warmup_time_s=5 \
+  --control.episode_time_s=30 \
+  --control.reset_time_s=30 \
+  --control.num_episodes=2 \
+  --control.push_to_hub=true
+```
 
 # H. Visualize a dataset
 

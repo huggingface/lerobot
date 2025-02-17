@@ -525,7 +525,7 @@ class MobileSO100RobotConfig(RobotConfig):
     max_relative_target: int | None = None
 
     # Network Configuration
-    ip: str = "192.168.0.193"
+    ip: str = "172.17.133.91"
     port: int = 5555
     video_port: int = 5556
 
@@ -555,7 +555,8 @@ class MobileSO100RobotConfig(RobotConfig):
         }
     )
 
-    mobile_so100: dict[str, MotorsBusConfig] = field(
+    # TODO(pepijn): seperate follower arm and base (3 wheels)
+    follower_arms: dict[str, MotorsBusConfig] = field(
         default_factory=lambda: {
             "main": FeetechMotorsBusConfig(
                 port="/dev/ttyACM0",

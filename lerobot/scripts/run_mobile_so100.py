@@ -19,12 +19,12 @@ cameras = make_cameras_from_configs(config.cameras)
 for _, cam in cameras.items():
     cam.connect()
 
-# Use Feetech config from mobile_so100["main"]
-motor_config = config.mobile_so100["main"]
+# Use Feetech config from follower_arms["main"]
+motor_config = config.follower_arms["main"]
 motors_bus = FeetechMotorsBus(motor_config)
 motors_bus.connect()
 
-calibration_dir: str = ".cache/calibration/so100"
+calibration_dir: str = ".cache/calibration/mobile_so100"
 robot = MobileSO100(motors_bus)
 
 # ZeroMQ Setup
