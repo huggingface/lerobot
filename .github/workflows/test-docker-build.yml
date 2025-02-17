@@ -8,6 +8,8 @@ on:
       # Run only when DockerFile files are modified
       - "docker/**"
 
+permissions: {}
+
 env:
   PYTHON_VERSION: "3.10"
 
@@ -20,6 +22,8 @@ jobs:
     steps:
       - name: Check out code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Get changed files
         id: changed-files
@@ -28,14 +32,11 @@ jobs:
           files: docker/**
           json: "true"
 
-      - name: Run step if only the files listed above change
+      - name: Run step if only the files listed above change  # zizmor: ignore[template-injection]
         if: steps.changed-files.outputs.any_changed == 'true'
         id: set-matrix
-        env:
-          ALL_CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
         run: |
           echo "matrix=${{ steps.changed-files.outputs.all_changed_files}}" >> $GITHUB_OUTPUT
-
 
   build_modified_dockerfiles:
     name: Build modified Docker images
@@ -50,9 +51,13 @@ jobs:
     steps:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+        with:
+          cache-binary: false
 
       - name: Check out code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Build Docker image
         uses: docker/build-push-action@v5
