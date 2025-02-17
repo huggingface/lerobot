@@ -36,10 +36,11 @@ jobs:
         if: steps.changed-files.outputs.any_changed == 'true'
         id: set-matrix
         env:
-          ALL_CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
+          CF: ${{ steps.changed-files.outputs.all_changed_files }}
         run: |
-          echo "$ALL_CHANGED_FILES" > safe_matrix.json
-          echo "matrix=$(cat safe_matrix.json)" >> $GITHUB_OUTPUT
+          tmp="$(echo "$CF" | jq -r)"
+          parsed="$(echo "$tmp" | jq -c .)"
+          echo "matrix=$parsed" >> "$GITHUB_OUTPUT"
 
       - name: debug
         if: steps.changed-files.outputs.any_changed == 'true'
