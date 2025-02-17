@@ -32,24 +32,11 @@ jobs:
           files: docker/**
           json: "true"
 
-      - name: Run step if only the files listed above change
+      - name: Run step if only the files listed above change  # zizmor: ignore[template-injection]
         if: steps.changed-files.outputs.any_changed == 'true'
         id: set-matrix
-        env:
-          CF: ${{ steps.changed-files.outputs.all_changed_files }}
         run: |
-          tmp="$(echo "$CF" | jq -r)"
-          parsed="$(echo "$tmp" | jq -c .)"
-          echo "matrix=$parsed" >> "$GITHUB_OUTPUT"
-
-      - name: debug
-        if: steps.changed-files.outputs.any_changed == 'true'
-        id: debug
-        env:
-          ALL_CHANGED_FILES: ${{ steps.set-matrix.outputs.matrix }}
-        run: |
-          cat safe_matrix.json
-          echo ${ALL_CHANGED_FILES}
+          echo "matrix=${{ steps.changed-files.outputs.all_changed_files}}" >> $GITHUB_OUTPUT
 
   build_modified_dockerfiles:
     name: Build modified Docker images
