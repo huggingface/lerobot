@@ -196,28 +196,18 @@ class MobileSO100RobotConfig(RobotConfig):
     max_relative_target: int | None = None
 
     # Network Configuration
-    ip: str = "192.168.0.193"
+    ip: str = "172.17.133.91"
     port: int = 5555
     video_port: int = 5556
 
     cameras: dict[str, CameraConfig] = field(
         default_factory=lambda: {
-            "mobile": OpenCVCameraConfig(
-                camera_index="/dev/video0",
-                fps=30,
-                width=640,
-                height=480
-            ),
-            "mobile2": OpenCVCameraConfig(
-                camera_index="/dev/video2",
-                fps=30,
-                width=640,
-                height=480
-            ),
+            "mobile": OpenCVCameraConfig(camera_index="/dev/video0", fps=30, width=640, height=480),
+            "mobile2": OpenCVCameraConfig(camera_index="/dev/video2", fps=30, width=640, height=480),
         }
     )
 
-    calibration_dir: str = ".cache/calibration/so100"
+    calibration_dir: str = ".cache/calibration/mobile_so100"
 
     leader_arms: dict[str, MotorsBusConfig] = field(
         default_factory=lambda: {
@@ -236,7 +226,7 @@ class MobileSO100RobotConfig(RobotConfig):
         }
     )
 
-    mobile_so100: dict[str, MotorsBusConfig] = field(
+    follower_arms: dict[str, MotorsBusConfig] = field(
         default_factory=lambda: {
             "main": FeetechMotorsBusConfig(
                 port="/dev/ttyACM0",
