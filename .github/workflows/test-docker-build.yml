@@ -46,7 +46,9 @@ jobs:
         id: debug
         env:
           ALL_CHANGED_FILES: ${{ steps.set-matrix.outputs.matrix }}
-        run: echo ${ALL_CHANGED_FILES}
+        run: |
+          cat safe_matrix.json
+          echo ${ALL_CHANGED_FILES}
 
   build_modified_dockerfiles:
     name: Build modified Docker images
