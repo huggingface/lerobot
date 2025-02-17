@@ -128,7 +128,7 @@ class Logger:
                 resume="must" if cfg.resume else None,
             )
             # Handle custom step key for rl asynchronous training.
-            self._wandb_custom_step_key = None
+            self._wandb_custom_step_key: set[str] | None = None
             print(colored("Logs will be synced with wandb.", "blue", attrs=["bold"]))
             logging.info(f"Track this run --> {colored(wandb.run.get_url(), 'yellow', attrs=['bold'])}")
             self._wandb = wandb
@@ -264,11 +264,13 @@ class Logger:
             # multiple time steps is possible for example, the interaction step with the environment,
             # the training step, the evaluation step, etc. So we need to define a custom step key
             # to log the correct step for each metric.
-            if custom_step_key is not None and self._wandb_custom_step_key is None:
-                # NOTE: Define the custom step key, once for the moment this implementation support only one
-                # custom step.
-                self._wandb_custom_step_key = f"{mode}/{custom_step_key}"
-                self._wandb.define_metric(self._wandb_custom_step_key, hidden=True)
+            if custom_step_key is not None:
+                if self._wandb_custom_step_key is None:
+                    self._wandb_custom_step_key = set()
+                new_custom_key = f"{mode}/{custom_step_key}"
+                if new_custom_key not in self._wandb_custom_step_key:
+                    self._wandb_custom_step_key.add(new_custom_key)
+                    self._wandb.define_metric(new_custom_key, hidden=True)
 
             for k, v in d.items():
                 if not isinstance(v, (int, float, str, wandb.Table)):
@@ -277,17 +279,16 @@ class Logger:
                     )
                     continue
 
-                # We don't want to log the custom step
-                if k == custom_step_key:
+                # Do not log the custom step key itself.
+                if self._wandb_custom_step_key is not None and k in self._wandb_custom_step_key:
                     continue
 
-                if self._wandb_custom_step_key is not None and custom_step_key is not None:
-                    # NOTE: Log the metric with the custom step key.
-                    value_custom_step_key = d[custom_step_key]
-                    self._wandb.log({f"{mode}/{k}": v, self._wandb_custom_step_key: value_custom_step_key})
+                if custom_step_key is not None:
+                    value_custom_step = d[custom_step_key]
+                    self._wandb.log({f"{mode}/{k}": v, f"{mode}/{custom_step_key}": value_custom_step})
                     continue
 
-                self._wandb.log({f"{mode}/{k}": v}, step=step)
+                self._wandb.log(data={f"{mode}/{k}": v}, step=step)
 
     def log_video(self, video_path: str, step: int, mode: str = "train"):
         assert mode in {"train", "eval"}

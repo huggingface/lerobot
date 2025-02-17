@@ -206,9 +206,9 @@ def start_learner_threads(
 
     server_thread.start()
     transition_thread.start()
-    param_push_thread.start()
+    # param_push_thread.start()
 
-    param_push_thread.join()
+    # param_push_thread.join()
     transition_thread.join()
     server_thread.join()
 
@@ -448,7 +448,9 @@ def add_actor_information_and_train(
 
         policy.update_target_networks()
         if optimization_step % cfg.training.log_freq == 0:
-            logger.log_dict(training_infos, step=optimization_step, mode="train")
+            training_infos["Optimization step"] = optimization_step
+            logger.log_dict(d=training_infos, mode="train", custom_step_key="Optimization step")
+            # logging.info(f"Training infos: {training_infos}")
 
         time_for_one_optimization_step = time.time() - time_for_one_optimization_step
         frequency_for_one_optimization_step = 1 / (time_for_one_optimization_step + 1e-9)
@@ -456,9 +458,12 @@ def add_actor_information_and_train(
         logging.info(f"[LEARNER] Optimization frequency loop [Hz]: {frequency_for_one_optimization_step}")
 
         logger.log_dict(
-            {"Optimization frequency loop [Hz]": frequency_for_one_optimization_step},
-            step=optimization_step,
+            {
+                "Optimization frequency loop [Hz]": frequency_for_one_optimization_step,
+                "Optimization step": optimization_step,
+            },
             mode="train",
+            custom_step_key="Optimization step",
         )
 
         optimization_step += 1
