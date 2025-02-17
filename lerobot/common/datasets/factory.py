@@ -104,7 +104,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
         )
         logging.info(
             "Multiple datasets were provided. Applied the following index mapping to the provided datasets: "
-            f"{pformat(dataset.repo_id_to_index , indent=2)}"
+            f"{pformat(dataset.repo_id_to_index, indent=2)}"
         )
 
     if cfg.dataset.use_imagenet_stats:

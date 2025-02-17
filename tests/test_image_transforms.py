@@ -343,13 +343,13 @@ def test_save_all_transforms(img_tensor_factory, tmp_path):
     # Check if the combined transforms directory exists and contains the right files
     combined_transforms_dir = tmp_path / "all"
     assert combined_transforms_dir.exists(), "Combined transforms directory was not created."
-    assert any(
-        combined_transforms_dir.iterdir()
-    ), "No transformed images found in combined transforms directory."
+    assert any(combined_transforms_dir.iterdir()), (
+        "No transformed images found in combined transforms directory."
+    )
     for i in range(1, n_examples + 1):
-        assert (
-            combined_transforms_dir / f"{i}.png"
-        ).exists(), f"Combined transform image {i}.png was not found."
+        assert (combined_transforms_dir / f"{i}.png").exists(), (
+            f"Combined transform image {i}.png was not found."
+        )
 
 
 def test_save_each_transform(img_tensor_factory, tmp_path):
@@ -369,6 +369,6 @@ def test_save_each_transform(img_tensor_factory, tmp_path):
         # Check for specific files within each transform directory
         expected_files = [f"{i}.png" for i in range(1, n_examples + 1)] + ["min.png", "max.png", "mean.png"]
         for file_name in expected_files:
-            assert (
-                transform_dir / file_name
-            ).exists(), f"{file_name} was not found in {transform} directory."
+            assert (transform_dir / file_name).exists(), (
+                f"{file_name} was not found in {transform} directory."
+            )

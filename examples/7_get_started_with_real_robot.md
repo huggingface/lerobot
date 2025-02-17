@@ -36,9 +36,14 @@ Using `pip`:
 pip install -e ".[dynamixel]"
 ```
 
-Or using `poetry`:
+Using `poetry`:
 ```bash
-poetry install --sync --extras "dynamixel"
+poetry sync --extras "dynamixel"
+```
+
+Using `uv`:
+```bash
+uv sync --extra "dynamixel"
 ```
 
 /!\ For Linux only, ffmpeg and opencv requires conda install for now. Run this exact sequence of commands:

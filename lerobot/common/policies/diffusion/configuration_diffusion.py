@@ -221,7 +221,7 @@ class DiffusionConfig(PreTrainedConfig):
         for key, image_ft in self.image_features.items():
             if image_ft.shape != first_image_ft.shape:
                 raise ValueError(
-                    f"`{key}` does not match `{first_image_key}`, but we " "expect all image shapes to match."
+                    f"`{key}` does not match `{first_image_key}`, but we expect all image shapes to match."
                 )
 
     @property
