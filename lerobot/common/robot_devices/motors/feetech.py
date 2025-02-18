@@ -111,60 +111,44 @@ NUM_READ_RETRY = 20
 NUM_WRITE_RETRY = 20
 
 
-def convert_degrees_to_steps(
-    degrees: float | np.ndarray, models: list[str], multi_turn_index: int
-) -> np.ndarray:
-    """
-    Converts degrees to motor steps with multi-turn tracking.
-    - Each full rotation (360°) corresponds to an additional 4096 steps.
-    """
+def convert_ticks_to_degrees(ticks, model):
+    resolutions = MODEL_RESOLUTION[model]
+    degrees = (ticks / resolutions) * 360.0  # Convert to 0-360 range
 
-    resolutions = np.array([MODEL_RESOLUTION[m] for m in models], dtype=float)
+    # Convert to range [-180, 180]
+    degrees = (degrees + 180) % 360 - 180
+    return degrees
 
+
+def convert_degrees_to_ticks(degrees, model, motorbus, motor_id: int):
+    multi_turn_index = motorbus.multi_turn_index[motor_id - 1]
+    resolutions = MODEL_RESOLUTION[model]
     # Remove full rotations from degrees
     base_degrees = degrees - (multi_turn_index * 360.0)
 
-    # Convert degrees to motor steps
-    steps = base_degrees / 180.0 * (resolutions / 2)
+    # Convert degrees to motor ticks
+    ticks = base_degrees / 180.0 * (resolutions / 2)
 
-    # Add back multi-turn steps
-    steps += multi_turn_index * resolutions
+    # Add back multi-turn ticks
+    ticks += multi_turn_index * resolutions
 
-    return steps.astype(int)
-
-
-def convert_steps_to_degrees(steps: int | np.ndarray, models: list[str]) -> np.ndarray:
-    """
-    Converts motor steps to degrees while accounting for multi-turn motion.
-    - Each full rotation (4096 steps) adds ±360°.
-    """
-    resolutions = np.array([MODEL_RESOLUTION[m] for m in models], dtype=float)
-    steps = np.array(steps, dtype=float)
-
-    # Convert steps to degrees
-    degrees = steps * (360.0 / resolutions)
-
-    return degrees
+    return int(ticks)
 
 
 def adjusted_to_homing_ticks(
     raw_motor_ticks: int, encoder_offset: int, model: str, motorbus, motor_id: int
 ) -> int:
     """
-    Converts raw motor ticks [0..4095] to homed servo ticks with multi-turn indexing.
-    - Uses a rolling index to track full rotations (4096 steps each)
+    Shifts raw [0..4095] ticks by an encoder offset, modulo a single turn [0..4095].
     """
-
-    resolutions = MODEL_RESOLUTION[model]
-
     # Retrieve previous values for tracking
     prev_value = motorbus.previous_value[motor_id - 1]
     multi_turn_index = motorbus.multi_turn_index[motor_id - 1]
 
-    # Compute new shifted position
+    resolutions = MODEL_RESOLUTION[model]
     shifted = (raw_motor_ticks + encoder_offset) % resolutions
     if shifted > resolutions // 2:
-        shifted -= resolutions  # Normalize to [-2048, 2047]
+        shifted -= resolutions
 
     if prev_value is not None:
         delta = shifted - prev_value
@@ -179,7 +163,6 @@ def adjusted_to_homing_ticks(
     motorbus.previous_value[motor_id - 1] = shifted
     motorbus.multi_turn_index[motor_id - 1] = multi_turn_index
 
-    # Return final adjusted ticks with multi-turn indexing
     return shifted + (multi_turn_index * resolutions)
 
 
@@ -190,9 +173,7 @@ def adjusted_to_motor_ticks(
     Inverse of adjusted_to_homing_ticks().
     Converts homed servo ticks (with multi-turn indexing) back to [0..4095].
     """
-
     resolutions = MODEL_RESOLUTION[model]
-
     # Get the current multi-turn index and remove that offset
     multi_turn_index = motorbus.multi_turn_index[motor_id - 1]
     adjusted_pos -= multi_turn_index * 4096
@@ -481,7 +462,7 @@ class FeetechMotorsBus:
 
                 # Convert raw motor ticks to homed ticks, then convert the homed ticks to degrees
                 values[i] = adjusted_to_homing_ticks(values[i], homing_offset, model, self, motor_idx)
-                values[i] = convert_steps_to_degrees(values[i], [model])
+                values[i] = convert_ticks_to_degrees(values[i], model)
 
                 # Update direction of rotation of the motor to match between leader and follower.
                 # In fact, the motor of the leader for a given joint can be assembled in an
@@ -524,7 +505,7 @@ class FeetechMotorsBus:
                 motor_idx, model = self.motors[name]
 
                 # Convert degrees to homed ticks, then convert the homed ticks to raw ticks
-                values[i] = convert_degrees_to_steps(values[i], [model], self.multi_turn_index[motor_idx - 1])
+                values[i] = convert_degrees_to_ticks(values[i], model, self, motor_idx)
                 values[i] = adjusted_to_motor_ticks(values[i], homing_offset, model, self, motor_idx)
 
                 # Remove drive mode, which is the rotation direction of the motor, to come back to

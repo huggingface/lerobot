@@ -7,7 +7,8 @@ from lerobot.common.robot_devices.motors.feetech import (
     FeetechMotorsBus,
     adjusted_to_homing_ticks,
     adjusted_to_motor_ticks,
-    convert_steps_to_degrees,
+    convert_degrees_to_ticks,
+    convert_ticks_to_degrees,
 )
 
 # Replace this import with your real config class import
@@ -82,17 +83,20 @@ def debug_feetech_positions(cfg, arm_arg: str):
                 # Manually compute "adjusted ticks" from raw ticks
                 manual_adjusted = adjusted_to_homing_ticks(raw_ticks, offset, model, bus, motor_idx)
                 # Convert to degrees
-                manual_degs = convert_steps_to_degrees(manual_adjusted, [model])[0]
+                manual_degs = convert_ticks_to_degrees(manual_adjusted, model)
+                # Convert to ticks
+                manual_ticks = convert_degrees_to_ticks(manual_degs, model, bus, motor_idx)
                 # Invert
-                inv_ticks = adjusted_to_motor_ticks(manual_adjusted, offset, model, bus, motor_idx)
+                inv_ticks = adjusted_to_motor_ticks(manual_ticks, offset, model, bus, motor_idx)
 
                 print(
                     f"{name:15s} | "
                     f"RAW={raw_ticks:4d} | "
                     f"HOMED={homed_val:7.2f} | "
-                    f"MANUAL_ADJ={manual_adjusted:6d} | "
-                    f"DEG={manual_degs:7.2f} | "
-                    f"INV={inv_ticks:4d}"
+                    f"MANUAL_ADJ_TICKS={manual_adjusted:6d} | "
+                    f"MANUAL_ADJ_DEG={manual_degs:7.2f} | "
+                    f"INV_TICKS={manual_ticks:6d} | "
+                    f"INV_STEPS={inv_ticks:4d}"
                 )
             print("----------------------------------------------------")
             time.sleep(0.25)  # slow down loop
