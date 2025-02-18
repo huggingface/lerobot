@@ -295,8 +295,26 @@ def get_episode_data(
     if inference_dir is not None:
         feats = torch.load(inference_dir / f"output_features_episode_{episode_index}.pth")
         for key in feats:
-            header.append(key.replace("loss_per_item", "loss"))
-            rows = np.concatenate([rows, feats[key][:, None]], axis=1)
+            if "loss_per_item" in key:
+                if feats[key].ndim != 1:
+                    raise ValueError()
+
+                header.append(key.replace("loss_per_item", "loss"))
+                rows = np.concatenate([rows, feats[key][:, None]], axis=1)
+
+            elif key == "action":
+                if feats[key].ndim != 3:
+                    raise ValueError()
+
+                next_action = feats[key][:, 0, :]
+                num_motors = next_action.shape[1]
+
+                for i in range(num_motors):
+                    header.append(f"action_{i}")
+
+                rows = np.concatenate([rows, next_action], axis=1)
+            else:
+                raise NotImplementedError(key)
 
     rows = rows.tolist()
 

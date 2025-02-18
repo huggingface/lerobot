@@ -89,11 +89,8 @@ def save_inference(cfg: SaveInferenceConfig):
         # Create a temporary directory that will be automatically cleaned up
         output_dir = tempfile.mkdtemp(prefix="lerobot_save_inference_")
 
-    elif Path(output_dir).exists():
-        if cfg.force_override:
-            shutil.rmtree(cfg.output_dir)
-        else:
-            raise NotImplementedError(f"Output directory already exists: {cfg.output_dir}")
+    elif Path(output_dir).exists() and cfg.force_override:
+        shutil.rmtree(cfg.output_dir)
 
     output_dir = Path(output_dir)
 
@@ -119,27 +116,33 @@ def save_inference(cfg: SaveInferenceConfig):
         with torch.no_grad(), torch.autocast(device_type=cfg.device) if cfg.use_amp else nullcontext():
             _, output_dict = policy.forward(batch)
 
-        bsize = batch["episode_index"].shape[0]
+        batch_size = batch["episode_index"].shape[0]
         episode_indices.append(batch["episode_index"])
         frame_indices.append(batch["frame_index"])
 
-        for key in output_dict:
-            if "loss_per_item" not in key:
+        for key, value in output_dict.items():
+            if not isinstance(value, torch.Tensor) or value.shape[0] != batch_size:
+                print(f"Skipping {key}")
                 continue
 
             if key not in feats:
                 feats[key] = []
 
-            if not (output_dict[key].ndim == 1 and output_dict[key].shape[0] == bsize):
-                raise ValueError(output_dict[key].shape)
+            feats[key].append(value)
 
-            feats[key].append(output_dict[key])
+    episode_indices = torch.cat(episode_indices).cpu()
+    frame_indices = torch.cat(frame_indices).cpu()
 
-    episode_indices = torch.cat(episode_indices)
-    frame_indices = torch.cat(frame_indices)
-
-    for key in feats:
-        feats[key] = torch.cat(feats[key])
+    # TODO(rcadene): use collate?
+    for key, value in feats.items():
+        if isinstance(value[0], (float, int)):
+            feats[key] = torch.tensor(value)
+        elif isinstance(value[0], torch.Tensor):
+            feats[key] = torch.cat(value, dim=0).cpu()
+        elif isinstance(value[0], str):
+            pass
+        else:
+            raise NotImplementedError(f"{key}: {value}")
 
     # Find unique episode indices
     unique_episodes = torch.unique(episode_indices)
@@ -147,7 +150,7 @@ def save_inference(cfg: SaveInferenceConfig):
     for episode in unique_episodes:
         ep_feats = {}
         for key in feats:
-            ep_feats[key] = feats[key][episode_indices == episode].data.cpu()
+            ep_feats[key] = feats[key][episode_indices == episode]
 
         output_dir.mkdir(parents=True, exist_ok=True)
         torch.save(ep_feats, output_dir / f"output_features_episode_{episode}.pth")

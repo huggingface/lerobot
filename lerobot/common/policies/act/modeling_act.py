@@ -159,9 +159,10 @@ class ACTPolicy(PreTrainedPolicy):
         l1_loss *= ~batch["action_is_pad"].unsqueeze(-1)
 
         bsize, seqlen, num_motors = l1_loss.shape
-        loss_dict = {
+        output_dict = {
             "l1_loss": l1_loss.mean().item(),
             "l1_loss_per_item": l1_loss.view(bsize, seqlen * num_motors).mean(dim=1),
+            "action": self.unnormalize_outputs({"action": actions_hat})["action"],
         }
         if self.config.use_vae:
             # Calculate Dₖₗ(latent_pdf || standard_normal). Note: After computing the KL-divergence for
@@ -169,19 +170,19 @@ class ACTPolicy(PreTrainedPolicy):
             # KL-divergence per batch element, then take the mean over the batch.
             # (See App. B of https://arxiv.org/abs/1312.6114 for more details).
             mean_kld = (-0.5 * (1 + log_sigma_x2_hat - mu_hat.pow(2) - (log_sigma_x2_hat).exp())).sum(-1)
-            loss_dict["kld_loss_per_item"] = mean_kld
+            output_dict["kld_loss_per_item"] = mean_kld
 
             mean_kld = mean_kld.mean()
-            loss_dict["kld_loss"] = mean_kld.item()
+            output_dict["kld_loss"] = mean_kld.item()
 
             loss = l1_loss + mean_kld * self.config.kl_weight
-            loss_dict["loss_per_item"] = (
-                loss_dict["l1_loss_per_item"] + loss_dict["kld_loss_per_item"] * self.config.kl_weight
+            output_dict["loss_per_item"] = (
+                output_dict["l1_loss_per_item"] + output_dict["kld_loss_per_item"] * self.config.kl_weight
             )
         else:
             loss = l1_loss
 
-        return loss, loss_dict
+        return loss, output_dict
 
 
 class ACTTemporalEnsembler:
