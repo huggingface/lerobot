@@ -27,6 +27,7 @@ from typing import Any
 import datasets
 import jsonlines
 import numpy as np
+import packaging.version
 import pyarrow.compute as pc
 import torch
 from datasets.table import embed_table_storage
@@ -265,11 +266,6 @@ def hf_transform_to_torch(items_dict: dict[torch.Tensor | None]):
     return items_dict
 
 
-def _get_major_minor(version: str) -> tuple[int]:
-    split = version.strip("v").split(".")
-    return int(split[0]), int(split[1])
-
-
 class BackwardCompatibilityError(Exception):
     def __init__(self, repo_id, version):
         message = textwrap.dedent(f"""
@@ -297,11 +293,11 @@ class BackwardCompatibilityError(Exception):
 def check_version_compatibility(
     repo_id: str, version_to_check: str, current_version: str, enforce_breaking_major: bool = True
 ) -> None:
-    current_major, _ = _get_major_minor(current_version)
-    major_to_check, _ = _get_major_minor(version_to_check)
-    if major_to_check < current_major and enforce_breaking_major:
+    v_check = packaging.version.parse(version_to_check)
+    v_current = packaging.version.parse(current_version)
+    if v_check.major < v_current.major and enforce_breaking_major:
         raise BackwardCompatibilityError(repo_id, version_to_check)
-    elif float(version_to_check.strip("v")) < float(current_version.strip("v")):
+    elif v_check < v_current:
         logging.warning(
             f"""The dataset you requested ({repo_id}) was created with a previous version ({version_to_check}) of the
             codebase. The current codebase version is {current_version}. You should be fine since

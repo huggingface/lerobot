@@ -21,11 +21,13 @@ from typing import Callable
 
 import datasets
 import numpy as np
+import packaging.version
 import PIL.Image
 import torch
 import torch.utils
 from datasets import load_dataset
 from huggingface_hub import HfApi, snapshot_download
+from huggingface_hub.constants import REPOCARD_NAME
 
 from lerobot.common.datasets.compute_stats import aggregate_stats, compute_episode_stats
 from lerobot.common.datasets.image_writer import AsyncImageWriter, write_image
@@ -40,7 +42,6 @@ from lerobot.common.datasets.utils import (
     check_frame_features,
     check_timestamps_sync,
     check_version_compatibility,
-    create_branch,
     create_empty_dataset_info,
     create_lerobot_dataset_card,
     get_delta_indices,
@@ -78,13 +79,15 @@ class LeRobotDatasetMetadata:
         repo_id: str,
         root: str | Path | None = None,
         revision: str | None = None,
+        sync_cache_first: bool = False,
     ):
         self.repo_id = repo_id
-        self.revision = revision
+        self.revision = revision if revision else CODEBASE_VERSION
         self.root = Path(root) if root is not None else LEROBOT_HOME / repo_id
 
-        # Load metadata
         try:
+            if sync_cache_first:
+                raise FileNotFoundError
             self.load_metadata()
         except (FileNotFoundError, NotADirectoryError):
             (self.root / "meta").mkdir(exist_ok=True, parents=True)
@@ -93,20 +96,19 @@ class LeRobotDatasetMetadata:
 
     def load_metadata(self):
         self.info = load_info(self.root)
-        self.stats = load_stats(self.root)
         self.tasks, self.task_to_task_index = load_tasks(self.root)
         self.episodes = load_episodes(self.root)
-        try:
-            self.episodes_stats = load_episodes_stats(self.root)
-            self.stats = aggregate_stats(list(self.episodes_stats.values()))
-        except FileNotFoundError:
-            logging.warning(
-                f"""'episodes_stats.jsonl' not found. Using global dataset stats for each episode instead.
-                Convert your dataset stats to the new format using this command:
-                python lerobot/common/datasets/v21/convert_dataset_v20_to_v21.py --repo-id={self.repo_id} """
-            )
+        if packaging.version.parse(self._version) < packaging.version.parse("v2.1"):
             self.stats = load_stats(self.root)
             self.episodes_stats = backward_compatible_episodes_stats(self.stats, self.episodes)
+            logging.warning(
+                f"""The version of your dataset still uses global dataset stats instead of per-episode stats.
+                Update your dataset stats to the new format using this command:
+                python lerobot/common/datasets/v21/convert_dataset_v20_to_v21.py --repo-id={self.repo_id} """
+            )
+        else:
+            self.episodes_stats = load_episodes_stats(self.root)
+            self.stats = aggregate_stats(list(self.episodes_stats.values()))
 
     def pull_from_repo(
         self,
@@ -355,6 +357,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         delta_timestamps: dict[list[float]] | None = None,
         tolerance_s: float = 1e-4,
         revision: str | None = None,
+        sync_cache_first: bool = False,
         download_videos: bool = True,
         video_backend: str | None = None,
     ):
@@ -448,7 +451,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 decoded from video files. It is also used to check that `delta_timestamps` (when provided) are
                 multiples of 1/fps. Defaults to 1e-4.
             revision (str, optional): An optional Git revision id which can be a branch name, a tag, or a
-                commit hash.
+                commit hash. Defaults to current codebase version tag.
+            sync_cache_first (bool, optional): Flag to sync and refresh local files first. If True and files
+                are already present in the local cache, this will be faster. However, files loaded might not
+                be in sync with the version on the hub, especially if you specified 'revision'. Defaults to
+                False.
             download_videos (bool, optional): Flag to download the videos. Note that when set to True but the
                 video files are already present on local disk, they won't be downloaded again. Defaults to
                 True.
@@ -462,7 +469,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.delta_timestamps = delta_timestamps
         self.episodes = episodes
         self.tolerance_s = tolerance_s
-        self.revision = revision
+        self.revision = revision if revision else CODEBASE_VERSION
         self.video_backend = video_backend if video_backend else "pyav"
         self.delta_indices = None
 
@@ -473,8 +480,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.root.mkdir(exist_ok=True, parents=True)
 
         # Load metadata
-        self.meta = LeRobotDatasetMetadata(self.repo_id, self.root, self.revision)
-        if self.episodes is not None and self.meta._version == CODEBASE_VERSION:
+        self.meta = LeRobotDatasetMetadata(
+            self.repo_id, self.root, self.revision, sync_cache_first=sync_cache_first
+        )
+        if self.episodes is not None and packaging.version.parse(
+            self.meta._version
+        ) >= packaging.version.parse("v2.1"):
             episodes_stats = [self.meta.episodes_stats[ep_idx] for ep_idx in self.episodes]
             self.stats = aggregate_stats(episodes_stats)
 
@@ -483,6 +494,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         # Load actual data
         try:
+            if sync_cache_first:
+                raise FileNotFoundError
             assert all((self.root / fpath).is_file() for fpath in self.get_episodes_file_paths())
             self.hf_dataset = self.load_hf_dataset()
         except (AssertionError, FileNotFoundError, NotADirectoryError):
@@ -505,7 +518,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def push_to_hub(
         self,
         branch: str | None = None,
-        create_card: bool = True,
         tags: list | None = None,
         license: str | None = "apache-2.0",
         push_videos: bool = True,
@@ -532,7 +544,13 @@ class LeRobotDataset(torch.utils.data.Dataset):
             exist_ok=True,
         )
         if branch:
-            create_branch(repo_id=self.repo_id, branch=branch, repo_type="dataset")
+            hub_api.create_branch(
+                repo_id=self.repo_id,
+                branch=branch,
+                revision=self.revision,
+                repo_type="dataset",
+                exist_ok=True,
+            )
 
         hub_api.upload_folder(
             repo_id=self.repo_id,
@@ -542,14 +560,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
             allow_patterns=allow_patterns,
             ignore_patterns=ignore_patterns,
         )
-        if create_card:
+        if not hub_api.file_exists(self.repo_id, REPOCARD_NAME, repo_type="dataset", revision=branch):
             card = create_lerobot_dataset_card(
                 tags=tags, dataset_info=self.meta.info, license=license, **card_kwargs
             )
             card.push_to_hub(repo_id=self.repo_id, repo_type="dataset", revision=branch)
-
-        if not branch:
-            create_branch(repo_id=self.repo_id, branch=CODEBASE_VERSION, repo_type="dataset")
 
     def pull_from_repo(
         self,
