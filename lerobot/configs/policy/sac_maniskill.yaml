@@ -52,10 +52,10 @@ policy:
   n_action_steps: 1
 
   shared_encoder: true
-  vision_encoder_name: null
-  # vision_encoder_name: "helper2424/resnet10"
-  # freeze_vision_encoder: true
-  freeze_vision_encoder: false
+  # vision_encoder_name: null
+  vision_encoder_name: "helper2424/resnet10"
+  freeze_vision_encoder: true
+  # freeze_vision_encoder: false
   input_shapes:
     # # TODO(rcadene, alexander-soare): add variables for height and width from the dataset/env?
     observation.state: ["${env.state_dim}"]
