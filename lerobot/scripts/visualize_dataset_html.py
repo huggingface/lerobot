@@ -65,6 +65,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import requests
+import torch
 from flask import Flask, redirect, render_template, request, url_for
 
 from lerobot import available_datasets
@@ -80,6 +81,7 @@ def run_server(
     port: str,
     static_folder: Path,
     template_folder: Path,
+    inference_dir: Path | None,
 ):
     app = Flask(__name__, static_folder=static_folder.resolve(), template_folder=template_folder.resolve())
     app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0  # specifying not to cache
@@ -139,7 +141,14 @@ def run_server(
         )
 
     @app.route("/<string:dataset_namespace>/<string:dataset_name>/episode_<int:episode_id>")
-    def show_episode(dataset_namespace, dataset_name, episode_id, dataset=dataset, episodes=episodes):
+    def show_episode(
+        dataset_namespace,
+        dataset_name,
+        episode_id,
+        dataset=dataset,
+        episodes=episodes,
+        inference_dir=inference_dir,
+    ):
         repo_id = f"{dataset_namespace}/{dataset_name}"
         try:
             if dataset is None:
@@ -158,7 +167,7 @@ def run_server(
             if major_version < 2:
                 return "Make sure to convert your LeRobotDataset to v2 & above."
 
-        episode_data_csv_str, columns = get_episode_data(dataset, episode_id)
+        episode_data_csv_str, columns = get_episode_data(dataset, episode_id, inference_dir)
         dataset_info = {
             "repo_id": f"{dataset_namespace}/{dataset_name}",
             "num_samples": dataset.num_frames
@@ -228,7 +237,9 @@ def get_ep_csv_fname(episode_id: int):
     return ep_csv_fname
 
 
-def get_episode_data(dataset: LeRobotDataset | IterableNamespace, episode_index):
+def get_episode_data(
+    dataset: LeRobotDataset | IterableNamespace, episode_index, inference_dir: Path | None = None
+):
     """Get a csv str containing timeseries data of an episode (e.g. state and action).
     This file will be loaded by Dygraph javascript to plot data in real time."""
     columns = []
@@ -279,7 +290,15 @@ def get_episode_data(dataset: LeRobotDataset | IterableNamespace, episode_index)
             np.expand_dims(data["timestamp"], axis=1),
             *[np.vstack(data[col]) for col in selected_columns[1:]],
         )
-    ).tolist()
+    )
+
+    if inference_dir is not None:
+        feats = torch.load(inference_dir / f"output_features_episode_{episode_index}.pth")
+        for key in feats:
+            header.append(key.replace("loss_per_item", "loss"))
+            rows = np.concatenate([rows, feats[key][:, None]], axis=1)
+
+    rows = rows.tolist()
 
     # Convert data to CSV string
     csv_buffer = StringIO()
@@ -332,6 +351,7 @@ def visualize_dataset_html(
     host: str = "127.0.0.1",
     port: int = 9090,
     force_override: bool = False,
+    inference_dir: Path | None = None,
 ) -> Path | None:
     init_logging()
 
@@ -372,7 +392,7 @@ def visualize_dataset_html(
                 ln_videos_dir.symlink_to((dataset.root / "videos").resolve())
 
         if serve:
-            run_server(dataset, episodes, host, port, static_dir, template_dir)
+            run_server(dataset, episodes, host, port, static_dir, template_dir, inference_dir)
 
 
 def main():
@@ -438,6 +458,12 @@ def main():
         type=int,
         default=0,
         help="Delete the output directory if it exists already.",
+    )
+    parser.add_argument(
+        "--inference-dir",
+        type=Path,
+        default=None,
+        help="",
     )
 
     args = parser.parse_args()
