@@ -121,7 +121,7 @@ def run_full_arm_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm
     print("\nMove arm to homing position")
     print(
         "See: " + URL_TEMPLATE.format(robot=robot_type, arm=arm_type, position="zero")
-    )  # TODO(pepijn): replace with new instruction homing pos (all motors in center)
+    )  # TODO(pepijn): replace with new instruction homing pos (all motors in center) in tutorial
     input("Press Enter to continue...")
 
     start_positions = np.zeros(len(arm.motor_indices))
@@ -158,7 +158,7 @@ def run_full_arm_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm
 
 
 def run_full_auto_arm_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm_type: str):
-    """TODO: Add this method later as extra
+    """TODO(pepijn): Add this method later as extra
     Example of usage:
     ```python
     run_full_auto_arm_calibration(arm, "so100", "left", "follower")

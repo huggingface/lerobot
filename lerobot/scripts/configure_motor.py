@@ -141,10 +141,9 @@ def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
             motor_bus.write("Lock", 1)
             print("Offset", motor_bus.read("Offset"))
 
-            # TODO(pepijn):
+            # TODO(pepijn): Add when doing a motor configuration, you instantainesly home the position (while assembling)
             # single_calibration = single_motor_calibration(motor_bus, motor_idx_des)
-
-            # TODO(pepijn): store single_calibration
+            # Then store single_calibration in yaml via dict (not overwrite but add the single calibration each time for motor id)
 
     except Exception as e:
         print(f"Error occurred during motor configuration: {e}")

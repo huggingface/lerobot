@@ -16,13 +16,6 @@ TIMEOUT_MS = 1000
 
 MAX_ID_RANGE = 252
 
-# The following bounds define the lower and upper joints range (after calibration).
-# For joints in degree (i.e. revolute joints), their nominal range is [-180, 180] degrees
-# which corresponds to a half rotation on the left and half rotation on the right.
-# Some joints might require higher range, so we allow up to [-270, 270] degrees until
-# an error is raised.
-LOWER_BOUND_DEGREE = -180
-UPPER_BOUND_DEGREE = 180
 # For joints in percentage (i.e. joints that move linearly like the prismatic joint of a gripper),
 # their nominal range is [0, 100] %. For instance, for Aloha gripper, 0% is fully
 # closed, and 100% is fully open. To account for slight calibration issue, we allow up to
@@ -31,7 +24,6 @@ LOWER_BOUND_LINEAR = -10
 UPPER_BOUND_LINEAR = 110
 
 HALF_TURN_DEGREE = 180
-
 
 # See this link for STS3215 Memory Table:
 # https://docs.google.com/spreadsheets/d/1GVs7W1VS1PqdhA1nW-abeyAHhTUxKUdR/edit?usp=sharing&ouid=116566590112741600240&rtpof=true&sd=true
@@ -119,25 +111,39 @@ NUM_READ_RETRY = 20
 NUM_WRITE_RETRY = 20
 
 
-def convert_degrees_to_steps(degrees: float | np.ndarray, models: list[str]) -> np.ndarray:
-    """This function converts the degree range to the step range for indicating motors rotation.
-    It assumes a motor achieves a full rotation by going from -180 degree position to +180.
-    The motor resolution (e.g. 4096) corresponds to the number of steps needed to achieve a full rotation.
+def convert_degrees_to_steps(
+    degrees: float | np.ndarray, models: list[str], multi_turn_index: int
+) -> np.ndarray:
     """
+    Converts degrees to motor steps with multi-turn tracking.
+    - Each full rotation (360°) corresponds to an additional 4096 steps.
+    """
+
     resolutions = np.array([MODEL_RESOLUTION[m] for m in models], dtype=float)
-    steps = degrees / 180 * np.array(resolutions) / 2
-    steps = steps.astype(int)
-    return steps
+
+    # Remove full rotations from degrees
+    base_degrees = degrees - (multi_turn_index * 360.0)
+
+    # Convert degrees to motor steps
+    steps = base_degrees / 180.0 * (resolutions / 2)
+
+    # Add back multi-turn steps
+    steps += multi_turn_index * resolutions
+
+    return steps.astype(int)
 
 
 def convert_steps_to_degrees(steps: int | np.ndarray, models: list[str]) -> np.ndarray:
-    """This function converts the step range to the degrees range for indicating motors rotation.
-    It assumes a motor achieves a full rotation by going from -180 degree position to +180.
-    The motor resolution (e.g. 4096) corresponds to the number of steps needed to achieve a full rotation.
+    """
+    Converts motor steps to degrees while accounting for multi-turn motion.
+    - Each full rotation (4096 steps) adds ±360°.
     """
     resolutions = np.array([MODEL_RESOLUTION[m] for m in models], dtype=float)
     steps = np.array(steps, dtype=float)
+
+    # Convert steps to degrees
     degrees = steps * (360.0 / resolutions)
+
     return degrees
 
 
@@ -145,38 +151,36 @@ def adjusted_to_homing_ticks(
     raw_motor_ticks: int, encoder_offset: int, model: str, motorbus, motor_id: int
 ) -> int:
     """
-    Converts raw motor ticks [0..4095] to homed servo ticks in [-2048..2047].
-    Tracks multi-turn rotations by adjusting a multi-turn index.
+    Converts raw motor ticks [0..4095] to homed servo ticks with multi-turn indexing.
+    - Uses a rolling index to track full rotations (4096 steps each)
     """
 
     resolutions = MODEL_RESOLUTION[model]
-    # Retrieve "previous shifted" and the multi-turn index
+
+    # Retrieve previous values for tracking
     prev_value = motorbus.previous_value[motor_id - 1]
     multi_turn_index = motorbus.multi_turn_index[motor_id - 1]
 
-    # Compute the new shifted value in the range [-2048..2047]
+    # Compute new shifted position
     shifted = (raw_motor_ticks + encoder_offset) % resolutions
-    if shifted > 2047:
-        shifted -= 4096
+    if shifted > resolutions // 2:
+        shifted -= resolutions  # Normalize to [-2048, 2047]
 
-    # If we have a valid previous value, detect big jumps
     if prev_value is not None:
         delta = shifted - prev_value
 
-        # If we jump forward by more than half a turn, we must have wrapped negatively
-        if delta > 2048:
+        # If jump forward > 180° (2048 steps), assume full rotation
+        if delta > resolutions // 2:
             multi_turn_index -= 1
-
-        # If we jump backward by more than half a turn, we must have wrapped positively
-        elif delta < -2048:
+        elif delta < -resolutions // 2:
             multi_turn_index += 1
 
-    # Store the new shifted value and updated multi-turn index
+    # Update stored values
     motorbus.previous_value[motor_id - 1] = shifted
     motorbus.multi_turn_index[motor_id - 1] = multi_turn_index
 
-    # Return the final multi-turn adjusted position
-    return shifted + multi_turn_index * 4096
+    # Return final adjusted ticks with multi-turn indexing
+    return shifted + (multi_turn_index * resolutions)
 
 
 def adjusted_to_motor_ticks(
@@ -485,21 +489,9 @@ class FeetechMotorsBus:
                 if drive_mode:
                     values[i] *= -1
 
-                if (values[i] < LOWER_BOUND_DEGREE) or (values[i] > UPPER_BOUND_DEGREE):
-                    raise JointOutOfRangeError(
-                        f"Wrong motor position range detected for {name}. "
-                        f"Expected to be in nominal range of [-{HALF_TURN_DEGREE}, {HALF_TURN_DEGREE}] degrees (a full rotation), "
-                        f"with a maximum range of [{LOWER_BOUND_DEGREE}, {UPPER_BOUND_DEGREE}] degrees to account for joints that can rotate a bit more, "
-                        f"but present value is {values[i]} degree. "
-                        "This might be due to a cable connection issue creating an artificial 360 degrees jump in motor values. "
-                        "You need to recalibrate by running: `python lerobot/scripts/control_robot.py calibrate`"
-                    )
-
             elif CalibrationMode[calib_mode] == CalibrationMode.LINEAR:
                 start_pos = self.calibration["start_pos"][calib_idx]
                 end_pos = self.calibration["end_pos"][calib_idx]
-
-                # TODO(pepijn): Check if a homing (something similar to homing) should be applied to linear joint (think so)
 
                 # Rescale the present position to a nominal range [0, 100] %,
                 # useful for joints with linear motions like Aloha gripper
@@ -532,7 +524,7 @@ class FeetechMotorsBus:
                 motor_idx, model = self.motors[name]
 
                 # Convert degrees to homed ticks, then convert the homed ticks to raw ticks
-                values[i] = convert_degrees_to_steps(values[i], [model])
+                values[i] = convert_degrees_to_steps(values[i], [model], self.multi_turn_index[motor_idx - 1])
                 values[i] = adjusted_to_motor_ticks(values[i], homing_offset, model, self, motor_idx)
 
                 # Remove drive mode, which is the rotation direction of the motor, to come back to
