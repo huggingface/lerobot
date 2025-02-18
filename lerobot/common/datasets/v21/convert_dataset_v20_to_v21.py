@@ -1,10 +1,12 @@
 """
 This script will help you convert any LeRobot dataset already pushed to the hub from codebase version 2.0 to
-2.1. It performs the following:
+2.1. It will:
 
 - Generates per-episodes stats and writes them in `episodes_stats.jsonl`
+- Check consistency between these new stats and the old ones.
 - Removes the deprecated `stats.json` (by default)
 - Updates codebase_version in `info.json`
+- Push this new version to the hub on the 'main' branch and tags it with "v2.1".
 
 Usage:
 
@@ -14,9 +16,9 @@ python lerobot/common/datasets/v21/convert_dataset_v20_to_v21.py \
 ```
 
 """
-# TODO(rcadene, aliberts): ensure this script works for any other changes for the final v2.1
 
 import argparse
+import logging
 
 from huggingface_hub import HfApi
 
@@ -24,14 +26,27 @@ from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDat
 from lerobot.common.datasets.utils import EPISODES_STATS_PATH, STATS_PATH, load_stats, write_info
 from lerobot.common.datasets.v21.convert_stats import check_aggregate_stats, convert_stats
 
+V20 = "v2.0"
+V21 = "v2.1"
 
-def main(
+
+class SuppressWarnings:
+    def __enter__(self):
+        self.previous_level = logging.getLogger().getEffectiveLevel()
+        logging.getLogger().setLevel(logging.ERROR)
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        logging.getLogger().setLevel(self.previous_level)
+
+
+def convert_dataset(
     repo_id: str,
-    test_branch: str | None = None,
-    delete_old_stats: bool = False,
+    branch: str | None = None,
     num_workers: int = 4,
 ):
-    dataset = LeRobotDataset(repo_id)
+    with SuppressWarnings():
+        dataset = LeRobotDataset(repo_id, revision=V20, sync_cache_first=True)
+
     if (dataset.root / EPISODES_STATS_PATH).is_file():
         raise FileExistsError("episodes_stats.jsonl already exists.")
 
@@ -42,18 +57,21 @@ def main(
     dataset.meta.info["codebase_version"] = CODEBASE_VERSION
     write_info(dataset.meta.info, dataset.root)
 
-    dataset.push_to_hub(branch=test_branch, create_card=False, allow_patterns="meta/")
+    dataset.push_to_hub(branch=branch, allow_patterns="meta/")
 
-    if delete_old_stats:
-        if (dataset.root / STATS_PATH).is_file:
-            (dataset.root / STATS_PATH).unlink()
-        hub_api = HfApi()
-        if hub_api.file_exists(
-            STATS_PATH, repo_id=dataset.repo_id, revision=test_branch, repo_type="dataset"
-        ):
-            hub_api.delete_file(
-                STATS_PATH, repo_id=dataset.repo_id, revision=test_branch, repo_type="dataset"
-            )
+    # delete old stats.json file
+    if (dataset.root / STATS_PATH).is_file:
+        (dataset.root / STATS_PATH).unlink()
+
+    hub_api = HfApi()
+    if hub_api.file_exists(
+        repo_id=dataset.repo_id, filename=STATS_PATH, revision=branch, repo_type="dataset"
+    ):
+        hub_api.delete_file(
+            path_in_repo=STATS_PATH, repo_id=dataset.repo_id, revision=branch, repo_type="dataset"
+        )
+
+    hub_api.create_tag(repo_id, tag=CODEBASE_VERSION, revision=branch, repo_type="dataset")
 
 
 if __name__ == "__main__":
@@ -65,16 +83,10 @@ if __name__ == "__main__":
         help="Repository identifier on Hugging Face: a community or a user name `/` the name of the dataset (e.g. `lerobot/pusht`, `cadene/aloha_sim_insertion_human`).",
     )
     parser.add_argument(
-        "--test-branch",
+        "--branch",
         type=str,
         default=None,
-        help="Repo branch to test your conversion first (e.g. 'v2.0.test')",
-    )
-    parser.add_argument(
-        "--delete-old-stats",
-        type=bool,
-        default=False,
-        help="Delete the deprecated `stats.json`",
+        help="Repo branch to push your dataset (defaults to the main branch)",
     )
     parser.add_argument(
         "--num-workers",
@@ -84,4 +96,4 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
-    main(**vars(args))
+    convert_dataset(**vars(args))
