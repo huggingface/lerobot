@@ -51,7 +51,7 @@ def calibrate_homing_motor(motor_id, motor_bus):
 
 def calibrate_linear_motor(motor_id, motor_bus):
     motor_names = motor_bus.motor_names
-    motor_name = motor_names[motor_id - 1]
+    motor_name = motor_names[motor_id - 1]  # TODO(pepijn): replace motor_id with motor index when (id-1)
 
     input(f"Close the {motor_name}, then press Enter...")
     start_pos = motor_bus.read("Present_Position")[motor_id - 1]  # Read index starts ar 0
@@ -77,7 +77,7 @@ def single_motor_calibration(arm: MotorsBus, motor_id: int):
     if motor_id == 6:
         start_pos, end_pos = calibrate_linear_motor(motor_id, arm)
     else:
-        input("Move the motor to middle (home) position, then press Enter...")
+        input("Move the motor to (zero) position, then press Enter...")
         encoder_offset = calibrate_homing_motor(motor_id, arm)
 
     print(f"Calibration for motor ID:{motor_id} done.")
