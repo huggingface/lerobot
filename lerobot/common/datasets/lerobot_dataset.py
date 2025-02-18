@@ -21,13 +21,13 @@ from typing import Callable
 
 import datasets
 import numpy as np
-import packaging.version
 import PIL.Image
 import torch
 import torch.utils
 from datasets import load_dataset
 from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.constants import REPOCARD_NAME
+from packaging import version
 
 from lerobot.common.datasets.compute_stats import aggregate_stats, compute_episode_stats
 from lerobot.common.datasets.image_writer import AsyncImageWriter, write_image
@@ -48,6 +48,7 @@ from lerobot.common.datasets.utils import (
     get_episode_data_index,
     get_features_from_robot,
     get_hf_features_from_features,
+    get_safe_revision,
     hf_transform_to_torch,
     load_episodes,
     load_episodes_stats,
@@ -79,33 +80,31 @@ class LeRobotDatasetMetadata:
         repo_id: str,
         root: str | Path | None = None,
         revision: str | None = None,
-        sync_cache_first: bool = False,
+        force_cache_sync: bool = False,
     ):
         self.repo_id = repo_id
         self.revision = revision if revision else CODEBASE_VERSION
         self.root = Path(root) if root is not None else LEROBOT_HOME / repo_id
 
         try:
-            if sync_cache_first:
+            if force_cache_sync:
                 raise FileNotFoundError
             self.load_metadata()
         except (FileNotFoundError, NotADirectoryError):
             (self.root / "meta").mkdir(exist_ok=True, parents=True)
+            self.revision = get_safe_revision(self.repo_id, self.revision)
             self.pull_from_repo(allow_patterns="meta/")
             self.load_metadata()
+
+        check_version_compatibility(self.repo_id, self._version, CODEBASE_VERSION)
 
     def load_metadata(self):
         self.info = load_info(self.root)
         self.tasks, self.task_to_task_index = load_tasks(self.root)
         self.episodes = load_episodes(self.root)
-        if packaging.version.parse(self._version) < packaging.version.parse("v2.1"):
+        if version.parse(self._version) < version.parse("v2.1"):
             self.stats = load_stats(self.root)
             self.episodes_stats = backward_compatible_episodes_stats(self.stats, self.episodes)
-            logging.warning(
-                f"""The version of your dataset still uses global dataset stats instead of per-episode stats.
-                Update your dataset stats to the new format using this command:
-                python lerobot/common/datasets/v21/convert_dataset_v20_to_v21.py --repo-id={self.repo_id} """
-            )
         else:
             self.episodes_stats = load_episodes_stats(self.root)
             self.stats = aggregate_stats(list(self.episodes_stats.values()))
@@ -357,7 +356,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         delta_timestamps: dict[list[float]] | None = None,
         tolerance_s: float = 1e-4,
         revision: str | None = None,
-        sync_cache_first: bool = False,
+        force_cache_sync: bool = False,
         download_videos: bool = True,
         video_backend: str | None = None,
     ):
@@ -481,24 +480,20 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         # Load metadata
         self.meta = LeRobotDatasetMetadata(
-            self.repo_id, self.root, self.revision, sync_cache_first=sync_cache_first
+            self.repo_id, self.root, self.revision, force_cache_sync=force_cache_sync
         )
-        if self.episodes is not None and packaging.version.parse(
-            self.meta._version
-        ) >= packaging.version.parse("v2.1"):
+        if self.episodes is not None and version.parse(self.meta._version) >= version.parse("v2.1"):
             episodes_stats = [self.meta.episodes_stats[ep_idx] for ep_idx in self.episodes]
             self.stats = aggregate_stats(episodes_stats)
 
-        # Check version
-        check_version_compatibility(self.repo_id, self.meta._version, CODEBASE_VERSION)
-
         # Load actual data
         try:
-            if sync_cache_first:
+            if force_cache_sync:
                 raise FileNotFoundError
             assert all((self.root / fpath).is_file() for fpath in self.get_episodes_file_paths())
             self.hf_dataset = self.load_hf_dataset()
         except (AssertionError, FileNotFoundError, NotADirectoryError):
+            self.revision = get_safe_revision(self.repo_id, self.revision)
             self.download_episodes(download_videos)
             self.hf_dataset = self.load_hf_dataset()
 

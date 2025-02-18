@@ -45,7 +45,7 @@ def convert_dataset(
     num_workers: int = 4,
 ):
     with SuppressWarnings():
-        dataset = LeRobotDataset(repo_id, revision=V20, sync_cache_first=True)
+        dataset = LeRobotDataset(repo_id, revision=V20, force_cache_sync=True)
 
     if (dataset.root / EPISODES_STATS_PATH).is_file():
         raise FileExistsError("episodes_stats.jsonl already exists.")
