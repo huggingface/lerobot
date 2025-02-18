@@ -46,7 +46,7 @@ from lerobot.common.datasets.utils import (
 from lerobot.common.envs.factory import make_env_config
 from lerobot.common.policies.factory import make_policy_config
 from lerobot.common.robot_devices.robots.utils import make_robot
-from lerobot.common.utils.utils import seeded_context
+from lerobot.common.utils.random_utils import seeded_context
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
 from tests.fixtures.constants import DUMMY_REPO_ID
@@ -336,9 +336,9 @@ def test_backward_compatibility(repo_id):
         assert new_keys == old_keys, f"{new_keys=} and {old_keys=} are not the same"
 
         for key in new_frame:
-            assert torch.isclose(
-                new_frame[key], old_frame[key]
-            ).all(), f"{key=} for index={i} does not contain the same value"
+            assert torch.isclose(new_frame[key], old_frame[key]).all(), (
+                f"{key=} for index={i} does not contain the same value"
+            )
 
     # test2 first frames of first episode
     i = dataset.episode_data_index["from"][0].item()

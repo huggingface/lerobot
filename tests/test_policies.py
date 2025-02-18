@@ -36,7 +36,7 @@ from lerobot.common.policies.factory import (
 )
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.pretrained import PreTrainedPolicy
-from lerobot.common.utils.utils import seeded_context
+from lerobot.common.utils.random_utils import seeded_context
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
@@ -193,12 +193,12 @@ def test_policy(ds_repo_id, env_name, env_kwargs, policy_name, policy_kwargs):
     observation_ = deepcopy(observation)
     with torch.inference_mode():
         action = policy.select_action(observation).cpu().numpy()
-    assert set(observation) == set(
-        observation_
-    ), "Observation batch keys are not the same after a forward pass."
-    assert all(
-        torch.equal(observation[k], observation_[k]) for k in observation
-    ), "Observation batch values are not the same after a forward pass."
+    assert set(observation) == set(observation_), (
+        "Observation batch keys are not the same after a forward pass."
+    )
+    assert all(torch.equal(observation[k], observation_[k]) for k in observation), (
+        "Observation batch values are not the same after a forward pass."
+    )
 
     # Test step through policy
     env.step(action)
