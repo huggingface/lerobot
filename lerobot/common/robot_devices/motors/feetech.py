@@ -118,7 +118,6 @@ def convert_ticks_to_degrees(ticks, model):
     return ticks * (360.0/resolutions)
 
 
-
 def convert_degrees_to_ticks(degrees, model):
     resolutions = MODEL_RESOLUTION[model]
     # Convert degrees to motor ticks
@@ -131,31 +130,14 @@ def adjusted_to_homing_ticks(
     """
     Shifts raw [0..4095] ticks by an encoder offset, modulo a single turn [0..4095].
     """
-    # Retrieve previous values for tracking
-    prev_value = motorbus.previous_value[motor_id - 1]
-    multi_turn_index = motorbus.multi_turn_index[motor_id - 1]
     resolutions = MODEL_RESOLUTION[model]
 
     # Add offset and wrap within resolution
-    shifted = (raw_motor_ticks + encoder_offset) % resolutions
+    ticks = (raw_motor_ticks + encoder_offset) % resolutions
 
     # # Re-center into a symmetric range (e.g., [-2048, 2047] if resolutions==4096) Thus the middle homing position will be virtual 0.
-    if shifted > resolutions // 2:
-        shifted -= resolutions
-
-    # Update multi turn values if needed
-    if prev_value is not None:
-        delta = shifted - prev_value
-        # If jump forward > 180° (2048 steps), assume full rotation
-        if delta > (resolutions // 2):
-            multi_turn_index -= 1
-        elif delta < (-resolutions // 2):
-            multi_turn_index += 1
-    motorbus.previous_value[motor_id - 1] = shifted
-    motorbus.multi_turn_index[motor_id - 1] = multi_turn_index
-
-    # Apply the multi turn to output so we can track beyong -180..180 degrees or -2048..2048 ticks
-    ticks = shifted + (multi_turn_index * resolutions)
+    if ticks > resolutions // 2:
+        ticks -= resolutions
 
     # Update direction of rotation of the motor to match between leader and follower.
     # In fact, the motor of the leader for a given joint can be assembled in an
@@ -175,18 +157,7 @@ def adjusted_to_motor_ticks(
 ) -> int:
     """
     Inverse of adjusted_to_homing_ticks().
-    Converts homed servo ticks (with multi-turn indexing) back to [0..4095].
     """
-    multi_turn_index = motorbus.multi_turn_index[motor_id - 1]
-
-    resolutions = MODEL_RESOLUTION[model]
-
-    # Remove offset and wrap within resolution
-    shifted = (adjusted_pos - encoder_offset) % resolutions
-
-    # Apply the multi turn to output ticks because goal position can have input of -32000...32000
-    ticks = shifted + (multi_turn_index * resolutions)
-
     # Update direction of rotation of the motor to match between leader and follower.
     # In fact, the motor of the leader for a given joint can be assembled in an
     # opposite direction in term of rotation than the motor of the follower on the same joint.
@@ -195,7 +166,12 @@ def adjusted_to_motor_ticks(
         drive_mode = motorbus.calibration["drive_mode"][motor_id - 1]
     
     if drive_mode:
-        ticks *= -1
+        adjusted_pos *= -1
+
+    resolutions = MODEL_RESOLUTION[model]
+
+    # Remove offset and wrap within resolution
+    ticks = (adjusted_pos - encoder_offset) % resolutions
 
     return ticks
 
@@ -355,9 +331,6 @@ class FeetechMotorsBus:
         self.group_readers = {}
         self.group_writers = {}
         self.logs = {}
-
-        self.multi_turn_index = self.multi_turn_index = [0] * len(self.motors)
-        self.previous_value = self.previous_value = [0] * len(self.motors)
 
     def connect(self):
         if self.is_connected:

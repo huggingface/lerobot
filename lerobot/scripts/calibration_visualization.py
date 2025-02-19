@@ -79,7 +79,6 @@ def debug_feetech_positions(cfg, arm_arg: str):
                 if bus.calibration and name in bus.calibration["motor_names"]:
                     offset_idx = bus.calibration["motor_names"].index(name)
                     offset = bus.calibration["homing_offset"][offset_idx]
-                    multi_turn_index = bus.multi_turn_index[offset_idx]
 
                 # Manually compute "adjusted ticks" from raw ticks
                 manual_adjusted = adjusted_to_homing_ticks(raw_ticks, offset, model, bus, motor_idx)
@@ -98,8 +97,7 @@ def debug_feetech_positions(cfg, arm_arg: str):
                     f"HOMED_TICKS={manual_adjusted:6d} | "
                     f"MANUAL_ADJ_DEG={manual_degs:7.2f} | "
                     f"MANUAL_ADJ_TICKS={manual_ticks:6d} | "
-                    f"INV_TICKS={inv_ticks:4d} | "
-                    f"MULTI_TURN_INDEX={multi_turn_index}"
+                    f"INV_TICKS={inv_ticks:4d} "
                 )
             print("----------------------------------------------------")
             time.sleep(0.25)  # slow down loop
