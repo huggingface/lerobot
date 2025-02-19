@@ -142,6 +142,7 @@ def initialize_replay_buffer(cfg: DictConfig, logger: Logger, device: str) -> Re
             capacity=cfg.training.online_buffer_capacity,
             device=device,
             state_keys=cfg.policy.input_shapes.keys(),
+            storage_device=device
         )
 
     dataset = LeRobotDataset(
