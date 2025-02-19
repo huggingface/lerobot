@@ -581,9 +581,9 @@ def test_create_branch():
 
 def test_dataset_feature_with_forward_slash_raises_error():
     # make sure dir does not exist
-    from lerobot.common.datasets.lerobot_dataset import LEROBOT_HOME
+    from lerobot.common.constants import HF_LEROBOT_HOME
 
-    dataset_dir = LEROBOT_HOME / "lerobot/test/with/slash"
+    dataset_dir = HF_LEROBOT_HOME / "lerobot/test/with/slash"
     # make sure does not exist
     if dataset_dir.exists():
         dataset_dir.rmdir()
