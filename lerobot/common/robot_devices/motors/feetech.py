@@ -1,3 +1,4 @@
+
 import enum
 import time
 import traceback
@@ -113,26 +114,15 @@ NUM_WRITE_RETRY = 20
 
 def convert_ticks_to_degrees(ticks, model):
     resolutions = MODEL_RESOLUTION[model]
-    degrees = (ticks / resolutions) * 360.0  # Convert to 0-360 range
-
-    # Convert to range [-180, 180]
-    degrees = (degrees + 180) % 360 - 180
-    return degrees
+    # Convert the ticks to degrees 
+    return ticks * (360.0/resolutions)
 
 
-def convert_degrees_to_ticks(degrees, model, motorbus, motor_id: int):
-    multi_turn_index = motorbus.multi_turn_index[motor_id - 1]
+
+def convert_degrees_to_ticks(degrees, model):
     resolutions = MODEL_RESOLUTION[model]
-    # Remove full rotations from degrees
-    base_degrees = degrees - (multi_turn_index * 360.0)
-
     # Convert degrees to motor ticks
-    ticks = base_degrees / 180.0 * (resolutions / 2)
-
-    # Add back multi-turn ticks
-    ticks += multi_turn_index * resolutions
-
-    return int(ticks)
+    return int(degrees * (resolutions/360.0))
 
 
 def adjusted_to_homing_ticks(
@@ -141,37 +131,39 @@ def adjusted_to_homing_ticks(
     """
     Shifts raw [0..4095] ticks by an encoder offset, modulo a single turn [0..4095].
     """
-    drive_mode = 0
-    if motorbus.calibration is not None:
-        drive_mode = motorbus.calibration["drive_mode"][motor_id - 1]
-
     # Retrieve previous values for tracking
     prev_value = motorbus.previous_value[motor_id - 1]
     multi_turn_index = motorbus.multi_turn_index[motor_id - 1]
-
     resolutions = MODEL_RESOLUTION[model]
+
+    # Add offset and wrap within resolution
     shifted = (raw_motor_ticks + encoder_offset) % resolutions
+
+    # # Re-center into a symmetric range (e.g., [-2048, 2047] if resolutions==4096) Thus the middle homing position will be virtual 0.
     if shifted > resolutions // 2:
         shifted -= resolutions
 
+    # Update multi turn values if needed
     if prev_value is not None:
         delta = shifted - prev_value
-
         # If jump forward > 180° (2048 steps), assume full rotation
-        if delta > resolutions // 2:
+        if delta > (resolutions // 2):
             multi_turn_index -= 1
-        elif delta < -resolutions // 2:
+        elif delta < (-resolutions // 2):
             multi_turn_index += 1
-
-    # Update stored values
     motorbus.previous_value[motor_id - 1] = shifted
     motorbus.multi_turn_index[motor_id - 1] = multi_turn_index
 
+    # Apply the multi turn to output so we can track beyong -180..180 degrees or -2048..2048 ticks
     ticks = shifted + (multi_turn_index * resolutions)
 
     # Update direction of rotation of the motor to match between leader and follower.
     # In fact, the motor of the leader for a given joint can be assembled in an
     # opposite direction in term of rotation than the motor of the follower on the same joint.
+    drive_mode = 0
+    if motorbus.calibration is not None:
+        drive_mode = motorbus.calibration["drive_mode"][motor_id - 1]
+    
     if drive_mode:
         ticks *= -1
 
@@ -185,27 +177,27 @@ def adjusted_to_motor_ticks(
     Inverse of adjusted_to_homing_ticks().
     Converts homed servo ticks (with multi-turn indexing) back to [0..4095].
     """
+    multi_turn_index = motorbus.multi_turn_index[motor_id - 1]
+
+    resolutions = MODEL_RESOLUTION[model]
+
+    # Remove offset and wrap within resolution
+    shifted = (adjusted_pos - encoder_offset) % resolutions
+
+    # Apply the multi turn to output ticks because goal position can have input of -32000...32000
+    ticks = shifted + (multi_turn_index * resolutions)
+
+    # Update direction of rotation of the motor to match between leader and follower.
+    # In fact, the motor of the leader for a given joint can be assembled in an
+    # opposite direction in term of rotation than the motor of the follower on the same joint.
     drive_mode = 0
     if motorbus.calibration is not None:
         drive_mode = motorbus.calibration["drive_mode"][motor_id - 1]
-    # If inverted, flip the adjusted value back.
+    
     if drive_mode:
-        adjusted_pos *= -1
+        ticks *= -1
 
-    resolutions = MODEL_RESOLUTION[model]
-    # Get the current multi-turn index and remove that offset
-    multi_turn_index = motorbus.multi_turn_index[motor_id - 1]
-    adjusted_pos -= multi_turn_index * 4096
-
-    #  Convert back into [−2048..2047] before final modulo
-    if adjusted_pos > 2047:
-        adjusted_pos -= 4096
-    elif adjusted_pos < -2048:
-        adjusted_pos += 4096
-
-    # Map back to raw ticks [0..4095]
-    raw_ticks = (adjusted_pos - encoder_offset) % resolutions
-    return raw_ticks
+    return ticks
 
 
 def convert_to_bytes(value, bytes, mock=False):
@@ -516,7 +508,7 @@ class FeetechMotorsBus:
                 motor_idx, model = self.motors[name]
 
                 # Convert degrees to homed ticks, then convert the homed ticks to raw ticks
-                values[i] = convert_degrees_to_ticks(values[i], model, self, motor_idx)
+                values[i] = convert_degrees_to_ticks(values[i], model)
                 values[i] = adjusted_to_motor_ticks(values[i], homing_offset, model, self, motor_idx)
 
             elif CalibrationMode[calib_mode] == CalibrationMode.LINEAR:
@@ -757,3 +749,4 @@ class FeetechMotorsBus:
     def __del__(self):
         if getattr(self, "is_connected", False):
             self.disconnect()
+
