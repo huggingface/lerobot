@@ -200,8 +200,6 @@ def main(raw_dir: Path, repo_id: str, mode: str = "video", push_to_hub: bool = T
 
         dataset.save_episode()
 
-    dataset.consolidate()
-
     if push_to_hub:
         dataset.push_to_hub()
         hub_api = HfApi()
