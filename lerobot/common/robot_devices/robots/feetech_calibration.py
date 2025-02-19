@@ -118,10 +118,10 @@ def run_full_arm_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm
 
     print(f"\nRunning calibration of {robot_type} {arm_name} {arm_type}...")
 
-    print("\nMove arm to homing position (zero)")
+    print("\nMove arm to homing position (middle)")
     print(
         "See: " + URL_TEMPLATE.format(robot=robot_type, arm=arm_type, position="zero")
-    )  # TODO(pepijn): replace with new instruction homing pos (all motors in zero) in tutorial
+    )  # TODO(pepijn): replace with new instruction homing pos (all motors in middle) in tutorial
     input("Press Enter to continue...")
 
     start_positions = np.zeros(len(arm.motor_indices))
@@ -147,7 +147,6 @@ def run_full_arm_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm
     print(f"\n calibration of {robot_type} {arm_name} {arm_type} done!")
 
     # Force drive_mode values: motors 2 and 5 -> drive_mode 1; all others -> 0. 1 = clockwise = positive range (0..180), 0 = clockwise = negative range (0..-180)
-    # 
     drive_modes = [0, 1, 0, 0, 1, 0] 
 
     calib_dict = {
