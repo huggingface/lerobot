@@ -80,8 +80,8 @@ class SACPolicy(
             encoder_critic = SACObservationEncoder(config, self.normalize_inputs)
             encoder_actor: SACObservationEncoder = encoder_critic
         else:
-            encoder_critic = SACObservationEncoder(config)
-            encoder_actor = SACObservationEncoder(config)
+            encoder_critic = SACObservationEncoder(config, self.normalize_inputs)
+            encoder_actor = SACObservationEncoder(config, self.normalize_inputs)
 
         self.critic_ensemble = CriticEnsemble(
             encoder=encoder_critic,

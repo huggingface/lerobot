@@ -684,38 +684,34 @@ def make_robot_env(
     Returns:
         A vectorized gym environment with all the necessary wrappers applied.
     """
-    if "maniskill" in cfg.name:
+    if "maniskill" in cfg.env.name:
         logging.warning("WE SHOULD REMOVE THE MANISKILL BEFORE THE MERGE INTO MAIN")
         env = make_maniskill(
-            task=cfg.task,
-            obs_mode=cfg.obs,
-            control_mode=cfg.control_mode,
-            render_mode=cfg.render_mode,
-            sensor_configs={"width": cfg.render_size, "height": cfg.render_size},
-            device=cfg.device,
+            cfg=cfg,
+            n_envs=1,
         )
         return env
     # Create base environment
     env = HILSerlRobotEnv(
         robot=robot,
-        display_cameras=cfg.wrapper.display_cameras,
-        delta=cfg.wrapper.delta_action,
-        use_delta_action_space=cfg.wrapper.use_relative_joint_positions,
+        display_cameras=cfg.env.wrapper.display_cameras,
+        delta=cfg.env.wrapper.delta_action,
+        use_delta_action_space=cfg.env.wrapper.use_relative_joint_positions,
     )
 
     # Add observation and image processing
     env = ConvertToLeRobotObservation(env=env, device=cfg.device)
-    if cfg.wrapper.crop_params_dict is not None:
+    if cfg.env.wrapper.crop_params_dict is not None:
         env = ImageCropResizeWrapper(
-            env=env, crop_params_dict=cfg.wrapper.crop_params_dict, resize_size=cfg.wrapper.resize_size
+            env=env, crop_params_dict=cfg.env.wrapper.crop_params_dict, resize_size=cfg.env.wrapper.resize_size
         )
 
     # Add reward computation and control wrappers
     env = RewardWrapper(env=env, reward_classifier=reward_classifier, device=cfg.device)
-    env = TimeLimitWrapper(env=env, control_time_s=cfg.wrapper.control_time_s, fps=cfg.fps)
+    env = TimeLimitWrapper(env=env, control_time_s=cfg.env.wrapper.control_time_s, fps=cfg.fps)
     env = KeyboardInterfaceWrapper(env=env)
-    env = ResetWrapper(env=env, reset_fn=None, reset_time_s=cfg.wrapper.reset_time_s)
-    env = JointMaskingActionSpace(env=env, mask=cfg.wrapper.joint_masking_action_space)
+    env = ResetWrapper(env=env, reset_fn=None, reset_time_s=cfg.env.wrapper.reset_time_s)
+    env = JointMaskingActionSpace(env=env, mask=cfg.env.wrapper.joint_masking_action_space)
     env = BatchCompitableWrapper(env=env)
 
     return env
