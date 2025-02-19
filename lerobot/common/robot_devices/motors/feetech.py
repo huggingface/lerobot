@@ -141,6 +141,10 @@ def adjusted_to_homing_ticks(
     """
     Shifts raw [0..4095] ticks by an encoder offset, modulo a single turn [0..4095].
     """
+    drive_mode = 0
+    if motorbus.calibration is not None:
+        drive_mode = motorbus.calibration["drive_mode"][motor_id - 1]
+
     # Retrieve previous values for tracking
     prev_value = motorbus.previous_value[motor_id - 1]
     multi_turn_index = motorbus.multi_turn_index[motor_id - 1]
@@ -163,7 +167,15 @@ def adjusted_to_homing_ticks(
     motorbus.previous_value[motor_id - 1] = shifted
     motorbus.multi_turn_index[motor_id - 1] = multi_turn_index
 
-    return shifted + (multi_turn_index * resolutions)
+    ticks = shifted + (multi_turn_index * resolutions)
+
+    # Update direction of rotation of the motor to match between leader and follower.
+    # In fact, the motor of the leader for a given joint can be assembled in an
+    # opposite direction in term of rotation than the motor of the follower on the same joint.
+    if drive_mode:
+        ticks *= -1
+
+    return ticks
 
 
 def adjusted_to_motor_ticks(
@@ -173,6 +185,13 @@ def adjusted_to_motor_ticks(
     Inverse of adjusted_to_homing_ticks().
     Converts homed servo ticks (with multi-turn indexing) back to [0..4095].
     """
+    drive_mode = 0
+    if motorbus.calibration is not None:
+        drive_mode = motorbus.calibration["drive_mode"][motor_id - 1]
+    # If inverted, flip the adjusted value back.
+    if drive_mode:
+        adjusted_pos *= -1
+
     resolutions = MODEL_RESOLUTION[model]
     # Get the current multi-turn index and remove that offset
     multi_turn_index = motorbus.multi_turn_index[motor_id - 1]
@@ -456,19 +475,12 @@ class FeetechMotorsBus:
             calib_mode = self.calibration["calib_mode"][calib_idx]
 
             if CalibrationMode[calib_mode] == CalibrationMode.DEGREE:
-                drive_mode = self.calibration["drive_mode"][calib_idx]
                 homing_offset = self.calibration["homing_offset"][calib_idx]
                 motor_idx, model = self.motors[name]
 
                 # Convert raw motor ticks to homed ticks, then convert the homed ticks to degrees
                 values[i] = adjusted_to_homing_ticks(values[i], homing_offset, model, self, motor_idx)
                 values[i] = convert_ticks_to_degrees(values[i], model)
-
-                # Update direction of rotation of the motor to match between leader and follower.
-                # In fact, the motor of the leader for a given joint can be assembled in an
-                # opposite direction in term of rotation than the motor of the follower on the same joint.
-                if drive_mode:
-                    values[i] *= -1
 
             elif CalibrationMode[calib_mode] == CalibrationMode.LINEAR:
                 start_pos = self.calibration["start_pos"][calib_idx]
@@ -500,18 +512,12 @@ class FeetechMotorsBus:
             calib_mode = self.calibration["calib_mode"][calib_idx]
 
             if CalibrationMode[calib_mode] == CalibrationMode.DEGREE:
-                drive_mode = self.calibration["drive_mode"][calib_idx]
                 homing_offset = self.calibration["homing_offset"][calib_idx]
                 motor_idx, model = self.motors[name]
 
                 # Convert degrees to homed ticks, then convert the homed ticks to raw ticks
                 values[i] = convert_degrees_to_ticks(values[i], model, self, motor_idx)
                 values[i] = adjusted_to_motor_ticks(values[i], homing_offset, model, self, motor_idx)
-
-                # Remove drive mode, which is the rotation direction of the motor, to come back to
-                # actual motor rotation direction which can be arbitrary.
-                if drive_mode:
-                    values[i] *= -1
 
             elif CalibrationMode[calib_mode] == CalibrationMode.LINEAR:
                 start_pos = self.calibration["start_pos"][calib_idx]

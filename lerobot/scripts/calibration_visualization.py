@@ -84,6 +84,7 @@ def debug_feetech_positions(cfg, arm_arg: str):
                 manual_adjusted = adjusted_to_homing_ticks(raw_ticks, offset, model, bus, motor_idx)
                 # Convert to degrees
                 manual_degs = convert_ticks_to_degrees(manual_adjusted, model)
+
                 # Convert to ticks
                 manual_ticks = convert_degrees_to_ticks(manual_degs, model, bus, motor_idx)
                 # Invert
@@ -96,7 +97,7 @@ def debug_feetech_positions(cfg, arm_arg: str):
                     f"MANUAL_ADJ_TICKS={manual_adjusted:6d} | "
                     f"MANUAL_ADJ_DEG={manual_degs:7.2f} | "
                     f"INV_TICKS={manual_ticks:6d} | "
-                    f"INV_STEPS={inv_ticks:4d}"
+                    f"INV_TICKS={inv_ticks:4d}"
                 )
             print("----------------------------------------------------")
             time.sleep(0.25)  # slow down loop
