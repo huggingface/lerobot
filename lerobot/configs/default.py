@@ -31,7 +31,7 @@ class DatasetConfig:
     repo_id: str
     episodes: list[int] | None = None
     image_transforms: ImageTransformsConfig = field(default_factory=ImageTransformsConfig)
-    local_files_only: bool = False
+    revision: str | None = None
     use_imagenet_stats: bool = True
     video_backend: str = "pyav"
 
