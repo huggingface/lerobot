@@ -179,8 +179,6 @@ def save_as_lerobot_dataset(
         lerobot_dataset.save_episode()
         print("\nsave_episode\n")
 
-        break
-
 
 def create_lerobot_dataset(
     raw_dir: Path,
