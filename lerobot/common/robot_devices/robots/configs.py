@@ -516,9 +516,9 @@ class StretchRobotConfig(RobotConfig):
     mock: bool = False
 
 
-@RobotConfig.register_subclass("mobile_so100")
+@RobotConfig.register_subclass("lekiwi")
 @dataclass
-class MobileSO100RobotConfig(RobotConfig):
+class LeKiwiRobotConfig(RobotConfig):
     # `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
     # Set this to a positive scalar to have the same value for all motors, or a list that is the same length as
     # the number of motors in your follower arms.
@@ -531,12 +531,12 @@ class MobileSO100RobotConfig(RobotConfig):
 
     cameras: dict[str, CameraConfig] = field(
         default_factory=lambda: {
-            "mobile": OpenCVCameraConfig(camera_index="/dev/video0", fps=30, width=640, height=480),
-            "mobile2": OpenCVCameraConfig(camera_index="/dev/video2", fps=30, width=640, height=480),
+            "front": OpenCVCameraConfig(camera_index="/dev/video0", fps=30, width=640, height=480),
+            "wrist": OpenCVCameraConfig(camera_index="/dev/video2", fps=30, width=640, height=480),
         }
     )
 
-    calibration_dir: str = ".cache/calibration/mobile_so100"
+    calibration_dir: str = ".cache/calibration/lekiwi"
 
     leader_arms: dict[str, MotorsBusConfig] = field(
         default_factory=lambda: {
@@ -567,9 +567,9 @@ class MobileSO100RobotConfig(RobotConfig):
                     "wrist_flex": [4, "sts3215"],
                     "wrist_roll": [5, "sts3215"],
                     "gripper": [6, "sts3215"],
-                    "wheel_1": (7, "sts3215"),
-                    "wheel_2": (8, "sts3215"),
-                    "wheel_3": (9, "sts3215"),
+                    "left_wheel": (7, "sts3215"),
+                    "right_wheel": (8, "sts3215"),
+                    "back_wheel": (9, "sts3215"),
                 },
             ),
         }

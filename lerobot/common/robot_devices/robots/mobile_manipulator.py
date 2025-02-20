@@ -12,7 +12,7 @@ import zmq
 from lerobot.common.robot_devices.cameras.utils import make_cameras_from_configs
 from lerobot.common.robot_devices.motors.feetech import TorqueMode
 from lerobot.common.robot_devices.motors.utils import MotorsBus, make_motors_buses_from_configs
-from lerobot.common.robot_devices.robots.configs import MobileSO100RobotConfig
+from lerobot.common.robot_devices.robots.configs import LeKiwiRobotConfig
 from lerobot.common.robot_devices.robots.feetech_calibration import run_arm_manual_calibration
 from lerobot.common.robot_devices.robots.utils import get_arm_id
 from lerobot.common.robot_devices.utils import RobotDeviceNotConnectedError
@@ -43,7 +43,7 @@ class MobileManipulator:
     In parallel, keyboard teleoperation is used to generate raw velocity commands for the wheels.
     """
 
-    def __init__(self, config: MobileSO100RobotConfig):
+    def __init__(self, config: LeKiwiRobotConfig):
         """
         Expected keys in config:
           - ip, port, video_port for the remote connection.
@@ -442,9 +442,9 @@ class MobileManipulator:
         frames, present_speed, remote_arm_state_tensor = self._get_data()
 
         present_speed_dict = {
-            "wheel_1": int(present_speed.get("1", 0)),
-            "wheel_2": int(present_speed.get("2", 0)),
-            "wheel_3": int(present_speed.get("3", 0)),
+            "left_wheel": int(present_speed.get("1", 0)),
+            "right_wheel": int(present_speed.get("2", 0)),
+            "back_wheel": int(present_speed.get("3", 0)),
         }
 
         body_state = self.wheel_raw_to_body(present_speed_dict)
@@ -507,7 +507,7 @@ class MobileManipulator:
         if not self.is_connected:
             raise RobotDeviceNotConnectedError("Not connected.")
         if self.cmd_socket:
-            stop_cmd = {"raw_velocity": {"wheel_1": 0, "wheel_2": 0, "wheel_3": 0}, "arm_positions": {}}
+            stop_cmd = {"raw_velocity": {"left_wheel": 0, "right_wheel": 0, "back_wheel": 0}, "arm_positions": {}}
             self.cmd_socket.send_string(json.dumps(stop_cmd))
             self.cmd_socket.close()
         if self.video_socket:
@@ -568,7 +568,7 @@ class MobileManipulator:
 
         Returns:
           A dictionary with wheel raw commands:
-             {"wheel_1": value, "wheel_2": value, "wheel_3": value}.
+             {"left_wheel": value, "right_wheel": value, "back_wheel": value}.
 
         Notes:
           - Internally, the method converts theta_cmd to rad/s for the kinematics.
@@ -605,7 +605,7 @@ class MobileManipulator:
         # Convert each wheel’s angular speed (deg/s) to a raw integer.
         wheel_raw = [MobileManipulator.degps_to_raw(deg) for deg in wheel_degps]
 
-        return {"wheel_1": wheel_raw[0], "wheel_2": wheel_raw[1], "wheel_3": wheel_raw[2]}
+        return {"left_wheel": wheel_raw[0], "right_wheel": wheel_raw[1], "back_wheel": wheel_raw[2]}
 
     def wheel_raw_to_body(
         self, wheel_raw: dict, wheel_radius: float = 0.05, base_radius: float = 0.125
@@ -614,7 +614,7 @@ class MobileManipulator:
         Convert wheel raw command feedback back into body-frame velocities.
 
         Parameters:
-          wheel_raw   : Dictionary with raw wheel commands (keys: "wheel_1", "wheel_2", "wheel_3").
+          wheel_raw   : Dictionary with raw wheel commands (keys: "left_wheel", "right_wheel", "back_wheel").
           wheel_radius: Radius of each wheel (meters).
           base_radius : Distance from the robot center to each wheel (meters).
 
@@ -625,7 +625,7 @@ class MobileManipulator:
              theta_cmd  : Rotational velocity in deg/s.
         """
         # Extract the raw values in order.
-        raw_list = [wheel_raw["wheel_1"], wheel_raw["wheel_2"], wheel_raw["wheel_3"]]
+        raw_list = [wheel_raw["left_wheel"], wheel_raw["right_wheel"], wheel_raw["back_wheel"]]
 
         # Convert each raw command back to an angular speed in deg/s.
         wheel_degps = np.array([MobileManipulator.raw_to_degps(r) for r in raw_list])
@@ -644,3 +644,41 @@ class MobileManipulator:
         x_cmd, y_cmd, theta_rad = velocity_vector
         theta_cmd = theta_rad * (180.0 / np.pi)
         return (x_cmd, y_cmd, theta_cmd)
+
+class LeKiwi:
+    def __init__(self, motor_bus):
+        """
+        Initializes the LeKiwi with Feetech motors bus.
+        """
+        self.motor_bus = motor_bus
+        self.motor_ids = ["left_wheel", "right_wheel", "back_wheel"]
+
+        # Initialize motors in velocity mode.
+        self.motor_bus.write("Lock", 0)
+        self.motor_bus.write("Mode", [1, 1, 1], self.motor_ids)
+        self.motor_bus.write("Lock", 1)
+        print("Motors set to velocity mode.")
+
+    def read_velocity(self):
+        """
+        Reads the raw speeds for all wheels. Returns a dictionary with motor index strings:
+        {
+            "1": raw_speed_left_wheel,
+            "2": raw_speed_right_wheel,
+            "3": raw_speed_back_wheel
+        }
+        """
+        raw_speeds = self.motor_bus.read("Present_Speed", self.motor_ids)
+        return {"1": int(raw_speeds[0]), "2": int(raw_speeds[1]), "3": int(raw_speeds[2])}
+
+    def set_velocity(self, command_speeds):
+        """
+        Sends raw velocity commands (16-bit encoded values) directly to the motor bus.
+        The order of speeds must correspond to self.motor_ids.
+        """
+        self.motor_bus.write("Goal_Speed", command_speeds, self.motor_ids)
+
+    def stop(self):
+        """Stops the robot by setting all motor speeds to zero."""
+        self.motor_bus.write("Goal_Speed", [0, 0, 0], self.motor_ids)
+        print("Motors stopped.")

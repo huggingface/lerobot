@@ -134,6 +134,10 @@ class ReplayControlConfig(ControlConfig):
     # Use local files only. By default, this script will try to fetch the dataset from the hub if it exists.
     local_files_only: bool = False
 
+@ControlConfig.register_subclass("remote_robot")
+@dataclass
+class RemoteRobotConfig(ControlConfig):
+    log_interval: int = 100
 
 @dataclass
 class ControlPipelineConfig:

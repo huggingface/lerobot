@@ -1,4 +1,4 @@
-# Using the Mobile SO100: [LeKiwi](https://github.com/SIGRobotics-UIUC/LeKiwi) with LeRobot
+# Using the [LeKiwi](https://github.com/SIGRobotics-UIUC/LeKiwi) Robot with LeRobot
 
 ## Table of Contents
 
@@ -15,7 +15,7 @@
   - [K. Evaluate your policy](#k-evaluate-your-policy)
 
 > [!TIP]
->  If you have any questions or need help, please reach out on Discord in the channel [`#lerobot`](https://discord.com/invite/s3KuuzsPFb).
+>  If you have any questions or need help, please reach out on [Discord](https://discord.com/invite/s3KuuzsPFb) in the channel [`#mobile-so-100-arm`](https://discord.com/channels/1216765309076115607/1318390825528332371).
 
 ## A. Source the parts
 
@@ -24,7 +24,7 @@ Follow this [README](https://github.com/SIGRobotics-UIUC/LeKiwi). It contains th
 Before assembling, you will first need to configure your motors. To this end, we provide a nice script, so let's first install LeRobot. After configuration, we will also guide you through assembly.
 
 ## B. Install software on Pi
-Now we have to setup the remote PC that will run on the MobileSO100. This is normally a Raspberry Pi, but can be any PC that can run on 5V and has enough usb ports (2 or more) for the cameras and motor control board.
+Now we have to setup the remote PC that will run on the LeKiwi Robot. This is normally a Raspberry Pi, but can be any PC that can run on 5V and has enough usb ports (2 or more) for the cameras and motor control board.
 
 ### Install OS
 For setting up the Raspberry Pi and its SD-card see: [Setup PI](https://www.raspberrypi.com/documentation/computers/getting-started.html). Here is explained how to download the [Imager](https://www.raspberrypi.com/software/) to install Raspberry Pi OS or Ubuntu.
@@ -127,7 +127,7 @@ First we will assemble the two SO100 arms. One to attach to the mobile base and 
 ### Configure motors
 The instructions for configuring the motors can be found [Here](https://github.com/huggingface/lerobot/blob/main/examples/10_use_so100.md#c-configure-the-motors) in step C of the SO100 tutorial. Besides the ID's for the arm motors we also need to set the motor ID's for the mobile base. These needs to be in a specific order to work. Below an image of the motor ID's and motor mounting positions for the mobile base. Note that we only use one Motor Control board on LeKiwi. This means the motor ID's for the wheels are 7, 8 and 9.
 
-<img src="../media/mobileso100/mobile_motor_ids.webp?raw=true" alt="Motor ID's for mobile robot" title="Motor ID's for mobile robot" width="60%">
+<img src="../media/lekiwi/mobile_motor_ids.webp?raw=true" alt="Motor ID's for mobile robot" title="Motor ID's for mobile robot" width="60%">
 
 ### Assemble arms
 [Assemble arms instruction](https://github.com/huggingface/lerobot/blob/main/examples/10_use_so100.md#d-assemble-the-arms)
@@ -136,7 +136,7 @@ The instructions for configuring the motors can be found [Here](https://github.c
 [Assemble LeKiwi](https://github.com/SIGRobotics-UIUC/LeKiwi)
 
 ### Update config
-Both config files on the MobileSO100 LeRobot and on the laptop should be the same. First we should find the ip address of the Raspberry Pi of the mobile manipulator. This is the same Ip address used in ssh. We also need the usb port of the leader arm on the laptop and the port of the follower arm on the mobile manipulator. We can find these ports with the following script.
+Both config files on the LeKiwi LeRobot and on the laptop should be the same. First we should find the ip address of the Raspberry Pi of the mobile manipulator. This is the same Ip address used in ssh. We also need the usb port of the leader arm on the laptop and the port of the follower arm on the mobile manipulator. We can find these ports with the following script.
 
 #### a. Run the script to find port
 
@@ -185,11 +185,11 @@ sudo chmod 666 /dev/ttyACM1
 
 #### d. Update config file
 
-IMPORTANTLY: Now that you have your ports of leader and follower arm and ip adress of the mobile-so100, update the **ip** in Network configuration, **port** in leader_arms and **port** in mobile_so100. In the [`SO100RobotConfig`](../lerobot/common/robot_devices/robots/configs.py) file. Where you will find something like:
+IMPORTANTLY: Now that you have your ports of leader and follower arm and ip adress of the mobile-so100, update the **ip** in Network configuration, **port** in leader_arms and **port** in lekiwi. In the [`LeKiwiRobotConfig`](../lerobot/common/robot_devices/robots/configs.py) file. Where you will find something like:
 ```python
-@RobotConfig.register_subclass("mobile_so100")
+@RobotConfig.register_subclass("lekiwi")
 @dataclass
-class MobileSO100RobotConfig(RobotConfig):
+class LeKiwiRobotConfig(RobotConfig):
     # `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
     # Set this to a positive scalar to have the same value for all motors, or a list that is the same length as
     # the number of motors in your follower arms.
@@ -207,7 +207,7 @@ class MobileSO100RobotConfig(RobotConfig):
         }
     )
 
-    calibration_dir: str = ".cache/calibration/mobile_so100"
+    calibration_dir: str = ".cache/calibration/lekiwi"
 
     leader_arms: dict[str, MotorsBusConfig] = field(
         default_factory=lambda: {
@@ -238,9 +238,9 @@ class MobileSO100RobotConfig(RobotConfig):
                     "wrist_flex": [4, "sts3215"],
                     "wrist_roll": [5, "sts3215"],
                     "gripper": [6, "sts3215"],
-                    "wheel_1": (7, "sts3215"),
-                    "wheel_2": (8, "sts3215"),
-                    "wheel_3": (9, "sts3215"),
+                    "left_wheel": (7, "sts3215"),
+                    "right_wheel": (8, "sts3215"),
+                    "back_wheel": (9, "sts3215"),
                 },
             ),
         }
@@ -261,12 +261,12 @@ You will need to move the follower arm to these positions sequentially:
 
 | 1. Zero position | 2. Rotated position | 3. Rest position |
 |---|---|---|
-| <img src="../media/mobileso100/mobile_calib_zero.webp?raw=true" alt="SO-100 follower arm zero position" title="SO-100 follower arm zero position" style="width:100%;"> | <img src="../media/mobileso100/mobile_calib_rotated.webp?raw=true" alt="SO-100 follower arm rotated position" title="SO-100 follower arm rotated position" style="width:100%;"> | <img src="../media/mobileso100/mobile_calib_rest.webp?raw=true" alt="SO-100 follower arm rest position" title="SO-100 follower arm rest position" style="width:100%;"> |
+| <img src="../media/lekiwi/mobile_calib_zero.webp?raw=true" alt="SO-100 follower arm zero position" title="SO-100 follower arm zero position" style="width:100%;"> | <img src="../media/lekiwi/mobile_calib_rotated.webp?raw=true" alt="SO-100 follower arm rotated position" title="SO-100 follower arm rotated position" style="width:100%;"> | <img src="../media/lekiwi/mobile_calib_rest.webp?raw=true" alt="SO-100 follower arm rest position" title="SO-100 follower arm rest position" style="width:100%;"> |
 
 Make sure the arm is connected to the Raspberry Pi and run this script (on the Raspberry Pi) to launch manual calibration:
 ```bash
 python lerobot/scripts/control_robot.py \
-  --robot.type=mobile_so100 \
+  --robot.type=lekiwi \
   --robot.cameras='{}' \
   --control.type=calibrate \
   --control.arms='["main_follower"]'
@@ -282,7 +282,7 @@ Then to calibrate the leader arm (which is attached to the laptop/pc). You will 
 Run this script (on your laptop/pc) to launch manual calibration:
 ```bash
 python lerobot/scripts/control_robot.py \
-  --robot.type=mobile_so100 \
+  --robot.type=lekiwi \
   --robot.cameras='{}' \
   --control.type=calibrate \
   --control.arms='["main_leader"]'
@@ -291,13 +291,13 @@ python lerobot/scripts/control_robot.py \
 # F. Teleoperate
 To teleoperate SSH into your Raspberry Pi, and run `conda activate lerobot` and this script:
 ```bash
-python lerobot/scripts/run_mobile_so100.py
+python lerobot/scripts/run_lekiwi.py
 ```
 
 Then on your laptop, also run `conda activate lerobot` and this script:
 ```bash
 python lerobot/scripts/control_robot.py \
-  --robot.type=mobile_so100 \
+  --robot.type=lekiwi \
   --control.type=teleoperate \
   --control.fps=30
 ```
@@ -374,11 +374,11 @@ echo $HF_USER
 Record 2 episodes and upload your dataset to the hub:
 ```bash
 python lerobot/scripts/control_robot.py \
-  --robot.type=mobile_so100 \
+  --robot.type=lekiwi \
   --control.type=record \
   --control.fps=30 \
   --control.single_task="Grasp a lego block and put it in the bin." \
-  --control.repo_id=${HF_USER}/mobileso100_test \
+  --control.repo_id=${HF_USER}/lekiwi_test \
   --control.tags='["tutorial"]' \
   --control.warmup_time_s=5 \
   --control.episode_time_s=30 \
@@ -393,13 +393,13 @@ Note: You can resume recording by adding `--control.resume=true`. Also if you di
 
 If you uploaded your dataset to the hub with `--control.push_to_hub=true`, you can [visualize your dataset online](https://huggingface.co/spaces/lerobot/visualize_dataset) by copy pasting your repo id given by:
 ```bash
-echo ${HF_USER}/mobileso100_test
+echo ${HF_USER}/lekiwi_test
 ```
 
 If you didn't upload with `--control.push_to_hub=false`, you can also visualize it locally with:
 ```bash
 python lerobot/scripts/visualize_dataset_html.py \
-  --repo-id ${HF_USER}/mobileso100_test \
+  --repo-id ${HF_USER}/lekiwi_test \
   --local-files-only 1
 ```
 
@@ -407,10 +407,10 @@ python lerobot/scripts/visualize_dataset_html.py \
 Now try to replay the first episode on your robot:
 ```bash
 python lerobot/scripts/control_robot.py \
-  --robot.type=mobile_so100 \
+  --robot.type=lekiwi \
   --control.type=replay \
   --control.fps=30 \
-  --control.repo_id=${HF_USER}/mobileso100_test \
+  --control.repo_id=${HF_USER}/lekiwi_test \
   --control.episode=0
 ```
 
@@ -421,10 +421,10 @@ Note: If you didn't push your dataset yet, add `--control.local_files_only=true`
 To train a policy to control your robot, use the [`python lerobot/scripts/train.py`](../lerobot/scripts/train.py) script. A few arguments are required. Here is an example command:
 ```bash
 python lerobot/scripts/train.py \
-  --dataset.repo_id=${HF_USER}/mobileso100_test \
+  --dataset.repo_id=${HF_USER}/lekiwi_test \
   --policy.type=act \
-  --output_dir=outputs/train/act_mobileso100_test \
-  --job_name=act_mobileso100_test \
+  --output_dir=outputs/train/act_lekiwi_test \
+  --job_name=act_lekiwi_test \
   --device=cuda \
   --wandb.enable=true
 ```
@@ -432,32 +432,32 @@ python lerobot/scripts/train.py \
 Note: If you didn't push your dataset yet, add `--control.local_files_only=true`.
 
 Let's explain it:
-1. We provided the dataset as argument with `--dataset.repo_id=${HF_USER}/mobileso100_test`.
+1. We provided the dataset as argument with `--dataset.repo_id=${HF_USER}/lekiwi_test`.
 2. We provided the policy with `policy.type=act`. This loads configurations from [`configuration_act.py`](../lerobot/common/policies/act/configuration_act.py). Importantly, this policy will automatically adapt to the number of motor sates, motor actions and cameras of your robot (e.g. `laptop` and `phone`) which have been saved in your dataset.
 4. We provided `device=cuda` since we are training on a Nvidia GPU, but you could use `device=mps` to train on Apple silicon.
 5. We provided `wandb.enable=true` to use [Weights and Biases](https://docs.wandb.ai/quickstart) for visualizing training plots. This is optional but if you use it, make sure you are logged in by running `wandb login`.
 
-Training should take several hours. You will find checkpoints in `outputs/train/act_mobileso100_test/checkpoints`.
+Training should take several hours. You will find checkpoints in `outputs/train/act_lekiwi_test/checkpoints`.
 
 ## K. Evaluate your policy
 
 You can use the `record` function from [`lerobot/scripts/control_robot.py`](../lerobot/scripts/control_robot.py) but with a policy checkpoint as input. For instance, run this command to record 10 evaluation episodes:
 ```bash
 python lerobot/scripts/control_robot.py \
-  --robot.type=mobile_so100 \
+  --robot.type=lekiwi \
   --control.type=record \
   --control.fps=30 \
   --control.single_task="Drive to the red block and pick it up" \
-  --control.repo_id=${HF_USER}/eval_act_mobileso100_test \
+  --control.repo_id=${HF_USER}/eval_act_lekiwi_test \
   --control.tags='["tutorial"]' \
   --control.warmup_time_s=5 \
   --control.episode_time_s=30 \
   --control.reset_time_s=30 \
   --control.num_episodes=10 \
   --control.push_to_hub=true \
-  --control.policy.path=outputs/train/act_mobileso100_test/checkpoints/last/pretrained_model
+  --control.policy.path=outputs/train/act_lekiwi_test/checkpoints/last/pretrained_model
 ```
 
 As you can see, it's almost the same command as previously used to record your training dataset. Two things changed:
-1. There is an additional `--control.policy.path` argument which indicates the path to your policy checkpoint with  (e.g. `outputs/train/eval_act_so100_test/checkpoints/last/pretrained_model`). You can also use the model repository if you uploaded a model checkpoint to the hub (e.g. `${HF_USER}/act_mobileso100_test`).
-2. The name of dataset begins by `eval` to reflect that you are running inference (e.g. `${HF_USER}/eval_act_mobileso100_test`).
+1. There is an additional `--control.policy.path` argument which indicates the path to your policy checkpoint with  (e.g. `outputs/train/eval_act_lekiwi_test/checkpoints/last/pretrained_model`). You can also use the model repository if you uploaded a model checkpoint to the hub (e.g. `${HF_USER}/act_lekiwi_test`).
+2. The name of dataset begins by `eval` to reflect that you are running inference (e.g. `${HF_USER}/eval_act_lekiwi_test`).
