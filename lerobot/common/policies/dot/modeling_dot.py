@@ -355,7 +355,7 @@ class DOTPolicy(PreTrainedPolicy):
         self.state_noise *= self.config.noise_decay
         self.crop_scale = 1 - (1 - self.crop_scale) * self.config.noise_decay
 
-        return loss_dict
+        return loss, loss_dict
 
     @classmethod
     def from_pretrained(cls, pretrained_name_or_path, *args, **kwargs):
