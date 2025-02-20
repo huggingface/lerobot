@@ -55,6 +55,7 @@ class MobileManipulator:
         self.remote_port = config.port
         self.remote_port_video = config.video_port
         self.calibration_dir = Path(self.config.calibration_dir)
+        self.logs = {}
 
         # For teleoperation, the leader arm (local) is used to record the desired arm pose.
         self.leader_arms = make_motors_buses_from_configs(self.config.leader_arms)
@@ -441,15 +442,9 @@ class MobileManipulator:
 
         frames, present_speed, remote_arm_state_tensor = self._get_data()
 
-        present_speed_dict = {
-            "left_wheel": int(present_speed.get("1", 0)),
-            "right_wheel": int(present_speed.get("2", 0)),
-            "back_wheel": int(present_speed.get("3", 0)),
-        }
+        body_state = self.wheel_raw_to_body(present_speed)
 
-        body_state = self.wheel_raw_to_body(present_speed_dict)
-
-        body_state_mm = (body_state[0] * 1000.0, body_state[1] * 1000.0, body_state[2])
+        body_state_mm = (body_state[0] * 1000.0, body_state[1] * 1000.0, body_state[2]) # Convert x,y to mm/s
         wheel_state_tensor = torch.tensor(body_state_mm, dtype=torch.float32)
         combined_state_tensor = torch.cat((remote_arm_state_tensor, wheel_state_tensor), dim=0)
 
@@ -507,7 +502,7 @@ class MobileManipulator:
         if not self.is_connected:
             raise RobotDeviceNotConnectedError("Not connected.")
         if self.cmd_socket:
-            stop_cmd = {"raw_velocity": {"left_wheel": 0, "right_wheel": 0, "back_wheel": 0}, "arm_positions": {}}
+            stop_cmd = {"raw_velocity": {"left_wheel": 0, "back_wheel": 0, "right_wheel": 0}, "arm_positions": {}}
             self.cmd_socket.send_string(json.dumps(stop_cmd))
             self.cmd_socket.close()
         if self.video_socket:
@@ -568,7 +563,7 @@ class MobileManipulator:
 
         Returns:
           A dictionary with wheel raw commands:
-             {"left_wheel": value, "right_wheel": value, "back_wheel": value}.
+             {"left_wheel": value, "back_wheel": value, "right_wheel": value}.
 
         Notes:
           - Internally, the method converts theta_cmd to rad/s for the kinematics.
@@ -614,7 +609,7 @@ class MobileManipulator:
         Convert wheel raw command feedback back into body-frame velocities.
 
         Parameters:
-          wheel_raw   : Dictionary with raw wheel commands (keys: "left_wheel", "right_wheel", "back_wheel").
+          wheel_raw   : Dictionary with raw wheel commands (keys: "left_wheel", "back_wheel", "right_wheel").
           wheel_radius: Radius of each wheel (meters).
           base_radius : Distance from the robot center to each wheel (meters).
 
@@ -625,7 +620,7 @@ class MobileManipulator:
              theta_cmd  : Rotational velocity in deg/s.
         """
         # Extract the raw values in order.
-        raw_list = [wheel_raw["left_wheel"], wheel_raw["right_wheel"], wheel_raw["back_wheel"]]
+        raw_list = [int(wheel_raw.get("left_wheel", 0)), int(wheel_raw.get("back_wheel", 0)), int(wheel_raw.get("right_wheel", 0))]
 
         # Convert each raw command back to an angular speed in deg/s.
         wheel_degps = np.array([MobileManipulator.raw_to_degps(r) for r in raw_list])
@@ -651,7 +646,7 @@ class LeKiwi:
         Initializes the LeKiwi with Feetech motors bus.
         """
         self.motor_bus = motor_bus
-        self.motor_ids = ["left_wheel", "right_wheel", "back_wheel"]
+        self.motor_ids = ["left_wheel", "back_wheel", "right_wheel"]
 
         # Initialize motors in velocity mode.
         self.motor_bus.write("Lock", 0)
@@ -661,15 +656,10 @@ class LeKiwi:
 
     def read_velocity(self):
         """
-        Reads the raw speeds for all wheels. Returns a dictionary with motor index strings:
-        {
-            "1": raw_speed_left_wheel,
-            "2": raw_speed_right_wheel,
-            "3": raw_speed_back_wheel
-        }
+        Reads the raw speeds for all wheels. Returns a dictionary with motor names:
         """
         raw_speeds = self.motor_bus.read("Present_Speed", self.motor_ids)
-        return {"1": int(raw_speeds[0]), "2": int(raw_speeds[1]), "3": int(raw_speeds[2])}
+        return {"left_wheel": int(raw_speeds[0]), "back_wheel": int(raw_speeds[1]), "right_wheel": int(raw_speeds[2])}
 
     def set_velocity(self, command_speeds):
         """

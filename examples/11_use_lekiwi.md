@@ -127,7 +127,7 @@ First we will assemble the two SO100 arms. One to attach to the mobile base and 
 ### Configure motors
 The instructions for configuring the motors can be found [Here](https://github.com/huggingface/lerobot/blob/main/examples/10_use_so100.md#c-configure-the-motors) in step C of the SO100 tutorial. Besides the ID's for the arm motors we also need to set the motor ID's for the mobile base. These needs to be in a specific order to work. Below an image of the motor ID's and motor mounting positions for the mobile base. Note that we only use one Motor Control board on LeKiwi. This means the motor ID's for the wheels are 7, 8 and 9.
 
-<img src="../media/lekiwi/mobile_motor_ids.webp?raw=true" alt="Motor ID's for mobile robot" title="Motor ID's for mobile robot" width="60%">
+<img src="../media/lekiwi/motor_ids.webp?raw=true" alt="Motor ID's for mobile robot" title="Motor ID's for mobile robot" width="60%">
 
 ### Assemble arms
 [Assemble arms instruction](https://github.com/huggingface/lerobot/blob/main/examples/10_use_so100.md#d-assemble-the-arms)
@@ -136,7 +136,7 @@ The instructions for configuring the motors can be found [Here](https://github.c
 [Assemble LeKiwi](https://github.com/SIGRobotics-UIUC/LeKiwi)
 
 ### Update config
-Both config files on the LeKiwi LeRobot and on the laptop should be the same. First we should find the ip address of the Raspberry Pi of the mobile manipulator. This is the same Ip address used in ssh. We also need the usb port of the leader arm on the laptop and the port of the follower arm on the mobile manipulator. We can find these ports with the following script.
+Both config files on the LeKiwi LeRobot and on the laptop should be the same. First we should find the Ip address of the Raspberry Pi of the mobile manipulator. This is the same Ip address used in SSH. We also need the usb port of the control board of the leader arm on the laptop and the port of the control board on LeKiwi. We can find these ports with the following script.
 
 #### a. Run the script to find port
 
@@ -239,8 +239,8 @@ class LeKiwiRobotConfig(RobotConfig):
                     "wrist_roll": [5, "sts3215"],
                     "gripper": [6, "sts3215"],
                     "left_wheel": (7, "sts3215"),
-                    "right_wheel": (8, "sts3215"),
-                    "back_wheel": (9, "sts3215"),
+                    "back_wheel": (8, "sts3215"),
+                    "right_wheel": (9, "sts3215"),
                 },
             ),
         }
@@ -291,7 +291,9 @@ python lerobot/scripts/control_robot.py \
 # F. Teleoperate
 To teleoperate SSH into your Raspberry Pi, and run `conda activate lerobot` and this script:
 ```bash
-python lerobot/scripts/run_lekiwi.py
+python lerobot/scripts/control_robot.py \
+  --robot.type=lekiwi \
+  --control.type=remote_robot
 ```
 
 Then on your laptop, also run `conda activate lerobot` and this script:

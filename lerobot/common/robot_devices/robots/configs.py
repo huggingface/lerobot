@@ -525,7 +525,7 @@ class LeKiwiRobotConfig(RobotConfig):
     max_relative_target: int | None = None
 
     # Network Configuration
-    ip: str = "172.17.133.91"
+    ip: str = "192.168.0.193"
     port: int = 5555
     video_port: int = 5556
 
@@ -568,8 +568,8 @@ class LeKiwiRobotConfig(RobotConfig):
                     "wrist_roll": [5, "sts3215"],
                     "gripper": [6, "sts3215"],
                     "left_wheel": (7, "sts3215"),
-                    "right_wheel": (8, "sts3215"),
-                    "back_wheel": (9, "sts3215"),
+                    "back_wheel": (8, "sts3215"),
+                    "right_wheel": (9, "sts3215"),
                 },
             ),
         }

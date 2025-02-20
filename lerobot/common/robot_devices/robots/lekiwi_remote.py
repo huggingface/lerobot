@@ -139,11 +139,11 @@ def run_lekiwi(robot_config):
                     # Process wheel (base) commands.
                     if "raw_velocity" in data:
                         raw_command = data["raw_velocity"]
-                        # Expect keys: "left_wheel", "right_wheel", "back_wheel".
+                        # Expect keys: "left_wheel", "back_wheel", "right_wheel".
                         command_speeds = [
                             int(raw_command.get("left_wheel", 0)),
-                            int(raw_command.get("right_wheel", 0)),
                             int(raw_command.get("back_wheel", 0)),
+                            int(raw_command.get("right_wheel", 0)),
                         ]
                         robot.set_velocity(command_speeds)
                         last_cmd_time = time.time()
@@ -176,11 +176,7 @@ def run_lekiwi(robot_config):
             # Build the observation dictionary.
             observation = {
                 "images": images_dict_copy,
-                "present_speed": {
-                    "left_wheel": int(current_velocity.get("1", 0)),
-                    "right_wheel": int(current_velocity.get("2", 0)),
-                    "back_wheel": int(current_velocity.get("3", 0)),
-                },
+                "present_speed": current_velocity,
                 "follower_arm_state": follower_arm_state,
             }
             # Send the observation over the video socket.
