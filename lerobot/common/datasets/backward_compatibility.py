@@ -33,8 +33,22 @@ If you encounter a problem, contact LeRobot maintainers on [Discord](https://dis
 or open an [issue on GitHub](https://github.com/huggingface/lerobot/issues/new/choose).
 """
 
+FUTURE_MESSAGE = """
+The dataset you requested ({repo_id}) is only available in {version} format.
+As we cannot ensure forward compatibility with it, please update your current version of lerobot.
+"""
 
-class BackwardCompatibilityError(Exception):
+
+class CompatibilityError(Exception): ...
+
+
+class BackwardCompatibilityError(CompatibilityError):
     def __init__(self, repo_id: str, version: packaging.version.Version):
         message = V2_MESSAGE.format(repo_id=repo_id, version=version)
+        super().__init__(message)
+
+
+class ForwardCompatibilityError(CompatibilityError):
+    def __init__(self, repo_id: str, version: packaging.version.Version):
+        message = FUTURE_MESSAGE.format(repo_id=repo_id, version=version)
         super().__init__(message)

@@ -20,13 +20,13 @@ from typing import Callable
 
 import datasets
 import numpy as np
+import packaging.version
 import PIL.Image
 import torch
 import torch.utils
 from datasets import load_dataset
 from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.constants import REPOCARD_NAME
-from packaging import version
 
 from lerobot.common.constants import HF_LEROBOT_HOME
 from lerobot.common.datasets.compute_stats import aggregate_stats, compute_episode_stats
@@ -47,8 +47,9 @@ from lerobot.common.datasets.utils import (
     get_episode_data_index,
     get_features_from_robot,
     get_hf_features_from_features,
-    get_safe_revision,
+    get_safe_version,
     hf_transform_to_torch,
+    is_valid_version,
     load_episodes,
     load_episodes_stats,
     load_info,
@@ -91,18 +92,19 @@ class LeRobotDatasetMetadata:
                 raise FileNotFoundError
             self.load_metadata()
         except (FileNotFoundError, NotADirectoryError):
+            if is_valid_version(self.revision):
+                self.revision = get_safe_version(self.repo_id, self.revision)
+
             (self.root / "meta").mkdir(exist_ok=True, parents=True)
-            self.revision = get_safe_revision(self.repo_id, self.revision)
             self.pull_from_repo(allow_patterns="meta/")
             self.load_metadata()
 
-        check_version_compatibility(self.repo_id, self._version, CODEBASE_VERSION)
-
     def load_metadata(self):
         self.info = load_info(self.root)
+        check_version_compatibility(self.repo_id, self._version, CODEBASE_VERSION)
         self.tasks, self.task_to_task_index = load_tasks(self.root)
         self.episodes = load_episodes(self.root)
-        if version.parse(self._version) < version.parse("v2.1"):
+        if self._version < packaging.version.parse("v2.1"):
             self.stats = load_stats(self.root)
             self.episodes_stats = backward_compatible_episodes_stats(self.stats, self.episodes)
         else:
@@ -124,9 +126,9 @@ class LeRobotDatasetMetadata:
         )
 
     @property
-    def _version(self) -> str:
+    def _version(self) -> packaging.version.Version:
         """Codebase version used to create this dataset."""
-        return self.info["codebase_version"]
+        return packaging.version.parse(self.info["codebase_version"])
 
     def get_data_file_path(self, ep_index: int) -> Path:
         ep_chunk = self.get_episode_chunk(ep_index)
@@ -483,7 +485,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.meta = LeRobotDatasetMetadata(
             self.repo_id, self.root, self.revision, force_cache_sync=force_cache_sync
         )
-        if self.episodes is not None and version.parse(self.meta._version) >= version.parse("v2.1"):
+        if self.episodes is not None and self.meta._version >= packaging.version.parse("v2.1"):
             episodes_stats = [self.meta.episodes_stats[ep_idx] for ep_idx in self.episodes]
             self.stats = aggregate_stats(episodes_stats)
 
@@ -494,7 +496,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             assert all((self.root / fpath).is_file() for fpath in self.get_episodes_file_paths())
             self.hf_dataset = self.load_hf_dataset()
         except (AssertionError, FileNotFoundError, NotADirectoryError):
-            self.revision = get_safe_revision(self.repo_id, self.revision)
+            self.revision = get_safe_version(self.repo_id, self.revision)
             self.download_episodes(download_videos)
             self.hf_dataset = self.load_hf_dataset()
 

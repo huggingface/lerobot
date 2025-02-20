@@ -27,15 +27,19 @@ from typing import Any
 import datasets
 import jsonlines
 import numpy as np
+import packaging.version
 import pyarrow.compute as pc
 import torch
 from datasets.table import embed_table_storage
 from huggingface_hub import DatasetCard, DatasetCardData, HfApi
-from packaging import version
 from PIL import Image as PILImage
 from torchvision import transforms
 
-from lerobot.common.datasets.backward_compatibility import V21_MESSAGE, BackwardCompatibilityError
+from lerobot.common.datasets.backward_compatibility import (
+    V21_MESSAGE,
+    BackwardCompatibilityError,
+    ForwardCompatibilityError,
+)
 from lerobot.common.robot_devices.robots.utils import Robot
 from lerobot.common.utils.utils import is_valid_numpy_dtype_string
 from lerobot.configs.types import DictLike, FeatureType, PolicyFeature
@@ -269,38 +273,78 @@ def hf_transform_to_torch(items_dict: dict[torch.Tensor | None]):
     return items_dict
 
 
+def is_valid_version(version: str) -> bool:
+    try:
+        packaging.version.parse(version)
+        return True
+    except packaging.version.InvalidVersion:
+        return False
+
+
 def check_version_compatibility(
-    repo_id: str, version_to_check: str, current_version: str, enforce_breaking_major: bool = True
+    repo_id: str,
+    version_to_check: str | packaging.version.Version,
+    current_version: str | packaging.version.Version,
+    enforce_breaking_major: bool = True,
 ) -> None:
-    v_check = version.parse(version_to_check)
-    v_current = version.parse(current_version)
+    v_check = (
+        packaging.version.parse(version_to_check)
+        if not isinstance(version_to_check, packaging.version.Version)
+        else version_to_check
+    )
+    v_current = (
+        packaging.version.parse(current_version)
+        if not isinstance(current_version, packaging.version.Version)
+        else current_version
+    )
     if v_check.major < v_current.major and enforce_breaking_major:
         raise BackwardCompatibilityError(repo_id, v_check)
     elif v_check.minor < v_current.minor:
-        logging.warning(V21_MESSAGE.format(repo_id=repo_id, version=version_to_check))
+        logging.warning(V21_MESSAGE.format(repo_id=repo_id, version=v_check))
 
 
-def get_repo_versions(repo_id: str) -> list[version.Version]:
+def get_repo_versions(repo_id: str) -> list[packaging.version.Version]:
     """Returns available valid versions (branches and tags) on given repo."""
     api = HfApi()
     repo_refs = api.list_repo_refs(repo_id, repo_type="dataset")
     repo_refs = [b.name for b in repo_refs.branches + repo_refs.tags]
     repo_versions = []
     for ref in repo_refs:
-        with contextlib.suppress(version.InvalidVersion):
-            repo_versions.append(version.parse(ref))
+        with contextlib.suppress(packaging.version.InvalidVersion):
+            repo_versions.append(packaging.version.parse(ref))
 
     return repo_versions
 
 
-def get_safe_revision(repo_id: str, revision: str) -> str:
-    """Returns the version if available on repo, otherwise return the latest available."""
-    api = HfApi()
-    if api.revision_exists(repo_id, revision, repo_type="dataset"):
-        return revision
-
+def get_safe_version(repo_id: str, version: str | packaging.version.Version) -> str:
+    """
+    Returns the version if available on repo or the latest compatible one.
+    Otherwise, will throw a `CompatibilityError`.
+    """
+    target_version = (
+        packaging.version.parse(version) if not isinstance(version, packaging.version.Version) else version
+    )
     hub_versions = get_repo_versions(repo_id)
-    return f"v{max(hub_versions)}"
+
+    if target_version in hub_versions:
+        return f"v{target_version}"
+
+    compatibles = [
+        v for v in hub_versions if v.major == target_version.major and v.minor <= target_version.minor
+    ]
+    if compatibles:
+        return_version = max(compatibles)
+        if return_version < target_version:
+            logging.warning(f"Revision {version} for {repo_id} not found, using version v{return_version}")
+        return f"v{return_version}"
+
+    lower_major = [v for v in hub_versions if v.major < target_version.major]
+    if lower_major:
+        raise BackwardCompatibilityError(repo_id, max(lower_major))
+
+    upper_versions = [v for v in hub_versions if v > target_version]
+    assert len(upper_versions) > 0
+    raise ForwardCompatibilityError(repo_id, min(upper_versions))
 
 
 def get_hf_features_from_features(features: dict) -> datasets.Features:

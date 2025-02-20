@@ -150,7 +150,7 @@ def run_server(
                 400,
             )
         dataset_version = (
-            dataset.meta._version if isinstance(dataset, LeRobotDataset) else dataset.codebase_version
+            str(dataset.meta._version) if isinstance(dataset, LeRobotDataset) else dataset.codebase_version
         )
         match = re.search(r"v(\d+)\.", dataset_version)
         if match:
