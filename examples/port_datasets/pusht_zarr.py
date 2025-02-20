@@ -3,8 +3,10 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from huggingface_hub import HfApi
 
-from lerobot.common.datasets.lerobot_dataset import LEROBOT_HOME, LeRobotDataset
+from lerobot.common.constants import HF_LEROBOT_HOME
+from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset
 from lerobot.common.datasets.push_dataset_to_hub._download_raw import download_raw
 
 PUSHT_TASK = "Push the T-shaped blue block onto the T-shaped green target surface."
@@ -134,8 +136,8 @@ def main(raw_dir: Path, repo_id: str, mode: str = "video", push_to_hub: bool = T
     if mode not in ["video", "image", "keypoints"]:
         raise ValueError(mode)
 
-    if (LEROBOT_HOME / repo_id).exists():
-        shutil.rmtree(LEROBOT_HOME / repo_id)
+    if (HF_LEROBOT_HOME / repo_id).exists():
+        shutil.rmtree(HF_LEROBOT_HOME / repo_id)
 
     if not raw_dir.exists():
         download_raw(raw_dir, repo_id="lerobot-raw/pusht_raw")
@@ -198,10 +200,10 @@ def main(raw_dir: Path, repo_id: str, mode: str = "video", push_to_hub: bool = T
 
         dataset.save_episode()
 
-    dataset.consolidate()
-
     if push_to_hub:
         dataset.push_to_hub()
+        hub_api = HfApi()
+        hub_api.create_tag(repo_id, tag=CODEBASE_VERSION, repo_type="dataset")
 
 
 if __name__ == "__main__":

@@ -1,5 +1,7 @@
 import random
+from functools import partial
 from pathlib import Path
+from typing import Protocol
 from unittest.mock import patch
 
 import datasets
@@ -17,7 +19,6 @@ from lerobot.common.datasets.utils import (
     get_hf_features_from_features,
     hf_transform_to_torch,
 )
-from lerobot.common.robot_devices.robots.utils import Robot
 from tests.fixtures.constants import (
     DEFAULT_FPS,
     DUMMY_CAMERA_FEATURES,
@@ -26,6 +27,10 @@ from tests.fixtures.constants import (
     DUMMY_ROBOT_TYPE,
     DUMMY_VIDEO_INFO,
 )
+
+
+class LeRobotDatasetFactory(Protocol):
+    def __call__(self, *args, **kwargs) -> LeRobotDataset: ...
 
 
 def get_task_index(task_dicts: dict, task: str) -> int:
@@ -358,7 +363,7 @@ def lerobot_dataset_factory(
     hf_dataset_factory,
     mock_snapshot_download_factory,
     lerobot_dataset_metadata_factory,
-):
+) -> LeRobotDatasetFactory:
     def _create_lerobot_dataset(
         root: Path,
         repo_id: str = DUMMY_REPO_ID,
@@ -430,17 +435,5 @@ def lerobot_dataset_factory(
 
 
 @pytest.fixture(scope="session")
-def empty_lerobot_dataset_factory():
-    def _create_empty_lerobot_dataset(
-        root: Path,
-        repo_id: str = DUMMY_REPO_ID,
-        fps: int = DEFAULT_FPS,
-        robot: Robot | None = None,
-        robot_type: str | None = None,
-        features: dict | None = None,
-    ) -> LeRobotDataset:
-        return LeRobotDataset.create(
-            repo_id=repo_id, fps=fps, root=root, robot=robot, robot_type=robot_type, features=features
-        )
-
-    return _create_empty_lerobot_dataset
+def empty_lerobot_dataset_factory() -> LeRobotDatasetFactory:
+    return partial(LeRobotDataset.create, repo_id=DUMMY_REPO_ID, fps=DEFAULT_FPS)

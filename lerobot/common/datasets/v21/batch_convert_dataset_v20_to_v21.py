@@ -29,8 +29,9 @@ LOCAL_DIR = Path("data/")
 
 def batch_convert():
     status = {}
+    LOCAL_DIR.mkdir(parents=True, exist_ok=True)
     logfile = LOCAL_DIR / "conversion_log_v21.txt"
-    for num, repo_id in available_datasets:
+    for num, repo_id in enumerate(available_datasets):
         print(f"\nConverting {repo_id} ({num}/{len(available_datasets)})")
         print("---------------------------------------------------------")
         try:
