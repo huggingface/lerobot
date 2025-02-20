@@ -660,6 +660,45 @@ class LeRobotDataset(torch.utils.data.Dataset):
             item = {**item, **padding}
             for key, val in query_result.items():
                 item[key] = val
+        if len(self.meta.video_keys) > 0:
+            current_ts = item["timestamp"].item()
+            query_timestamps = self._get_query_timestamps(current_ts, query_indices)
+            # if what is returned is all the info that i used query_timestamps, episode
+            # percentage of chance, 30% cpu, gpu
+            # video_frames = self._query_videos(query_timestamps, ep_idx)
+            # item = {**video_frames, **item}
+
+            # jade - instead of decoding video, return video path & timestamps
+            # hack only add metadata
+            item["video_paths"] = {
+                vid_key: self.root / self.meta.get_video_file_path(ep_idx, vid_key)
+                for vid_key in query_timestamps.keys()
+            }
+            item["query_timestamps"] = query_timestamps
+
+        if self.image_transforms is not None:
+            breakpoint()
+            image_keys = self.meta.camera_keys
+            for cam in image_keys:
+                item[cam] = self.image_transforms(item[cam])
+
+        # Add task as a string
+        task_idx = item["task_index"].item()
+        item["task"] = self.meta.tasks[task_idx]
+
+        return item
+    def __getitem2__(self, idx) -> dict:
+        item = self.hf_dataset[idx]
+        ep_idx = item["episode_index"].item()
+
+        query_indices = None
+        if self.delta_indices is not None:
+            current_ep_idx = self.episodes.index(ep_idx) if self.episodes is not None else ep_idx
+            query_indices, padding = self._get_query_indices(idx, current_ep_idx)
+            query_result = self._query_hf_dataset(query_indices)
+            item = {**item, **padding}
+            for key, val in query_result.items():
+                item[key] = val
 
         if len(self.meta.video_keys) > 0:
             current_ts = item["timestamp"].item()
@@ -677,7 +716,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         item["task"] = self.meta.tasks[task_idx]
 
         return item
-
     def __repr__(self):
         feature_keys = list(self.features)
         return (
