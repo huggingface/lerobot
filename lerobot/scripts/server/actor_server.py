@@ -268,13 +268,9 @@ def act_with_policy(
 
     logging.info("make_env online")
 
-<<<<<<< HEAD
-    online_env = make_robot_env(robot=robot, reward_classifier=reward_classifier, cfg=cfg)
-=======
     online_env = make_robot_env(
-        robot=robot, reward_classifier=reward_classifier, cfg=cfg.env
+        robot=robot, reward_classifier=reward_classifier, cfg=cfg
     )
->>>>>>> 06dd863d (Add mani-skill for docker)
 
     set_global_seed(cfg.seed)
     device = get_safe_torch_device(cfg.device, log=True)
@@ -391,13 +387,9 @@ def act_with_policy(
                 f"[ACTOR] Global step {interaction_step}: Episode reward: {sum_reward_episode}"
             )
 
-<<<<<<< HEAD
-            update_policy_parameters(policy=policy.actor, parameters_queue=parameters_queue, device=device)
-=======
             update_policy_parameters(
-                policy=policy, parameters_queue=parameters_queue, device=device
+                policy=policy.actor, parameters_queue=parameters_queue, device=device
             )
->>>>>>> 06dd863d (Add mani-skill for docker)
 
             if len(list_transition_to_send_to_learner) > 0:
                 send_transitions_in_chunks(

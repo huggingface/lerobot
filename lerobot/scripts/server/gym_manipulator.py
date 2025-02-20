@@ -786,27 +786,23 @@ def make_robot_env(
     env = ConvertToLeRobotObservation(env=env, device=cfg.device)
     if cfg.env.wrapper.crop_params_dict is not None:
         env = ImageCropResizeWrapper(
-<<<<<<< HEAD
-            env=env, crop_params_dict=cfg.env.wrapper.crop_params_dict, resize_size=cfg.env.wrapper.resize_size
-=======
             env=env,
-            crop_params_dict=cfg.wrapper.crop_params_dict,
-            resize_size=cfg.wrapper.resize_size,
->>>>>>> 75d6712e (Fixup for mani skill)
+            crop_params_dict=cfg.env.wrapper.crop_params_dict,
+            resize_size=cfg.env.wrapper.resize_size,
         )
 
     # Add reward computation and control wrappers
     env = RewardWrapper(env=env, reward_classifier=reward_classifier, device=cfg.device)
-<<<<<<< HEAD
-    env = TimeLimitWrapper(env=env, control_time_s=cfg.env.wrapper.control_time_s, fps=cfg.fps)
-=======
     env = TimeLimitWrapper(
-        env=env, control_time_s=cfg.wrapper.control_time_s, fps=cfg.fps
+        env=env, control_time_s=cfg.env.wrapper.control_time_s, fps=cfg.fps
     )
->>>>>>> 75d6712e (Fixup for mani skill)
     env = KeyboardInterfaceWrapper(env=env)
-    env = ResetWrapper(env=env, reset_fn=None, reset_time_s=cfg.env.wrapper.reset_time_s)
-    env = JointMaskingActionSpace(env=env, mask=cfg.env.wrapper.joint_masking_action_space)
+    env = ResetWrapper(
+        env=env, reset_fn=None, reset_time_s=cfg.env.wrapper.reset_time_s
+    )
+    env = JointMaskingActionSpace(
+        env=env, mask=cfg.env.wrapper.joint_masking_action_space
+    )
     env = BatchCompitableWrapper(env=env)
 
     return env
