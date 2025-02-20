@@ -2,10 +2,10 @@
 This script will help you convert any LeRobot dataset already pushed to the hub from codebase version 2.0 to
 2.1. It will:
 
-- Generates per-episodes stats and writes them in `episodes_stats.jsonl`
+- Generate per-episodes stats and writes them in `episodes_stats.jsonl`
 - Check consistency between these new stats and the old ones.
-- Removes the deprecated `stats.json` (by default)
-- Updates codebase_version in `info.json`
+- Remove the deprecated `stats.json`.
+- Update codebase_version in `info.json`.
 - Push this new version to the hub on the 'main' branch and tags it with "v2.1".
 
 Usage:
@@ -80,19 +80,20 @@ if __name__ == "__main__":
         "--repo-id",
         type=str,
         required=True,
-        help="Repository identifier on Hugging Face: a community or a user name `/` the name of the dataset (e.g. `lerobot/pusht`, `cadene/aloha_sim_insertion_human`).",
+        help="Repository identifier on Hugging Face: a community or a user name `/` the name of the dataset "
+        "(e.g. `lerobot/pusht`, `cadene/aloha_sim_insertion_human`).",
     )
     parser.add_argument(
         "--branch",
         type=str,
         default=None,
-        help="Repo branch to push your dataset (defaults to the main branch)",
+        help="Repo branch to push your dataset. Defaults to the main branch.",
     )
     parser.add_argument(
         "--num-workers",
         type=int,
         default=4,
-        help="Number of workers for parallelizing compute",
+        help="Number of workers for parallelizing stats compute. Defaults to 4.",
     )
 
     args = parser.parse_args()
