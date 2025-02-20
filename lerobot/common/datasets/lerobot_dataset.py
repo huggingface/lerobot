@@ -849,12 +849,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self._wait_image_writer()
         self._save_episode_table(episode_buffer, episode_index)
         ep_stats = compute_episode_stats(episode_buffer, self.features)
-        self.meta.save_episode(episode_index, episode_length, episode_tasks, ep_stats)
 
         if len(self.meta.video_keys) > 0:
             video_paths = self.encode_episode_videos(episode_index)
             for key in self.meta.video_keys:
                 episode_buffer[key] = video_paths[key]
+
+        # `meta.save_episode` be executed after encoding the videos
+        self.meta.save_episode(episode_index, episode_length, episode_tasks, ep_stats)
 
         self.hf_dataset = self.load_hf_dataset()
         self.episode_data_index = get_episode_data_index(self.meta.episodes, self.episodes)
