@@ -73,8 +73,8 @@ class MobileManipulator:
         # Define three speed levels and a current index
         self.speed_levels = [
             {"xy": 0.1, "theta": 30},  # slow
-            {"xy": 0.25, "theta": 60},  # medium
-            {"xy": 0.4, "theta": 90},  # fast
+            {"xy": 0.2, "theta": 60},  # medium
+            {"xy": 0.3, "theta": 90},  # fast
         ]
         self.speed_index = 0  # Start at slow
 
@@ -395,13 +395,13 @@ class MobileManipulator:
         y_cmd = 0.0  # m/s lateral
         theta_cmd = 0.0  # deg/s rotation
         if self.pressed_keys["forward"]:
-            x_cmd -= xy_speed
-        if self.pressed_keys["backward"]:
             x_cmd += xy_speed
+        if self.pressed_keys["backward"]:
+            x_cmd -= xy_speed
         if self.pressed_keys["left"]:
-            y_cmd -= xy_speed
-        if self.pressed_keys["right"]:
             y_cmd += xy_speed
+        if self.pressed_keys["right"]:
+            y_cmd -= xy_speed
         if self.pressed_keys["rotate_left"]:
             theta_cmd += theta_speed
         if self.pressed_keys["rotate_right"]:
@@ -576,8 +576,8 @@ class MobileManipulator:
         # Create the body velocity vector [x, y, theta_rad].
         velocity_vector = np.array([x_cmd, y_cmd, theta_rad])
 
-        # Define the wheel mounting angles with a -45° offset.
-        angles = np.radians(np.array([0, 120, 240]) - 30)
+        # Define the wheel mounting angles with a -90° offset.
+        angles = np.radians(np.array([240, 120, 0]) - 90)
         # Build the kinematic matrix: each row maps body velocities to a wheel’s linear speed.
         # The third column (base_radius) accounts for the effect of rotation.
         m = np.array([[np.cos(a), np.sin(a), base_radius] for a in angles])
@@ -600,7 +600,7 @@ class MobileManipulator:
         # Convert each wheel’s angular speed (deg/s) to a raw integer.
         wheel_raw = [MobileManipulator.degps_to_raw(deg) for deg in wheel_degps]
 
-        return {"left_wheel": wheel_raw[0], "right_wheel": wheel_raw[1], "back_wheel": wheel_raw[2]}
+        return {"left_wheel": wheel_raw[0], "back_wheel": wheel_raw[1], "right_wheel": wheel_raw[2]}
 
     def wheel_raw_to_body(
         self, wheel_raw: dict, wheel_radius: float = 0.05, base_radius: float = 0.125
@@ -629,8 +629,8 @@ class MobileManipulator:
         # Compute each wheel’s linear speed (m/s) from its angular speed.
         wheel_linear_speeds = wheel_radps * wheel_radius
 
-        # Define the wheel mounting angles with a -45° offset.
-        angles = np.radians(np.array([0, 120, 240]) - 30)
+        # Define the wheel mounting angles with a -90° offset.
+        angles = np.radians(np.array([240, 120, 0]) - 90)
         m = np.array([[np.cos(a), np.sin(a), base_radius] for a in angles])
 
         # Solve the inverse kinematics: body_velocity = M⁻¹ · wheel_linear_speeds.
