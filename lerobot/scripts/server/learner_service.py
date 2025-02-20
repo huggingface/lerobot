@@ -65,10 +65,10 @@ class LearnerService(hilserl_pb2_grpc.LearnerServiceServicer):
         while sent_bytes < size_in_bytes:
             transfer_state = hilserl_pb2.TransferState.TRANSFER_MIDDLE
 
-            if sent_bytes == 0:
-                transfer_state = hilserl_pb2.TransferState.TRANSFER_BEGIN
-            elif sent_bytes + CHUNK_SIZE >= size_in_bytes:
+            if sent_bytes + CHUNK_SIZE >= size_in_bytes:
                 transfer_state = hilserl_pb2.TransferState.TRANSFER_END
+            elif sent_bytes == 0:
+                transfer_state = hilserl_pb2.TransferState.TRANSFER_BEGIN
 
             size_to_read = min(CHUNK_SIZE, size_in_bytes - sent_bytes)
             chunk = buffer.read(size_to_read)

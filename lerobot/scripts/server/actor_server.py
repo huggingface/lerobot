@@ -116,6 +116,7 @@ def receive_policy(
 
                 bytes_buffer.seek(0)
                 bytes_buffer.truncate(0)
+                step = 0
 
                 logging.info("Model updated")
 
