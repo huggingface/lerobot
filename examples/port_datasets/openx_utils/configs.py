@@ -56,7 +56,9 @@ def zero_action_filter(traj: Dict) -> bool:
             0.8897542208433151,
         ]
     )
-    DROID_NORM_0_ACT = 2 * (tf.zeros_like(traj["action"][:, :6]) - DROID_Q01) / (DROID_Q99 - DROID_Q01 + 1e-8) - 1
+    DROID_NORM_0_ACT = (
+        2 * (tf.zeros_like(traj["action"][:, :6]) - DROID_Q01) / (DROID_Q99 - DROID_Q01 + 1e-8) - 1
+    )
 
     return tf.reduce_any(tf.math.abs(traj["action"][:, :6] - DROID_NORM_0_ACT) > 1e-5)
 
@@ -799,7 +801,11 @@ OXE_DATASET_CONFIGS = {
     },
     ### DROID Finetuning datasets
     "droid_wipe": {
-        "image_obs_keys": {"primary": "exterior_image_2_left", "secondary": None, "wrist": "wrist_image_left"},
+        "image_obs_keys": {
+            "primary": "exterior_image_2_left",
+            "secondary": None,
+            "wrist": "wrist_image_left",
+        },
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": ["proprio"],
         "state_encoding": StateEncoding.POS_EULER,

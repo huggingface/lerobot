@@ -2,7 +2,6 @@
 Copied from https://github.com/openvla/openvla/blob/main/prismatic/vla/datasets/rlds/utils/data_utils.py
 """
 
-
 from typing import Any, Dict
 
 import tensorflow as tf
@@ -65,6 +64,7 @@ def rel2abs_gripper_actions(actions: tf.Tensor) -> tf.Tensor:
     new_actions = tf.cast(new_actions, tf.float32) / 2 + 0.5
 
     return new_actions
+
 
 # === Bridge-V2 =>> Dataset-Specific Transform ===
 def relabel_bridge_actions(traj: Dict[str, Any]) -> Dict[str, Any]:
