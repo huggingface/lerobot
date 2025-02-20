@@ -78,6 +78,7 @@ class SACPolicy(
         # NOTE: For images the encoder should be shared between the actor and critic
         if config.shared_encoder:
             encoder_critic = SACObservationEncoder(config, self.normalize_inputs)
+            encoder_critic = torch.compile(encoder_critic)
             encoder_actor: SACObservationEncoder = encoder_critic
         else:
             encoder_critic = SACObservationEncoder(config, self.normalize_inputs)
@@ -96,6 +97,7 @@ class SACPolicy(
             ),
             output_normalization=self.normalize_targets,
         )
+        self.critic_ensemble = torch.compile(self.critic_ensemble)
 
         self.critic_target = CriticEnsemble(
             encoder=encoder_critic,
@@ -110,6 +112,7 @@ class SACPolicy(
             ),
             output_normalization=self.normalize_targets,
         )
+        self.critic_target = torch.compile(self.critic_target)
 
         self.critic_target.load_state_dict(self.critic_ensemble.state_dict())
 
@@ -120,6 +123,9 @@ class SACPolicy(
             encoder_is_shared=config.shared_encoder,
             **config.policy_kwargs,
         )
+
+        # self.actor = torch.compile(self.actor)
+
         if config.target_entropy is None:
             config.target_entropy = -np.prod(config.output_shapes["action"][0]) / 2  # (-dim(A)/2)
 
@@ -148,7 +154,7 @@ class SACPolicy(
         return actions
 
     def critic_forward(
-        self, observations: dict[str, Tensor], actions: Tensor, use_target: bool = False
+        self, observations: dict[str, Tensor], actions: Tensor, use_target: bool = False, image_features: Tensor | None = None
     ) -> Tensor:
         """Forward pass through a critic network ensemble
 
@@ -161,7 +167,7 @@ class SACPolicy(
             Tensor of Q-values from all critics
         """
         critics = self.critic_target if use_target else self.critic_ensemble
-        q_values = critics(observations, actions)
+        q_values = critics(observations, actions, image_features=image_features)
         return q_values
 
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor | float]: ...
@@ -175,14 +181,14 @@ class SACPolicy(
                 + target_param.data * (1.0 - self.config.critic_target_update_weight)
             )
 
-    def compute_loss_critic(self, observations, actions, rewards, next_observations, done) -> Tensor:
+    def compute_loss_critic(self, observations, actions, rewards, next_observations, done, image_features: Tensor | None = None, next_image_features: Tensor | None = None) -> Tensor:
         temperature = self.log_alpha.exp().item()
         with torch.no_grad():
-            next_action_preds, next_log_probs, _ = self.actor(next_observations)
+            next_action_preds, next_log_probs, _ = self.actor(next_observations, next_image_features)
 
             # 2- compute q targets
             q_targets = self.critic_forward(
-                observations=next_observations, actions=next_action_preds, use_target=True
+                observations=next_observations, actions=next_action_preds, use_target=True, image_features=next_image_features
             )
 
             # subsample critics to prevent overfitting if use high UTD (update to date)
@@ -214,18 +220,18 @@ class SACPolicy(
         ).sum()
         return critics_loss
 
-    def compute_loss_temperature(self, observations) -> Tensor:
+    def compute_loss_temperature(self, observations, image_features: Tensor | None = None) -> Tensor:
         """Compute the temperature loss"""
         # calculate temperature loss
         with torch.no_grad():
-            _, log_probs, _ = self.actor(observations)
+            _, log_probs, _ = self.actor(observations, image_features)
         temperature_loss = (-self.log_alpha.exp() * (log_probs + self.config.target_entropy)).mean()
         return temperature_loss
 
-    def compute_loss_actor(self, observations) -> Tensor:
+    def compute_loss_actor(self, observations, image_features: Tensor | None = None) -> Tensor:
         temperature = self.log_alpha.exp().item()
 
-        actions_pi, log_probs, _ = self.actor(observations)
+        actions_pi, log_probs, _ = self.actor(observations, image_features)
 
         q_preds = self.critic_forward(observations, actions_pi, use_target=False)
         min_q_preds = q_preds.min(dim=0)[0]
@@ -360,6 +366,7 @@ class CriticEnsemble(nn.Module):
         self,
         observations: dict[str, torch.Tensor],
         actions: torch.Tensor,
+        image_features: torch.Tensor | None = None,
     ) -> torch.Tensor:
         device = get_device_from_parameters(self)
         # Move each tensor in observations to device
@@ -370,7 +377,7 @@ class CriticEnsemble(nn.Module):
         actions = self.output_normalization(actions)["action"]
         actions = actions.to(device)
 
-        obs_enc = observations if self.encoder is None else self.encoder(observations)
+        obs_enc = image_features if image_features is not None else (observations if self.encoder is None else self.encoder(observations))
 
         inputs = torch.cat([obs_enc, actions], dim=-1)
         list_q_values = []
@@ -435,9 +442,10 @@ class Policy(nn.Module):
     def forward(
         self,
         observations: torch.Tensor,
+        image_features: torch.Tensor | None = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         # Encode observations if encoder exists
-        obs_enc = observations if self.encoder is None else self.encoder(observations)
+        obs_enc = image_features if image_features is not None else (observations if self.encoder is None else self.encoder(observations))
 
         # Get network outputs
         outputs = self.network(obs_enc)

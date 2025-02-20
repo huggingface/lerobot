@@ -21,7 +21,10 @@ import queue
 import shutil
 import time
 from pprint import pformat
-from threading import Lock, Thread
+from multiprocessing import Process, Event
+from torch.multiprocessing import Queue, Lock, set_start_method
+import logging.handlers
+from pathlib import Path
 
 import grpc
 
@@ -35,9 +38,6 @@ from omegaconf import DictConfig, OmegaConf
 from termcolor import colored
 from torch import nn
 from torch.optim.optimizer import Optimizer
-
-# For profiling only
-import datetime
 
 from lerobot.common.datasets.factory import make_dataset
 
@@ -63,10 +63,13 @@ from lerobot.scripts.server.buffer import (
 )
 
 logging.basicConfig(level=logging.INFO)
-
-transition_queue = queue.Queue()
-interaction_message_queue = queue.Queue()
-
+# Initialize these in the main process
+# transition_queue = Queue(maxsize=1_000_000)  # Set a maximum size
+# interaction_message_queue = Queue(maxsize=1_000_000)  # Set a maximum size
+policy_lock = Lock()
+replay_buffer_lock = Lock()
+offline_replay_buffer_lock = Lock()
+# logging_queue = Queue(maxsize=1_000_000)  # Set a maximum size
 
 def handle_resume_logic(cfg: DictConfig, out_dir: str) -> DictConfig:
     if not cfg.resume:
@@ -145,7 +148,8 @@ def initialize_replay_buffer(cfg: DictConfig, logger: Logger, device: str) -> Re
             capacity=cfg.training.online_buffer_capacity,
             device=device,
             state_keys=cfg.policy.input_shapes.keys(),
-            storage_device=device
+            storage_device=device,
+            use_shared_memory=True
         )
 
     dataset = LeRobotDataset(
@@ -156,6 +160,7 @@ def initialize_replay_buffer(cfg: DictConfig, logger: Logger, device: str) -> Re
         capacity=cfg.training.online_buffer_capacity,
         device=device,
         state_keys=cfg.policy.input_shapes.keys(),
+        use_shared_memory=True
     )
 
 
@@ -167,56 +172,79 @@ def start_learner_threads(
     batch_size: int,
     optimizers: dict,
     policy: SACPolicy,
-    policy_lock: Lock,
-    logger: Logger,
+    log_dir: Path,
+    transition_queue: Queue,
+    interaction_message_queue: Queue,
+    logging_queue: Queue,
     resume_optimization_step: int | None = None,
     resume_interaction_step: int | None = None,
 ) -> None:
     actor_ip = cfg.actor_learner_config.actor_ip
     port = cfg.actor_learner_config.port
 
-    server_thread = Thread(
+    # Move policy to shared memory
+    policy.share_memory()
+
+    server_process = Process(
         target=stream_transitions_from_actor,
         args=(
+            transition_queue,
+            interaction_message_queue,
             actor_ip,
             port,
         ),
         daemon=True,
     )
 
-    transition_thread = Thread(
-        target=add_actor_information_and_train,
+    transition_process = Process(
+        target=train_offpolicy_rl,
         daemon=True,
         args=(
             cfg,
-            device,
             replay_buffer,
             offline_replay_buffer,
             batch_size,
             optimizers,
             policy,
-            policy_lock,
-            logger,
+            log_dir,
             resume_optimization_step,
-            resume_interaction_step,
         ),
     )
 
-    param_push_thread = Thread(
+    param_push_process = Process(
         target=learner_push_parameters,
-        args=(policy, policy_lock, actor_ip, port, 15),
+        args=(
+            policy,
+            actor_ip,
+            port,
+            15
+        ),
         daemon=True,
     )
 
-    server_thread.start()
-    transition_thread.start()
-    param_push_thread.start()
-    param_push_thread.join()
-    transition_thread.join()
-    server_thread.join()
+    fill_replay_buffers_process = Process(
+        target=fill_replay_buffers,
+        args=(
+            replay_buffer,
+            offline_replay_buffer,
+            transition_queue,
+            interaction_message_queue,
+            logging_queue,
+            resume_interaction_step,
+            device,
+        )
+    )
+
+    return server_process, transition_process, param_push_process, fill_replay_buffers_process
 
 
-def stream_transitions_from_actor(host="127.0.0.1", port=50051):
+
+def stream_transitions_from_actor(
+    transition_queue: Queue,
+    interaction_message_queue: Queue,
+    host: str,
+    port: int,
+):
     """
     Runs a gRPC client that listens for transition and interaction messages from an Actor service.
 
@@ -238,18 +266,26 @@ def stream_transitions_from_actor(host="127.0.0.1", port=50051):
         options=[("grpc.max_send_message_length", -1), ("grpc.max_receive_message_length", -1)],
     )
     stub = hilserl_pb2_grpc.ActorServiceStub(channel)
-    for response in stub.StreamTransition(hilserl_pb2.Empty()):
-        if response.HasField("transition"):
-            buffer = io.BytesIO(response.transition.transition_bytes)
-            transition = torch.load(buffer)
-            transition_queue.put(transition)
-        if response.HasField("interaction_message"):
-            content = pickle.loads(response.interaction_message.interaction_message_bytes)
-            interaction_message_queue.put(content)
+    while True:
+        try:
+            for response in stub.StreamTransition(hilserl_pb2.Empty()):
+                if response.HasField("transition"):
+                    buffer = io.BytesIO(response.transition.transition_bytes)
+                    transition = torch.load(buffer)
+                    transition_queue.put(transition)
+                if response.HasField("interaction_message"):
+                    content = pickle.loads(response.interaction_message.interaction_message_bytes)
+                    interaction_message_queue.put(content)
+        except grpc.RpcError:
+            time.sleep(2)  # Retry connection
+            continue
 
 
 def learner_push_parameters(
-    policy: nn.Module, policy_lock: Lock, actor_host="127.0.0.1", actor_port=50052, seconds_between_pushes=5
+    policy: nn.Module,
+    actor_host="127.0.0.1",
+    actor_port=50052,
+    seconds_between_pushes=5
 ):
     """
     As a client, connect to the Actor's gRPC server (ActorService)
@@ -287,6 +323,39 @@ def learner_push_parameters(
         time.sleep(seconds_between_pushes)
 
 
+
+def fill_replay_buffers(
+    replay_buffer: ReplayBuffer,
+    offline_replay_buffer: ReplayBuffer,
+    transition_queue: Queue,
+    interaction_message_queue: Queue,
+    logger_queue: Queue,
+    resume_interaction_step: int | None,
+    device: str,
+):
+    while True:
+        while not transition_queue.empty():
+            transition_list = transition_queue.get()  # Increase timeout
+            for transition in transition_list:
+                transition = move_transition_to_device(transition, device=device)
+                with replay_buffer_lock:
+                    replay_buffer.add(**transition)
+
+                if transition.get("complementary_info", {}).get("is_intervention"):
+                    with offline_replay_buffer_lock:
+                        offline_replay_buffer.add(**transition)
+            
+        while not interaction_message_queue.empty():
+            interaction_message = interaction_message_queue.get()
+            # If cfg.resume, shift the interaction step with the last checkpointed step in order to not break the logging
+            if resume_interaction_step is not None:
+                interaction_message["Interaction step"] += resume_interaction_step 
+            logger_queue.put({
+                'info': interaction_message,
+                'step_key': "Interaction step"
+            })
+
+
 def check_nan_in_transition(observations: torch.Tensor, actions: torch.Tensor, next_state: torch.Tensor):
     for k in observations:
         if torch.isnan(observations[k]).any():
@@ -298,18 +367,16 @@ def check_nan_in_transition(observations: torch.Tensor, actions: torch.Tensor, n
         logging.error("actions contains NaN values")
 
 
-def add_actor_information_and_train(
+def train_offpolicy_rl(
     cfg,
-    device: str,
     replay_buffer: ReplayBuffer,
     offline_replay_buffer: ReplayBuffer,
     batch_size: int,
     optimizers: dict[str, torch.optim.Optimizer],
     policy: nn.Module,
-    policy_lock: Lock,
-    logger: Logger,
+    log_dir: Path,
+    logging_queue: Queue,
     resume_optimization_step: int | None = None,
-    resume_interaction_step: int | None = None,
 ):
     """
     Handles data transfer from the actor to the learner, manages training updates,
@@ -337,8 +404,7 @@ def add_actor_information_and_train(
         batch_size (int): The number of transitions to sample per training step.
         optimizers (Dict[str, torch.optim.Optimizer]): A dictionary of optimizers (`"actor"`, `"critic"`, `"temperature"`).
         policy (nn.Module): The reinforcement learning policy with critic, actor, and temperature parameters.
-        policy_lock (Lock): A threading lock to ensure safe policy updates.
-        logger (Logger): Logger instance for tracking training progress.
+        log_dir (Path): The directory to save the log files.
         resume_optimization_step (int | None): In the case of resume training, start from the last optimization step reached.
         resume_interaction_step (int | None): In the case of resume training, shift the interaction step with the last saved step in order to not break logging.
     """
@@ -347,29 +413,16 @@ def add_actor_information_and_train(
     # are divided by 200. So we need to have a single thread that does all the work.
     time.time()
     logging.info("Starting learner thread")
-    interaction_message, transition = None, None
     optimization_step = resume_optimization_step if resume_optimization_step is not None else 0
-    interaction_step_shift = resume_interaction_step if resume_interaction_step is not None else 0
 
+    # Wait for stream process to be ready
     while True:
-        while not transition_queue.empty():
-            transition_list = transition_queue.get()
-            for transition in transition_list:
-                transition = move_transition_to_device(transition, device=device)
-                replay_buffer.add(**transition)
 
-                if transition.get("complementary_info", {}).get("is_intervention"):
-                    offline_replay_buffer.add(**transition)
-
-        while not interaction_message_queue.empty():
-            interaction_message = interaction_message_queue.get()
-            # If cfg.resume, shift the interaction step with the last checkpointed step in order to not break the logging
-            interaction_message["Interaction step"] += interaction_step_shift
-            logger.log_dict(interaction_message, mode="train", custom_step_key="Interaction step")
-            # logging.info(f"Interaction message: {interaction_message}")
-
-        if len(replay_buffer) < cfg.training.online_step_before_learning:
-            continue
+        with replay_buffer_lock:
+            logging.info(f"Size of replay buffer: {len(replay_buffer)}")
+            if len(replay_buffer) < cfg.training.online_step_before_learning:
+                time.sleep(1)
+                continue
 
         # logging.info(f"Size of replay buffer: {len(replay_buffer)}")
         # logging.info(f"Size of offline replay buffer: {len(offline_replay_buffer)}")
@@ -377,10 +430,12 @@ def add_actor_information_and_train(
         image_features, next_image_features = None, None
         time_for_one_optimization_step = time.time()
         for _ in range(cfg.policy.utd_ratio - 1):
-            batch = replay_buffer.sample(batch_size)
+            with replay_buffer_lock:
+                batch = replay_buffer.sample(batch_size)
 
             if cfg.dataset_repo_id is not None:
-                batch_offline = offline_replay_buffer.sample(batch_size)
+                with offline_replay_buffer_lock:
+                    batch_offline = offline_replay_buffer.sample(batch_size)
                 batch = concatenate_batch_transitions(batch, batch_offline)
 
             actions = batch["action"]
@@ -391,19 +446,18 @@ def add_actor_information_and_train(
             check_nan_in_transition(observations=observations, actions=actions, next_state=next_observations)
 
             # Precompute encoder features from the frozen vision encoder if enabled
-            with record_function("encoder_forward"):
-                if policy.config.vision_encoder_name is not None and policy.config.freeze_vision_encoder:
-                    with torch.no_grad():
-                        image_features = (
-                            policy.actor.encoder(observations)
-                            if policy.actor.encoder is not None
-                            else None
-                        )
-                        next_image_features = (
-                            policy.actor.encoder(next_observations)
-                            if policy.actor.encoder is not None
-                            else None
-                        )
+            if policy.config.vision_encoder_name is not None and policy.config.freeze_vision_encoder:
+                with torch.no_grad():
+                    image_features = (
+                        policy.actor.encoder(observations)
+                        if policy.actor.encoder is not None
+                        else None
+                    )
+                    next_image_features = (
+                        policy.actor.encoder(next_observations)
+                        if policy.actor.encoder is not None
+                        else None
+                    )
 
             with policy_lock:
                 loss_critic = policy.compute_loss_critic(
@@ -419,13 +473,15 @@ def add_actor_information_and_train(
                 loss_critic.backward()
                 optimizers["critic"].step()
 
-        batch = replay_buffer.sample(batch_size)
+            with replay_buffer_lock:
+                batch = replay_buffer.sample(batch_size)
 
-        if cfg.dataset_repo_id is not None:
-            batch_offline = offline_replay_buffer.sample(batch_size)
-            batch = concatenate_batch_transitions(
-                left_batch_transitions=batch, right_batch_transition=batch_offline
-            )
+            if cfg.dataset_repo_id is not None:
+                with offline_replay_buffer_lock:
+                    batch_offline = offline_replay_buffer.sample(batch_size)
+                batch = concatenate_batch_transitions(
+                    left_batch_transitions=batch, right_batch_transition=batch_offline
+                )
 
         actions = batch["action"]
         rewards = batch["reward"]
@@ -476,32 +532,25 @@ def add_actor_information_and_train(
 
                     training_infos["loss_actor"] = loss_actor.item()
 
-                    loss_temperature = policy.compute_loss_temperature(observations=observations, image_features=image_features)
-                    optimizers["temperature"].zero_grad()
-                    loss_temperature.backward()
-                    optimizers["temperature"].step()
+                loss_temperature = policy.compute_loss_temperature(observations=observations, image_features=image_features)
+                optimizers["temperature"].zero_grad()
+                loss_temperature.backward()
+                optimizers["temperature"].step()
 
-                    training_infos["loss_temperature"] = loss_temperature.item()
+                training_infos["loss_temperature"] = loss_temperature.item()
 
         policy.update_target_networks()
         if optimization_step % cfg.training.log_freq == 0:
             training_infos["Optimization step"] = optimization_step
-            logger.log_dict(d=training_infos, mode="train", custom_step_key="Optimization step")
-            # logging.info(f"Training infos: {training_infos}")
+            logging_queue.put({
+                'info': training_infos,
+                'step_key': "Optimization step"
+            })
 
         time_for_one_optimization_step = time.time() - time_for_one_optimization_step
         frequency_for_one_optimization_step = 1 / (time_for_one_optimization_step + 1e-9)
 
         logging.info(f"[LEARNER] Optimization frequency loop [Hz]: {frequency_for_one_optimization_step}")
-
-        logger.log_dict(
-            {
-                "Optimization frequency loop [Hz]": frequency_for_one_optimization_step,
-                "Optimization step": optimization_step,
-            },
-            mode="train",
-            custom_step_key="Optimization step",
-        )
 
         optimization_step += 1
         if optimization_step % cfg.training.log_freq == 0:
@@ -515,36 +564,26 @@ def add_actor_information_and_train(
             # needed (choose 6 as a minimum for consistency without being overkill).
             _num_digits = max(6, len(str(cfg.training.online_steps)))
             step_identifier = f"{optimization_step:0{_num_digits}d}"
-            interaction_step = (
-                interaction_message["Interaction step"] if interaction_message is not None else 0
-            )
-            logger.save_checkpoint(
-                optimization_step,
-                policy,
-                optimizers,
-                scheduler=None,
-                identifier=step_identifier,
-                interaction_step=interaction_step,
-            )
+            logging_queue.put({
+                'checkpoint': {
+                    'step': optimization_step,
+                    'identifier': step_identifier,
+                }
+            })
 
             # TODO : temporarly save replay buffer here, remove later when on the robot
             # We want to control this with the keyboard inputs
-            dataset_dir = logger.log_dir / "dataset"
+            dataset_dir = log_dir / "dataset"
             if dataset_dir.exists() and dataset_dir.is_dir():
                 shutil.rmtree(
                     dataset_dir,
                 )
-            replay_buffer.to_lerobot_dataset(
-                cfg.dataset_repo_id, fps=cfg.fps, root=logger.log_dir / "dataset"
-            )
+            with replay_buffer_lock:
+                replay_buffer.to_lerobot_dataset(
+                    cfg.dataset_repo_id, fps=cfg.fps, root=dataset_dir
+                )
 
             logging.info("Resume training")
-
-        profiler.step()
-        
-        if optimization_step >= 50:  # Profile for 500 steps
-            profiler.stop()
-            break
 
 
 def make_optimizers_and_scheduler(cfg, policy: nn.Module):
@@ -592,6 +631,10 @@ def make_optimizers_and_scheduler(cfg, policy: nn.Module):
 
 
 def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = None):
+
+    # Initialize multiprocessing with spawn method for better compatibility
+    set_start_method('spawn', force=True)
+
     if out_dir is None:
         raise NotImplementedError()
     if job_name is None:
@@ -600,6 +643,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     init_logging()
     logging.info(pformat(OmegaConf.to_container(cfg)))
 
+    # Create our logger instance in the main process
     logger = Logger(cfg, out_dir, wandb_job_name=job_name)
     cfg = handle_resume_logic(cfg, out_dir)
 
@@ -617,7 +661,6 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     ### on both sides, the learner sends the updated parameters every n steps to update the actor's parameters
     # TODO: At some point we should just need make sac policy
 
-    policy_lock = Lock()
     policy: SACPolicy = make_policy(
         hydra_cfg=cfg,
         # dataset_stats=offline_dataset.meta.stats if not cfg.resume else None,
@@ -649,10 +692,15 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             state_keys=cfg.policy.input_shapes.keys(),
             action_mask=active_action_dims,
             action_delta=cfg.env.wrapper.delta_action,
+            use_shared_memory=True
         )
-        batch_size: int = batch_size // 2  # We will sample from both replay buffer
+        batch_size = batch_size // 2
 
-    start_learner_threads(
+    transition_queue = Queue(maxsize=1_000_000)  # Set a maximum size
+    interaction_message_queue = Queue(maxsize=1_000_000)  # Set a maximum size
+    logging_queue = Queue(maxsize=1_000_000)  # Set a maximum size
+
+    processes = start_learner_threads(
         cfg,
         device,
         replay_buffer,
@@ -660,11 +708,50 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         batch_size,
         optimizers,
         policy,
-        policy_lock,
-        logger,
+        logger.log_dir,
+        transition_queue,
+        interaction_message_queue,
+        logging_queue,
         resume_optimization_step,
         resume_interaction_step,
     )
+
+
+    # Consume log messages from the logging_queue in the main process
+    for p in processes:
+        p.start()
+
+    latest_interaction_step = resume_interaction_step if resume_interaction_step is not None else 0
+    while True:
+        try:
+            message = logging_queue.get(timeout=1)
+            if 'checkpoint' in message:
+                ckpt = message['checkpoint']
+                logger.save_checkpoint(
+                    ckpt['step'],
+                    policy,
+                    optimizers,
+                    scheduler=None,
+                    identifier=ckpt['identifier'],
+                    interaction_step=latest_interaction_step,
+                )
+            else:
+                if 'Interaction step' in message['info']:
+                    latest_interaction_step = message['info']['Interaction step']
+                logger.log_dict(
+                    message['info'],
+                    mode="train",
+                    custom_step_key=message['step_key']
+                )
+        except queue.Empty:
+            continue
+        except KeyboardInterrupt:
+            # Cleanup any remaining processes (if you want to terminate them here)
+            for p in processes:
+                if p.is_alive():
+                    p.terminate()
+                    p.join()
+            break
 
 
 @hydra.main(version_base="1.2", config_name="default", config_path="../../configs")
