@@ -25,6 +25,7 @@ service LearnerService {
   rpc SendInteractionMessage(InteractionMessage) returns (Empty);
   rpc StreamParameters(Empty) returns (stream Parameters);
   rpc ReceiveTransitions(stream ActorInformation) returns (Empty);
+  rpc Ready(Empty) returns (Empty);
 }
 
 message ActorInformation {

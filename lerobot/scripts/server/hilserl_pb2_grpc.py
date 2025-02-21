@@ -51,6 +51,11 @@ class LearnerServiceStub(object):
                 request_serializer=hilserl__pb2.ActorInformation.SerializeToString,
                 response_deserializer=hilserl__pb2.Empty.FromString,
                 _registered_method=True)
+        self.Ready = channel.unary_unary(
+                '/hil_serl.LearnerService/Ready',
+                request_serializer=hilserl__pb2.Empty.SerializeToString,
+                response_deserializer=hilserl__pb2.Empty.FromString,
+                _registered_method=True)
 
 
 class LearnerServiceServicer(object):
@@ -77,6 +82,12 @@ class LearnerServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def Ready(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_LearnerServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -93,6 +104,11 @@ def add_LearnerServiceServicer_to_server(servicer, server):
             'ReceiveTransitions': grpc.stream_unary_rpc_method_handler(
                     servicer.ReceiveTransitions,
                     request_deserializer=hilserl__pb2.ActorInformation.FromString,
+                    response_serializer=hilserl__pb2.Empty.SerializeToString,
+            ),
+            'Ready': grpc.unary_unary_rpc_method_handler(
+                    servicer.Ready,
+                    request_deserializer=hilserl__pb2.Empty.FromString,
                     response_serializer=hilserl__pb2.Empty.SerializeToString,
             ),
     }
@@ -178,6 +194,33 @@ class LearnerService(object):
             target,
             '/hil_serl.LearnerService/ReceiveTransitions',
             hilserl__pb2.ActorInformation.SerializeToString,
+            hilserl__pb2.Empty.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Ready(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/hil_serl.LearnerService/Ready',
+            hilserl__pb2.Empty.SerializeToString,
             hilserl__pb2.Empty.FromString,
             options,
             channel_credentials,

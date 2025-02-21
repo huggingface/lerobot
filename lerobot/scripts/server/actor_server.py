@@ -459,12 +459,15 @@ def log_policy_frequency_issue(
         )
 
 
-def establish_learner_connection(channel, attempts=30):
+def establish_learner_connection(stub, attempts=30):
     for _ in range(attempts):
         # Force a connection attempt and check state
-        if channel.get_state(try_to_connect=True) == grpc.ChannelConnectivity.READY:
-            return True
-        time.sleep(2)
+        try:
+            if stub.Ready(hilserl_pb2.Empty()) == hilserl_pb2.Empty():
+                return True
+        except grpc.RpcError as e:
+            logging.error(f"[ACTOR] Waiting for Learner to be ready... {e}")
+            time.sleep(2)
     return False
 
 
@@ -493,7 +496,7 @@ def actor_cli(cfg: dict):
     )
 
     logging.info("[ACTOR] Establishing connection with Learner")
-    if not establish_learner_connection(grpc_channel):
+    if not establish_learner_connection(learner_client):
         logging.error("[ACTOR] Failed to establish connection with Learner")
         return
 

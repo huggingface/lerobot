@@ -103,3 +103,6 @@ class LearnerService(hilserl_pb2_grpc.LearnerServiceServicer):
                     request.interaction_message.interaction_message_bytes
                 )
                 self.interaction_message_queue.put(content)
+
+    def Ready(self, request, context):
+        return hilserl_pb2.Empty()
