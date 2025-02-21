@@ -217,7 +217,7 @@ def learner_service_client(
             {
                 "name": [{}],  # Applies to ALL methods in ALL services
                 "retryPolicy": {
-                    "maxAttempts": 5,  # Max retries (total attempts = 5)
+                    "maxAttempts": 7,  # Max retries (total attempts = 5)
                     "initialBackoff": "0.1s",  # First retry after 0.1s
                     "maxBackoff": "2s",  # Max wait time between retries
                     "backoffMultiplier": 2,  # Exponential backoff factor

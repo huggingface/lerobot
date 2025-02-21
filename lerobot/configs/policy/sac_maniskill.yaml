@@ -31,7 +31,7 @@ training:
   online_env_seed: 10000
   online_buffer_capacity: 1000000
   online_buffer_seed_size: 0
-  online_step_before_learning: 5000
+  online_step_before_learning: 500
   do_online_rollout_async: false
   policy_update_freq: 1
 
@@ -52,19 +52,16 @@ policy:
   n_action_steps: 1
 
   shared_encoder: true
-  vision_encoder_name: null
-  # vision_encoder_name: "helper2424/resnet10"
-  # freeze_vision_encoder: true
-  freeze_vision_encoder: false
+  vision_encoder_name: "helper2424/resnet10"
+  freeze_vision_encoder: true
   input_shapes:
     # # TODO(rcadene, alexander-soare): add variables for height and width from the dataset/env?
     observation.state: ["${env.state_dim}"]
-    observation.image: [3, 64, 64]
-    observation.image.2: [3, 64, 64]
+    observation.image: [3, 128, 128]
   output_shapes:
     action: [7]
   
-  camera_number: 2
+  camera_number: 1
 
   # Normalization / Unnormalization
   input_normalization_modes: null
