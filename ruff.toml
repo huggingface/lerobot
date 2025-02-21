@@ -1,0 +1,11 @@
+ # Exclude files/directories from Ruff
+exclude = [
+    "*_pb2.py",           # Ignore all protobuf generated files
+    "*_pb2_grpc.py",      # Ignore all gRPC generated files
+    "lerobot/scripts/server/hilserl_pb2.py",  # Ignore specific file
+    ".git",
+    ".env",
+    ".venv",
+    "build",
+    "dist"
+]
