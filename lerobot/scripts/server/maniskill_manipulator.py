@@ -41,7 +41,6 @@ def preprocess_maniskill_observation(observations: dict[str, np.ndarray]) -> dic
     state = torch.cat([q_pos, q_vel, tcp_pos], dim=-1)
 
     return_observations["observation.image"] = img
-    return_observations["observation.image.2"] = img
     return_observations["observation.state"] = state
     return return_observations
 
