@@ -21,7 +21,7 @@ def fix_dataset(repo_id: str) -> str:
 
     dataset_info = get_dataset_config_info(repo_id, "default")
     with SuppressWarnings():
-        lerobot_metadata = LeRobotDatasetMetadata(repo_id, revision=V20)
+        lerobot_metadata = LeRobotDatasetMetadata(repo_id, revision=V20, force_cache_sync=True)
 
     meta_features = {key for key, ft in lerobot_metadata.features.items() if ft["dtype"] != "video"}
     parquet_features = set(dataset_info.features)
