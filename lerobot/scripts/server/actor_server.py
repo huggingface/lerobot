@@ -16,13 +16,11 @@
 import io
 import logging
 import pickle
-import queue
 from statistics import mean, quantiles
 import signal
 from functools import lru_cache
 
 # from lerobot.scripts.eval import eval_policy
-from threading import Thread
 
 import grpc
 import hydra
@@ -53,12 +51,10 @@ from lerobot.scripts.server.buffer import (
 from lerobot.scripts.server.gym_manipulator import get_classifier, make_robot_env
 from lerobot.scripts.server import learner_service
 
-from threading import Event
+from multiprocessing import Process, Queue, Event
+from queue import Empty
 
 logging.basicConfig(level=logging.INFO)
-
-parameters_queue = queue.Queue(maxsize=1)
-message_queue = queue.Queue(maxsize=1_000_000)
 
 ACTOR_SHUTDOWN_TIMEOUT = 30
 
@@ -83,7 +79,7 @@ class ActorInformation:
 def receive_policy(
     learner_client: hilserl_pb2_grpc.LearnerServiceStub,
     shutdown_event: Event,
-    parameters_queue: queue.Queue,
+    parameters_queue: Queue,
 ):
     logging.info("[ACTOR] Start receiving parameters from the Learner")
     bytes_buffer = io.BytesIO()
@@ -129,11 +125,11 @@ def receive_policy(
     return hilserl_pb2.Empty()
 
 
-def transitions_stream(shutdown_event: Event, message_queue: queue.Queue):
+def transitions_stream(shutdown_event: Event, message_queue: Queue):
     while not shutdown_event.is_set():
         try:
             message = message_queue.get(block=True, timeout=5)
-        except queue.Empty:
+        except Empty:
             logging.debug("[ACTOR] Transition queue is empty")
             continue
 
@@ -171,7 +167,7 @@ def transitions_stream(shutdown_event: Event, message_queue: queue.Queue):
 def send_transitions(
     learner_client: hilserl_pb2_grpc.LearnerServiceStub,
     shutdown_event: Event,
-    message_queue: queue.Queue,
+    message_queue: Queue,
 ):
     """
     Streams data from the actor to the learner.
@@ -247,7 +243,7 @@ def learner_service_client(
     return stub, channel
 
 
-def update_policy_parameters(policy: SACPolicy, parameters_queue: queue.Queue, device):
+def update_policy_parameters(policy: SACPolicy, parameters_queue: Queue, device):
     if not parameters_queue.empty():
         logging.info("[ACTOR] Load new parameters from Learner.")
         state_dict = parameters_queue.get()
@@ -256,7 +252,12 @@ def update_policy_parameters(policy: SACPolicy, parameters_queue: queue.Queue, d
 
 
 def act_with_policy(
-    cfg: DictConfig, robot: Robot, reward_classifier: nn.Module, shutdown_event: Event
+    cfg: DictConfig,
+    robot: Robot,
+    reward_classifier: nn.Module,
+    shutdown_event: Event,
+    parameters_queue: Queue,
+    message_queue: Queue,
 ):
     """
     Executes policy interaction within the environment.
@@ -473,6 +474,9 @@ def actor_cli(cfg: dict):
 
     shutdown_event = Event()
 
+    parameters_queue = Queue(maxsize=1)
+    message_queue = Queue(maxsize=1_000_000)
+
     # Define signal handler
     def signal_handler(signum, frame):
         logging.info("Shutdown signal received. Cleaning up...")
@@ -495,17 +499,18 @@ def actor_cli(cfg: dict):
 
     logging.info("[ACTOR] Connection with Learner established")
 
-    receive_policy_thread = Thread(
+    receive_policy_process = Process(
         target=receive_policy,
         args=(learner_client, shutdown_event, parameters_queue),
-        daemon=True,
     )
 
-    transitions_thread = Thread(
+    transitions_process = Process(
         target=send_transitions,
         args=(learner_client, shutdown_event, message_queue),
-        daemon=True,
     )
+
+    transitions_process.start()
+    receive_policy_process.start()
 
     # HACK: FOR MANISKILL we do not have a reward classifier
     # TODO: Remove this once we merge into main
@@ -519,26 +524,17 @@ def actor_cli(cfg: dict):
             config_path=cfg.env.reward_classifier.config_path,
         )
 
-    policy_thread = Thread(
-        target=act_with_policy,
-        daemon=True,
-        args=(cfg, robot, reward_classifier, shutdown_event),
+    act_with_policy(
+        cfg, robot, reward_classifier, shutdown_event, parameters_queue, message_queue
     )
+    logging.info("[ACTOR] Policy thread joined")
 
-    transitions_thread.start()
-    policy_thread.start()
-    receive_policy_thread.start()
-
-    shutdown_event.wait()
-    logging.info("[ACTOR] Shutdown event received")
     grpc_channel.close()
 
-    policy_thread.join()
-    logging.info("[ACTOR] Policy thread joined")
-    transitions_thread.join()
-    logging.info("[ACTOR] Transitions thread joined")
-    receive_policy_thread.join()
-    logging.info("[ACTOR] Receive policy thread joined")
+    transitions_process.join()
+    logging.info("[ACTOR] Transitions process joined")
+    receive_policy_process.join()
+    logging.info("[ACTOR] Receive policy process joined")
 
 
 if __name__ == "__main__":
