@@ -29,7 +29,7 @@ class PortOpenXDataset(PipelineStep):
 
         create_lerobot_dataset(
             self.raw_dir,
-            f"{self.repo_id}_world_{world_size}_rank_{rank}",
+            f"{self.repo_id}_2025-02-22_00-12-00_world_{world_size}_rank_{rank}",
             image_writer_process=self.image_writer_process,
             image_writer_threads=self.image_writer_threads,
             push_to_hub=False,
@@ -52,7 +52,7 @@ def main(slurm=True):
     port_job_name = "port_openx_droid"
     logs_dir = Path("/fsx/remi_cadene/logs")
     # port_log_dir = logs_dir / f"{now:%Y-%m-%d}_{now:%H-%M-%S}_{port_job_name}"
-    port_log_dir = Path("/fsx/remi_cadene/logs/2025-02-20_23-24-12_port_openx_droid")
+    port_log_dir = Path("/fsx/remi_cadene/logs/2025-02-22_00-12-00_port_openx_droid")
 
     if slurm:
         executor_class = SlurmPipelineExecutor
