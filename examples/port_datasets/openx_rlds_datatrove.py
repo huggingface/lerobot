@@ -58,8 +58,8 @@ def main(slurm=True):
         dist_extra_kwargs = {
             "job_name": port_job_name,
             "tasks": 10000,
-            "workers": 24,
-            "time": "00:30:00",
+            "workers": 8 * 16,
+            "time": "08:00:00",
             "partition": "hopper-cpu",
             "cpus_per_task": 12,
             "mem_per_cpu_gb": 4,
