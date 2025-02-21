@@ -41,11 +41,16 @@ class SACConfig:
     )
     input_normalization_params: dict[str, dict[str, list[float]]] = field(
         default_factory=lambda: {
-            "observation.image": {"mean": [[0.485, 0.456, 0.406]], "std": [[0.229, 0.224, 0.225]]},
+            "observation.image": {
+                "mean": [[0.485, 0.456, 0.406]],
+                "std": [[0.229, 0.224, 0.225]],
+            },
             "observation.state": {"min": [-1, -1, -1, -1], "max": [1, 1, 1, 1]},
         }
     )
-    output_normalization_modes: dict[str, str] = field(default_factory=lambda: {"action": "min_max"})
+    output_normalization_modes: dict[str, str] = field(
+        default_factory=lambda: {"action": "min_max"}
+    )
     output_normalization_params: dict[str, dict[str, list[float]]] = field(
         default_factory=lambda: {
             "action": {"min": [-1, -1], "max": [1, 1]},
@@ -54,9 +59,8 @@ class SACConfig:
     # TODO: Move it outside of the config
     actor_learner_config: dict[str, str | int] = field(
         default_factory=lambda: {
-            "actor_ip": "127.0.0.1",
-            "port": 50051,
-            "learner_ip": "127.0.0.1",
+            "learner_host": "127.0.0.1",
+            "learner_port": 50051,
         }
     )
     camera_number: int = 1

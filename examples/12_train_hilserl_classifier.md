@@ -81,3 +81,14 @@ You can also log sample predictions during evaluation. Each logged sample will i
 - The **classifier's "confidence" (logits/probability)**.
 
 These logs can be useful for diagnosing and debugging performance issues.
+
+
+#### Generate protobuf files
+
+```bash
+python -m grpc_tools.protoc \
+    -I lerobot/scripts/server \
+    --python_out=lerobot/scripts/server \
+    --grpc_python_out=lerobot/scripts/server \
+    lerobot/scripts/server/hilserl.proto
+```
