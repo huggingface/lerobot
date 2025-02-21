@@ -41,17 +41,17 @@ class LearnerService(hilserl_pb2_grpc.LearnerServiceServicer):
     def _get_policy_state(self):
         with self.policy_lock:
             params_dict = self.policy.actor.state_dict()
-            if self.policy.config.vision_encoder_name is not None:
-                if self.policy.config.freeze_vision_encoder:
-                    params_dict: dict[str, torch.Tensor] = {
-                        k: v
-                        for k, v in params_dict.items()
-                        if not k.startswith("encoder.")
-                    }
-                else:
-                    raise NotImplementedError(
-                        "Vision encoder is not frozen, we need to send the full model over the network which requires chunking the model."
-                    )
+            # if self.policy.config.vision_encoder_name is not None:
+            #     if self.policy.config.freeze_vision_encoder:
+            #         params_dict: dict[str, torch.Tensor] = {
+            #             k: v
+            #             for k, v in params_dict.items()
+            #             if not k.startswith("encoder.")
+            #         }
+            #     else:
+            #         raise NotImplementedError(
+            #             "Vision encoder is not frozen, we need to send the full model over the network which requires chunking the model."
+            #         )
 
         return move_state_dict_to_device(params_dict, device="cpu")
 
