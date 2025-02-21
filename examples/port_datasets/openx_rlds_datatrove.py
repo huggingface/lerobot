@@ -1,5 +1,4 @@
 import datetime as dt
-import shutil
 from pathlib import Path
 
 from datatrove.executor import LocalPipelineExecutor
@@ -45,24 +44,27 @@ class AggregateDatasets(PipelineStep):
 
 
 def main(slurm=True):
-    for dir_ in Path("/fsx/remi_cadene/.cache/huggingface/lerobot/cadene").glob("droid_world*"):
-        shutil.rmtree(dir_)
+    # breakpoint()
+    # for dir_ in Path("/fsx/remi_cadene/.cache/huggingface/lerobot/cadene").glob("droid_world*"):
+    #     shutil.rmtree(dir_)
 
     now = dt.datetime.now()
     port_job_name = "port_openx_droid"
     logs_dir = Path("/fsx/remi_cadene/logs")
-    port_log_dir = logs_dir / f"{now:%Y-%m-%d}_{now:%H-%M-%S}_{port_job_name}"
+    # port_log_dir = logs_dir / f"{now:%Y-%m-%d}_{now:%H-%M-%S}_{port_job_name}"
+    port_log_dir = Path("/fsx/remi_cadene/logs/2025-02-20_23-24-12_port_openx_droid")
 
     if slurm:
         executor_class = SlurmPipelineExecutor
         dist_extra_kwargs = {
             "job_name": port_job_name,
             "tasks": 10000,
-            "workers": 8 * 16,
+            "workers": 20,  # 8 * 16,
             "time": "08:00:00",
             "partition": "hopper-cpu",
-            "cpus_per_task": 12,
-            "mem_per_cpu_gb": 4,
+            "cpus_per_task": 24,
+            "mem_per_cpu_gb": 2,
+            "max_array_launch_parallel": True,
         }
     else:
         executor_class = LocalPipelineExecutor

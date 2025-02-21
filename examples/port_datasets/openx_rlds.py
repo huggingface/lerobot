@@ -142,8 +142,6 @@ def save_as_lerobot_dataset(
     print(f"Total number of episodes {total_num_episodes}")
 
     if num_shards is not None:
-        num_shards = 10000
-        shard_index = 9999
         sharded_dataset = raw_dataset.shard(num_shards=num_shards, index=shard_index)
         sharded_num_episodes = sharded_dataset.cardinality().numpy().item()
         print(f"{sharded_num_episodes=}")
@@ -152,6 +150,9 @@ def save_as_lerobot_dataset(
     else:
         num_episodes = total_num_episodes
         iter_ = iter(raw_dataset)
+
+    if num_episodes <= 0:
+        raise ValueError(f"Number of episodes is {num_episodes}, but needs to be positive.")
 
     for episode_index in range(num_episodes):
         print(f"{episode_index} / {num_episodes}")
