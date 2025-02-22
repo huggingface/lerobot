@@ -229,11 +229,13 @@ def _mock_download_raw(raw_dir, repo_id):
         raise ValueError(repo_id)
 
 
+@pytest.mark.skip("push_dataset_to_hub is deprecated")
 def test_push_dataset_to_hub_invalid_repo_id(tmpdir):
     with pytest.raises(ValueError):
         push_dataset_to_hub(Path(tmpdir), "raw_format", "invalid_repo_id")
 
 
+@pytest.mark.skip("push_dataset_to_hub is deprecated")
 def test_push_dataset_to_hub_out_dir_force_override_false(tmpdir):
     tmpdir = Path(tmpdir)
     out_dir = tmpdir / "out"
@@ -250,7 +252,7 @@ def test_push_dataset_to_hub_out_dir_force_override_false(tmpdir):
         )
 
 
-@pytest.mark.skip("TODO after v2 migration / removing hydra")
+@pytest.mark.skip("push_dataset_to_hub is deprecated")
 @pytest.mark.parametrize(
     "required_packages, raw_format, repo_id, make_test_data",
     [
@@ -318,6 +320,7 @@ def test_push_dataset_to_hub_format(required_packages, tmpdir, raw_format, repo_
             assert torch.equal(test_dataset.episode_data_index[k], lerobot_dataset.episode_data_index[k][:1])
 
 
+@pytest.mark.skip("push_dataset_to_hub is deprecated")
 @pytest.mark.parametrize(
     "raw_format, repo_id",
     [
@@ -328,9 +331,6 @@ def test_push_dataset_to_hub_format(required_packages, tmpdir, raw_format, repo_
         ("umi_zarr", "lerobot/umi_cup_in_the_wild"),
         ("dora_parquet", "cadene/wrist_gripper"),
     ],
-)
-@pytest.mark.skip(
-    "Not compatible with our CI since it downloads raw datasets. Run with `python -m pytest --run-skipped tests/test_push_dataset_to_hub.py::test_push_dataset_to_hub_pusht_backward_compatibility`"
 )
 def test_push_dataset_to_hub_pusht_backward_compatibility(tmpdir, raw_format, repo_id):
     _, dataset_id = repo_id.split("/")

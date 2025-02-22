@@ -90,10 +90,11 @@ from lerobot.common.robot_devices.control_utils import (
     sanity_check_dataset_robot_compatibility,
     stop_recording,
 )
-from lerobot.common.robot_devices.robots.factory import make_robot
-from lerobot.common.robot_devices.robots.utils import Robot
+from lerobot.common.robot_devices.robots.utils import Robot, make_robot
 from lerobot.common.robot_devices.utils import busy_wait
 from lerobot.common.utils.utils import init_hydra_config, init_logging, log_say
+
+raise NotImplementedError("This script is currently deactivated")
 
 DEFAULT_FEATURES = {
     "next.reward": {
@@ -227,7 +228,7 @@ def record(
             shape = env.observation_space[key].shape
             if not key.startswith("observation.image."):
                 key = "observation.image." + key
-            features[key] = {"dtype": "video", "names": ["channel", "height", "width"], "shape": shape}
+            features[key] = {"dtype": "video", "names": ["channels", "height", "width"], "shape": shape}
 
         for key, obs_key in state_keys_dict.items():
             features[key] = {
@@ -504,7 +505,7 @@ if __name__ == "__main__":
 
     # make gym env
     env_cfg = init_hydra_config(env_config_path)
-    importlib.import_module(f"gym_{env_cfg.env.name}")
+    importlib.import_module(f"gym_{env_cfg.env.type}")
 
     def env_constructor():
         return gym.make(env_cfg.env.handle, disable_env_checker=True, **env_cfg.env.gym)
@@ -515,6 +516,7 @@ if __name__ == "__main__":
     if control_mode in ["teleoperate", "record"]:
         # make robot
         robot_overrides = ["~cameras", "~follower_arms"]
+        # TODO(rcadene): remove
         robot_cfg = init_hydra_config(robot_path, robot_overrides)
         robot = make_robot(robot_cfg)
         robot.connect()

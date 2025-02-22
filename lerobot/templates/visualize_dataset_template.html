@@ -107,8 +107,8 @@
             <span class="truncate">filter videos</span>
             <div class="transition-transform" :class="{ 'rotate-180': isVideosDropdownOpen }">🔽</div>
             </div>
-    
-            <div x-show="isVideosDropdownOpen" 
+
+            <div x-show="isVideosDropdownOpen"
                 class="absolute mt-1 border border-slate-500 rounded shadow-lg z-10">
             <div>
                 <template x-for="option in videosKeys" :key="option">

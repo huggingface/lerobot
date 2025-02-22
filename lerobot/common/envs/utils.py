@@ -18,8 +18,13 @@ import numpy as np
 import torch
 from torch import Tensor
 
+from lerobot.common.envs.configs import EnvConfig
+from lerobot.common.utils.utils import get_channel_first_image_shape
+from lerobot.configs.types import FeatureType, PolicyFeature
+
 
 def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Tensor]:
+    # TODO(aliberts, rcadene): refactor this to use features from the environment (no hardcoding)
     """Convert environment observation to LeRobot format observation.
     Args:
         observation: Dictionary of observation batches from a Gym vector environment.
@@ -35,6 +40,7 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
             imgs = {"observation.image": observations["pixels"]}
 
         for imgkey, img in imgs.items():
+            # TODO(aliberts, rcadene): use transforms.ToTensor()?
             img = torch.from_numpy(img)
 
             # sanity check that images are channel last
@@ -60,3 +66,23 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
     # requirement for "agent_pos"
     return_observations["observation.state"] = torch.from_numpy(observations["agent_pos"]).float()
     return return_observations
+
+
+def env_to_policy_features(env_cfg: EnvConfig) -> dict[str, PolicyFeature]:
+    # TODO(aliberts, rcadene): remove this hardcoding of keys and just use the nested keys as is
+    # (need to also refactor preprocess_observation and externalize normalization from policies)
+    policy_features = {}
+    for key, ft in env_cfg.features.items():
+        if ft.type is FeatureType.VISUAL:
+            if len(ft.shape) != 3:
+                raise ValueError(f"Number of dimensions of {key} != 3 (shape={ft.shape})")
+
+            shape = get_channel_first_image_shape(ft.shape)
+            feature = PolicyFeature(type=ft.type, shape=shape)
+        else:
+            feature = ft
+
+        policy_key = env_cfg.features_map[key]
+        policy_features[policy_key] = feature
+
+    return policy_features

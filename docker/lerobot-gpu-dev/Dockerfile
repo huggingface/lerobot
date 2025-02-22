@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     sed gawk grep curl wget zip unzip \
     tcpdump sysstat screen tmux \
     libglib2.0-0 libgl1-mesa-glx libegl1-mesa \
-    speech-dispatcher \
+    speech-dispatcher portaudio19-dev libgeos-dev \
     python${PYTHON_VERSION} python${PYTHON_VERSION}-venv \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
