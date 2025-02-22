@@ -21,8 +21,14 @@ class PortOpenXDataset(PipelineStep):
         self.image_writer_threads = image_writer_threads
 
     def run(self, data=None, rank: int = 0, world_size: int = 1):
+        from datasets.utils.tqdm import disable_progress_bars
+
         from examples.port_datasets.openx_rlds import create_lerobot_dataset
         from examples.port_datasets.openx_utils.test import display_slurm_info, display_system_info
+        from lerobot.common.utils.utils import init_logging
+
+        init_logging()
+        disable_progress_bars()
 
         display_system_info()
         display_slurm_info()
@@ -48,18 +54,22 @@ def main(slurm=True):
     # for dir_ in Path("/fsx/remi_cadene/.cache/huggingface/lerobot/cadene").glob("droid_world*"):
     #     shutil.rmtree(dir_)
 
-    now = dt.datetime.now()
     port_job_name = "port_openx_droid"
     logs_dir = Path("/fsx/remi_cadene/logs")
-    # port_log_dir = logs_dir / f"{now:%Y-%m-%d}_{now:%H-%M-%S}_{port_job_name}"
-    port_log_dir = Path("/fsx/remi_cadene/logs/2025-02-22_00-12-00_port_openx_droid")
+
+    now = dt.datetime.now()
+    datetime = f"{now:%Y-%m-%d}_{now:%H-%M-%S}"
+    # datetime = "2025-02-22_11-17-00"
+
+    port_log_dir = logs_dir / f"{datetime}_{port_job_name}"
 
     if slurm:
         executor_class = SlurmPipelineExecutor
         dist_extra_kwargs = {
             "job_name": port_job_name,
-            "tasks": 10000,
-            "workers": 20,  # 8 * 16,
+            "tasks": 2048,
+            # "workers": 20,  # 8 * 16,
+            "workers": 1,  # 8 * 16,
             "time": "08:00:00",
             "partition": "hopper-cpu",
             "cpus_per_task": 24,
@@ -75,9 +85,7 @@ def main(slurm=True):
 
     port_executor = executor_class(
         pipeline=[
-            PortOpenXDataset(
-                raw_dir=Path("/fsx/mustafa_shukor/droid"), repo_id="cadene/droid_2025-02-22_00-12-00"
-            ),
+            PortOpenXDataset(raw_dir=Path("/fsx/mustafa_shukor/droid"), repo_id=f"cadene/droid_{datetime}"),
         ],
         logging_dir=str(port_log_dir),
         **dist_extra_kwargs,
