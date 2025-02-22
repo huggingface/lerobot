@@ -35,6 +35,7 @@ from PIL import Image as PILImage
 from torchvision import transforms
 
 from lerobot.common.robot_devices.robots.utils import Robot
+from lerobot.configs.types import DictLike, FeatureType, PolicyFeature
 
 DEFAULT_CHUNK_SIZE = 1000  # Max number of episodes per chunk
 
@@ -96,6 +97,18 @@ def unflatten_dict(d: dict, sep: str = "/") -> dict:
             d = d[part]
         d[parts[-1]] = value
     return outdict
+
+
+def get_nested_item(obj: DictLike, flattened_key: str, sep: str = "/") -> Any:
+    split_keys = flattened_key.split(sep)
+    getter = obj[split_keys[0]]
+    if len(split_keys) == 1:
+        return getter
+
+    for key in split_keys[1:]:
+        getter = getter[key]
+
+    return getter
 
 
 def serialize_dict(stats: dict[str, torch.Tensor | np.ndarray | dict]) -> dict:
@@ -289,6 +302,37 @@ def get_features_from_robot(robot: Robot, use_videos: bool = True) -> dict:
     return {**robot.motor_features, **camera_ft, **DEFAULT_FEATURES}
 
 
+def dataset_to_policy_features(features: dict[str, dict]) -> dict[str, PolicyFeature]:
+    # TODO(aliberts): Implement "type" in dataset features and simplify this
+    policy_features = {}
+    for key, ft in features.items():
+        shape = ft["shape"]
+        if ft["dtype"] in ["image", "video"]:
+            type = FeatureType.VISUAL
+            if len(shape) != 3:
+                raise ValueError(f"Number of dimensions of {key} != 3 (shape={shape})")
+
+            names = ft["names"]
+            # Backward compatibility for "channel" which is an error introduced in LeRobotDataset v2.0 for ported datasets.
+            if names[2] in ["channel", "channels"]:  # (h, w, c) -> (c, h, w)
+                shape = (shape[2], shape[0], shape[1])
+        elif key == "observation.environment_state":
+            type = FeatureType.ENV
+        elif key.startswith("observation"):
+            type = FeatureType.STATE
+        elif key == "action":
+            type = FeatureType.ACTION
+        else:
+            continue
+
+        policy_features[key] = PolicyFeature(
+            type=type,
+            shape=shape,
+        )
+
+    return policy_features
+
+
 def create_empty_dataset_info(
     codebase_version: str,
     fps: int,
@@ -436,7 +480,7 @@ def check_delta_timestamps(
 def get_delta_indices(delta_timestamps: dict[str, list[float]], fps: int) -> dict[str, list[int]]:
     delta_indices = {}
     for key, delta_ts in delta_timestamps.items():
-        delta_indices[key] = (torch.tensor(delta_ts) * fps).long().tolist()
+        delta_indices[key] = [round(d * fps) for d in delta_ts]
 
     return delta_indices
 

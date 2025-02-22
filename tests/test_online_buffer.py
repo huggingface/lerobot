@@ -132,9 +132,9 @@ def test_fifo():
     buffer.add_data(new_data)
     n_more_episodes = 2
     # Developer sanity check (in case someone changes the global `buffer_capacity`).
-    assert (
-        n_episodes + n_more_episodes
-    ) * n_frames_per_episode > buffer_capacity, "Something went wrong with the test code."
+    assert (n_episodes + n_more_episodes) * n_frames_per_episode > buffer_capacity, (
+        "Something went wrong with the test code."
+    )
     more_new_data = make_spoof_data_frames(n_more_episodes, n_frames_per_episode)
     buffer.add_data(more_new_data)
     assert len(buffer) == buffer_capacity, "The buffer should be full."
@@ -203,9 +203,9 @@ def test_delta_timestamps_outside_tolerance_outside_episode_range():
     item = buffer[2]
     data, is_pad = item["index"], item["index_is_pad"]
     assert torch.equal(data, torch.tensor([0, 0, 2, 4, 4])), "Data does not match expected values"
-    assert torch.equal(
-        is_pad, torch.tensor([True, False, False, True, True])
-    ), "Padding does not match expected values"
+    assert torch.equal(is_pad, torch.tensor([True, False, False, True, True])), (
+        "Padding does not match expected values"
+    )
 
 
 # Arbitrarily set small dataset sizes, making sure to have uneven sizes.
