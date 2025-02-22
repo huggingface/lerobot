@@ -56,7 +56,7 @@ def get_motor_bus_cls(brand: str) -> tuple:
         )
 
 
-def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
+def configure_motor(port, brand, model, motor_idx_des, baudrate_des, old_ID):
     motor_bus_config_cls, motor_bus_cls, model_baudrate_table, series_baudrate_table = get_motor_bus_cls(
         brand
     )
@@ -93,7 +93,7 @@ def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
 
         for baudrate in all_baudrates:
             motor_bus.set_bus_baudrate(baudrate)
-            present_ids = motor_bus.find_motor_indices(list(range(1, 10)))
+            present_ids = motor_bus.find_motor_indices(list(range(1, 10)) if old_ID is None else [old_ID])
             if len(present_ids) > 1:
                 raise ValueError(
                     "Error: More than one motor ID detected. This script is designed to only handle one motor at a time. Please disconnect all but one motor."
@@ -168,9 +168,10 @@ if __name__ == "__main__":
     parser.add_argument("--brand", type=str, required=True, help="Motor brand (e.g. dynamixel,feetech)")
     parser.add_argument("--model", type=str, required=True, help="Motor model (e.g. xl330-m077,sts3215)")
     parser.add_argument("--ID", type=int, required=True, help="Desired ID of the current motor (e.g. 1,2,3)")
+    parser.add_argument("--oldID", type=int, default=None, help="ID of the current motor (e.g. 1), if provided, will speed up scanning")
     parser.add_argument(
         "--baudrate", type=int, default=1000000, help="Desired baudrate for the motor (default: 1000000)"
     )
     args = parser.parse_args()
 
-    configure_motor(args.port, args.brand, args.model, args.ID, args.baudrate)
+    configure_motor(args.port, args.brand, args.model, args.ID, args.baudrate, args.oldID)
