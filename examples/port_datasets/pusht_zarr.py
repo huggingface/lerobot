@@ -91,9 +91,9 @@ def calculate_coverage(zarr_data):
 
     num_frames = len(block_pos)
 
-    coverage = np.zeros((num_frames,))
+    coverage = np.zeros((num_frames,), dtype=np.float32)
     # 8 keypoints with 2 coords each
-    keypoints = np.zeros((num_frames, 16))
+    keypoints = np.zeros((num_frames, 16), dtype=np.float32)
 
     # Set x, y, theta (in radians)
     goal_pos_angle = np.array([256, 256, np.pi / 4])
