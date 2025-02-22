@@ -52,10 +52,9 @@ from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.scripts.eval import eval_policy
 from lerobot.common.datasets.video_utils import (
-    decode_video_frames_torchvision
+    decode_video_frames_torchvision, decode_video_frames_torchcodec
 )
 # let's define a custom fn
-from torchcodec.decoders import VideoDecoder
 
 def custom_collate_fn(batch):
     """
@@ -81,7 +80,7 @@ def custom_collate_fn(batch):
                 )
 
                 # stack frames for this video key and add directly to the item
-                item[vid_key] = torch.stack(frames)
+                item[vid_key] = frames
 
         # add item data (both video and non-video) to final_batch
         for key, value in item.items():
