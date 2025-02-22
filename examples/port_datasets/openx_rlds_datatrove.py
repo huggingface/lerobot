@@ -69,12 +69,12 @@ def main(slurm=True):
             "job_name": port_job_name,
             "tasks": 2048,
             # "workers": 20,  # 8 * 16,
-            "workers": 1,  # 8 * 16,
+            "workers": 20,  # 8 * 16,
             "time": "08:00:00",
             "partition": "hopper-cpu",
             "cpus_per_task": 24,
             "mem_per_cpu_gb": 2,
-            # "max_array_launch_parallel": True,
+            "max_array_launch_parallel": True,
         }
     else:
         executor_class = LocalPipelineExecutor
