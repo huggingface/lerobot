@@ -692,6 +692,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         ep_idx = item["episode_index"].item()
 
         query_indices = None
+        # data logic
         if self.delta_indices is not None:
             current_ep_idx = self.episodes.index(ep_idx) if self.episodes is not None else ep_idx
             query_indices, padding = self._get_query_indices(idx, current_ep_idx)
@@ -700,6 +701,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             for key, val in query_result.items():
                 item[key] = val
 
+        # video logic
         if len(self.meta.video_keys) > 0:
             current_ts = item["timestamp"].item()
             query_timestamps = self._get_query_timestamps(current_ts, query_indices)
