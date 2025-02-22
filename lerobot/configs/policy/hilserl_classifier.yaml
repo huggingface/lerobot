@@ -28,7 +28,7 @@ training:
   num_epochs: 6
   batch_size: 16
   learning_rate: 1e-4
-  num_workers: 0
+  num_workers: 4
   grad_clip_norm: 10
   use_amp: true
   log_freq: 1
@@ -56,6 +56,6 @@ wandb:
   job_name: "classifier_training_0"
   disable_artifact: false
 
-device: "cuda"
+device: "mps"
 resume: false
 output_dir: "outputs/classifier/old_trainer_resnet10_frozen"
