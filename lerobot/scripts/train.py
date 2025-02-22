@@ -81,7 +81,7 @@ def custom_collate_fn(batch):
                 )
 
                 # stack frames for this video key and add directly to the item
-                item[vid_key] = torch.stack(frames)
+                item[vid_key] = frames
 
         # add item data (both video and non-video) to final_batch
         for key, value in item.items():
