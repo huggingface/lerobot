@@ -45,11 +45,11 @@ from lerobot.scripts.server.buffer import (
     move_state_dict_to_device,
     move_transition_to_device,
     python_object_to_bytes,
+    transitions_to_bytes,
 )
 from lerobot.scripts.server.network_utils import (
     receive_bytes_in_chunks,
     send_bytes_in_chunks,
-    transitions_to_bytes,
 )
 from lerobot.scripts.server.gym_manipulator import get_classifier, make_robot_env
 from lerobot.scripts.server import learner_service
