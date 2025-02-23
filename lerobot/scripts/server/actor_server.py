@@ -363,7 +363,7 @@ def act_with_policy(
             if len(list_transition_to_send_to_learner) > 0:
                 send_transitions_in_chunks(
                     transitions=list_transition_to_send_to_learner,
-                    message_queue=transitions_queue,
+                    transitions_queue=transitions_queue,
                     chunk_size=4,
                 )
                 list_transition_to_send_to_learner = []
