@@ -36,7 +36,6 @@ python examples/port_datasets/openx_rlds.py \
 import argparse
 import logging
 import re
-import shutil
 import time
 from pathlib import Path
 
@@ -316,9 +315,9 @@ def main():
 
     args = parser.parse_args()
 
-    droid_dir = Path("/fsx/remi_cadene/.cache/huggingface/lerobot/cadene/droid")
-    if droid_dir.exists():
-        shutil.rmtree(droid_dir)
+    # droid_dir = Path("/fsx/remi_cadene/.cache/huggingface/lerobot/cadene/droid")
+    # if droid_dir.exists():
+    #     shutil.rmtree(droid_dir)
 
     create_lerobot_dataset(**vars(args))
 
