@@ -23,6 +23,7 @@ import torch.nn.functional as F  # noqa: N812
 from tqdm import tqdm
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+import pickle
 
 
 class Transition(TypedDict):
@@ -113,11 +114,24 @@ def state_to_bytes(state_dict: dict[str, torch.Tensor]) -> io.BytesIO:
     return buffer
 
 
-def bytes_buffer_size(buffer: io.BytesIO) -> int:
-    buffer.seek(0, io.SEEK_END)
-    result = buffer.tell()
-    buffer.seek(0)
-    return result
+def python_object_to_bytes(python_object: Any) -> bytes:
+    return pickle.dumps(python_object)
+
+
+def bytes_to_python_object(buffer: io.BytesIO) -> Any:
+    buffer = io.BytesIO(buffer)
+    return pickle.load(buffer)
+
+
+def bytes_to_transitions(buffer: io.BytesIO) -> list[Transition]:
+    buffer = io.BytesIO(buffer)
+    return torch.load(buffer)
+
+
+def transitions_to_bytes(transitions: list[Transition]) -> bytes:
+    buffer = io.BytesIO()
+    torch.save(transitions, buffer)
+    return buffer.getvalue()
 
 
 def random_crop_vectorized(images: torch.Tensor, output_size: tuple) -> torch.Tensor:

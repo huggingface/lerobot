@@ -13,9 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import io
 import logging
-import pickle
 from statistics import mean, quantiles
 import signal
 from functools import lru_cache
@@ -46,7 +44,12 @@ from lerobot.scripts.server.buffer import (
     Transition,
     move_state_dict_to_device,
     move_transition_to_device,
-    bytes_buffer_size,
+    python_object_to_bytes,
+)
+from lerobot.scripts.server.network_utils import (
+    receive_bytes_in_chunks,
+    send_bytes_in_chunks,
+    transitions_to_bytes,
 )
 from lerobot.scripts.server.gym_manipulator import get_classifier, make_robot_env
 from lerobot.scripts.server import learner_service
@@ -59,107 +62,51 @@ logging.basicConfig(level=logging.INFO)
 ACTOR_SHUTDOWN_TIMEOUT = 30
 
 
-class ActorInformation:
-    """
-    This helper class is used to differentiate between two types of messages that are placed in the same queue during streaming:
-
-    - **Transition Data:** Contains experience tuples (observation, action, reward, next observation) collected during interaction.
-    - **Interaction Messages:** Encapsulates statistics related to the interaction process.
-
-    Attributes:
-        transition (Optional): Transition data to be sent to the learner.
-        interaction_message (Optional): Iteraction message providing additional statistics for logging.
-    """
-
-    def __init__(self, transition=None, interaction_message=None):
-        self.transition = transition
-        self.interaction_message = interaction_message
-
-
 def receive_policy(
     learner_client: hilserl_pb2_grpc.LearnerServiceStub,
     shutdown_event: Event,
     parameters_queue: Queue,
 ):
     logging.info("[ACTOR] Start receiving parameters from the Learner")
-    bytes_buffer = io.BytesIO()
-    step = 0
+
     try:
-        for model_update in learner_client.StreamParameters(hilserl_pb2.Empty()):
-            if shutdown_event.is_set():
-                logging.info("[ACTOR] Shutting down policy streaming receiver")
-                return hilserl_pb2.Empty()
-
-            if model_update.transfer_state == hilserl_pb2.TransferState.TRANSFER_BEGIN:
-                bytes_buffer.seek(0)
-                bytes_buffer.truncate(0)
-                bytes_buffer.write(model_update.parameter_bytes)
-                logging.info("Received model update at step 0")
-                step = 0
-                continue
-            elif (
-                model_update.transfer_state == hilserl_pb2.TransferState.TRANSFER_MIDDLE
-            ):
-                bytes_buffer.write(model_update.parameter_bytes)
-                step += 1
-                logging.info(f"Received model update at step {step}")
-            elif model_update.transfer_state == hilserl_pb2.TransferState.TRANSFER_END:
-                bytes_buffer.write(model_update.parameter_bytes)
-                logging.info(
-                    f"Received model update at step end size {bytes_buffer_size(bytes_buffer)}"
-                )
-
-                state_dict = torch.load(bytes_buffer)
-
-                bytes_buffer.seek(0)
-                bytes_buffer.truncate(0)
-                step = 0
-
-                logging.info("Model updated")
-
-                parameters_queue.put(state_dict)
-
+        receive_bytes_in_chunks(
+            learner_client.StreamParameters(hilserl_pb2.Empty()),
+            parameters_queue,
+            shutdown_event,
+        )
     except grpc.RpcError as e:
         logging.error(f"[ACTOR] gRPC error: {e}")
 
     return hilserl_pb2.Empty()
 
 
-def transitions_stream(shutdown_event: Event, message_queue: Queue):
+def transitions_stream(
+    shutdown_event: Event, transitions_queue: Queue
+) -> hilserl_pb2.Empty:
     while not shutdown_event.is_set():
         try:
-            message = message_queue.get(block=True, timeout=5)
+            message = transitions_queue.get(block=True, timeout=5)
         except Empty:
             logging.debug("[ACTOR] Transition queue is empty")
             continue
 
-        if message.transition is not None:
-            transition_to_send_to_learner: list[Transition] = [
-                move_transition_to_device(transition=T, device="cpu")
-                for T in message.transition
-            ]
-            # Check for NaNs in transitions before sending to learner
-            for transition in transition_to_send_to_learner:
-                for key, value in transition["state"].items():
-                    if torch.isnan(value).any():
-                        logging.warning(f"Found NaN values in transition {key}")
-            buf = io.BytesIO()
-            torch.save(transition_to_send_to_learner, buf)
-            transition_bytes = buf.getvalue()
+        yield from send_bytes_in_chunks(message, hilserl_pb2.Transition)
 
-            transition_message = hilserl_pb2.Transition(
-                transition_bytes=transition_bytes
-            )
+    return hilserl_pb2.Empty()
 
-            response = hilserl_pb2.ActorInformation(transition=transition_message)
 
-        elif message.interaction_message is not None:
-            content = hilserl_pb2.InteractionMessage(
-                interaction_message_bytes=pickle.dumps(message.interaction_message)
-            )
-            response = hilserl_pb2.ActorInformation(interaction_message=content)
+def interactions_stream(
+    shutdown_event: Event, interactions_queue: Queue
+) -> hilserl_pb2.Empty:
+    while not shutdown_event.is_set():
+        try:
+            message = interactions_queue.get(block=True, timeout=5)
+        except Empty:
+            logging.debug("[ACTOR] Interaction queue is empty")
+            continue
 
-        yield response
+        yield from send_bytes_in_chunks(message, hilserl_pb2.InteractionMessage)
 
     return hilserl_pb2.Empty()
 
@@ -167,8 +114,8 @@ def transitions_stream(shutdown_event: Event, message_queue: Queue):
 def send_transitions(
     learner_client: hilserl_pb2_grpc.LearnerServiceStub,
     shutdown_event: Event,
-    message_queue: Queue,
-):
+    transitions_queue: Queue,
+) -> hilserl_pb2.Empty:
     """
     Streams data from the actor to the learner.
 
@@ -187,13 +134,31 @@ def send_transitions(
         hilserl_pb2.ActorInformation: The response message containing either transition data or an interaction message.
     """
     try:
-        learner_client.ReceiveTransitions(
-            transitions_stream(shutdown_event, message_queue)
+        learner_client.SendTransitions(
+            transitions_stream(shutdown_event, transitions_queue)
         )
     except grpc.RpcError as e:
         logging.error(f"[ACTOR] gRPC error: {e}")
 
     logging.info("[ACTOR] Finished streaming transitions")
+    return hilserl_pb2.Empty()
+
+
+def send_interactions(
+    learner_client: hilserl_pb2_grpc.LearnerServiceStub,
+    shutdown_event: Event,
+    interactions_queue: Queue,
+) -> hilserl_pb2.Empty:
+    try:
+        learner_client.SendInteractions(
+            interactions_stream(shutdown_event, interactions_queue)
+        )
+    except grpc.RpcError as e:
+        logging.error(f"[ACTOR] gRPC error: {e}")
+
+    logging.info("[ACTOR] Finished streaming interactions")
+
+    return hilserl_pb2.Empty()
 
 
 @lru_cache(maxsize=1)
@@ -257,7 +222,8 @@ def act_with_policy(
     reward_classifier: nn.Module,
     shutdown_event: Event,
     parameters_queue: Queue,
-    message_queue: Queue,
+    transitions_queue: Queue,
+    interactions_queue: Queue,
 ):
     """
     Executes policy interaction within the environment.
@@ -397,7 +363,7 @@ def act_with_policy(
             if len(list_transition_to_send_to_learner) > 0:
                 send_transitions_in_chunks(
                     transitions=list_transition_to_send_to_learner,
-                    message_queue=message_queue,
+                    message_queue=transitions_queue,
                     chunk_size=4,
                 )
                 list_transition_to_send_to_learner = []
@@ -406,9 +372,9 @@ def act_with_policy(
             list_policy_time.clear()
 
             # Send episodic reward to the learner
-            message_queue.put(
-                ActorInformation(
-                    interaction_message={
+            interactions_queue.put(
+                python_object_to_bytes(
+                    {
                         "Episodic reward": sum_reward_episode,
                         "Interaction step": interaction_step,
                         "Episode intervention": int(episode_intervention),
@@ -421,7 +387,9 @@ def act_with_policy(
             obs, info = online_env.reset()
 
 
-def send_transitions_in_chunks(transitions: list, message_queue, chunk_size: int = 100):
+def send_transitions_in_chunks(
+    transitions: list, transitions_queue, chunk_size: int = 100
+):
     """Send transitions to learner in smaller chunks to avoid network issues.
 
     Args:
@@ -431,8 +399,18 @@ def send_transitions_in_chunks(transitions: list, message_queue, chunk_size: int
     """
     for i in range(0, len(transitions), chunk_size):
         chunk = transitions[i : i + chunk_size]
+
+        transition_to_send_to_learner = []
+        for transition in chunk:
+            tr = move_transition_to_device(transition=transition, device="cpu")
+            for key, value in tr["state"].items():
+                if torch.isnan(value).any():
+                    logging.warning(f"Found NaN values in transition {key}")
+
+            transition_to_send_to_learner.append(tr)
+
         logging.debug(f"[ACTOR] Sending chunk of {len(chunk)} transitions to Learner.")
-        message_queue.put(ActorInformation(transition=chunk))
+        transitions_queue.put(transitions_to_bytes(transition_to_send_to_learner))
 
 
 def get_frequency_stats(list_policy_time: list[float]) -> dict[str, float]:
@@ -478,7 +456,8 @@ def actor_cli(cfg: dict):
     shutdown_event = Event()
 
     parameters_queue = Queue(maxsize=1)
-    message_queue = Queue(maxsize=1_000_000)
+    transitions_queue = Queue(maxsize=1_000_000)
+    interactions_queue = Queue(maxsize=1_000_000)
 
     # Define signal handler
     def signal_handler(signum, frame):
@@ -509,10 +488,16 @@ def actor_cli(cfg: dict):
 
     transitions_process = Process(
         target=send_transitions,
-        args=(learner_client, shutdown_event, message_queue),
+        args=(learner_client, shutdown_event, transitions_queue),
+    )
+
+    interactions_process = Process(
+        target=send_interactions,
+        args=(learner_client, shutdown_event, interactions_queue),
     )
 
     transitions_process.start()
+    interactions_process.start()
     receive_policy_process.start()
 
     # HACK: FOR MANISKILL we do not have a reward classifier
@@ -528,7 +513,13 @@ def actor_cli(cfg: dict):
         )
 
     act_with_policy(
-        cfg, robot, reward_classifier, shutdown_event, parameters_queue, message_queue
+        cfg,
+        robot,
+        reward_classifier,
+        shutdown_event,
+        parameters_queue,
+        transitions_queue,
+        interactions_queue,
     )
     logging.info("[ACTOR] Policy thread joined")
 
@@ -536,6 +527,8 @@ def actor_cli(cfg: dict):
 
     transitions_process.join()
     logging.info("[ACTOR] Transitions process joined")
+    interactions_process.join()
+    logging.info("[ACTOR] Interactions process joined")
     receive_policy_process.join()
     logging.info("[ACTOR] Receive policy process joined")
 

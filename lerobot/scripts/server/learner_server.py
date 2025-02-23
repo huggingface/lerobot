@@ -50,11 +50,15 @@ from lerobot.common.utils.utils import (
     set_global_random_state,
     set_global_seed,
 )
+
 from lerobot.scripts.server.buffer import (
     ReplayBuffer,
     concatenate_batch_transitions,
     move_transition_to_device,
     move_state_dict_to_device,
+    bytes_to_transitions,
+    state_to_bytes,
+    bytes_to_python_object,
 )
 
 from lerobot.scripts.server import learner_service
@@ -383,6 +387,7 @@ def add_actor_information_and_train(
 
         while not transition_queue.empty():
             transition_list = transition_queue.get()
+            transition_list = bytes_to_transitions(transition_list)
             for transition in transition_list:
                 transition = move_transition_to_device(transition, device=device)
                 replay_buffer.add(**transition)
@@ -391,6 +396,7 @@ def add_actor_information_and_train(
 
         while not interaction_message_queue.empty():
             interaction_message = interaction_message_queue.get()
+            interaction_message = bytes_to_python_object(interaction_message)
             # If cfg.resume, shift the interaction step with the last checkpointed step in order to not break the logging
             interaction_message["Interaction step"] += interaction_step_shift
             logger.log_dict(
@@ -520,9 +526,11 @@ def add_actor_information_and_train(
         )
 
         if optimization_step % cfg.training.policy_update_freq == 0:
-            parameters_queue.put(
-                move_state_dict_to_device(policy.actor.state_dict(), device="cpu")
+            state_dict = move_state_dict_to_device(
+                policy.actor.state_dict(), device="cpu"
             )
+            state_bytes = state_to_bytes(state_dict)
+            parameters_queue.put(state_bytes)
 
         optimization_step += 1
         if optimization_step % cfg.training.log_freq == 0:

@@ -1,21 +1,19 @@
 import hilserl_pb2  # type: ignore
 import hilserl_pb2_grpc  # type: ignore
-import torch
 import logging
-import io
-import pickle
 from multiprocessing import Event, Queue
 from queue import Empty
 
 from lerobot.scripts.server.buffer import (
-    bytes_buffer_size,
     state_to_bytes,
 )
+from lerobot.scripts.server.network_utils import receive_bytes_in_chunks
+from lerobot.scripts.server.network_utils import send_bytes_in_chunks
 
 
 MAX_MESSAGE_SIZE = 4 * 1024 * 1024  # 4 MB
 CHUNK_SIZE = 2 * 1024 * 1024  # 2 MB
-MAX_WORKERS = 10
+MAX_WORKERS = 3  # Stream parameters, send transitions and interactions
 STUTDOWN_TIMEOUT = 10
 
 
@@ -47,34 +45,6 @@ class LearnerService(hilserl_pb2_grpc.LearnerServiceServicer):
 
         return params_dict
 
-    def _send_bytes(self, buffer: bytes):
-        size_in_bytes = bytes_buffer_size(buffer)
-
-        sent_bytes = 0
-
-        logging.info(f"Model state size {size_in_bytes/1024/1024} MB with")
-
-        while sent_bytes < size_in_bytes:
-            transfer_state = hilserl_pb2.TransferState.TRANSFER_MIDDLE
-
-            if sent_bytes + CHUNK_SIZE >= size_in_bytes:
-                transfer_state = hilserl_pb2.TransferState.TRANSFER_END
-            elif sent_bytes == 0:
-                transfer_state = hilserl_pb2.TransferState.TRANSFER_BEGIN
-
-            size_to_read = min(CHUNK_SIZE, size_in_bytes - sent_bytes)
-            chunk = buffer.read(size_to_read)
-
-            yield hilserl_pb2.Parameters(
-                transfer_state=transfer_state, parameter_bytes=chunk
-            )
-            sent_bytes += size_to_read
-            logging.info(
-                f"[Learner] Sent {sent_bytes}/{size_in_bytes} bytes with state {transfer_state}"
-            )
-
-        logging.info(f"[LEARNER] Published {sent_bytes/1024/1024} MB to the Actor")
-
     def StreamParameters(self, request, context):
         # TODO: authorize the request
         logging.info("[LEARNER] Received request to stream parameters from the Actor")
@@ -84,25 +54,33 @@ class LearnerService(hilserl_pb2_grpc.LearnerServiceServicer):
             state_dict = self._get_policy_state()
 
             with state_to_bytes(state_dict) as buffer:
-                yield from self._send_bytes(buffer)
+                yield from send_bytes_in_chunks(buffer, hilserl_pb2.Parameters)
 
             self.shutdown_event.wait(self.seconds_between_pushes)
 
-    def ReceiveTransitions(self, request_iterator, context):
+    def SendTransitions(self, request_iterator, _context):
         # TODO: authorize the request
         logging.info("[LEARNER] Received request to receive transitions from the Actor")
 
-        for request in request_iterator:
-            logging.debug("[LEARNER] Received request")
-            if request.HasField("transition"):
-                buffer = io.BytesIO(request.transition.transition_bytes)
-                transition = torch.load(buffer)
-                self.transition_queue.put(transition)
-            if request.HasField("interaction_message"):
-                content = pickle.loads(
-                    request.interaction_message.interaction_message_bytes
-                )
-                self.interaction_message_queue.put(content)
+        receive_bytes_in_chunks(
+            request_iterator, self.transition_queue, self.shutdown_event
+        )
+
+        logging.debug("[LEARNER] Finished receiving transitions")
+        return hilserl_pb2.Empty()
+
+    def SendInteractions(self, request_iterator, _context):
+        # TODO: authorize the request
+        logging.info(
+            "[LEARNER] Received request to receive interactions from the Actor"
+        )
+
+        receive_bytes_in_chunks(
+            request_iterator, self.interaction_message_queue, self.shutdown_event
+        )
+
+        logging.debug("[LEARNER] Finished receiving interactions")
+        return hilserl_pb2.Empty()
 
     def Ready(self, request, context):
         return hilserl_pb2.Empty()
