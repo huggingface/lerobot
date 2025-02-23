@@ -12,7 +12,6 @@ from lerobot.scripts.server.network_utils import send_bytes_in_chunks
 
 
 MAX_MESSAGE_SIZE = 4 * 1024 * 1024  # 4 MB
-CHUNK_SIZE = 2 * 1024 * 1024  # 2 MB
 MAX_WORKERS = 3  # Stream parameters, send transitions and interactions
 STUTDOWN_TIMEOUT = 10
 

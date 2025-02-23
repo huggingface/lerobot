@@ -16,11 +16,12 @@
 # limitations under the License.
 
 from lerobot.scripts.server import hilserl_pb2
-from lerobot.scripts.server.learner_service import CHUNK_SIZE
 import logging
 import io
 from multiprocessing import Queue, Event
 from typing import Any
+
+CHUNK_SIZE = 2 * 1024 * 1024  # 2 MB
 
 
 def bytes_buffer_size(buffer: io.BytesIO) -> int:
