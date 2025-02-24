@@ -31,13 +31,13 @@ def bytes_buffer_size(buffer: io.BytesIO) -> int:
     return result
 
 
-def send_bytes_in_chunks(buffer: bytes, message_class: Any):
+def send_bytes_in_chunks(buffer: bytes, message_class: Any, log_prefix: str = ""):
     buffer = io.BytesIO(buffer)
     size_in_bytes = bytes_buffer_size(buffer)
 
     sent_bytes = 0
 
-    logging.info(f"Buffer size {size_in_bytes/1024/1024} MB with")
+    logging.debug(f"{log_prefix} Buffer size {size_in_bytes/1024/1024} MB with")
 
     while sent_bytes < size_in_bytes:
         transfer_state = hilserl_pb2.TransferState.TRANSFER_MIDDLE
@@ -52,11 +52,11 @@ def send_bytes_in_chunks(buffer: bytes, message_class: Any):
 
         yield message_class(transfer_state=transfer_state, data=chunk)
         sent_bytes += size_to_read
-        logging.info(
-            f"Sent {sent_bytes}/{size_in_bytes} bytes with state {transfer_state}"
+        logging.debug(
+            f"{log_prefix} Sent {sent_bytes}/{size_in_bytes} bytes with state {transfer_state}"
         )
 
-    logging.info(f"Published {sent_bytes/1024/1024} MB to the Actor")
+    logging.info(f"{log_prefix} Published {sent_bytes/1024/1024} MB")
 
 
 def receive_bytes_in_chunks(
@@ -67,7 +67,7 @@ def receive_bytes_in_chunks(
 
     logging.info(f"{log_prefix} Starting receiver")
     for item in iterator:
-        logging.info(f"{log_prefix} Received item")
+        logging.debug(f"{log_prefix} Received item")
         if shutdown_event.is_set():
             logging.info(f"{log_prefix} Shutting down receiver")
             return
@@ -76,16 +76,16 @@ def receive_bytes_in_chunks(
             bytes_buffer.seek(0)
             bytes_buffer.truncate(0)
             bytes_buffer.write(item.data)
-            logging.info(f"{log_prefix} Received data at step 0")
+            logging.debug(f"{log_prefix} Received data at step 0")
             step = 0
             continue
         elif item.transfer_state == hilserl_pb2.TransferState.TRANSFER_MIDDLE:
             bytes_buffer.write(item.data)
             step += 1
-            logging.info(f"{log_prefix} Received data at step {step}")
+            logging.debug(f"{log_prefix} Received data at step {step}")
         elif item.transfer_state == hilserl_pb2.TransferState.TRANSFER_END:
             bytes_buffer.write(item.data)
-            logging.info(
+            logging.debug(
                 f"{log_prefix} Received data at step end size {bytes_buffer_size(bytes_buffer)}"
             )
 
@@ -95,6 +95,6 @@ def receive_bytes_in_chunks(
             bytes_buffer.truncate(0)
             step = 0
 
-            logging.info(
+            logging.debug(
                 f"{log_prefix} Queue updated, {queue.qsize()} items in the queue"
             )

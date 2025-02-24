@@ -53,7 +53,11 @@ class LearnerService(hilserl_pb2_grpc.LearnerServiceServicer):
             state_dict = self._get_policy_state()
 
             with state_to_bytes(state_dict) as buffer:
-                yield from send_bytes_in_chunks(buffer, hilserl_pb2.Parameters)
+                yield from send_bytes_in_chunks(
+                    buffer,
+                    hilserl_pb2.Parameters,
+                    log_prefix="[LEARNER] Sending parameters",
+                )
 
             self.shutdown_event.wait(self.seconds_between_pushes)
 

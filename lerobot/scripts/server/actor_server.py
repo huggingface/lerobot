@@ -92,7 +92,9 @@ def transitions_stream(
             logging.debug("[ACTOR] Transition queue is empty")
             continue
 
-        yield from send_bytes_in_chunks(message, hilserl_pb2.Transition)
+        yield from send_bytes_in_chunks(
+            message, hilserl_pb2.Transition, log_prefix="[ACTOR] Send transitions"
+        )
 
     return hilserl_pb2.Empty()
 
@@ -107,7 +109,11 @@ def interactions_stream(
             logging.debug("[ACTOR] Interaction queue is empty")
             continue
 
-        yield from send_bytes_in_chunks(message, hilserl_pb2.InteractionMessage)
+        yield from send_bytes_in_chunks(
+            message,
+            hilserl_pb2.InteractionMessage,
+            log_prefix="[ACTOR] Send interactions",
+        )
 
     return hilserl_pb2.Empty()
 
