@@ -62,7 +62,10 @@ class LearnerService(hilserl_pb2_grpc.LearnerServiceServicer):
         logging.info("[LEARNER] Received request to receive transitions from the Actor")
 
         receive_bytes_in_chunks(
-            request_iterator, self.transition_queue, self.shutdown_event
+            request_iterator,
+            self.transition_queue,
+            self.shutdown_event,
+            log_prefix="[LEARNER] transitions",
         )
 
         logging.debug("[LEARNER] Finished receiving transitions")
@@ -75,7 +78,10 @@ class LearnerService(hilserl_pb2_grpc.LearnerServiceServicer):
         )
 
         receive_bytes_in_chunks(
-            request_iterator, self.interaction_message_queue, self.shutdown_event
+            request_iterator,
+            self.interaction_message_queue,
+            self.shutdown_event,
+            log_prefix="[LEARNER] interactions",
         )
 
         logging.debug("[LEARNER] Finished receiving interactions")

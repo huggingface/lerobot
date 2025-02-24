@@ -59,29 +59,31 @@ def send_bytes_in_chunks(buffer: bytes, message_class: Any):
     logging.info(f"Published {sent_bytes/1024/1024} MB to the Actor")
 
 
-def receive_bytes_in_chunks(iterator, queue: Queue, shutdown_event: Event):
+def receive_bytes_in_chunks(
+    iterator, queue: Queue, shutdown_event: Event, log_prefix: str = ""
+):
     bytes_buffer = io.BytesIO()
     step = 0
     for item in iterator:
         if shutdown_event.is_set():
-            logging.info("Shutting down receiver")
+            logging.info(f"{log_prefix} Shutting down receiver")
             return
 
         if item.transfer_state == hilserl_pb2.TransferState.TRANSFER_BEGIN:
             bytes_buffer.seek(0)
             bytes_buffer.truncate(0)
             bytes_buffer.write(item.data)
-            logging.info("Received data at step 0")
+            logging.debug(f"{log_prefix} Received data at step 0")
             step = 0
             continue
         elif item.transfer_state == hilserl_pb2.TransferState.TRANSFER_MIDDLE:
             bytes_buffer.write(item.data)
             step += 1
-            logging.info(f"Received data at step {step}")
+            logging.debug(f"{log_prefix} Received data at step {step}")
         elif item.transfer_state == hilserl_pb2.TransferState.TRANSFER_END:
             bytes_buffer.write(item.data)
-            logging.info(
-                f"Received data at step end size {bytes_buffer_size(bytes_buffer)}"
+            logging.debug(
+                f"{log_prefix} Received data at step end size {bytes_buffer_size(bytes_buffer)}"
             )
 
             queue.put(bytes_buffer)
@@ -90,4 +92,4 @@ def receive_bytes_in_chunks(iterator, queue: Queue, shutdown_event: Event):
             bytes_buffer.truncate(0)
             step = 0
 
-            logging.info("Queue updated")
+            logging.debug(f"{log_prefix} Queue updated")

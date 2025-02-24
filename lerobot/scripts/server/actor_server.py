@@ -74,6 +74,7 @@ def receive_policy(
             learner_client.StreamParameters(hilserl_pb2.Empty()),
             parameters_queue,
             shutdown_event,
+            log_prefix="[ACTOR] parameters",
         )
     except grpc.RpcError as e:
         logging.error(f"[ACTOR] gRPC error: {e}")
@@ -285,7 +286,7 @@ def act_with_policy(
 
     for interaction_step in range(cfg.training.online_steps):
         if shutdown_event.is_set():
-            logging.info("[ACTOR] Shutdown signal received. Exiting...")
+            logging.info("[ACTOR] Shutting down act_with_policy")
             return
 
         if interaction_step >= cfg.training.online_step_before_learning:
@@ -521,9 +522,11 @@ def actor_cli(cfg: dict):
         transitions_queue,
         interactions_queue,
     )
-    logging.info("[ACTOR] Policy thread joined")
+    logging.info("[ACTOR] Policy process joined")
 
     grpc_channel.close()
+
+    logging.info("[ACTOR] GRPC channel closed")
 
     transitions_process.join()
     logging.info("[ACTOR] Transitions process joined")
