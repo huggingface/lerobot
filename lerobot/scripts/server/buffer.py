@@ -114,6 +114,12 @@ def state_to_bytes(state_dict: dict[str, torch.Tensor]) -> bytes:
     return buffer.getvalue()
 
 
+def bytes_to_state_dict(buffer: bytes) -> dict[str, torch.Tensor]:
+    buffer = io.BytesIO(buffer)
+    buffer.seek(0)
+    return torch.load(buffer)
+
+
 def python_object_to_bytes(python_object: Any) -> bytes:
     return pickle.dumps(python_object)
 

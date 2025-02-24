@@ -46,6 +46,7 @@ from lerobot.scripts.server.buffer import (
     move_transition_to_device,
     python_object_to_bytes,
     transitions_to_bytes,
+    bytes_to_state_dict,
 )
 from lerobot.scripts.server.network_utils import (
     receive_bytes_in_chunks,
@@ -218,7 +219,8 @@ def learner_service_client(
 def update_policy_parameters(policy: SACPolicy, parameters_queue: Queue, device):
     if not parameters_queue.empty():
         logging.info("[ACTOR] Load new parameters from Learner.")
-        state_dict = parameters_queue.get()
+        bytes_state_dict = parameters_queue.get()
+        state_dict = bytes_to_state_dict(bytes_state_dict)
         state_dict = move_state_dict_to_device(state_dict, device=device)
         policy.load_state_dict(state_dict)
 
