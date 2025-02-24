@@ -132,13 +132,13 @@ def serialize_dict(stats: dict[str, torch.Tensor | np.ndarray | dict]) -> dict:
     return unflatten_dict(serialized_dict)
 
 
-def write_parquet(dataset: datasets.Dataset, fpath: Path) -> None:
+def embed_images(dataset: datasets.Dataset) -> datasets.Dataset:
     # Embed image bytes into the table before saving to parquet
     format = dataset.format
     dataset = dataset.with_format("arrow")
     dataset = dataset.map(embed_table_storage, batched=False)
     dataset = dataset.with_format(**format)
-    dataset.to_parquet(fpath)
+    return dataset
 
 
 def load_json(fpath: Path) -> Any:

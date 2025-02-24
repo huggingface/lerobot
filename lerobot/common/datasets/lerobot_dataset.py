@@ -24,7 +24,7 @@ import packaging.version
 import PIL.Image
 import torch
 import torch.utils
-from datasets import load_dataset
+from datasets import concatenate_datasets, load_dataset
 from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.constants import REPOCARD_NAME
 
@@ -43,6 +43,7 @@ from lerobot.common.datasets.utils import (
     check_version_compatibility,
     create_empty_dataset_info,
     create_lerobot_dataset_card,
+    embed_images,
     get_delta_indices,
     get_episode_data_index,
     get_features_from_robot,
@@ -61,7 +62,6 @@ from lerobot.common.datasets.utils import (
     write_episode_stats,
     write_info,
     write_json,
-    write_parquet,
 )
 from lerobot.common.datasets.video_utils import (
     VideoFrame,
@@ -609,7 +609,15 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         # TODO(aliberts): hf_dataset.set_format("torch")
         hf_dataset.set_transform(hf_transform_to_torch)
+        return hf_dataset
 
+    def create_hf_dataset(self) -> datasets.Dataset:
+        features = get_hf_features_from_features(self.features)
+        ft_dict = {col: [] for col in features}
+        hf_dataset = datasets.Dataset.from_dict(ft_dict, features=features, split="train")
+
+        # TODO(aliberts): hf_dataset.set_format("torch")
+        hf_dataset.set_transform(hf_transform_to_torch)
         return hf_dataset
 
     @property
@@ -889,9 +897,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def _save_episode_table(self, episode_buffer: dict, episode_index: int) -> None:
         episode_dict = {key: episode_buffer[key] for key in self.hf_features}
         ep_dataset = datasets.Dataset.from_dict(episode_dict, features=self.hf_features, split="train")
+        ep_dataset = embed_images(ep_dataset)
+        self.hf_dataset = concatenate_datasets([self.hf_dataset, ep_dataset])
+        self.hf_dataset.set_transform(hf_transform_to_torch)
         ep_data_path = self.root / self.meta.get_data_file_path(ep_index=episode_index)
         ep_data_path.parent.mkdir(parents=True, exist_ok=True)
-        write_parquet(ep_dataset, ep_data_path)
+        ep_dataset.to_parquet(ep_data_path)
 
     def clear_episode_buffer(self) -> None:
         episode_index = self.episode_buffer["episode_index"]
@@ -999,7 +1010,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.episode_buffer = obj.create_episode_buffer()
 
         obj.episodes = None
-        obj.hf_dataset = None
+        obj.hf_dataset = obj.create_hf_dataset()
         obj.image_transforms = None
         obj.delta_timestamps = None
         obj.delta_indices = None
