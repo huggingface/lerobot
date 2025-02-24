@@ -621,13 +621,13 @@ camera_01_frame_000047.png
 
 Note: Some cameras may take a few seconds to warm up, and the first frame might be black or green.
 
-Finally, run this code to instantiate and connectyour camera:
+Finally, run this code to instantiate and connect your camera:
 ```python
 from lerobot.common.robot_devices.cameras.configs import OpenCVCameraConfig
 from lerobot.common.robot_devices.cameras.opencv import OpenCVCamera
 
 camera_config = OpenCVCameraConfig(camera_index=0)
-camera = OpenCVCamera(config)
+camera = OpenCVCamera(camera_config)
 camera.connect()
 color_image = camera.read()
 
@@ -667,15 +667,16 @@ Additionaly, you can set up your robot to work with your cameras.
 
 Modify the following Python code with the appropriate camera names and configurations:
 ```python
-robot = ManipulatorRobot(
-    leader_arms={"main": leader_arm},
-    follower_arms={"main": follower_arm},
+robot_config = KochRobotConfig(
+    leader_arms={"main": leader_config},
+    follower_arms={"main": follower_config},
     calibration_dir=".cache/calibration/koch",
     cameras={
         "laptop": OpenCVCameraConfig(0, fps=30, width=640, height=480),
         "phone": OpenCVCameraConfig(1, fps=30, width=640, height=480),
     },
 )
+robot = ManipulatorRobot(robot_config)
 robot.connect()
 ```
 
