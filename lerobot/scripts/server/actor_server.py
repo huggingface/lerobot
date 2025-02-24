@@ -66,11 +66,16 @@ ACTOR_SHUTDOWN_TIMEOUT = 30
 
 
 def receive_policy(
-    learner_client: hilserl_pb2_grpc.LearnerServiceStub,
+    cfg: DictConfig,
     shutdown_event: Event,
     parameters_queue: Queue,
 ):
     logging.info("[ACTOR] Start receiving parameters from the Learner")
+
+    learner_client, grpc_channel = learner_service_client(
+        host=cfg.actor_learner_config.learner_host,
+        port=cfg.actor_learner_config.learner_port,
+    )
 
     try:
         receive_bytes_in_chunks(
@@ -82,7 +87,8 @@ def receive_policy(
     except grpc.RpcError as e:
         logging.error(f"[ACTOR] gRPC error: {e}")
 
-    return hilserl_pb2.Empty()
+    grpc_channel.close()
+    logging.info("[ACTOR] Received policy loop stopped")
 
 
 def transitions_stream(
@@ -122,7 +128,7 @@ def interactions_stream(
 
 
 def send_transitions(
-    learner_client: hilserl_pb2_grpc.LearnerServiceStub,
+    cfg: DictConfig,
     shutdown_event: Event,
     transitions_queue: Queue,
 ) -> hilserl_pb2.Empty:
@@ -143,6 +149,12 @@ def send_transitions(
     Yields:
         hilserl_pb2.ActorInformation: The response message containing either transition data or an interaction message.
     """
+
+    learner_client, grpc_channel = learner_service_client(
+        host=cfg.actor_learner_config.learner_host,
+        port=cfg.actor_learner_config.learner_port,
+    )
+
     try:
         learner_client.SendTransitions(
             transitions_stream(shutdown_event, transitions_queue)
@@ -151,14 +163,21 @@ def send_transitions(
         logging.error(f"[ACTOR] gRPC error: {e}")
 
     logging.info("[ACTOR] Finished streaming transitions")
-    return hilserl_pb2.Empty()
+
+    grpc_channel.close()
+    logging.info("[ACTOR] Transitions process stopped")
 
 
 def send_interactions(
-    learner_client: hilserl_pb2_grpc.LearnerServiceStub,
+    cfg: DictConfig,
     shutdown_event: Event,
     interactions_queue: Queue,
 ) -> hilserl_pb2.Empty:
+    learner_client, grpc_channel = learner_service_client(
+        host=cfg.actor_learner_config.learner_host,
+        port=cfg.actor_learner_config.learner_port,
+    )
+
     try:
         learner_client.SendInteractions(
             interactions_stream(shutdown_event, interactions_queue)
@@ -168,7 +187,8 @@ def send_interactions(
 
     logging.info("[ACTOR] Finished streaming interactions")
 
-    return hilserl_pb2.Empty()
+    grpc_channel.close()
+    logging.info("[ACTOR] Interactions process stopped")
 
 
 @lru_cache(maxsize=1)
@@ -495,21 +515,23 @@ def actor_cli(cfg: dict):
         logging.error("[ACTOR] Failed to establish connection with Learner")
         return
 
+    grpc_channel.close()
+
     logging.info("[ACTOR] Connection with Learner established")
 
     receive_policy_process = Process(
         target=receive_policy,
-        args=(learner_client, shutdown_event, parameters_queue),
+        args=(cfg, shutdown_event, parameters_queue),
     )
 
     transitions_process = Process(
         target=send_transitions,
-        args=(learner_client, shutdown_event, transitions_queue),
+        args=(cfg, shutdown_event, transitions_queue),
     )
 
     interactions_process = Process(
         target=send_interactions,
-        args=(learner_client, shutdown_event, interactions_queue),
+        args=(cfg, shutdown_event, interactions_queue),
     )
 
     transitions_process.start()
@@ -538,10 +560,6 @@ def actor_cli(cfg: dict):
         interactions_queue,
     )
     logging.info("[ACTOR] Policy process joined")
-
-    grpc_channel.close()
-
-    logging.info("[ACTOR] GRPC channel closed")
 
     transitions_process.join()
     logging.info("[ACTOR] Transitions process joined")
