@@ -28,7 +28,6 @@ import datasets
 import jsonlines
 import numpy as np
 import packaging.version
-import pyarrow.compute as pc
 import torch
 from datasets.table import embed_table_storage
 from huggingface_hub import DatasetCard, DatasetCardData, HfApi
@@ -453,75 +452,72 @@ def get_episode_data_index(
     }
 
 
-def calculate_total_episode(
-    hf_dataset: datasets.Dataset, raise_if_not_contiguous: bool = True
-) -> dict[str, torch.Tensor]:
-    episode_indices = sorted(hf_dataset.unique("episode_index"))
-    total_episodes = len(episode_indices)
-    if raise_if_not_contiguous and episode_indices != list(range(total_episodes)):
-        raise ValueError("episode_index values are not sorted and contiguous.")
-    return total_episodes
-
-
-def calculate_episode_data_index(hf_dataset: datasets.Dataset) -> dict[str, torch.Tensor]:
-    episode_lengths = []
-    table = hf_dataset.data.table
-    total_episodes = calculate_total_episode(hf_dataset)
-    for ep_idx in range(total_episodes):
-        ep_table = table.filter(pc.equal(table["episode_index"], ep_idx))
-        episode_lengths.insert(ep_idx, len(ep_table))
-
-    cumulative_lenghts = list(accumulate(episode_lengths))
-    return {
-        "from": torch.LongTensor([0] + cumulative_lenghts[:-1]),
-        "to": torch.LongTensor(cumulative_lenghts),
-    }
-
-
 def check_timestamps_sync(
-    hf_dataset: datasets.Dataset,
-    episode_data_index: dict[str, torch.Tensor],
+    timestamps: np.ndarray,
+    episode_indices: np.ndarray,
+    episode_data_index: dict[str, np.ndarray],
     fps: int,
     tolerance_s: float,
     raise_value_error: bool = True,
 ) -> bool:
     """
-    This check is to make sure that each timestamps is separated to the next by 1/fps +/- tolerance to
-    account for possible numerical error.
-    """
-    timestamps = torch.stack(hf_dataset["timestamp"])
-    diffs = torch.diff(timestamps)
-    within_tolerance = torch.abs(diffs - 1 / fps) <= tolerance_s
+    This check is to make sure that each timestamp is separated from the next by (1/fps) +/- tolerance
+    to account for possible numerical error.
 
-    # We mask differences between the timestamp at the end of an episode
-    # and the one at the start of the next episode since these are expected
-    # to be outside tolerance.
-    mask = torch.ones(len(diffs), dtype=torch.bool)
-    ignored_diffs = episode_data_index["to"][:-1] - 1
+    Args:
+        timestamps (np.ndarray): Array of timestamps in seconds.
+        episode_indices (np.ndarray): Array indicating the episode index for each timestamp.
+        episode_data_index (dict[str, np.ndarray]): A dictionary that includes 'to',
+            which identifies indices for the end of each episode.
+        fps (int): Frames per second. Used to check the expected difference between consecutive timestamps.
+        tolerance_s (float): Allowed deviation from the expected (1/fps) difference.
+        raise_value_error (bool): Whether to raise a ValueError if the check fails.
+
+    Returns:
+        bool: True if all checked timestamp differences lie within tolerance, False otherwise.
+
+    Raises:
+        ValueError: If the check fails and `raise_value_error` is True.
+    """
+    if timestamps.shape != episode_indices.shape:
+        raise ValueError(
+            "timestamps and episode_indices should have the same shape. "
+            f"Found {timestamps.shape=} and {episode_indices.shape=}."
+        )
+
+    # Consecutive differences
+    diffs = np.diff(timestamps)
+    within_tolerance = np.abs(diffs - (1.0 / fps)) <= tolerance_s
+
+    # Mask to ignore differences at the boundaries between episodes
+    mask = np.ones(len(diffs), dtype=bool)
+    ignored_diffs = episode_data_index["to"][:-1] - 1  # indices at the end of each episode
     mask[ignored_diffs] = False
     filtered_within_tolerance = within_tolerance[mask]
 
-    if not torch.all(filtered_within_tolerance):
+    # Check if all remaining diffs are within tolerance
+    if not np.all(filtered_within_tolerance):
         # Track original indices before masking
-        original_indices = torch.arange(len(diffs))
+        original_indices = np.arange(len(diffs))
         filtered_indices = original_indices[mask]
-        outside_tolerance_filtered_indices = torch.nonzero(~filtered_within_tolerance)  # .squeeze()
+        outside_tolerance_filtered_indices = np.nonzero(~filtered_within_tolerance)[0]
         outside_tolerance_indices = filtered_indices[outside_tolerance_filtered_indices]
-        episode_indices = torch.stack(hf_dataset["episode_index"])
 
         outside_tolerances = []
         for idx in outside_tolerance_indices:
             entry = {
                 "timestamps": [timestamps[idx], timestamps[idx + 1]],
                 "diff": diffs[idx],
-                "episode_index": episode_indices[idx].item(),
+                "episode_index": episode_indices[idx].item()
+                if hasattr(episode_indices[idx], "item")
+                else episode_indices[idx],
             }
             outside_tolerances.append(entry)
 
         if raise_value_error:
             raise ValueError(
                 f"""One or several timestamps unexpectedly violate the tolerance inside episode range.
-                This might be due to synchronization issues with timestamps during data collection.
+                This might be due to synchronization issues during data collection.
                 \n{pformat(outside_tolerances)}"""
             )
         return False

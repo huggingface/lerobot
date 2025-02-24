@@ -502,7 +502,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.episode_data_index = get_episode_data_index(self.meta.episodes, self.episodes)
 
         # Check timestamps
-        check_timestamps_sync(self.hf_dataset, self.episode_data_index, self.fps, self.tolerance_s)
+        timestamps = torch.stack(self.hf_dataset["timestamp"]).numpy()
+        episode_indices = torch.stack(self.hf_dataset["episode_index"]).numpy()
+        ep_data_index_np = {k: t.numpy() for k, t in self.episode_data_index.items()}
+        check_timestamps_sync(timestamps, episode_indices, ep_data_index_np, self.fps, self.tolerance_s)
 
         # Setup delta_indices
         if self.delta_timestamps is not None:
@@ -859,9 +862,15 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # `meta.save_episode` be executed after encoding the videos
         self.meta.save_episode(episode_index, episode_length, episode_tasks, ep_stats)
 
-        self.hf_dataset = self.load_hf_dataset()
-        self.episode_data_index = get_episode_data_index(self.meta.episodes, self.episodes)
-        check_timestamps_sync(self.hf_dataset, self.episode_data_index, self.fps, self.tolerance_s)
+        ep_data_index = get_episode_data_index(self.meta.episodes, [episode_index])
+        ep_data_index_np = {k: t.numpy() for k, t in ep_data_index.items()}
+        check_timestamps_sync(
+            episode_buffer["timestamp"],
+            episode_buffer["episode_index"],
+            ep_data_index_np,
+            self.fps,
+            self.tolerance_s,
+        )
 
         video_files = list(self.root.rglob("*.mp4"))
         assert len(video_files) == self.num_episodes * len(self.meta.video_keys)
