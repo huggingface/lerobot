@@ -57,6 +57,8 @@ class MobileManipulator:
         self.calibration_dir = Path(self.config.calibration_dir)
         self.logs = {}
 
+        self.teleop_keys = self.config.teleop_keys
+
         # For teleoperation, the leader arm (local) is used to record the desired arm pose.
         self.leader_arms = make_motors_buses_from_configs(self.config.leader_arms)
 
@@ -168,32 +170,35 @@ class MobileManipulator:
 
     def on_press(self, key):
         try:
-            if key.char == "w":
+            # Movement
+            if key.char == self.teleop_keys["forward"]:
                 self.pressed_keys["forward"] = True
-            elif key.char == "s":
+            elif key.char == self.teleop_keys["backward"]:
                 self.pressed_keys["backward"] = True
-            elif key.char == "a":
+            elif key.char == self.teleop_keys["left"]:
                 self.pressed_keys["left"] = True
-            elif key.char == "d":
+            elif key.char == self.teleop_keys["right"]:
                 self.pressed_keys["right"] = True
-            elif key.char == "z":
+            elif key.char == self.teleop_keys["rotate_left"]:
                 self.pressed_keys["rotate_left"] = True
-            elif key.char == "x":
+            elif key.char == self.teleop_keys["rotate_right"]:
                 self.pressed_keys["rotate_right"] = True
-            elif key.char == "q":
+
+            # Quit teleoperation
+            elif key.char == self.teleop_keys["quit"]:
                 self.running = False
                 return False
 
-            elif key.char == "r":
-                # Increase speed index, clamp at 2 (fast)
+            # Speed control
+            elif key.char == self.teleop_keys["speed_up"]:
                 self.speed_index = min(self.speed_index + 1, 2)
                 print(f"Speed index increased to {self.speed_index}")
-            elif key.char == "f":
-                # Decrease speed index, clamp at 0 (slow)
+            elif key.char == self.teleop_keys["speed_down"]:
                 self.speed_index = max(self.speed_index - 1, 0)
                 print(f"Speed index decreased to {self.speed_index}")
 
         except AttributeError:
+            # e.g., if key is special like Key.esc
             if key == keyboard.Key.esc:
                 self.running = False
                 return False
@@ -201,17 +206,17 @@ class MobileManipulator:
     def on_release(self, key):
         try:
             if hasattr(key, "char"):
-                if key.char == "w":
+                if key.char == self.teleop_keys["forward"]:
                     self.pressed_keys["forward"] = False
-                elif key.char == "s":
+                elif key.char == self.teleop_keys["backward"]:
                     self.pressed_keys["backward"] = False
-                elif key.char == "a":
+                elif key.char == self.teleop_keys["left"]:
                     self.pressed_keys["left"] = False
-                elif key.char == "d":
+                elif key.char == self.teleop_keys["right"]:
                     self.pressed_keys["right"] = False
-                elif key.char == "z":
+                elif key.char == self.teleop_keys["rotate_left"]:
                     self.pressed_keys["rotate_left"] = False
-                elif key.char == "x":
+                elif key.char == self.teleop_keys["rotate_right"]:
                     self.pressed_keys["rotate_right"] = False
         except AttributeError:
             pass
@@ -444,7 +449,7 @@ class MobileManipulator:
 
         body_state = self.wheel_raw_to_body(present_speed)
 
-        body_state_mm = (body_state[0] * 1000.0, body_state[1] * 1000.0, body_state[2]) # Convert x,y to mm/s
+        body_state_mm = (body_state[0] * 1000.0, body_state[1] * 1000.0, body_state[2])  # Convert x,y to mm/s
         wheel_state_tensor = torch.tensor(body_state_mm, dtype=torch.float32)
         combined_state_tensor = torch.cat((remote_arm_state_tensor, wheel_state_tensor), dim=0)
 
@@ -502,7 +507,10 @@ class MobileManipulator:
         if not self.is_connected:
             raise RobotDeviceNotConnectedError("Not connected.")
         if self.cmd_socket:
-            stop_cmd = {"raw_velocity": {"left_wheel": 0, "back_wheel": 0, "right_wheel": 0}, "arm_positions": {}}
+            stop_cmd = {
+                "raw_velocity": {"left_wheel": 0, "back_wheel": 0, "right_wheel": 0},
+                "arm_positions": {},
+            }
             self.cmd_socket.send_string(json.dumps(stop_cmd))
             self.cmd_socket.close()
         if self.video_socket:
@@ -620,7 +628,11 @@ class MobileManipulator:
              theta_cmd  : Rotational velocity in deg/s.
         """
         # Extract the raw values in order.
-        raw_list = [int(wheel_raw.get("left_wheel", 0)), int(wheel_raw.get("back_wheel", 0)), int(wheel_raw.get("right_wheel", 0))]
+        raw_list = [
+            int(wheel_raw.get("left_wheel", 0)),
+            int(wheel_raw.get("back_wheel", 0)),
+            int(wheel_raw.get("right_wheel", 0)),
+        ]
 
         # Convert each raw command back to an angular speed in deg/s.
         wheel_degps = np.array([MobileManipulator.raw_to_degps(r) for r in raw_list])
@@ -639,6 +651,7 @@ class MobileManipulator:
         x_cmd, y_cmd, theta_rad = velocity_vector
         theta_cmd = theta_rad * (180.0 / np.pi)
         return (x_cmd, y_cmd, theta_cmd)
+
 
 class LeKiwi:
     def __init__(self, motor_bus):
@@ -659,7 +672,11 @@ class LeKiwi:
         Reads the raw speeds for all wheels. Returns a dictionary with motor names:
         """
         raw_speeds = self.motor_bus.read("Present_Speed", self.motor_ids)
-        return {"left_wheel": int(raw_speeds[0]), "back_wheel": int(raw_speeds[1]), "right_wheel": int(raw_speeds[2])}
+        return {
+            "left_wheel": int(raw_speeds[0]),
+            "back_wheel": int(raw_speeds[1]),
+            "right_wheel": int(raw_speeds[2]),
+        }
 
     def set_velocity(self, command_speeds):
         """

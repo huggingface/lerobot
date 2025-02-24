@@ -531,8 +531,12 @@ class LeKiwiRobotConfig(RobotConfig):
 
     cameras: dict[str, CameraConfig] = field(
         default_factory=lambda: {
-            "front": OpenCVCameraConfig(camera_index="/dev/video0", fps=30, width=640, height=480),
-            "wrist": OpenCVCameraConfig(camera_index="/dev/video2", fps=30, width=640, height=480),
+            "front": OpenCVCameraConfig(
+                camera_index="/dev/video0", fps=30, width=640, height=480, rotation=90
+            ),
+            "wrist": OpenCVCameraConfig(
+                camera_index="/dev/video2", fps=30, width=640, height=480, rotation=180
+            ),
         }
     )
 
@@ -572,6 +576,23 @@ class LeKiwiRobotConfig(RobotConfig):
                     "right_wheel": (9, "sts3215"),
                 },
             ),
+        }
+    )
+
+    teleop_keys: dict[str, str] = field(
+        default_factory=lambda: {
+            # Movement
+            "forward": "w",
+            "backward": "s",
+            "left": "a",
+            "right": "d",
+            "rotate_left": "z",
+            "rotate_right": "x",
+            # Speed control
+            "speed_up": "r",
+            "speed_down": "f",
+            # quit teleop
+            "quit": "q",
         }
     )
 

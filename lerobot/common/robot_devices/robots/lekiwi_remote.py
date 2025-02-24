@@ -1,18 +1,27 @@
-import json, time, threading, cv2, base64, zmq
+import base64
+import json
+import threading
+import time
 from pathlib import Path
+
+import cv2
+import zmq
+
 from lerobot.common.robot_devices.robots.mobile_manipulator import LeKiwi
+
 
 def setup_zmq_sockets(config):
     context = zmq.Context()
     cmd_socket = context.socket(zmq.PULL)
     cmd_socket.setsockopt(zmq.CONFLATE, 1)
     cmd_socket.bind(f"tcp://*:{config.port}")
-    
+
     video_socket = context.socket(zmq.PUSH)
     video_socket.setsockopt(zmq.CONFLATE, 1)
     video_socket.bind(f"tcp://*:{config.video_port}")
-    
+
     return context, cmd_socket, video_socket
+
 
 def run_camera_capture(cameras, images_lock, latest_images_dict, stop_event):
     while not stop_event.is_set():
@@ -27,6 +36,7 @@ def run_camera_capture(cameras, images_lock, latest_images_dict, stop_event):
         with images_lock:
             latest_images_dict.update(local_dict)
         time.sleep(0.01)
+
 
 def calibrate_follower_arm(motors_bus, calib_dir_str):
     """
@@ -57,6 +67,7 @@ def calibrate_follower_arm(motors_bus, calib_dir_str):
         print("[INFO] Applied calibration for follower arm.")
     except Exception as e:
         print(f"[WARNING] Could not apply calibration: {e}")
+
 
 def run_lekiwi(robot_config):
     """
@@ -134,7 +145,7 @@ def run_lekiwi(robot_config):
                                 f"[WARNING] Received {len(arm_positions)} arm positions, expected {len(arm_motor_ids)}"
                             )
                         else:
-                            for motor, pos in zip(arm_motor_ids, arm_positions):
+                            for motor, pos in zip(arm_motor_ids, arm_positions, strict=False):
                                 motors_bus.write("Goal_Position", pos, motor)
                     # Process wheel (base) commands.
                     if "raw_velocity" in data:
@@ -184,7 +195,9 @@ def run_lekiwi(robot_config):
 
             # Ensure a short sleep to avoid overloading the CPU.
             elapsed = time.time() - loop_start_time
-            time.sleep(max(0.01 - elapsed, 0))
+            time.sleep(
+                max(0.033 - elapsed, 0)
+            )  # If robot jitters increase the sleep and monitor cpu load with `top` in cmd
     except KeyboardInterrupt:
         print("Shutting down LeKiwi server.")
     finally:

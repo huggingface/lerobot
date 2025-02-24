@@ -77,7 +77,7 @@ python lerobot/scripts/control_robot.py record \
     --control.reset_time_s=10
 ```
 
-- Run the code for the LeKiwi robot (on the robot itself),
+- For remote controlled robots like LeKiwi, run this script on the robot edge device (e.g. RaspBerryPi):
 ```bash
 python lerobot/scripts/control_robot.py \
   --robot.type=lekiwi \
@@ -377,6 +377,7 @@ def control_robot(cfg: ControlPipelineConfig):
         replay(robot, cfg.control)
     elif isinstance(cfg.control, RemoteRobotConfig):
         from lerobot.common.robot_devices.robots.lekiwi_remote import run_lekiwi
+
         run_lekiwi(cfg.robot)
 
     if robot.is_connected:
