@@ -60,6 +60,10 @@ from queue import Empty
 
 from lerobot.common.utils.utils import init_logging
 
+import multiprocessing
+
+multiprocessing.set_start_method("spawn")
+
 ACTOR_SHUTDOWN_TIMEOUT = 30
 
 

@@ -63,10 +63,9 @@ from lerobot.scripts.server.buffer import (
 
 from lerobot.scripts.server import learner_service
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(levelname)s [PID: %(process)d] %(asctime)s %(filename)s:%(lineno)d %(message)s",
-)
+import multiprocessing
+
+multiprocessing.set_start_method("spawn")
 
 
 def handle_resume_logic(cfg: DictConfig, out_dir: str) -> DictConfig:
@@ -650,7 +649,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
 
     def signal_handler(signum, frame):
         logging.error(
-            f"\nReceived signal {signal.Signals(signum).name}. Initiating learner shutdown..."
+            f"Received signal {signal.Signals(signum).name}. Initiating learner shutdown..."
         )
         shutdown_event.set()
 
