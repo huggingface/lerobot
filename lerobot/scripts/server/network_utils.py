@@ -64,7 +64,10 @@ def receive_bytes_in_chunks(
 ):
     bytes_buffer = io.BytesIO()
     step = 0
+
+    logging.info(f"{log_prefix} Starting receiver")
     for item in iterator:
+        logging.info(f"{log_prefix} Received item")
         if shutdown_event.is_set():
             logging.info(f"{log_prefix} Shutting down receiver")
             return
@@ -73,16 +76,16 @@ def receive_bytes_in_chunks(
             bytes_buffer.seek(0)
             bytes_buffer.truncate(0)
             bytes_buffer.write(item.data)
-            logging.debug(f"{log_prefix} Received data at step 0")
+            logging.info(f"{log_prefix} Received data at step 0")
             step = 0
             continue
         elif item.transfer_state == hilserl_pb2.TransferState.TRANSFER_MIDDLE:
             bytes_buffer.write(item.data)
             step += 1
-            logging.debug(f"{log_prefix} Received data at step {step}")
+            logging.info(f"{log_prefix} Received data at step {step}")
         elif item.transfer_state == hilserl_pb2.TransferState.TRANSFER_END:
             bytes_buffer.write(item.data)
-            logging.debug(
+            logging.info(
                 f"{log_prefix} Received data at step end size {bytes_buffer_size(bytes_buffer)}"
             )
 
@@ -92,4 +95,6 @@ def receive_bytes_in_chunks(
             bytes_buffer.truncate(0)
             step = 0
 
-            logging.debug(f"{log_prefix} Queue updated")
+            logging.info(
+                f"{log_prefix} Queue updated, {queue.qsize()} items in the queue"
+            )
