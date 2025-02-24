@@ -27,15 +27,18 @@ from typing import Any
 import datasets
 import jsonlines
 import numpy as np
-import pyarrow.compute as pc
+import packaging.version
 import torch
 from datasets.table import embed_table_storage
 from huggingface_hub import DatasetCard, DatasetCardData, HfApi
-from packaging import version
 from PIL import Image as PILImage
 from torchvision import transforms
 
-from lerobot.common.datasets.backward_compatibility import V21_MESSAGE, BackwardCompatibilityError
+from lerobot.common.datasets.backward_compatibility import (
+    V21_MESSAGE,
+    BackwardCompatibilityError,
+    ForwardCompatibilityError,
+)
 from lerobot.common.robot_devices.robots.utils import Robot
 from lerobot.common.utils.utils import is_valid_numpy_dtype_string
 from lerobot.configs.types import DictLike, FeatureType, PolicyFeature
@@ -129,13 +132,13 @@ def serialize_dict(stats: dict[str, torch.Tensor | np.ndarray | dict]) -> dict:
     return unflatten_dict(serialized_dict)
 
 
-def write_parquet(dataset: datasets.Dataset, fpath: Path) -> None:
+def embed_images(dataset: datasets.Dataset) -> datasets.Dataset:
     # Embed image bytes into the table before saving to parquet
     format = dataset.format
     dataset = dataset.with_format("arrow")
     dataset = dataset.map(embed_table_storage, batched=False)
     dataset = dataset.with_format(**format)
-    dataset.to_parquet(fpath)
+    return dataset
 
 
 def load_json(fpath: Path) -> Any:
@@ -269,38 +272,78 @@ def hf_transform_to_torch(items_dict: dict[torch.Tensor | None]):
     return items_dict
 
 
+def is_valid_version(version: str) -> bool:
+    try:
+        packaging.version.parse(version)
+        return True
+    except packaging.version.InvalidVersion:
+        return False
+
+
 def check_version_compatibility(
-    repo_id: str, version_to_check: str, current_version: str, enforce_breaking_major: bool = True
+    repo_id: str,
+    version_to_check: str | packaging.version.Version,
+    current_version: str | packaging.version.Version,
+    enforce_breaking_major: bool = True,
 ) -> None:
-    v_check = version.parse(version_to_check)
-    v_current = version.parse(current_version)
+    v_check = (
+        packaging.version.parse(version_to_check)
+        if not isinstance(version_to_check, packaging.version.Version)
+        else version_to_check
+    )
+    v_current = (
+        packaging.version.parse(current_version)
+        if not isinstance(current_version, packaging.version.Version)
+        else current_version
+    )
     if v_check.major < v_current.major and enforce_breaking_major:
         raise BackwardCompatibilityError(repo_id, v_check)
     elif v_check.minor < v_current.minor:
-        logging.warning(V21_MESSAGE.format(repo_id=repo_id, version=version_to_check))
+        logging.warning(V21_MESSAGE.format(repo_id=repo_id, version=v_check))
 
 
-def get_repo_versions(repo_id: str) -> list[version.Version]:
+def get_repo_versions(repo_id: str) -> list[packaging.version.Version]:
     """Returns available valid versions (branches and tags) on given repo."""
     api = HfApi()
     repo_refs = api.list_repo_refs(repo_id, repo_type="dataset")
     repo_refs = [b.name for b in repo_refs.branches + repo_refs.tags]
     repo_versions = []
     for ref in repo_refs:
-        with contextlib.suppress(version.InvalidVersion):
-            repo_versions.append(version.parse(ref))
+        with contextlib.suppress(packaging.version.InvalidVersion):
+            repo_versions.append(packaging.version.parse(ref))
 
     return repo_versions
 
 
-def get_safe_revision(repo_id: str, revision: str) -> str:
-    """Returns the version if available on repo, otherwise return the latest available."""
-    api = HfApi()
-    if api.revision_exists(repo_id, revision, repo_type="dataset"):
-        return revision
-
+def get_safe_version(repo_id: str, version: str | packaging.version.Version) -> str:
+    """
+    Returns the version if available on repo or the latest compatible one.
+    Otherwise, will throw a `CompatibilityError`.
+    """
+    target_version = (
+        packaging.version.parse(version) if not isinstance(version, packaging.version.Version) else version
+    )
     hub_versions = get_repo_versions(repo_id)
-    return f"v{max(hub_versions)}"
+
+    if target_version in hub_versions:
+        return f"v{target_version}"
+
+    compatibles = [
+        v for v in hub_versions if v.major == target_version.major and v.minor <= target_version.minor
+    ]
+    if compatibles:
+        return_version = max(compatibles)
+        if return_version < target_version:
+            logging.warning(f"Revision {version} for {repo_id} not found, using version v{return_version}")
+        return f"v{return_version}"
+
+    lower_major = [v for v in hub_versions if v.major < target_version.major]
+    if lower_major:
+        raise BackwardCompatibilityError(repo_id, max(lower_major))
+
+    upper_versions = [v for v in hub_versions if v > target_version]
+    assert len(upper_versions) > 0
+    raise ForwardCompatibilityError(repo_id, min(upper_versions))
 
 
 def get_hf_features_from_features(features: dict) -> datasets.Features:
@@ -409,75 +452,72 @@ def get_episode_data_index(
     }
 
 
-def calculate_total_episode(
-    hf_dataset: datasets.Dataset, raise_if_not_contiguous: bool = True
-) -> dict[str, torch.Tensor]:
-    episode_indices = sorted(hf_dataset.unique("episode_index"))
-    total_episodes = len(episode_indices)
-    if raise_if_not_contiguous and episode_indices != list(range(total_episodes)):
-        raise ValueError("episode_index values are not sorted and contiguous.")
-    return total_episodes
-
-
-def calculate_episode_data_index(hf_dataset: datasets.Dataset) -> dict[str, torch.Tensor]:
-    episode_lengths = []
-    table = hf_dataset.data.table
-    total_episodes = calculate_total_episode(hf_dataset)
-    for ep_idx in range(total_episodes):
-        ep_table = table.filter(pc.equal(table["episode_index"], ep_idx))
-        episode_lengths.insert(ep_idx, len(ep_table))
-
-    cumulative_lenghts = list(accumulate(episode_lengths))
-    return {
-        "from": torch.LongTensor([0] + cumulative_lenghts[:-1]),
-        "to": torch.LongTensor(cumulative_lenghts),
-    }
-
-
 def check_timestamps_sync(
-    hf_dataset: datasets.Dataset,
-    episode_data_index: dict[str, torch.Tensor],
+    timestamps: np.ndarray,
+    episode_indices: np.ndarray,
+    episode_data_index: dict[str, np.ndarray],
     fps: int,
     tolerance_s: float,
     raise_value_error: bool = True,
 ) -> bool:
     """
-    This check is to make sure that each timestamps is separated to the next by 1/fps +/- tolerance to
-    account for possible numerical error.
-    """
-    timestamps = torch.stack(hf_dataset["timestamp"])
-    diffs = torch.diff(timestamps)
-    within_tolerance = torch.abs(diffs - 1 / fps) <= tolerance_s
+    This check is to make sure that each timestamp is separated from the next by (1/fps) +/- tolerance
+    to account for possible numerical error.
 
-    # We mask differences between the timestamp at the end of an episode
-    # and the one at the start of the next episode since these are expected
-    # to be outside tolerance.
-    mask = torch.ones(len(diffs), dtype=torch.bool)
-    ignored_diffs = episode_data_index["to"][:-1] - 1
+    Args:
+        timestamps (np.ndarray): Array of timestamps in seconds.
+        episode_indices (np.ndarray): Array indicating the episode index for each timestamp.
+        episode_data_index (dict[str, np.ndarray]): A dictionary that includes 'to',
+            which identifies indices for the end of each episode.
+        fps (int): Frames per second. Used to check the expected difference between consecutive timestamps.
+        tolerance_s (float): Allowed deviation from the expected (1/fps) difference.
+        raise_value_error (bool): Whether to raise a ValueError if the check fails.
+
+    Returns:
+        bool: True if all checked timestamp differences lie within tolerance, False otherwise.
+
+    Raises:
+        ValueError: If the check fails and `raise_value_error` is True.
+    """
+    if timestamps.shape != episode_indices.shape:
+        raise ValueError(
+            "timestamps and episode_indices should have the same shape. "
+            f"Found {timestamps.shape=} and {episode_indices.shape=}."
+        )
+
+    # Consecutive differences
+    diffs = np.diff(timestamps)
+    within_tolerance = np.abs(diffs - (1.0 / fps)) <= tolerance_s
+
+    # Mask to ignore differences at the boundaries between episodes
+    mask = np.ones(len(diffs), dtype=bool)
+    ignored_diffs = episode_data_index["to"][:-1] - 1  # indices at the end of each episode
     mask[ignored_diffs] = False
     filtered_within_tolerance = within_tolerance[mask]
 
-    if not torch.all(filtered_within_tolerance):
+    # Check if all remaining diffs are within tolerance
+    if not np.all(filtered_within_tolerance):
         # Track original indices before masking
-        original_indices = torch.arange(len(diffs))
+        original_indices = np.arange(len(diffs))
         filtered_indices = original_indices[mask]
-        outside_tolerance_filtered_indices = torch.nonzero(~filtered_within_tolerance)  # .squeeze()
+        outside_tolerance_filtered_indices = np.nonzero(~filtered_within_tolerance)[0]
         outside_tolerance_indices = filtered_indices[outside_tolerance_filtered_indices]
-        episode_indices = torch.stack(hf_dataset["episode_index"])
 
         outside_tolerances = []
         for idx in outside_tolerance_indices:
             entry = {
                 "timestamps": [timestamps[idx], timestamps[idx + 1]],
                 "diff": diffs[idx],
-                "episode_index": episode_indices[idx].item(),
+                "episode_index": episode_indices[idx].item()
+                if hasattr(episode_indices[idx], "item")
+                else episode_indices[idx],
             }
             outside_tolerances.append(entry)
 
         if raise_value_error:
             raise ValueError(
                 f"""One or several timestamps unexpectedly violate the tolerance inside episode range.
-                This might be due to synchronization issues with timestamps during data collection.
+                This might be due to synchronization issues during data collection.
                 \n{pformat(outside_tolerances)}"""
             )
         return False

@@ -20,13 +20,13 @@ from typing import Callable
 
 import datasets
 import numpy as np
+import packaging.version
 import PIL.Image
 import torch
 import torch.utils
-from datasets import load_dataset
+from datasets import concatenate_datasets, load_dataset
 from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.constants import REPOCARD_NAME
-from packaging import version
 
 from lerobot.common.constants import HF_LEROBOT_HOME
 from lerobot.common.datasets.compute_stats import aggregate_stats, compute_episode_stats
@@ -43,12 +43,14 @@ from lerobot.common.datasets.utils import (
     check_version_compatibility,
     create_empty_dataset_info,
     create_lerobot_dataset_card,
+    embed_images,
     get_delta_indices,
     get_episode_data_index,
     get_features_from_robot,
     get_hf_features_from_features,
-    get_safe_revision,
+    get_safe_version,
     hf_transform_to_torch,
+    is_valid_version,
     load_episodes,
     load_episodes_stats,
     load_info,
@@ -60,7 +62,6 @@ from lerobot.common.datasets.utils import (
     write_episode_stats,
     write_info,
     write_json,
-    write_parquet,
 )
 from lerobot.common.datasets.video_utils import (
     VideoFrame,
@@ -70,7 +71,6 @@ from lerobot.common.datasets.video_utils import (
 )
 from lerobot.common.robot_devices.robots.utils import Robot
 
-# For maintainers, see lerobot/common/datasets/push_dataset_to_hub/CODEBASE_VERSION.md
 CODEBASE_VERSION = "v2.1"
 
 
@@ -91,18 +91,19 @@ class LeRobotDatasetMetadata:
                 raise FileNotFoundError
             self.load_metadata()
         except (FileNotFoundError, NotADirectoryError):
+            if is_valid_version(self.revision):
+                self.revision = get_safe_version(self.repo_id, self.revision)
+
             (self.root / "meta").mkdir(exist_ok=True, parents=True)
-            self.revision = get_safe_revision(self.repo_id, self.revision)
             self.pull_from_repo(allow_patterns="meta/")
             self.load_metadata()
 
-        check_version_compatibility(self.repo_id, self._version, CODEBASE_VERSION)
-
     def load_metadata(self):
         self.info = load_info(self.root)
+        check_version_compatibility(self.repo_id, self._version, CODEBASE_VERSION)
         self.tasks, self.task_to_task_index = load_tasks(self.root)
         self.episodes = load_episodes(self.root)
-        if version.parse(self._version) < version.parse("v2.1"):
+        if self._version < packaging.version.parse("v2.1"):
             self.stats = load_stats(self.root)
             self.episodes_stats = backward_compatible_episodes_stats(self.stats, self.episodes)
         else:
@@ -124,9 +125,9 @@ class LeRobotDatasetMetadata:
         )
 
     @property
-    def _version(self) -> str:
+    def _version(self) -> packaging.version.Version:
         """Codebase version used to create this dataset."""
-        return self.info["codebase_version"]
+        return packaging.version.parse(self.info["codebase_version"])
 
     def get_data_file_path(self, ep_index: int) -> Path:
         ep_chunk = self.get_episode_chunk(ep_index)
@@ -483,7 +484,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.meta = LeRobotDatasetMetadata(
             self.repo_id, self.root, self.revision, force_cache_sync=force_cache_sync
         )
-        if self.episodes is not None and version.parse(self.meta._version) >= version.parse("v2.1"):
+        if self.episodes is not None and self.meta._version >= packaging.version.parse("v2.1"):
             episodes_stats = [self.meta.episodes_stats[ep_idx] for ep_idx in self.episodes]
             self.stats = aggregate_stats(episodes_stats)
 
@@ -494,14 +495,17 @@ class LeRobotDataset(torch.utils.data.Dataset):
             assert all((self.root / fpath).is_file() for fpath in self.get_episodes_file_paths())
             self.hf_dataset = self.load_hf_dataset()
         except (AssertionError, FileNotFoundError, NotADirectoryError):
-            self.revision = get_safe_revision(self.repo_id, self.revision)
+            self.revision = get_safe_version(self.repo_id, self.revision)
             self.download_episodes(download_videos)
             self.hf_dataset = self.load_hf_dataset()
 
         self.episode_data_index = get_episode_data_index(self.meta.episodes, self.episodes)
 
         # Check timestamps
-        check_timestamps_sync(self.hf_dataset, self.episode_data_index, self.fps, self.tolerance_s)
+        timestamps = torch.stack(self.hf_dataset["timestamp"]).numpy()
+        episode_indices = torch.stack(self.hf_dataset["episode_index"]).numpy()
+        ep_data_index_np = {k: t.numpy() for k, t in self.episode_data_index.items()}
+        check_timestamps_sync(timestamps, episode_indices, ep_data_index_np, self.fps, self.tolerance_s)
 
         # Setup delta_indices
         if self.delta_timestamps is not None:
@@ -611,7 +615,15 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         # TODO(aliberts): hf_dataset.set_format("torch")
         hf_dataset.set_transform(hf_transform_to_torch)
+        return hf_dataset
 
+    def create_hf_dataset(self) -> datasets.Dataset:
+        features = get_hf_features_from_features(self.features)
+        ft_dict = {col: [] for col in features}
+        hf_dataset = datasets.Dataset.from_dict(ft_dict, features=features, split="train")
+
+        # TODO(aliberts): hf_dataset.set_format("torch")
+        hf_dataset.set_transform(hf_transform_to_torch)
         return hf_dataset
 
     @property
@@ -855,16 +867,24 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self._wait_image_writer()
         self._save_episode_table(episode_buffer, episode_index)
         ep_stats = compute_episode_stats(episode_buffer, self.features)
-        self.meta.save_episode(episode_index, episode_length, episode_tasks, ep_stats)
 
         if len(self.meta.video_keys) > 0:
             video_paths = self.encode_episode_videos(episode_index)
             for key in self.meta.video_keys:
                 episode_buffer[key] = video_paths[key]
 
-        self.hf_dataset = self.load_hf_dataset()
-        self.episode_data_index = get_episode_data_index(self.meta.episodes, self.episodes)
-        check_timestamps_sync(self.hf_dataset, self.episode_data_index, self.fps, self.tolerance_s)
+        # `meta.save_episode` be executed after encoding the videos
+        self.meta.save_episode(episode_index, episode_length, episode_tasks, ep_stats)
+
+        ep_data_index = get_episode_data_index(self.meta.episodes, [episode_index])
+        ep_data_index_np = {k: t.numpy() for k, t in ep_data_index.items()}
+        check_timestamps_sync(
+            episode_buffer["timestamp"],
+            episode_buffer["episode_index"],
+            ep_data_index_np,
+            self.fps,
+            self.tolerance_s,
+        )
 
         video_files = list(self.root.rglob("*.mp4"))
         assert len(video_files) == self.num_episodes * len(self.meta.video_keys)
@@ -883,9 +903,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def _save_episode_table(self, episode_buffer: dict, episode_index: int) -> None:
         episode_dict = {key: episode_buffer[key] for key in self.hf_features}
         ep_dataset = datasets.Dataset.from_dict(episode_dict, features=self.hf_features, split="train")
+        ep_dataset = embed_images(ep_dataset)
+        self.hf_dataset = concatenate_datasets([self.hf_dataset, ep_dataset])
+        self.hf_dataset.set_transform(hf_transform_to_torch)
         ep_data_path = self.root / self.meta.get_data_file_path(ep_index=episode_index)
         ep_data_path.parent.mkdir(parents=True, exist_ok=True)
-        write_parquet(ep_dataset, ep_data_path)
+        ep_dataset.to_parquet(ep_data_path)
 
     def clear_episode_buffer(self) -> None:
         episode_index = self.episode_buffer["episode_index"]
@@ -993,7 +1016,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.episode_buffer = obj.create_episode_buffer()
 
         obj.episodes = None
-        obj.hf_dataset = None
+        obj.hf_dataset = obj.create_hf_dataset()
         obj.image_transforms = None
         obj.delta_timestamps = None
         obj.delta_indices = None

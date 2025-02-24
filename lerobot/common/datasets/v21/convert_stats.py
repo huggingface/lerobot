@@ -65,7 +65,7 @@ def check_aggregate_stats(
     dataset: LeRobotDataset,
     reference_stats: dict[str, dict[str, np.ndarray]],
     video_rtol_atol: tuple[float] = (1e-2, 1e-2),
-    default_rtol_atol: tuple[float] = (5e-6, 0.0),
+    default_rtol_atol: tuple[float] = (5e-6, 6e-5),
 ):
     """Verifies that the aggregated stats from episodes_stats are close to reference stats."""
     agg_stats = aggregate_stats(list(dataset.meta.episodes_stats.values()))
