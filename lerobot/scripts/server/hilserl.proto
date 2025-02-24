@@ -24,14 +24,9 @@ service LearnerService {
   // Actor -> Learner to store transitions
   rpc SendInteractionMessage(InteractionMessage) returns (Empty);
   rpc StreamParameters(Empty) returns (stream Parameters);
-  rpc ReceiveTransitions(stream ActorInformation) returns (Empty);
-}
-
-message ActorInformation {
-    oneof data {
-        Transition transition = 1;
-        InteractionMessage interaction_message = 2;
-    }
+  rpc SendTransitions(stream Transition) returns (Empty);
+  rpc SendInteractions(stream InteractionMessage) returns (Empty);
+  rpc Ready(Empty) returns (Empty);
 }
 
 enum TransferState {
@@ -43,16 +38,18 @@ enum TransferState {
 
 // Messages
 message Transition {
-  bytes transition_bytes = 1;
+  TransferState transfer_state = 1;
+  bytes data = 2;
 }
 
 message Parameters {
   TransferState transfer_state = 1;
-  bytes parameter_bytes = 2;
+  bytes data = 2;
 }
 
 message InteractionMessage {
-  bytes interaction_message_bytes = 1;
+  TransferState transfer_state = 1;
+  bytes data = 2;
 }
 
 message Empty {}
