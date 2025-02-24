@@ -438,8 +438,12 @@ def log_policy_frequency_issue(
         )
 
 
-def establish_learner_connection(stub, attempts=30):
+def establish_learner_connection(stub, shutdown_event: Event, attempts=30):
     for _ in range(attempts):
+        if shutdown_event.is_set():
+            logging.info("[ACTOR] Shutting down establish_learner_connection")
+            return False
+
         # Force a connection attempt and check state
         try:
             if stub.Ready(hilserl_pb2.Empty()) == hilserl_pb2.Empty():
@@ -476,7 +480,7 @@ def actor_cli(cfg: dict):
     )
 
     logging.info("[ACTOR] Establishing connection with Learner")
-    if not establish_learner_connection(learner_client):
+    if not establish_learner_connection(learner_client, shutdown_event):
         logging.error("[ACTOR] Failed to establish connection with Learner")
         return
 
