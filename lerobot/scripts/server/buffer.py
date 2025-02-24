@@ -123,6 +123,8 @@ def bytes_to_python_object(buffer: bytes) -> Any:
 
 
 def bytes_to_transitions(buffer: bytes) -> list[Transition]:
+    buffer = io.BytesIO(buffer)
+    buffer.seek(0)
     return torch.load(buffer)
 
 
