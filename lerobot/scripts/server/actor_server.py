@@ -466,8 +466,6 @@ def establish_learner_connection(stub, shutdown_event: Event, attempts=30):
 
 @hydra.main(version_base="1.2", config_name="default", config_path="../../configs")
 def actor_cli(cfg: dict):
-    multiprocessing.set_start_method("spawn")
-
     init_logging()
     robot = make_robot(cfg=cfg.robot)
 
@@ -554,4 +552,6 @@ def actor_cli(cfg: dict):
 
 
 if __name__ == "__main__":
+    multiprocessing.set_start_method("spawn")
+
     actor_cli()

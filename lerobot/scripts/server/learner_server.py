@@ -625,8 +625,6 @@ def make_optimizers_and_scheduler(cfg, policy: nn.Module):
 
 
 def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = None):
-    multiprocessing.set_start_method("spawn")
-
     if out_dir is None:
         raise NotImplementedError()
     if job_name is None:
@@ -678,4 +676,6 @@ def train_cli(cfg: dict):
 
 
 if __name__ == "__main__":
+    multiprocessing.set_start_method("spawn")
+
     train_cli()
