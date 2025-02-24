@@ -65,8 +65,6 @@ from lerobot.scripts.server import learner_service
 
 import multiprocessing
 
-multiprocessing.set_start_method("spawn")
-
 
 def handle_resume_logic(cfg: DictConfig, out_dir: str) -> DictConfig:
     if not cfg.resume:
@@ -627,6 +625,8 @@ def make_optimizers_and_scheduler(cfg, policy: nn.Module):
 
 
 def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = None):
+    multiprocessing.set_start_method("spawn")
+
     if out_dir is None:
         raise NotImplementedError()
     if job_name is None:
