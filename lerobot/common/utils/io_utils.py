@@ -58,7 +58,7 @@ def deserialize_json_into_object(fpath: Path, obj: T) -> T:
             # Check that they have exactly the same set of keys.
             if target.keys() != source.keys():
                 raise ValueError(
-                    f"Dictionary keys do not match.\n" f"Expected: {target.keys()}, got: {source.keys()}"
+                    f"Dictionary keys do not match.\nExpected: {target.keys()}, got: {source.keys()}"
                 )
 
             # Recursively update each key.
