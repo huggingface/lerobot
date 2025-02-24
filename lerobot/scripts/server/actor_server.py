@@ -373,6 +373,7 @@ def act_with_policy(
                 reward=reward,
                 next_state=next_obs,
                 done=done,
+                truncated=truncated,  # TODO: (azouitine) Handle truncation properly
                 complementary_info=info,  # TODO Handle information for the transition, is_demonstraction: bool
             )
         )

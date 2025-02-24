@@ -8,7 +8,8 @@
 #   env.gym.obs_type=environment_state_agent_pos \
 
 seed: 1
-dataset_repo_id: null
+# dataset_repo_id: null
+dataset_repo_id: "AdilZtn/Maniskill-Pushcube-demonstration-medium"
 
 training:
   # Offline training dataloader
@@ -52,12 +53,14 @@ policy:
   n_action_steps: 1
 
   shared_encoder: true
-  vision_encoder_name: "helper2424/resnet10"
-  freeze_vision_encoder: true
+  # vision_encoder_name: "helper2424/resnet10"
+  vision_encoder_name: null
+  # freeze_vision_encoder: true
+  freeze_vision_encoder: false
   input_shapes:
     # # TODO(rcadene, alexander-soare): add variables for height and width from the dataset/env?
     observation.state: ["${env.state_dim}"]
-    observation.image: [3, 128, 128]
+    observation.image: [3, 64, 64]
   output_shapes:
     action: [7]
   
