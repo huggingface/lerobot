@@ -4,9 +4,6 @@ import logging
 from multiprocessing import Event, Queue
 from queue import Empty
 
-from lerobot.scripts.server.buffer import (
-    state_to_bytes,
-)
 from lerobot.scripts.server.network_utils import receive_bytes_in_chunks
 from lerobot.scripts.server.network_utils import send_bytes_in_chunks
 
@@ -33,16 +30,16 @@ class LearnerService(hilserl_pb2_grpc.LearnerServiceServicer):
 
     def _get_policy_state(self):
         # Get initial parameters
-        params_dict = self.parameters_queue.get()
+        params_bytes = self.parameters_queue.get()
 
         # Drain queue and keep only the most recent parameters
         try:
             while True:
-                params_dict = self.parameters_queue.get_nowait()
+                params_bytes = self.parameters_queue.get_nowait()
         except Empty:
             pass
 
-        return params_dict
+        return params_bytes
 
     def StreamParameters(self, request, context):
         # TODO: authorize the request
@@ -50,14 +47,13 @@ class LearnerService(hilserl_pb2_grpc.LearnerServiceServicer):
 
         while not self.shutdown_event.is_set():
             logging.debug("[LEARNER] Push parameters to the Actor")
-            state_dict = self._get_policy_state()
+            buffer = self._get_policy_state()
 
-            with state_to_bytes(state_dict) as buffer:
-                yield from send_bytes_in_chunks(
-                    buffer,
-                    hilserl_pb2.Parameters,
-                    log_prefix="[LEARNER] Sending parameters",
-                )
+            yield from send_bytes_in_chunks(
+                buffer,
+                hilserl_pb2.Parameters,
+                log_prefix="[LEARNER] Sending parameters",
+            )
 
             self.shutdown_event.wait(self.seconds_between_pushes)
 

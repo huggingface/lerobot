@@ -105,13 +105,13 @@ def move_state_dict_to_device(state_dict, device="cpu"):
         return state_dict
 
 
-def state_to_bytes(state_dict: dict[str, torch.Tensor]) -> io.BytesIO:
+def state_to_bytes(state_dict: dict[str, torch.Tensor]) -> bytes:
     """Convert model state dict to flat array for transmission"""
     buffer = io.BytesIO()
 
     torch.save(state_dict, buffer)
 
-    return buffer
+    return buffer.getvalue()
 
 
 def python_object_to_bytes(python_object: Any) -> bytes:
