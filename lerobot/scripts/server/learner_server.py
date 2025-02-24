@@ -649,7 +649,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     shutdown_event = Event()
 
     def signal_handler(signum, frame):
-        print(
+        logging.error(
             f"\nReceived signal {signal.Signals(signum).name}. Initiating learner shutdown..."
         )
         shutdown_event.set()

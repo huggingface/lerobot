@@ -58,10 +58,7 @@ from lerobot.scripts.server import learner_service
 from multiprocessing import Process, Queue, Event
 from queue import Empty
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(levelname)s [PID: %(process)d] %(asctime)s %(filename)s:%(lineno)d %(message)s",
-)
+from lerobot.common.utils.utils import init_logging
 
 ACTOR_SHUTDOWN_TIMEOUT = 30
 
@@ -467,6 +464,7 @@ def establish_learner_connection(stub, shutdown_event: Event, attempts=30):
 
 @hydra.main(version_base="1.2", config_name="default", config_path="../../configs")
 def actor_cli(cfg: dict):
+    init_logging()
     robot = make_robot(cfg=cfg.robot)
 
     shutdown_event = Event()
