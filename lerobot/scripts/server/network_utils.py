@@ -86,7 +86,7 @@ def receive_bytes_in_chunks(
                 f"{log_prefix} Received data at step end size {bytes_buffer_size(bytes_buffer)}"
             )
 
-            queue.put(bytes_buffer)
+            queue.put(bytes_buffer.getvalue())
 
             bytes_buffer.seek(0)
             bytes_buffer.truncate(0)

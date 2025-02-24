@@ -118,13 +118,11 @@ def python_object_to_bytes(python_object: Any) -> bytes:
     return pickle.dumps(python_object)
 
 
-def bytes_to_python_object(buffer: io.BytesIO) -> Any:
-    buffer = io.BytesIO(buffer)
+def bytes_to_python_object(buffer: bytes) -> Any:
     return pickle.load(buffer)
 
 
-def bytes_to_transitions(buffer: io.BytesIO) -> list[Transition]:
-    buffer = io.BytesIO(buffer)
+def bytes_to_transitions(buffer: bytes) -> list[Transition]:
     return torch.load(buffer)
 
 
