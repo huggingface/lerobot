@@ -63,7 +63,10 @@ from lerobot.scripts.server.buffer import (
 
 from lerobot.scripts.server import learner_service
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s [PID: %(process)d] %(asctime)s %(filename)s:%(lineno)d %(message)s",
+)
 
 
 def handle_resume_logic(cfg: DictConfig, out_dir: str) -> DictConfig:
@@ -410,7 +413,7 @@ def add_actor_information_and_train(
         if len(replay_buffer) < cfg.training.online_step_before_learning:
             continue
 
-        logging.info("[LEARNER] Starting optimization loop")
+        logging.debug("[LEARNER] Starting optimization loop")
         time_for_one_optimization_step = time.time()
         for _ in range(cfg.policy.utd_ratio - 1):
             batch = replay_buffer.sample(batch_size)

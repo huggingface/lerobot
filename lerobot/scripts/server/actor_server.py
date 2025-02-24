@@ -58,7 +58,10 @@ from lerobot.scripts.server import learner_service
 from multiprocessing import Process, Queue, Event
 from queue import Empty
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s [PID: %(process)d] %(asctime)s %(filename)s:%(lineno)d %(message)s",
+)
 
 ACTOR_SHUTDOWN_TIMEOUT = 30
 
