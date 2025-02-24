@@ -385,10 +385,8 @@ def add_actor_information_and_train(
             logging.info("[LEARNER] Shutdown signal received. Exiting...")
             break
 
+        logging.info("[LEARNER] Waiting for transitions")
         while not transition_queue.empty() and not shutdown_event.is_set():
-            if len(replay_buffer) >= cfg.training.online_step_before_learning:
-                break
-
             transition_list = transition_queue.get()
             transition_list = bytes_to_transitions(transition_list)
             for transition in transition_list:
@@ -396,11 +394,9 @@ def add_actor_information_and_train(
                 replay_buffer.add(**transition)
                 if transition.get("complementary_info", {}).get("is_intervention"):
                     offline_replay_buffer.add(**transition)
-
+        logging.info("[LEARNER] Received transitions")
+        logging.info("[LEARNER] Waiting for interactions")
         while not interaction_message_queue.empty() and not shutdown_event.is_set():
-            if len(replay_buffer) >= cfg.training.online_step_before_learning:
-                break
-
             interaction_message = interaction_message_queue.get()
             interaction_message = bytes_to_python_object(interaction_message)
             # If cfg.resume, shift the interaction step with the last checkpointed step in order to not break the logging
@@ -409,9 +405,12 @@ def add_actor_information_and_train(
                 interaction_message, mode="train", custom_step_key="Interaction step"
             )
 
+        logging.info("[LEARNER] Received interactions")
+
         if len(replay_buffer) < cfg.training.online_step_before_learning:
             continue
 
+        logging.info("[LEARNER] Starting optimization loop")
         time_for_one_optimization_step = time.time()
         for _ in range(cfg.policy.utd_ratio - 1):
             batch = replay_buffer.sample(batch_size)
