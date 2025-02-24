@@ -119,6 +119,8 @@ def python_object_to_bytes(python_object: Any) -> bytes:
 
 
 def bytes_to_python_object(buffer: bytes) -> Any:
+    buffer = io.BytesIO(buffer)
+    buffer.seek(0)
     return pickle.load(buffer)
 
 
