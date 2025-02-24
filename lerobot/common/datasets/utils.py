@@ -745,7 +745,7 @@ def validate_feature_numpy_array(
 
         if actual_shape != expected_shape:
             error_message += f"The feature '{name}' of shape '{actual_shape}' does not have the expected shape '{expected_shape}'.\n"
-    elif np.dtype(value) is not np.dtype(expected_dtype):
+    else:
         error_message += f"The feature '{name}' is not a 'np.ndarray'. Expected type is '{expected_dtype}', but type '{type(value)}' provided instead.\n"
 
     return error_message
