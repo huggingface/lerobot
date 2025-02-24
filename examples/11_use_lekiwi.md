@@ -323,6 +323,8 @@ You should see on your laptop something like this: ```[INFO] Connected to remote
 | R    | Increase speed                  |
 | F    | Decrease speed                  |
 
+> [!TIP]
+>  If you use a different keyboard you can change the keys for each commmand in the [`LeKiwiRobotConfig`](../lerobot/common/robot_devices/robots/configs.py).
 
 ## Troubleshoot communication
 
