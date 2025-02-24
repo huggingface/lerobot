@@ -385,7 +385,10 @@ def add_actor_information_and_train(
             logging.info("[LEARNER] Shutdown signal received. Exiting...")
             break
 
-        while not transition_queue.empty():
+        while not transition_queue.empty() and not shutdown_event.is_set():
+            if len(replay_buffer) >= cfg.training.online_step_before_learning:
+                break
+
             transition_list = transition_queue.get()
             transition_list = bytes_to_transitions(transition_list)
             for transition in transition_list:
@@ -394,7 +397,10 @@ def add_actor_information_and_train(
                 if transition.get("complementary_info", {}).get("is_intervention"):
                     offline_replay_buffer.add(**transition)
 
-        while not interaction_message_queue.empty():
+        while not interaction_message_queue.empty() and not shutdown_event.is_set():
+            if len(replay_buffer) >= cfg.training.online_step_before_learning:
+                break
+
             interaction_message = interaction_message_queue.get()
             interaction_message = bytes_to_python_object(interaction_message)
             # If cfg.resume, shift the interaction step with the last checkpointed step in order to not break the logging
