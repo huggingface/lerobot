@@ -62,24 +62,24 @@ def send_bytes_in_chunks(buffer: bytes, message_class: Any):
 def receive_bytes_in_chunks(iterator, queue: Queue, shutdown_event: Event):
     bytes_buffer = io.BytesIO()
     step = 0
-    for data in iterator:
+    for item in iterator:
         if shutdown_event.is_set():
             logging.info("Shutting down receiver")
             return
 
-        if data.transfer_state == hilserl_pb2.TransferState.TRANSFER_BEGIN:
+        if item.transfer_state == hilserl_pb2.TransferState.TRANSFER_BEGIN:
             bytes_buffer.seek(0)
             bytes_buffer.truncate(0)
-            bytes_buffer.write(data.parameter_bytes)
+            bytes_buffer.write(item.data)
             logging.info("Received data at step 0")
             step = 0
             continue
-        elif data.transfer_state == hilserl_pb2.TransferState.TRANSFER_MIDDLE:
-            bytes_buffer.write(data.parameter_bytes)
+        elif item.transfer_state == hilserl_pb2.TransferState.TRANSFER_MIDDLE:
+            bytes_buffer.write(item.data)
             step += 1
             logging.info(f"Received data at step {step}")
-        elif data.transfer_state == hilserl_pb2.TransferState.TRANSFER_END:
-            bytes_buffer.write(data.parameter_bytes)
+        elif item.transfer_state == hilserl_pb2.TransferState.TRANSFER_END:
+            bytes_buffer.write(item.data)
             logging.info(
                 f"Received data at step end size {bytes_buffer_size(bytes_buffer)}"
             )
