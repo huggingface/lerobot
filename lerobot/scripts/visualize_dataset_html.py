@@ -150,7 +150,7 @@ def run_server(
                 400,
             )
         dataset_version = (
-            dataset.meta._version if isinstance(dataset, LeRobotDataset) else dataset.codebase_version
+            str(dataset.meta._version) if isinstance(dataset, LeRobotDataset) else dataset.codebase_version
         )
         match = re.search(r"v(\d+)\.", dataset_version)
         if match:
@@ -385,12 +385,6 @@ def main():
         help="Name of hugging face repositery containing a LeRobotDataset dataset (e.g. `lerobot/pusht` for https://huggingface.co/datasets/lerobot/pusht).",
     )
     parser.add_argument(
-        "--local-files-only",
-        type=int,
-        default=0,
-        help="Use local files only. By default, this script will try to fetch the dataset from the hub if it exists.",
-    )
-    parser.add_argument(
         "--root",
         type=Path,
         default=None,
@@ -445,15 +439,10 @@ def main():
     repo_id = kwargs.pop("repo_id")
     load_from_hf_hub = kwargs.pop("load_from_hf_hub")
     root = kwargs.pop("root")
-    local_files_only = kwargs.pop("local_files_only")
 
     dataset = None
     if repo_id:
-        dataset = (
-            LeRobotDataset(repo_id, root=root, local_files_only=local_files_only)
-            if not load_from_hf_hub
-            else get_dataset_info(repo_id)
-        )
+        dataset = LeRobotDataset(repo_id, root=root) if not load_from_hf_hub else get_dataset_info(repo_id)
 
     visualize_dataset_html(dataset, **vars(args))
 

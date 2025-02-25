@@ -24,129 +24,137 @@ pytest -sx 'tests/test_control_robot.py::test_teleoperate[aloha-True]'
 """
 
 import multiprocessing
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from lerobot.common.logger import Logger
+from lerobot.common.policies.act.configuration_act import ACTConfig
 from lerobot.common.policies.factory import make_policy
-from lerobot.common.utils.utils import init_hydra_config
+from lerobot.common.robot_devices.control_configs import (
+    CalibrateControlConfig,
+    RecordControlConfig,
+    ReplayControlConfig,
+    TeleoperateControlConfig,
+)
+from lerobot.configs.policies import PreTrainedConfig
 from lerobot.scripts.control_robot import calibrate, record, replay, teleoperate
-from lerobot.scripts.train import make_optimizer_and_scheduler
 from tests.test_robots import make_robot
-from tests.utils import DEFAULT_CONFIG_PATH, DEVICE, TEST_ROBOT_TYPES, mock_calibration_dir, require_robot
+from tests.utils import DEVICE, TEST_ROBOT_TYPES, mock_calibration_dir, require_robot
 
 
 @pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)
 @require_robot
-def test_teleoperate(tmpdir, request, robot_type, mock):
+def test_teleoperate(tmp_path, request, robot_type, mock):
+    robot_kwargs = {"robot_type": robot_type, "mock": mock}
+
     if mock and robot_type != "aloha":
         request.getfixturevalue("patch_builtins_input")
 
         # Create an empty calibration directory to trigger manual calibration
         # and avoid writing calibration files in user .cache/calibration folder
-        tmpdir = Path(tmpdir)
-        calibration_dir = tmpdir / robot_type
+        calibration_dir = tmp_path / robot_type
         mock_calibration_dir(calibration_dir)
-        overrides = [f"calibration_dir={calibration_dir}"]
+        robot_kwargs["calibration_dir"] = calibration_dir
     else:
         # Use the default .cache/calibration folder when mock=False
-        overrides = None
+        pass
 
-    robot = make_robot(robot_type, overrides=overrides, mock=mock)
-    teleoperate(robot, teleop_time_s=1)
-    teleoperate(robot, fps=30, teleop_time_s=1)
-    teleoperate(robot, fps=60, teleop_time_s=1)
+    robot = make_robot(**robot_kwargs)
+    teleoperate(robot, TeleoperateControlConfig(teleop_time_s=1))
+    teleoperate(robot, TeleoperateControlConfig(fps=30, teleop_time_s=1))
+    teleoperate(robot, TeleoperateControlConfig(fps=60, teleop_time_s=1))
     del robot
 
 
 @pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)
 @require_robot
-def test_calibrate(tmpdir, request, robot_type, mock):
+def test_calibrate(tmp_path, request, robot_type, mock):
+    robot_kwargs = {"robot_type": robot_type, "mock": mock}
+
     if mock:
         request.getfixturevalue("patch_builtins_input")
 
     # Create an empty calibration directory to trigger manual calibration
-    tmpdir = Path(tmpdir)
-    calibration_dir = tmpdir / robot_type
-    overrides_calibration_dir = [f"calibration_dir={calibration_dir}"]
+    calibration_dir = tmp_path / robot_type
+    robot_kwargs["calibration_dir"] = calibration_dir
 
-    robot = make_robot(robot_type, overrides=overrides_calibration_dir, mock=mock)
-    calibrate(robot, arms=robot.available_arms)
+    robot = make_robot(**robot_kwargs)
+    calib_cfg = CalibrateControlConfig(arms=robot.available_arms)
+    calibrate(robot, calib_cfg)
     del robot
 
 
 @pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)
 @require_robot
-def test_record_without_cameras(tmpdir, request, robot_type, mock):
+def test_record_without_cameras(tmp_path, request, robot_type, mock):
+    robot_kwargs = {"robot_type": robot_type, "mock": mock}
+
     # Avoid using cameras
-    overrides = ["~cameras"]
+    robot_kwargs["cameras"] = {}
 
     if mock and robot_type != "aloha":
         request.getfixturevalue("patch_builtins_input")
 
         # Create an empty calibration directory to trigger manual calibration
         # and avoid writing calibration files in user .cache/calibration folder
-        calibration_dir = Path(tmpdir) / robot_type
+        calibration_dir = tmp_path / robot_type
         mock_calibration_dir(calibration_dir)
-        overrides.append(f"calibration_dir={calibration_dir}")
+        robot_kwargs["calibration_dir"] = calibration_dir
+    else:
+        # Use the default .cache/calibration folder when mock=False
+        pass
 
     repo_id = "lerobot/debug"
-    root = Path(tmpdir) / "data" / repo_id
+    root = tmp_path / "data" / repo_id
     single_task = "Do something."
 
-    robot = make_robot(robot_type, overrides=overrides, mock=mock)
-    record(
-        robot,
-        fps=30,
-        root=root,
+    robot = make_robot(**robot_kwargs)
+    rec_cfg = RecordControlConfig(
         repo_id=repo_id,
         single_task=single_task,
-        warmup_time_s=1,
+        root=root,
+        fps=30,
+        warmup_time_s=0.1,
         episode_time_s=1,
+        reset_time_s=0.1,
         num_episodes=2,
-        run_compute_stats=False,
         push_to_hub=False,
         video=False,
         play_sounds=False,
     )
+    record(robot, rec_cfg)
 
 
 @pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)
 @require_robot
-def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
-    tmpdir = Path(tmpdir)
+def test_record_and_replay_and_policy(tmp_path, request, robot_type, mock):
+    robot_kwargs = {"robot_type": robot_type, "mock": mock}
 
     if mock and robot_type != "aloha":
         request.getfixturevalue("patch_builtins_input")
 
         # Create an empty calibration directory to trigger manual calibration
         # and avoid writing calibration files in user .cache/calibration folder
-        calibration_dir = tmpdir / robot_type
+        calibration_dir = tmp_path / robot_type
         mock_calibration_dir(calibration_dir)
-        overrides = [f"calibration_dir={calibration_dir}"]
+        robot_kwargs["calibration_dir"] = calibration_dir
     else:
-        # Use the default .cache/calibration folder when mock=False or for aloha
-        overrides = None
+        # Use the default .cache/calibration folder when mock=False
+        pass
 
-    env_name = "koch_real"
-    policy_name = "act_koch_real"
-
-    repo_id = "lerobot/debug"
-    root = tmpdir / "data" / repo_id
+    repo_id = "lerobot_test/debug"
+    root = tmp_path / "data" / repo_id
     single_task = "Do something."
 
-    robot = make_robot(robot_type, overrides=overrides, mock=mock)
-    dataset = record(
-        robot,
-        root,
-        repo_id,
-        single_task,
+    robot = make_robot(**robot_kwargs)
+    rec_cfg = RecordControlConfig(
+        repo_id=repo_id,
+        single_task=single_task,
+        root=root,
         fps=1,
-        warmup_time_s=0.5,
+        warmup_time_s=0.1,
         episode_time_s=1,
-        reset_time_s=1,
+        reset_time_s=0.1,
         num_episodes=2,
         push_to_hub=False,
         # TODO(rcadene, aliberts): test video=True
@@ -155,56 +163,20 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
         display_cameras=False,
         play_sounds=False,
     )
+    dataset = record(robot, rec_cfg)
     assert dataset.meta.total_episodes == 2
     assert len(dataset) == 2
 
-    replay(robot, episode=0, fps=1, root=root, repo_id=repo_id, play_sounds=False, local_files_only=True)
+    replay_cfg = ReplayControlConfig(episode=0, fps=1, root=root, repo_id=repo_id, play_sounds=False)
+    replay(robot, replay_cfg)
 
-    # TODO(rcadene, aliberts): rethink this design
-    if robot_type == "aloha":
-        env_name = "aloha_real"
-        policy_name = "act_aloha_real"
-    elif robot_type in ["koch", "koch_bimanual"]:
-        env_name = "koch_real"
-        policy_name = "act_koch_real"
-    elif robot_type == "so100":
-        env_name = "so100_real"
-        policy_name = "act_so100_real"
-    elif robot_type == "moss":
-        env_name = "moss_real"
-        policy_name = "act_moss_real"
-    else:
-        raise NotImplementedError(robot_type)
+    policy_cfg = ACTConfig()
+    policy = make_policy(policy_cfg, ds_meta=dataset.meta, device=DEVICE)
 
-    overrides = [
-        f"env={env_name}",
-        f"policy={policy_name}",
-        f"device={DEVICE}",
-    ]
+    out_dir = tmp_path / "logger"
 
-    if robot_type == "koch_bimanual":
-        overrides += ["env.state_dim=12", "env.action_dim=12"]
-
-    overrides += ["wandb.enable=false"]
-    overrides += ["env.fps=1"]
-
-    cfg = init_hydra_config(
-        DEFAULT_CONFIG_PATH,
-        overrides=overrides,
-    )
-
-    policy = make_policy(hydra_cfg=cfg, dataset_stats=dataset.meta.stats)
-    optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
-    out_dir = tmpdir / "logger"
-    logger = Logger(cfg, out_dir, wandb_job_name="debug")
-    logger.save_checkpoint(
-        0,
-        policy,
-        optimizer,
-        lr_scheduler,
-        identifier=0,
-    )
-    pretrained_policy_name_or_path = out_dir / "checkpoints/last/pretrained_model"
+    pretrained_policy_path = out_dir / "checkpoints/last/pretrained_model"
+    policy.save_pretrained(pretrained_policy_path)
 
     # In `examples/9_use_aloha.md`, we advise using `num_image_writer_processes=1`
     # during inference, to reach constent fps, so we test this here.
@@ -228,26 +200,30 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
         num_image_writer_processes = 0
 
     eval_repo_id = "lerobot/eval_debug"
-    eval_root = tmpdir / "data" / eval_repo_id
+    eval_root = tmp_path / "data" / eval_repo_id
 
-    dataset = record(
-        robot,
-        eval_root,
-        eval_repo_id,
-        single_task,
-        pretrained_policy_name_or_path,
-        warmup_time_s=1,
+    rec_eval_cfg = RecordControlConfig(
+        repo_id=eval_repo_id,
+        root=eval_root,
+        single_task=single_task,
+        fps=1,
+        warmup_time_s=0.1,
         episode_time_s=1,
-        reset_time_s=1,
+        reset_time_s=0.1,
         num_episodes=2,
-        run_compute_stats=False,
         push_to_hub=False,
         video=False,
         display_cameras=False,
         play_sounds=False,
         num_image_writer_processes=num_image_writer_processes,
+        device=DEVICE,
+        use_amp=False,
     )
 
+    rec_eval_cfg.policy = PreTrainedConfig.from_pretrained(pretrained_policy_path)
+    rec_eval_cfg.policy.pretrained_path = pretrained_policy_path
+
+    dataset = record(robot, rec_eval_cfg)
     assert dataset.num_episodes == 2
     assert len(dataset) == 2
 
@@ -256,69 +232,72 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
 
 @pytest.mark.parametrize("robot_type, mock", [("koch", True)])
 @require_robot
-def test_resume_record(tmpdir, request, robot_type, mock):
+def test_resume_record(tmp_path, request, robot_type, mock):
+    robot_kwargs = {"robot_type": robot_type, "mock": mock}
+
     if mock and robot_type != "aloha":
         request.getfixturevalue("patch_builtins_input")
 
         # Create an empty calibration directory to trigger manual calibration
         # and avoid writing calibration files in user .cache/calibration folder
-        calibration_dir = tmpdir / robot_type
+        calibration_dir = tmp_path / robot_type
         mock_calibration_dir(calibration_dir)
-        overrides = [f"calibration_dir={calibration_dir}"]
+        robot_kwargs["calibration_dir"] = calibration_dir
     else:
-        # Use the default .cache/calibration folder when mock=False or for aloha
-        overrides = []
+        # Use the default .cache/calibration folder when mock=False
+        pass
 
-    robot = make_robot(robot_type, overrides=overrides, mock=mock)
+    robot = make_robot(**robot_kwargs)
 
     repo_id = "lerobot/debug"
-    root = Path(tmpdir) / "data" / repo_id
+    root = tmp_path / "data" / repo_id
     single_task = "Do something."
 
-    record_kwargs = {
-        "robot": robot,
-        "root": root,
-        "repo_id": repo_id,
-        "single_task": single_task,
-        "fps": 1,
-        "warmup_time_s": 0,
-        "episode_time_s": 1,
-        "push_to_hub": False,
-        "video": False,
-        "display_cameras": False,
-        "play_sounds": False,
-        "run_compute_stats": False,
-        "local_files_only": True,
-        "num_episodes": 1,
-    }
+    rec_cfg = RecordControlConfig(
+        repo_id=repo_id,
+        root=root,
+        single_task=single_task,
+        fps=1,
+        warmup_time_s=0,
+        episode_time_s=1,
+        push_to_hub=False,
+        video=False,
+        display_cameras=False,
+        play_sounds=False,
+        num_episodes=1,
+    )
 
-    dataset = record(**record_kwargs)
+    dataset = record(robot, rec_cfg)
     assert len(dataset) == 1, f"`dataset` should contain 1 frame, not {len(dataset)}"
 
     with pytest.raises(FileExistsError):
         # Dataset already exists, but resume=False by default
-        record(**record_kwargs)
+        record(robot, rec_cfg)
 
-    dataset = record(**record_kwargs, resume=True)
+    rec_cfg.resume = True
+    dataset = record(robot, rec_cfg)
     assert len(dataset) == 2, f"`dataset` should contain 2 frames, not {len(dataset)}"
 
 
 @pytest.mark.parametrize("robot_type, mock", [("koch", True)])
 @require_robot
-def test_record_with_event_rerecord_episode(tmpdir, request, robot_type, mock):
+def test_record_with_event_rerecord_episode(tmp_path, request, robot_type, mock):
+    robot_kwargs = {"robot_type": robot_type, "mock": mock}
+
     if mock and robot_type != "aloha":
         request.getfixturevalue("patch_builtins_input")
 
         # Create an empty calibration directory to trigger manual calibration
         # and avoid writing calibration files in user .cache/calibration folder
-        calibration_dir = tmpdir / robot_type
+        calibration_dir = tmp_path / robot_type
         mock_calibration_dir(calibration_dir)
-        overrides = [f"calibration_dir={calibration_dir}"]
+        robot_kwargs["calibration_dir"] = calibration_dir
     else:
-        # Use the default .cache/calibration folder when mock=False or for aloha
-        overrides = []
+        # Use the default .cache/calibration folder when mock=False
+        pass
 
-    robot = make_robot(robot_type, overrides=overrides, mock=mock)
+    robot = make_robot(**robot_kwargs)
+
     with patch("lerobot.scripts.control_robot.init_keyboard_listener") as mock_listener:
         mock_events = {}
         mock_events["exit_early"] = True
@@ -327,14 +306,13 @@ def test_record_with_event_rerecord_episode(tmpdir, request, robot_type, mock):
         mock_listener.return_value = (None, mock_events)
 
         repo_id = "lerobot/debug"
-        root = Path(tmpdir) / "data" / repo_id
+        root = tmp_path / "data" / repo_id
         single_task = "Do something."
 
-        dataset = record(
-            robot,
-            root,
-            repo_id,
-            single_task,
+        rec_cfg = RecordControlConfig(
+            repo_id=repo_id,
+            root=root,
+            single_task=single_task,
             fps=1,
             warmup_time_s=0,
             episode_time_s=1,
@@ -343,8 +321,8 @@ def test_record_with_event_rerecord_episode(tmpdir, request, robot_type, mock):
             video=False,
             display_cameras=False,
             play_sounds=False,
-            run_compute_stats=False,
         )
+        dataset = record(robot, rec_cfg)
 
         assert not mock_events["rerecord_episode"], "`rerecord_episode` wasn't properly reset to False"
         assert not mock_events["exit_early"], "`exit_early` wasn't properly reset to False"
@@ -353,20 +331,23 @@ def test_record_with_event_rerecord_episode(tmpdir, request, robot_type, mock):
 
 @pytest.mark.parametrize("robot_type, mock", [("koch", True)])
 @require_robot
-def test_record_with_event_exit_early(tmpdir, request, robot_type, mock):
+def test_record_with_event_exit_early(tmp_path, request, robot_type, mock):
+    robot_kwargs = {"robot_type": robot_type, "mock": mock}
+
     if mock:
         request.getfixturevalue("patch_builtins_input")
 
         # Create an empty calibration directory to trigger manual calibration
         # and avoid writing calibration files in user .cache/calibration folder
-        calibration_dir = tmpdir / robot_type
+        calibration_dir = tmp_path / robot_type
         mock_calibration_dir(calibration_dir)
-        overrides = [f"calibration_dir={calibration_dir}"]
+        robot_kwargs["calibration_dir"] = calibration_dir
     else:
-        # Use the default .cache/calibration folder when mock=False or for aloha
-        overrides = []
+        # Use the default .cache/calibration folder when mock=False
+        pass
 
-    robot = make_robot(robot_type, overrides=overrides, mock=mock)
+    robot = make_robot(**robot_kwargs)
+
     with patch("lerobot.scripts.control_robot.init_keyboard_listener") as mock_listener:
         mock_events = {}
         mock_events["exit_early"] = True
@@ -375,15 +356,14 @@ def test_record_with_event_exit_early(tmpdir, request, robot_type, mock):
         mock_listener.return_value = (None, mock_events)
 
         repo_id = "lerobot/debug"
-        root = Path(tmpdir) / "data" / repo_id
+        root = tmp_path / "data" / repo_id
         single_task = "Do something."
 
-        dataset = record(
-            robot,
-            fps=2,
+        rec_cfg = RecordControlConfig(
+            repo_id=repo_id,
             root=root,
             single_task=single_task,
-            repo_id=repo_id,
+            fps=2,
             warmup_time_s=0,
             episode_time_s=1,
             num_episodes=1,
@@ -391,8 +371,9 @@ def test_record_with_event_exit_early(tmpdir, request, robot_type, mock):
             video=False,
             display_cameras=False,
             play_sounds=False,
-            run_compute_stats=False,
         )
+
+        dataset = record(robot, rec_cfg)
 
         assert not mock_events["exit_early"], "`exit_early` wasn't properly reset to False"
         assert len(dataset) == 1, "`dataset` should contain only 1 frame"
@@ -402,20 +383,23 @@ def test_record_with_event_exit_early(tmpdir, request, robot_type, mock):
     "robot_type, mock, num_image_writer_processes", [("koch", True, 0), ("koch", True, 1)]
 )
 @require_robot
-def test_record_with_event_stop_recording(tmpdir, request, robot_type, mock, num_image_writer_processes):
+def test_record_with_event_stop_recording(tmp_path, request, robot_type, mock, num_image_writer_processes):
+    robot_kwargs = {"robot_type": robot_type, "mock": mock}
+
     if mock:
         request.getfixturevalue("patch_builtins_input")
 
         # Create an empty calibration directory to trigger manual calibration
         # and avoid writing calibration files in user .cache/calibration folder
-        calibration_dir = tmpdir / robot_type
+        calibration_dir = tmp_path / robot_type
         mock_calibration_dir(calibration_dir)
-        overrides = [f"calibration_dir={calibration_dir}"]
+        robot_kwargs["calibration_dir"] = calibration_dir
     else:
-        # Use the default .cache/calibration folder when mock=False or for aloha
-        overrides = []
+        # Use the default .cache/calibration folder when mock=False
+        pass
 
-    robot = make_robot(robot_type, overrides=overrides, mock=mock)
+    robot = make_robot(**robot_kwargs)
+
     with patch("lerobot.scripts.control_robot.init_keyboard_listener") as mock_listener:
         mock_events = {}
         mock_events["exit_early"] = True
@@ -424,25 +408,26 @@ def test_record_with_event_stop_recording(tmpdir, request, robot_type, mock, num
         mock_listener.return_value = (None, mock_events)
 
         repo_id = "lerobot/debug"
-        root = Path(tmpdir) / "data" / repo_id
+        root = tmp_path / "data" / repo_id
         single_task = "Do something."
 
-        dataset = record(
-            robot,
-            root,
-            repo_id,
+        rec_cfg = RecordControlConfig(
+            repo_id=repo_id,
+            root=root,
             single_task=single_task,
             fps=1,
             warmup_time_s=0,
             episode_time_s=1,
+            reset_time_s=0.1,
             num_episodes=2,
             push_to_hub=False,
             video=False,
             display_cameras=False,
             play_sounds=False,
-            run_compute_stats=False,
             num_image_writer_processes=num_image_writer_processes,
         )
+
+        dataset = record(robot, rec_cfg)
 
         assert not mock_events["exit_early"], "`exit_early` wasn't properly reset to False"
         assert len(dataset) == 1, "`dataset` should contain only 1 frame"

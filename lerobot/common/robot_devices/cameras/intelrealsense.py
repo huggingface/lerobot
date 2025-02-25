@@ -11,13 +11,13 @@ import threading
 import time
 import traceback
 from collections import Counter
-from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import Thread
 
 import numpy as np
 from PIL import Image
 
+from lerobot.common.robot_devices.cameras.configs import IntelRealSenseCameraConfig
 from lerobot.common.robot_devices.utils import (
     RobotDeviceAlreadyConnectedError,
     RobotDeviceNotConnectedError,
@@ -94,7 +94,10 @@ def save_images_from_cameras(
     cameras = []
     for cam_sn in serial_numbers:
         print(f"{cam_sn=}")
-        camera = IntelRealSenseCamera(cam_sn, fps=fps, width=width, height=height, mock=mock)
+        config = IntelRealSenseCameraConfig(
+            serial_number=cam_sn, fps=fps, width=width, height=height, mock=mock
+        )
+        camera = IntelRealSenseCamera(config)
         camera.connect()
         print(
             f"IntelRealSenseCamera({camera.serial_number}, fps={camera.fps}, width={camera.width}, height={camera.height}, color_mode={camera.color_mode})"
@@ -149,51 +152,6 @@ def save_images_from_cameras(
             camera.disconnect()
 
 
-@dataclass
-class IntelRealSenseCameraConfig:
-    """
-    Example of tested options for Intel Real Sense D405:
-
-    ```python
-    IntelRealSenseCameraConfig(30, 640, 480)
-    IntelRealSenseCameraConfig(60, 640, 480)
-    IntelRealSenseCameraConfig(90, 640, 480)
-    IntelRealSenseCameraConfig(30, 1280, 720)
-    IntelRealSenseCameraConfig(30, 640, 480, use_depth=True)
-    IntelRealSenseCameraConfig(30, 640, 480, rotation=90)
-    ```
-    """
-
-    fps: int | None = None
-    width: int | None = None
-    height: int | None = None
-    color_mode: str = "rgb"
-    channels: int | None = None
-    use_depth: bool = False
-    force_hardware_reset: bool = True
-    rotation: int | None = None
-    mock: bool = False
-
-    def __post_init__(self):
-        if self.color_mode not in ["rgb", "bgr"]:
-            raise ValueError(
-                f"`color_mode` is expected to be 'rgb' or 'bgr', but {self.color_mode} is provided."
-            )
-
-        self.channels = 3
-
-        at_least_one_is_not_none = self.fps is not None or self.width is not None or self.height is not None
-        at_least_one_is_none = self.fps is None or self.width is None or self.height is None
-        if at_least_one_is_not_none and at_least_one_is_none:
-            raise ValueError(
-                "For `fps`, `width` and `height`, either all of them need to be set, or none of them, "
-                f"but {self.fps=}, {self.width=}, {self.height=} were provided."
-            )
-
-        if self.rotation not in [-90, None, 90, 180]:
-            raise ValueError(f"`rotation` must be in [-90, None, 90, 180] (got {self.rotation})")
-
-
 class IntelRealSenseCamera:
     """
     The IntelRealSenseCamera class is similar to OpenCVCamera class but adds additional features for Intel Real Sense cameras:
@@ -209,33 +167,35 @@ class IntelRealSenseCamera:
     When an IntelRealSenseCamera is instantiated, if no specific config is provided, the default fps, width, height and color_mode
     of the given camera will be used.
 
-    Example of usage:
+    Example of instantiating with a serial number:
     ```python
-    # Instantiate with its serial number
-    camera = IntelRealSenseCamera(128422271347)
-    # Or by its name if it's unique
-    camera = IntelRealSenseCamera.init_from_name("Intel RealSense D405")
+    from lerobot.common.robot_devices.cameras.configs import IntelRealSenseCameraConfig
+
+    config = IntelRealSenseCameraConfig(serial_number=128422271347)
+    camera = IntelRealSenseCamera(config)
     camera.connect()
     color_image = camera.read()
     # when done using the camera, consider disconnecting
     camera.disconnect()
     ```
 
+    Example of instantiating with a name if it's unique:
+    ```
+    config = IntelRealSenseCameraConfig(name="Intel RealSense D405")
+    ```
+
     Example of changing default fps, width, height and color_mode:
     ```python
-    camera = IntelRealSenseCamera(serial_number, fps=30, width=1280, height=720)
-    camera = connect()  # applies the settings, might error out if these settings are not compatible with the camera
-
-    camera = IntelRealSenseCamera(serial_number, fps=90, width=640, height=480)
-    camera = connect()
-
-    camera = IntelRealSenseCamera(serial_number, fps=90, width=640, height=480, color_mode="bgr")
-    camera = connect()
+    config = IntelRealSenseCameraConfig(serial_number=128422271347, fps=30, width=1280, height=720)
+    config = IntelRealSenseCameraConfig(serial_number=128422271347, fps=90, width=640, height=480)
+    config = IntelRealSenseCameraConfig(serial_number=128422271347, fps=90, width=640, height=480, color_mode="bgr")
+    # Note: might error out upon `camera.connect()` if these settings are not compatible with the camera
     ```
 
     Example of returning depth:
     ```python
-    camera = IntelRealSenseCamera(serial_number, use_depth=True)
+    config = IntelRealSenseCameraConfig(serial_number=128422271347, use_depth=True)
+    camera = IntelRealSenseCamera(config)
     camera.connect()
     color_image, depth_map = camera.read()
     ```
@@ -243,17 +203,13 @@ class IntelRealSenseCamera:
 
     def __init__(
         self,
-        serial_number: int,
-        config: IntelRealSenseCameraConfig | None = None,
-        **kwargs,
+        config: IntelRealSenseCameraConfig,
     ):
-        if config is None:
-            config = IntelRealSenseCameraConfig()
-
-        # Overwrite the config arguments using kwargs
-        config = replace(config, **kwargs)
-
-        self.serial_number = serial_number
+        self.config = config
+        if config.name is not None:
+            self.serial_number = self.find_serial_number_from_name(config.name)
+        else:
+            self.serial_number = config.serial_number
         self.fps = config.fps
         self.width = config.width
         self.height = config.height
@@ -285,8 +241,7 @@ class IntelRealSenseCamera:
         elif config.rotation == 180:
             self.rotation = cv2.ROTATE_180
 
-    @classmethod
-    def init_from_name(cls, name: str, config: IntelRealSenseCameraConfig | None = None, **kwargs):
+    def find_serial_number_from_name(self, name):
         camera_infos = find_cameras()
         camera_names = [cam["name"] for cam in camera_infos]
         this_name_count = Counter(camera_names)[name]
@@ -299,13 +254,7 @@ class IntelRealSenseCamera:
         name_to_serial_dict = {cam["name"]: cam["serial_number"] for cam in camera_infos}
         cam_sn = name_to_serial_dict[name]
 
-        if config is None:
-            config = IntelRealSenseCameraConfig()
-
-        # Overwrite the config arguments using kwargs
-        config = replace(config, **kwargs)
-
-        return cls(serial_number=cam_sn, config=config, **kwargs)
+        return cam_sn
 
     def connect(self):
         if self.is_connected:

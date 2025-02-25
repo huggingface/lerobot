@@ -14,24 +14,20 @@ repos:
       - id: end-of-file-fixer
       - id: trailing-whitespace
   - repo: https://github.com/asottile/pyupgrade
-    rev: v3.19.0
+    rev: v3.19.1
     hooks:
     -   id: pyupgrade
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.8.2
+    rev: v0.9.6
     hooks:
       - id: ruff
         args: [--fix]
       - id: ruff-format
-  - repo: https://github.com/python-poetry/poetry
-    rev: 1.8.0
-    hooks:
-      - id: poetry-check
-      - id: poetry-lock
-        args:
-          - "--check"
-          - "--no-update"
   - repo: https://github.com/gitleaks/gitleaks
-    rev: v8.21.2
+    rev: v8.23.3
     hooks:
       - id: gitleaks
+  - repo: https://github.com/woodruffw/zizmor-pre-commit
+    rev: v1.3.1
+    hooks:
+      - id: zizmor

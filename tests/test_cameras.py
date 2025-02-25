@@ -51,8 +51,10 @@ def test_camera(request, camera_type, mock):
     if camera_type == "opencv" and not mock:
         pytest.skip("TODO(rcadene): fix test for opencv physical camera")
 
+    camera_kwargs = {"camera_type": camera_type, "mock": mock}
+
     # Test instantiating
-    camera = make_camera(camera_type, mock=mock)
+    camera = make_camera(**camera_kwargs)
 
     # Test reading, async reading, disconnecting before connecting raises an error
     with pytest.raises(RobotDeviceNotConnectedError):
@@ -66,7 +68,7 @@ def test_camera(request, camera_type, mock):
     del camera
 
     # Test connecting
-    camera = make_camera(camera_type, mock=mock)
+    camera = make_camera(**camera_kwargs)
     camera.connect()
     assert camera.is_connected
     assert camera.fps is not None
@@ -106,12 +108,12 @@ def test_camera(request, camera_type, mock):
     assert camera.thread is None
 
     # Test disconnecting with `__del__`
-    camera = make_camera(camera_type, mock=mock)
+    camera = make_camera(**camera_kwargs)
     camera.connect()
     del camera
 
     # Test acquiring a bgr image
-    camera = make_camera(camera_type, color_mode="bgr", mock=mock)
+    camera = make_camera(**camera_kwargs, color_mode="bgr")
     camera.connect()
     assert camera.color_mode == "bgr"
     bgr_color_image = camera.read()
@@ -121,13 +123,13 @@ def test_camera(request, camera_type, mock):
     del camera
 
     # Test acquiring a rotated image
-    camera = make_camera(camera_type, mock=mock)
+    camera = make_camera(**camera_kwargs)
     camera.connect()
     ori_color_image = camera.read()
     del camera
 
     for rotation in [None, 90, 180, -90]:
-        camera = make_camera(camera_type, rotation=rotation, mock=mock)
+        camera = make_camera(**camera_kwargs, rotation=rotation)
         camera.connect()
 
         if mock:
@@ -159,7 +161,7 @@ def test_camera(request, camera_type, mock):
     # TODO(rcadene): Add a test for a camera that supports fps=60
 
     # Test width and height can be set
-    camera = make_camera(camera_type, fps=30, width=1280, height=720, mock=mock)
+    camera = make_camera(**camera_kwargs, fps=30, width=1280, height=720)
     camera.connect()
     assert camera.fps == 30
     assert camera.width == 1280
@@ -172,7 +174,7 @@ def test_camera(request, camera_type, mock):
     del camera
 
     # Test not supported width and height raise an error
-    camera = make_camera(camera_type, fps=30, width=0, height=0, mock=mock)
+    camera = make_camera(**camera_kwargs, fps=30, width=0, height=0)
     with pytest.raises(OSError):
         camera.connect()
     del camera
@@ -180,7 +182,7 @@ def test_camera(request, camera_type, mock):
 
 @pytest.mark.parametrize("camera_type, mock", TEST_CAMERA_TYPES)
 @require_camera
-def test_save_images_from_cameras(tmpdir, request, camera_type, mock):
+def test_save_images_from_cameras(tmp_path, request, camera_type, mock):
     # TODO(rcadene): refactor
     if camera_type == "opencv":
         from lerobot.common.robot_devices.cameras.opencv import save_images_from_cameras
@@ -188,4 +190,4 @@ def test_save_images_from_cameras(tmpdir, request, camera_type, mock):
         from lerobot.common.robot_devices.cameras.intelrealsense import save_images_from_cameras
 
     # Small `record_time_s` to speedup unit tests
-    save_images_from_cameras(tmpdir, record_time_s=0.02, mock=mock)
+    save_images_from_cameras(tmp_path, record_time_s=0.02, mock=mock)

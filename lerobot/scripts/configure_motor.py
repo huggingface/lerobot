@@ -16,28 +16,42 @@ import argparse
 import time
 
 
-def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
+def get_motor_bus_cls(brand: str) -> tuple:
     if brand == "feetech":
-        from lerobot.common.robot_devices.motors.feetech import MODEL_BAUDRATE_TABLE
+        from lerobot.common.robot_devices.motors.configs import FeetechMotorsBusConfig
         from lerobot.common.robot_devices.motors.feetech import (
-            SCS_SERIES_BAUDRATE_TABLE as SERIES_BAUDRATE_TABLE,
+            MODEL_BAUDRATE_TABLE,
+            SCS_SERIES_BAUDRATE_TABLE,
+            FeetechMotorsBus,
         )
-        from lerobot.common.robot_devices.motors.feetech import FeetechMotorsBus as MotorsBusClass
+
+        return FeetechMotorsBusConfig, FeetechMotorsBus, MODEL_BAUDRATE_TABLE, SCS_SERIES_BAUDRATE_TABLE
+
     elif brand == "dynamixel":
-        from lerobot.common.robot_devices.motors.dynamixel import MODEL_BAUDRATE_TABLE
+        from lerobot.common.robot_devices.motors.configs import DynamixelMotorsBusConfig
         from lerobot.common.robot_devices.motors.dynamixel import (
-            X_SERIES_BAUDRATE_TABLE as SERIES_BAUDRATE_TABLE,
+            MODEL_BAUDRATE_TABLE,
+            X_SERIES_BAUDRATE_TABLE,
+            DynamixelMotorsBus,
         )
-        from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus as MotorsBusClass
+
+        return DynamixelMotorsBusConfig, DynamixelMotorsBus, MODEL_BAUDRATE_TABLE, X_SERIES_BAUDRATE_TABLE
+
     else:
         raise ValueError(
             f"Currently we do not support this motor brand: {brand}. We currently support feetech and dynamixel motors."
         )
 
+
+def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
+    motor_bus_config_cls, motor_bus_cls, model_baudrate_table, series_baudrate_table = get_motor_bus_cls(
+        brand
+    )
+
     # Check if the provided model exists in the model_baud_rate_table
-    if model not in MODEL_BAUDRATE_TABLE:
+    if model not in model_baudrate_table:
         raise ValueError(
-            f"Invalid model '{model}' for brand '{brand}'. Supported models: {list(MODEL_BAUDRATE_TABLE.keys())}"
+            f"Invalid model '{model}' for brand '{brand}'. Supported models: {list(model_baudrate_table.keys())}"
         )
 
     # Setup motor names, indices, and models
@@ -45,8 +59,10 @@ def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
     motor_index_arbitrary = motor_idx_des  # Use the motor ID passed via argument
     motor_model = model  # Use the motor model passed via argument
 
+    config = motor_bus_config_cls(port=port, motors={motor_name: (motor_index_arbitrary, motor_model)})
+
     # Initialize the MotorBus with the correct port and motor configurations
-    motor_bus = MotorsBusClass(port=port, motors={motor_name: (motor_index_arbitrary, motor_model)})
+    motor_bus = motor_bus_cls(config=config)
 
     # Try to connect to the motor bus and handle any connection-specific errors
     try:
@@ -59,7 +75,7 @@ def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
     # Motor bus is connected, proceed with the rest of the operations
     try:
         print("Scanning all baudrates and motor indices")
-        all_baudrates = set(SERIES_BAUDRATE_TABLE.values())
+        all_baudrates = set(series_baudrate_table.values())
         motor_index = -1  # Set the motor index to an out-of-range value.
 
         for baudrate in all_baudrates:
@@ -89,7 +105,7 @@ def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
 
         if baudrate != baudrate_des:
             print(f"Setting its baudrate to {baudrate_des}")
-            baudrate_idx = list(SERIES_BAUDRATE_TABLE.values()).index(baudrate_des)
+            baudrate_idx = list(series_baudrate_table.values()).index(baudrate_des)
 
             # The write can fail, so we allow retries
             motor_bus.write_with_motor_ids(motor_bus.motor_models, motor_index, "Baud_Rate", baudrate_idx)
