@@ -127,6 +127,8 @@ class Logger:
                 job_type="train_eval",
                 resume="must" if cfg.resume else None,
             )
+            # Handle custom step key for rl asynchronous training.
+            self._wandb_custom_step_key: set[str] | None = None
             print(colored("Logs will be synced with wandb.", "blue", attrs=["bold"]))
             logging.info(f"Track this run --> {colored(wandb.run.get_url(), 'yellow', attrs=['bold'])}")
             self._wandb = wandb
@@ -172,18 +174,32 @@ class Logger:
         self,
         save_dir: Path,
         train_step: int,
-        optimizer: Optimizer,
+        optimizer: Optimizer | dict,
         scheduler: LRScheduler | None,
+        interaction_step: int | None = None,
     ):
         """Checkpoint the global training_step, optimizer state, scheduler state, and random state.
 
         All of these are saved as "training_state.pth" under the checkpoint directory.
         """
+        # In Sac, for example, we have a dictionary of torch.optim.Optimizer
+        if type(optimizer) is dict:
+            optimizer_state_dict = {}
+            for k in optimizer:
+                optimizer_state_dict[k] = optimizer[k].state_dict()
+        else:
+            optimizer_state_dict = optimizer.state_dict()
+
         training_state = {
             "step": train_step,
-            "optimizer": optimizer.state_dict(),
+            "optimizer": optimizer_state_dict,
             **get_global_random_state(),
         }
+        # Interaction step is related to the distributed training code
+        # In that setup, we have two kinds of steps, the online step of the env and the optimization step
+        # We need to save both in order to resume the optimization properly and not break the logs dependant on the interaction step
+        if interaction_step is not None:
+            training_state["interaction_step"] = interaction_step
         if scheduler is not None:
             training_state["scheduler"] = scheduler.state_dict()
         torch.save(training_state, save_dir / self.training_state_file_name)
@@ -195,6 +211,7 @@ class Logger:
         optimizer: Optimizer,
         scheduler: LRScheduler | None,
         identifier: str,
+        interaction_step: int | None = None,
     ):
         """Checkpoint the model weights and the training state."""
         checkpoint_dir = self.checkpoints_dir / str(identifier)
@@ -206,16 +223,24 @@ class Logger:
         self.save_model(
             checkpoint_dir / self.pretrained_model_dir_name, policy, wandb_artifact_name=wandb_artifact_name
         )
-        self.save_training_state(checkpoint_dir, train_step, optimizer, scheduler)
+        self.save_training_state(checkpoint_dir, train_step, optimizer, scheduler, interaction_step)
         os.symlink(checkpoint_dir.absolute(), self.last_checkpoint_dir)
 
-    def load_last_training_state(self, optimizer: Optimizer, scheduler: LRScheduler | None) -> int:
+    def load_last_training_state(self, optimizer: Optimizer | dict, scheduler: LRScheduler | None) -> int:
         """
         Given the last checkpoint in the logging directory, load the optimizer state, scheduler state, and
         random state, and return the global training step.
         """
         training_state = torch.load(self.last_checkpoint_dir / self.training_state_file_name)
-        optimizer.load_state_dict(training_state["optimizer"])
+        # For the case where the optimizer is a dictionary of optimizers (e.g., sac)
+        if type(training_state["optimizer"]) is dict:
+            assert set(training_state["optimizer"].keys()) == set(optimizer.keys()), (
+                "Optimizer dictionaries do not have the same keys during resume!"
+            )
+            for k, v in training_state["optimizer"].items():
+                optimizer[k].load_state_dict(v)
+        else:
+            optimizer.load_state_dict(training_state["optimizer"])
         if scheduler is not None:
             scheduler.load_state_dict(training_state["scheduler"])
         elif "scheduler" in training_state:
@@ -226,17 +251,44 @@ class Logger:
         set_global_random_state({k: training_state[k] for k in get_global_random_state()})
         return training_state["step"]
 
-    def log_dict(self, d, step, mode="train"):
+    def log_dict(self, d, step: int | None = None, mode="train", custom_step_key: str | None = None):
+        """Log a dictionary of metrics to WandB."""
         assert mode in {"train", "eval"}
         # TODO(alexander-soare): Add local text log.
+        if step is None and custom_step_key is None:
+            raise ValueError("Either step or custom_step_key must be provided.")
+
         if self._wandb is not None:
+            # NOTE: This is not simple. Wandb step is it must always monotonically increase and it
+            # increases with each wandb.log call, but in the case of asynchronous RL for example,
+            # multiple time steps is possible for example, the interaction step with the environment,
+            # the training step, the evaluation step, etc. So we need to define a custom step key
+            # to log the correct step for each metric.
+            if custom_step_key is not None:
+                if self._wandb_custom_step_key is None:
+                    self._wandb_custom_step_key = set()
+                new_custom_key = f"{mode}/{custom_step_key}"
+                if new_custom_key not in self._wandb_custom_step_key:
+                    self._wandb_custom_step_key.add(new_custom_key)
+                    self._wandb.define_metric(new_custom_key, hidden=True)
+
             for k, v in d.items():
                 if not isinstance(v, (int, float, str, wandb.Table)):
                     logging.warning(
                         f'WandB logging of key "{k}" was ignored as its type is not handled by this wrapper.'
                     )
                     continue
-                self._wandb.log({f"{mode}/{k}": v}, step=step)
+
+                # Do not log the custom step key itself.
+                if self._wandb_custom_step_key is not None and k in self._wandb_custom_step_key:
+                    continue
+
+                if custom_step_key is not None:
+                    value_custom_step = d[custom_step_key]
+                    self._wandb.log({f"{mode}/{k}": v, f"{mode}/{custom_step_key}": value_custom_step})
+                    continue
+
+                self._wandb.log(data={f"{mode}/{k}": v}, step=step)
 
     def log_video(self, video_path: str, step: int, mode: str = "train"):
         assert mode in {"train", "eval"}

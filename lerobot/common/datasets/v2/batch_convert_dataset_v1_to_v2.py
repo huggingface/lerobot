@@ -159,11 +159,11 @@ DATASETS = {
         **ALOHA_STATIC_INFO,
     },
     "aloha_static_vinh_cup": {
-        "single_task": "Pick up the platic cup with the right arm, then pop its lid open with the left arm.",
+        "single_task": "Pick up the plastic cup with the right arm, then pop its lid open with the left arm.",
         **ALOHA_STATIC_INFO,
     },
     "aloha_static_vinh_cup_left": {
-        "single_task": "Pick up the platic cup with the left arm, then pop its lid open with the right arm.",
+        "single_task": "Pick up the plastic cup with the left arm, then pop its lid open with the right arm.",
         **ALOHA_STATIC_INFO,
     },
     "aloha_static_ziploc_slide": {"single_task": "Slide open the ziploc bag.", **ALOHA_STATIC_INFO},

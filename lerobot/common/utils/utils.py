@@ -18,6 +18,7 @@ import os
 import os.path as osp
 import platform
 import random
+import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -217,3 +218,28 @@ def log_say(text, play_sounds, blocking=False):
 
     if play_sounds:
         say(text, blocking)
+
+
+class TimerManager:
+    def __init__(self, elapsed_time_list: list[float] | None = None, label="Elapsed time", log=True):
+        self.label = label
+        self.elapsed_time_list = elapsed_time_list
+        self.log = log
+        self.elapsed = 0.0
+
+    def __enter__(self):
+        self.start = time.perf_counter()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.elapsed: float = time.perf_counter() - self.start
+
+        if self.elapsed_time_list is not None:
+            self.elapsed_time_list.append(self.elapsed)
+
+        if self.log:
+            print(f"{self.label}: {self.elapsed:.6f} seconds")
+
+    @property
+    def elapsed_seconds(self):
+        return self.elapsed

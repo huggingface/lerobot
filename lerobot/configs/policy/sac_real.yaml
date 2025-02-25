@@ -1,0 +1,128 @@
+# @package _global_
+
+# Train with:
+#
+# python lerobot/scripts/train.py \
+#   +dataset=lerobot/pusht_keypoints
+#   env=pusht \
+#   env.gym.obs_type=environment_state_agent_pos \
+
+seed: 1
+dataset_repo_id: aractingi/push_cube_overfit_cropped_resized
+#aractingi/push_cube_square_offline_demo_cropped_resized
+
+training:
+  # Offline training dataloader
+  num_workers: 4
+
+  # batch_size: 256
+  batch_size: 512
+  grad_clip_norm: 10.0
+  lr: 3e-4
+
+  eval_freq: 2500
+  log_freq: 1
+  save_freq: 2000000
+
+  online_steps: 1000000
+  online_rollout_n_episodes: 10
+  online_rollout_batch_size: 10
+  online_steps_between_rollouts: 1000
+  online_sampling_ratio: 1.0
+  online_env_seed: 10000
+  online_buffer_capacity: 1000000
+  online_buffer_seed_size: 0
+  online_step_before_learning: 100 #5000
+  do_online_rollout_async: false
+  policy_update_freq: 1
+
+  # delta_timestamps:
+  #   observation.environment_state: "[i / ${fps} for i in range(${policy.horizon} + 1)]"
+  #   observation.state: "[i / ${fps} for i in range(${policy.horizon} + 1)]"
+  #   action: "[i / ${fps} for i in range(${policy.horizon})]"
+  #   next.reward: "[i / ${fps} for i in range(${policy.horizon})]"
+
+policy:
+  name: sac
+
+  pretrained_model_path:
+
+  # Input / output structure.
+  n_action_repeats: 1
+  horizon: 1
+  n_action_steps: 1
+
+  shared_encoder: true
+  vision_encoder_name: "helper2424/resnet10"
+  freeze_vision_encoder: true
+  input_shapes:
+    # # TODO(rcadene, alexander-soare): add variables for height and width from the dataset/env?
+    observation.state: ["${env.state_dim}"]
+    observation.images.front: [3, 128, 128]
+    observation.images.side: [3, 128, 128]
+    # observation.image: [3, 128, 128]
+  output_shapes:
+    action: [4] # ["${env.action_dim}"]
+
+  # Normalization / Unnormalization
+  input_normalization_modes:
+    observation.images.front: mean_std
+    observation.images.side: mean_std
+    observation.state: min_max
+  input_normalization_params:
+    observation.images.front:
+      mean: [0.485, 0.456, 0.406]
+      std: [0.229, 0.224, 0.225]
+    observation.images.side:
+      mean: [0.485, 0.456, 0.406]
+      std: [0.229, 0.224, 0.225]
+    observation.state:
+      min: [-77.08008,     56.25,        60.55664,     19.511719,   0., -0.63829786]
+      max: [ 7.215820e+01,  1.5398438e+02,  1.6075195e+02,  9.3251953e+01, 0., -1.4184397e-01]
+
+      # min: [-87.09961,     62.402344,    67.23633,     36.035156,    77.34375,0.53691274]
+      # max: [58.183594,   131.83594,    145.98633,     82.08984,     78.22266, 0.60402685]
+      # min: [-88.50586,  23.81836, 0.87890625, -32.16797, 78.66211,   0.53691274]
+      # max: [84.55078, 187.11914, 145.98633, 101.60156, 146.60156,  88.18792]
+
+  output_normalization_modes:
+    action: min_max
+  output_normalization_params:
+    # action:
+    #   min: [-1.0, -1.0, -1.0, -1.0, -1.0, -1.0]
+    #   max: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    action:
+      min: [-149.23828125, -97.734375, -100.1953125, -73.740234375]
+      max: [149.23828125, 97.734375, 100.1953125, 73.740234375]
+
+  # Architecture / modeling.
+  # Neural networks.
+  image_encoder_hidden_dim: 32
+  # discount: 0.99
+  discount: 0.97
+  temperature_init: 1.0
+  num_critics: 2 #10
+  camera_number: 2
+  num_subsample_critics: null
+  critic_lr: 3e-4
+  actor_lr: 3e-4
+  temperature_lr: 3e-4
+  # critic_target_update_weight: 0.005
+  critic_target_update_weight: 0.01
+  utd_ratio: 2 # 10
+
+actor_learner_config:
+  learner_host: "127.0.0.1"
+  learner_port: 50051
+  policy_parameters_push_frequency: 15
+
+  # # Loss coefficients.
+  # reward_coeff: 0.5
+  # expectile_weight: 0.9
+  # value_coeff: 0.1
+  # consistency_coeff: 20.0
+  # advantage_scaling: 3.0
+  # pi_coeff: 0.5
+  # temporal_decay_coeff: 0.5
+  # # Target model.
+  # target_model_momentum: 0.995
