@@ -647,6 +647,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
             state_keys=cfg.policy.input_shapes.keys(),
             action_mask=active_action_dims,
             action_delta=cfg.env.wrapper.delta_action,
+            storage_device=device,
         )
         batch_size: int = batch_size // 2  # We will sample from both replay buffer
 
