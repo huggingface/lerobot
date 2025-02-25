@@ -29,9 +29,11 @@ class DatasetConfig:
     # "dataset_index" into the returned item. The index mapping is made according to the order in which the
     # datsets are provided.
     repo_id: str
+    # Root directory where the dataset will be stored (e.g. 'dataset/path').
+    root: str | None = None
     episodes: list[int] | None = None
     image_transforms: ImageTransformsConfig = field(default_factory=ImageTransformsConfig)
-    local_files_only: bool = False
+    revision: str | None = None
     use_imagenet_stats: bool = True
     video_backend: str = "pyav"
 
