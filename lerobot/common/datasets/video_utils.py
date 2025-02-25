@@ -73,7 +73,7 @@ def decode_video_frames_torchvision(
     last_ts = max(timestamps)
 
     # access closest key frame of the first requested frame
-    # Note: closest key frame timestamp is usally smaller than `first_ts` (e.g. key frame can be the first frame of the video)
+    # Note: closest key frame timestamp is usually smaller than `first_ts` (e.g. key frame can be the first frame of the video)
     # for details on what `seek` is doing see: https://pyav.basswood-io.com/docs/stable/api/container.html?highlight=inputcontainer#av.container.InputContainer.seek
     reader.seek(first_ts, keyframes_only=keyframes_only)
 

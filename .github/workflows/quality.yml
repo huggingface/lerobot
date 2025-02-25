@@ -42,3 +42,15 @@ jobs:
 
       - name: Ruff format
         run: ruff format --diff
+
+  typos:
+    name: Typos
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: typos-action
+        uses: crate-ci/typos@v1.29.10

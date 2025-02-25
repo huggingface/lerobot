@@ -152,7 +152,7 @@ def download_raw(raw_dir: Path, repo_id: str):
             stacklevel=1,
         )
 
-    # Send warning if raw_dir isn't well formated
+    # Send warning if raw_dir isn't well formatted
     if raw_dir.parts[-2] != user_id or raw_dir.parts[-1] != dataset_id:
         warnings.warn(
             f"""`raw_dir` ({raw_dir}) doesn't contain a community or user id `/` the name of the dataset that

@@ -398,7 +398,7 @@ And here are the corresponding positions for the leader arm:
 
 You can watch a [video tutorial of the calibration procedure](https://youtu.be/8drnU9uRY24) for more details.
 
-During calibration, we count the number of full 360-degree rotations your motors have made since they were first used. That's why we ask yo to move to this arbitrary "zero" position. We don't actually "set" the zero position, so you don't need to be accurate. After calculating these "offsets" to shift the motor values around 0, we need to assess the rotation direction of each motor, which might differ. That's why we ask you to rotate all motors to roughly 90 degrees, to mesure if the values changed negatively or positively.
+During calibration, we count the number of full 360-degree rotations your motors have made since they were first used. That's why we ask yo to move to this arbitrary "zero" position. We don't actually "set" the zero position, so you don't need to be accurate. After calculating these "offsets" to shift the motor values around 0, we need to assess the rotation direction of each motor, which might differ. That's why we ask you to rotate all motors to roughly 90 degrees, to measure if the values changed negatively or positively.
 
 Finally, the rest position ensures that the follower and leader arms are roughly aligned after calibration, preventing sudden movements that could damage the motors when starting teleoperation.
 
@@ -663,7 +663,7 @@ camera.disconnect()
 
 **Instantiate your robot with cameras**
 
-Additionaly, you can set up your robot to work with your cameras.
+Additionally, you can set up your robot to work with your cameras.
 
 Modify the following Python code with the appropriate camera names and configurations:
 ```python
@@ -825,8 +825,8 @@ It contains:
 - `dtRlead: 5.06 (197.5hz)` which is the delta time of reading the present position of the leader arm.
 - `dtWfoll: 0.25 (3963.7hz)` which is the delta time of writing the goal position on the follower arm ; writing is asynchronous so it takes less time than reading.
 - `dtRfoll: 6.22 (160.7hz)` which is the delta time of reading the present position on the follower arm.
-- `dtRlaptop:32.57 (30.7hz) ` which is the delta time of capturing an image from the laptop camera in the thread running asynchrously.
-- `dtRphone:33.84 (29.5hz)` which is the delta time of capturing an image from the phone camera in the thread running asynchrously.
+- `dtRlaptop:32.57 (30.7hz) ` which is the delta time of capturing an image from the laptop camera in the thread running asynchronously.
+- `dtRphone:33.84 (29.5hz)` which is the delta time of capturing an image from the phone camera in the thread running asynchronously.
 
 Troubleshooting:
 - On Linux, if you encounter a hanging issue when using cameras, uninstall opencv and re-install it with conda:
@@ -846,7 +846,7 @@ At the end of data recording, your dataset will be uploaded on your Hugging Face
 echo https://huggingface.co/datasets/${HF_USER}/koch_test
 ```
 
-### b. Advices for recording dataset
+### b. Advice for recording dataset
 
 Once you're comfortable with data recording, it's time to create a larger dataset for training. A good starting task is grasping an object at different locations and placing it in a bin. We suggest recording at least 50 episodes, with 10 episodes per location. Keep the cameras fixed and maintain consistent grasping behavior throughout the recordings.
 

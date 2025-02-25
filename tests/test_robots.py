@@ -86,7 +86,7 @@ def test_robot(tmp_path, request, robot_type, mock):
     robot.connect()
     robot.teleop_step()
 
-    # Test data recorded during teleop are well formated
+    # Test data recorded during teleop are well formatted
     observation, action = robot.teleop_step(record_data=True)
     # State
     assert "observation.state" in observation
