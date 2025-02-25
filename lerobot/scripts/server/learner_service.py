@@ -46,7 +46,7 @@ class LearnerService(hilserl_pb2_grpc.LearnerServiceServicer):
         logging.info("[LEARNER] Received request to stream parameters from the Actor")
 
         while not self.shutdown_event.is_set():
-            logging.debug("[LEARNER] Push parameters to the Actor")
+            logging.info("[LEARNER] Push parameters to the Actor")
             buffer = self._get_policy_state()
 
             yield from send_bytes_in_chunks(

@@ -277,6 +277,13 @@ def check_nan_in_transition(
         logging.error("actions contains NaN values")
 
 
+def push_actor_policy_to_queue(parameters_queue: Queue, policy: nn.Module):
+    logging.info("[LEARNER] Pushing actor policy to the queue")
+    state_dict = move_state_dict_to_device(policy.actor.state_dict(), device="cpu")
+    state_bytes = state_to_bytes(state_dict)
+    parameters_queue.put(state_bytes)
+
+
 def add_actor_information_and_train(
     cfg,
     device: str,
@@ -338,6 +345,8 @@ def add_actor_information_and_train(
     # compile policy
     policy = torch.compile(policy)
     assert isinstance(policy, nn.Module)
+
+    push_actor_policy_to_queue(parameters_queue, policy)
 
     optimizers, lr_scheduler = make_optimizers_and_scheduler(cfg, policy)
     resume_optimization_step, resume_interaction_step = load_training_state(
@@ -503,6 +512,7 @@ def add_actor_information_and_train(
                 optimizers["temperature"].step()
 
                 training_infos["loss_temperature"] = loss_temperature.item()
+            push_actor_policy_to_queue(parameters_queue, policy)
 
         policy.update_target_networks()
         if optimization_step % cfg.training.log_freq == 0:
@@ -529,13 +539,6 @@ def add_actor_information_and_train(
             mode="train",
             custom_step_key="Optimization step",
         )
-
-        if optimization_step % cfg.training.policy_update_freq == 0:
-            state_dict = move_state_dict_to_device(
-                policy.actor.state_dict(), device="cpu"
-            )
-            state_bytes = state_to_bytes(state_dict)
-            parameters_queue.put(state_bytes)
 
         optimization_step += 1
         if optimization_step % cfg.training.log_freq == 0:
