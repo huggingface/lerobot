@@ -95,6 +95,4 @@ def receive_bytes_in_chunks(
             bytes_buffer.truncate(0)
             step = 0
 
-            logging.debug(
-                f"{log_prefix} Queue updated, {queue.qsize()} items in the queue"
-            )
+            logging.debug(f"{log_prefix} Queue updated")

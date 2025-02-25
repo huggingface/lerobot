@@ -491,9 +491,9 @@ def actor_cli(cfg: dict):
 
     shutdown_event = Event()
 
-    parameters_queue = Queue(maxsize=1)
-    transitions_queue = Queue(maxsize=1_000_000)
-    interactions_queue = Queue(maxsize=1_000_000)
+    parameters_queue = Queue()
+    transitions_queue = Queue()
+    interactions_queue = Queue()
 
     # Define signal handler
     def signal_handler(signum, frame):
