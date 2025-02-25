@@ -135,6 +135,12 @@ class ReplayControlConfig(ControlConfig):
     local_files_only: bool = False
 
 
+@ControlConfig.register_subclass("remote_robot")
+@dataclass
+class RemoteRobotConfig(ControlConfig):
+    log_interval: int = 100
+
+
 @dataclass
 class ControlPipelineConfig:
     robot: RobotConfig
