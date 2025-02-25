@@ -127,6 +127,12 @@ class ReplayControlConfig(ControlConfig):
     play_sounds: bool = True
 
 
+@ControlConfig.register_subclass("remote_robot")
+@dataclass
+class RemoteRobotConfig(ControlConfig):
+    log_interval: int = 100
+
+
 @dataclass
 class ControlPipelineConfig:
     robot: RobotConfig
