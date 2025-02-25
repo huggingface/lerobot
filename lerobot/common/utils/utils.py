@@ -20,10 +20,10 @@ import platform
 from copy import copy
 from datetime import datetime, timezone
 from pathlib import Path
-
+from typing import Callable
 import numpy as np
 import torch
-
+from typing import Any
 
 def none_or_int(value):
     if value == "None":
@@ -50,12 +50,12 @@ def auto_select_torch_device() -> torch.device:
         return torch.device("cpu")
 
 
-def get_safe_torch_device(try_device: str, log: bool = False) -> torch.device:
+def get_safe_torch_device(try_device: str, log: bool = False, accelerator: Callable = None) -> torch.device:
     """Given a string, return a torch.device with checks on whether the device is available."""
     match try_device:
         case "cuda":
             assert torch.cuda.is_available()
-            device = torch.device("cuda")
+            device = accelerator.device if accelerator else torch.device("cuda")
         case "mps":
             assert torch.backends.mps.is_available()
             device = torch.device("mps")
@@ -103,7 +103,7 @@ def is_amp_available(device: str):
         raise ValueError(f"Unknown device '{device}.")
 
 
-def init_logging():
+def init_logging(accelerator: Callable = None):
     def custom_format(record):
         dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         fnameline = f"{record.pathname}:{record.lineno}"
@@ -120,7 +120,10 @@ def init_logging():
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(formatter)
     logging.getLogger().addHandler(console_handler)
-
+    if accelerator is not None and not accelerator.is_main_process:
+        # Disable duplicate logging on non-main processes
+        logging.info(f"Setting logging level on non-main process {accelerator.process_index} to WARNING.")
+        logging.getLogger().setLevel(logging.WARNING)
 
 def format_big_number(num, precision=0):
     suffixes = ["", "K", "M", "B", "T", "Q"]
@@ -216,3 +219,18 @@ def is_valid_numpy_dtype_string(dtype_str: str) -> bool:
     except TypeError:
         # If a TypeError is raised, the string is not a valid dtype
         return False
+
+def is_launched_with_accelerate() -> bool:
+    return "ACCELERATE_MIXED_PRECISION" in os.environ
+
+def get_accelerate_config(accelerator: Callable = None) -> dict[str, Any]:
+    config = {}
+    if not accelerator:
+        return config
+    config["num_processes"] = accelerator.num_processes
+    config["device"] = str(accelerator.device)
+    config["distributed_type"] = str(accelerator.distributed_type)
+    config["mixed_precision"] = accelerator.mixed_precision
+    config["gradient_accumulation_steps"] = accelerator.gradient_accumulation_steps
+
+    return config
