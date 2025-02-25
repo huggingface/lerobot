@@ -17,6 +17,7 @@ repos:
     rev: v1.29.10
     hooks:
       - id: typos
+        args: [--force-exclude]
   - repo: https://github.com/asottile/pyupgrade
     rev: v3.19.1
     hooks:
