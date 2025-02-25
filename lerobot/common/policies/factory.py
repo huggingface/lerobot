@@ -25,6 +25,7 @@ from lerobot.common.envs.configs import EnvConfig
 from lerobot.common.envs.utils import env_to_policy_features
 from lerobot.common.policies.act.configuration_act import ACTConfig
 from lerobot.common.policies.diffusion.configuration_diffusion import DiffusionConfig
+from lerobot.common.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.policies.tdmpc.configuration_tdmpc import TDMPCConfig
 from lerobot.common.policies.vqbet.configuration_vqbet import VQBeTConfig
@@ -50,6 +51,10 @@ def get_policy_class(name: str) -> PreTrainedPolicy:
         from lerobot.common.policies.vqbet.modeling_vqbet import VQBeTPolicy
 
         return VQBeTPolicy
+    elif name == "pi0":
+        from lerobot.common.policies.pi0.modeling_pi0 import PI0Policy
+
+        return PI0Policy
     else:
         raise NotImplementedError(f"Policy with name {name} is not implemented.")
 
@@ -63,6 +68,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return ACTConfig(**kwargs)
     elif policy_type == "vqbet":
         return VQBeTConfig(**kwargs)
+    elif policy_type == "pi0":
+        return PI0Config(**kwargs)
     else:
         raise ValueError(f"Policy type '{policy_type}' is not available.")
 
@@ -140,5 +147,7 @@ def make_policy(
 
     policy.to(device)
     assert isinstance(policy, nn.Module)
+
+    # policy = torch.compile(policy, mode="reduce-overhead")
 
     return policy

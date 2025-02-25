@@ -2,9 +2,10 @@ import shutil
 from pathlib import Path
 
 import numpy as np
-import torch
+from huggingface_hub import HfApi
 
-from lerobot.common.datasets.lerobot_dataset import LEROBOT_HOME, LeRobotDataset
+from lerobot.common.constants import HF_LEROBOT_HOME
+from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset
 from lerobot.common.datasets.push_dataset_to_hub._download_raw import download_raw
 
 PUSHT_TASK = "Push the T-shaped blue block onto the T-shaped green target surface."
@@ -89,9 +90,9 @@ def calculate_coverage(zarr_data):
 
     num_frames = len(block_pos)
 
-    coverage = np.zeros((num_frames,))
+    coverage = np.zeros((num_frames,), dtype=np.float32)
     # 8 keypoints with 2 coords each
-    keypoints = np.zeros((num_frames, 16))
+    keypoints = np.zeros((num_frames, 16), dtype=np.float32)
 
     # Set x, y, theta (in radians)
     goal_pos_angle = np.array([256, 256, np.pi / 4])
@@ -117,7 +118,7 @@ def calculate_coverage(zarr_data):
         intersection_area = goal_geom.intersection(block_geom).area
         goal_area = goal_geom.area
         coverage[i] = intersection_area / goal_area
-        keypoints[i] = torch.from_numpy(PushTEnv.get_keypoints(block_shapes).flatten())
+        keypoints[i] = PushTEnv.get_keypoints(block_shapes).flatten()
 
     return coverage, keypoints
 
@@ -134,8 +135,8 @@ def main(raw_dir: Path, repo_id: str, mode: str = "video", push_to_hub: bool = T
     if mode not in ["video", "image", "keypoints"]:
         raise ValueError(mode)
 
-    if (LEROBOT_HOME / repo_id).exists():
-        shutil.rmtree(LEROBOT_HOME / repo_id)
+    if (HF_LEROBOT_HOME / repo_id).exists():
+        shutil.rmtree(HF_LEROBOT_HOME / repo_id)
 
     if not raw_dir.exists():
         download_raw(raw_dir, repo_id="lerobot-raw/pusht_raw")
@@ -147,6 +148,10 @@ def main(raw_dir: Path, repo_id: str, mode: str = "video", push_to_hub: bool = T
 
     action = zarr_data["action"][:]
     image = zarr_data["img"]  # (b, h, w, c)
+
+    if image.dtype == np.float32 and image.max() == np.float32(255):
+        # HACK: images are loaded as float32 but they actually encode uint8 data
+        image = image.astype(np.uint8)
 
     episode_data_index = {
         "from": np.concatenate(([0], zarr_data.meta["episode_ends"][:-1])),
@@ -175,28 +180,30 @@ def main(raw_dir: Path, repo_id: str, mode: str = "video", push_to_hub: bool = T
 
         for frame_idx in range(num_frames):
             i = from_idx + frame_idx
+            idx = i + (frame_idx < num_frames - 1)
             frame = {
-                "action": torch.from_numpy(action[i]),
+                "action": action[i],
                 # Shift reward and success by +1 until the last item of the episode
-                "next.reward": reward[i + (frame_idx < num_frames - 1)],
-                "next.success": success[i + (frame_idx < num_frames - 1)],
+                "next.reward": reward[idx : idx + 1],
+                "next.success": success[idx : idx + 1],
+                "task": PUSHT_TASK,
             }
 
-            frame["observation.state"] = torch.from_numpy(agent_pos[i])
+            frame["observation.state"] = agent_pos[i]
 
             if mode == "keypoints":
-                frame["observation.environment_state"] = torch.from_numpy(keypoints[i])
+                frame["observation.environment_state"] = keypoints[i]
             else:
-                frame["observation.image"] = torch.from_numpy(image[i])
+                frame["observation.image"] = image[i]
 
             dataset.add_frame(frame)
 
-        dataset.save_episode(task=PUSHT_TASK)
-
-    dataset.consolidate()
+        dataset.save_episode()
 
     if push_to_hub:
         dataset.push_to_hub()
+        hub_api = HfApi()
+        hub_api.create_tag(repo_id, tag=CODEBASE_VERSION, repo_type="dataset")
 
 
 if __name__ == "__main__":
@@ -218,5 +225,5 @@ if __name__ == "__main__":
         main(raw_dir, repo_id=repo_id, mode=mode)
 
         # Uncomment if you want to load the local dataset and explore it
-        # dataset = LeRobotDataset(repo_id=repo_id, local_files_only=True)
+        # dataset = LeRobotDataset(repo_id=repo_id)
         # breakpoint()
