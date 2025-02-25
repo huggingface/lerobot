@@ -60,8 +60,6 @@ class RecordControlConfig(ControlConfig):
     num_episodes: int = 50
     # Encode frames in the dataset into video
     video: bool = True
-    # By default, run the computation of the data statistics at the end of data collection. Compute intensive and not required to just replay an episode.
-    run_compute_stats: bool = True
     # Upload dataset to Hugging Face hub.
     push_to_hub: bool = True
     # Upload on private repository on the Hugging Face hub.
@@ -83,9 +81,6 @@ class RecordControlConfig(ControlConfig):
     play_sounds: bool = True
     # Resume recording on an existing dataset.
     resume: bool = False
-    # TODO(rcadene, aliberts): remove local_files_only when refactor with dataset as argument
-    # Use local files only. By default, this script will try to fetch the dataset from the hub if it exists.
-    local_files_only: bool = False
 
     def __post_init__(self):
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
@@ -130,9 +125,6 @@ class ReplayControlConfig(ControlConfig):
     fps: int | None = None
     # Use vocal synthesis to read events.
     play_sounds: bool = True
-    # TODO(rcadene, aliberts): remove local_files_only when refactor with dataset as argument
-    # Use local files only. By default, this script will try to fetch the dataset from the hub if it exists.
-    local_files_only: bool = False
 
 
 @ControlConfig.register_subclass("remote_robot")

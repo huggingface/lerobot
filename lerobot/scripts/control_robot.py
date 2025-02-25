@@ -92,7 +92,6 @@ python lerobot/scripts/control_robot.py \
 This might require a sudo permission to allow your terminal to monitor keyboard events.
 
 **NOTE**: You can resume/continue data recording by running the same data recording command and adding `--control.resume=true`.
-If the dataset you want to extend is not on the hub, you also need to add `--control.local_files_only=true`.
 
 - Train on this dataset with the ACT policy:
 ```bash
@@ -234,7 +233,6 @@ def record(
         dataset = LeRobotDataset(
             cfg.repo_id,
             root=cfg.root,
-            local_files_only=cfg.local_files_only,
         )
         if len(robot.cameras) > 0:
             dataset.start_image_writer(
@@ -281,8 +279,8 @@ def record(
 
         log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
         record_episode(
-            dataset=dataset,
             robot=robot,
+            dataset=dataset,
             events=events,
             episode_time_s=cfg.episode_time_s,
             display_cameras=cfg.display_cameras,
@@ -290,6 +288,7 @@ def record(
             device=cfg.device,
             use_amp=cfg.use_amp,
             fps=cfg.fps,
+            single_task=cfg.single_task,
         )
 
         # Execute a few seconds without recording to give time to manually reset the environment
@@ -309,7 +308,7 @@ def record(
             dataset.clear_episode_buffer()
             continue
 
-        dataset.save_episode(cfg.single_task)
+        dataset.save_episode()
         recorded_episodes += 1
 
         if events["stop_recording"]:
@@ -317,11 +316,6 @@ def record(
 
     log_say("Stop recording", cfg.play_sounds, blocking=True)
     stop_recording(robot, listener, cfg.display_cameras)
-
-    if cfg.run_compute_stats:
-        logging.info("Computing dataset statistics")
-
-    dataset.consolidate(cfg.run_compute_stats)
 
     if cfg.push_to_hub:
         dataset.push_to_hub(tags=cfg.tags, private=cfg.private)
@@ -338,9 +332,7 @@ def replay(
     # TODO(rcadene, aliberts): refactor with control_loop, once `dataset` is an instance of LeRobotDataset
     # TODO(rcadene): Add option to record logs
 
-    dataset = LeRobotDataset(
-        cfg.repo_id, root=cfg.root, episodes=[cfg.episode], local_files_only=cfg.local_files_only
-    )
+    dataset = LeRobotDataset(cfg.repo_id, root=cfg.root, episodes=[cfg.episode])
     actions = dataset.hf_dataset.select_columns("action")
 
     if not robot.is_connected:

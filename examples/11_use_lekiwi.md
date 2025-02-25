@@ -391,7 +391,7 @@ python lerobot/scripts/control_robot.py \
   --control.push_to_hub=true
 ```
 
-Note: You can resume recording by adding `--control.resume=true`. Also if you didn't push your dataset yet, add `--control.local_files_only=true`.
+Note: You can resume recording by adding `--control.resume=true`.
 
 # H. Visualize a dataset
 
@@ -418,8 +418,6 @@ python lerobot/scripts/control_robot.py \
   --control.episode=0
 ```
 
-Note: If you didn't push your dataset yet, add `--control.local_files_only=true`.
-
 ## J. Train a policy
 
 To train a policy to control your robot, use the [`python lerobot/scripts/train.py`](../lerobot/scripts/train.py) script. A few arguments are required. Here is an example command:
@@ -432,8 +430,6 @@ python lerobot/scripts/train.py \
   --device=cuda \
   --wandb.enable=true
 ```
-
-Note: If you didn't push your dataset yet, add `--control.local_files_only=true`.
 
 Let's explain it:
 1. We provided the dataset as argument with `--dataset.repo_id=${HF_USER}/lekiwi_test`.

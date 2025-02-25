@@ -4,7 +4,13 @@ import datasets
 import pytest
 from huggingface_hub.utils import filter_repo_objects
 
-from lerobot.common.datasets.utils import EPISODES_PATH, INFO_PATH, STATS_PATH, TASKS_PATH
+from lerobot.common.datasets.utils import (
+    EPISODES_PATH,
+    EPISODES_STATS_PATH,
+    INFO_PATH,
+    STATS_PATH,
+    TASKS_PATH,
+)
 from tests.fixtures.constants import LEROBOT_TEST_DIR
 
 
@@ -14,6 +20,8 @@ def mock_snapshot_download_factory(
     info_path,
     stats_factory,
     stats_path,
+    episodes_stats_factory,
+    episodes_stats_path,
     tasks_factory,
     tasks_path,
     episodes_factory,
@@ -29,6 +37,7 @@ def mock_snapshot_download_factory(
     def _mock_snapshot_download_func(
         info: dict | None = None,
         stats: dict | None = None,
+        episodes_stats: list[dict] | None = None,
         tasks: list[dict] | None = None,
         episodes: list[dict] | None = None,
         hf_dataset: datasets.Dataset | None = None,
@@ -37,6 +46,10 @@ def mock_snapshot_download_factory(
             info = info_factory()
         if not stats:
             stats = stats_factory(features=info["features"])
+        if not episodes_stats:
+            episodes_stats = episodes_stats_factory(
+                features=info["features"], total_episodes=info["total_episodes"]
+            )
         if not tasks:
             tasks = tasks_factory(total_tasks=info["total_tasks"])
         if not episodes:
@@ -67,11 +80,11 @@ def mock_snapshot_download_factory(
 
             # List all possible files
             all_files = []
-            meta_files = [INFO_PATH, STATS_PATH, TASKS_PATH, EPISODES_PATH]
+            meta_files = [INFO_PATH, STATS_PATH, EPISODES_STATS_PATH, TASKS_PATH, EPISODES_PATH]
             all_files.extend(meta_files)
 
             data_files = []
-            for episode_dict in episodes:
+            for episode_dict in episodes.values():
                 ep_idx = episode_dict["episode_index"]
                 ep_chunk = ep_idx // info["chunks_size"]
                 data_path = info["data_path"].format(episode_chunk=ep_chunk, episode_index=ep_idx)
@@ -92,6 +105,8 @@ def mock_snapshot_download_factory(
                     _ = info_path(local_dir, info)
                 elif rel_path == STATS_PATH:
                     _ = stats_path(local_dir, stats)
+                elif rel_path == EPISODES_STATS_PATH:
+                    _ = episodes_stats_path(local_dir, episodes_stats)
                 elif rel_path == TASKS_PATH:
                     _ = tasks_path(local_dir, tasks)
                 elif rel_path == EPISODES_PATH:
