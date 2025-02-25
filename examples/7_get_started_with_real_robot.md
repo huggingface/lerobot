@@ -626,7 +626,7 @@ Finally, run this code to instantiate and connectyour camera:
 from lerobot.common.robot_devices.cameras.configs import OpenCVCameraConfig
 from lerobot.common.robot_devices.cameras.opencv import OpenCVCamera
 
-camera_config = OpenCVCameraConfig(camera_index=0)
+config = OpenCVCameraConfig(camera_index=0)
 camera = OpenCVCamera(config)
 camera.connect()
 color_image = camera.read()
@@ -668,13 +668,15 @@ Additionaly, you can set up your robot to work with your cameras.
 Modify the following Python code with the appropriate camera names and configurations:
 ```python
 robot = ManipulatorRobot(
-    leader_arms={"main": leader_arm},
-    follower_arms={"main": follower_arm},
-    calibration_dir=".cache/calibration/koch",
-    cameras={
-        "laptop": OpenCVCameraConfig(0, fps=30, width=640, height=480),
-        "phone": OpenCVCameraConfig(1, fps=30, width=640, height=480),
-    },
+    KochRobotConfig(
+        leader_arms={"main": leader_arm},
+        follower_arms={"main": follower_arm},
+        calibration_dir=".cache/calibration/koch",
+        cameras={
+            "laptop": OpenCVCameraConfig(0, fps=30, width=640, height=480),
+            "phone": OpenCVCameraConfig(1, fps=30, width=640, height=480),
+        },
+    )
 )
 robot.connect()
 ```
@@ -711,7 +713,7 @@ python lerobot/scripts/control_robot.py \
 
 You will see a lot of lines appearing like this one:
 ```
-INFO 2024-08-10 11:15:03 ol_robot.py:209 dt: 5.12 (195.1hz) dtRlead: 4.93 (203.0hz) dtRfoll: 0.19 (5239.0hz)
+INFO 2024-08-10 11:15:03 ol_robot.py:209 dt: 5.12 (195.1hz) dtRlead: 4.93 (203.0hz) dtWfoll: 0.19 (5239.0hz)
 ```
 
 It contains
