@@ -426,27 +426,27 @@ class So100RobotConfig(ManipulatorRobotConfig):
     # the number of motors in your follower arms.
     max_relative_target: int | None = None
 
-    leader_arms: dict[str, MotorsBusConfig] = field(
-        default_factory=lambda: {
-            "main": FeetechMotorsBusConfig(
-                port="/dev/tty.usbmodem58760431091",
-                motors={
-                    # name: (index, model)
-                    "shoulder_pan": [1, "sts3215"],
-                    "shoulder_lift": [2, "sts3215"],
-                    "elbow_flex": [3, "sts3215"],
-                    "wrist_flex": [4, "sts3215"],
-                    "wrist_roll": [5, "sts3215"],
-                    "gripper": [6, "sts3215"],
-                },
-            ),
-        }
-    )
+    # leader_arms: dict[str, MotorsBusConfig] = field(
+    #     default_factory=lambda: {
+    #         "main": FeetechMotorsBusConfig(
+    #             port="/dev/tty.usbmodem58760431091",
+    #             motors={
+    #                 # name: (index, model)
+    #                 "shoulder_pan": [1, "sts3215"],
+    #                 "shoulder_lift": [2, "sts3215"],
+    #                 "elbow_flex": [3, "sts3215"],
+    #                 "wrist_flex": [4, "sts3215"],
+    #                 "wrist_roll": [5, "sts3215"],
+    #                 "gripper": [6, "sts3215"],
+    #             },
+    #         ),
+    #     }
+    # )
 
     follower_arms: dict[str, MotorsBusConfig] = field(
         default_factory=lambda: {
             "main": FeetechMotorsBusConfig(
-                port="/dev/tty.usbmodem585A0076891",
+                port="/dev/ttyACM0",
                 motors={
                     # name: (index, model)
                     "shoulder_pan": [1, "sts3215"],
@@ -460,22 +460,22 @@ class So100RobotConfig(ManipulatorRobotConfig):
         }
     )
 
-    cameras: dict[str, CameraConfig] = field(
-        default_factory=lambda: {
-            "laptop": OpenCVCameraConfig(
-                camera_index=0,
-                fps=30,
-                width=640,
-                height=480,
-            ),
-            "phone": OpenCVCameraConfig(
-                camera_index=1,
-                fps=30,
-                width=640,
-                height=480,
-            ),
-        }
-    )
+    # cameras: dict[str, CameraConfig] = field(
+    #     default_factory=lambda: {
+    #         "laptop": OpenCVCameraConfig(
+    #             camera_index=0,
+    #             fps=30,
+    #             width=640,
+    #             height=480,
+    #         ),
+    #         "phone": OpenCVCameraConfig(
+    #             camera_index=1,
+    #             fps=30,
+    #             width=640,
+    #             height=480,
+    #         ),
+    #     }
+    # )
 
     mock: bool = False
 
