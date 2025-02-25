@@ -21,6 +21,7 @@ from copy import copy
 from datetime import datetime, timezone
 from pathlib import Path
 
+import numpy as np
 import torch
 
 
@@ -200,5 +201,18 @@ def get_channel_first_image_shape(image_shape: tuple) -> tuple:
     return shape
 
 
-def has_method(cls: object, method_name: str):
+def has_method(cls: object, method_name: str) -> bool:
     return hasattr(cls, method_name) and callable(getattr(cls, method_name))
+
+
+def is_valid_numpy_dtype_string(dtype_str: str) -> bool:
+    """
+    Return True if a given string can be converted to a numpy dtype.
+    """
+    try:
+        # Attempt to convert the string to a numpy dtype
+        np.dtype(dtype_str)
+        return True
+    except TypeError:
+        # If a TypeError is raised, the string is not a valid dtype
+        return False
