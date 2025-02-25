@@ -768,7 +768,7 @@ You can use the `record` function from [`lerobot/scripts/control_robot.py`](../l
 1. Frames from cameras are saved on disk in threads, and encoded into videos at the end of each episode recording.
 2. Video streams from cameras are displayed in window so that you can verify them.
 3. Data is stored with [`LeRobotDataset`](../lerobot/common/datasets/lerobot_dataset.py) format which is pushed to your Hugging Face page (unless `--control.push_to_hub=false` is provided).
-4. Checkpoints are done during recording, so if any issue occurs, you can resume recording by re-running the same command again with `--control.resume=true`. You might need to add `--control.local_files_only=true` if your dataset was not uploaded to hugging face hub. Also you will need to manually delete the dataset directory to start recording from scratch.
+4. Checkpoints are done during recording, so if any issue occurs, you can resume recording by re-running the same command again with `--control.resume=true`. You will need to manually delete the dataset directory if you want to start recording from scratch.
 5. Set the flow of data recording using command line arguments:
    - `--control.warmup_time_s=10` defines the number of seconds before starting data collection. It allows the robot devices to warmup and synchronize (10 seconds by default).
    - `--control.episode_time_s=60` defines the number of seconds for data recording for each episode (60 seconds by default).
@@ -883,8 +883,6 @@ python lerobot/scripts/control_robot.py \
   --control.episode=0
 ```
 
-Note: You might need to add `--control.local_files_only=true` if your dataset was not uploaded to hugging face hub.
-
 Your robot should replicate movements similar to those you recorded. For example, check out [this video](https://x.com/RemiCadene/status/1793654950905680090) where we use `replay` on a Aloha robot from [Trossen Robotics](https://www.trossenrobotics.com).
 
 ## 4. Train a policy on your data
@@ -901,8 +899,6 @@ python lerobot/scripts/train.py \
   --device=cuda \
   --wandb.enable=true
 ```
-
-Note: You might need to add `--dataset.local_files_only=true` if your dataset was not uploaded to hugging face hub.
 
 Let's explain it:
 1. We provided the dataset as argument with `--dataset.repo_id=${HF_USER}/koch_test`.

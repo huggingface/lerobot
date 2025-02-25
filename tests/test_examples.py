@@ -53,7 +53,7 @@ def test_example_1(tmp_path, lerobot_dataset_factory):
             ('repo_id = "lerobot/pusht"', f'repo_id = "{DUMMY_REPO_ID}"'),
             (
                 "LeRobotDataset(repo_id",
-                f"LeRobotDataset(repo_id, root='{str(tmp_path)}', local_files_only=True",
+                f"LeRobotDataset(repo_id, root='{str(tmp_path)}'",
             ),
         ],
     )

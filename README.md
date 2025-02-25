@@ -210,7 +210,7 @@ A `LeRobotDataset` is serialised using several widespread file formats for each 
 - videos are stored in mp4 format to save space
 - metadata are stored in plain json/jsonl files
 
-Dataset can be uploaded/downloaded from the HuggingFace hub seamlessly. To work on a local dataset, you can use the `local_files_only` argument and specify its location with the `root` argument if it's not in the default `~/.cache/huggingface/lerobot` location.
+Dataset can be uploaded/downloaded from the HuggingFace hub seamlessly. To work on a local dataset, you can specify its location with the `root` argument if it's not in the default `~/.cache/huggingface/lerobot` location.
 
 ### Evaluate a pretrained policy
 
