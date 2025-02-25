@@ -32,10 +32,10 @@ def calculate_episode_data_index(hf_dataset: datasets.Dataset) -> dict[str, np.n
         ep_table = table.filter(pc.equal(table["episode_index"], ep_idx))
         episode_lengths.insert(ep_idx, len(ep_table))
 
-    cumulative_lenghts = list(accumulate(episode_lengths))
+    cumulative_lengths = list(accumulate(episode_lengths))
     return {
-        "from": np.array([0] + cumulative_lenghts[:-1], dtype=np.int64),
-        "to": np.array(cumulative_lenghts, dtype=np.int64),
+        "from": np.array([0] + cumulative_lengths[:-1], dtype=np.int64),
+        "to": np.array(cumulative_lengths, dtype=np.int64),
     }
 
 

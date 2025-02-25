@@ -59,8 +59,8 @@ python lerobot/scripts/control_sim_robot.py record \
 ```
 
 **NOTE**: You can use your keyboard to control data recording flow.
-- Tap right arrow key '->' to early exit while recording an episode and go to reseting the environment.
-- Tap right arrow key '->' to early exit while reseting the environment and got to recording the next episode.
+- Tap right arrow key '->' to early exit while recording an episode and go to resetting the environment.
+- Tap right arrow key '->' to early exit while resetting the environment and got to recording the next episode.
 - Tap left arrow key '<-' to early exit and re-record the current episode.
 - Tap escape key 'esc' to stop the data recording.
 This might require a sudo permission to allow your terminal to monitor keyboard events.
@@ -131,7 +131,7 @@ def none_or_int(value):
 
 def init_sim_calibration(robot, cfg):
     # Constants necessary for transforming the joint pos of the real robot to the sim
-    # depending on the robot discription used in that sim.
+    # depending on the robot description used in that sim.
     start_pos = np.array(robot.leader_arms.main.calibration["start_pos"])
     axis_directions = np.array(cfg.get("axis_directions", [1]))
     offsets = np.array(cfg.get("offsets", [0])) * np.pi
