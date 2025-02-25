@@ -12,7 +12,6 @@ from functools import cache
 
 import cv2
 import torch
-import tqdm
 from deepdiff import DeepDiff
 from termcolor import colored
 
