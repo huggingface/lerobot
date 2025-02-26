@@ -123,7 +123,7 @@ def init_logging():
         message = f"{record.levelname} [PID: {os.getpid()}] {dt} {fnameline[-15:]:>15} {record.msg}"
         return message
 
-    logging.basicConfig(level=logging.DEBUG)
+    logging.basicConfig(level=logging.INFO)
 
     for handler in logging.root.handlers[:]:
         logging.root.removeHandler(handler)
