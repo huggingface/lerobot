@@ -78,8 +78,11 @@ def receive_policy(
     )
 
     try:
+        logging.info("[ACTOR] WTF!! before receive_bytes_in_chunks")
+        iterator = learner_client.StreamParameters(hilserl_pb2.Empty())
+        logging.info("[ACTOR] WTF!! after receive_bytes_in_chunks")
         receive_bytes_in_chunks(
-            learner_client.StreamParameters(hilserl_pb2.Empty()),
+            iterator,
             parameters_queue,
             shutdown_event,
             log_prefix="[ACTOR] parameters",
@@ -234,7 +237,7 @@ def learner_service_client(
         ],
     )
     stub = hilserl_pb2_grpc.LearnerServiceStub(channel)
-    logging.info("[LEARNER] Learner service client created")
+    logging.info("[ACTOR] Learner service client created")
     return stub, channel
 
 
