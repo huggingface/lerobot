@@ -60,6 +60,9 @@ class LearnerService(hilserl_pb2_grpc.LearnerServiceServicer):
 
             self.shutdown_event.wait(self.seconds_between_pushes)
 
+        logging.info("[LEARNER] Stream parameters finished")
+        return hilserl_pb2.Empty()
+
     def SendTransitions(self, request_iterator, _context):
         # TODO: authorize the request
         logging.info("[LEARNER] Received request to receive transitions from the Actor")

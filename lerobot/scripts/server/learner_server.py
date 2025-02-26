@@ -265,6 +265,7 @@ def start_learner_server(
     logging.info("[LEARNER] gRPC server started")
 
     shutdown_event.wait()
+    logging.info("[LEARNER] Stopping gRPC server...")
     server.stop(learner_service.STUTDOWN_TIMEOUT)
     logging.info("[LEARNER] gRPC server stopped")
 
