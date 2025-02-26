@@ -27,8 +27,7 @@ from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
 
 
-def get_policy_stats(ds_repo_id, env_name, policy_name, policy_kwargs, train_kwargs):
-    # TODO(rcadene, aliberts): env_name?
+def get_policy_stats(ds_repo_id, policy_name, policy_kwargs):
     set_seed(1337)
 
     train_cfg = TrainPipelineConfig(
@@ -36,7 +35,6 @@ def get_policy_stats(ds_repo_id, env_name, policy_name, policy_kwargs, train_kwa
         dataset=DatasetConfig(repo_id=ds_repo_id, episodes=[0]),
         policy=make_policy_config(policy_name, **policy_kwargs),
         device="cpu",
-        **train_kwargs,
     )
     train_cfg.validate()  # Needed for auto-setting some parameters
 
@@ -101,7 +99,7 @@ def get_policy_stats(ds_repo_id, env_name, policy_name, policy_kwargs, train_kwa
     return output_dict, grad_stats, param_stats, actions
 
 
-def save_policy_to_safetensors(output_dir, env_name, policy_name, policy_kwargs, file_name_extra):
+def save_policy_to_safetensors(output_dir, ds_repo_id, env_name, policy_name, policy_kwargs, file_name_extra):
     env_policy_dir = Path(output_dir) / f"{env_name}_{policy_name}{file_name_extra}"
 
     if env_policy_dir.exists():
@@ -111,7 +109,7 @@ def save_policy_to_safetensors(output_dir, env_name, policy_name, policy_kwargs,
         shutil.rmtree(env_policy_dir)
 
     env_policy_dir.mkdir(parents=True, exist_ok=True)
-    output_dict, grad_stats, param_stats, actions = get_policy_stats(env_name, policy_name, policy_kwargs)
+    output_dict, grad_stats, param_stats, actions = get_policy_stats(ds_repo_id, policy_name, policy_kwargs)
     save_file(output_dict, env_policy_dir / "output_dict.safetensors")
     save_file(grad_stats, env_policy_dir / "grad_stats.safetensors")
     save_file(param_stats, env_policy_dir / "param_stats.safetensors")
