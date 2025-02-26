@@ -20,6 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Clone repository and install LeRobot in a single layer
 COPY . /lerobot
+WORKDIR /lerobot
 RUN /opt/venv/bin/pip install --upgrade --no-cache-dir pip \
     && /opt/venv/bin/pip install --no-cache-dir ".[test, aloha, xarm, pusht, dynamixel]" \
         --extra-index-url https://download.pytorch.org/whl/cpu
