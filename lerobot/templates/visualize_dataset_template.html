@@ -14,22 +14,7 @@
 <!-- Use [Alpin.js](https://alpinejs.dev), a lightweight and easy to learn JS framework -->
 <!-- Use [tailwindcss](https://tailwindcss.com/), CSS classes for styling html -->
 <!-- Use [dygraphs](https://dygraphs.com/), a lightweight JS charting library -->
-<body class="flex flex-col md:flex-row h-screen max-h-screen bg-slate-950 text-gray-200" x-data="createAlpineData()" @keydown.window="(e) => {
-    // Use the space bar to play and pause, instead of default action (e.g. scrolling)
-    const { keyCode, key } = e;
-    if (keyCode === 32 || key === ' ') {
-        e.preventDefault();
-        $refs.btnPause.classList.contains('hidden') ? $refs.btnPlay.click() : $refs.btnPause.click();
-    } else if (key === 'ArrowDown' || key === 'ArrowUp') {
-        const episodes = {{ episodes }};  // Access episodes directly from the Jinja template
-        const nextEpisodeId = key === 'ArrowDown' ? {{ episode_id }} + 1 : {{ episode_id }} - 1;
-        const lowestEpisodeId = episodes.at(0);
-        const highestEpisodeId = episodes.at(-1);
-        if(nextEpisodeId >= lowestEpisodeId && nextEpisodeId <= highestEpisodeId){
-            window.location.href = `./episode_${nextEpisodeId}`;
-        }
-    }
-}">
+<body class="flex flex-col md:flex-row h-screen max-h-screen bg-slate-950 text-gray-200" x-data="createAlpineData()">
     <!-- Sidebar -->
     <div x-ref="sidebar" class="bg-slate-900 p-5 break-words overflow-y-auto shrink-0 md:shrink md:w-60 md:max-h-screen">
         <a href="https://github.com/huggingface/lerobot" target="_blank" class="hidden md:block">
@@ -525,6 +510,27 @@
         });
     </script>
 
+    <script>
+        window.addEventListener('keydown', (e) => {
+            // Use the space bar to play and pause, instead of default action (e.g. scrolling)
+            const { keyCode, key } = e;
+            
+            if (keyCode === 32 || key === ' ') {
+                e.preventDefault();
+                const btnPause = document.querySelector('[x-ref="btnPause"]');
+                const btnPlay = document.querySelector('[x-ref="btnPlay"]');
+                btnPause.classList.contains('hidden') ? btnPlay.click() : btnPause.click();
+            } else if (key === 'ArrowDown' || key === 'ArrowUp') {
+                const episodes = {{ episodes }};  // Access episodes directly from the Jinja template
+                const nextEpisodeId = key === 'ArrowDown' ? {{ episode_id }} + 1 : {{ episode_id }} - 1;
+                const lowestEpisodeId = episodes.at(0);
+                const highestEpisodeId = episodes.at(-1);
+                if (nextEpisodeId >= lowestEpisodeId && nextEpisodeId <= highestEpisodeId) {
+                    window.location.href = `./episode_${nextEpisodeId}`;
+                }
+            }
+        });
+    </script>
 </body>
 
 </html>
