@@ -15,8 +15,8 @@
 # limitations under the License.
 import logging
 from statistics import mean, quantiles
-import signal
 from functools import lru_cache
+from lerobot.scripts.server.utils import setup_process_handlers
 
 # from lerobot.scripts.eval import eval_policy
 
@@ -67,10 +67,11 @@ ACTOR_SHUTDOWN_TIMEOUT = 30
 
 def receive_policy(
     cfg: DictConfig,
-    shutdown_event: Event,
     parameters_queue: Queue,
 ):
     logging.info("[ACTOR] Start receiving parameters from the Learner")
+
+    shutdown_event = setup_process_handlers()
 
     learner_client, grpc_channel = learner_service_client(
         host=cfg.actor_learner_config.learner_host,
@@ -132,7 +133,6 @@ def interactions_stream(
 
 def send_transitions(
     cfg: DictConfig,
-    shutdown_event: Event,
     transitions_queue: Queue,
 ) -> hilserl_pb2.Empty:
     """
@@ -152,6 +152,8 @@ def send_transitions(
     Yields:
         hilserl_pb2.ActorInformation: The response message containing either transition data or an interaction message.
     """
+
+    shutdown_event = setup_process_handlers()
 
     learner_client, grpc_channel = learner_service_client(
         host=cfg.actor_learner_config.learner_host,
@@ -173,9 +175,10 @@ def send_transitions(
 
 def send_interactions(
     cfg: DictConfig,
-    shutdown_event: Event,
     interactions_queue: Queue,
 ) -> hilserl_pb2.Empty:
+    shutdown_event = setup_process_handlers()
+
     learner_client, grpc_channel = learner_service_client(
         host=cfg.actor_learner_config.learner_host,
         port=cfg.actor_learner_config.learner_port,
@@ -247,9 +250,7 @@ def update_policy_parameters(policy: SACPolicy, parameters_queue: Queue, device)
         bytes_state_dict = parameters_queue.get()
         state_dict = bytes_to_state_dict(bytes_state_dict)
         state_dict = move_state_dict_to_device(state_dict, device=device)
-        logging.info(f"[ACTOR] old state dict {policy.state_dict()}")
         policy.load_state_dict(state_dict)
-        logging.info(f"[ACTOR] new state dict {policy.state_dict()}")
 
 
 def act_with_policy(
@@ -494,21 +495,11 @@ def actor_cli(cfg: dict):
     init_logging()
     robot = make_robot(cfg=cfg.robot)
 
-    shutdown_event = Event()
-
     parameters_queue = Queue()
     transitions_queue = Queue()
     interactions_queue = Queue()
 
-    # Define signal handler
-    def signal_handler(signum, frame):
-        logging.info("Shutdown signal received. Cleaning up...")
-        shutdown_event.set()
-
-    signal.signal(signal.SIGINT, signal_handler)  # Ctrl+C
-    signal.signal(signal.SIGTERM, signal_handler)  # Termination request (kill)
-    signal.signal(signal.SIGHUP, signal_handler)  # Terminal closed/Hangup
-    signal.signal(signal.SIGQUIT, signal_handler)  # Ctrl+\
+    shutdown_event = setup_process_handlers()
 
     learner_client, grpc_channel = learner_service_client(
         host=cfg.actor_learner_config.learner_host,
@@ -526,17 +517,17 @@ def actor_cli(cfg: dict):
 
     receive_policy_process = Process(
         target=receive_policy,
-        args=(cfg, shutdown_event, parameters_queue),
+        args=(cfg, parameters_queue),
     )
 
     transitions_process = Process(
         target=send_transitions,
-        args=(cfg, shutdown_event, transitions_queue),
+        args=(cfg, transitions_queue),
     )
 
     interactions_process = Process(
         target=send_interactions,
-        args=(cfg, shutdown_event, interactions_queue),
+        args=(cfg, interactions_queue),
     )
 
     transitions_process.start()
