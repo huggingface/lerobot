@@ -20,10 +20,11 @@
     if (keyCode === 32 || key === ' ') {
         e.preventDefault();
         $refs.btnPause.classList.contains('hidden') ? $refs.btnPlay.click() : $refs.btnPause.click();
-    }else if (key === 'ArrowDown' || key === 'ArrowUp'){
+    } else if (key === 'ArrowDown' || key === 'ArrowUp') {
+        const episodes = {{ episodes }};  // Access episodes directly from the Jinja template
         const nextEpisodeId = key === 'ArrowDown' ? {{ episode_id }} + 1 : {{ episode_id }} - 1;
-        const lowestEpisodeId = {{ episodes }}.at(0);
-        const highestEpisodeId = {{ episodes }}.at(-1);
+        const lowestEpisodeId = episodes.at(0);
+        const highestEpisodeId = episodes.at(-1);
         if(nextEpisodeId >= lowestEpisodeId && nextEpisodeId <= highestEpisodeId){
             window.location.href = `./episode_${nextEpisodeId}`;
         }
