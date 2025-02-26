@@ -235,7 +235,7 @@ def start_learner_threads(
     logging.info("[LEARNER] Training process stopped")
 
     communication_process.join()
-    logging.info("[LEARNER] gRPC server stopped")
+    logging.info("[LEARNER] Communication process joined")
 
 
 def start_learner_server(
