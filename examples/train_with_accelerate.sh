@@ -11,7 +11,7 @@ export HF_HOME=$WORK/.cache/huggingface
 export DATA_DIR=$WORK/.cache/huggingface/datasets
 export HF_LEROBOT_HOME=$WORK/.cache/huggingface/lerobot
 
-export HF_DATASETS_OFFLINE=1 
+export HF_DATASETS_OFFLINE=1
 export HF_HUB_OFFLINE=1
 
 export WANDB_CACHE_DIR=/lustre/fsn1/projects/rech/dyf/ugz83ue/wandb
@@ -60,4 +60,4 @@ python -m accelerate.commands.launch --num_processes=$GPUS --mixed_precision=fp1
      --batch_size=$BATCH_SIZE \
      --steps=$OFFLINE_STEPS \
      --eval_freq=$EVAL_FREQ --save_freq=$SAVE_FREQ --eval.batch_size=$EVAL_BATCH_SIZE --eval.n_episodes=$EVAL_BATCH_SIZE  \
-     --use_amp=$USE_AMP 
+     --use_amp=$USE_AMP

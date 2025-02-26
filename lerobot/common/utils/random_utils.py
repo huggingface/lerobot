@@ -16,7 +16,7 @@
 import random
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Generator, Callable
+from typing import Any, Callable, Generator
 
 import numpy as np
 import torch
@@ -172,7 +172,9 @@ def set_seed(seed, accelerator: Callable = None) -> None:
         torch.cuda.manual_seed_all(seed)
     if accelerator:
         from accelerate.utils import set_seed
+
         set_seed(seed)
+
 
 @contextmanager
 def seeded_context(seed: int) -> Generator[None, None, None]:

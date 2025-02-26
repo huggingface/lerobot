@@ -46,8 +46,7 @@ from lerobot.common.utils.utils import (
     get_safe_torch_device,
     has_method,
     init_logging,
-    get_accelerate_config,
-    is_launched_with_accelerate
+    is_launched_with_accelerate,
 )
 from lerobot.common.utils.wandb_utils import WandBLogger
 from lerobot.configs import parser
@@ -108,7 +107,9 @@ def update_policy(
         lr_scheduler.step()
 
     if accelerator:
-        if has_method(accelerator.unwrap_model(policy, keep_fp32_wrapper=True), "update"): # FIXME(mshukor): avoid accelerator.unwrap_model ?
+        if has_method(
+            accelerator.unwrap_model(policy, keep_fp32_wrapper=True), "update"
+        ):  # FIXME(mshukor): avoid accelerator.unwrap_model ?
             accelerator.unwrap_model(policy, keep_fp32_wrapper=True).update()
     else:
         if has_method(policy, "update"):
@@ -222,7 +223,12 @@ def train(cfg: TrainPipelineConfig, accelerator: Callable = None):
     }
 
     train_tracker = MetricsTracker(
-        cfg.batch_size, dataset.num_frames, dataset.num_episodes, train_metrics, initial_step=step, accelerator=accelerator
+        cfg.batch_size,
+        dataset.num_frames,
+        dataset.num_episodes,
+        train_metrics,
+        initial_step=step,
+        accelerator=accelerator,
     )
     if not accelerator or accelerator.is_main_process:
         logging.info("Start offline training on a fixed dataset")
@@ -251,9 +257,19 @@ def train(cfg: TrainPipelineConfig, accelerator: Callable = None):
         # increment `step` here.
         step += 1
         train_tracker.step()
-        is_log_step = cfg.log_freq > 0 and step % cfg.log_freq == 0 and (not accelerator or accelerator.is_main_process)
-        is_saving_step = step % cfg.save_freq == 0 or step == cfg.steps and (not accelerator or accelerator.is_main_process)
-        is_eval_step = cfg.eval_freq > 0 and step % cfg.eval_freq == 0 and (not accelerator or accelerator.is_main_process)
+        is_log_step = (
+            cfg.log_freq > 0 and step % cfg.log_freq == 0 and (not accelerator or accelerator.is_main_process)
+        )
+        is_saving_step = (
+            step % cfg.save_freq == 0
+            or step == cfg.steps
+            and (not accelerator or accelerator.is_main_process)
+        )
+        is_eval_step = (
+            cfg.eval_freq > 0
+            and step % cfg.eval_freq == 0
+            and (not accelerator or accelerator.is_main_process)
+        )
 
         if is_log_step:
             logging.info(train_tracker)
@@ -267,7 +283,14 @@ def train(cfg: TrainPipelineConfig, accelerator: Callable = None):
         if cfg.save_checkpoint and is_saving_step:
             logging.info(f"Checkpoint policy after step {step}")
             checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, cfg.steps, step)
-            save_checkpoint(checkpoint_dir, step, cfg, policy if not accelerator else accelerator.unwrap_model(policy), optimizer, lr_scheduler)
+            save_checkpoint(
+                checkpoint_dir,
+                step,
+                cfg,
+                policy if not accelerator else accelerator.unwrap_model(policy),
+                optimizer,
+                lr_scheduler,
+            )
             update_last_checkpoint(checkpoint_dir)
             if wandb_logger:
                 wandb_logger.log_policy(checkpoint_dir)
@@ -296,7 +319,12 @@ def train(cfg: TrainPipelineConfig, accelerator: Callable = None):
                 "eval_s": AverageMeter("eval_s", ":.3f"),
             }
             eval_tracker = MetricsTracker(
-                cfg.batch_size, dataset.num_frames, dataset.num_episodes, eval_metrics, initial_step=step, accelerator=None
+                cfg.batch_size,
+                dataset.num_frames,
+                dataset.num_episodes,
+                eval_metrics,
+                initial_step=step,
+                accelerator=None,
             )
             eval_tracker.eval_s = eval_info["aggregated"].pop("eval_s")
             eval_tracker.avg_sum_reward = eval_info["aggregated"].pop("avg_sum_reward")
@@ -317,6 +345,7 @@ if __name__ == "__main__":
     init_logging()
     if is_launched_with_accelerate():
         import accelerate
+
         # We set step_scheduler_with_optimizer False to prevent accelerate from
         # adjusting the lr_scheduler steps based on the num_processes
         accelerator = accelerate.Accelerator(step_scheduler_with_optimizer=False)

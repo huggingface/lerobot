@@ -20,10 +20,11 @@ import platform
 from copy import copy
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
+
 import numpy as np
 import torch
-from typing import Any
+
 
 def none_or_int(value):
     if value == "None":
@@ -125,6 +126,7 @@ def init_logging(accelerator: Callable = None):
         logging.info(f"Setting logging level on non-main process {accelerator.process_index} to WARNING.")
         logging.getLogger().setLevel(logging.WARNING)
 
+
 def format_big_number(num, precision=0):
     suffixes = ["", "K", "M", "B", "T", "Q"]
     divisor = 1000.0
@@ -220,8 +222,10 @@ def is_valid_numpy_dtype_string(dtype_str: str) -> bool:
         # If a TypeError is raised, the string is not a valid dtype
         return False
 
+
 def is_launched_with_accelerate() -> bool:
     return "ACCELERATE_MIXED_PRECISION" in os.environ
+
 
 def get_accelerate_config(accelerator: Callable = None) -> dict[str, Any]:
     config = {}
