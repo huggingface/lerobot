@@ -88,7 +88,7 @@ def test_motors_bus(request, motor_type, mock):
 
     motors_bus = make_motors_bus(motor_type, mock=mock)
 
-    # Test reading and writting before connecting raises an error
+    # Test reading and writing before connecting raises an error
     with pytest.raises(RobotDeviceNotConnectedError):
         motors_bus.read("Torque_Enable")
     with pytest.raises(RobotDeviceNotConnectedError):

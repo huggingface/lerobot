@@ -486,7 +486,7 @@ def test_backward_compatibility(repo_id):
         old_frame = load_file(test_dir / f"frame_{i}.safetensors")  # noqa: B023
 
         # ignore language instructions (if exists) in language conditioned datasets
-        # TODO (michel-aractingi): transform language obs to langauge embeddings via tokenizer
+        # TODO (michel-aractingi): transform language obs to language embeddings via tokenizer
         new_frame.pop("language_instruction", None)
         old_frame.pop("language_instruction", None)
         new_frame.pop("task", None)

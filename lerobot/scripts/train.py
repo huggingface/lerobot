@@ -72,7 +72,7 @@ def update_policy(
         # TODO(rcadene): policy.unnormalize_outputs(out_dict)
     grad_scaler.scale(loss).backward()
 
-    # Unscale the graident of the optimzer's assigned params in-place **prior to gradient clipping**.
+    # Unscale the gradient of the optimizer's assigned params in-place **prior to gradient clipping**.
     grad_scaler.unscale_(optimizer)
 
     grad_norm = torch.nn.utils.clip_grad_norm_(

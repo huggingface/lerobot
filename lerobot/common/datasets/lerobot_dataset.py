@@ -226,7 +226,7 @@ class LeRobotDatasetMetadata:
 
     def add_task(self, task: str):
         """
-        Given a task in natural language, add it to the dictionnary of tasks.
+        Given a task in natural language, add it to the dictionary of tasks.
         """
         if task in self.task_to_task_index:
             raise ValueError(f"The task '{task}' already exists and can't be added twice.")
@@ -389,7 +389,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 - info contains various information about the dataset like shapes, keys, fps etc.
                 - stats stores the dataset statistics of the different modalities for normalization
                 - tasks contains the prompts for each task of the dataset, which can be used for
-                  task-conditionned training.
+                  task-conditioned training.
             - hf_dataset (from datasets.Dataset), which will read any values from parquet files.
             - videos (optional) from which frames are loaded to be synchronous with data from parquet files.
 
@@ -848,7 +848,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         episode_buffer["index"] = np.arange(self.meta.total_frames, self.meta.total_frames + episode_length)
         episode_buffer["episode_index"] = np.full((episode_length,), episode_index)
 
-        # Add new tasks to the tasks dictionnary
+        # Add new tasks to the tasks dictionary
         for task in episode_tasks:
             task_index = self.meta.get_task_index(task)
             if task_index is None:

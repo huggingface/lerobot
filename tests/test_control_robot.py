@@ -179,7 +179,7 @@ def test_record_and_replay_and_policy(tmp_path, request, robot_type, mock):
     policy.save_pretrained(pretrained_policy_path)
 
     # In `examples/9_use_aloha.md`, we advise using `num_image_writer_processes=1`
-    # during inference, to reach constent fps, so we test this here.
+    # during inference, to reach constant fps, so we test this here.
     if robot_type == "aloha":
         num_image_writer_processes = 1
 

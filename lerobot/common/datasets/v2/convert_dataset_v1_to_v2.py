@@ -17,7 +17,7 @@
 """
 This script will help you convert any LeRobot dataset already pushed to the hub from codebase version 1.6 to
 2.0. You will be required to provide the 'tasks', which is a short but accurate description in plain English
-for each of the task performed in the dataset. This will allow to easily train models with task-conditionning.
+for each of the task performed in the dataset. This will allow to easily train models with task-conditioning.
 
 We support 3 different scenarios for these tasks (see instructions below):
     1. Single task dataset: all episodes of your dataset have the same single task.

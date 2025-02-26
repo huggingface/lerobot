@@ -222,7 +222,7 @@ def load_episodes(local_dir: Path) -> dict:
 
 
 def write_episode_stats(episode_index: int, episode_stats: dict, local_dir: Path):
-    # We wrap episode_stats in a dictionnary since `episode_stats["episode_index"]`
+    # We wrap episode_stats in a dictionary since `episode_stats["episode_index"]`
     # is a dictionary of stats and not an integer.
     episode_stats = {"episode_index": episode_index, "stats": serialize_dict(episode_stats)}
     append_jsonlines(episode_stats, local_dir / EPISODES_STATS_PATH)
@@ -445,10 +445,10 @@ def get_episode_data_index(
     if episodes is not None:
         episode_lengths = {ep_idx: episode_lengths[ep_idx] for ep_idx in episodes}
 
-    cumulative_lenghts = list(accumulate(episode_lengths.values()))
+    cumulative_lengths = list(accumulate(episode_lengths.values()))
     return {
-        "from": torch.LongTensor([0] + cumulative_lenghts[:-1]),
-        "to": torch.LongTensor(cumulative_lenghts),
+        "from": torch.LongTensor([0] + cumulative_lengths[:-1]),
+        "to": torch.LongTensor(cumulative_lengths),
     }
 
 
