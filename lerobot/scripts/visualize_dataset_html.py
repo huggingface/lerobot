@@ -364,7 +364,7 @@ def visualize_dataset_html(
                 template_folder=template_dir,
             )
     else:
-        # Create a simlink from the dataset video folder containg mp4 files to the output directory
+        # Create a simlink from the dataset video folder containing mp4 files to the output directory
         # so that the http server can get access to the mp4 files.
         if isinstance(dataset, LeRobotDataset):
             ln_videos_dir = static_dir / "videos"

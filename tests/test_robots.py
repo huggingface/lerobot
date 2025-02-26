@@ -86,7 +86,7 @@ def test_robot(tmp_path, request, robot_type, mock):
     robot.connect()
     robot.teleop_step()
 
-    # Test data recorded during teleop are well formated
+    # Test data recorded during teleop are well formatted
     observation, action = robot.teleop_step(record_data=True)
     # State
     assert "observation.state" in observation
@@ -114,7 +114,7 @@ def test_robot(tmp_path, request, robot_type, mock):
         if "image" in name:
             # TODO(rcadene): skipping image for now as it's challenging to assess equality between two consecutive frames
             continue
-        assert torch.allclose(captured_observation[name], observation[name], atol=1)
+        torch.testing.assert_close(captured_observation[name], observation[name], rtol=1e-4, atol=1)
         assert captured_observation[name].shape == observation[name].shape
 
     # Test send_action can run

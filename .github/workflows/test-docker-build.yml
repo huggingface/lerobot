@@ -43,7 +43,7 @@ jobs:
     needs: get_changed_files
     runs-on:
       group: aws-general-8-plus
-    if: ${{ needs.get_changed_files.outputs.matrix }} != ''
+    if: needs.get_changed_files.outputs.matrix != ''
     strategy:
       fail-fast: false
       matrix:

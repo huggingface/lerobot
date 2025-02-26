@@ -92,7 +92,7 @@ def compute_episode_stats(episode_data: dict[str, list[str] | np.ndarray], featu
             axes_to_reduce = (0, 2, 3)  # keep channel dim
             keepdims = True
         else:
-            ep_ft_array = data  # data is alreay a np.ndarray
+            ep_ft_array = data  # data is already a np.ndarray
             axes_to_reduce = 0  # compute stats over the first axis
             keepdims = data.ndim == 1  # keep as np.array
 
