@@ -8,7 +8,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 
 # Install dependencies and set up Python in a single layer
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential cmake git git-lfs \
+    build-essential cmake git \
     libglib2.0-0 libgl1-mesa-glx libegl1-mesa ffmpeg \
     speech-dispatcher libgeos-dev \
     python${PYTHON_VERSION}-dev python${PYTHON_VERSION}-venv \
@@ -18,8 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && echo "source /opt/venv/bin/activate" >> /root/.bashrc
 
 # Clone repository and install LeRobot in a single layer
+COPY . /lerobot
 WORKDIR /lerobot
-RUN git lfs install \
-    && git clone https://github.com/huggingface/lerobot.git . \
-    && /opt/venv/bin/pip install --upgrade --no-cache-dir pip \
+RUN /opt/venv/bin/pip install --upgrade --no-cache-dir pip \
     && /opt/venv/bin/pip install --no-cache-dir ".[test, aloha, xarm, pusht, dynamixel]"
