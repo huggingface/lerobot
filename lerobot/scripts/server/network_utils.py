@@ -39,7 +39,7 @@ def send_bytes_in_chunks(
 
     sent_bytes = 0
 
-    logging_method = logging.debug if not silent else logging.info
+    logging_method = logging.info if not silent else logging.debug
 
     logging_method(f"{log_prefix} Buffer size {size_in_bytes/1024/1024} MB with")
 
