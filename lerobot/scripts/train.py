@@ -109,7 +109,7 @@ def update_policy(
     if accelerator:
         if has_method(
             accelerator.unwrap_model(policy, keep_fp32_wrapper=True), "update"
-        ):  # FIXME(mshukor): avoid accelerator.unwrap_model ?
+        ):
             accelerator.unwrap_model(policy, keep_fp32_wrapper=True).update()
     else:
         if has_method(policy, "update"):
