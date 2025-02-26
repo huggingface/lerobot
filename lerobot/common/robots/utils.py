@@ -1,16 +1,15 @@
 from typing import Protocol
 
-from lerobot.common.robots.configs import (
-    AlohaRobotConfig,
-    KochBimanualRobotConfig,
-    KochRobotConfig,
-    LeKiwiRobotConfig,
+from lerobot.common.robots.aloha.configuration_aloha import AlohaRobotConfig
+from lerobot.common.robots.config_abc import (
     ManipulatorRobotConfig,
-    MossRobotConfig,
     RobotConfig,
-    So100RobotConfig,
-    StretchRobotConfig,
 )
+from lerobot.common.robots.koch.configuration_koch import KochBimanualRobotConfig, KochRobotConfig
+from lerobot.common.robots.lekiwi.configuration_lekiwi import LeKiwiRobotConfig
+from lerobot.common.robots.moss.configuration_moss import MossRobotConfig
+from lerobot.common.robots.so_100.configuration_so_100 import So100RobotConfig
+from lerobot.common.robots.stretch3.configuration_stretch3 import StretchRobotConfig
 
 
 def get_arm_id(name, arm_type):
@@ -62,7 +61,7 @@ def make_robot_from_config(config: RobotConfig):
 
         return MobileManipulator(config)
     else:
-        from lerobot.common.robots.stretch3.stretch3_robot import StretchRobot
+        from lerobot.common.robots.stretch3.robot_stretch3 import StretchRobot
 
         return StretchRobot(config)
 

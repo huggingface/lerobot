@@ -15,7 +15,7 @@ import torch
 
 from lerobot.common.cameras.utils import make_cameras_from_configs
 from lerobot.common.motors.utils import MotorsBus, make_motors_buses_from_configs
-from lerobot.common.robots.configs import ManipulatorRobotConfig
+from lerobot.common.robots.config_abc import ManipulatorRobotConfig
 from lerobot.common.robots.utils import get_arm_id
 from lerobot.common.utils.robot_utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
 

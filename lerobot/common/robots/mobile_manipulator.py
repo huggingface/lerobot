@@ -13,7 +13,7 @@ from lerobot.common.cameras.utils import make_cameras_from_configs
 from lerobot.common.motors.feetech import TorqueMode
 from lerobot.common.motors.feetech_calibration import run_arm_manual_calibration
 from lerobot.common.motors.utils import MotorsBus, make_motors_buses_from_configs
-from lerobot.common.robots.configs import LeKiwiRobotConfig
+from lerobot.common.robots.lekiwi.configuration_lekiwi import LeKiwiRobotConfig
 from lerobot.common.robots.utils import get_arm_id
 from lerobot.common.utils.robot_utils import RobotDeviceNotConnectedError
 

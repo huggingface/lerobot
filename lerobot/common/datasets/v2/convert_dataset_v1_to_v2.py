@@ -141,7 +141,7 @@ from lerobot.common.datasets.video_utils import (
     get_image_pixel_channels,
     get_video_info,
 )
-from lerobot.common.robots.configs import RobotConfig
+from lerobot.common.robots.config_abc import RobotConfig
 from lerobot.common.robots.utils import make_robot_config
 
 V16 = "v1.6"
