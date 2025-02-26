@@ -200,25 +200,14 @@ def start_learner_threads(
     out_dir: str,
     shutdown_event: Event,
 ) -> None:
-    host = cfg.actor_learner_config.learner_host
-    port = cfg.actor_learner_config.learner_port
-
     # Create multiprocessing queues
     transition_queue = Queue()
     interaction_message_queue = Queue()
     parameters_queue = Queue()
 
-    # Create service with multiprocessing queues
-    service = learner_service.LearnerService(
-        shutdown_event,
-        parameters_queue,
-        cfg.actor_learner_config.policy_parameters_push_frequency,
-        transition_queue,
-        interaction_message_queue,
-    )
-
     communication_process = Process(
-        target=start_learner_server, args=(service, host, port)
+        target=start_learner_server,
+        args=(parameters_queue, transition_queue, interaction_message_queue, cfg),
     )
     communication_process.start()
 
@@ -239,13 +228,22 @@ def start_learner_threads(
 
 
 def start_learner_server(
-    service: learner_service.LearnerService,
-    host="0.0.0.0",
-    port=50051,
+    parameters_queue: Queue,
+    transition_queue: Queue,
+    interaction_message_queue: Queue,
+    cfg: DictConfig,
 ):
     init_logging()
 
     shutdown_event = setup_process_handlers()
+
+    service = learner_service.LearnerService(
+        shutdown_event,
+        parameters_queue,
+        cfg.actor_learner_config.policy_parameters_push_frequency,
+        transition_queue,
+        interaction_message_queue,
+    )
 
     server = grpc.server(
         ThreadPoolExecutor(max_workers=learner_service.MAX_WORKERS),
@@ -259,6 +257,9 @@ def start_learner_server(
         service,
         server,
     )
+
+    host = cfg.actor_learner_config.learner_host
+    port = cfg.actor_learner_config.learner_port
 
     server.add_insecure_port(f"{host}:{port}")
     server.start()
