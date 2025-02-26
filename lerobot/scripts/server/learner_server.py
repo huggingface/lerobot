@@ -244,7 +244,7 @@ def start_learner_server(
     host="0.0.0.0",
     port=50051,
 ):
-    logging.info("WTF???")
+    init_logging()
     server = grpc.server(
         ThreadPoolExecutor(max_workers=learner_service.MAX_WORKERS),
         options=[
@@ -253,15 +253,12 @@ def start_learner_server(
         ],
     )
 
-    logging.info("after server creation")
     hilserl_pb2_grpc.add_LearnerServiceServicer_to_server(
         service,
         server,
     )
 
-    logging.info("before port binding")
     server.add_insecure_port(f"{host}:{port}")
-    logging.info("before server start")
     server.start()
     logging.info("[LEARNER] gRPC server started")
 
