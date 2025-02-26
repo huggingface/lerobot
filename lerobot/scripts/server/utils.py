@@ -20,7 +20,7 @@ import logging
 import signal
 
 
-def setup_process_handlers(shutdown_event: Event):
+def setup_process_handlers() -> Event:
     shutdown_event = Event()
 
     # Define signal handler
