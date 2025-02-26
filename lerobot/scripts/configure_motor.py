@@ -18,8 +18,8 @@ import time
 
 def get_motor_bus_cls(brand: str) -> tuple:
     if brand == "feetech":
-        from lerobot.common.robot_devices.motors.configs import FeetechMotorsBusConfig
-        from lerobot.common.robot_devices.motors.feetech import (
+        from lerobot.common.motors.configs import FeetechMotorsBusConfig
+        from lerobot.common.motors.feetech import (
             MODEL_BAUDRATE_TABLE,
             SCS_SERIES_BAUDRATE_TABLE,
             FeetechMotorsBus,
@@ -28,8 +28,8 @@ def get_motor_bus_cls(brand: str) -> tuple:
         return FeetechMotorsBusConfig, FeetechMotorsBus, MODEL_BAUDRATE_TABLE, SCS_SERIES_BAUDRATE_TABLE
 
     elif brand == "dynamixel":
-        from lerobot.common.robot_devices.motors.configs import DynamixelMotorsBusConfig
-        from lerobot.common.robot_devices.motors.dynamixel import (
+        from lerobot.common.motors.configs import DynamixelMotorsBusConfig
+        from lerobot.common.motors.dynamixel import (
             MODEL_BAUDRATE_TABLE,
             X_SERIES_BAUDRATE_TABLE,
             DynamixelMotorsBus,

@@ -30,7 +30,7 @@ import time
 import numpy as np
 import pytest
 
-from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
+from lerobot.common.utils.robot_utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
 from lerobot.scripts.find_motors_bus_port import find_port
 from tests.utils import TEST_MOTOR_TYPES, make_motors_bus, require_motor
 

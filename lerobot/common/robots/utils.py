@@ -1,6 +1,6 @@
 from typing import Protocol
 
-from lerobot.common.robot_devices.robots.configs import (
+from lerobot.common.robots.configs import (
     AlohaRobotConfig,
     KochBimanualRobotConfig,
     KochRobotConfig,
@@ -54,15 +54,15 @@ def make_robot_config(robot_type: str, **kwargs) -> RobotConfig:
 
 def make_robot_from_config(config: RobotConfig):
     if isinstance(config, ManipulatorRobotConfig):
-        from lerobot.common.robot_devices.robots.manipulator import ManipulatorRobot
+        from lerobot.common.robots.manipulator import ManipulatorRobot
 
         return ManipulatorRobot(config)
     elif isinstance(config, LeKiwiRobotConfig):
-        from lerobot.common.robot_devices.robots.mobile_manipulator import MobileManipulator
+        from lerobot.common.robots.mobile_manipulator import MobileManipulator
 
         return MobileManipulator(config)
     else:
-        from lerobot.common.robot_devices.robots.stretch import StretchRobot
+        from lerobot.common.robots.stretch3.stretch3_robot import StretchRobot
 
         return StretchRobot(config)
 

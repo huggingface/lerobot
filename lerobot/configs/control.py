@@ -4,7 +4,7 @@ from pathlib import Path
 
 import draccus
 
-from lerobot.common.robot_devices.robots.configs import RobotConfig
+from lerobot.common.robots.configs import RobotConfig
 from lerobot.common.utils.utils import auto_select_torch_device, is_amp_available, is_torch_device_available
 from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig

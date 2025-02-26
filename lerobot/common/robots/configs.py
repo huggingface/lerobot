@@ -4,12 +4,12 @@ from typing import Sequence
 
 import draccus
 
-from lerobot.common.robot_devices.cameras.configs import (
+from lerobot.common.cameras.configs import (
     CameraConfig,
     IntelRealSenseCameraConfig,
     OpenCVCameraConfig,
 )
-from lerobot.common.robot_devices.motors.configs import (
+from lerobot.common.motors.configs import (
     DynamixelMotorsBusConfig,
     FeetechMotorsBusConfig,
     MotorsBusConfig,

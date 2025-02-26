@@ -19,8 +19,8 @@ from termcolor import colored
 from lerobot.common.datasets.image_writer import safe_stop_image_writer
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.datasets.utils import get_features_from_robot
-from lerobot.common.robot_devices.robots.utils import Robot
-from lerobot.common.robot_devices.utils import busy_wait
+from lerobot.common.robots.utils import Robot
+from lerobot.common.utils.robot_utils import busy_wait
 from lerobot.common.utils.utils import get_safe_torch_device, has_method
 
 

@@ -15,8 +15,8 @@ from threading import Thread
 import numpy as np
 from PIL import Image
 
-from lerobot.common.robot_devices.cameras.configs import OpenCVCameraConfig
-from lerobot.common.robot_devices.utils import (
+from lerobot.common.cameras.configs import OpenCVCameraConfig
+from lerobot.common.utils.robot_utils import (
     RobotDeviceAlreadyConnectedError,
     RobotDeviceNotConnectedError,
     busy_wait,

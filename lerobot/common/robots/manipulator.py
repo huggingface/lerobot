@@ -13,11 +13,11 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from lerobot.common.robot_devices.cameras.utils import make_cameras_from_configs
-from lerobot.common.robot_devices.motors.utils import MotorsBus, make_motors_buses_from_configs
-from lerobot.common.robot_devices.robots.configs import ManipulatorRobotConfig
-from lerobot.common.robot_devices.robots.utils import get_arm_id
-from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
+from lerobot.common.cameras.utils import make_cameras_from_configs
+from lerobot.common.motors.utils import MotorsBus, make_motors_buses_from_configs
+from lerobot.common.robots.configs import ManipulatorRobotConfig
+from lerobot.common.robots.utils import get_arm_id
+from lerobot.common.utils.robot_utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
 
 
 def ensure_safe_goal_position(
@@ -228,9 +228,9 @@ class ManipulatorRobot:
             self.leader_arms[name].connect()
 
         if self.robot_type in ["koch", "koch_bimanual", "aloha"]:
-            from lerobot.common.robot_devices.motors.dynamixel import TorqueMode
+            from lerobot.common.motors.dynamixel import TorqueMode
         elif self.robot_type in ["so100", "moss", "lekiwi"]:
-            from lerobot.common.robot_devices.motors.feetech import TorqueMode
+            from lerobot.common.motors.feetech import TorqueMode
 
         # We assume that at connection time, arms are in a rest position, and torque can
         # be safely disabled to run calibration and/or set robot preset configurations.
@@ -295,12 +295,12 @@ class ManipulatorRobot:
                 print(f"Missing calibration file '{arm_calib_path}'")
 
                 if self.robot_type in ["koch", "koch_bimanual", "aloha"]:
-                    from lerobot.common.robot_devices.robots.dynamixel_calibration import run_arm_calibration
+                    from lerobot.common.motors.dynamixel_calibration import run_arm_calibration
 
                     calibration = run_arm_calibration(arm, self.robot_type, name, arm_type)
 
                 elif self.robot_type in ["so100", "moss", "lekiwi"]:
-                    from lerobot.common.robot_devices.robots.feetech_calibration import (
+                    from lerobot.common.motors.feetech_calibration import (
                         run_arm_manual_calibration,
                     )
 
@@ -322,7 +322,7 @@ class ManipulatorRobot:
 
     def set_koch_robot_preset(self):
         def set_operating_mode_(arm):
-            from lerobot.common.robot_devices.motors.dynamixel import TorqueMode
+            from lerobot.common.motors.dynamixel import TorqueMode
 
             if (arm.read("Torque_Enable") != TorqueMode.DISABLED.value).any():
                 raise ValueError("To run set robot preset, the torque must be disabled on all motors.")

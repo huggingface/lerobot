@@ -22,7 +22,7 @@ from stretch_body.gamepad_teleop import GamePadTeleop
 from stretch_body.robot import Robot as StretchAPI
 from stretch_body.robot_params import RobotParams
 
-from lerobot.common.robot_devices.robots.configs import StretchRobotConfig
+from lerobot.common.robots.configs import StretchRobotConfig
 
 
 class StretchRobot(StretchAPI):
