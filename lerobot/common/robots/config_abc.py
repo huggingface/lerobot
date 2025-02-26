@@ -1,11 +1,11 @@
 import abc
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Sequence
 
 import draccus
 
 from lerobot.common.cameras.configs import CameraConfig
-from lerobot.common.motors.configs import MotorsBusConfig, field
+from lerobot.common.motors.configs import MotorsBusConfig
 
 
 @dataclass
