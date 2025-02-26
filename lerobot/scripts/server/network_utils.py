@@ -31,13 +31,17 @@ def bytes_buffer_size(buffer: io.BytesIO) -> int:
     return result
 
 
-def send_bytes_in_chunks(buffer: bytes, message_class: Any, log_prefix: str = ""):
+def send_bytes_in_chunks(
+    buffer: bytes, message_class: Any, log_prefix: str = "", silent: bool = True
+):
     buffer = io.BytesIO(buffer)
     size_in_bytes = bytes_buffer_size(buffer)
 
     sent_bytes = 0
 
-    logging.debug(f"{log_prefix} Buffer size {size_in_bytes/1024/1024} MB with")
+    logging_method = logging.debug if not silent else logging.info
+
+    logging_method(f"{log_prefix} Buffer size {size_in_bytes/1024/1024} MB with")
 
     while sent_bytes < size_in_bytes:
         transfer_state = hilserl_pb2.TransferState.TRANSFER_MIDDLE
@@ -52,11 +56,11 @@ def send_bytes_in_chunks(buffer: bytes, message_class: Any, log_prefix: str = ""
 
         yield message_class(transfer_state=transfer_state, data=chunk)
         sent_bytes += size_to_read
-        logging.debug(
+        logging_method(
             f"{log_prefix} Sent {sent_bytes}/{size_in_bytes} bytes with state {transfer_state}"
         )
 
-    logging.info(f"{log_prefix} Published {sent_bytes/1024/1024} MB")
+    logging_method(f"{log_prefix} Published {sent_bytes/1024/1024} MB")
 
 
 def receive_bytes_in_chunks(
