@@ -429,13 +429,13 @@ def test_backward_compatibility(
     )
 
     for key in saved_output_dict:
-        assert torch.allclose(output_dict[key], saved_output_dict[key], rtol=0.1, atol=1e-7)
+        torch.testing.assert_close(output_dict[key], saved_output_dict[key], rtol=0.1, atol=1e-7)
     for key in saved_grad_stats:
-        assert torch.allclose(grad_stats[key], saved_grad_stats[key], rtol=0.1, atol=1e-7)
+        torch.testing.assert_close(grad_stats[key], saved_grad_stats[key], rtol=0.1, atol=1e-7)
     for key in saved_param_stats:
-        assert torch.allclose(param_stats[key], saved_param_stats[key], rtol=0.1, atol=1e-7)
+        torch.testing.assert_close(param_stats[key], saved_param_stats[key], rtol=0.1, atol=1e-7)
     for key in saved_actions:
-        assert torch.allclose(actions[key], saved_actions[key], rtol=0.1, atol=1e-7)
+        torch.testing.assert_close(actions[key], saved_actions[key], rtol=0.1, atol=1e-7)
 
 
 def test_act_temporal_ensembler():
@@ -490,4 +490,4 @@ def test_act_temporal_ensembler():
         assert torch.all(einops.reduce(seq_slice, "b s 1 -> b 1", "min") <= offline_avg)
         assert torch.all(offline_avg <= einops.reduce(seq_slice, "b s 1 -> b 1", "max"))
         # Selected atol=1e-4 keeping in mind actions in [-1, 1] and excepting 0.01% error.
-        assert torch.allclose(online_avg, offline_avg, atol=1e-4)
+        torch.testing.assert_close(online_avg, offline_avg, atol=1e-4)
