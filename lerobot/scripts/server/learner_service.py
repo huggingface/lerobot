@@ -55,6 +55,8 @@ class LearnerService(hilserl_pb2_grpc.LearnerServiceServicer):
                 log_prefix="[LEARNER] Sending parameters",
             )
 
+            logging.info("[LEARNER] Parameters sent")
+
             self.shutdown_event.wait(self.seconds_between_pushes)
 
     def SendTransitions(self, request_iterator, _context):
