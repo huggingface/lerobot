@@ -84,6 +84,7 @@ class MetricsTracker:
         "samples",
         "episodes",
         "epochs",
+        "accelerator",
     ]
 
     def __init__(

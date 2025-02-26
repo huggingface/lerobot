@@ -174,15 +174,15 @@ def train(cfg: TrainPipelineConfig, accelerator: Callable = None):
 
     num_learnable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
     num_total_params = sum(p.numel() for p in policy.parameters())
-
-    logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}")
-    if cfg.env is not None:
-        logging.info(f"{cfg.env.task=}")
-    logging.info(f"{cfg.steps=} ({format_big_number(cfg.steps)})")
-    logging.info(f"{dataset.num_frames=} ({format_big_number(dataset.num_frames)})")
-    logging.info(f"{dataset.num_episodes=}")
-    logging.info(f"{num_learnable_params=} ({format_big_number(num_learnable_params)})")
-    logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
+    if not accelerator or accelerator.is_main_process:
+        logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}")
+        if cfg.env is not None:
+            logging.info(f"{cfg.env.task=}")
+        logging.info(f"{cfg.steps=} ({format_big_number(cfg.steps)})")
+        logging.info(f"{dataset.num_frames=} ({format_big_number(dataset.num_frames)})")
+        logging.info(f"{dataset.num_episodes=}")
+        logging.info(f"{num_learnable_params=} ({format_big_number(num_learnable_params)})")
+        logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
     # create dataloader for offline training
     if hasattr(cfg.policy, "drop_n_last_frames"):
@@ -224,8 +224,8 @@ def train(cfg: TrainPipelineConfig, accelerator: Callable = None):
     train_tracker = MetricsTracker(
         cfg.batch_size, dataset.num_frames, dataset.num_episodes, train_metrics, initial_step=step, accelerator=accelerator
     )
-
-    logging.info("Start offline training on a fixed dataset")
+    if not accelerator or accelerator.is_main_process:
+        logging.info("Start offline training on a fixed dataset")
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
         batch = next(dl_iter)
@@ -251,9 +251,9 @@ def train(cfg: TrainPipelineConfig, accelerator: Callable = None):
         # increment `step` here.
         step += 1
         train_tracker.step()
-        is_log_step = cfg.log_freq > 0 and step % cfg.log_freq == 0
-        is_saving_step = step % cfg.save_freq == 0 or step == cfg.steps
-        is_eval_step = cfg.eval_freq > 0 and step % cfg.eval_freq == 0
+        is_log_step = cfg.log_freq > 0 and step % cfg.log_freq == 0 and (not accelerator or accelerator.is_main_process)
+        is_saving_step = step % cfg.save_freq == 0 or step == cfg.steps and (not accelerator or accelerator.is_main_process)
+        is_eval_step = cfg.eval_freq > 0 and step % cfg.eval_freq == 0 and (not accelerator or accelerator.is_main_process)
 
         if is_log_step:
             logging.info(train_tracker)
@@ -264,7 +264,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Callable = None):
                 wandb_logger.log_dict(wandb_log_dict, step)
             train_tracker.reset_averages()
 
-        if cfg.save_checkpoint and is_saving_step and (not accelerator or accelerator.is_main_process):
+        if cfg.save_checkpoint and is_saving_step:
             logging.info(f"Checkpoint policy after step {step}")
             checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, cfg.steps, step)
             save_checkpoint(checkpoint_dir, step, cfg, policy if not accelerator else accelerator.unwrap_model(policy), optimizer, lr_scheduler)
@@ -309,7 +309,8 @@ def train(cfg: TrainPipelineConfig, accelerator: Callable = None):
 
     if eval_env:
         eval_env.close()
-    logging.info("End of training")
+    if not accelerator or accelerator.is_main_process:
+        logging.info("End of training")
 
 
 if __name__ == "__main__":
