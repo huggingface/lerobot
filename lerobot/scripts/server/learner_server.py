@@ -18,9 +18,9 @@ import logging
 import shutil
 import time
 from pprint import pformat
-import signal
 from concurrent.futures import ThreadPoolExecutor
 from multiprocessing import Event, Queue, Process
+from lerobot.scripts.server.utils import setup_process_handlers
 
 import grpc
 
@@ -218,7 +218,7 @@ def start_learner_threads(
     )
 
     communication_process = Process(
-        target=start_learner_server, args=(service, shutdown_event, host, port)
+        target=start_learner_server, args=(service, host, port)
     )
     communication_process.start()
 
@@ -240,11 +240,13 @@ def start_learner_threads(
 
 def start_learner_server(
     service: learner_service.LearnerService,
-    shutdown_event: Event,
     host="0.0.0.0",
     port=50051,
 ):
     init_logging()
+
+    shutdown_event = setup_process_handlers()
+
     server = grpc.server(
         ThreadPoolExecutor(max_workers=learner_service.MAX_WORKERS),
         options=[
@@ -649,19 +651,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
 
-    shutdown_event = Event()
-
-    def signal_handler(signum, frame):
-        logging.error(
-            f"Received signal {signal.Signals(signum).name}. Initiating learner shutdown..."
-        )
-        shutdown_event.set()
-
-    # Register signal handlers
-    signal.signal(signal.SIGINT, signal_handler)  # Ctrl+C
-    signal.signal(signal.SIGTERM, signal_handler)  # Termination request
-    signal.signal(signal.SIGHUP, signal_handler)  # Terminal closed
-    signal.signal(signal.SIGQUIT, signal_handler)  # Ctrl+\
+    shutdown_event = setup_process_handlers()
 
     start_learner_threads(
         cfg,
