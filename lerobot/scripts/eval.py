@@ -46,7 +46,7 @@ Note that in both examples, the repo/folder should contain at least `config.json
 You can learn about the CLI options for this script in the `EvalPipelineConfig` in lerobot/configs/eval.py
 """
 
-import json 
+import json
 import logging
 import threading
 import time
