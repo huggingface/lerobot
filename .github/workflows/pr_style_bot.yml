@@ -41,7 +41,7 @@ jobs:
           HEADREPOFULLNAME: ${{ steps.pr_info.outputs.headRepoFullName }}
           HEADREF: ${{ steps.pr_info.outputs.headRef }}
         with:
-          persist-credentials: false
+          persist-credentials: true
           # Instead of checking out the base repo, use the contributor's repo name
           repository: ${{ env.HEADREPOFULLNAME }}
           ref: ${{ env.HEADREF }}
