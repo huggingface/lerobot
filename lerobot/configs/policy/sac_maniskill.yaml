@@ -52,15 +52,15 @@ policy:
   n_action_steps: 1
 
   shared_encoder: true
-  vision_encoder_name: "helper2424/resnet10"
+  vision_encoder_name: null
   freeze_vision_encoder: true
   input_shapes:
     # # TODO(rcadene, alexander-soare): add variables for height and width from the dataset/env?
     observation.state: ["${env.state_dim}"]
-    observation.image: [3, 128, 128]
+    observation.image: [3, 64, 64]
   output_shapes:
     action: [7]
-  
+
   camera_number: 1
 
   # Normalization / Unnormalization
@@ -73,7 +73,7 @@ policy:
     #       1.0764e+00, -1.2680e+00,  0.0000e+00,  0.0000e+00, -9.3448e+00,
     #      -3.3828e+00, -3.8420e+00, -5.2553e+00, -3.4154e+00, -6.5082e+00,
     #      -6.0500e+00, -8.7193e+00, -8.2337e+00, -3.4650e-01, -4.9441e-01,
-    #       8.3516e-03, -3.1114e-01, -9.9700e-01, -2.3471e-01, -2.7137e-01] 
+    #       8.3516e-03, -3.1114e-01, -9.9700e-01, -2.3471e-01, -2.7137e-01]
 
     #   max: [ 0.8644,  1.4306,  1.8520, -0.7578,  0.9508,  3.4901,  1.9381,  0.0400,
     #       0.0400,  5.0885,  4.7156,  7.9393,  7.9100,  2.9796,  5.7720,  4.7163,
@@ -105,6 +105,6 @@ policy:
   utd_ratio: 2 # 10
 
 actor_learner_config:
-  learner_host: "127.0.0.1"
-  learner_port: 50051
+  learner_host: "79.116.12.45"
+  learner_port: 5678
   policy_parameters_push_frequency: 15
