@@ -107,9 +107,7 @@ def update_policy(
         lr_scheduler.step()
 
     if accelerator:
-        if has_method(
-            accelerator.unwrap_model(policy, keep_fp32_wrapper=True), "update"
-        ):
+        if has_method(accelerator.unwrap_model(policy, keep_fp32_wrapper=True), "update"):
             accelerator.unwrap_model(policy, keep_fp32_wrapper=True).update()
     else:
         if has_method(policy, "update"):

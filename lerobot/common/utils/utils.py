@@ -20,7 +20,7 @@ import platform
 from copy import copy
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Callable
 
 import numpy as np
 import torch
