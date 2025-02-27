@@ -92,6 +92,7 @@ jobs:
           # Configure git with the Actions bot user
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local lfs.https://github.com/.locksverify false
 
           # Make sure your 'origin' remote is set to the contributor's fork
           git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${HEADREPOFULLNAME}.git"
