@@ -225,16 +225,3 @@ def is_valid_numpy_dtype_string(dtype_str: str) -> bool:
 
 def is_launched_with_accelerate() -> bool:
     return "ACCELERATE_MIXED_PRECISION" in os.environ
-
-
-def get_accelerate_config(accelerator: Callable = None) -> dict[str, Any]:
-    config = {}
-    if not accelerator:
-        return config
-    config["num_processes"] = accelerator.num_processes
-    config["device"] = str(accelerator.device)
-    config["distributed_type"] = str(accelerator.distributed_type)
-    config["mixed_precision"] = accelerator.mixed_precision
-    config["gradient_accumulation_steps"] = accelerator.gradient_accumulation_steps
-
-    return config
