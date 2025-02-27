@@ -246,14 +246,16 @@
                                 <div class="flex gap-x-2 max-w-64 font-semibold px-1 break-all">
                                     <input type="checkbox" :checked="isRowChecked(rowIndex)"
                                         @change="toggleRow(rowIndex)">
-                                    <p x-text="`${rowLabels[rowIndex]}`"></p>
                                 </div>
                             </td>
                             <template x-for="(cell, colIndex) in row">
                                 <td x-show="cell" class="border border-slate-700">
-                                    <div class="flex gap-x-2 w-24 justify-between px-2" :class="{ 'hidden': cell.isNull }">
-                                        <input type="checkbox" x-model="cell.checked" @change="updateTableValues()">
-                                        <span x-text="`${!cell.isNull ? cell.value.toFixed(2) : null}`"
+                                    <div class="flex gap-x-2 justify-between px-2" :class="{ 'hidden': cell.isNull }">
+                                        <div class="flex gap-x-2">
+                                            <input type="checkbox" x-model="cell.checked" @change="updateTableValues()">
+                                            <span x-text="`${!cell.isNull ? cell.label : null}`"></span>
+                                        </div>
+                                        <span class="w-14 text-right" x-text="`${!cell.isNull ? (typeof cell.value === 'number' ? cell.value.toFixed(2) : cell.value) : null}`"
                                             :style="`color: ${cell.color}`"></span>
                                     </div>
                                 </td>
@@ -295,7 +297,6 @@
                 videosKeys: {{ videos_info | map(attribute='filename') | list | tojson }},
                 videosKeysSelected: [],
                 columns: {{ columns | tojson }},
-                rowLabels: {{ columns | tojson }}.reduce((colA, colB) => colA.value.length > colB.value.length ? colA : colB).value,
 
                 // alpine initialization
                 init() {
