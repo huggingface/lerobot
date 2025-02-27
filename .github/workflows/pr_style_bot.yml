@@ -42,6 +42,7 @@ jobs:
           HEADREF: ${{ steps.pr_info.outputs.headRef }}
         with:
           persist-credentials: true
+          lfs: true
           # Instead of checking out the base repo, use the contributor's repo name
           repository: ${{ env.HEADREPOFULLNAME }}
           ref: ${{ env.HEADREF }}
@@ -97,6 +98,7 @@ jobs:
 
           # If there are changes after running style/quality, commit them
           if [ -n "$(git status --porcelain)" ]; then
+            git lfs install
             git add .
             git commit -m "Apply style fixes"
             # Push to the original contributor's forked branch
