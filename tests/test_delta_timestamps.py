@@ -7,9 +7,7 @@ import pytest
 import torch
 
 from lerobot.common.datasets.utils import (
-    check_delta_timestamps,
     check_timestamps_sync,
-    get_delta_indices,
 )
 from tests.fixtures.constants import DUMMY_MOTOR_FEATURES
 
@@ -193,73 +191,3 @@ def test_check_timestamps_sync_single_timestamp():
         tolerance_s=tolerance_s,
     )
     assert result is True
-
-
-def test_check_delta_timestamps_valid(valid_delta_timestamps_factory):
-    fps = 30
-    tolerance_s = 1e-4
-    valid_delta_timestamps = valid_delta_timestamps_factory(fps)
-    result = check_delta_timestamps(
-        delta_timestamps=valid_delta_timestamps,
-        fps=fps,
-        tolerance_s=tolerance_s,
-    )
-    assert result is True
-
-
-def test_check_delta_timestamps_slightly_off(slightly_off_delta_timestamps_factory):
-    fps = 30
-    tolerance_s = 1e-4
-    slightly_off_delta_timestamps = slightly_off_delta_timestamps_factory(fps, tolerance_s)
-    result = check_delta_timestamps(
-        delta_timestamps=slightly_off_delta_timestamps,
-        fps=fps,
-        tolerance_s=tolerance_s,
-    )
-    assert result is True
-
-
-def test_check_delta_timestamps_invalid(invalid_delta_timestamps_factory):
-    fps = 30
-    tolerance_s = 1e-4
-    invalid_delta_timestamps = invalid_delta_timestamps_factory(fps, tolerance_s)
-    with pytest.raises(ValueError):
-        check_delta_timestamps(
-            delta_timestamps=invalid_delta_timestamps,
-            fps=fps,
-            tolerance_s=tolerance_s,
-        )
-
-
-def test_check_delta_timestamps_invalid_no_exception(invalid_delta_timestamps_factory):
-    fps = 30
-    tolerance_s = 1e-4
-    invalid_delta_timestamps = invalid_delta_timestamps_factory(fps, tolerance_s)
-    result = check_delta_timestamps(
-        delta_timestamps=invalid_delta_timestamps,
-        fps=fps,
-        tolerance_s=tolerance_s,
-        raise_value_error=False,
-    )
-    assert result is False
-
-
-def test_check_delta_timestamps_empty():
-    delta_timestamps = {}
-    fps = 30
-    tolerance_s = 1e-4
-    result = check_delta_timestamps(
-        delta_timestamps=delta_timestamps,
-        fps=fps,
-        tolerance_s=tolerance_s,
-    )
-    assert result is True
-
-
-def test_delta_indices(valid_delta_timestamps_factory, delta_indices_factory):
-    fps = 50
-    min_max_range = (-100, 100)
-    delta_timestamps = valid_delta_timestamps_factory(fps, min_max_range=min_max_range)
-    expected_delta_indices = delta_indices_factory(min_max_range=min_max_range)
-    actual_delta_indices = get_delta_indices(delta_timestamps, fps)
-    assert expected_delta_indices == actual_delta_indices
