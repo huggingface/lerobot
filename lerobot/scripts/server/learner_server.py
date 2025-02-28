@@ -242,6 +242,10 @@ def start_learner_server(
 ):
     init_logging()
 
+    # Setup process handlers to handle shutdown signal
+    # But use shutdown event from the main process
+    setup_process_handlers()
+
     service = learner_service.LearnerService(
         shutdown_event,
         parameters_queue,
