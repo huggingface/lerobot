@@ -567,7 +567,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         if tag_version:
             with contextlib.suppress(RevisionNotFoundError):
-                hub_api.delete_tag(self.repo_id, tag=CODEBASE_VERSION, revision=branch, repo_type="dataset")
+                hub_api.delete_tag(self.repo_id, tag=CODEBASE_VERSION, repo_type="dataset")
             hub_api.create_tag(self.repo_id, tag=CODEBASE_VERSION, revision=branch, repo_type="dataset")
 
     def pull_from_repo(
