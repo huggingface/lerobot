@@ -495,6 +495,7 @@ def establish_learner_connection(stub, shutdown_event: Event, attempts=30):
 
         # Force a connection attempt and check state
         try:
+            logging.info("[ACTOR] Send ready message to Learner")
             if stub.Ready(hilserl_pb2.Empty()) == hilserl_pb2.Empty():
                 return True
         except grpc.RpcError as e:
@@ -507,10 +508,6 @@ def establish_learner_connection(stub, shutdown_event: Event, attempts=30):
 def actor_cli(cfg: dict):
     init_logging()
     robot = make_robot(cfg=cfg.robot)
-
-    parameters_queue = Queue()
-    transitions_queue = Queue()
-    interactions_queue = Queue()
 
     shutdown_event = setup_process_handlers()
 
@@ -527,6 +524,10 @@ def actor_cli(cfg: dict):
     grpc_channel.close()
 
     logging.info("[ACTOR] Connection with Learner established")
+
+    parameters_queue = Queue()
+    transitions_queue = Queue()
+    interactions_queue = Queue()
 
     receive_policy_process = Process(
         target=receive_policy,
