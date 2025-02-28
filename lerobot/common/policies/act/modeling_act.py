@@ -156,7 +156,7 @@ class ACTPolicy(PreTrainedPolicy):
             self._eoe_queue.extend(eoe_preds.transpose(0, 1))
         return self._action_queue.popleft(), self._eoe_queue.popleft()
 
-    def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
+    def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
         """Run the batch through the model and compute the loss for training or validation."""
         batch = self.normalize_inputs(batch)
         if self.config.image_features:
@@ -188,11 +188,11 @@ class ACTPolicy(PreTrainedPolicy):
                 (-0.5 * (1 + log_sigma_x2_hat - mu_hat.pow(2) - (log_sigma_x2_hat).exp())).sum(-1).mean()
             )
             loss_dict["kld_loss"] = mean_kld.item()
-            loss_dict["loss"] = l1_loss + eoe_loss + mean_kld * self.config.kl_weight
+            loss = l1_loss + eoe_loss + mean_kld * self.config.kl_weight
         else:
-            loss_dict["loss"] = l1_loss + eoe_loss
+            loss = l1_loss + eoe_loss
 
-        return loss_dict
+        return loss, loss_dict
 
 
 class ACTTemporalEnsembler:
@@ -429,9 +429,9 @@ class ACT(nn.Module):
             latent dimension.
         """
         if self.config.use_vae and self.training:
-            assert (
-                "action" in batch
-            ), "actions must be provided when using the variational objective in training mode."
+            assert "action" in batch, (
+                "actions must be provided when using the variational objective in training mode."
+            )
 
         batch_size = (
             batch["observation.images"]

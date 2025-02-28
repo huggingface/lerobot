@@ -4,6 +4,7 @@ from lerobot.common.robot_devices.robots.configs import (
     AlohaRobotConfig,
     KochBimanualRobotConfig,
     KochRobotConfig,
+    LeKiwiRobotConfig,
     ManipulatorRobotConfig,
     MossRobotConfig,
     RobotConfig,
@@ -59,6 +60,8 @@ def make_robot_config(robot_type: str, **kwargs) -> RobotConfig:
         return ARX5SingleArmFollowOnlyConfig(**kwargs)
     elif robot_type == "arx5_bimanual_follow":
         return ARX5BimanualFollowOnlyConfig(**kwargs)
+    elif robot_type == "lekiwi":
+        return LeKiwiRobotConfig(**kwargs)
     else:
         raise ValueError(f"Robot type '{robot_type}' is not available.")
 
@@ -100,6 +103,10 @@ def make_robot_from_config(config: RobotConfig):
             cameras=config.cameras
         )
         return ARX5Robot(common_config)
+    elif isinstance(config, LeKiwiRobotConfig):
+        from lerobot.common.robot_devices.robots.mobile_manipulator import MobileManipulator
+
+        return MobileManipulator(config)
     else:
         from lerobot.common.robot_devices.robots.stretch import StretchRobot
 

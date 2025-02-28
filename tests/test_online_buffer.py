@@ -132,9 +132,9 @@ def test_fifo():
     buffer.add_data(new_data)
     n_more_episodes = 2
     # Developer sanity check (in case someone changes the global `buffer_capacity`).
-    assert (
-        n_episodes + n_more_episodes
-    ) * n_frames_per_episode > buffer_capacity, "Something went wrong with the test code."
+    assert (n_episodes + n_more_episodes) * n_frames_per_episode > buffer_capacity, (
+        "Something went wrong with the test code."
+    )
     more_new_data = make_spoof_data_frames(n_more_episodes, n_frames_per_episode)
     buffer.add_data(more_new_data)
     assert len(buffer) == buffer_capacity, "The buffer should be full."
@@ -166,7 +166,7 @@ def test_delta_timestamps_within_tolerance():
     buffer.tolerance_s = 0.04
     item = buffer[2]
     data, is_pad = item["index"], item[f"index{OnlineBuffer.IS_PAD_POSTFIX}"]
-    assert torch.allclose(data, torch.tensor([0, 2, 3])), "Data does not match expected values"
+    torch.testing.assert_close(data, torch.tensor([0, 2, 3]), msg="Data does not match expected values")
     assert not is_pad.any(), "Unexpected padding detected"
 
 
@@ -203,9 +203,9 @@ def test_delta_timestamps_outside_tolerance_outside_episode_range():
     item = buffer[2]
     data, is_pad = item["index"], item["index_is_pad"]
     assert torch.equal(data, torch.tensor([0, 0, 2, 4, 4])), "Data does not match expected values"
-    assert torch.equal(
-        is_pad, torch.tensor([True, False, False, True, True])
-    ), "Padding does not match expected values"
+    assert torch.equal(is_pad, torch.tensor([True, False, False, True, True])), (
+        "Padding does not match expected values"
+    )
 
 
 # Arbitrarily set small dataset sizes, making sure to have uneven sizes.
@@ -236,7 +236,7 @@ def test_compute_sampler_weights_trivial(
     elif online_sampling_ratio == 1:
         expected_weights = torch.cat([torch.zeros(offline_dataset_size), torch.ones(online_dataset_size)])
     expected_weights /= expected_weights.sum()
-    assert torch.allclose(weights, expected_weights)
+    torch.testing.assert_close(weights, expected_weights)
 
 
 def test_compute_sampler_weights_nontrivial_ratio(lerobot_dataset_factory, tmp_path):
@@ -248,7 +248,7 @@ def test_compute_sampler_weights_nontrivial_ratio(lerobot_dataset_factory, tmp_p
     weights = compute_sampler_weights(
         offline_dataset, online_dataset=online_dataset, online_sampling_ratio=online_sampling_ratio
     )
-    assert torch.allclose(
+    torch.testing.assert_close(
         weights, torch.tensor([0.05, 0.05, 0.05, 0.05, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1])
     )
 
@@ -261,7 +261,7 @@ def test_compute_sampler_weights_nontrivial_ratio_and_drop_last_n(lerobot_datase
     weights = compute_sampler_weights(
         offline_dataset, online_dataset=online_dataset, online_sampling_ratio=0.8, online_drop_n_last_frames=1
     )
-    assert torch.allclose(
+    torch.testing.assert_close(
         weights, torch.tensor([0.05, 0.05, 0.05, 0.05, 0.2, 0.0, 0.2, 0.0, 0.2, 0.0, 0.2, 0.0])
     )
 
@@ -279,4 +279,4 @@ def test_compute_sampler_weights_drop_n_last_frames(lerobot_dataset_factory, tmp
         online_sampling_ratio=0.5,
         online_drop_n_last_frames=1,
     )
-    assert torch.allclose(weights, torch.tensor([0.5, 0, 0.125, 0, 0.125, 0, 0.125, 0, 0.125, 0]))
+    torch.testing.assert_close(weights, torch.tensor([0.5, 0, 0.125, 0, 0.125, 0, 0.125, 0, 0.125, 0]))

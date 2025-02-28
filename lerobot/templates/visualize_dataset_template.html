@@ -14,21 +14,7 @@
 <!-- Use [Alpin.js](https://alpinejs.dev), a lightweight and easy to learn JS framework -->
 <!-- Use [tailwindcss](https://tailwindcss.com/), CSS classes for styling html -->
 <!-- Use [dygraphs](https://dygraphs.com/), a lightweight JS charting library -->
-<body class="flex flex-col md:flex-row h-screen max-h-screen bg-slate-950 text-gray-200" x-data="createAlpineData()" @keydown.window="(e) => {
-    // Use the space bar to play and pause, instead of default action (e.g. scrolling)
-    const { keyCode, key } = e;
-    if (keyCode === 32 || key === ' ') {
-        e.preventDefault();
-        $refs.btnPause.classList.contains('hidden') ? $refs.btnPlay.click() : $refs.btnPause.click();
-    }else if (key === 'ArrowDown' || key === 'ArrowUp'){
-        const nextEpisodeId = key === 'ArrowDown' ? {{ episode_id }} + 1 : {{ episode_id }} - 1;
-        const lowestEpisodeId = {{ episodes }}.at(0);
-        const highestEpisodeId = {{ episodes }}.at(-1);
-        if(nextEpisodeId >= lowestEpisodeId && nextEpisodeId <= highestEpisodeId){
-            window.location.href = `./episode_${nextEpisodeId}`;
-        }
-    }
-}">
+<body class="flex flex-col md:flex-row h-screen max-h-screen bg-slate-950 text-gray-200" x-data="createAlpineData()">
     <!-- Sidebar -->
     <div x-ref="sidebar" class="bg-slate-900 p-5 break-words overflow-y-auto shrink-0 md:shrink md:w-60 md:max-h-screen">
         <a href="https://github.com/huggingface/lerobot" target="_blank" class="hidden md:block">
@@ -52,25 +38,55 @@
 
         <p>Episodes:</p>
         <!-- episodes menu for medium & large screens -->
-        <ul class="ml-2 hidden md:block">
-            {% for episode in episodes %}
-            <li class="font-mono text-sm mt-0.5">
-                <a href="episode_{{ episode }}" class="underline {% if episode_id == episode %}font-bold -ml-1{% endif %}">
-                    Episode {{ episode }}
-                </a>
-            </li>
-            {% endfor %}
-        </ul>
-
+        <div class="ml-2 hidden md:block" x-data="episodePagination">
+            <ul>
+                <template x-for="episode in paginatedEpisodes" :key="episode">
+                    <li class="font-mono text-sm mt-0.5">
+                        <a :href="'episode_' + episode" 
+                           :class="{'underline': true, 'font-bold -ml-1': episode == {{ episode_id }}}"
+                           x-text="'Episode ' + episode"></a>
+                    </li>
+                </template>
+            </ul>
+        
+            <div class="flex items-center mt-3 text-xs" x-show="totalPages > 1">
+                <button @click="prevPage()" 
+                        class="px-2 py-1 bg-slate-800 rounded mr-2"
+                        :class="{'opacity-50 cursor-not-allowed': page === 1}"
+                        :disabled="page === 1">
+                    &laquo; Prev
+                </button>
+                <span class="font-mono mr-2" x-text="` ${page} / ${totalPages}`"></span>
+                <button @click="nextPage()" 
+                        class="px-2 py-1 bg-slate-800 rounded"
+                        :class="{'opacity-50 cursor-not-allowed': page === totalPages}"
+                        :disabled="page === totalPages">
+                    Next &raquo;
+                </button>
+            </div>
+        </div>
+        
         <!-- episodes menu for small screens -->
-        <div class="flex overflow-x-auto md:hidden">
-            {% for episode in episodes %}
-            <p class="font-mono text-sm mt-0.5 border-r last:border-r-0 px-2 {% if episode_id == episode %}font-bold{% endif %}">
-                <a href="episode_{{ episode }}" class="">
-                    {{ episode }}
-                </a>
-            </p>
-            {% endfor %}
+        <div class="flex overflow-x-auto md:hidden" x-data="episodePagination">
+            <button @click="prevPage()" 
+                    class="px-2 bg-slate-800 rounded mr-2"
+                    :class="{'opacity-50 cursor-not-allowed': page === 1}"
+                    :disabled="page === 1">&laquo;</button>
+            <div class="flex">
+                <template x-for="(episode, index) in paginatedEpisodes" :key="episode">
+                    <p class="font-mono text-sm mt-0.5 px-2"
+                       :class="{
+                           'font-bold': episode == {{ episode_id }},
+                           'border-r': index !== paginatedEpisodes.length - 1
+                       }">
+                        <a :href="'episode_' + episode" x-text="episode"></a>
+                    </p>
+                </template>
+            </div>
+            <button @click="nextPage()" 
+                    class="px-2 bg-slate-800 rounded ml-2"
+                    :class="{'opacity-50 cursor-not-allowed': page === totalPages}"
+                    :disabled="page === totalPages">&raquo; </button>
         </div>
 
     </div>
@@ -230,14 +246,16 @@
                                 <div class="flex gap-x-2 max-w-64 font-semibold px-1 break-all">
                                     <input type="checkbox" :checked="isRowChecked(rowIndex)"
                                         @change="toggleRow(rowIndex)">
-                                    <p x-text="`${rowLabels[rowIndex]}`"></p>
                                 </div>
                             </td>
                             <template x-for="(cell, colIndex) in row">
                                 <td x-show="cell" class="border border-slate-700">
-                                    <div class="flex gap-x-2 w-24 justify-between px-2" :class="{ 'hidden': cell.isNull }">
-                                        <input type="checkbox" x-model="cell.checked" @change="updateTableValues()">
-                                        <span x-text="`${!cell.isNull ? cell.value.toFixed(2) : null}`"
+                                    <div class="flex gap-x-2 justify-between px-2" :class="{ 'hidden': cell.isNull }">
+                                        <div class="flex gap-x-2">
+                                            <input type="checkbox" x-model="cell.checked" @change="updateTableValues()">
+                                            <span x-text="`${!cell.isNull ? cell.label : null}`"></span>
+                                        </div>
+                                        <span class="w-14 text-right" x-text="`${!cell.isNull ? (typeof cell.value === 'number' ? cell.value.toFixed(2) : cell.value) : null}`"
                                             :style="`color: ${cell.color}`"></span>
                                     </div>
                                 </td>
@@ -279,7 +297,6 @@
                 videosKeys: {{ videos_info | map(attribute='filename') | list | tojson }},
                 videosKeysSelected: [],
                 columns: {{ columns | tojson }},
-                rowLabels: {{ columns | tojson }}.reduce((colA, colB) => colA.value.length > colB.value.length ? colA : colB).value,
 
                 // alpine initialization
                 init() {
@@ -452,6 +469,68 @@
                 }
             };
         }
+
+        document.addEventListener('alpine:init', () => {
+            // Episode pagination component
+            Alpine.data('episodePagination', () => ({
+                episodes: {{ episodes }},
+                pageSize: 100,
+                page: 1,
+                
+                init() {
+                    // Find which page contains the current episode_id
+                    const currentEpisodeId = {{ episode_id }};
+                    const episodeIndex = this.episodes.indexOf(currentEpisodeId);
+                    if (episodeIndex !== -1) {
+                        this.page = Math.floor(episodeIndex / this.pageSize) + 1;
+                    }
+                },
+                
+                get totalPages() {
+                    return Math.ceil(this.episodes.length / this.pageSize);
+                },
+                
+                get paginatedEpisodes() {
+                    const start = (this.page - 1) * this.pageSize;
+                    const end = start + this.pageSize;
+                    return this.episodes.slice(start, end);
+                },
+                
+                nextPage() {
+                    if (this.page < this.totalPages) {
+                        this.page++;
+                    }
+                },
+                
+                prevPage() {
+                    if (this.page > 1) {
+                        this.page--;
+                    }
+                }
+            }));
+        });
+    </script>
+
+    <script>
+        window.addEventListener('keydown', (e) => {
+            // Use the space bar to play and pause, instead of default action (e.g. scrolling)
+            const { keyCode, key } = e;
+            
+            if (keyCode === 32 || key === ' ') {
+                e.preventDefault();
+                const btnPause = document.querySelector('[x-ref="btnPause"]');
+                const btnPlay = document.querySelector('[x-ref="btnPlay"]');
+                btnPause.classList.contains('hidden') ? btnPlay.click() : btnPause.click();
+            } else if (key === 'ArrowDown' || key === 'ArrowUp') {
+                const episodes = {{ episodes }};  // Access episodes directly from the Jinja template
+                const nextEpisodeId = key === 'ArrowDown' ? {{ episode_id }} + 1 : {{ episode_id }} - 1;
+                const lowestEpisodeId = episodes.at(0);
+                const highestEpisodeId = episodes.at(-1);
+                if (nextEpisodeId >= lowestEpisodeId && nextEpisodeId <= highestEpisodeId) {
+                    window.location.href = `./episode_${nextEpisodeId}`;
+                }
+            }
+        });
     </script>
 </body>
 

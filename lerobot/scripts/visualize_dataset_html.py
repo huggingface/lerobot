@@ -150,7 +150,7 @@ def run_server(
                 400,
             )
         dataset_version = (
-            dataset.meta._version if isinstance(dataset, LeRobotDataset) else dataset.codebase_version
+            str(dataset.meta._version) if isinstance(dataset, LeRobotDataset) else dataset.codebase_version
         )
         match = re.search(r"v(\d+)\.", dataset_version)
         if match:
@@ -245,15 +245,16 @@ def get_episode_data(dataset: LeRobotDataset | IterableNamespace, episode_index)
             if isinstance(dataset, LeRobotDataset)
             else dataset.features[column_name].shape[0]
         )
-        header += [f"{column_name}_{i}" for i in range(dim_state)]
 
         if "names" in dataset.features[column_name] and dataset.features[column_name]["names"]:
             column_names = dataset.features[column_name]["names"]
             while not isinstance(column_names, list):
                 column_names = list(column_names.values())[0]
         else:
-            column_names = [f"motor_{i}" for i in range(dim_state)]
+            column_names = [f"{column_name}_{i}" for i in range(dim_state)]
         columns.append({"key": column_name, "value": column_names})
+
+        header += column_names
 
     selected_columns.insert(0, "timestamp")
 
@@ -364,7 +365,7 @@ def visualize_dataset_html(
                 template_folder=template_dir,
             )
     else:
-        # Create a simlink from the dataset video folder containg mp4 files to the output directory
+        # Create a simlink from the dataset video folder containing mp4 files to the output directory
         # so that the http server can get access to the mp4 files.
         if isinstance(dataset, LeRobotDataset):
             ln_videos_dir = static_dir / "videos"
@@ -383,12 +384,6 @@ def main():
         type=str,
         default=None,
         help="Name of hugging face repositery containing a LeRobotDataset dataset (e.g. `lerobot/pusht` for https://huggingface.co/datasets/lerobot/pusht).",
-    )
-    parser.add_argument(
-        "--local-files-only",
-        type=int,
-        default=0,
-        help="Use local files only. By default, this script will try to fetch the dataset from the hub if it exists.",
     )
     parser.add_argument(
         "--root",
@@ -445,15 +440,10 @@ def main():
     repo_id = kwargs.pop("repo_id")
     load_from_hf_hub = kwargs.pop("load_from_hf_hub")
     root = kwargs.pop("root")
-    local_files_only = kwargs.pop("local_files_only")
 
     dataset = None
     if repo_id:
-        dataset = (
-            LeRobotDataset(repo_id, root=root, local_files_only=local_files_only)
-            if not load_from_hf_hub
-            else get_dataset_info(repo_id)
-        )
+        dataset = LeRobotDataset(repo_id, root=root) if not load_from_hf_hub else get_dataset_info(repo_id)
 
     visualize_dataset_html(dataset, **vars(args))
 
