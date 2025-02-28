@@ -19,7 +19,11 @@ import shutil
 import time
 from pprint import pformat
 from concurrent.futures import ThreadPoolExecutor
-from torch.multiprocessing import Event, Queue, Process
+
+# from torch.multiprocessing import Event, Queue, Process
+from threading import Event, Thread
+from queue import Queue
+
 from lerobot.scripts.server.utils import setup_process_handlers
 from debug import print_state_summary, summarize_state_dict, print_transitions_summary
 
@@ -206,7 +210,7 @@ def start_learner_threads(
     interaction_message_queue = Queue()
     parameters_queue = Queue()
 
-    communication_process = Process(
+    communication_process = Thread(
         target=start_learner_server,
         args=(
             parameters_queue,
@@ -215,6 +219,7 @@ def start_learner_threads(
             shutdown_event,
             cfg,
         ),
+        daemon=True,
     )
     communication_process.start()
 
@@ -234,14 +239,14 @@ def start_learner_threads(
     logging.info("[LEARNER] Communication process joined")
 
     logging.info("[LEARNER] Closing queues")
-    transition_queue.close()
-    interaction_message_queue.close()
-    parameters_queue.close()
+    # transition_queue.close()
+    # interaction_message_queue.close()
+    # parameters_queue.close()
 
-    logging.info("[LEARNER] join queues")
-    transition_queue.cancel_join_thread()
-    interaction_message_queue.cancel_join_thread()
-    parameters_queue.cancel_join_thread()
+    # logging.info("[LEARNER] join queues")
+    # transition_queue.cancel_join_thread()
+    # interaction_message_queue.cancel_join_thread()
+    # parameters_queue.cancel_join_thread()
 
     logging.info("[LEARNER] queues closed")
 
