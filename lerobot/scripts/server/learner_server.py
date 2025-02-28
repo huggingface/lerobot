@@ -258,11 +258,11 @@ def start_learner_server(
     shutdown_event: Event,
     cfg: DictConfig,
 ):
-    init_logging()
+    # init_logging()
 
     # Setup process handlers to handle shutdown signal
     # But use shutdown event from the main process
-    setup_process_handlers()
+    # setup_process_handlers()
 
     service = learner_service.LearnerService(
         shutdown_event,
