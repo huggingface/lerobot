@@ -681,8 +681,12 @@ def train_cli(cfg: dict):
         job_name=hydra.core.hydra_config.HydraConfig.get().job.name,
     )
 
+    logging.info("[LEARNER] train_cli finished")
+
 
 if __name__ == "__main__":
     multiprocessing.set_start_method("spawn")
 
     train_cli()
+
+    logging.info("[LEARNER] main finished")
