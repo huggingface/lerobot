@@ -232,6 +232,18 @@ def start_learner_threads(
     communication_process.join()
     logging.info("[LEARNER] Communication process joined")
 
+    logging.info("[LEARNER] Closing queues")
+    transition_queue.close()
+    interaction_message_queue.close()
+    parameters_queue.close()
+
+    logging.info("[LEARNER] join queues")
+    transition_queue.join_thread()
+    interaction_message_queue.join_thread()
+    parameters_queue.join_thread()
+
+    logging.info("[LEARNER] queues closed")
+
 
 def start_learner_server(
     parameters_queue: Queue,
