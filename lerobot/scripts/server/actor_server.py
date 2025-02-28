@@ -62,6 +62,8 @@ from lerobot.common.utils.utils import init_logging
 
 import multiprocessing
 
+from debug import print_state_summary, summarize_state_dict
+
 ACTOR_SHUTDOWN_TIMEOUT = 30
 
 
@@ -259,7 +261,8 @@ def update_policy_parameters(policy: SACPolicy, parameters_queue: Queue, device)
         bytes_state_dict = parameters_queue.get()
         state_dict = bytes_to_state_dict(bytes_state_dict)
         state_dict = move_state_dict_to_device(state_dict, device=device)
-        policy.load_state_dict(state_dict)
+        policy.actor.load_state_dict(state_dict)
+        print_state_summary(summarize_state_dict(policy.actor.state_dict()))
 
 
 def act_with_policy(
@@ -443,6 +446,8 @@ def send_transitions_in_chunks(
         message_queue: Queue to send messages to learner
         chunk_size: Size of each chunk to send
     """
+    logging.info(f"[ACTOR] Sending {len(transitions)} transitions to Learner.")
+    logging.info(f"[ACTOR] Transitions: {transitions}")
     for i in range(0, len(transitions), chunk_size):
         chunk = transitions[i : i + chunk_size]
 

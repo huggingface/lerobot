@@ -21,6 +21,7 @@ from pprint import pformat
 from concurrent.futures import ThreadPoolExecutor
 from multiprocessing import Event, Queue, Process
 from lerobot.scripts.server.utils import setup_process_handlers
+from debug import print_state_summary, summarize_state_dict
 
 import grpc
 
@@ -306,10 +307,11 @@ def check_nan_in_transition(
 
 
 def push_actor_policy_to_queue(parameters_queue: Queue, policy: nn.Module):
-    logging.info("[LEARNER] Pushing actor policy to the queue")
+    logging.debug("[LEARNER] Pushing actor policy to the queue")
     state_dict = move_state_dict_to_device(policy.actor.state_dict(), device="cpu")
     state_bytes = state_to_bytes(state_dict)
     parameters_queue.put(state_bytes)
+    print_state_summary(summarize_state_dict(policy.actor.state_dict()))
 
 
 def add_actor_information_and_train(
@@ -426,6 +428,8 @@ def add_actor_information_and_train(
         while not transition_queue.empty() and not shutdown_event.is_set():
             transition_list = transition_queue.get()
             transition_list = bytes_to_transitions(transition_list)
+
+            logging.info(f"[LEARNER] Received {len(transition_list)} transitions")
             for transition in transition_list:
                 transition = move_transition_to_device(transition, device=device)
                 replay_buffer.add(**transition)
