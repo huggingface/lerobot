@@ -68,10 +68,13 @@ ACTOR_SHUTDOWN_TIMEOUT = 30
 def receive_policy(
     cfg: DictConfig,
     parameters_queue: Queue,
+    shutdown_event: Event,
 ):
     logging.info("[ACTOR] Start receiving parameters from the Learner")
 
-    shutdown_event = setup_process_handlers()
+    # Setup process handlers to handle shutdown signal
+    # But use shutdown event from the main process
+    setup_process_handlers()
 
     learner_client, grpc_channel = learner_service_client(
         host=cfg.actor_learner_config.learner_host,
@@ -134,6 +137,7 @@ def interactions_stream(
 def send_transitions(
     cfg: DictConfig,
     transitions_queue: Queue,
+    shutdown_event: Event,
 ) -> hilserl_pb2.Empty:
     """
     Streams data from the actor to the learner.
@@ -153,7 +157,9 @@ def send_transitions(
         hilserl_pb2.ActorInformation: The response message containing either transition data or an interaction message.
     """
 
-    shutdown_event = setup_process_handlers()
+    # Setup process handlers to handle shutdown signal
+    # But use shutdown event from the main process
+    setup_process_handlers()
 
     learner_client, grpc_channel = learner_service_client(
         host=cfg.actor_learner_config.learner_host,
@@ -176,8 +182,11 @@ def send_transitions(
 def send_interactions(
     cfg: DictConfig,
     interactions_queue: Queue,
+    shutdown_event: Event,
 ) -> hilserl_pb2.Empty:
-    shutdown_event = setup_process_handlers()
+    # Setup process handlers to handle shutdown signal
+    # But use shutdown event from the main process
+    setup_process_handlers()
 
     learner_client, grpc_channel = learner_service_client(
         host=cfg.actor_learner_config.learner_host,
@@ -517,17 +526,17 @@ def actor_cli(cfg: dict):
 
     receive_policy_process = Process(
         target=receive_policy,
-        args=(cfg, parameters_queue),
+        args=(cfg, parameters_queue, shutdown_event),
     )
 
     transitions_process = Process(
         target=send_transitions,
-        args=(cfg, transitions_queue),
+        args=(cfg, transitions_queue, shutdown_event),
     )
 
     interactions_process = Process(
         target=send_interactions,
-        args=(cfg, interactions_queue),
+        args=(cfg, interactions_queue, shutdown_event),
     )
 
     transitions_process.start()
@@ -563,6 +572,18 @@ def actor_cli(cfg: dict):
     logging.info("[ACTOR] Interactions process joined")
     receive_policy_process.join()
     logging.info("[ACTOR] Receive policy process joined")
+
+    logging.info("[ACTOR] Closing queues")
+    transitions_queue.close()
+    interactions_queue.close()
+    parameters_queue.close()
+
+    logging.info("[ACTOR] join queues")
+    transitions_queue.cancel_join_thread()
+    interactions_queue.cancel_join_thread()
+    parameters_queue.cancel_join_thread()
+
+    logging.info("[ACTOR] queues closed")
 
 
 if __name__ == "__main__":
