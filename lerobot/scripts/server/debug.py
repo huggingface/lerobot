@@ -25,9 +25,8 @@ def summarize_state_dict(state_dict):
     return summary
 
 
-def print_transitions_summary(transitions):
-    for transition in transitions:
-        print_transition_summary(transition)
+def print_transitions_summary(_transitions):
+    pass
 
 
 def print_transition_summary(transition):
