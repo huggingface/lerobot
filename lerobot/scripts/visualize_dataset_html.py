@@ -245,15 +245,16 @@ def get_episode_data(dataset: LeRobotDataset | IterableNamespace, episode_index)
             if isinstance(dataset, LeRobotDataset)
             else dataset.features[column_name].shape[0]
         )
-        header += [f"{column_name}_{i}" for i in range(dim_state)]
 
         if "names" in dataset.features[column_name] and dataset.features[column_name]["names"]:
             column_names = dataset.features[column_name]["names"]
             while not isinstance(column_names, list):
                 column_names = list(column_names.values())[0]
         else:
-            column_names = [f"motor_{i}" for i in range(dim_state)]
+            column_names = [f"{column_name}_{i}" for i in range(dim_state)]
         columns.append({"key": column_name, "value": column_names})
+
+        header += column_names
 
     selected_columns.insert(0, "timestamp")
 
