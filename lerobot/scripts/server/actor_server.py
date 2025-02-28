@@ -63,6 +63,7 @@ from lerobot.common.utils.utils import init_logging
 import torch.multiprocessing as mp
 
 from debug import print_state_summary, summarize_state_dict, print_transitions_summary
+from lerobot.scripts.server.utils import get_last_item_from_queue
 
 ACTOR_SHUTDOWN_TIMEOUT = 30
 
@@ -258,7 +259,7 @@ def learner_service_client(
 def update_policy_parameters(policy: SACPolicy, parameters_queue: Queue, device):
     if not parameters_queue.empty():
         logging.info("[ACTOR] Load new parameters from Learner.")
-        bytes_state_dict = parameters_queue.get()
+        bytes_state_dict = get_last_item_from_queue(parameters_queue)
         state_dict = bytes_to_state_dict(bytes_state_dict)
         state_dict = move_state_dict_to_device(state_dict, device=device)
         policy.load_state_dict(state_dict)

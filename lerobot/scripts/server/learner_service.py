@@ -2,11 +2,10 @@ import hilserl_pb2  # type: ignore
 import hilserl_pb2_grpc  # type: ignore
 import logging
 from multiprocessing import Event, Queue
-from queue import Empty
 
 from lerobot.scripts.server.network_utils import receive_bytes_in_chunks
 from lerobot.scripts.server.network_utils import send_bytes_in_chunks
-
+from lerobot.scripts.server.utils import get_last_item_from_queue
 
 MAX_MESSAGE_SIZE = 4 * 1024 * 1024  # 4 MB
 MAX_WORKERS = 3  # Stream parameters, send transitions and interactions
@@ -29,17 +28,7 @@ class LearnerService(hilserl_pb2_grpc.LearnerServiceServicer):
         self.interaction_message_queue = interaction_message_queue
 
     def _get_policy_state(self):
-        # Get initial parameters
-        params_bytes = self.parameters_queue.get()
-
-        # Drain queue and keep only the most recent parameters
-        try:
-            while True:
-                params_bytes = self.parameters_queue.get_nowait()
-        except Empty:
-            pass
-
-        return params_bytes
+        return get_last_item_from_queue(self.parameters_queue)
 
     def StreamParameters(self, request, context):
         # TODO: authorize the request

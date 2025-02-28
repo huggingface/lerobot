@@ -19,6 +19,9 @@ from multiprocessing import Event
 import logging
 import signal
 
+from torch.multiprocessing import Queue
+from queue import Empty
+
 
 def setup_process_handlers() -> Event:
     shutdown_event = Event()
@@ -38,3 +41,16 @@ def setup_process_handlers() -> Event:
         shutdown_event.set()
 
     return shutdown_event
+
+
+def get_last_item_from_queue(queue: Queue):
+    item = queue.get()
+
+    # Drain queue and keep only the most recent parameters
+    try:
+        while True:
+            item = queue.get_nowait()
+    except Empty:
+        pass
+
+    return item
