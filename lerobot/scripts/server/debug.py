@@ -1,6 +1,5 @@
 import hashlib
 import logging
-import torch
 
 
 def summarize_state_dict(state_dict):
@@ -38,16 +37,6 @@ def print_transition_summary(transition):
 
 def summarize_transition(transition):
     summary = {}
-    for key, value in transition.items():
-        if isinstance(value, torch.Tensor):
-            summary[key] = {
-                "shape": tuple(value.shape),
-                "mean": value.mean().item(),
-                "std": value.std().item(),
-                "checksum": hashlib.md5(value.numpy().tobytes()).hexdigest()[:8],
-            }
-        else:
-            summary[key] = value
 
     summary["next_state"] = summarize_state_dict(transition["next_state"])
     summary["action"] = {
