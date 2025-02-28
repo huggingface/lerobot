@@ -207,7 +207,13 @@ def start_learner_threads(
 
     communication_process = Process(
         target=start_learner_server,
-        args=(parameters_queue, transition_queue, interaction_message_queue, cfg),
+        args=(
+            parameters_queue,
+            transition_queue,
+            interaction_message_queue,
+            shutdown_event,
+            cfg,
+        ),
     )
     communication_process.start()
 
@@ -231,11 +237,10 @@ def start_learner_server(
     parameters_queue: Queue,
     transition_queue: Queue,
     interaction_message_queue: Queue,
+    shutdown_event: Event,
     cfg: DictConfig,
 ):
     init_logging()
-
-    shutdown_event = setup_process_handlers()
 
     service = learner_service.LearnerService(
         shutdown_event,

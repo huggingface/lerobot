@@ -106,5 +106,5 @@ policy:
 
 actor_learner_config:
   learner_host: "79.116.12.45"
-  learner_port: 5678
+  learner_port: 22714
   policy_parameters_push_frequency: 15
