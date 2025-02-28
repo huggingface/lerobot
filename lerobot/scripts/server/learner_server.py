@@ -19,7 +19,7 @@ import shutil
 import time
 from pprint import pformat
 from concurrent.futures import ThreadPoolExecutor
-from multiprocessing import Event, Queue, Process
+from torch.multiprocessing import Event, Queue, Process
 from lerobot.scripts.server.utils import setup_process_handlers
 from debug import print_state_summary, summarize_state_dict, print_transitions_summary
 
@@ -64,7 +64,7 @@ from lerobot.scripts.server.buffer import (
 
 from lerobot.scripts.server import learner_service
 
-import multiprocessing
+import torch.multiprocessing as mp
 
 
 def handle_resume_logic(cfg: DictConfig, out_dir: str) -> DictConfig:
@@ -665,7 +665,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     if job_name is None:
         raise NotImplementedError()
 
-    init_logging()
+    init_logging(log_file=f"{out_dir}/learner.log")
     logging.info(pformat(OmegaConf.to_container(cfg)))
 
     logger = Logger(cfg, out_dir, wandb_job_name=job_name)
@@ -701,7 +701,7 @@ def train_cli(cfg: dict):
 
 
 if __name__ == "__main__":
-    multiprocessing.set_start_method("spawn")
+    mp.set_start_method("spawn")
 
     train_cli()
 

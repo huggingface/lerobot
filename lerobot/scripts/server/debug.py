@@ -26,7 +26,8 @@ def summarize_state_dict(state_dict):
 
 
 def print_transitions_summary(_transitions):
-    pass
+    logging.info(f"[DEBUG] Transitions summary: {len(_transitions)}")
+    print_transition_summary(_transitions[-1])
 
 
 def print_transition_summary(transition):

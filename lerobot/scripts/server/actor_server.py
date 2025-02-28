@@ -55,12 +55,12 @@ from lerobot.scripts.server.network_utils import (
 from lerobot.scripts.server.gym_manipulator import get_classifier, make_robot_env
 from lerobot.scripts.server import learner_service
 
-from multiprocessing import Process, Queue, Event
+from torch.multiprocessing import Process, Queue, Event
 from queue import Empty
 
 from lerobot.common.utils.utils import init_logging
 
-import multiprocessing
+import torch.multiprocessing as mp
 
 from debug import print_state_summary, summarize_state_dict, print_transitions_summary
 
@@ -505,7 +505,7 @@ def establish_learner_connection(stub, shutdown_event: Event, attempts=30):
 
 @hydra.main(version_base="1.2", config_name="default", config_path="../../configs")
 def actor_cli(cfg: dict):
-    init_logging()
+    init_logging(log_file="actor.log")
     robot = make_robot(cfg=cfg.robot)
 
     shutdown_event = setup_process_handlers()
@@ -591,6 +591,6 @@ def actor_cli(cfg: dict):
 
 
 if __name__ == "__main__":
-    multiprocessing.set_start_method("spawn")
+    mp.set_start_method("spawn")
 
     actor_cli()
