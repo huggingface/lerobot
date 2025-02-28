@@ -33,10 +33,7 @@ def print_transitions_summary(transitions):
 
 def print_transition_summary(transition):
     summary = summarize_transition(transition)
-    for key, val in summary.items():
-        logging.info(
-            f"{key}: shape={val['shape']}, mean={val['mean']}, std={val['std']}, checksum={val['checksum']}"
-        )
+    logging.info(f"[DEBUG] Transition summary: {summary}")
 
 
 def summarize_transition(transition):
