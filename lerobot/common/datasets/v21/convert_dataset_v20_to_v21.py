@@ -57,7 +57,7 @@ def convert_dataset(
     dataset.meta.info["codebase_version"] = CODEBASE_VERSION
     write_info(dataset.meta.info, dataset.root)
 
-    dataset.push_to_hub(branch=branch, allow_patterns="meta/")
+    dataset.push_to_hub(branch=branch, tag_version=False, allow_patterns="meta/")
 
     # delete old stats.json file
     if (dataset.root / STATS_PATH).is_file:
