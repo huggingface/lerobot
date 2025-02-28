@@ -21,7 +21,7 @@ from pprint import pformat
 from concurrent.futures import ThreadPoolExecutor
 from multiprocessing import Event, Queue, Process
 from lerobot.scripts.server.utils import setup_process_handlers
-from debug import print_state_summary, summarize_state_dict
+from debug import print_state_summary, summarize_state_dict, print_transitions_summary
 
 import grpc
 
@@ -429,7 +429,7 @@ def add_actor_information_and_train(
             transition_list = transition_queue.get()
             transition_list = bytes_to_transitions(transition_list)
 
-            logging.info(f"[LEARNER] Received {len(transition_list)} transitions")
+            print_transitions_summary(transition_list)
             for transition in transition_list:
                 transition = move_transition_to_device(transition, device=device)
                 replay_buffer.add(**transition)

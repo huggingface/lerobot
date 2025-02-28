@@ -62,7 +62,7 @@ from lerobot.common.utils.utils import init_logging
 
 import multiprocessing
 
-from debug import print_state_summary, summarize_state_dict
+from debug import print_state_summary, summarize_state_dict, print_transitions_summary
 
 ACTOR_SHUTDOWN_TIMEOUT = 30
 
@@ -446,7 +446,6 @@ def send_transitions_in_chunks(
         message_queue: Queue to send messages to learner
         chunk_size: Size of each chunk to send
     """
-    logging.info(f"[ACTOR] Sending {len(transitions)} transitions to Learner.")
     logging.info(f"[ACTOR] Transitions: {transitions}")
     for i in range(0, len(transitions), chunk_size):
         chunk = transitions[i : i + chunk_size]
@@ -460,7 +459,7 @@ def send_transitions_in_chunks(
 
             transition_to_send_to_learner.append(tr)
 
-        logging.debug(f"[ACTOR] Sending chunk of {len(chunk)} transitions to Learner.")
+        print_transitions_summary(transition_to_send_to_learner)
         transitions_queue.put(transitions_to_bytes(transition_to_send_to_learner))
 
 
