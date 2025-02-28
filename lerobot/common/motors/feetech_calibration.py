@@ -5,12 +5,12 @@ import time
 
 import numpy as np
 
-from lerobot.common.robot_devices.motors.feetech import (
+from lerobot.common.motors.feetech import (
     CalibrationMode,
     TorqueMode,
     convert_degrees_to_steps,
 )
-from lerobot.common.robot_devices.motors.utils import MotorsBus
+from lerobot.common.motors.utils import MotorsBus
 
 URL_TEMPLATE = (
     "https://raw.githubusercontent.com/huggingface/lerobot/main/media/{robot}/{arm}_{position}.webp"
