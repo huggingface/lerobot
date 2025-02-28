@@ -539,44 +539,6 @@ def check_timestamps_sync(
     return True
 
 
-def check_delta_timestamps(
-    delta_timestamps: dict[str, list[float]], fps: int, tolerance_s: float, raise_value_error: bool = True
-) -> bool:
-    """This will check if all the values in delta_timestamps are multiples of 1/fps +/- tolerance.
-    This is to ensure that these delta_timestamps added to any timestamp from a dataset will themselves be
-    actual timestamps from the dataset.
-    """
-    outside_tolerance = {}
-    for key, delta_ts in delta_timestamps.items():
-        within_tolerance = [abs(ts * fps - round(ts * fps)) / fps <= tolerance_s for ts in delta_ts]
-        if not all(within_tolerance):
-            outside_tolerance[key] = [
-                ts for ts, is_within in zip(delta_ts, within_tolerance, strict=True) if not is_within
-            ]
-
-    if len(outside_tolerance) > 0:
-        if raise_value_error:
-            raise ValueError(
-                f"""
-                The following delta_timestamps are found outside of tolerance range.
-                Please make sure they are multiples of 1/{fps} +/- tolerance and adjust
-                their values accordingly.
-                \n{pformat(outside_tolerance)}
-                """
-            )
-        return False
-
-    return True
-
-
-def get_delta_indices(delta_timestamps: dict[str, list[float]], fps: int) -> dict[str, list[int]]:
-    delta_indices = {}
-    for key, delta_ts in delta_timestamps.items():
-        delta_indices[key] = [round(d * fps) for d in delta_ts]
-
-    return delta_indices
-
-
 def cycle(iterable):
     """The equivalent of itertools.cycle, but safe for Pytorch dataloaders.
 
