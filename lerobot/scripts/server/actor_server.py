@@ -566,17 +566,17 @@ def actor_cli(cfg: dict):
     )
     logging.info("[ACTOR] Policy process joined")
 
+    logging.info("[ACTOR] Closing queues")
+    transitions_queue.close()
+    interactions_queue.close()
+    parameters_queue.close()
+
     transitions_process.join()
     logging.info("[ACTOR] Transitions process joined")
     interactions_process.join()
     logging.info("[ACTOR] Interactions process joined")
     receive_policy_process.join()
     logging.info("[ACTOR] Receive policy process joined")
-
-    logging.info("[ACTOR] Closing queues")
-    transitions_queue.close()
-    interactions_queue.close()
-    parameters_queue.close()
 
     logging.info("[ACTOR] join queues")
     transitions_queue.cancel_join_thread()
