@@ -446,7 +446,6 @@ def send_transitions_in_chunks(
         message_queue: Queue to send messages to learner
         chunk_size: Size of each chunk to send
     """
-    logging.info(f"[ACTOR] Transitions: {transitions}")
     for i in range(0, len(transitions), chunk_size):
         chunk = transitions[i : i + chunk_size]
 
