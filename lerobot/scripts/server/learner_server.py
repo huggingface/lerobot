@@ -211,7 +211,6 @@ def start_learner_threads(
             parameters_queue,
             transition_queue,
             interaction_message_queue,
-            shutdown_event,
             cfg,
         ),
     )
@@ -249,14 +248,11 @@ def start_learner_server(
     parameters_queue: Queue,
     transition_queue: Queue,
     interaction_message_queue: Queue,
-    shutdown_event: Event,
     cfg: DictConfig,
 ):
     init_logging()
 
-    # Setup process handlers to handle shutdown signal
-    # But use shutdown event from the main process
-    setup_process_handlers()
+    shutdown_event = setup_process_handlers()
 
     service = learner_service.LearnerService(
         shutdown_event,
