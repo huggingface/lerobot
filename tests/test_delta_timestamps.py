@@ -9,7 +9,6 @@ import torch
 from lerobot.common.datasets.utils import (
     check_timestamps_sync,
 )
-from tests.fixtures.constants import DUMMY_MOTOR_FEATURES
 
 
 def calculate_total_episode(
@@ -71,54 +70,6 @@ def slightly_off_timestamps_factory(synced_timestamps_factory):
         return timestamps, episode_indices, episode_data_index
 
     return _create_slightly_off_timestamps
-
-
-@pytest.fixture(scope="module")
-def valid_delta_timestamps_factory():
-    def _create_valid_delta_timestamps(
-        fps: int = 30, keys: list = DUMMY_MOTOR_FEATURES, min_max_range: tuple[int, int] = (-10, 10)
-    ) -> dict:
-        delta_timestamps = {key: [i * (1 / fps) for i in range(*min_max_range)] for key in keys}
-        return delta_timestamps
-
-    return _create_valid_delta_timestamps
-
-
-@pytest.fixture(scope="module")
-def invalid_delta_timestamps_factory(valid_delta_timestamps_factory):
-    def _create_invalid_delta_timestamps(
-        fps: int = 30, tolerance_s: float = 1e-4, keys: list = DUMMY_MOTOR_FEATURES
-    ) -> dict:
-        delta_timestamps = valid_delta_timestamps_factory(fps, keys)
-        # Modify a single timestamp just outside tolerance
-        for key in keys:
-            delta_timestamps[key][3] += tolerance_s * 1.1
-        return delta_timestamps
-
-    return _create_invalid_delta_timestamps
-
-
-@pytest.fixture(scope="module")
-def slightly_off_delta_timestamps_factory(valid_delta_timestamps_factory):
-    def _create_slightly_off_delta_timestamps(
-        fps: int = 30, tolerance_s: float = 1e-4, keys: list = DUMMY_MOTOR_FEATURES
-    ) -> dict:
-        delta_timestamps = valid_delta_timestamps_factory(fps, keys)
-        # Modify a single timestamp just inside tolerance
-        for key in delta_timestamps:
-            delta_timestamps[key][3] += tolerance_s * 0.9
-            delta_timestamps[key][-3] += tolerance_s * 0.9
-        return delta_timestamps
-
-    return _create_slightly_off_delta_timestamps
-
-
-@pytest.fixture(scope="module")
-def delta_indices_factory():
-    def _delta_indices(keys: list = DUMMY_MOTOR_FEATURES, min_max_range: tuple[int, int] = (-10, 10)) -> dict:
-        return {key: list(range(*min_max_range)) for key in keys}
-
-    return _delta_indices
 
 
 def test_check_timestamps_sync_synced(synced_timestamps_factory):
