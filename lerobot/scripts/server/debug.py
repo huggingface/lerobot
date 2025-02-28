@@ -49,7 +49,6 @@ def summarize_transition(transition):
         else:
             summary[key] = value
 
-    summary["state"] = summarize_state_dict(transition["state"])
     summary["next_state"] = summarize_state_dict(transition["next_state"])
     summary["action"] = {
         "shape": tuple(transition["action"].shape),
