@@ -40,17 +40,20 @@ def get_update_episode_and_task_func(episode_index_to_add, task_index_to_global_
     return _update
 
 
-def aggregate_datasets(all_metadata: list[LeRobotDatasetMetadata], repo_id: str, root=None):
+def aggregate_datasets(repo_ids: list[str], aggr_repo_id: str, aggr_root=None):
     logging.info("start aggregate_datasets")
+
+    all_metadata = [LeRobotDatasetMetadata(repo_id) for repo_id in repo_ids]
+
     fps, robot_type, features = validate_all_metadata(all_metadata)
 
     # Create resulting dataset folder
     aggr_meta = LeRobotDatasetMetadata.create(
-        repo_id=repo_id,
+        repo_id=aggr_repo_id,
         fps=fps,
         robot_type=robot_type,
         features=features,
-        root=root,
+        root=aggr_root,
     )
 
     logging.info("find all tasks")
