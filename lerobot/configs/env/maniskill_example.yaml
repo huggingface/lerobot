@@ -27,4 +27,5 @@ env:
     enabled: true
     record_dir: maniskill_videos
     trajectory_name: trajectory
+    save_every_n_episodes: 1000
     fps: ${fps}
