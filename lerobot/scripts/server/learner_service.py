@@ -5,7 +5,6 @@ from multiprocessing import Event, Queue
 
 from lerobot.scripts.server.network_utils import receive_bytes_in_chunks
 from lerobot.scripts.server.network_utils import send_bytes_in_chunks
-from lerobot.scripts.server.utils import get_last_item_from_queue
 
 MAX_MESSAGE_SIZE = 4 * 1024 * 1024  # 4 MB
 MAX_WORKERS = 3  # Stream parameters, send transitions and interactions
@@ -27,16 +26,13 @@ class LearnerService(hilserl_pb2_grpc.LearnerServiceServicer):
         self.transition_queue = transition_queue
         self.interaction_message_queue = interaction_message_queue
 
-    def _get_policy_state(self):
-        return get_last_item_from_queue(self.parameters_queue)
-
     def StreamParameters(self, request, context):
         # TODO: authorize the request
         logging.info("[LEARNER] Received request to stream parameters from the Actor")
 
         while not self.shutdown_event.is_set():
             logging.info("[LEARNER] Push parameters to the Actor")
-            buffer = self._get_policy_state()
+            buffer = self.parameters_queue.get()
 
             yield from send_bytes_in_chunks(
                 buffer,

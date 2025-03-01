@@ -53,12 +53,16 @@ def setup_process_handlers() -> Event:
 
 def get_last_item_from_queue(queue: Queue):
     item = queue.get()
+    counter = 1
 
     # Drain queue and keep only the most recent parameters
     try:
         while True:
             item = queue.get_nowait()
+            counter += 1
     except Empty:
         pass
+
+    logging.info(f"Drained {counter} items from queue")
 
     return item

@@ -389,6 +389,8 @@ def add_actor_information_and_train(
 
     push_actor_policy_to_queue(parameters_queue, policy)
 
+    last_time_policy_pushed = time.time()
+
     optimizers, lr_scheduler = make_optimizers_and_scheduler(cfg, policy)
     resume_optimization_step, resume_interaction_step = load_training_state(
         cfg, logger, optimizers
@@ -560,7 +562,12 @@ def add_actor_information_and_train(
 
                 training_infos["loss_temperature"] = loss_temperature.item()
 
+        if (
+            time.time() - last_time_policy_pushed
+            > cfg.actor_learner_config.policy_parameters_push_frequency
+        ):
             push_actor_policy_to_queue(parameters_queue, policy)
+            last_time_policy_pushed = time.time()
 
         policy.update_target_networks()
         if optimization_step % cfg.training.log_freq == 0:
