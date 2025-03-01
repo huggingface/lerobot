@@ -566,6 +566,7 @@ class So100BimanualRobotConfig(ManipulatorRobotConfig):
 
     mock: bool = False
 
+
 @RobotConfig.register_subclass("stretch")
 @dataclass
 class StretchRobotConfig(RobotConfig):
