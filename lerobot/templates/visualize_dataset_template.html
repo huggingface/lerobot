@@ -42,22 +42,22 @@
             <ul>
                 <template x-for="episode in paginatedEpisodes" :key="episode">
                     <li class="font-mono text-sm mt-0.5">
-                        <a :href="'episode_' + episode" 
+                        <a :href="'episode_' + episode"
                            :class="{'underline': true, 'font-bold -ml-1': episode == {{ episode_id }}}"
                            x-text="'Episode ' + episode"></a>
                     </li>
                 </template>
             </ul>
-        
+
             <div class="flex items-center mt-3 text-xs" x-show="totalPages > 1">
-                <button @click="prevPage()" 
+                <button @click="prevPage()"
                         class="px-2 py-1 bg-slate-800 rounded mr-2"
                         :class="{'opacity-50 cursor-not-allowed': page === 1}"
                         :disabled="page === 1">
                     &laquo; Prev
                 </button>
                 <span class="font-mono mr-2" x-text="` ${page} / ${totalPages}`"></span>
-                <button @click="nextPage()" 
+                <button @click="nextPage()"
                         class="px-2 py-1 bg-slate-800 rounded"
                         :class="{'opacity-50 cursor-not-allowed': page === totalPages}"
                         :disabled="page === totalPages">
@@ -65,10 +65,10 @@
                 </button>
             </div>
         </div>
-        
+
         <!-- episodes menu for small screens -->
         <div class="flex overflow-x-auto md:hidden" x-data="episodePagination">
-            <button @click="prevPage()" 
+            <button @click="prevPage()"
                     class="px-2 bg-slate-800 rounded mr-2"
                     :class="{'opacity-50 cursor-not-allowed': page === 1}"
                     :disabled="page === 1">&laquo;</button>
@@ -83,7 +83,7 @@
                     </p>
                 </template>
             </div>
-            <button @click="nextPage()" 
+            <button @click="nextPage()"
                     class="px-2 bg-slate-800 rounded ml-2"
                     :class="{'opacity-50 cursor-not-allowed': page === totalPages}"
                     :disabled="page === totalPages">&raquo; </button>
@@ -476,7 +476,7 @@
                 episodes: {{ episodes }},
                 pageSize: 100,
                 page: 1,
-                
+
                 init() {
                     // Find which page contains the current episode_id
                     const currentEpisodeId = {{ episode_id }};
@@ -485,23 +485,23 @@
                         this.page = Math.floor(episodeIndex / this.pageSize) + 1;
                     }
                 },
-                
+
                 get totalPages() {
                     return Math.ceil(this.episodes.length / this.pageSize);
                 },
-                
+
                 get paginatedEpisodes() {
                     const start = (this.page - 1) * this.pageSize;
                     const end = start + this.pageSize;
                     return this.episodes.slice(start, end);
                 },
-                
+
                 nextPage() {
                     if (this.page < this.totalPages) {
                         this.page++;
                     }
                 },
-                
+
                 prevPage() {
                     if (this.page > 1) {
                         this.page--;
@@ -515,7 +515,7 @@
         window.addEventListener('keydown', (e) => {
             // Use the space bar to play and pause, instead of default action (e.g. scrolling)
             const { keyCode, key } = e;
-            
+
             if (keyCode === 32 || key === ' ') {
                 e.preventDefault();
                 const btnPause = document.querySelector('[x-ref="btnPause"]');
