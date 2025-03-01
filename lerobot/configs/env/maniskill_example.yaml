@@ -24,8 +24,7 @@ env:
     delta_action: null
 
   video_record:
-    enabled: true
+    enabled: false
     record_dir: maniskill_videos
     trajectory_name: trajectory
-    save_every_n_episodes: 1000
     fps: ${fps}
