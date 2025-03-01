@@ -5,9 +5,8 @@ import torch
 
 from omegaconf import DictConfig
 from typing import Any
-
-"""Make ManiSkill3 gym environment"""
 from mani_skill.vector.wrappers.gymnasium import ManiSkillVectorEnv
+from mani_skill.utils.wrappers.record import RecordEpisode
 
 
 def preprocess_maniskill_observation(
@@ -143,6 +142,14 @@ def make_maniskill(
         num_envs=n_envs,
     )
 
+    env = RecordEpisode(
+        env,
+        output_dir="videos",
+        save_trajectory=True,
+        trajectory_name="trajectory",
+        save_video=True,
+        video_fps=30,
+    )
     env = ManiSkillObservationWrapper(env, device=cfg.env.device)
     env = ManiSkillVectorEnv(env, ignore_terminations=True, auto_reset=False)
     env._max_episode_steps = env.max_episode_steps = (
