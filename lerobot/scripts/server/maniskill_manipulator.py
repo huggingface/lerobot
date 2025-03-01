@@ -149,7 +149,7 @@ def make_maniskill(
             save_trajectory=True,
             trajectory_name=cfg.env.video_record.trajectory_name,
             save_video=True,
-            video_fps=cfg.env.video_record.fps,
+            video_fps=30,
         )
     env = ManiSkillObservationWrapper(env, device=cfg.env.device)
     env = ManiSkillVectorEnv(env, ignore_terminations=True, auto_reset=False)
