@@ -9,6 +9,9 @@ permissions:
   contents: write
   pull-requests: write
 
+env:
+  PYTHON_VERSION: "3.10"
+
 jobs:
   run-style-bot:
     if: >
@@ -61,6 +64,8 @@ jobs:
 
       - name: Set up Python
         uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Get Ruff Version from pre-commit-config.yaml
         id: get-ruff-version
