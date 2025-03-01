@@ -194,7 +194,7 @@ def run_server(
             ]
 
             response = requests.get(
-                f"https://huggingface.co/datasets/{repo_id}/resolve/main/meta/episodes.jsonl"
+                f"https://huggingface.co/datasets/{repo_id}/resolve/main/meta/episodes.jsonl", timeout=5
             )
             response.raise_for_status()
             # Split into lines and parse each line as JSON
@@ -318,7 +318,9 @@ def get_episode_language_instruction(dataset: LeRobotDataset, ep_index: int) -> 
 
 
 def get_dataset_info(repo_id: str) -> IterableNamespace:
-    response = requests.get(f"https://huggingface.co/datasets/{repo_id}/resolve/main/meta/info.json")
+    response = requests.get(
+        f"https://huggingface.co/datasets/{repo_id}/resolve/main/meta/info.json", timeout=5
+    )
     response.raise_for_status()  # Raises an HTTPError for bad responses
     dataset_info = response.json()
     dataset_info["repo_id"] = repo_id
