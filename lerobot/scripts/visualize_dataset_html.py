@@ -150,7 +150,7 @@ def run_server(
                 400,
             )
         dataset_version = (
-            dataset.meta._version if isinstance(dataset, LeRobotDataset) else dataset.codebase_version
+            str(dataset.meta._version) if isinstance(dataset, LeRobotDataset) else dataset.codebase_version
         )
         match = re.search(r"v(\d+)\.", dataset_version)
         if match:
@@ -194,7 +194,7 @@ def run_server(
             ]
 
             response = requests.get(
-                f"https://huggingface.co/datasets/{repo_id}/resolve/main/meta/episodes.jsonl"
+                f"https://huggingface.co/datasets/{repo_id}/resolve/main/meta/episodes.jsonl", timeout=5
             )
             response.raise_for_status()
             # Split into lines and parse each line as JSON
@@ -245,15 +245,16 @@ def get_episode_data(dataset: LeRobotDataset | IterableNamespace, episode_index)
             if isinstance(dataset, LeRobotDataset)
             else dataset.features[column_name].shape[0]
         )
-        header += [f"{column_name}_{i}" for i in range(dim_state)]
 
         if "names" in dataset.features[column_name] and dataset.features[column_name]["names"]:
             column_names = dataset.features[column_name]["names"]
             while not isinstance(column_names, list):
                 column_names = list(column_names.values())[0]
         else:
-            column_names = [f"motor_{i}" for i in range(dim_state)]
+            column_names = [f"{column_name}_{i}" for i in range(dim_state)]
         columns.append({"key": column_name, "value": column_names})
+
+        header += column_names
 
     selected_columns.insert(0, "timestamp")
 
@@ -317,7 +318,9 @@ def get_episode_language_instruction(dataset: LeRobotDataset, ep_index: int) -> 
 
 
 def get_dataset_info(repo_id: str) -> IterableNamespace:
-    response = requests.get(f"https://huggingface.co/datasets/{repo_id}/resolve/main/meta/info.json")
+    response = requests.get(
+        f"https://huggingface.co/datasets/{repo_id}/resolve/main/meta/info.json", timeout=5
+    )
     response.raise_for_status()  # Raises an HTTPError for bad responses
     dataset_info = response.json()
     dataset_info["repo_id"] = repo_id
@@ -364,7 +367,7 @@ def visualize_dataset_html(
                 template_folder=template_dir,
             )
     else:
-        # Create a simlink from the dataset video folder containg mp4 files to the output directory
+        # Create a simlink from the dataset video folder containing mp4 files to the output directory
         # so that the http server can get access to the mp4 files.
         if isinstance(dataset, LeRobotDataset):
             ln_videos_dir = static_dir / "videos"

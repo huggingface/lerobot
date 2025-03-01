@@ -77,6 +77,13 @@ python lerobot/scripts/control_robot.py record \
     --control.reset_time_s=10
 ```
 
+- For remote controlled robots like LeKiwi, run this script on the robot edge device (e.g. RaspBerryPi):
+```bash
+python lerobot/scripts/control_robot.py \
+  --robot.type=lekiwi \
+  --control.type=remote_robot
+```
+
 **NOTE**: You can use your keyboard to control data recording flow.
 - Tap right arrow key '->' to early exit while recording an episode and go to resseting the environment.
 - Tap right arrow key '->' to early exit while resetting the environment and got to recording the next episode.
@@ -126,6 +133,7 @@ from lerobot.common.robot_devices.control_configs import (
     CalibrateControlConfig,
     ControlPipelineConfig,
     RecordControlConfig,
+    RemoteRobotConfig,
     ReplayControlConfig,
     TeleoperateControlConfig,
 )
@@ -186,6 +194,16 @@ def calibrate(robot: Robot, cfg: CalibrateControlConfig):
 
     if robot.is_connected:
         robot.disconnect()
+
+    if robot.robot_type.startswith("lekiwi") and "main_follower" in arms:
+        print("Calibrating only the lekiwi follower arm 'main_follower'...")
+        robot.calibrate_follower()
+        return
+
+    if robot.robot_type.startswith("lekiwi") and "main_leader" in arms:
+        print("Calibrating only the lekiwi leader arm 'main_leader'...")
+        robot.calibrate_leader()
+        return
 
     # Calling `connect` automatically runs calibration
     # when the calibration file is missing
@@ -281,7 +299,7 @@ def record(
             (recorded_episodes < cfg.num_episodes - 1) or events["rerecord_episode"]
         ):
             log_say("Reset the environment", cfg.play_sounds)
-            reset_environment(robot, events, cfg.reset_time_s)
+            reset_environment(robot, events, cfg.reset_time_s, cfg.fps)
 
         if events["rerecord_episode"]:
             log_say("Re-record episode", cfg.play_sounds)
@@ -349,6 +367,10 @@ def control_robot(cfg: ControlPipelineConfig):
         record(robot, cfg.control)
     elif isinstance(cfg.control, ReplayControlConfig):
         replay(robot, cfg.control)
+    elif isinstance(cfg.control, RemoteRobotConfig):
+        from lerobot.common.robot_devices.robots.lekiwi_remote import run_lekiwi
+
+        run_lekiwi(cfg.robot)
 
     if robot.is_connected:
         # Disconnect manually to avoid a "Core dump" during process

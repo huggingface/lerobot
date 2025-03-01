@@ -27,7 +27,7 @@ import pytest
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
 from tests.utils import TEST_CAMERA_TYPES, make_camera, require_camera
 
-# Maximum absolute difference between two consecutive images recored by a camera.
+# Maximum absolute difference between two consecutive images recorded by a camera.
 # This value differs with respect to the camera.
 MAX_PIXEL_DIFFERENCE = 25
 

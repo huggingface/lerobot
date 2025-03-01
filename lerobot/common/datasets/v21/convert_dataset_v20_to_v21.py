@@ -48,7 +48,7 @@ def convert_dataset(
         dataset = LeRobotDataset(repo_id, revision=V20, force_cache_sync=True)
 
     if (dataset.root / EPISODES_STATS_PATH).is_file():
-        raise FileExistsError("episodes_stats.jsonl already exists.")
+        (dataset.root / EPISODES_STATS_PATH).unlink()
 
     convert_stats(dataset, num_workers=num_workers)
     ref_stats = load_stats(dataset.root)
@@ -57,7 +57,7 @@ def convert_dataset(
     dataset.meta.info["codebase_version"] = CODEBASE_VERSION
     write_info(dataset.meta.info, dataset.root)
 
-    dataset.push_to_hub(branch=branch, allow_patterns="meta/")
+    dataset.push_to_hub(branch=branch, tag_version=False, allow_patterns="meta/")
 
     # delete old stats.json file
     if (dataset.root / STATS_PATH).is_file:

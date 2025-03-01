@@ -228,7 +228,7 @@ Follow these steps to start contributing:
    git commit
    ```
 
-   Note, if you already commited some changes that have a wrong formatting, you can use:
+   Note, if you already committed some changes that have a wrong formatting, you can use:
    ```bash
    pre-commit run --all-files
    ```
