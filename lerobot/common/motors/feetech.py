@@ -8,8 +8,8 @@ from copy import deepcopy
 import numpy as np
 import tqdm
 
-from lerobot.common.robot_devices.motors.configs import FeetechMotorsBusConfig
-from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
+from lerobot.common.motors.configs import FeetechMotorsBusConfig
+from lerobot.common.utils.robot_utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
 from lerobot.common.utils.utils import capture_timestamp_utc
 
 PROTOCOL_VERSION = 0

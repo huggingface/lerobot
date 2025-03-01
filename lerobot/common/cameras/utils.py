@@ -2,7 +2,7 @@ from typing import Protocol
 
 import numpy as np
 
-from lerobot.common.robot_devices.cameras.configs import (
+from lerobot.common.cameras.configs import (
     CameraConfig,
     IntelRealSenseCameraConfig,
     OpenCVCameraConfig,
@@ -22,12 +22,12 @@ def make_cameras_from_configs(camera_configs: dict[str, CameraConfig]) -> list[C
 
     for key, cfg in camera_configs.items():
         if cfg.type == "opencv":
-            from lerobot.common.robot_devices.cameras.opencv import OpenCVCamera
+            from lerobot.common.cameras.opencv import OpenCVCamera
 
             cameras[key] = OpenCVCamera(cfg)
 
         elif cfg.type == "intelrealsense":
-            from lerobot.common.robot_devices.cameras.intelrealsense import IntelRealSenseCamera
+            from lerobot.common.cameras.intelrealsense import IntelRealSenseCamera
 
             cameras[key] = IntelRealSenseCamera(cfg)
         else:
@@ -38,13 +38,13 @@ def make_cameras_from_configs(camera_configs: dict[str, CameraConfig]) -> list[C
 
 def make_camera(camera_type, **kwargs) -> Camera:
     if camera_type == "opencv":
-        from lerobot.common.robot_devices.cameras.opencv import OpenCVCamera
+        from lerobot.common.cameras.opencv import OpenCVCamera
 
         config = OpenCVCameraConfig(**kwargs)
         return OpenCVCamera(config)
 
     elif camera_type == "intelrealsense":
-        from lerobot.common.robot_devices.cameras.intelrealsense import IntelRealSenseCamera
+        from lerobot.common.cameras.intelrealsense import IntelRealSenseCamera
 
         config = IntelRealSenseCameraConfig(**kwargs)
         return IntelRealSenseCamera(config)
