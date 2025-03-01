@@ -560,6 +560,8 @@ def add_actor_information_and_train(
 
                 training_infos["loss_temperature"] = loss_temperature.item()
 
+            push_actor_policy_to_queue(parameters_queue, policy)
+
         policy.update_target_networks()
         if optimization_step % cfg.training.log_freq == 0:
             training_infos["Optimization step"] = optimization_step
@@ -567,8 +569,6 @@ def add_actor_information_and_train(
                 d=training_infos, mode="train", custom_step_key="Optimization step"
             )
             # logging.info(f"Training infos: {training_infos}")
-
-        push_actor_policy_to_queue(parameters_queue, policy)
 
         time_for_one_optimization_step = time.time() - time_for_one_optimization_step
         frequency_for_one_optimization_step = 1 / (
