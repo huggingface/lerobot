@@ -22,3 +22,9 @@ env:
   wrapper:
     joint_masking_action_space: null
     delta_action: null
+
+  video_record:
+    record_dir: maniskill_videos
+    save_every_n_episodes: 10
+    trajectory_name: trajectory
+    fps: ${fps}

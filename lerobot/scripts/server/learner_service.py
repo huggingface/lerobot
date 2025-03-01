@@ -38,7 +38,7 @@ class LearnerService(hilserl_pb2_grpc.LearnerServiceServicer):
                 buffer,
                 hilserl_pb2.Parameters,
                 log_prefix="[LEARNER] Sending parameters",
-                silent=False,
+                silent=True,
             )
 
             logging.info("[LEARNER] Parameters sent")

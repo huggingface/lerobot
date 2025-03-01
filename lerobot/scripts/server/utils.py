@@ -63,6 +63,6 @@ def get_last_item_from_queue(queue: Queue):
     except Empty:
         pass
 
-    logging.info(f"Drained {counter} items from queue")
+    logging.debug(f"Drained {counter} items from queue")
 
     return item
