@@ -2,6 +2,7 @@ exclude: ^(tests/data)
 default_language_version:
     python: python3.10
 repos:
+  ##### Style / Misc. #####
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
@@ -28,6 +29,8 @@ repos:
       - id: ruff
         args: [--fix]
       - id: ruff-format
+
+  ##### Security #####
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.23.3
     hooks:
@@ -36,3 +39,9 @@ repos:
     rev: v1.3.1
     hooks:
       - id: zizmor
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.8.3
+    hooks:
+    - id: bandit
+      args: ["-c", "pyproject.toml"]
+      additional_dependencies: ["bandit[toml]"]
