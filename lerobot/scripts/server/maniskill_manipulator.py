@@ -142,16 +142,17 @@ def make_maniskill(
         num_envs=n_envs,
     )
 
-    env = RecordEpisode(
-        env,
-        output_dir=cfg.env.video_record.record_dir,
-        save_trajectory=True,
-        trajectory_name=cfg.env.video_record.trajectory_name,
-        save_video=True,
-        video_fps=cfg.env.video_record.fps,
-        save_video_trigger=lambda x: x % cfg.env.video_record.save_every_n_episodes
-        == 0,
-    )
+    if cfg.env.video_record.enabled:
+        env = RecordEpisode(
+            env,
+            output_dir=cfg.env.video_record.record_dir,
+            save_trajectory=True,
+            trajectory_name=cfg.env.video_record.trajectory_name,
+            save_video=True,
+            video_fps=cfg.env.video_record.fps,
+            save_video_trigger=lambda x: x % cfg.env.video_record.save_every_n_episodes
+            == 0,
+        )
     env = ManiSkillObservationWrapper(env, device=cfg.env.device)
     env = ManiSkillVectorEnv(env, ignore_terminations=True, auto_reset=False)
     env._max_episode_steps = env.max_episode_steps = (

@@ -24,6 +24,7 @@ env:
     delta_action: null
 
   video_record:
+    enabled: true
     record_dir: maniskill_videos
     save_every_n_episodes: 10
     trajectory_name: trajectory
