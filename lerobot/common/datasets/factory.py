@@ -33,7 +33,9 @@ IMAGENET_STATS = {
 }
 
 
-def resolve_delta_indices(cfg: PreTrainedConfig, ds_meta: LeRobotDatasetMetadata) -> dict[str, list[int]] | None:
+def resolve_delta_indices(
+    cfg: PreTrainedConfig, ds_meta: LeRobotDatasetMetadata
+) -> dict[str, list[int]] | None:
     """Resolves delta indices by reading from the 'delta_indices' properties of the PreTrainedConfig.
     Args:
         cfg (PreTrainedConfig): The PreTrainedConfig to read delta_indices from.
