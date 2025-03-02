@@ -8,7 +8,6 @@ from copy import deepcopy
 import numpy as np
 import tqdm
 
-from lerobot.common.motors.configs import DynamixelMotorsBusConfig
 from lerobot.common.utils.robot_utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
 from lerobot.common.utils.utils import capture_timestamp_utc
 
@@ -274,11 +273,10 @@ class DynamixelMotorsBus:
     motor_index = 6
     motor_model = "xl330-m288"
 
-    config = DynamixelMotorsBusConfig(
+    motors_bus = DynamixelMotorsBus(
         port="/dev/tty.usbmodem575E0031751",
         motors={motor_name: (motor_index, motor_model)},
     )
-    motors_bus = DynamixelMotorsBus(config)
     motors_bus.connect()
 
     position = motors_bus.read("Present_Position")
@@ -294,11 +292,13 @@ class DynamixelMotorsBus:
 
     def __init__(
         self,
-        config: DynamixelMotorsBusConfig,
+        port: str,
+        motors: dict[str, tuple[int, str]],
+        mock: bool = False,
     ):
-        self.port = config.port
-        self.motors = config.motors
-        self.mock = config.mock
+        self.port = port
+        self.motors = motors
+        self.mock = mock
 
         self.model_ctrl_table = deepcopy(MODEL_CONTROL_TABLE)
         self.model_resolution = deepcopy(MODEL_RESOLUTION)
