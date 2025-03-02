@@ -124,7 +124,8 @@ class ARX5Arm:
             vel[-1] *= 3.85
             effort[-1] *= 3.85
 
-        return (pos, vel, effort)
+        eef_state = self.joint_controller.get_eef_state()
+        return (pos, vel, effort, eef_state.pose_6d().copy())
     
     def send_command(self, action: np.ndarray):
         if not self.is_connected:
@@ -228,6 +229,10 @@ class ARX5Robot:
                 "dtype": "float32",
                 "shape": (action_space,),
             },
+            "observation.eef_6d_pose": {
+                "dtype": "float32",
+                "shape": (6,),
+            },
         }
 
     def connect(self):
@@ -315,14 +320,17 @@ class ARX5Robot:
         state = []
         velocity = []
         effort = []
+        eef_pose = []
         for name in self.follower_arms:
             if name in follower_obs:
                 state.append(follower_obs[name][0])
                 velocity.append(follower_obs[name][1])
                 effort.append(follower_obs[name][2])
+                eef_pose.append(follower_obs[name][3])
         state = np.concatenate(state)
         velocity = np.concatenate(velocity)
         effort = np.concatenate(effort)
+        eef_pose = np.concatenate(eef_pose)
 
         # Create action by concatenating follower goal position
         action = []
@@ -344,6 +352,7 @@ class ARX5Robot:
         obs_dict["observation.state"] = torch.from_numpy(state.astype(np.float32))
         obs_dict["observation.velocity"] = torch.from_numpy(velocity.astype(np.float32))
         obs_dict["observation.effort"] = torch.from_numpy(effort.astype(np.float32))
+        obs_dict["observation.eef_6d_pose"] = torch.from_numpy(eef_pose.astype(np.float32))
         action_dict["action"] = torch.from_numpy(action.astype(np.float32))
         for name in self.cameras:
             obs_dict[f"observation.images.{name}"] = torch.from_numpy(images[name])
@@ -368,14 +377,17 @@ class ARX5Robot:
         state = []
         velocity = []
         effort = []
+        eef_pose = []
         for name in self.follower_arms:
             if name in follower_obs:
                 state.append(follower_obs[name][0])
                 velocity.append(follower_obs[name][1])
                 effort.append(follower_obs[name][2])
+                eef_pose.append(follower_obs[name][3])
         state = np.concatenate(state)
         velocity = np.concatenate(velocity)
         effort = np.concatenate(effort)
+        eef_pose = np.concatenate(eef_pose)
 
         # Capture images from cameras
         images = {}
@@ -390,6 +402,7 @@ class ARX5Robot:
         obs_dict["observation.state"] = state.astype(np.float32)
         obs_dict["observation.velocity"] = velocity.astype(np.float32)
         obs_dict["observation.effort"] = effort.astype(np.float32)
+        obs_dict["observation.eef_6d_pose"] = eef_pose.astype(np.float32)
         for name in self.cameras:
             obs_dict[f"observation.images.{name}"] = torch.from_numpy(images[name])
         return obs_dict
