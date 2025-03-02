@@ -21,12 +21,12 @@ def make_motors_buses_from_configs(motors_bus_configs: dict[str, MotorsBusConfig
 
     for key, cfg in motors_bus_configs.items():
         if cfg.type == "dynamixel":
-            from lerobot.common.motors.dynamixel import DynamixelMotorsBus
+            from lerobot.common.motors.dynamixel.dynamixel import DynamixelMotorsBus
 
             motors_buses[key] = DynamixelMotorsBus(cfg)
 
         elif cfg.type == "feetech":
-            from lerobot.common.motors.feetech import FeetechMotorsBus
+            from lerobot.common.motors.feetech.feetech import FeetechMotorsBus
 
             motors_buses[key] = FeetechMotorsBus(cfg)
 
@@ -38,13 +38,13 @@ def make_motors_buses_from_configs(motors_bus_configs: dict[str, MotorsBusConfig
 
 def make_motors_bus(motor_type: str, **kwargs) -> MotorsBus:
     if motor_type == "dynamixel":
-        from lerobot.common.motors.dynamixel import DynamixelMotorsBus
+        from lerobot.common.motors.dynamixel.dynamixel import DynamixelMotorsBus
 
         config = DynamixelMotorsBusConfig(**kwargs)
         return DynamixelMotorsBus(config)
 
     elif motor_type == "feetech":
-        from lerobot.common.motors.feetech import FeetechMotorsBus
+        from lerobot.common.motors.feetech.feetech import FeetechMotorsBus
 
         config = FeetechMotorsBusConfig(**kwargs)
         return FeetechMotorsBus(config)

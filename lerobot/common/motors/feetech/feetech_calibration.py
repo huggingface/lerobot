@@ -5,7 +5,7 @@ import time
 
 import numpy as np
 
-from lerobot.common.motors.feetech import (
+from lerobot.common.motors.feetech.feetech import (
     CalibrationMode,
     TorqueMode,
     convert_degrees_to_steps,

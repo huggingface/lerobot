@@ -3,7 +3,7 @@
 
 import numpy as np
 
-from lerobot.common.motors.dynamixel import (
+from lerobot.common.motors.dynamixel.dynamixel import (
     CalibrationMode,
     TorqueMode,
     convert_degrees_to_steps,
