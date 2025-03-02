@@ -110,6 +110,22 @@ class ARX5Arm:
         # print(f"arm ({name}): {state[-3:-1]}")
         return state
     
+    def get_obs(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        if not self.is_connected:
+            raise RobotDeviceNotConnectedError(
+                "ARX5Arm is not connected. You need to run `robot.connect()`."
+            )
+        joint_state = self.joint_controller.get_joint_state()
+        pos = np.concatenate([joint_state.pos().copy(), np.array([joint_state.gripper_pos])])
+        vel = np.concatenate([joint_state.vel().copy(), np.array([joint_state.gripper_vel])])
+        effort = np.concatenate([joint_state.torque().copy(), np.array([joint_state.gripper_torque])])
+        if self.is_master:
+            pos[-1] *= 3.85
+            vel[-1] *= 3.85
+            effort[-1] *= 3.85
+
+        return (pos, vel, effort)
+    
     def send_command(self, action: np.ndarray):
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
@@ -204,6 +220,14 @@ class ARX5Robot:
                 "dtype": "float32",
                 "shape": (action_space,),
             },
+            "observation.velocity": {
+                "dtype": "float32",
+                "shape": (action_space,),
+            },
+            "observation.effort": {
+                "dtype": "float32",
+                "shape": (action_space,),
+            },
         }
 
     def connect(self):
@@ -280,20 +304,25 @@ class ARX5Robot:
         if not record_data:
             return
 
-        # TODO(rcadene): Add velocity and other info
         # Read follower position
-        follower_pos = {}
+        follower_obs = {}
         for name in self.follower_arms:
             before_fread_t = time.perf_counter()
-            follower_pos[name] = self.follower_arms[name].get_state()
+            follower_obs[name] = self.follower_arms[name].get_obs()
             self.logs[f"read_follower_{name}_pos_dt_s"] = time.perf_counter() - before_fread_t
 
         # Create state by concatenating follower current position
         state = []
+        velocity = []
+        effort = []
         for name in self.follower_arms:
-            if name in follower_pos:
-                state.append(follower_pos[name])
+            if name in follower_obs:
+                state.append(follower_obs[name][0])
+                velocity.append(follower_obs[name][1])
+                effort.append(follower_obs[name][2])
         state = np.concatenate(state)
+        velocity = np.concatenate(velocity)
+        effort = np.concatenate(effort)
 
         # Create action by concatenating follower goal position
         action = []
@@ -312,8 +341,10 @@ class ARX5Robot:
 
         # Populate output dictionnaries and format to pytorch
         obs_dict, action_dict = {}, {}
-        obs_dict["observation.state"] = torch.from_numpy(state)
-        action_dict["action"] = torch.from_numpy(action)
+        obs_dict["observation.state"] = torch.from_numpy(state.astype(np.float32))
+        obs_dict["observation.velocity"] = torch.from_numpy(velocity.astype(np.float32))
+        obs_dict["observation.effort"] = torch.from_numpy(effort.astype(np.float32))
+        action_dict["action"] = torch.from_numpy(action.astype(np.float32))
         for name in self.cameras:
             obs_dict[f"observation.images.{name}"] = torch.from_numpy(images[name])
 
@@ -326,19 +357,25 @@ class ARX5Robot:
                 "ARX5Robot is not connected. You need to run `robot.connect()`."
             )
 
-        # Read follower position
-        follower_pos = {}
+        # Read follower observations
+        follower_obs = {}
         for name in self.follower_arms:
             before_fread_t = time.perf_counter()
-            follower_pos[name] = self.follower_arms[name].get_state()
+            follower_obs[name] = self.follower_arms[name].get_obs()
             self.logs[f"read_follower_{name}_pos_dt_s"] = time.perf_counter() - before_fread_t
 
         # Create state by concatenating follower current position
         state = []
+        velocity = []
+        effort = []
         for name in self.follower_arms:
-            if name in follower_pos:
-                state.append(follower_pos[name])
+            if name in follower_obs:
+                state.append(follower_obs[name][0])
+                velocity.append(follower_obs[name][1])
+                effort.append(follower_obs[name][2])
         state = np.concatenate(state)
+        velocity = np.concatenate(velocity)
+        effort = np.concatenate(effort)
 
         # Capture images from cameras
         images = {}
@@ -350,7 +387,9 @@ class ARX5Robot:
 
         # Populate output dictionaries
         obs_dict = {}
-        obs_dict["observation.state"] = state
+        obs_dict["observation.state"] = state.astype(np.float32)
+        obs_dict["observation.velocity"] = velocity.astype(np.float32)
+        obs_dict["observation.effort"] = effort.astype(np.float32)
         for name in self.cameras:
             obs_dict[f"observation.images.{name}"] = torch.from_numpy(images[name])
         return obs_dict

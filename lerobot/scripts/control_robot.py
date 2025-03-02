@@ -330,6 +330,9 @@ def record(
         dataset.save_episode()
         recorded_episodes += 1
 
+        if events["stop_recording"]:
+            break
+
     log_say("Stop recording", cfg.play_sounds, blocking=True)
     stop_recording(robot, listener, cfg.display_cameras)
 
