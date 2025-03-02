@@ -67,7 +67,7 @@ from lerobot.common.datasets.utils import (
 )
 from lerobot.common.datasets.video_utils import (
     VideoFrame,
-    decode_video_frames_torchvision,
+    decode_video_frames_torchcodec,
     encode_video_frames,
     get_video_info,
 )
@@ -707,8 +707,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         item = {}
         for vid_key, query_ts in query_timestamps.items():
             video_path = self.root / self.meta.get_video_file_path(ep_idx, vid_key)
-            frames = decode_video_frames_torchvision(
-                video_path, query_ts, self.tolerance_s, self.video_backend
+            frames = decode_video_frames_torchcodec(
+                video_path, query_ts, self.tolerance_s
             )
             item[vid_key] = frames.squeeze(0)
 
