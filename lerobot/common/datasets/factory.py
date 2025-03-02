@@ -40,7 +40,7 @@ def resolve_delta_indices(cfg: PreTrainedConfig, ds_meta: LeRobotDatasetMetadata
         ds_meta (LeRobotDatasetMetadata): The dataset metadata containing feature information.
 
     Returns:
-        dict[str, list] | None: A dictionary of delta indices, e.g.:
+        dict[str, list[int]] | None: A dictionary of delta indices, e.g.:
             {
                 "observation.state": [0, 1, 2]
                 "observation.action": [0, 1, 2]
