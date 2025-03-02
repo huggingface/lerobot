@@ -41,14 +41,21 @@ class ARX5Arm:
             )
         self.is_connected = True
 
-        self.joint_controller = arx5.Arx5JointController(self.config.model, self.config.interface_name)
+        robot_config = arx5.RobotConfigFactory.get_instance().get_config(self.config.model)
+        robot_config.gripper_torque_max *= 2
+        controller_config = arx5.ControllerConfigFactory.get_instance().get_config(
+            "joint_controller", robot_config.joint_dof
+        )
+        controller_config.gravity_compensation = True   # TODO: may be default true
+        controller_config.background_send_recv = True
+
+        self.joint_controller = arx5.Arx5JointController(robot_config, controller_config, self.config.interface_name)
         print("joint controller created")
-        self.joint_controller.enable_background_send_recv()
         self.joint_controller.reset_to_home()
-        self.joint_controller.enable_gravity_compensation(self.config.urdf_path)
+        # self.joint_controller.enable_gravity_compensation(self.config.urdf_path)
         # self.joint_controller.set_log_level(arx5.LogLevel.DEBUG)
 
-        self.robot_config = self.joint_controller.get_robot_config()
+        self.robot_config = robot_config
         print(f"Gripper max width: {self.robot_config.gripper_width}")
 
     def disconnect(self):
@@ -82,13 +89,19 @@ class ARX5Arm:
             gain.kd()[:3] *= 0.05
             gain.kd()[3:] *= 0.1
             self.joint_controller.set_gain(gain)
+        else:
+            # gripper - make it less aggressive
+            gain = self.joint_controller.get_gain()
+            gain.gripper_kp /= 1.8
+            gain.gripper_kd *= 1.8
+            self.joint_controller.set_gain(gain)
 
     def get_state(self) -> np.ndarray:
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
                 "ARX5Arm is not connected. You need to run `robot.connect()`."
             )
-        joint_state = self.joint_controller.get_state()
+        joint_state = self.joint_controller.get_joint_state()
         state = np.concatenate([joint_state.pos().copy(), np.array([joint_state.gripper_pos])])
         if self.is_master:
             state[-1] *= 3.85

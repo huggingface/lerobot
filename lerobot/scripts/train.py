@@ -15,16 +15,17 @@
 # limitations under the License.
 import logging
 import time
+import numpy as np
 from contextlib import nullcontext
 from pprint import pformat
-from typing import Any
+from typing import List, Dict, Any
 
 import torch
 from termcolor import colored
 from torch.amp import GradScaler
 from torch.optim import Optimizer
 
-from lerobot.common.datasets.lerobot_dataset import MultiLeRobotDataset
+from lerobot.common.datasets.lerobot_dataset import MultiLeRobotDataset, LeRobotDatasetMetadata
 from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.datasets.sampler import EpisodeAwareSampler
 from lerobot.common.datasets.utils import cycle
@@ -53,6 +54,116 @@ from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.scripts.eval import eval_policy
 
+
+
+
+# TODO: move elsewhere:
+def merge_feature_stats(datasets_stats: List[Dict[str, Dict[str, np.ndarray]]], 
+                       total_frames: List[int]) -> Dict[str, Dict[str, np.ndarray]]:
+    """
+    Merge statistics from multiple LeRobot datasets.
+    
+    Args:
+        datasets_stats: List of statistics dictionaries from each dataset
+        total_frames: List of frame counts for each dataset
+    
+    Returns:
+        Dictionary containing merged statistics for all features
+    """
+    if not datasets_stats:
+        return {}
+    
+    # Get all unique feature keys across datasets
+    all_features = set()
+    for stats in datasets_stats:
+        all_features.update(stats.keys())
+    
+    merged_stats = {}
+    total_frames_array = np.array(total_frames)
+    N = np.sum(total_frames_array)
+    
+    for feature in all_features:
+        # Initialize with zeros for datasets that might not have this feature
+        means = []
+        stds = []
+        maxs = []
+        mins = []
+        
+        # Collect stats for this feature from all datasets
+        for stats in datasets_stats:
+            if feature in stats:
+                means.append(stats[feature]["mean"])
+                stds.append(stats[feature]["std"])
+                maxs.append(stats[feature]["max"])
+                mins.append(stats[feature]["min"])
+            else:
+                # If feature missing in this dataset, use placeholder
+                shape = means[0].shape if means else None
+                if shape is None:
+                    continue
+                means.append(np.zeros_like(means[0]))
+                stds.append(np.zeros_like(means[0]))
+                maxs.append(np.full_like(means[0], np.inf))
+                mins.append(np.full_like(means[0], -np.inf))
+        
+        if not means:  # Skip if feature not found in any dataset
+            continue
+            
+        # Convert lists to arrays for vectorized operations
+        means = np.array(means)
+        stds = np.array(stds)
+        maxs = np.array(maxs)
+        mins = np.array(mins)
+        
+        # Calculate combined statistics
+        # Weighted mean
+        combined_mean = np.sum(means * total_frames_array[:, None], axis=0) / N
+        
+        # Combined standard deviation
+        combined_variance = np.sum(
+            total_frames_array[:, None] * (stds**2 + (means - combined_mean)**2),
+            axis=0
+        ) / N
+        combined_std = np.sqrt(combined_variance)
+        
+        # Global min and max
+        combined_max = np.max(maxs, axis=0)
+        combined_min = np.min(mins, axis=0)
+        
+        merged_stats[feature] = {
+            "mean": combined_mean,
+            "std": combined_std,
+            "max": combined_max,
+            "min": combined_min
+        }
+    
+    return merged_stats
+
+def merge_lerobot_datasets_metadata(datasets: List[LeRobotDatasetMetadata]) -> Dict[str, Any]:
+    """
+    Merge metadata from multiple LeRobot datasets.
+    
+    Args:
+        datasets: List of LeRobotDatasetMetadata objects
+    
+    Returns:
+        Dictionary containing merged metadata
+    """
+    if not datasets:
+        return {}
+    
+    total_frames = [ds.total_frames for ds in datasets]
+    merged_stats = merge_feature_stats([ds.stats for ds in datasets], total_frames)
+    
+    # Additional metadata merging can be added here if needed
+    # For example, merging tasks, episodes, etc.
+    
+    return {
+        "stats": merged_stats,
+        "total_frames": sum(total_frames),
+        "total_episodes": sum(ds.total_episodes for ds in datasets),
+        # Add other metadata as needed
+    }
 
 def update_policy(
     train_metrics: MetricsTracker,
@@ -140,6 +251,11 @@ def train(cfg: TrainPipelineConfig):
     # TODO: support multi-lerobot dataset
     if isinstance(dataset, MultiLeRobotDataset):
         ds_meta = dataset._datasets[0].meta
+        metadatas = []
+        for ds in dataset._datasets:
+            metadatas.append(ds.meta)
+        x = merge_lerobot_datasets_metadata(metadatas)
+        ds_meta.stats = x["stats"]
     else:
         ds_meta = dataset.meta
     policy = make_policy(
