@@ -1,6 +1,6 @@
 exclude: ^(tests/data)
 default_language_version:
-    python: python3.10
+    python: python3.12
 repos:
   ##### Style / Misc. #####
   - repo: https://github.com/pre-commit/pre-commit-hooks
