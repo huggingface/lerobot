@@ -15,13 +15,14 @@ from threading import Thread
 import numpy as np
 from PIL import Image
 
-from lerobot.common.cameras.configs import OpenCVCameraConfig
+from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.common.utils.robot_utils import (
-    RobotDeviceAlreadyConnectedError,
-    RobotDeviceNotConnectedError,
     busy_wait,
 )
 from lerobot.common.utils.utils import capture_timestamp_utc
+
+from ..camera import Camera
+from .configuration_opencv import OpenCVCameraConfig
 
 # The maximum opencv device index depends on your operating system. For instance,
 # if you have 3 cameras, they should be associated to index 0, 1, and 2. This is the case
@@ -176,7 +177,7 @@ def save_images_from_cameras(
     print(f"Images have been saved to {images_dir}")
 
 
-class OpenCVCamera:
+class OpenCVCamera(Camera):
     """
     The OpenCVCamera class allows to efficiently record images from cameras. It relies on opencv2 to communicate
     with the cameras. Most cameras are compatible. For more info, see the [Video I/O with OpenCV Overview](https://docs.opencv.org/4.x/d0/da7/videoio_overview.html).
@@ -260,7 +261,7 @@ class OpenCVCamera:
 
     def connect(self):
         if self.is_connected:
-            raise RobotDeviceAlreadyConnectedError(f"OpenCVCamera({self.camera_index}) is already connected.")
+            raise DeviceAlreadyConnectedError(f"OpenCVCamera({self.camera_index}) is already connected.")
 
         if self.mock:
             import tests.mock_cv2 as cv2
@@ -339,7 +340,7 @@ class OpenCVCamera:
         If you are reading data from other sensors, we advise to use `camera.async_read()` which is non blocking version of `camera.read()`.
         """
         if not self.is_connected:
-            raise RobotDeviceNotConnectedError(
+            raise DeviceNotConnectedError(
                 f"OpenCVCamera({self.camera_index}) is not connected. Try running `camera.connect()` first."
             )
 
@@ -396,7 +397,7 @@ class OpenCVCamera:
 
     def async_read(self):
         if not self.is_connected:
-            raise RobotDeviceNotConnectedError(
+            raise DeviceNotConnectedError(
                 f"OpenCVCamera({self.camera_index}) is not connected. Try running `camera.connect()` first."
             )
 
@@ -418,7 +419,7 @@ class OpenCVCamera:
 
     def disconnect(self):
         if not self.is_connected:
-            raise RobotDeviceNotConnectedError(
+            raise DeviceNotConnectedError(
                 f"OpenCVCamera({self.camera_index}) is not connected. Try running `camera.connect()` first."
             )
 

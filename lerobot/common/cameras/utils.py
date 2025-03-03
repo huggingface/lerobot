@@ -1,35 +1,20 @@
-from typing import Protocol
-
-import numpy as np
-
-from lerobot.common.cameras.configs import (
-    CameraConfig,
-    IntelRealSenseCameraConfig,
-    OpenCVCameraConfig,
-)
+from .camera import Camera
+from .configs import CameraConfig
 
 
-# Defines a camera type
-class Camera(Protocol):
-    def connect(self): ...
-    def read(self, temporary_color: str | None = None) -> np.ndarray: ...
-    def async_read(self) -> np.ndarray: ...
-    def disconnect(self): ...
-
-
-def make_cameras_from_configs(camera_configs: dict[str, CameraConfig]) -> list[Camera]:
+def make_cameras_from_configs(camera_configs: dict[str, CameraConfig]) -> dict[str, Camera]:
     cameras = {}
 
     for key, cfg in camera_configs.items():
         if cfg.type == "opencv":
-            from lerobot.common.cameras.opencv import OpenCVCamera
+            from .opencv import OpenCVCamera
 
             cameras[key] = OpenCVCamera(cfg)
 
         elif cfg.type == "intelrealsense":
-            from lerobot.common.cameras.intelrealsense import IntelRealSenseCamera
+            from .intel.camera_realsense import RealSenseCamera
 
-            cameras[key] = IntelRealSenseCamera(cfg)
+            cameras[key] = RealSenseCamera(cfg)
         else:
             raise ValueError(f"The motor type '{cfg.type}' is not valid.")
 
@@ -38,16 +23,16 @@ def make_cameras_from_configs(camera_configs: dict[str, CameraConfig]) -> list[C
 
 def make_camera(camera_type, **kwargs) -> Camera:
     if camera_type == "opencv":
-        from lerobot.common.cameras.opencv import OpenCVCamera
+        from .opencv import OpenCVCamera, OpenCVCameraConfig
 
         config = OpenCVCameraConfig(**kwargs)
         return OpenCVCamera(config)
 
     elif camera_type == "intelrealsense":
-        from lerobot.common.cameras.intelrealsense import IntelRealSenseCamera
+        from .intel import RealSenseCamera, RealSenseCameraConfig
 
-        config = IntelRealSenseCameraConfig(**kwargs)
-        return IntelRealSenseCamera(config)
+        config = RealSenseCameraConfig(**kwargs)
+        return RealSenseCamera(config)
 
     else:
         raise ValueError(f"The camera type '{camera_type}' is not valid.")
