@@ -8,13 +8,13 @@
 #   env.gym.obs_type=environment_state_agent_pos \
 
 seed: 1
-dataset_repo_id: "AdilZtn/Maniskill-Pushcube-demonstration-medium"
+# dataset_repo_id: "AdilZtn/Maniskill-Pushcube-demonstration-medium"
 
 training:
   # Offline training dataloader
   num_workers: 4
 
-  batch_size: 512
+  batch_size: 256
   grad_clip_norm: 10.0
   lr: 3e-4
 

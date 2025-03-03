@@ -23,7 +23,6 @@ from concurrent.futures import ThreadPoolExecutor
 # from torch.multiprocessing import Event, Queue, Process
 # from threading import Event, Thread
 # from torch.multiprocessing import Queue, Event
-from threading import Thread
 from torch.multiprocessing import Queue
 
 from lerobot.scripts.server.utils import setup_process_handlers
@@ -70,6 +69,7 @@ from lerobot.scripts.server.buffer import (
 from lerobot.scripts.server import learner_service
 
 import torch.multiprocessing as mp
+from torch.multiprocessing import Process
 
 
 def handle_resume_logic(cfg: DictConfig, out_dir: str) -> DictConfig:
@@ -212,7 +212,7 @@ def start_learner_threads(
     interaction_message_queue = Queue()
     parameters_queue = Queue()
 
-    communication_process = Thread(
+    communication_process = Process(
         target=start_learner_server,
         args=(
             parameters_queue,
@@ -261,12 +261,12 @@ def start_learner_server(
     cfg: DictConfig,
 ):
     # Return back for MP
-    # init_logging()
+    init_logging()
 
     # Setup process handlers to handle shutdown signal
     # But use shutdown event from the main process
     # Return back for MP
-    # setup_process_handlers()
+    setup_process_handlers()
 
     service = learner_service.LearnerService(
         shutdown_event,
