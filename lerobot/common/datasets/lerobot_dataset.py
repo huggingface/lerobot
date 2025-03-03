@@ -462,7 +462,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             download_videos (bool, optional): Flag to download the videos. Note that when set to True but the
                 video files are already present on local disk, they won't be downloaded again. Defaults to
                 True.
-            video_backend (str | None, optional): Video backend to use for decoding videos. Defaults to torchcodec.  
+            video_backend (str | None, optional): Video backend to use for decoding videos. Defaults to torchcodec.
                 You can also use the 'pyav' decoder used by Torchvision.
         """
         super().__init__()
@@ -707,9 +707,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         item = {}
         for vid_key, query_ts in query_timestamps.items():
             video_path = self.root / self.meta.get_video_file_path(ep_idx, vid_key)
-            frames = decode_video_frames(
-                video_path, query_ts, self.tolerance_s, self.video_backend
-            )
+            frames = decode_video_frames(video_path, query_ts, self.tolerance_s, self.video_backend)
             item[vid_key] = frames.squeeze(0)
 
         return item
