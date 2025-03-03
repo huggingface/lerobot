@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import contextlib
 import logging
 import shutil
 from pathlib import Path
@@ -27,6 +28,7 @@ import torch.utils
 from datasets import concatenate_datasets, load_dataset
 from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.constants import REPOCARD_NAME
+from huggingface_hub.errors import RevisionNotFoundError
 
 from lerobot.common.constants import HF_LEROBOT_HOME
 from lerobot.common.datasets.compute_stats import aggregate_stats, compute_episode_stats
@@ -517,6 +519,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         branch: str | None = None,
         tags: list | None = None,
         license: str | None = "apache-2.0",
+        tag_version: bool = True,
         push_videos: bool = True,
         private: bool = False,
         allow_patterns: list[str] | str | None = None,
@@ -561,6 +564,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 tags=tags, dataset_info=self.meta.info, license=license, **card_kwargs
             )
             card.push_to_hub(repo_id=self.repo_id, repo_type="dataset", revision=branch)
+
+        if tag_version:
+            with contextlib.suppress(RevisionNotFoundError):
+                hub_api.delete_tag(self.repo_id, tag=CODEBASE_VERSION, repo_type="dataset")
+            hub_api.create_tag(self.repo_id, tag=CODEBASE_VERSION, revision=branch, repo_type="dataset")
 
     def pull_from_repo(
         self,

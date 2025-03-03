@@ -31,6 +31,7 @@ import packaging.version
 import torch
 from datasets.table import embed_table_storage
 from huggingface_hub import DatasetCard, DatasetCardData, HfApi
+from huggingface_hub.errors import RevisionNotFoundError
 from PIL import Image as PILImage
 from torchvision import transforms
 
@@ -324,6 +325,19 @@ def get_safe_version(repo_id: str, version: str | packaging.version.Version) -> 
         packaging.version.parse(version) if not isinstance(version, packaging.version.Version) else version
     )
     hub_versions = get_repo_versions(repo_id)
+
+    if not hub_versions:
+        raise RevisionNotFoundError(
+            f"""Your dataset must be tagged with a codebase version.
+            Assuming _version_ is the codebase_version value in the info.json, you can run this:
+            ```python
+            from huggingface_hub import HfApi
+
+            hub_api = HfApi()
+            hub_api.create_tag("{repo_id}", tag="_version_", repo_type="dataset")
+            ```
+            """
+        )
 
     if target_version in hub_versions:
         return f"v{target_version}"
