@@ -16,10 +16,6 @@ class KochRobotConfig(RobotConfig):
     # the number of motors in your follower arms.
     max_relative_target: int | None = None
 
-    # Sets the leader arm in torque mode with the gripper motor set to this angle. This makes it possible
-    # to squeeze the gripper and have it spring back to an open position on its own.
-    gripper_open_degree: float = 35.156
-
     mock: bool = False
 
     # motors

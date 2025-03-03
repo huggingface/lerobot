@@ -21,6 +21,7 @@ import time
 import numpy as np
 
 from lerobot.common.cameras.utils import make_cameras_from_configs
+from lerobot.common.constants import OBS_IMAGES, OBS_STATE
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.common.motors.dynamixel import (
     DynamixelMotorsBus,
@@ -118,8 +119,8 @@ class KochRobot(Robot):
         self.arm.read("Present_Position")
 
         # Connect the cameras
-        for name in self.cameras:
-            self.cameras[name].connect()
+        for cam in self.cameras.values():
+            cam.connect()
 
         self.is_connected = True
 
@@ -156,13 +157,13 @@ class KochRobot(Robot):
 
         # Read arm position
         before_read_t = time.perf_counter()
-        obs_dict["observation.state"] = self.arm.read("Present_Position")
+        obs_dict[OBS_STATE] = self.arm.read("Present_Position")
         self.logs["read_pos_dt_s"] = time.perf_counter() - before_read_t
 
         # Capture images from cameras
         for cam_key, cam in self.cameras.items():
             before_camread_t = time.perf_counter()
-            obs_dict[f"observation.images.{cam_key}"] = cam.async_read()
+            obs_dict[f"{OBS_IMAGES}.{cam_key}"] = cam.async_read()
             self.logs[f"read_camera_{cam_key}_dt_s"] = cam.logs["delta_timestamp_s"]
             self.logs[f"async_read_camera_{cam_key}_dt_s"] = time.perf_counter() - before_camread_t
 
