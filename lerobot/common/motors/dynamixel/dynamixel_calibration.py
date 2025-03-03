@@ -3,12 +3,12 @@
 
 import numpy as np
 
-from lerobot.common.motors.dynamixel.dynamixel import (
+from ..motors_bus import MotorsBus
+from .dynamixel import (
     CalibrationMode,
     TorqueMode,
     convert_degrees_to_steps,
 )
-from lerobot.common.motors.utils import MotorsBus
 
 URL_TEMPLATE = (
     "https://raw.githubusercontent.com/huggingface/lerobot/main/media/{robot}/{arm}_{position}.webp"

@@ -8,8 +8,7 @@ from copy import deepcopy
 import numpy as np
 import tqdm
 
-from lerobot.common.motors.configs import FeetechMotorsBusConfig
-from lerobot.common.utils.robot_utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
+from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.common.utils.utils import capture_timestamp_utc
 
 PROTOCOL_VERSION = 0
@@ -253,11 +252,10 @@ class FeetechMotorsBus:
     motor_index = 6
     motor_model = "sts3215"
 
-    config = FeetechMotorsBusConfig(
+    motors_bus = FeetechMotorsBus(
         port="/dev/tty.usbmodem575E0031751",
         motors={motor_name: (motor_index, motor_model)},
     )
-    motors_bus = FeetechMotorsBus(config)
     motors_bus.connect()
 
     position = motors_bus.read("Present_Position")
@@ -273,11 +271,13 @@ class FeetechMotorsBus:
 
     def __init__(
         self,
-        config: FeetechMotorsBusConfig,
+        port: str,
+        motors: dict[str, tuple[int, str]],
+        mock: bool = False,
     ):
-        self.port = config.port
-        self.motors = config.motors
-        self.mock = config.mock
+        self.port = port
+        self.motors = motors
+        self.mock = mock
 
         self.model_ctrl_table = deepcopy(MODEL_CONTROL_TABLE)
         self.model_resolution = deepcopy(MODEL_RESOLUTION)
@@ -294,7 +294,7 @@ class FeetechMotorsBus:
 
     def connect(self):
         if self.is_connected:
-            raise RobotDeviceAlreadyConnectedError(
+            raise DeviceAlreadyConnectedError(
                 f"FeetechMotorsBus({self.port}) is already connected. Do not call `motors_bus.connect()` twice."
             )
 
@@ -693,7 +693,7 @@ class FeetechMotorsBus:
             import scservo_sdk as scs
 
         if not self.is_connected:
-            raise RobotDeviceNotConnectedError(
+            raise DeviceNotConnectedError(
                 f"FeetechMotorsBus({self.port}) is not connected. You need to run `motors_bus.connect()`."
             )
 
@@ -797,7 +797,7 @@ class FeetechMotorsBus:
 
     def write(self, data_name, values: int | float | np.ndarray, motor_names: str | list[str] | None = None):
         if not self.is_connected:
-            raise RobotDeviceNotConnectedError(
+            raise DeviceNotConnectedError(
                 f"FeetechMotorsBus({self.port}) is not connected. You need to run `motors_bus.connect()`."
             )
 
@@ -866,7 +866,7 @@ class FeetechMotorsBus:
 
     def disconnect(self):
         if not self.is_connected:
-            raise RobotDeviceNotConnectedError(
+            raise DeviceNotConnectedError(
                 f"FeetechMotorsBus({self.port}) is not connected. Try running `motors_bus.connect()` first."
             )
 

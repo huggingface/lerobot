@@ -8,7 +8,7 @@ from copy import deepcopy
 import numpy as np
 import tqdm
 
-from lerobot.common.utils.robot_utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
+from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.common.utils.utils import capture_timestamp_utc
 
 PROTOCOL_VERSION = 2.0
@@ -313,7 +313,7 @@ class DynamixelMotorsBus:
 
     def connect(self):
         if self.is_connected:
-            raise RobotDeviceAlreadyConnectedError(
+            raise DeviceAlreadyConnectedError(
                 f"DynamixelMotorsBus({self.port}) is already connected. Do not call `motors_bus.connect()` twice."
             )
 
@@ -670,7 +670,7 @@ class DynamixelMotorsBus:
 
     def read(self, data_name, motor_names: str | list[str] | None = None):
         if not self.is_connected:
-            raise RobotDeviceNotConnectedError(
+            raise DeviceNotConnectedError(
                 f"DynamixelMotorsBus({self.port}) is not connected. You need to run `motors_bus.connect()`."
             )
 
@@ -772,7 +772,7 @@ class DynamixelMotorsBus:
 
     def write(self, data_name, values: int | float | np.ndarray, motor_names: str | list[str] | None = None):
         if not self.is_connected:
-            raise RobotDeviceNotConnectedError(
+            raise DeviceNotConnectedError(
                 f"DynamixelMotorsBus({self.port}) is not connected. You need to run `motors_bus.connect()`."
             )
 
@@ -841,7 +841,7 @@ class DynamixelMotorsBus:
 
     def disconnect(self):
         if not self.is_connected:
-            raise RobotDeviceNotConnectedError(
+            raise DeviceNotConnectedError(
                 f"DynamixelMotorsBus({self.port}) is not connected. Try running `motors_bus.connect()` first."
             )
 
@@ -857,3 +857,25 @@ class DynamixelMotorsBus:
     def __del__(self):
         if getattr(self, "is_connected", False):
             self.disconnect()
+
+
+def set_operating_mode(arm: DynamixelMotorsBus):
+    if (arm.read("Torque_Enable") != TorqueMode.DISABLED.value).any():
+        raise ValueError("To run set robot preset, the torque must be disabled on all motors.")
+
+    # Use 'extended position mode' for all motors except gripper, because in joint mode the servos can't
+    # rotate more than 360 degrees (from 0 to 4095) And some mistake can happen while assembling the arm,
+    # you could end up with a servo with a position 0 or 4095 at a crucial point See [
+    # https://emanual.robotis.com/docs/en/dxl/x/x_series/#operating-mode11]
+    all_motors_except_gripper = [name for name in arm.motor_names if name != "gripper"]
+    if len(all_motors_except_gripper) > 0:
+        # 4 corresponds to Extended Position on Koch motors
+        arm.write("Operating_Mode", 4, all_motors_except_gripper)
+
+    # Use 'position control current based' for gripper to be limited by the limit of the current.
+    # For the follower gripper, it means it can grasp an object without forcing too much even tho,
+    # it's goal position is a complete grasp (both gripper fingers are ordered to join and reach a touch).
+    # For the leader gripper, it means we can use it as a physical trigger, since we can force with our finger
+    # to make it move, and it will move back to its original target position when we release the force.
+    # 5 corresponds to Current Controlled Position on Koch gripper motors "xl330-m077, xl330-m288"
+    arm.write("Operating_Mode", 5, "gripper")
