@@ -29,6 +29,30 @@ from datasets.features.features import register_feature
 from PIL import Image
 from torchcodec.decoders import VideoDecoder
 
+def decode_video_frames(
+    video_path: Path | str,
+    timestamps: list[float],
+    tolerance_s: float,
+    backend: str = "torchcodec",
+) -> torch.Tensor:
+        """
+        Decodes video frames using the specified backend.
+        
+        Args:
+            video_path (Path): Path to the video file.
+            query_ts (list[float]): List of timestamps to extract frames.
+        
+        Returns:
+            torch.Tensor: Decoded frames.
+
+        Currently supports torchcodec on cpu and pyav.
+        """
+        if backend == "torchcodec":
+            return decode_video_frames_torchcodec(video_path, timestamps, tolerance_s)
+        elif backend == "pyav":
+            return decode_video_frames_torchvision(video_path, timestamps, tolerance_s, backend)
+        else:
+            raise ValueError(f"Unsupported video backend: {backend}")
 
 def decode_video_frames_torchvision(
     video_path: Path | str,
