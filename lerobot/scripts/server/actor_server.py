@@ -141,21 +141,14 @@ def send_transitions(
     shutdown_event: any,  # Event,
 ) -> hilserl_pb2.Empty:
     """
-    Streams data from the actor to the learner.
+    Sends transitions to the learner.
 
-    This function continuously retrieves messages from the queue and processes them based on their type:
+    This function continuously retrieves messages from the queue and processes:
 
     - **Transition Data:**
         - A batch of transitions (observation, action, reward, next observation) is collected.
         - Transitions are moved to the CPU and serialized using PyTorch.
         - The serialized data is wrapped in a `hilserl_pb2.Transition` message and sent to the learner.
-
-    - **Interaction Messages:**
-        - Contains useful statistics about episodic rewards and policy timings.
-        - The message is serialized using `pickle` and sent to the learner.
-
-    Yields:
-        hilserl_pb2.ActorInformation: The response message containing either transition data or an interaction message.
     """
 
     # Setup process handlers to handle shutdown signal
@@ -185,6 +178,15 @@ def send_interactions(
     interactions_queue: Queue,
     shutdown_event: any,  # Event,
 ) -> hilserl_pb2.Empty:
+    """
+    Sends interactions to the learner.
+
+    This function continuously retrieves messages from the queue and processes:
+
+    - **Interaction Messages:**
+        - Contains useful statistics about episodic rewards and policy timings.
+        - The message is serialized using `pickle` and sent to the learner.
+    """
     # Setup process handlers to handle shutdown signal
     # But use shutdown event from the main process
     setup_process_handlers()
