@@ -23,7 +23,7 @@ from concurrent.futures import ThreadPoolExecutor
 # from torch.multiprocessing import Event, Queue, Process
 # from threading import Event, Thread
 # from torch.multiprocessing import Queue, Event
-from threading import Thread, Event
+from threading import Thread
 from torch.multiprocessing import Queue
 
 from lerobot.scripts.server.utils import setup_process_handlers
@@ -205,7 +205,7 @@ def start_learner_threads(
     cfg: DictConfig,
     logger: Logger,
     out_dir: str,
-    shutdown_event: Event,
+    shutdown_event: any,  # Event,
 ) -> None:
     # Create multiprocessing queues
     transition_queue = Queue()
@@ -257,7 +257,7 @@ def start_learner_server(
     parameters_queue: Queue,
     transition_queue: Queue,
     interaction_message_queue: Queue,
-    shutdown_event: Event,
+    shutdown_event: any,  # Event,
     cfg: DictConfig,
 ):
     # Return back for MP
@@ -327,7 +327,7 @@ def add_actor_information_and_train(
     device: str,
     logger: Logger,
     out_dir: str,
-    shutdown_event: Event,
+    shutdown_event: any,  # Event,
     transition_queue: Queue,
     interaction_message_queue: Queue,
     parameters_queue: Queue,
@@ -353,16 +353,12 @@ def add_actor_information_and_train(
     Args:
         cfg: Configuration object containing hyperparameters.
         device (str): The computing device (`"cpu"` or `"cuda"`).
-        replay_buffer (ReplayBuffer): The primary replay buffer storing online transitions.
-        offline_replay_buffer (ReplayBuffer): An additional buffer for offline transitions.
-        batch_size (int): The number of transitions to sample per training step.
-        optimizers (Dict[str, torch.optim.Optimizer]): A dictionary of optimizers (`"actor"`, `"critic"`, `"temperature"`).
-        policy (nn.Module): The reinforcement learning policy with critic, actor, and temperature parameters.
-        policy_lock (Lock): A threading lock to ensure safe policy updates.
         logger (Logger): Logger instance for tracking training progress.
-        resume_optimization_step (int | None): In the case of resume training, start from the last optimization step reached.
-        resume_interaction_step (int | None): In the case of resume training, shift the interaction step with the last saved step in order to not break logging.
-        shutdown_event (Event | None): Event to signal shutdown.
+        out_dir (str): The output directory for storing training checkpoints and logs.
+        shutdown_event (Event): Event to signal shutdown.
+        transition_queue (Queue): Queue for receiving transitions from the actor.
+        interaction_message_queue (Queue): Queue for receiving interaction messages from the actor.
+        parameters_queue (Queue): Queue for sending policy parameters to the actor.
     """
 
     device = get_safe_torch_device(cfg.device, log=True)

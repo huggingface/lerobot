@@ -70,7 +70,7 @@ ACTOR_SHUTDOWN_TIMEOUT = 30
 def receive_policy(
     cfg: DictConfig,
     parameters_queue: Queue,
-    shutdown_event: Event,
+    shutdown_event: any,  # Event,
 ):
     logging.info("[ACTOR] Start receiving parameters from the Learner")
 
@@ -116,7 +116,8 @@ def transitions_stream(
 
 
 def interactions_stream(
-    shutdown_event: Event, interactions_queue: Queue
+    shutdown_event: any,  # Event,
+    interactions_queue: Queue,
 ) -> hilserl_pb2.Empty:
     while not shutdown_event.is_set():
         try:
@@ -137,7 +138,7 @@ def interactions_stream(
 def send_transitions(
     cfg: DictConfig,
     transitions_queue: Queue,
-    shutdown_event: Event,
+    shutdown_event: any,  # Event,
 ) -> hilserl_pb2.Empty:
     """
     Streams data from the actor to the learner.
@@ -182,7 +183,7 @@ def send_transitions(
 def send_interactions(
     cfg: DictConfig,
     interactions_queue: Queue,
-    shutdown_event: Event,
+    shutdown_event: any,  # Event,
 ) -> hilserl_pb2.Empty:
     # Setup process handlers to handle shutdown signal
     # But use shutdown event from the main process
@@ -266,7 +267,7 @@ def act_with_policy(
     cfg: DictConfig,
     robot: Robot,
     reward_classifier: nn.Module,
-    shutdown_event: Event,
+    shutdown_event: any,  # Event,
     parameters_queue: Queue,
     transitions_queue: Queue,
     interactions_queue: Queue,
@@ -477,7 +478,11 @@ def log_policy_frequency_issue(
         )
 
 
-def establish_learner_connection(stub, shutdown_event: Event, attempts=30):
+def establish_learner_connection(
+    stub,
+    shutdown_event: any,  # Event,
+    attempts=30,
+):
     for _ in range(attempts):
         if shutdown_event.is_set():
             logging.info("[ACTOR] Shutting down establish_learner_connection")
