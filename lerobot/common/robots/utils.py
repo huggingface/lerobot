@@ -1,15 +1,9 @@
+import logging
 from typing import Protocol
 
-from lerobot.common.robots.aloha.configuration_aloha import AlohaRobotConfig
-from lerobot.common.robots.config_abc import (
-    ManipulatorRobotConfig,
-    RobotConfig,
-)
-from lerobot.common.robots.koch.configuration_koch import KochBimanualRobotConfig, KochRobotConfig
-from lerobot.common.robots.lekiwi.configuration_lekiwi import LeKiwiRobotConfig
-from lerobot.common.robots.moss.configuration_moss import MossRobotConfig
-from lerobot.common.robots.so_100.configuration_so_100 import So100RobotConfig
-from lerobot.common.robots.stretch3.configuration_stretch3 import StretchRobotConfig
+import numpy as np
+
+from lerobot.common.robots import RobotConfig
 
 
 def get_arm_id(name, arm_type):
@@ -19,8 +13,8 @@ def get_arm_id(name, arm_type):
     return f"{name}_{arm_type}"
 
 
+# TODO(aliberts): Remove and point to lerobot.common.robots.Robot
 class Robot(Protocol):
-    # TODO(rcadene, aliberts): Add unit test checking the protocol is implemented in the corresponding classes
     robot_type: str
     features: dict
 
@@ -34,24 +28,39 @@ class Robot(Protocol):
 
 def make_robot_config(robot_type: str, **kwargs) -> RobotConfig:
     if robot_type == "aloha":
+        from .aloha.configuration_aloha import AlohaRobotConfig
+
         return AlohaRobotConfig(**kwargs)
     elif robot_type == "koch":
+        from .koch.configuration_koch import KochRobotConfig
+
         return KochRobotConfig(**kwargs)
-    elif robot_type == "koch_bimanual":
-        return KochBimanualRobotConfig(**kwargs)
+    # elif robot_type == "koch_bimanual":
+    #     return KochBimanualRobotConfig(**kwargs)
     elif robot_type == "moss":
+        from .moss.configuration_moss import MossRobotConfig
+
         return MossRobotConfig(**kwargs)
     elif robot_type == "so100":
+        from .so100.configuration_so100 import So100RobotConfig
+
         return So100RobotConfig(**kwargs)
     elif robot_type == "stretch":
+        from .stretch3.configuration_stretch3 import StretchRobotConfig
+
         return StretchRobotConfig(**kwargs)
     elif robot_type == "lekiwi":
+        from .lekiwi.configuration_lekiwi import LeKiwiRobotConfig
+
         return LeKiwiRobotConfig(**kwargs)
     else:
         raise ValueError(f"Robot type '{robot_type}' is not available.")
 
 
 def make_robot_from_config(config: RobotConfig):
+    from .lekiwi.configuration_lekiwi import LeKiwiRobotConfig
+    from .manipulator import ManipulatorRobotConfig
+
     if isinstance(config, ManipulatorRobotConfig):
         from lerobot.common.robots.manipulator import ManipulatorRobot
 
@@ -61,11 +70,31 @@ def make_robot_from_config(config: RobotConfig):
 
         return MobileManipulator(config)
     else:
-        from lerobot.common.robots.stretch3.robot_stretch3 import StretchRobot
+        from lerobot.common.robots.stretch3.robot_stretch3 import Stretch3Robot
 
-        return StretchRobot(config)
+        return Stretch3Robot(config)
 
 
 def make_robot(robot_type: str, **kwargs) -> Robot:
     config = make_robot_config(robot_type, **kwargs)
     return make_robot_from_config(config)
+
+
+def ensure_safe_goal_position(
+    goal_pos: np.ndarray, present_pos: np.ndarray, max_relative_target: float | list[float]
+):
+    # Cap relative action target magnitude for safety.
+    diff = goal_pos - present_pos
+    max_relative_target = np.array(max_relative_target)
+    safe_diff = np.min(diff, max_relative_target)
+    safe_diff = np.max(safe_diff, -max_relative_target)
+    safe_goal_pos = present_pos + safe_diff
+
+    if not np.allclose(goal_pos, safe_goal_pos):
+        logging.warning(
+            "Relative goal position magnitude had to be clamped to be safe.\n"
+            f"  requested relative goal position target: {diff}\n"
+            f"    clamped relative goal position target: {safe_diff}"
+        )
+
+    return safe_goal_pos

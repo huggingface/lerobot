@@ -19,20 +19,3 @@ def make_cameras_from_configs(camera_configs: dict[str, CameraConfig]) -> dict[s
             raise ValueError(f"The motor type '{cfg.type}' is not valid.")
 
     return cameras
-
-
-def make_camera(camera_type, **kwargs) -> Camera:
-    if camera_type == "opencv":
-        from .opencv import OpenCVCamera, OpenCVCameraConfig
-
-        config = OpenCVCameraConfig(**kwargs)
-        return OpenCVCamera(config)
-
-    elif camera_type == "intelrealsense":
-        from .intel import RealSenseCamera, RealSenseCameraConfig
-
-        config = RealSenseCameraConfig(**kwargs)
-        return RealSenseCamera(config)
-
-    else:
-        raise ValueError(f"The camera type '{camera_type}' is not valid.")

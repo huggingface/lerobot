@@ -26,8 +26,8 @@ pytest -sx 'tests/test_robots.py::test_robot[aloha-True]'
 import pytest
 import torch
 
+from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.common.robots.utils import make_robot
-from lerobot.common.utils.robot_utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
 from tests.utils import TEST_ROBOT_TYPES, mock_calibration_dir, require_robot
 
 
@@ -54,15 +54,15 @@ def test_robot(tmp_path, request, robot_type, mock):
 
     # Test using robot before connecting raises an error
     robot = make_robot(**robot_kwargs)
-    with pytest.raises(RobotDeviceNotConnectedError):
+    with pytest.raises(DeviceNotConnectedError):
         robot.teleop_step()
-    with pytest.raises(RobotDeviceNotConnectedError):
+    with pytest.raises(DeviceNotConnectedError):
         robot.teleop_step(record_data=True)
-    with pytest.raises(RobotDeviceNotConnectedError):
+    with pytest.raises(DeviceNotConnectedError):
         robot.capture_observation()
-    with pytest.raises(RobotDeviceNotConnectedError):
+    with pytest.raises(DeviceNotConnectedError):
         robot.send_action(None)
-    with pytest.raises(RobotDeviceNotConnectedError):
+    with pytest.raises(DeviceNotConnectedError):
         robot.disconnect()
 
     # Test deleting the object without connecting first
@@ -74,7 +74,7 @@ def test_robot(tmp_path, request, robot_type, mock):
     assert robot.is_connected
 
     # Test connecting twice raises an error
-    with pytest.raises(RobotDeviceAlreadyConnectedError):
+    with pytest.raises(DeviceAlreadyConnectedError):
         robot.connect()
 
     # TODO(rcadene, aliberts): Test disconnecting with `__del__` instead of `disconnect`

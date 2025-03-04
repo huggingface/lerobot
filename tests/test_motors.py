@@ -30,7 +30,7 @@ import time
 import numpy as np
 import pytest
 
-from lerobot.common.utils.robot_utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
+from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.scripts.find_motors_bus_port import find_port
 from tests.utils import TEST_MOTOR_TYPES, make_motors_bus, require_motor
 
@@ -89,11 +89,11 @@ def test_motors_bus(request, motor_type, mock):
     motors_bus = make_motors_bus(motor_type, mock=mock)
 
     # Test reading and writing before connecting raises an error
-    with pytest.raises(RobotDeviceNotConnectedError):
+    with pytest.raises(DeviceNotConnectedError):
         motors_bus.read("Torque_Enable")
-    with pytest.raises(RobotDeviceNotConnectedError):
+    with pytest.raises(DeviceNotConnectedError):
         motors_bus.write("Torque_Enable", 1)
-    with pytest.raises(RobotDeviceNotConnectedError):
+    with pytest.raises(DeviceNotConnectedError):
         motors_bus.disconnect()
 
     # Test deleting the object without connecting first
@@ -104,7 +104,7 @@ def test_motors_bus(request, motor_type, mock):
     motors_bus.connect()
 
     # Test connecting twice raises an error
-    with pytest.raises(RobotDeviceAlreadyConnectedError):
+    with pytest.raises(DeviceAlreadyConnectedError):
         motors_bus.connect()
 
     # Test disabling torque and reading torque on all motors
