@@ -463,7 +463,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 video files are already present on local disk, they won't be downloaded again. Defaults to
                 True.
             video_backend (str | None, optional): Video backend to use for decoding videos. Defaults to torchcodec.
-                You can also use the 'pyav' decoder used by Torchvision.
+                You can also use the 'pyav' decoder used by Torchvision, which used to be the default option, or 'video_reader' which is another decoder of Torchvision.
         """
         super().__init__()
         self.repo_id = repo_id
