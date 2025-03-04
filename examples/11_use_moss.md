@@ -2,7 +2,7 @@ This tutorial explains how to use [Moss v1](https://github.com/jess-moss/moss-ro
 
 ## Source the parts
 
-Follow this [README](https://github.com/jess-moss/moss-robot-arms). It contains the bill of materials, with link to source the parts, as well as the instructions to 3D print the parts, and advices if it's your first time printing or if you don't own a 3D printer already.
+Follow this [README](https://github.com/jess-moss/moss-robot-arms). It contains the bill of materials with link to source the parts, as well as the instructions to 3D print the parts and advice if it's your first time printing or if you don't own a 3D printer already.
 
 **Important**: Before assembling, you will first need to configure your motors. To this end, we provide a nice script, so let's first install LeRobot. After configuration, we will also guide you through assembly.
 
@@ -256,7 +256,7 @@ python lerobot/scripts/control_robot.py \
   --control.push_to_hub=true
 ```
 
-Note: You can resume recording by adding `--control.resume=true`. Also if you didn't push your dataset yet, add `--control.local_files_only=true`.
+Note: You can resume recording by adding `--control.resume=true`.
 
 ## Visualize a dataset
 
@@ -284,8 +284,6 @@ python lerobot/scripts/control_robot.py \
   --control.episode=0
 ```
 
-Note: If you didn't push your dataset yet, add `--control.local_files_only=true`.
-
 ## Train a policy
 
 To train a policy to control your robot, use the [`python lerobot/scripts/train.py`](../lerobot/scripts/train.py) script. A few arguments are required. Here is an example command:
@@ -298,8 +296,6 @@ python lerobot/scripts/train.py \
   --device=cuda \
   --wandb.enable=true
 ```
-
-Note: If you didn't push your dataset yet, add `--control.local_files_only=true`.
 
 Let's explain it:
 1. We provided the dataset as argument with `--dataset.repo_id=${HF_USER}/moss_test`.

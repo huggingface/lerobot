@@ -1,5 +1,7 @@
 import random
+from functools import partial
 from pathlib import Path
+from typing import Protocol
 from unittest.mock import patch
 
 import datasets
@@ -27,8 +29,12 @@ from tests.fixtures.constants import (
 )
 
 
+class LeRobotDatasetFactory(Protocol):
+    def __call__(self, *args, **kwargs) -> LeRobotDataset: ...
+
+
 def get_task_index(task_dicts: dict, task: str) -> int:
-    tasks = {d["task_index"]: d["task"] for d in task_dicts}
+    tasks = {d["task_index"]: d["task"] for d in task_dicts.values()}
     task_to_task_index = {task: task_idx for task_idx, task in tasks.items()}
     return task_to_task_index[task]
 
@@ -141,6 +147,7 @@ def stats_factory():
                     "mean": np.full((3, 1, 1), 0.5, dtype=np.float32).tolist(),
                     "min": np.full((3, 1, 1), 0, dtype=np.float32).tolist(),
                     "std": np.full((3, 1, 1), 0.25, dtype=np.float32).tolist(),
+                    "count": [10],
                 }
             else:
                 stats[key] = {
@@ -148,6 +155,7 @@ def stats_factory():
                     "mean": np.full(shape, 0.5, dtype=dtype).tolist(),
                     "min": np.full(shape, 0, dtype=dtype).tolist(),
                     "std": np.full(shape, 0.25, dtype=dtype).tolist(),
+                    "count": [10],
                 }
         return stats
 
@@ -155,13 +163,30 @@ def stats_factory():
 
 
 @pytest.fixture(scope="session")
+def episodes_stats_factory(stats_factory):
+    def _create_episodes_stats(
+        features: dict[str],
+        total_episodes: int = 3,
+    ) -> dict:
+        episodes_stats = {}
+        for episode_index in range(total_episodes):
+            episodes_stats[episode_index] = {
+                "episode_index": episode_index,
+                "stats": stats_factory(features),
+            }
+        return episodes_stats
+
+    return _create_episodes_stats
+
+
+@pytest.fixture(scope="session")
 def tasks_factory():
     def _create_tasks(total_tasks: int = 3) -> int:
-        tasks_list = []
-        for i in range(total_tasks):
-            task_dict = {"task_index": i, "task": f"Perform action {i}."}
-            tasks_list.append(task_dict)
-        return tasks_list
+        tasks = {}
+        for task_index in range(total_tasks):
+            task_dict = {"task_index": task_index, "task": f"Perform action {task_index}."}
+            tasks[task_index] = task_dict
+        return tasks
 
     return _create_tasks
 
@@ -190,10 +215,10 @@ def episodes_factory(tasks_factory):
         # Generate random lengths that sum up to total_length
         lengths = np.random.multinomial(total_frames, [1 / total_episodes] * total_episodes).tolist()
 
-        tasks_list = [task_dict["task"] for task_dict in tasks]
+        tasks_list = [task_dict["task"] for task_dict in tasks.values()]
         num_tasks_available = len(tasks_list)
 
-        episodes_list = []
+        episodes = {}
         remaining_tasks = tasks_list.copy()
         for ep_idx in range(total_episodes):
             num_tasks_in_episode = random.randint(1, min(3, num_tasks_available)) if multi_task else 1
@@ -203,15 +228,13 @@ def episodes_factory(tasks_factory):
                 for task in episode_tasks:
                     remaining_tasks.remove(task)
 
-            episodes_list.append(
-                {
-                    "episode_index": ep_idx,
-                    "tasks": episode_tasks,
-                    "length": lengths[ep_idx],
-                }
-            )
+            episodes[ep_idx] = {
+                "episode_index": ep_idx,
+                "tasks": episode_tasks,
+                "length": lengths[ep_idx],
+            }
 
-        return episodes_list
+        return episodes
 
     return _create_episodes
 
@@ -235,7 +258,7 @@ def hf_dataset_factory(features_factory, tasks_factory, episodes_factory, img_ar
         frame_index_col = np.array([], dtype=np.int64)
         episode_index_col = np.array([], dtype=np.int64)
         task_index = np.array([], dtype=np.int64)
-        for ep_dict in episodes:
+        for ep_dict in episodes.values():
             timestamp_col = np.concatenate((timestamp_col, np.arange(ep_dict["length"]) / fps))
             frame_index_col = np.concatenate((frame_index_col, np.arange(ep_dict["length"], dtype=int)))
             episode_index_col = np.concatenate(
@@ -278,6 +301,7 @@ def hf_dataset_factory(features_factory, tasks_factory, episodes_factory, img_ar
 def lerobot_dataset_metadata_factory(
     info_factory,
     stats_factory,
+    episodes_stats_factory,
     tasks_factory,
     episodes_factory,
     mock_snapshot_download_factory,
@@ -287,14 +311,18 @@ def lerobot_dataset_metadata_factory(
         repo_id: str = DUMMY_REPO_ID,
         info: dict | None = None,
         stats: dict | None = None,
+        episodes_stats: list[dict] | None = None,
         tasks: list[dict] | None = None,
         episodes: list[dict] | None = None,
-        local_files_only: bool = False,
     ) -> LeRobotDatasetMetadata:
         if not info:
             info = info_factory()
         if not stats:
             stats = stats_factory(features=info["features"])
+        if not episodes_stats:
+            episodes_stats = episodes_stats_factory(
+                features=info["features"], total_episodes=info["total_episodes"]
+            )
         if not tasks:
             tasks = tasks_factory(total_tasks=info["total_tasks"])
         if not episodes:
@@ -305,21 +333,20 @@ def lerobot_dataset_metadata_factory(
         mock_snapshot_download = mock_snapshot_download_factory(
             info=info,
             stats=stats,
+            episodes_stats=episodes_stats,
             tasks=tasks,
             episodes=episodes,
         )
         with (
-            patch(
-                "lerobot.common.datasets.lerobot_dataset.get_hub_safe_version"
-            ) as mock_get_hub_safe_version_patch,
+            patch("lerobot.common.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version_patch,
             patch(
                 "lerobot.common.datasets.lerobot_dataset.snapshot_download"
             ) as mock_snapshot_download_patch,
         ):
-            mock_get_hub_safe_version_patch.side_effect = lambda repo_id, version: version
+            mock_get_safe_version_patch.side_effect = lambda repo_id, version: version
             mock_snapshot_download_patch.side_effect = mock_snapshot_download
 
-            return LeRobotDatasetMetadata(repo_id=repo_id, root=root, local_files_only=local_files_only)
+            return LeRobotDatasetMetadata(repo_id=repo_id, root=root)
 
     return _create_lerobot_dataset_metadata
 
@@ -328,12 +355,13 @@ def lerobot_dataset_metadata_factory(
 def lerobot_dataset_factory(
     info_factory,
     stats_factory,
+    episodes_stats_factory,
     tasks_factory,
     episodes_factory,
     hf_dataset_factory,
     mock_snapshot_download_factory,
     lerobot_dataset_metadata_factory,
-):
+) -> LeRobotDatasetFactory:
     def _create_lerobot_dataset(
         root: Path,
         repo_id: str = DUMMY_REPO_ID,
@@ -343,6 +371,7 @@ def lerobot_dataset_factory(
         multi_task: bool = False,
         info: dict | None = None,
         stats: dict | None = None,
+        episodes_stats: list[dict] | None = None,
         tasks: list[dict] | None = None,
         episode_dicts: list[dict] | None = None,
         hf_dataset: datasets.Dataset | None = None,
@@ -354,6 +383,8 @@ def lerobot_dataset_factory(
             )
         if not stats:
             stats = stats_factory(features=info["features"])
+        if not episodes_stats:
+            episodes_stats = episodes_stats_factory(features=info["features"], total_episodes=total_episodes)
         if not tasks:
             tasks = tasks_factory(total_tasks=info["total_tasks"])
         if not episode_dicts:
@@ -369,6 +400,7 @@ def lerobot_dataset_factory(
         mock_snapshot_download = mock_snapshot_download_factory(
             info=info,
             stats=stats,
+            episodes_stats=episodes_stats,
             tasks=tasks,
             episodes=episode_dicts,
             hf_dataset=hf_dataset,
@@ -378,19 +410,26 @@ def lerobot_dataset_factory(
             repo_id=repo_id,
             info=info,
             stats=stats,
+            episodes_stats=episodes_stats,
             tasks=tasks,
             episodes=episode_dicts,
-            local_files_only=kwargs.get("local_files_only", False),
         )
         with (
             patch("lerobot.common.datasets.lerobot_dataset.LeRobotDatasetMetadata") as mock_metadata_patch,
+            patch("lerobot.common.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version_patch,
             patch(
                 "lerobot.common.datasets.lerobot_dataset.snapshot_download"
             ) as mock_snapshot_download_patch,
         ):
             mock_metadata_patch.return_value = mock_metadata
+            mock_get_safe_version_patch.side_effect = lambda repo_id, version: version
             mock_snapshot_download_patch.side_effect = mock_snapshot_download
 
             return LeRobotDataset(repo_id=repo_id, root=root, **kwargs)
 
     return _create_lerobot_dataset
+
+
+@pytest.fixture(scope="session")
+def empty_lerobot_dataset_factory() -> LeRobotDatasetFactory:
+    return partial(LeRobotDataset.create, repo_id=DUMMY_REPO_ID, fps=DEFAULT_FPS)

@@ -2,6 +2,7 @@ exclude: ^(tests/data)
 default_language_version:
     python: python3.10
 repos:
+  ##### Style / Misc. #####
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
@@ -13,21 +14,34 @@ repos:
       - id: check-toml
       - id: end-of-file-fixer
       - id: trailing-whitespace
+  - repo: https://github.com/crate-ci/typos
+    rev: v1.30.0
+    hooks:
+      - id: typos
+        args: [--force-exclude]
   - repo: https://github.com/asottile/pyupgrade
     rev: v3.19.1
     hooks:
     -   id: pyupgrade
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.9.6
+    rev: v0.9.9
     hooks:
       - id: ruff
         args: [--fix]
       - id: ruff-format
+
+  ##### Security #####
   - repo: https://github.com/gitleaks/gitleaks
-    rev: v8.23.3
+    rev: v8.24.0
     hooks:
       - id: gitleaks
   - repo: https://github.com/woodruffw/zizmor-pre-commit
-    rev: v1.3.1
+    rev: v1.4.1
     hooks:
       - id: zizmor
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.8.3
+    hooks:
+    - id: bandit
+      args: ["-c", "pyproject.toml"]
+      additional_dependencies: ["bandit[toml]"]
