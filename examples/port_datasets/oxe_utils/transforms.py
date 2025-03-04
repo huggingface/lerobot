@@ -31,6 +31,7 @@ def droid_baseact_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     """
     DROID dataset transformation for actions expressed in *base* frame of the robot.
     """
+
     def rand_swap_exterior_images(img1, img2):
         """
         Randomly swaps the two exterior images (for training with single exterior input).
@@ -55,11 +56,11 @@ def droid_baseact_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
         )
     )
     # trajectory["observation"]["proprio"] = tf.concat(
-        # (
-            # trajectory["observation"]["cartesian_position"],
-            # trajectory["observation"]["gripper_position"],
-        # ),
-        # axis=-1,
+    # (
+    # trajectory["observation"]["cartesian_position"],
+    # trajectory["observation"]["gripper_position"],
+    # ),
+    # axis=-1,
     # )
     trajectory["observation"]["EEF_state"] = trajectory["observation"]["cartesian_position"]
     trajectory["observation"]["gripper_state"] = trajectory["observation"]["gripper_position"]
@@ -96,7 +97,7 @@ def bridge_oxe_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
 
     Note =>> In original Bridge V2 dataset, the first timestep has an all-zero action, so we remove it!
     """
-    for key in trajectory.keys():
+    for key in trajectory:
         if key == "traj_metadata":
             continue
         elif key in ["observation", "action"]:
@@ -126,7 +127,7 @@ def bridge_orig_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
 
     Note =>> In original Bridge V2 dataset, the first timestep has an all-zero action, so we remove it!
     """
-    for key in trajectory.keys():
+    for key in trajectory:
         if key == "traj_metadata":
             continue
         elif key == "observation":
@@ -198,7 +199,9 @@ def kuka_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     )
     eef_value = tf.io.decode_raw(eef_value, tf.float32)
     trajectory["observation"]["clip_function_input/base_pose_tool_reached"] = tf.reshape(eef_value, (-1, 7))
-    gripper_value = tf.io.decode_compressed(trajectory["observation"]["gripper_closed"], compression_type="ZLIB")
+    gripper_value = tf.io.decode_compressed(
+        trajectory["observation"]["gripper_closed"], compression_type="ZLIB"
+    )
     gripper_value = tf.io.decode_raw(gripper_value, tf.float32)
     trajectory["observation"]["gripper_closed"] = tf.reshape(gripper_value, (-1, 1))
     # trajectory["language_instruction"] = tf.fill(
@@ -228,7 +231,9 @@ def taco_play_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
 
 def jaco_play_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     trajectory["observation"]["state_eef"] = trajectory["observation"]["end_effector_cartesian_pos"][:, :6]
-    trajectory["observation"]["state_gripper"] = trajectory["observation"]["end_effector_cartesian_pos"][:, -1:]
+    trajectory["observation"]["state_gripper"] = trajectory["observation"]["end_effector_cartesian_pos"][
+        :, -1:
+    ]
 
     # make gripper action absolute action, +1 = open, 0 = close
     gripper_action = trajectory["action"]["gripper_closedness_action"][:, 0]
@@ -264,7 +269,9 @@ def berkeley_cable_routing_dataset_transform(trajectory: Dict[str, Any]) -> Dict
 
 def roboturk_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     # invert absolute gripper action, +1 = open, 0 = close
-    gripper_action = invert_gripper_actions(tf.clip_by_value(trajectory["action"]["gripper_closedness_action"], 0, 1))
+    gripper_action = invert_gripper_actions(
+        tf.clip_by_value(trajectory["action"]["gripper_closedness_action"], 0, 1)
+    )
 
     trajectory["action"] = tf.concat(
         (
@@ -374,7 +381,9 @@ def language_table_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, An
     instruction_bytes = trajectory["observation"]["instruction"]
     instruction_encoded = tf.strings.unicode_encode(instruction_bytes, output_encoding="UTF-8")
     # Remove trailing padding --> convert RaggedTensor to regular Tensor.
-    trajectory["language_instruction"] = tf.strings.split(instruction_encoded, "\x00")[:, :1].to_tensor()[:, 0]
+    trajectory["language_instruction"] = tf.strings.split(instruction_encoded, "\x00")[:, :1].to_tensor()[
+        :, 0
+    ]
     return trajectory
 
 
@@ -900,7 +909,9 @@ def libero_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
         axis=1,
     )
     trajectory["observation"]["EEF_state"] = trajectory["observation"]["state"][:, :6]
-    trajectory["observation"]["gripper_state"] = trajectory["observation"]["state"][:, -2:]  # 2D gripper state
+    trajectory["observation"]["gripper_state"] = trajectory["observation"]["state"][
+        :, -2:
+    ]  # 2D gripper state
     return trajectory
 
 

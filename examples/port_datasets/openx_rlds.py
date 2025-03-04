@@ -96,7 +96,16 @@ def generate_features_from_raw(builder: tfds.core.DatasetBuilder, use_videos: bo
         if state_encoding == StateEncoding.POS_EULER:
             state_names = ["x", "y", "z", "roll", "pitch", "yaw", "pad", "gripper"]
             if "libero" in dataset_name:
-                state_names = ["x", "y", "z", "roll", "pitch", "yaw", "gripper", "gripper"]  # 2D gripper state
+                state_names = [
+                    "x",
+                    "y",
+                    "z",
+                    "roll",
+                    "pitch",
+                    "yaw",
+                    "gripper",
+                    "gripper",
+                ]  # 2D gripper state
         elif state_encoding == StateEncoding.POS_QUAT:
             state_names = ["x", "y", "z", "rx", "ry", "rz", "rw", "gripper"]
 
@@ -183,7 +192,9 @@ def create_lerobot_dataset(
 
     builder = tfds.builder(dataset_name, data_dir=data_dir, version=version)
     features = generate_features_from_raw(builder, use_videos)
-    raw_dataset = builder.as_dataset(split="train").map(partial(transform_raw_dataset, dataset_name=dataset_name))
+    raw_dataset = builder.as_dataset(split="train").map(
+        partial(transform_raw_dataset, dataset_name=dataset_name)
+    )
 
     if fps is None:
         if dataset_name in OXE_DATASET_CONFIGS:
