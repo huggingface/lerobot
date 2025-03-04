@@ -64,7 +64,7 @@ class ACTConfig(PreTrainedConfig):
         output_normalization_modes: Similar dictionary as `normalize_input_modes`, but to unnormalize to the
             original scale. Note that this is also used for normalizing the training targets.
         vision_backbone: Name of the torchvision resnet backbone to use for encoding images.
-        pretrained_backbone_weights: Pretrained weights from torchvision to initalize the backbone.
+        pretrained_backbone_weights: Pretrained weights from torchvision to initialize the backbone.
             `None` means no pretrained weights.
         replace_final_stride_with_dilation: Whether to replace the ResNet's final 2x2 stride with a dilated
             convolution.

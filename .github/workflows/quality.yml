@@ -32,13 +32,27 @@ jobs:
         id: get-ruff-version
         run: |
           RUFF_VERSION=$(awk '/repo: https:\/\/github.com\/astral-sh\/ruff-pre-commit/{flag=1;next}/rev:/{if(flag){print $2;exit}}' .pre-commit-config.yaml)
-          echo "RUFF_VERSION=${RUFF_VERSION}" >> $GITHUB_ENV
+          echo "ruff_version=${RUFF_VERSION}" >> $GITHUB_OUTPUT
 
       - name: Install Ruff
-        run: python -m pip install "ruff==${{ env.RUFF_VERSION }}"
+        env:
+          RUFF_VERSION: ${{ steps.get-ruff-version.outputs.ruff_version }}
+        run: python -m pip install "ruff==${RUFF_VERSION}"
 
       - name: Ruff check
         run: ruff check --output-format=github
 
       - name: Ruff format
         run: ruff format --diff
+
+  typos:
+    name: Typos
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: typos-action
+        uses: crate-ci/typos@v1.29.10
