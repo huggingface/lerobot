@@ -20,6 +20,9 @@ training:
   grad_clip_norm: 10.0
   lr: 3e-4
 
+
+  storage_device: "cpu"
+
   eval_freq: 2500
   log_freq: 10
   save_freq: 2000000
@@ -30,7 +33,7 @@ training:
   online_steps_between_rollouts: 1000
   online_sampling_ratio: 1.0
   online_env_seed: 10000
-  online_buffer_capacity: 1000000
+  online_buffer_capacity: 200000
   online_buffer_seed_size: 0
   online_step_before_learning: 500
   do_online_rollout_async: false
