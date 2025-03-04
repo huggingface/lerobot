@@ -52,9 +52,15 @@ STATS_PATH = "meta/stats.json"
 EPISODES_STATS_PATH = "meta/episodes_stats.jsonl"
 TASKS_PATH = "meta/tasks.jsonl"
 
-DEFAULT_VIDEO_PATH = "videos/chunk-{episode_chunk:03d}/{video_key}/episode_{episode_index:06d}.mp4"
-DEFAULT_PARQUET_PATH = "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet"
-DEFAULT_IMAGE_PATH = "images/{image_key}/episode_{episode_index:06d}/frame_{frame_index:06d}.png"
+DEFAULT_VIDEO_PATH = (
+    "videos/chunk-{episode_chunk:03d}/{video_key}/episode_{episode_index:06d}.mp4"
+)
+DEFAULT_PARQUET_PATH = (
+    "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet"
+)
+DEFAULT_IMAGE_PATH = (
+    "images/{image_key}/episode_{episode_index:06d}/frame_{frame_index:06d}.png"
+)
 
 DATASET_CARD_TEMPLATE = """
 ---
@@ -540,7 +546,10 @@ def check_timestamps_sync(
 
 
 def check_delta_timestamps(
-    delta_timestamps: dict[str, list[float]], fps: int, tolerance_s: float, raise_value_error: bool = True
+    delta_timestamps: dict[str, list[float]],
+    fps: int,
+    tolerance_s: float,
+    raise_value_error: bool = True,
 ) -> bool:
     """This will check if all the values in delta_timestamps are multiples of 1/fps +/- tolerance.
     This is to ensure that these delta_timestamps added to any timestamp from a dataset will themselves be
@@ -548,10 +557,14 @@ def check_delta_timestamps(
     """
     outside_tolerance = {}
     for key, delta_ts in delta_timestamps.items():
-        within_tolerance = [abs(ts * fps - round(ts * fps)) / fps <= tolerance_s for ts in delta_ts]
+        within_tolerance = [
+            abs(ts * fps - round(ts * fps)) / fps <= tolerance_s for ts in delta_ts
+        ]
         if not all(within_tolerance):
             outside_tolerance[key] = [
-                ts for ts, is_within in zip(delta_ts, within_tolerance, strict=True) if not is_within
+                ts
+                for ts, is_within in zip(delta_ts, within_tolerance, strict=True)
+                if not is_within
             ]
 
     if len(outside_tolerance) > 0:
@@ -569,7 +582,9 @@ def check_delta_timestamps(
     return True
 
 
-def get_delta_indices(delta_timestamps: dict[str, list[float]], fps: int) -> dict[str, list[int]]:
+def get_delta_indices(
+    delta_timestamps: dict[str, list[float]], fps: int
+) -> dict[str, list[int]]:
     delta_indices = {}
     for key, delta_ts in delta_timestamps.items():
         delta_indices[key] = [round(d * fps) for d in delta_ts]
@@ -634,7 +649,9 @@ def create_lerobot_dataset_card(
         ],
     )
 
-    card_template = (importlib.resources.files("lerobot.common.datasets") / "card_template.md").read_text()
+    card_template = (
+        importlib.resources.files("lerobot.common.datasets") / "card_template.md"
+    ).read_text()
 
     return DatasetCard.from_template(
         card_data=card_data,

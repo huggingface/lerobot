@@ -334,8 +334,12 @@ def test_record_with_event_rerecord_episode(tmp_path, request, robot_type, mock)
         )
         dataset = record(robot, rec_cfg)
 
-        assert not mock_events["rerecord_episode"], "`rerecord_episode` wasn't properly reset to False"
-        assert not mock_events["exit_early"], "`exit_early` wasn't properly reset to False"
+        assert not mock_events[
+            "rerecord_episode"
+        ], "`rerecord_episode` wasn't properly reset to False"
+        assert not mock_events[
+            "exit_early"
+        ], "`exit_early` wasn't properly reset to False"
         assert len(dataset) == 1, "`dataset` should contain only 1 frame"
 
 
@@ -390,7 +394,8 @@ def test_record_with_event_exit_early(tmp_path, request, robot_type, mock):
 
 
 @pytest.mark.parametrize(
-    "robot_type, mock, num_image_writer_processes", [("koch", True, 0), ("koch", True, 1)]
+    "robot_type, mock, num_image_writer_processes",
+    [("koch", True, 0), ("koch", True, 1)],
 )
 @require_robot
 def test_record_with_event_stop_recording(tmp_path, request, robot_type, mock, num_image_writer_processes):

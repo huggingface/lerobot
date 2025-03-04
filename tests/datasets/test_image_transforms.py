@@ -364,10 +364,16 @@ def test_save_each_transform(img_tensor_factory, tmp_path):
     for transform in transforms:
         transform_dir = tmp_path / transform
         assert transform_dir.exists(), f"{transform} directory was not created."
-        assert any(transform_dir.iterdir()), f"No transformed images found in {transform} directory."
+        assert any(
+            transform_dir.iterdir()
+        ), f"No transformed images found in {transform} directory."
 
         # Check for specific files within each transform directory
-        expected_files = [f"{i}.png" for i in range(1, n_examples + 1)] + ["min.png", "max.png", "mean.png"]
+        expected_files = [f"{i}.png" for i in range(1, n_examples + 1)] + [
+            "min.png",
+            "max.png",
+            "mean.png",
+        ]
         for file_name in expected_files:
             assert (transform_dir / file_name).exists(), (
                 f"{file_name} was not found in {transform} directory."

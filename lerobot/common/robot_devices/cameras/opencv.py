@@ -45,10 +45,14 @@ from lerobot.common.utils.utils import capture_timestamp_utc
 MAX_OPENCV_INDEX = 60
 
 
-def find_cameras(raise_when_empty=False, max_index_search_range=MAX_OPENCV_INDEX, mock=False) -> list[dict]:
+def find_cameras(
+    raise_when_empty=False, max_index_search_range=MAX_OPENCV_INDEX, mock=False
+) -> list[dict]:
     cameras = []
     if platform.system() == "Linux":
-        print("Linux detected. Finding available camera indices through scanning '/dev/video*' ports")
+        print(
+            "Linux detected. Finding available camera indices through scanning '/dev/video*' ports"
+        )
         possible_ports = [str(port) for port in Path("/dev").glob("video*")]
         ports = _find_cameras(possible_ports, mock=mock)
         for port in ports:
@@ -180,7 +184,9 @@ def save_images_from_cameras(
                 dt_s = time.perf_counter() - now
                 busy_wait(1 / fps - dt_s)
 
-            print(f"Frame: {frame_index:04d}\tLatency (ms): {(time.perf_counter() - now) * 1000:.2f}")
+            print(
+                f"Frame: {frame_index:04d}\tLatency (ms): {(time.perf_counter() - now) * 1000:.2f}"
+            )
 
             if time.perf_counter() - start_time > record_time_s:
                 break
@@ -237,7 +243,9 @@ class OpenCVCamera:
         if platform.system() == "Linux":
             if isinstance(self.camera_index, int):
                 self.port = Path(f"/dev/video{self.camera_index}")
-            elif isinstance(self.camera_index, str) and is_valid_unix_path(self.camera_index):
+            elif isinstance(self.camera_index, str) and is_valid_unix_path(
+                self.camera_index
+            ):
                 self.port = Path(self.camera_index)
                 # Retrieve the camera index from a potentially symlinked path
                 self.camera_index = get_camera_index_from_unix_port(self.port)
@@ -283,7 +291,9 @@ class OpenCVCamera:
 
     def connect(self):
         if self.is_connected:
-            raise RobotDeviceAlreadyConnectedError(f"OpenCVCamera({self.camera_index}) is already connected.")
+            raise RobotDeviceAlreadyConnectedError(
+                f"OpenCVCamera({self.camera_index}) is already connected."
+            )
 
         if self.mock:
             import tests.cameras.mock_cv2 as cv2
@@ -344,7 +354,9 @@ class OpenCVCamera:
         actual_height = self.camera.get(cv2.CAP_PROP_FRAME_HEIGHT)
 
         # Using `math.isclose` since actual fps can be a float (e.g. 29.9 instead of 30)
-        if self.fps is not None and not math.isclose(self.fps, actual_fps, rel_tol=1e-3):
+        if self.fps is not None and not math.isclose(
+            self.fps, actual_fps, rel_tol=1e-3
+        ):
             # Using `OSError` since it's a broad that encompasses issues related to device communication
             raise OSError(
                 f"Can't set {self.fps=} for OpenCVCamera({self.camera_index}). Actual value is {actual_fps}."
@@ -386,7 +398,9 @@ class OpenCVCamera:
         if not ret:
             raise OSError(f"Can't capture color image from camera {self.camera_index}.")
 
-        requested_color_mode = self.color_mode if temporary_color_mode is None else temporary_color_mode
+        requested_color_mode = (
+            self.color_mode if temporary_color_mode is None else temporary_color_mode
+        )
 
         if requested_color_mode not in ["rgb", "bgr"]:
             raise ValueError(

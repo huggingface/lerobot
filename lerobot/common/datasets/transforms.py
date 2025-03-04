@@ -58,7 +58,9 @@ class RandomSubsetApply(Transform):
         elif not isinstance(n_subset, int):
             raise TypeError("n_subset should be an int or None")
         elif not (1 <= n_subset <= len(transforms)):
-            raise ValueError(f"n_subset should be in the interval [1, {len(transforms)}]")
+            raise ValueError(
+                f"n_subset should be in the interval [1, {len(transforms)}]"
+            )
 
         self.transforms = transforms
         total = sum(p)
@@ -119,16 +121,22 @@ class SharpnessJitter(Transform):
     def _check_input(self, sharpness):
         if isinstance(sharpness, (int, float)):
             if sharpness < 0:
-                raise ValueError("If sharpness is a single number, it must be non negative.")
+                raise ValueError(
+                    "If sharpness is a single number, it must be non negative."
+                )
             sharpness = [1.0 - sharpness, 1.0 + sharpness]
             sharpness[0] = max(sharpness[0], 0.0)
         elif isinstance(sharpness, collections.abc.Sequence) and len(sharpness) == 2:
             sharpness = [float(v) for v in sharpness]
         else:
-            raise TypeError(f"{sharpness=} should be a single number or a sequence with length 2.")
+            raise TypeError(
+                f"{sharpness=} should be a single number or a sequence with length 2."
+            )
 
         if not 0.0 <= sharpness[0] <= sharpness[1]:
-            raise ValueError(f"sharpnesss values should be between (0., inf), but got {sharpness}.")
+            raise ValueError(
+                f"sharpnesss values should be between (0., inf), but got {sharpness}."
+            )
 
         return float(sharpness[0]), float(sharpness[1])
 

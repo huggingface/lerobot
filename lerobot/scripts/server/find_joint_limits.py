@@ -31,7 +31,9 @@ def find_joint_bounds(
         if display_cameras and not is_headless():
             image_keys = [key for key in observation if "image" in key]
             for key in image_keys:
-                cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
+                cv2.imshow(
+                    key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR)
+                )
             cv2.waitKey(1)
 
         timestamp = time.perf_counter() - start_episode_t
@@ -57,7 +59,12 @@ if __name__ == "__main__":
         nargs="*",
         help="Any key=value arguments to override config values (use dots for.nested=overrides)",
     )
-    parser.add_argument("--control-time-s", type=float, default=20, help="Maximum episode length in seconds")
+    parser.add_argument(
+        "--control-time-s",
+        type=float,
+        default=20,
+        help="Maximum episode length in seconds",
+    )
     args = parser.parse_args()
     robot_cfg = init_hydra_config(args.robot_path, args.robot_overrides)
 

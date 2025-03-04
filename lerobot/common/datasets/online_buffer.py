@@ -131,7 +131,9 @@ class OnlineBuffer(torch.utils.data.Dataset):
         else:
             self._delta_timestamps = None
 
-    def _make_data_spec(self, data_spec: dict[str, Any], buffer_capacity: int) -> dict[str, dict[str, Any]]:
+    def _make_data_spec(
+        self, data_spec: dict[str, Any], buffer_capacity: int
+    ) -> dict[str, dict[str, Any]]:
         """Makes the data spec for np.memmap."""
         if any(k.startswith("_") for k in data_spec):
             raise ValueError(
@@ -154,14 +156,32 @@ class OnlineBuffer(torch.utils.data.Dataset):
             OnlineBuffer.NEXT_INDEX_KEY: {"dtype": np.dtype("int64"), "shape": ()},
             # Since the memmap is initialized with all-zeros, this keeps track of which indices are occupied
             # with real data rather than the dummy initialization.
-            OnlineBuffer.OCCUPANCY_MASK_KEY: {"dtype": np.dtype("?"), "shape": (buffer_capacity,)},
-            OnlineBuffer.INDEX_KEY: {"dtype": np.dtype("int64"), "shape": (buffer_capacity,)},
-            OnlineBuffer.FRAME_INDEX_KEY: {"dtype": np.dtype("int64"), "shape": (buffer_capacity,)},
-            OnlineBuffer.EPISODE_INDEX_KEY: {"dtype": np.dtype("int64"), "shape": (buffer_capacity,)},
-            OnlineBuffer.TIMESTAMP_KEY: {"dtype": np.dtype("float64"), "shape": (buffer_capacity,)},
+            OnlineBuffer.OCCUPANCY_MASK_KEY: {
+                "dtype": np.dtype("?"),
+                "shape": (buffer_capacity,),
+            },
+            OnlineBuffer.INDEX_KEY: {
+                "dtype": np.dtype("int64"),
+                "shape": (buffer_capacity,),
+            },
+            OnlineBuffer.FRAME_INDEX_KEY: {
+                "dtype": np.dtype("int64"),
+                "shape": (buffer_capacity,),
+            },
+            OnlineBuffer.EPISODE_INDEX_KEY: {
+                "dtype": np.dtype("int64"),
+                "shape": (buffer_capacity,),
+            },
+            OnlineBuffer.TIMESTAMP_KEY: {
+                "dtype": np.dtype("float64"),
+                "shape": (buffer_capacity,),
+            },
         }
         for k, v in data_spec.items():
-            complete_data_spec[k] = {"dtype": v["dtype"], "shape": (buffer_capacity, *v["shape"])}
+            complete_data_spec[k] = {
+                "dtype": v["dtype"],
+                "shape": (buffer_capacity, *v["shape"]),
+            }
         return complete_data_spec
 
     def add_data(self, data: dict[str, np.ndarray]):
@@ -188,7 +208,9 @@ class OnlineBuffer(torch.utils.data.Dataset):
 
         # Shift the incoming indices if necessary.
         if self.num_frames > 0:
-            last_episode_index = self._data[OnlineBuffer.EPISODE_INDEX_KEY][next_index - 1]
+            last_episode_index = self._data[OnlineBuffer.EPISODE_INDEX_KEY][
+                next_index - 1
+            ]
             last_data_index = self._data[OnlineBuffer.INDEX_KEY][next_index - 1]
             data[OnlineBuffer.EPISODE_INDEX_KEY] += last_episode_index + 1
             data[OnlineBuffer.INDEX_KEY] += last_data_index + 1
@@ -223,7 +245,11 @@ class OnlineBuffer(torch.utils.data.Dataset):
     @property
     def num_episodes(self) -> int:
         return len(
-            np.unique(self._data[OnlineBuffer.EPISODE_INDEX_KEY][self._data[OnlineBuffer.OCCUPANCY_MASK_KEY]])
+            np.unique(
+                self._data[OnlineBuffer.EPISODE_INDEX_KEY][
+                    self._data[OnlineBuffer.OCCUPANCY_MASK_KEY]
+                ]
+            )
         )
 
     @property
@@ -261,7 +287,9 @@ class OnlineBuffer(torch.utils.data.Dataset):
                 self._data[OnlineBuffer.OCCUPANCY_MASK_KEY],
             )
         )[0]
-        episode_timestamps = self._data[OnlineBuffer.TIMESTAMP_KEY][episode_data_indices]
+        episode_timestamps = self._data[OnlineBuffer.TIMESTAMP_KEY][
+            episode_data_indices
+        ]
 
         for data_key in self.delta_timestamps:
             # Note: The logic in this loop is copied from `load_previous_and_future_frames`.
@@ -278,7 +306,8 @@ class OnlineBuffer(torch.utils.data.Dataset):
 
             # Check violated query timestamps are all outside the episode range.
             assert (
-                (query_ts[is_pad] < episode_timestamps[0]) | (episode_timestamps[-1] < query_ts[is_pad])
+                (query_ts[is_pad] < episode_timestamps[0])
+                | (episode_timestamps[-1] < query_ts[is_pad])
             ).all(), (
                 f"One or several timestamps unexpectedly violate the tolerance ({min_} > {self.tolerance_s=}"
                 ") inside the episode range."
@@ -293,7 +322,9 @@ class OnlineBuffer(torch.utils.data.Dataset):
 
     def get_data_by_key(self, key: str) -> torch.Tensor:
         """Returns all data for a given data key as a Tensor."""
-        return torch.from_numpy(self._data[key][self._data[OnlineBuffer.OCCUPANCY_MASK_KEY]])
+        return torch.from_numpy(
+            self._data[key][self._data[OnlineBuffer.OCCUPANCY_MASK_KEY]]
+        )
 
 
 def compute_sampler_weights(
@@ -324,13 +355,19 @@ def compute_sampler_weights(
         - Options `drop_first_n_frames` and `episode_indices_to_use` can be added easily. They were not
           included here to avoid adding complexity.
     """
-    if len(offline_dataset) == 0 and (online_dataset is None or len(online_dataset) == 0):
-        raise ValueError("At least one of `offline_dataset` or `online_dataset` should be contain data.")
+    if len(offline_dataset) == 0 and (
+        online_dataset is None or len(online_dataset) == 0
+    ):
+        raise ValueError(
+            "At least one of `offline_dataset` or `online_dataset` should be contain data."
+        )
     if (online_dataset is None) ^ (online_sampling_ratio is None):
         raise ValueError(
             "`online_dataset` and `online_sampling_ratio` must be provided together or not at all."
         )
-    offline_sampling_ratio = 0 if online_sampling_ratio is None else 1 - online_sampling_ratio
+    offline_sampling_ratio = (
+        0 if online_sampling_ratio is None else 1 - online_sampling_ratio
+    )
 
     weights = []
 

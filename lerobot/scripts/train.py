@@ -73,7 +73,9 @@ def make_optimizer_and_scheduler(cfg, policy):
             },
         ]
         optimizer = torch.optim.AdamW(
-            optimizer_params_dicts, lr=cfg.training.lr, weight_decay=cfg.training.weight_decay
+            optimizer_params_dicts,
+            lr=cfg.training.lr,
+            weight_decay=cfg.training.weight_decay,
         )
         lr_scheduler = None
     elif cfg.policy.name == "diffusion":
@@ -100,14 +102,23 @@ def make_optimizer_and_scheduler(cfg, policy):
         optimizer = torch.optim.Adam(
             [
                 {"params": policy.actor.parameters(), "lr": policy.config.actor_lr},
-                {"params": policy.critic_ensemble.parameters(), "lr": policy.config.critic_lr},
-                {"params": policy.temperature.parameters(), "lr": policy.config.temperature_lr},
+                {
+                    "params": policy.critic_ensemble.parameters(),
+                    "lr": policy.config.critic_lr,
+                },
+                {
+                    "params": policy.temperature.parameters(),
+                    "lr": policy.config.temperature_lr,
+                },
             ]
         )
         lr_scheduler = None
 
     elif cfg.policy.name == "vqbet":
-        from lerobot.common.policies.vqbet.modeling_vqbet import VQBeTOptimizer, VQBeTScheduler
+        from lerobot.common.policies.vqbet.modeling_vqbet import (
+            VQBeTOptimizer,
+            VQBeTScheduler,
+        )
 
         optimizer = VQBeTOptimizer(policy, cfg)
         lr_scheduler = VQBeTScheduler(optimizer, cfg)
@@ -214,7 +225,9 @@ def train(cfg: TrainPipelineConfig):
     if cfg.resume:
         step, optimizer, lr_scheduler = load_training_state(cfg.checkpoint_path, optimizer, lr_scheduler)
 
-    num_learnable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
+    num_learnable_params = sum(
+        p.numel() for p in policy.parameters() if p.requires_grad
+    )
     num_total_params = sum(p.numel() for p in policy.parameters())
 
     logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}")
