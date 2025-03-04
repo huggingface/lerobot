@@ -237,7 +237,6 @@ def get_episode_data(dataset: LeRobotDataset | IterableNamespace, episode_index)
     selected_columns = [col for col, ft in dataset.features.items() if ft["dtype"] == "float32"]
     selected_columns.remove("timestamp")
 
-
     ignored_columns = []
     for column_name in selected_columns:
         shape = dataset.features[column_name]["shape"]
