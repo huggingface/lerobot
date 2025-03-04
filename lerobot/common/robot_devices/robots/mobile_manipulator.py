@@ -584,7 +584,7 @@ class MobileManipulator:
         # Create the body velocity vector [x, y, theta_rad].
         velocity_vector = np.array([x_cmd, y_cmd, theta_rad])
 
-        # Define the wheel mounting angles (defined from y axis cw)    
+        # Define the wheel mounting angles (defined from y axis cw)
         angles = np.radians(np.array([300, 180, 60]))
         # Build the kinematic matrix: each row maps body velocities to a wheel’s linear speed.
         # The third column (base_radius) accounts for the effect of rotation.
@@ -641,7 +641,7 @@ class MobileManipulator:
         # Compute each wheel’s linear speed (m/s) from its angular speed.
         wheel_linear_speeds = wheel_radps * wheel_radius
 
-        # Define the wheel mounting angles (defined from y axis cw) 
+        # Define the wheel mounting angles (defined from y axis cw)
         angles = np.radians(np.array([300, 180, 60]))
         m = np.array([[np.cos(a), np.sin(a), base_radius] for a in angles])
 
