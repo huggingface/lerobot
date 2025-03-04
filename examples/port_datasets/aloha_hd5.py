@@ -263,7 +263,7 @@ class DatasetConverter:
         console_handler.setFormatter(formatter)
         self.logger.addHandler(console_handler)
 
-        self.logger.info(f"{'-'*10} Aloha HD5 -> Lerobot Converter {'-'*10}")
+        self.logger.info(f"{'-' * 10} Aloha HD5 -> Lerobot Converter {'-' * 10}")
         self.logger.info(f"Processing Aloha HD5 dataset from {self.raw_path}")
         self.logger.info(f"Dataset will be stored in {self.dataset_repo_id}")
         self.logger.info(f"FPS: {self.fps}")
