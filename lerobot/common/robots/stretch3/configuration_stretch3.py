@@ -1,7 +1,10 @@
 from dataclasses import dataclass, field
 
-from lerobot.common.cameras.configs import CameraConfig, IntelRealSenseCameraConfig, OpenCVCameraConfig
-from lerobot.common.robots.config_abc import RobotConfig
+from lerobot.common.cameras import CameraConfig
+from lerobot.common.cameras.intel import RealSenseCameraConfig
+from lerobot.common.cameras.opencv import OpenCVCameraConfig
+
+from ..config import RobotConfig
 
 
 @RobotConfig.register_subclass("stretch")
@@ -12,6 +15,7 @@ class StretchRobotConfig(RobotConfig):
     # the number of motors in your follower arms.
     max_relative_target: int | None = None
 
+    # cameras
     cameras: dict[str, CameraConfig] = field(
         default_factory=lambda: {
             "navigation": OpenCVCameraConfig(
@@ -21,14 +25,14 @@ class StretchRobotConfig(RobotConfig):
                 height=720,
                 rotation=-90,
             ),
-            "head": IntelRealSenseCameraConfig(
+            "head": RealSenseCameraConfig(
                 name="Intel RealSense D435I",
                 fps=30,
                 width=640,
                 height=480,
                 rotation=90,
             ),
-            "wrist": IntelRealSenseCameraConfig(
+            "wrist": RealSenseCameraConfig(
                 name="Intel RealSense D405",
                 fps=30,
                 width=640,
