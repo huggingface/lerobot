@@ -50,10 +50,11 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
 
     def __post_init__(self):
         self.pretrained_path = None
-        if not is_torch_device_available(self.device):
+        if not self.device:
             auto_device = auto_select_torch_device()
             logging.warning(f"Device '{self.device}' is not available. Switching to '{auto_device}'.")
             self.device = auto_device
+        is_torch_device_available(self.device)
 
         # Automatically deactivate AMP if necessary
         if self.use_amp and not is_amp_available(self.device):
