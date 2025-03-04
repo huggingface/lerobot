@@ -282,7 +282,7 @@ class LeKiwiRobotConfig(RobotConfig):
     max_relative_target: int | None = None
 
     # Network Configuration
-    ip: str = "127.0.0.1" 
+    ip: str = "127.0.0.1"
     port: int = 5555
     video_port: int = 5556
 
