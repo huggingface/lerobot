@@ -5,25 +5,35 @@ fps: 10
 env:
   name: real_world
   task: null
-  state_dim: 6
-  action_dim: 6
+  state_dim: 12
+  action_dim: 3
   fps: ${fps}
   device: mps
 
   wrapper:
     crop_params_dict:
-      observation.images.front: [102, 43, 358, 523]
-      observation.images.side: [92, 123, 379, 349]
-      # observation.images.front: [109, 37, 361, 557]
-      # observation.images.side: [94, 161, 372, 315]
+      observation.images.front: [128, 217, 217, 185]
+      observation.images.side: [168, 211, 180, 278]
     resize_size: [128, 128]
-    control_time_s: 20
-    reset_follower_pos: true
+    control_time_s: 40
+    reset_follower_pos: false
     use_relative_joint_positions: true
     reset_time_s: 5
     display_cameras: false
-    delta_action: 0.1
+    delta_action: 0.3
     joint_masking_action_space: [1, 1, 1, 1, 0, 0] # disable wrist and gripper
+    add_joint_velocity_to_observation: true
+
+    # If null then the teleoperation will be used to reset the robot
+    fixed_reset_joint_positions: [37.001953, 95.97656, 95.33789, 63.720703, 7.1191406, -0.21276596]
+    ee_action_space_params: # If null then ee_action_space is not used
+      bounds:
+        max: [0.30126422, 0.1062732, 0.07259984]
+        min: [0.19910116, -0.19314124, 0.0480586]
+      use_gamepad: true
+      x_step_size: 0.03
+      y_step_size: 0.03
+      z_step_size: 0.05
 
   reward_classifier:
     pretrained_path:  outputs/classifier/13-02-random-sample-resnet10-frozen/checkpoints/best/pretrained_model

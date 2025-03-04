@@ -14,9 +14,13 @@ calibration_dir: .cache/calibration/so100
 # Set this to a positive scalar to have the same value for all motors, or a list that is the same length as
 # the number of motors in your follower arms.
 max_relative_target: null
-joint_position_relative_bounds:
-  max: [ 7.2158203e+01,  1.5398438e+02,  1.6075195e+02,  9.3251953e+01, 0., -1.4184397e-01]
-  min: [-77.08008,     56.25,        60.55664,     19.511719,   0., -0.63829786]
+joint_position_relative_bounds: null
+  # max: [100, 100, 100, 100, 100, 100]
+  # min: [-100, -100, -100, -100, -100, -100]
+  # max: [ 7.2158203e+01,  1.5398438e+02,  1.6075195e+02,  9.3251953e+01, 0., -1.4184397e-01]
+  # min: [-77.08008,     56.25,        60.55664,     19.511719,   0., -0.63829786]
+  # max: [ 35.06836 ,  103.18359 ,  127.61719 ,  75.58594 , 0., 0.]
+  # min: [ -8.876953 ,  63.808594 ,  90.49805 ,  49.48242 , 0., 0.]
 
 leader_arms:
   main:

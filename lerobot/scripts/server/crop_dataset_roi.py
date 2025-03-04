@@ -263,11 +263,6 @@ if __name__ == "__main__":
         with open(args.crop_params_path) as f:
             rois = json.load(f)
 
-    # rois = {
-    #     "observation.images.front": [102, 43, 358, 523],
-    #     "observation.images.side": [92, 123, 379, 349],
-    # }
-
     # Print the selected rectangular ROIs
     print("\nSelected Rectangular Regions of Interest (top, left, height, width):")
     for key, roi in rois.items():
