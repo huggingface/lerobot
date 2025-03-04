@@ -45,7 +45,7 @@ from lerobot.common.robot_devices.robots.utils import make_robot
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
 from tests.fixtures.constants import DUMMY_CHW, DUMMY_HWC, DUMMY_REPO_ID
-from tests.utils import DEVICE, require_x86_64_kernel
+from tests.utils import require_x86_64_kernel
 
 
 @pytest.fixture
@@ -349,7 +349,6 @@ def test_factory(env_name, repo_id, policy_name):
         dataset=DatasetConfig(repo_id=repo_id, episodes=[0]),
         env=make_env_config(env_name),
         policy=make_policy_config(policy_name),
-        device=DEVICE,
     )
 
     dataset = make_dataset(cfg)

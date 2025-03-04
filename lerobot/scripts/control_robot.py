@@ -254,7 +254,7 @@ def record(
         )
 
     # Load pretrained policy
-    policy = None if cfg.policy is None else make_policy(cfg.policy, cfg.device, ds_meta=dataset.meta)
+    policy = None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
 
     if not robot.is_connected:
         robot.connect()
@@ -285,8 +285,8 @@ def record(
             episode_time_s=cfg.episode_time_s,
             display_cameras=cfg.display_cameras,
             policy=policy,
-            device=cfg.device,
-            use_amp=cfg.use_amp,
+            device=policy.device,
+            use_amp=policy.use_amp,
             fps=cfg.fps,
             single_task=cfg.single_task,
         )
