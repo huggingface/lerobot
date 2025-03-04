@@ -85,7 +85,7 @@ def main():
     done = False
     while not done:
         for batch in dataloader:
-            batch = {k: v.to(device, non_blocking=True) for k, v in batch.items()}
+            batch = {k: (v.to(device) if isinstance(v, torch.Tensor) else v) for k, v in batch.items()}
             loss, _ = policy.forward(batch)
             loss.backward()
             optimizer.step()

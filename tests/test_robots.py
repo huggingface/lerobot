@@ -23,8 +23,6 @@ pytest -sx 'tests/test_robots.py::test_robot[aloha-True]'
 ```
 """
 
-from pathlib import Path
-
 import pytest
 import torch
 
@@ -35,7 +33,7 @@ from tests.utils import TEST_ROBOT_TYPES, mock_calibration_dir, require_robot
 
 @pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)
 @require_robot
-def test_robot(tmpdir, request, robot_type, mock):
+def test_robot(tmp_path, request, robot_type, mock):
     # TODO(rcadene): measure fps in nightly?
     # TODO(rcadene): test logs
     # TODO(rcadene): add compatibility with other robots
@@ -50,8 +48,7 @@ def test_robot(tmpdir, request, robot_type, mock):
             request.getfixturevalue("patch_builtins_input")
 
         # Create an empty calibration directory to trigger manual calibration
-        tmpdir = Path(tmpdir)
-        calibration_dir = tmpdir / robot_type
+        calibration_dir = tmp_path / robot_type
         mock_calibration_dir(calibration_dir)
         robot_kwargs["calibration_dir"] = calibration_dir
 
@@ -89,7 +86,7 @@ def test_robot(tmpdir, request, robot_type, mock):
     robot.connect()
     robot.teleop_step()
 
-    # Test data recorded during teleop are well formated
+    # Test data recorded during teleop are well formatted
     observation, action = robot.teleop_step(record_data=True)
     # State
     assert "observation.state" in observation
@@ -117,7 +114,7 @@ def test_robot(tmpdir, request, robot_type, mock):
         if "image" in name:
             # TODO(rcadene): skipping image for now as it's challenging to assess equality between two consecutive frames
             continue
-        assert torch.allclose(captured_observation[name], observation[name], atol=1)
+        torch.testing.assert_close(captured_observation[name], observation[name], rtol=1e-4, atol=1)
         assert captured_observation[name].shape == observation[name].shape
 
     # Test send_action can run

@@ -38,7 +38,7 @@ dependencies = [
     "einops>=0.8.0",
     "flask>=3.0.3",
     "gdown>=5.1.0",
-    "gymnasium==0.29.1",  # TODO(rcadene, aliberts): Make gym 1.0.0 work
+    "gymnasium==0.29.1", # TODO(rcadene, aliberts): Make gym 1.0.0 work
     "h5py>=3.10.0",
     "huggingface-hub[hf-transfer,cli]>=0.27.1 ; python_version < '4.0'",
     "hydra-core>=1.3.2",
@@ -47,14 +47,17 @@ dependencies = [
     "numba>=0.59.0",
     "omegaconf>=2.3.0",
     "opencv-python>=4.9.0",
-    "pyav>=12.0.5",
+    "packaging>=24.2",
+    "av>=12.0.5",
     "pymunk>=6.6.0",
+    "pynput>=1.7.7",
+    "pyzmq>=26.2.1",
     "rerun-sdk>=0.21.0",
     "termcolor>=2.4.0",
     "torch>=2.2.1",
     "torchvision>=0.21.0",
     "wandb>=0.16.3",
-    "zarr>=2.17.0"
+    "zarr>=2.17.0",
 ]
 
 [project.optional-dependencies]
@@ -108,10 +111,32 @@ exclude = [
     "venv",
 ]
 
-
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "I", "N", "B", "C4", "SIM"]
 
+[tool.bandit]
+exclude_dirs = [
+    "tests",
+    "benchmarks",
+    "lerobot/common/datasets/push_dataset_to_hub",
+    "lerobot/common/datasets/v2/convert_dataset_v1_to_v2",
+    "lerobot/common/policies/pi0/conversion_scripts",
+    "lerobot/scripts/push_dataset_to_hub.py",
+]
+skips = ["B101", "B311", "B404", "B603"]
+
+[tool.typos]
+default.extend-ignore-re = [
+    "(?Rm)^.*(#|//)\\s*spellchecker:disable-line$",  # spellchecker:disable-line
+    "(?s)(#|//)\\s*spellchecker:off.*?\\n\\s*(#|//)\\s*spellchecker:on"  # spellchecker:<on|off>
+]
+default.extend-ignore-identifiers-re = [
+    # Add individual words here to ignore them
+    "2nd",
+    "pn",
+    "ser",
+    "ein",
+]
 
 [build-system]
 requires = ["poetry-core"]
