@@ -51,6 +51,7 @@ def auto_select_torch_device() -> torch.device:
         return torch.device("cpu")
 
 
+# TODO(Steven): Remove log. log shouldn't be an argument, this should be handled by the logger level
 def get_safe_torch_device(try_device: str, log: bool = False) -> torch.device:
     """Given a string, return a torch.device with checks on whether the device is available."""
     match try_device:
@@ -92,7 +93,7 @@ def is_torch_device_available(try_device: str) -> bool:
     elif try_device == "cpu":
         return True
     else:
-        raise ValueError(f"Unknown device '{try_device}.")
+        raise ValueError(f"Unknown device '{try_device}. Supported devices are: cuda, mps or cpu.")
 
 
 def is_amp_available(device: str):
