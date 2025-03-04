@@ -121,7 +121,9 @@ class DiffusionConfig:
             "observation.state": "min_max",
         }
     )
-    output_normalization_modes: dict[str, str] = field(default_factory=lambda: {"action": "min_max"})
+    output_normalization_modes: dict[str, str] = field(
+        default_factory=lambda: {"action": "min_max"}
+    )
 
     # Architecture / modeling.
     # Vision backbone.
@@ -163,8 +165,13 @@ class DiffusionConfig:
 
         image_keys = {k for k in self.input_shapes if k.startswith("observation.image")}
 
-        if len(image_keys) == 0 and "observation.environment_state" not in self.input_shapes:
-            raise ValueError("You must provide at least one image or the environment state among the inputs.")
+        if (
+            len(image_keys) == 0
+            and "observation.environment_state" not in self.input_shapes
+        ):
+            raise ValueError(
+                "You must provide at least one image or the environment state among the inputs."
+            )
 
         if len(image_keys) > 0:
             if self.crop_shape is not None:

@@ -7,7 +7,9 @@ from torch import Tensor, nn
 
 from .configuration_classifier import ClassifierConfig
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -15,7 +17,10 @@ class ClassifierOutput:
     """Wrapper for classifier outputs with additional metadata."""
 
     def __init__(
-        self, logits: Tensor, probabilities: Optional[Tensor] = None, hidden_states: Optional[Tensor] = None
+        self,
+        logits: Tensor,
+        probabilities: Optional[Tensor] = None,
+        hidden_states: Optional[Tensor] = None,
     ):
         self.logits = logits
         self.probabilities = probabilities
@@ -43,12 +48,14 @@ class Classifier(
     name = "classifier"
 
     def __init__(self, config: ClassifierConfig):
-        from transformers import AutoImageProcessor, AutoModel
+        from transformers import AutoModel
 
         super().__init__()
         self.config = config
-        self.processor = AutoImageProcessor.from_pretrained(self.config.model_name, trust_remote_code=True)
-        encoder = AutoModel.from_pretrained(self.config.model_name, trust_remote_code=True)
+        # self.processor = AutoImageProcessor.from_pretrained(self.config.model_name, trust_remote_code=True)
+        encoder = AutoModel.from_pretrained(
+            self.config.model_name, trust_remote_code=True
+        )
         # Extract vision model if we're given a multimodal model
         if hasattr(encoder, "vision_model"):
             logging.info("Multimodal model detected - using vision encoder only")
@@ -74,7 +81,9 @@ class Classifier(
             self.feature_dim = self.encoder.fc.in_features
             self.encoder = nn.Sequential(*list(self.encoder.children())[:-1])
         elif hasattr(self.encoder.config, "hidden_sizes"):
-            self.feature_dim = self.encoder.config.hidden_sizes[-1]  # Last channel dimension
+            self.feature_dim = self.encoder.config.hidden_sizes[
+                -1
+            ]  # Last channel dimension
         else:
             raise ValueError("Unsupported CNN architecture")
 
@@ -94,25 +103,31 @@ class Classifier(
             if hasattr(self.encoder.config, "hidden_size"):
                 input_dim = self.encoder.config.hidden_size
             else:
-                raise ValueError("Unsupported transformer architecture since hidden_size is not found")
+                raise ValueError(
+                    "Unsupported transformer architecture since hidden_size is not found"
+                )
 
         self.classifier_head = nn.Sequential(
             nn.Linear(input_dim * self.config.num_cameras, self.config.hidden_dim),
             nn.Dropout(self.config.dropout_rate),
             nn.LayerNorm(self.config.hidden_dim),
             nn.ReLU(),
-            nn.Linear(self.config.hidden_dim, 1 if self.config.num_classes == 2 else self.config.num_classes),
+            nn.Linear(
+                self.config.hidden_dim,
+                1 if self.config.num_classes == 2 else self.config.num_classes,
+            ),
         )
         self.classifier_head = self.classifier_head.to(self.config.device)
 
     def _get_encoder_output(self, x: torch.Tensor) -> torch.Tensor:
         """Extract the appropriate output from the encoder."""
         # Process images with the processor (handles resizing and normalization)
-        processed = self.processor(
-            images=x,  # LeRobotDataset already provides proper tensor format
-            return_tensors="pt",
-        )
-        processed = processed["pixel_values"].to(x.device)
+        # processed = self.processor(
+        #     images=x,  # LeRobotDataset already provides proper tensor format
+        #     return_tensors="pt",
+        # )
+        # processed = processed["pixel_values"].to(x.device)
+        processed = x
 
         with torch.no_grad():
             if self.is_cnn:
@@ -126,7 +141,10 @@ class Classifier(
                 return features
             else:  # Transformer models
                 outputs = self.encoder(processed)
-                if hasattr(outputs, "pooler_output") and outputs.pooler_output is not None:
+                if (
+                    hasattr(outputs, "pooler_output")
+                    and outputs.pooler_output is not None
+                ):
                     return outputs.pooler_output
                 return outputs.last_hidden_state[:, 0, :]
 
@@ -142,10 +160,14 @@ class Classifier(
         else:
             probabilities = torch.softmax(logits, dim=-1)
 
-        return ClassifierOutput(logits=logits, probabilities=probabilities, hidden_states=encoder_outputs)
+        return ClassifierOutput(
+            logits=logits, probabilities=probabilities, hidden_states=encoder_outputs
+        )
 
-    def predict_reward(self, x):
+    def predict_reward(self, x, threshold=0.6):
         if self.config.num_classes == 2:
-            return (self.forward(x).probabilities > 0.5).float()
+            probs = self.forward(x).probabilities
+            logging.debug(f"Predicted reward images: {probs}")
+            return (probs > threshold).float()
         else:
             return torch.argmax(self.forward(x).probabilities, dim=1)

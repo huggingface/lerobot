@@ -14,6 +14,9 @@ calibration_dir: .cache/calibration/so100
 # Set this to a positive scalar to have the same value for all motors, or a list that is the same length as
 # the number of motors in your follower arms.
 max_relative_target: null
+joint_position_relative_bounds:
+  max: [ 7.2158203e+01,  1.5398438e+02,  1.6075195e+02,  9.3251953e+01, 0., -1.4184397e-01]
+  min: [-77.08008,     56.25,        60.55664,     19.511719,   0., -0.63829786]
 
 leader_arms:
   main:
@@ -31,7 +34,7 @@ leader_arms:
 follower_arms:
   main:
     _target_: lerobot.common.robot_devices.motors.feetech.FeetechMotorsBus
-    port: /dev/tty.usbmodem585A0080971
+    port: /dev/tty.usbmodem58760431631
     motors:
       # name: (index, model)
       shoulder_pan: [1, "sts3215"]
@@ -42,13 +45,13 @@ follower_arms:
       gripper: [6, "sts3215"]
 
 cameras:
-  laptop:
+  front:
     _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
     camera_index: 0
     fps: 30
     width: 640
     height: 480
-  phone:
+  side:
     _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
     camera_index: 1
     fps: 30

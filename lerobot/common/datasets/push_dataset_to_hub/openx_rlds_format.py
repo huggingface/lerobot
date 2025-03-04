@@ -143,7 +143,11 @@ def load_from_raw(
         else:
             state_keys.append(key)
 
-    lang_key = "language_instruction" if "language_instruction" in dataset.element_spec else None
+    lang_key = (
+        "language_instruction"
+        if "language_instruction" in dataset.element_spec
+        else None
+    )
 
     print(" - image_keys: ", image_keys)
     print(" - lang_key: ", lang_key)
@@ -202,7 +206,9 @@ def load_from_raw(
 
         # If lang_key is present, convert the entire tensor at once
         if lang_key is not None:
-            ep_dict["language_instruction"] = [x.numpy().decode("utf-8") for x in episode[lang_key]]
+            ep_dict["language_instruction"] = [
+                x.numpy().decode("utf-8") for x in episode[lang_key]
+            ]
 
         ep_dict["timestamp"] = torch.arange(0, num_frames, 1) / fps
         ep_dict["episode_index"] = torch.tensor([ep_idx] * num_frames)
@@ -234,7 +240,8 @@ def load_from_raw(
 
                 # store the reference to the video frame
                 ep_dict[img_key] = [
-                    {"path": f"videos/{fname}", "timestamp": i / fps} for i in range(num_frames)
+                    {"path": f"videos/{fname}", "timestamp": i / fps}
+                    for i in range(num_frames)
                 ]
             else:
                 ep_dict[img_key] = [PILImage.fromarray(x) for x in imgs_array]
@@ -259,7 +266,9 @@ def to_hf_dataset(data_dict, video) -> Dataset:
     for key in data_dict:
         # check if vector state obs
         if key.startswith("observation.") and "observation.images." not in key:
-            features[key] = Sequence(length=data_dict[key].shape[1], feature=Value(dtype="float32", id=None))
+            features[key] = Sequence(
+                length=data_dict[key].shape[1], feature=Value(dtype="float32", id=None)
+            )
         # check if image obs
         elif "observation.images." in key:
             if video:

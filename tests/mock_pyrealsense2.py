@@ -17,7 +17,9 @@ class config:  # noqa: N801
     def enable_device(self, device_id: str):
         self.device_enabled = device_id
 
-    def enable_stream(self, stream_type: stream, width=None, height=None, color_format=None, fps=None):
+    def enable_stream(
+        self, stream_type: stream, width=None, height=None, color_format=None, fps=None
+    ):
         self.stream_type = stream_type
         # Overwrite default values when possible
         self.width = 848 if width is None else width

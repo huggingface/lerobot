@@ -56,7 +56,9 @@ def check_format(raw_dir):
 
     required_datasets.remove("meta/episode_ends")
 
-    assert all(nb_frames == zarr_data[dataset].shape[0] for dataset in required_datasets)
+    assert all(
+        nb_frames == zarr_data[dataset].shape[0] for dataset in required_datasets
+    )
 
 
 def load_from_raw(
@@ -76,7 +78,9 @@ def load_from_raw(
             ReplayBuffer as DiffusionPolicyReplayBuffer,
         )
     except ModuleNotFoundError as e:
-        print("`gym_pusht` is not installed. Please install it with `pip install 'lerobot[gym_pusht]'`")
+        print(
+            "`gym_pusht` is not installed. Please install it with `pip install 'lerobot[gym_pusht]'`"
+        )
         raise e
     # as define in gmy-pusht env: https://github.com/huggingface/gym-pusht/blob/e0684ff988d223808c0a9dcfaba9dc4991791370/gym_pusht/envs/pusht.py#L174
     success_threshold = 0.95  # 95% coverage,
@@ -150,7 +154,9 @@ def load_from_raw(
             ]
             space.add(*walls)
 
-            block_body, block_shapes = PushTEnv.add_tee(space, block_pos[i].tolist(), block_angle[i].item())
+            block_body, block_shapes = PushTEnv.add_tee(
+                space, block_pos[i].tolist(), block_angle[i].item()
+            )
             goal_geom = pymunk_to_shapely(goal_body, block_body.shapes)
             block_geom = pymunk_to_shapely(block_body, block_body.shapes)
             intersection_area = goal_geom.intersection(block_geom).area
@@ -159,7 +165,9 @@ def load_from_raw(
             reward[i] = np.clip(coverage / success_threshold, 0, 1)
             success[i] = coverage > success_threshold
             if keypoints_instead_of_image:
-                keypoints[i] = torch.from_numpy(PushTEnv.get_keypoints(block_shapes).flatten())
+                keypoints[i] = torch.from_numpy(
+                    PushTEnv.get_keypoints(block_shapes).flatten()
+                )
 
         # last step of demonstration is considered done
         done[-1] = True
@@ -184,7 +192,8 @@ def load_from_raw(
 
                 # store the reference to the video frame
                 ep_dict[img_key] = [
-                    {"path": f"videos/{fname}", "timestamp": i / fps} for i in range(num_frames)
+                    {"path": f"videos/{fname}", "timestamp": i / fps}
+                    for i in range(num_frames)
                 ]
             else:
                 ep_dict[img_key] = [PILImage.fromarray(x) for x in imgs_array]
@@ -193,7 +202,9 @@ def load_from_raw(
         if keypoints_instead_of_image:
             ep_dict["observation.environment_state"] = keypoints
         ep_dict["action"] = actions[from_idx:to_idx]
-        ep_dict["episode_index"] = torch.tensor([ep_idx] * num_frames, dtype=torch.int64)
+        ep_dict["episode_index"] = torch.tensor(
+            [ep_idx] * num_frames, dtype=torch.int64
+        )
         ep_dict["frame_index"] = torch.arange(0, num_frames, 1)
         ep_dict["timestamp"] = torch.arange(0, num_frames, 1) / fps
         # ep_dict["next.observation.image"] = image[1:],
@@ -220,7 +231,8 @@ def to_hf_dataset(data_dict, video, keypoints_instead_of_image: bool = False):
             features["observation.image"] = Image()
 
     features["observation.state"] = Sequence(
-        length=data_dict["observation.state"].shape[1], feature=Value(dtype="float32", id=None)
+        length=data_dict["observation.state"].shape[1],
+        feature=Value(dtype="float32", id=None),
     )
     if keypoints_instead_of_image:
         features["observation.environment_state"] = Sequence(
@@ -261,7 +273,9 @@ def from_raw_to_lerobot_format(
     if fps is None:
         fps = 10
 
-    data_dict = load_from_raw(raw_dir, videos_dir, fps, video, episodes, keypoints_instead_of_image, encoding)
+    data_dict = load_from_raw(
+        raw_dir, videos_dir, fps, video, episodes, keypoints_instead_of_image, encoding
+    )
     hf_dataset = to_hf_dataset(data_dict, video, keypoints_instead_of_image)
     episode_data_index = calculate_episode_data_index(hf_dataset)
     info = {

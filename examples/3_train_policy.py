@@ -31,7 +31,24 @@ delta_timestamps = {
     # Load the previous action (-0.1), the next action to be executed (0.0),
     # and 14 future actions with a 0.1 seconds spacing. All these actions will be
     # used to supervise the policy.
-    "action": [-0.1, 0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4],
+    "action": [
+        -0.1,
+        0.0,
+        0.1,
+        0.2,
+        0.3,
+        0.4,
+        0.5,
+        0.6,
+        0.7,
+        0.8,
+        0.9,
+        1.0,
+        1.1,
+        1.2,
+        1.3,
+        1.4,
+    ],
 }
 dataset = LeRobotDataset("lerobot/pusht", delta_timestamps=delta_timestamps)
 

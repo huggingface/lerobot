@@ -4,7 +4,12 @@ import datasets
 import pytest
 from huggingface_hub.utils import filter_repo_objects
 
-from lerobot.common.datasets.utils import EPISODES_PATH, INFO_PATH, STATS_PATH, TASKS_PATH
+from lerobot.common.datasets.utils import (
+    EPISODES_PATH,
+    INFO_PATH,
+    STATS_PATH,
+    TASKS_PATH,
+)
 from tests.fixtures.constants import LEROBOT_TEST_DIR
 
 
@@ -41,15 +46,21 @@ def mock_snapshot_download_factory(
             tasks = tasks_factory(total_tasks=info["total_tasks"])
         if not episodes:
             episodes = episodes_factory(
-                total_episodes=info["total_episodes"], total_frames=info["total_frames"], tasks=tasks
+                total_episodes=info["total_episodes"],
+                total_frames=info["total_frames"],
+                tasks=tasks,
             )
         if not hf_dataset:
-            hf_dataset = hf_dataset_factory(tasks=tasks, episodes=episodes, fps=info["fps"])
+            hf_dataset = hf_dataset_factory(
+                tasks=tasks, episodes=episodes, fps=info["fps"]
+            )
 
         def _extract_episode_index_from_path(fpath: str) -> int:
             path = Path(fpath)
             if path.suffix == ".parquet" and path.stem.startswith("episode_"):
-                episode_index = int(path.stem[len("episode_") :])  # 'episode_000000' -> 0
+                episode_index = int(
+                    path.stem[len("episode_") :]
+                )  # 'episode_000000' -> 0
                 return episode_index
             else:
                 return None
@@ -74,12 +85,16 @@ def mock_snapshot_download_factory(
             for episode_dict in episodes:
                 ep_idx = episode_dict["episode_index"]
                 ep_chunk = ep_idx // info["chunks_size"]
-                data_path = info["data_path"].format(episode_chunk=ep_chunk, episode_index=ep_idx)
+                data_path = info["data_path"].format(
+                    episode_chunk=ep_chunk, episode_index=ep_idx
+                )
                 data_files.append(data_path)
             all_files.extend(data_files)
 
             allowed_files = filter_repo_objects(
-                all_files, allow_patterns=allow_patterns, ignore_patterns=ignore_patterns
+                all_files,
+                allow_patterns=allow_patterns,
+                ignore_patterns=ignore_patterns,
             )
 
             # Create allowed files
@@ -87,7 +102,9 @@ def mock_snapshot_download_factory(
                 if rel_path.startswith("data/"):
                     episode_index = _extract_episode_index_from_path(rel_path)
                     if episode_index is not None:
-                        _ = single_episode_parquet_path(local_dir, episode_index, hf_dataset, info)
+                        _ = single_episode_parquet_path(
+                            local_dir, episode_index, hf_dataset, info
+                        )
                 if rel_path == INFO_PATH:
                     _ = info_path(local_dir, info)
                 elif rel_path == STATS_PATH:

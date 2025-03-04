@@ -10,7 +10,7 @@ class ClassifierConfig:
     num_classes: int = 2
     hidden_dim: int = 256
     dropout_rate: float = 0.1
-    model_name: str = "microsoft/resnet-50"
+    model_name: str = "helper2424/resnet10"
     device: str = "cpu"
     model_type: str = "cnn"  # "transformer" or "cnn"
     num_cameras: int = 2
