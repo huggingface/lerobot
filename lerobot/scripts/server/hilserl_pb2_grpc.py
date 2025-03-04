@@ -46,9 +46,19 @@ class LearnerServiceStub(object):
                 request_serializer=hilserl__pb2.Empty.SerializeToString,
                 response_deserializer=hilserl__pb2.Parameters.FromString,
                 _registered_method=True)
-        self.ReceiveTransitions = channel.stream_unary(
-                '/hil_serl.LearnerService/ReceiveTransitions',
-                request_serializer=hilserl__pb2.ActorInformation.SerializeToString,
+        self.SendTransitions = channel.stream_unary(
+                '/hil_serl.LearnerService/SendTransitions',
+                request_serializer=hilserl__pb2.Transition.SerializeToString,
+                response_deserializer=hilserl__pb2.Empty.FromString,
+                _registered_method=True)
+        self.SendInteractions = channel.stream_unary(
+                '/hil_serl.LearnerService/SendInteractions',
+                request_serializer=hilserl__pb2.InteractionMessage.SerializeToString,
+                response_deserializer=hilserl__pb2.Empty.FromString,
+                _registered_method=True)
+        self.Ready = channel.unary_unary(
+                '/hil_serl.LearnerService/Ready',
+                request_serializer=hilserl__pb2.Empty.SerializeToString,
                 response_deserializer=hilserl__pb2.Empty.FromString,
                 _registered_method=True)
 
@@ -71,7 +81,19 @@ class LearnerServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def ReceiveTransitions(self, request_iterator, context):
+    def SendTransitions(self, request_iterator, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def SendInteractions(self, request_iterator, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Ready(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -90,9 +112,19 @@ def add_LearnerServiceServicer_to_server(servicer, server):
                     request_deserializer=hilserl__pb2.Empty.FromString,
                     response_serializer=hilserl__pb2.Parameters.SerializeToString,
             ),
-            'ReceiveTransitions': grpc.stream_unary_rpc_method_handler(
-                    servicer.ReceiveTransitions,
-                    request_deserializer=hilserl__pb2.ActorInformation.FromString,
+            'SendTransitions': grpc.stream_unary_rpc_method_handler(
+                    servicer.SendTransitions,
+                    request_deserializer=hilserl__pb2.Transition.FromString,
+                    response_serializer=hilserl__pb2.Empty.SerializeToString,
+            ),
+            'SendInteractions': grpc.stream_unary_rpc_method_handler(
+                    servicer.SendInteractions,
+                    request_deserializer=hilserl__pb2.InteractionMessage.FromString,
+                    response_serializer=hilserl__pb2.Empty.SerializeToString,
+            ),
+            'Ready': grpc.unary_unary_rpc_method_handler(
+                    servicer.Ready,
+                    request_deserializer=hilserl__pb2.Empty.FromString,
                     response_serializer=hilserl__pb2.Empty.SerializeToString,
             ),
     }
@@ -163,7 +195,7 @@ class LearnerService(object):
             _registered_method=True)
 
     @staticmethod
-    def ReceiveTransitions(request_iterator,
+    def SendTransitions(request_iterator,
             target,
             options=(),
             channel_credentials=None,
@@ -176,8 +208,62 @@ class LearnerService(object):
         return grpc.experimental.stream_unary(
             request_iterator,
             target,
-            '/hil_serl.LearnerService/ReceiveTransitions',
-            hilserl__pb2.ActorInformation.SerializeToString,
+            '/hil_serl.LearnerService/SendTransitions',
+            hilserl__pb2.Transition.SerializeToString,
+            hilserl__pb2.Empty.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SendInteractions(request_iterator,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.stream_unary(
+            request_iterator,
+            target,
+            '/hil_serl.LearnerService/SendInteractions',
+            hilserl__pb2.InteractionMessage.SerializeToString,
+            hilserl__pb2.Empty.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Ready(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/hil_serl.LearnerService/Ready',
+            hilserl__pb2.Empty.SerializeToString,
             hilserl__pb2.Empty.FromString,
             options,
             channel_credentials,
