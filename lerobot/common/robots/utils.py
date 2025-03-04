@@ -46,9 +46,9 @@ def make_robot_config(robot_type: str, **kwargs) -> RobotConfig:
 
         return So100RobotConfig(**kwargs)
     elif robot_type == "stretch":
-        from .stretch3.configuration_stretch3 import StretchRobotConfig
+        from .stretch3.configuration_stretch3 import Stretch3RobotConfig
 
-        return StretchRobotConfig(**kwargs)
+        return Stretch3RobotConfig(**kwargs)
     elif robot_type == "lekiwi":
         from .lekiwi.configuration_lekiwi import LeKiwiRobotConfig
 

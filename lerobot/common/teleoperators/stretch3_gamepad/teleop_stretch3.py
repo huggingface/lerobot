@@ -18,15 +18,13 @@ import time
 
 import numpy as np
 from stretch_body.gamepad_teleop import GamePadTeleop
-from stretch_body.robot import Robot as StretchAPI
 from stretch_body.robot_params import RobotParams
 
-from lerobot.common.cameras.utils import make_cameras_from_configs
 from lerobot.common.constants import OBS_IMAGES, OBS_STATE
 from lerobot.common.datasets.utils import get_nested_item
 
-from ..robot import Robot
-from .configuration_stretch3 import Stretch3RobotConfig
+from ..teleoperator import Teleoperator
+from .configuration_stretch3 import Stretch3GamePadConfig
 
 # {lerobot_keys: stretch.api.keys}
 STRETCH_MOTORS = {
@@ -44,20 +42,19 @@ STRETCH_MOTORS = {
 }
 
 
-class Stretch3Robot(Robot):
+class Stretch3GamePad(Teleoperator):
     """[Stretch 3](https://hello-robot.com/stretch-3-product), by Hello Robot."""
 
-    config_class = Stretch3RobotConfig
+    config_class = Stretch3GamePadConfig
     name = "stretch3"
 
-    def __init__(self, config: Stretch3RobotConfig):
+    def __init__(self, config: Stretch3GamePadConfig):
         super().__init__(config)
 
         self.config = config
         self.robot_type = self.config.type
 
-        self.api = StretchAPI()
-        self.cameras = make_cameras_from_configs(config.cameras)
+        self.api = GamePadTeleop(robot_instance=False)
 
         self.is_connected = False
         self.logs = {}
