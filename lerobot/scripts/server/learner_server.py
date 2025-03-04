@@ -227,7 +227,6 @@ def start_learner_threads(
 
     add_actor_information_and_train(
         cfg,
-        device,
         logger,
         out_dir,
         shutdown_event,
@@ -324,7 +323,6 @@ def push_actor_policy_to_queue(parameters_queue: Queue, policy: nn.Module):
 
 def add_actor_information_and_train(
     cfg,
-    device: str,
     logger: Logger,
     out_dir: str,
     shutdown_event: any,  # Event,
