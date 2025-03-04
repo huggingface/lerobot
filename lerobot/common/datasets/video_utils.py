@@ -41,7 +41,9 @@ def decode_video_frames(
 
     Args:
         video_path (Path): Path to the video file.
-        query_ts (list[float]): List of timestamps to extract frames.
+        timestamps (list[float]): List of timestamps to extract frames.
+        tolerance_s (float): Allowed deviation in seconds for frame retrieval.
+        backend (str, optional): Backend to use for decoding. Defaults to "torchcodec".
 
     Returns:
         torch.Tensor: Decoded frames.
