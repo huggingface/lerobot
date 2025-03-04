@@ -64,6 +64,8 @@ class SACConfig:
         }
     )
     camera_number: int = 1
+
+    storage_device: str = "cpu"
     # Add type annotations for these fields:
     vision_encoder_name: str | None = field(default="helper2424/resnet10")
     freeze_vision_encoder: bool = True
