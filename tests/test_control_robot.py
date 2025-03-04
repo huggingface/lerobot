@@ -24,7 +24,6 @@ pytest -sx 'tests/test_control_robot.py::test_teleoperate[aloha-True]'
 """
 
 import multiprocessing
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -45,7 +44,7 @@ from tests.utils import DEVICE, TEST_ROBOT_TYPES, mock_calibration_dir, require_
 
 @pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)
 @require_robot
-def test_teleoperate(tmpdir, request, robot_type, mock):
+def test_teleoperate(tmp_path, request, robot_type, mock):
     robot_kwargs = {"robot_type": robot_type, "mock": mock}
 
     if mock and robot_type != "aloha":
@@ -53,8 +52,7 @@ def test_teleoperate(tmpdir, request, robot_type, mock):
 
         # Create an empty calibration directory to trigger manual calibration
         # and avoid writing calibration files in user .cache/calibration folder
-        tmpdir = Path(tmpdir)
-        calibration_dir = tmpdir / robot_type
+        calibration_dir = tmp_path / robot_type
         mock_calibration_dir(calibration_dir)
         robot_kwargs["calibration_dir"] = calibration_dir
     else:
@@ -70,15 +68,14 @@ def test_teleoperate(tmpdir, request, robot_type, mock):
 
 @pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)
 @require_robot
-def test_calibrate(tmpdir, request, robot_type, mock):
+def test_calibrate(tmp_path, request, robot_type, mock):
     robot_kwargs = {"robot_type": robot_type, "mock": mock}
 
     if mock:
         request.getfixturevalue("patch_builtins_input")
 
     # Create an empty calibration directory to trigger manual calibration
-    tmpdir = Path(tmpdir)
-    calibration_dir = tmpdir / robot_type
+    calibration_dir = tmp_path / robot_type
     robot_kwargs["calibration_dir"] = calibration_dir
 
     robot = make_robot(**robot_kwargs)
@@ -89,7 +86,7 @@ def test_calibrate(tmpdir, request, robot_type, mock):
 
 @pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)
 @require_robot
-def test_record_without_cameras(tmpdir, request, robot_type, mock):
+def test_record_without_cameras(tmp_path, request, robot_type, mock):
     robot_kwargs = {"robot_type": robot_type, "mock": mock}
 
     # Avoid using cameras
@@ -100,7 +97,7 @@ def test_record_without_cameras(tmpdir, request, robot_type, mock):
 
         # Create an empty calibration directory to trigger manual calibration
         # and avoid writing calibration files in user .cache/calibration folder
-        calibration_dir = Path(tmpdir) / robot_type
+        calibration_dir = tmp_path / robot_type
         mock_calibration_dir(calibration_dir)
         robot_kwargs["calibration_dir"] = calibration_dir
     else:
@@ -108,7 +105,7 @@ def test_record_without_cameras(tmpdir, request, robot_type, mock):
         pass
 
     repo_id = "lerobot/debug"
-    root = Path(tmpdir) / "data" / repo_id
+    root = tmp_path / "data" / repo_id
     single_task = "Do something."
 
     robot = make_robot(**robot_kwargs)
@@ -121,7 +118,6 @@ def test_record_without_cameras(tmpdir, request, robot_type, mock):
         episode_time_s=1,
         reset_time_s=0.1,
         num_episodes=2,
-        run_compute_stats=False,
         push_to_hub=False,
         video=False,
         play_sounds=False,
@@ -131,8 +127,7 @@ def test_record_without_cameras(tmpdir, request, robot_type, mock):
 
 @pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)
 @require_robot
-def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
-    tmpdir = Path(tmpdir)
+def test_record_and_replay_and_policy(tmp_path, request, robot_type, mock):
     robot_kwargs = {"robot_type": robot_type, "mock": mock}
 
     if mock and robot_type != "aloha":
@@ -140,7 +135,7 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
 
         # Create an empty calibration directory to trigger manual calibration
         # and avoid writing calibration files in user .cache/calibration folder
-        calibration_dir = tmpdir / robot_type
+        calibration_dir = tmp_path / robot_type
         mock_calibration_dir(calibration_dir)
         robot_kwargs["calibration_dir"] = calibration_dir
     else:
@@ -148,7 +143,7 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
         pass
 
     repo_id = "lerobot_test/debug"
-    root = tmpdir / "data" / repo_id
+    root = tmp_path / "data" / repo_id
     single_task = "Do something."
 
     robot = make_robot(**robot_kwargs)
@@ -172,21 +167,19 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
     assert dataset.meta.total_episodes == 2
     assert len(dataset) == 2
 
-    replay_cfg = ReplayControlConfig(
-        episode=0, fps=1, root=root, repo_id=repo_id, play_sounds=False, local_files_only=True
-    )
+    replay_cfg = ReplayControlConfig(episode=0, fps=1, root=root, repo_id=repo_id, play_sounds=False)
     replay(robot, replay_cfg)
 
     policy_cfg = ACTConfig()
     policy = make_policy(policy_cfg, ds_meta=dataset.meta, device=DEVICE)
 
-    out_dir = tmpdir / "logger"
+    out_dir = tmp_path / "logger"
 
     pretrained_policy_path = out_dir / "checkpoints/last/pretrained_model"
     policy.save_pretrained(pretrained_policy_path)
 
     # In `examples/9_use_aloha.md`, we advise using `num_image_writer_processes=1`
-    # during inference, to reach constent fps, so we test this here.
+    # during inference, to reach constant fps, so we test this here.
     if robot_type == "aloha":
         num_image_writer_processes = 1
 
@@ -207,7 +200,7 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
         num_image_writer_processes = 0
 
     eval_repo_id = "lerobot/eval_debug"
-    eval_root = tmpdir / "data" / eval_repo_id
+    eval_root = tmp_path / "data" / eval_repo_id
 
     rec_eval_cfg = RecordControlConfig(
         repo_id=eval_repo_id,
@@ -218,7 +211,6 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
         episode_time_s=1,
         reset_time_s=0.1,
         num_episodes=2,
-        run_compute_stats=False,
         push_to_hub=False,
         video=False,
         display_cameras=False,
@@ -240,7 +232,7 @@ def test_record_and_replay_and_policy(tmpdir, request, robot_type, mock):
 
 @pytest.mark.parametrize("robot_type, mock", [("koch", True)])
 @require_robot
-def test_resume_record(tmpdir, request, robot_type, mock):
+def test_resume_record(tmp_path, request, robot_type, mock):
     robot_kwargs = {"robot_type": robot_type, "mock": mock}
 
     if mock and robot_type != "aloha":
@@ -248,7 +240,7 @@ def test_resume_record(tmpdir, request, robot_type, mock):
 
         # Create an empty calibration directory to trigger manual calibration
         # and avoid writing calibration files in user .cache/calibration folder
-        calibration_dir = tmpdir / robot_type
+        calibration_dir = tmp_path / robot_type
         mock_calibration_dir(calibration_dir)
         robot_kwargs["calibration_dir"] = calibration_dir
     else:
@@ -258,7 +250,7 @@ def test_resume_record(tmpdir, request, robot_type, mock):
     robot = make_robot(**robot_kwargs)
 
     repo_id = "lerobot/debug"
-    root = Path(tmpdir) / "data" / repo_id
+    root = tmp_path / "data" / repo_id
     single_task = "Do something."
 
     rec_cfg = RecordControlConfig(
@@ -272,8 +264,6 @@ def test_resume_record(tmpdir, request, robot_type, mock):
         video=False,
         display_cameras=False,
         play_sounds=False,
-        run_compute_stats=False,
-        local_files_only=True,
         num_episodes=1,
     )
 
@@ -291,7 +281,7 @@ def test_resume_record(tmpdir, request, robot_type, mock):
 
 @pytest.mark.parametrize("robot_type, mock", [("koch", True)])
 @require_robot
-def test_record_with_event_rerecord_episode(tmpdir, request, robot_type, mock):
+def test_record_with_event_rerecord_episode(tmp_path, request, robot_type, mock):
     robot_kwargs = {"robot_type": robot_type, "mock": mock}
 
     if mock and robot_type != "aloha":
@@ -299,7 +289,7 @@ def test_record_with_event_rerecord_episode(tmpdir, request, robot_type, mock):
 
         # Create an empty calibration directory to trigger manual calibration
         # and avoid writing calibration files in user .cache/calibration folder
-        calibration_dir = tmpdir / robot_type
+        calibration_dir = tmp_path / robot_type
         mock_calibration_dir(calibration_dir)
         robot_kwargs["calibration_dir"] = calibration_dir
     else:
@@ -316,7 +306,7 @@ def test_record_with_event_rerecord_episode(tmpdir, request, robot_type, mock):
         mock_listener.return_value = (None, mock_events)
 
         repo_id = "lerobot/debug"
-        root = Path(tmpdir) / "data" / repo_id
+        root = tmp_path / "data" / repo_id
         single_task = "Do something."
 
         rec_cfg = RecordControlConfig(
@@ -331,7 +321,6 @@ def test_record_with_event_rerecord_episode(tmpdir, request, robot_type, mock):
             video=False,
             display_cameras=False,
             play_sounds=False,
-            run_compute_stats=False,
         )
         dataset = record(robot, rec_cfg)
 
@@ -342,7 +331,7 @@ def test_record_with_event_rerecord_episode(tmpdir, request, robot_type, mock):
 
 @pytest.mark.parametrize("robot_type, mock", [("koch", True)])
 @require_robot
-def test_record_with_event_exit_early(tmpdir, request, robot_type, mock):
+def test_record_with_event_exit_early(tmp_path, request, robot_type, mock):
     robot_kwargs = {"robot_type": robot_type, "mock": mock}
 
     if mock:
@@ -350,7 +339,7 @@ def test_record_with_event_exit_early(tmpdir, request, robot_type, mock):
 
         # Create an empty calibration directory to trigger manual calibration
         # and avoid writing calibration files in user .cache/calibration folder
-        calibration_dir = tmpdir / robot_type
+        calibration_dir = tmp_path / robot_type
         mock_calibration_dir(calibration_dir)
         robot_kwargs["calibration_dir"] = calibration_dir
     else:
@@ -367,7 +356,7 @@ def test_record_with_event_exit_early(tmpdir, request, robot_type, mock):
         mock_listener.return_value = (None, mock_events)
 
         repo_id = "lerobot/debug"
-        root = Path(tmpdir) / "data" / repo_id
+        root = tmp_path / "data" / repo_id
         single_task = "Do something."
 
         rec_cfg = RecordControlConfig(
@@ -382,7 +371,6 @@ def test_record_with_event_exit_early(tmpdir, request, robot_type, mock):
             video=False,
             display_cameras=False,
             play_sounds=False,
-            run_compute_stats=False,
         )
 
         dataset = record(robot, rec_cfg)
@@ -395,7 +383,7 @@ def test_record_with_event_exit_early(tmpdir, request, robot_type, mock):
     "robot_type, mock, num_image_writer_processes", [("koch", True, 0), ("koch", True, 1)]
 )
 @require_robot
-def test_record_with_event_stop_recording(tmpdir, request, robot_type, mock, num_image_writer_processes):
+def test_record_with_event_stop_recording(tmp_path, request, robot_type, mock, num_image_writer_processes):
     robot_kwargs = {"robot_type": robot_type, "mock": mock}
 
     if mock:
@@ -403,7 +391,7 @@ def test_record_with_event_stop_recording(tmpdir, request, robot_type, mock, num
 
         # Create an empty calibration directory to trigger manual calibration
         # and avoid writing calibration files in user .cache/calibration folder
-        calibration_dir = tmpdir / robot_type
+        calibration_dir = tmp_path / robot_type
         mock_calibration_dir(calibration_dir)
         robot_kwargs["calibration_dir"] = calibration_dir
     else:
@@ -420,7 +408,7 @@ def test_record_with_event_stop_recording(tmpdir, request, robot_type, mock, num
         mock_listener.return_value = (None, mock_events)
 
         repo_id = "lerobot/debug"
-        root = Path(tmpdir) / "data" / repo_id
+        root = tmp_path / "data" / repo_id
         single_task = "Do something."
 
         rec_cfg = RecordControlConfig(
@@ -436,7 +424,6 @@ def test_record_with_event_stop_recording(tmpdir, request, robot_type, mock, num
             video=False,
             display_cameras=False,
             play_sounds=False,
-            run_compute_stats=False,
             num_image_writer_processes=num_image_writer_processes,
         )
 

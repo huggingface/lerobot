@@ -44,7 +44,7 @@ class ManipulatorRobot:
     # TODO(rcadene): Implement force feedback
     """This class allows to control any manipulator robot of various number of motors.
 
-    Non exaustive list of robots:
+    Non exhaustive list of robots:
     - [Koch v1.0](https://github.com/AlexanderKoch-Koch/low_cost_robot), with and without the wrist-to-elbow expansion, developed
     by Alexander Koch from [Tau Robotics](https://tau-robotics.com)
     - [Koch v1.1](https://github.com/jess-moss/koch-v1-1) developed by Jess Moss
@@ -55,7 +55,7 @@ class ManipulatorRobot:
     robot = ManipulatorRobot(KochRobotConfig())
     ```
 
-    Example of overwritting motors during instantiation:
+    Example of overwriting motors during instantiation:
     ```python
     # Defines how to communicate with the motors of the leader and follower arms
     leader_arms = {
@@ -90,7 +90,7 @@ class ManipulatorRobot:
     robot = ManipulatorRobot(robot_config)
     ```
 
-    Example of overwritting cameras during instantiation:
+    Example of overwriting cameras during instantiation:
     ```python
     # Defines how to communicate with 2 cameras connected to the computer.
     # Here, the webcam of the laptop and the phone (connected in USB to the laptop)
@@ -229,7 +229,7 @@ class ManipulatorRobot:
 
         if self.robot_type in ["koch", "koch_bimanual", "aloha"]:
             from lerobot.common.robot_devices.motors.dynamixel import TorqueMode
-        elif self.robot_type in ["so100", "moss"]:
+        elif self.robot_type in ["so100", "moss", "lekiwi"]:
             from lerobot.common.robot_devices.motors.feetech import TorqueMode
 
         # We assume that at connection time, arms are in a rest position, and torque can
@@ -246,7 +246,7 @@ class ManipulatorRobot:
             self.set_koch_robot_preset()
         elif self.robot_type == "aloha":
             self.set_aloha_robot_preset()
-        elif self.robot_type in ["so100", "moss"]:
+        elif self.robot_type in ["so100", "moss", "lekiwi"]:
             self.set_so100_robot_preset()
 
         # Enable torque on all motors of the follower arms
@@ -299,7 +299,7 @@ class ManipulatorRobot:
 
                     calibration = run_arm_calibration(arm, self.robot_type, name, arm_type)
 
-                elif self.robot_type in ["so100", "moss"]:
+                elif self.robot_type in ["so100", "moss", "lekiwi"]:
                     from lerobot.common.robot_devices.robots.feetech_calibration import (
                         run_arm_manual_calibration,
                     )
@@ -348,7 +348,7 @@ class ManipulatorRobot:
             set_operating_mode_(self.follower_arms[name])
 
             # Set better PID values to close the gap between recorded states and actions
-            # TODO(rcadene): Implement an automatic procedure to set optimial PID values for each motor
+            # TODO(rcadene): Implement an automatic procedure to set optimal PID values for each motor
             self.follower_arms[name].write("Position_P_Gain", 1500, "elbow_flex")
             self.follower_arms[name].write("Position_I_Gain", 0, "elbow_flex")
             self.follower_arms[name].write("Position_D_Gain", 600, "elbow_flex")
@@ -500,7 +500,7 @@ class ManipulatorRobot:
             self.logs[f"read_camera_{name}_dt_s"] = self.cameras[name].logs["delta_timestamp_s"]
             self.logs[f"async_read_camera_{name}_dt_s"] = time.perf_counter() - before_camread_t
 
-        # Populate output dictionnaries
+        # Populate output dictionaries
         obs_dict, action_dict = {}, {}
         obs_dict["observation.state"] = state
         action_dict["action"] = action
@@ -540,7 +540,7 @@ class ManipulatorRobot:
             self.logs[f"read_camera_{name}_dt_s"] = self.cameras[name].logs["delta_timestamp_s"]
             self.logs[f"async_read_camera_{name}_dt_s"] = time.perf_counter() - before_camread_t
 
-        # Populate output dictionnaries and format to pytorch
+        # Populate output dictionaries and format to pytorch
         obs_dict = {}
         obs_dict["observation.state"] = state
         for name in self.cameras:

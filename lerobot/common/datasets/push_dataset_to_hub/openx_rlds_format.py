@@ -17,7 +17,7 @@
 For all datasets in the RLDS format.
 For https://github.com/google-deepmind/open_x_embodiment (OPENX) datasets.
 
-NOTE: You need to install tensorflow and tensorflow_datsets before running this script.
+NOTE: You need to install tensorflow and tensorflow_datasets before running this script.
 
 Example:
     python lerobot/scripts/push_dataset_to_hub.py \

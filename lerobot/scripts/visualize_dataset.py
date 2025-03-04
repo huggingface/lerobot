@@ -208,12 +208,6 @@ def main():
         help="Episode to visualize.",
     )
     parser.add_argument(
-        "--local-files-only",
-        type=int,
-        default=0,
-        help="Use local files only. By default, this script will try to fetch the dataset from the hub if it exists.",
-    )
-    parser.add_argument(
         "--root",
         type=Path,
         default=None,
@@ -275,10 +269,9 @@ def main():
     kwargs = vars(args)
     repo_id = kwargs.pop("repo_id")
     root = kwargs.pop("root")
-    local_files_only = kwargs.pop("local_files_only")
 
     logging.info("Loading dataset")
-    dataset = LeRobotDataset(repo_id, root=root, local_files_only=local_files_only)
+    dataset = LeRobotDataset(repo_id, root=root)
 
     visualize_dataset(dataset, **vars(args))
 

@@ -18,11 +18,11 @@ def _generate_image(width: int, height: int):
     return np.random.randint(0, 256, size=(height, width, 3), dtype=np.uint8)
 
 
-def cvtColor(color_image, color_convertion):  # noqa: N802
-    if color_convertion in [COLOR_RGB2BGR, COLOR_BGR2RGB]:
+def cvtColor(color_image, color_conversion):  # noqa: N802
+    if color_conversion in [COLOR_RGB2BGR, COLOR_BGR2RGB]:
         return color_image[:, :, [2, 1, 0]]
     else:
-        raise NotImplementedError(color_convertion)
+        raise NotImplementedError(color_conversion)
 
 
 def rotate(color_image, rotation):
