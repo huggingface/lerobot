@@ -139,7 +139,9 @@ class LeRobotDatasetMetadata:
 
     def get_video_file_path(self, ep_index: int, vid_key: str) -> Path:
         ep_chunk = self.get_episode_chunk(ep_index)
-        fpath = self.video_path.format(episode_chunk=ep_chunk, video_key=vid_key, episode_index=ep_index)
+        fpath = self.video_path.format(
+            episode_chunk=ep_chunk, video_key=vid_key, episode_index=ep_index
+        )
         return Path(fpath)
 
     def get_episode_chunk(self, ep_index: int) -> int:
@@ -183,7 +185,11 @@ class LeRobotDatasetMetadata:
     @property
     def camera_keys(self) -> list[str]:
         """Keys to access visual modalities (regardless of their storage method)."""
-        return [key for key, ft in self.features.items() if ft["dtype"] in ["video", "image"]]
+        return [
+            key
+            for key, ft in self.features.items()
+            if ft["dtype"] in ["video", "image"]
+        ]
 
     @property
     def names(self) -> dict[str, list | dict]:
@@ -285,7 +291,9 @@ class LeRobotDatasetMetadata:
         """
         for key in self.video_keys:
             if not self.features[key].get("info", None):
-                video_path = self.root / self.get_video_file_path(ep_index=0, vid_key=key)
+                video_path = self.root / self.get_video_file_path(
+                    ep_index=0, vid_key=key
+                )
                 self.info["features"][key]["info"] = get_video_info(video_path)
 
     def __repr__(self):
@@ -619,7 +627,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
             path = str(self.root / "data")
             hf_dataset = load_dataset("parquet", data_dir=path, split="train")
         else:
-            files = [str(self.root / self.meta.get_data_file_path(ep_idx)) for ep_idx in self.episodes]
+            files = [
+                str(self.root / self.meta.get_data_file_path(ep_idx))
+                for ep_idx in self.episodes
+            ]
             hf_dataset = load_dataset("parquet", data_files=files, split="train")
 
         # TODO(aliberts): hf_dataset.set_format("torch")
@@ -643,12 +654,20 @@ class LeRobotDataset(torch.utils.data.Dataset):
     @property
     def num_frames(self) -> int:
         """Number of frames in selected episodes."""
-        return len(self.hf_dataset) if self.hf_dataset is not None else self.meta.total_frames
+        return (
+            len(self.hf_dataset)
+            if self.hf_dataset is not None
+            else self.meta.total_frames
+        )
 
     @property
     def num_episodes(self) -> int:
         """Number of episodes selected."""
-        return len(self.episodes) if self.episodes is not None else self.meta.total_episodes
+        return (
+            len(self.episodes)
+            if self.episodes is not None
+            else self.meta.total_episodes
+        )
 
     @property
     def features(self) -> dict[str, dict]:
@@ -662,16 +681,24 @@ class LeRobotDataset(torch.utils.data.Dataset):
         else:
             return get_hf_features_from_features(self.features)
 
-    def _get_query_indices(self, idx: int, ep_idx: int) -> tuple[dict[str, list[int | bool]]]:
+    def _get_query_indices(
+        self, idx: int, ep_idx: int
+    ) -> tuple[dict[str, list[int | bool]]]:
         ep_start = self.episode_data_index["from"][ep_idx]
         ep_end = self.episode_data_index["to"][ep_idx]
         query_indices = {
-            key: [max(ep_start.item(), min(ep_end.item() - 1, idx + delta)) for delta in delta_idx]
+            key: [
+                max(ep_start.item(), min(ep_end.item() - 1, idx + delta))
+                for delta in delta_idx
+            ]
             for key, delta_idx in self.delta_indices.items()
         }
         padding = {  # Pad values outside of current episode range
             f"{key}_is_pad": torch.BoolTensor(
-                [(idx + delta < ep_start.item()) | (idx + delta >= ep_end.item()) for delta in delta_idx]
+                [
+                    (idx + delta < ep_start.item()) | (idx + delta >= ep_end.item())
+                    for delta in delta_idx
+                ]
             )
             for key, delta_idx in self.delta_indices.items()
         }
@@ -771,13 +798,17 @@ class LeRobotDataset(torch.utils.data.Dataset):
             ep_buffer[key] = current_ep_idx if key == "episode_index" else []
         return ep_buffer
 
-    def _get_image_file_path(self, episode_index: int, image_key: str, frame_index: int) -> Path:
+    def _get_image_file_path(
+        self, episode_index: int, image_key: str, frame_index: int
+    ) -> Path:
         fpath = DEFAULT_IMAGE_PATH.format(
             image_key=image_key, episode_index=episode_index, frame_index=frame_index
         )
         return self.root / fpath
 
-    def _save_image(self, image: torch.Tensor | np.ndarray | PIL.Image.Image, fpath: Path) -> None:
+    def _save_image(
+        self, image: torch.Tensor | np.ndarray | PIL.Image.Image, fpath: Path
+    ) -> None:
         if self.image_writer is None:
             if isinstance(image, torch.Tensor):
                 image = image.cpu().numpy()
@@ -803,7 +834,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         # Automatically add frame_index and timestamp to episode buffer
         frame_index = self.episode_buffer["size"]
-        timestamp = frame.pop("timestamp") if "timestamp" in frame else frame_index / self.fps
+        timestamp = (
+            frame.pop("timestamp") if "timestamp" in frame else frame_index / self.fps
+        )
         self.episode_buffer["frame_index"].append(frame_index)
         self.episode_buffer["timestamp"].append(timestamp)
 
@@ -821,7 +854,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
             if self.features[key]["dtype"] in ["image", "video"]:
                 img_path = self._get_image_file_path(
-                    episode_index=self.episode_buffer["episode_index"], image_key=key, frame_index=frame_index
+                    episode_index=self.episode_buffer["episode_index"],
+                    image_key=key,
+                    frame_index=frame_index,
                 )
                 if frame_index == 0:
                     img_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1132,7 +1167,13 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
     def features(self) -> datasets.Features:
         features = {}
         for dataset in self._datasets:
-            features.update({k: v for k, v in dataset.hf_features.items() if k not in self.disabled_features})
+            features.update(
+                {
+                    k: v
+                    for k, v in dataset.hf_features.items()
+                    if k not in self.disabled_features
+                }
+            )
         return features
 
     @property
@@ -1193,7 +1234,9 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
                 continue
             break
         else:
-            raise AssertionError("We expect the loop to break out as long as the index is within bounds.")
+            raise AssertionError(
+                "We expect the loop to break out as long as the index is within bounds."
+            )
         item = self._datasets[dataset_idx][idx - start_idx]
         item["dataset_index"] = torch.tensor(dataset_idx)
         for data_key in self.disabled_features:

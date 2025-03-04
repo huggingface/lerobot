@@ -9,7 +9,7 @@ env:
   action_dim: 6
   fps: ${fps}
   device: mps
-  
+
   wrapper:
     crop_params_dict:
       observation.images.front: [102, 43, 358, 523]
@@ -28,4 +28,4 @@ env:
   reward_classifier:
     pretrained_path:  outputs/classifier/13-02-random-sample-resnet10-frozen/checkpoints/best/pretrained_model
     config_path: lerobot/configs/policy/hilserl_classifier.yaml
-    
+

@@ -14,7 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import functools
-import random
 from typing import Any, Callable, Optional, Sequence, TypedDict
 
 import io
@@ -737,7 +736,6 @@ def concatenate_batch_transitions(
 
 
 if __name__ == "__main__":
-    import numpy as np
     from tempfile import TemporaryDirectory
 
     # ===== Test 1: Create and use a synthetic ReplayBuffer =====
@@ -1139,7 +1137,7 @@ if __name__ == "__main__":
 
     savings_percent = (std_mem - opt_mem) / std_mem * 100
 
-    print(f"\nMemory optimization result:")
+    print("\nMemory optimization result:")
     print(f"- Standard buffer state memory: {std_mem / (1024 * 1024):.2f} MB")
     print(f"- Optimized buffer state memory: {opt_mem / (1024 * 1024):.2f} MB")
     print(f"- Memory savings for state tensors: {savings_percent:.1f}%")

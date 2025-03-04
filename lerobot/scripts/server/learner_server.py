@@ -146,7 +146,7 @@ def log_training_info(cfg: DictConfig, out_dir: str, policy: nn.Module) -> None:
 
 
 def initialize_replay_buffer(
-    cfg: DictConfig, logger: Logger, device: str, storage_device:str
+    cfg: DictConfig, logger: Logger, device: str, storage_device: str
 ) -> ReplayBuffer:
     if not cfg.resume:
         return ReplayBuffer(

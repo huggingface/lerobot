@@ -52,7 +52,9 @@ class StretchRobot(StretchAPI):
     def connect(self) -> None:
         self.is_connected = self.startup()
         if not self.is_connected:
-            print("Another process is already using Stretch. Try running 'stretch_free_robot_process.py'")
+            print(
+                "Another process is already using Stretch. Try running 'stretch_free_robot_process.py'"
+            )
             raise ConnectionError()
 
         for name in self.cameras:
@@ -60,7 +62,9 @@ class StretchRobot(StretchAPI):
             self.is_connected = self.is_connected and self.cameras[name].is_connected
 
         if not self.is_connected:
-            print("Could not connect to the cameras, check that all cameras are plugged-in.")
+            print(
+                "Could not connect to the cameras, check that all cameras are plugged-in."
+            )
             raise ConnectionError()
 
         self.run_calibration()
@@ -105,8 +109,12 @@ class StretchRobot(StretchAPI):
             before_camread_t = time.perf_counter()
             images[name] = self.cameras[name].async_read()
             images[name] = torch.from_numpy(images[name])
-            self.logs[f"read_camera_{name}_dt_s"] = self.cameras[name].logs["delta_timestamp_s"]
-            self.logs[f"async_read_camera_{name}_dt_s"] = time.perf_counter() - before_camread_t
+            self.logs[f"read_camera_{name}_dt_s"] = self.cameras[name].logs[
+                "delta_timestamp_s"
+            ]
+            self.logs[f"async_read_camera_{name}_dt_s"] = (
+                time.perf_counter() - before_camread_t
+            )
 
         # Populate output dictionaries
         obs_dict, action_dict = {}, {}
@@ -150,8 +158,12 @@ class StretchRobot(StretchAPI):
             before_camread_t = time.perf_counter()
             images[name] = self.cameras[name].async_read()
             images[name] = torch.from_numpy(images[name])
-            self.logs[f"read_camera_{name}_dt_s"] = self.cameras[name].logs["delta_timestamp_s"]
-            self.logs[f"async_read_camera_{name}_dt_s"] = time.perf_counter() - before_camread_t
+            self.logs[f"read_camera_{name}_dt_s"] = self.cameras[name].logs[
+                "delta_timestamp_s"
+            ]
+            self.logs[f"async_read_camera_{name}_dt_s"] = (
+                time.perf_counter() - before_camread_t
+            )
 
         # Populate output dictionaries
         obs_dict = {}

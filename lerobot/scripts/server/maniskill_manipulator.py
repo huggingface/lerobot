@@ -10,7 +10,9 @@ from typing import Any
 from mani_skill.vector.wrappers.gymnasium import ManiSkillVectorEnv
 
 
-def preprocess_maniskill_observation(observations: dict[str, np.ndarray]) -> dict[str, torch.Tensor]:
+def preprocess_maniskill_observation(
+    observations: dict[str, np.ndarray],
+) -> dict[str, torch.Tensor]:
     """Convert environment observation to LeRobot format observation.
     Args:
         observation: Dictionary of observation batches from a Gym vector environment.
@@ -62,7 +64,9 @@ class ManiSkillCompat(gym.Wrapper):
         new_action_space_shape = env.action_space.shape[-1]
         new_low = np.squeeze(env.action_space.low, axis=0)
         new_high = np.squeeze(env.action_space.high, axis=0)
-        self.action_space = gym.spaces.Box(low=new_low, high=new_high, shape=(new_action_space_shape,))
+        self.action_space = gym.spaces.Box(
+            low=new_low, high=new_high, shape=(new_action_space_shape,)
+        )
 
     def reset(
         self, *, seed: int | None = None, options: dict[str, Any] | None = None
@@ -81,7 +85,9 @@ class ManiSkillCompat(gym.Wrapper):
 class ManiSkillActionWrapper(gym.ActionWrapper):
     def __init__(self, env):
         super().__init__(env)
-        self.action_space = gym.spaces.Tuple(spaces=(env.action_space, gym.spaces.Discrete(2)))
+        self.action_space = gym.spaces.Tuple(
+            spaces=(env.action_space, gym.spaces.Discrete(2))
+        )
 
     def action(self, action):
         action, telop = action
@@ -95,7 +101,9 @@ class ManiSkillMultiplyActionWrapper(gym.Wrapper):
         action_space_agent: gym.spaces.Box = env.action_space[0]
         action_space_agent.low = action_space_agent.low * multiply_factor
         action_space_agent.high = action_space_agent.high * multiply_factor
-        self.action_space = gym.spaces.Tuple(spaces=(action_space_agent, gym.spaces.Discrete(2)))
+        self.action_space = gym.spaces.Tuple(
+            spaces=(action_space_agent, gym.spaces.Discrete(2))
+        )
 
     def step(self, action):
         if isinstance(action, tuple):
@@ -137,7 +145,9 @@ def make_maniskill(
 
     env = ManiSkillObservationWrapper(env, device=cfg.env.device)
     env = ManiSkillVectorEnv(env, ignore_terminations=True, auto_reset=False)
-    env._max_episode_steps = env.max_episode_steps = 50  # gym_utils.find_max_episode_steps_value(env)
+    env._max_episode_steps = env.max_episode_steps = (
+        50  # gym_utils.find_max_episode_steps_value(env)
+    )
     env.unwrapped.metadata["render_fps"] = 20
     env = ManiSkillCompat(env)
     env = ManiSkillActionWrapper(env)
@@ -149,10 +159,11 @@ def make_maniskill(
 if __name__ == "__main__":
     import argparse
     import hydra
-    from omegaconf import OmegaConf
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, default="lerobot/configs/env/maniskill_example.yaml")
+    parser.add_argument(
+        "--config", type=str, default="lerobot/configs/env/maniskill_example.yaml"
+    )
     args = parser.parse_args()
 
     # Initialize config
