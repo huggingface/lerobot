@@ -26,7 +26,10 @@ from pathlib import Path
 from textwrap import dedent
 
 from lerobot import available_datasets
-from lerobot.common.datasets.v2.convert_dataset_v1_to_v2 import convert_dataset, parse_robot_config
+from lerobot.common.datasets.v2.convert_dataset_v1_to_v2 import (
+    convert_dataset,
+    parse_robot_config,
+)
 
 LOCAL_DIR = Path("data/")
 
@@ -117,7 +120,10 @@ DATASETS = {
         "single_task": "Place the battery into the slot of the remote controller.",
         **ALOHA_STATIC_INFO,
     },
-    "aloha_static_candy": {"single_task": "Pick up the candy and unwrap it.", **ALOHA_STATIC_INFO},
+    "aloha_static_candy": {
+        "single_task": "Pick up the candy and unwrap it.",
+        **ALOHA_STATIC_INFO,
+    },
     "aloha_static_coffee": {
         "single_task": "Place the coffee capsule inside the capsule container, then place the cup onto the center of the cup tray, then push the 'Hot Water' and 'Travel Mug' buttons.",
         **ALOHA_STATIC_INFO,
@@ -166,13 +172,22 @@ DATASETS = {
         "single_task": "Pick up the plastic cup with the left arm, then pop its lid open with the right arm.",
         **ALOHA_STATIC_INFO,
     },
-    "aloha_static_ziploc_slide": {"single_task": "Slide open the ziploc bag.", **ALOHA_STATIC_INFO},
-    "aloha_sim_insertion_scripted": {"single_task": "Insert the peg into the socket.", **ALOHA_STATIC_INFO},
+    "aloha_static_ziploc_slide": {
+        "single_task": "Slide open the ziploc bag.",
+        **ALOHA_STATIC_INFO,
+    },
+    "aloha_sim_insertion_scripted": {
+        "single_task": "Insert the peg into the socket.",
+        **ALOHA_STATIC_INFO,
+    },
     "aloha_sim_insertion_scripted_image": {
         "single_task": "Insert the peg into the socket.",
         **ALOHA_STATIC_INFO,
     },
-    "aloha_sim_insertion_human": {"single_task": "Insert the peg into the socket.", **ALOHA_STATIC_INFO},
+    "aloha_sim_insertion_human": {
+        "single_task": "Insert the peg into the socket.",
+        **ALOHA_STATIC_INFO,
+    },
     "aloha_sim_insertion_human_image": {
         "single_task": "Insert the peg into the socket.",
         **ALOHA_STATIC_INFO,
@@ -193,10 +208,19 @@ DATASETS = {
         "single_task": "Pick up the cube with the right arm and transfer it to the left arm.",
         **ALOHA_STATIC_INFO,
     },
-    "pusht": {"single_task": "Push the T-shaped block onto the T-shaped target.", **PUSHT_INFO},
-    "pusht_image": {"single_task": "Push the T-shaped block onto the T-shaped target.", **PUSHT_INFO},
+    "pusht": {
+        "single_task": "Push the T-shaped block onto the T-shaped target.",
+        **PUSHT_INFO,
+    },
+    "pusht_image": {
+        "single_task": "Push the T-shaped block onto the T-shaped target.",
+        **PUSHT_INFO,
+    },
     "unitreeh1_fold_clothes": {"single_task": "Fold the sweatshirt.", **UNITREEH_INFO},
-    "unitreeh1_rearrange_objects": {"single_task": "Put the object into the bin.", **UNITREEH_INFO},
+    "unitreeh1_rearrange_objects": {
+        "single_task": "Put the object into the bin.",
+        **UNITREEH_INFO,
+    },
     "unitreeh1_two_robot_greeting": {
         "single_task": "Greet the other robot with a high five.",
         **UNITREEH_INFO,
@@ -206,13 +230,31 @@ DATASETS = {
         **UNITREEH_INFO,
     },
     "xarm_lift_medium": {"single_task": "Pick up the cube and lift it.", **XARM_INFO},
-    "xarm_lift_medium_image": {"single_task": "Pick up the cube and lift it.", **XARM_INFO},
-    "xarm_lift_medium_replay": {"single_task": "Pick up the cube and lift it.", **XARM_INFO},
-    "xarm_lift_medium_replay_image": {"single_task": "Pick up the cube and lift it.", **XARM_INFO},
+    "xarm_lift_medium_image": {
+        "single_task": "Pick up the cube and lift it.",
+        **XARM_INFO,
+    },
+    "xarm_lift_medium_replay": {
+        "single_task": "Pick up the cube and lift it.",
+        **XARM_INFO,
+    },
+    "xarm_lift_medium_replay_image": {
+        "single_task": "Pick up the cube and lift it.",
+        **XARM_INFO,
+    },
     "xarm_push_medium": {"single_task": "Push the cube onto the target.", **XARM_INFO},
-    "xarm_push_medium_image": {"single_task": "Push the cube onto the target.", **XARM_INFO},
-    "xarm_push_medium_replay": {"single_task": "Push the cube onto the target.", **XARM_INFO},
-    "xarm_push_medium_replay_image": {"single_task": "Push the cube onto the target.", **XARM_INFO},
+    "xarm_push_medium_image": {
+        "single_task": "Push the cube onto the target.",
+        **XARM_INFO,
+    },
+    "xarm_push_medium_replay": {
+        "single_task": "Push the cube onto the target.",
+        **XARM_INFO,
+    },
+    "xarm_push_medium_replay_image": {
+        "single_task": "Push the cube onto the target.",
+        **XARM_INFO,
+    },
     "umi_cup_in_the_wild": {
         "single_task": "Put the cup on the plate.",
         "license": "apache-2.0",

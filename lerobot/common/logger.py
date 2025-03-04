@@ -84,7 +84,9 @@ class Logger:
     pretrained_model_dir_name = "pretrained_model"
     training_state_file_name = "training_state.pth"
 
-    def __init__(self, cfg: DictConfig, log_dir: str, wandb_job_name: str | None = None):
+    def __init__(
+        self, cfg: DictConfig, log_dir: str, wandb_job_name: str | None = None
+    ):
         """
         Args:
             log_dir: The directory to save all logs and training outputs to.
@@ -104,7 +106,9 @@ class Logger:
         enable_wandb = cfg.get("wandb", {}).get("enable", False)
         run_offline = not enable_wandb or not project
         if run_offline:
-            logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
+            logging.info(
+                colored("Logs will be saved locally.", "yellow", attrs=["bold"])
+            )
             self._wandb = None
         else:
             os.environ["WANDB_SILENT"] = "true"
@@ -130,7 +134,9 @@ class Logger:
             # Handle custom step key for rl asynchronous training.
             self._wandb_custom_step_key: set[str] | None = None
             print(colored("Logs will be synced with wandb.", "blue", attrs=["bold"]))
-            logging.info(f"Track this run --> {colored(wandb.run.get_url(), 'yellow', attrs=['bold'])}")
+            logging.info(
+                f"Track this run --> {colored(wandb.run.get_url(), 'yellow', attrs=['bold'])}"
+            )
             self._wandb = wandb
 
     @classmethod
@@ -151,7 +157,9 @@ class Logger:
         """
         return cls.get_last_checkpoint_dir(log_dir) / cls.pretrained_model_dir_name
 
-    def save_model(self, save_dir: Path, policy: Policy, wandb_artifact_name: str | None = None):
+    def save_model(
+        self, save_dir: Path, policy: Policy, wandb_artifact_name: str | None = None
+    ):
         """Save the weights of the Policy model using PyTorchModelHubMixin.
 
         The weights are saved in a folder called "pretrained_model" under the checkpoint directory.
@@ -221,22 +229,30 @@ class Logger:
             else f"{self._group.replace(':', '_').replace('/', '_')}-{self._cfg.seed}-{identifier}"
         )
         self.save_model(
-            checkpoint_dir / self.pretrained_model_dir_name, policy, wandb_artifact_name=wandb_artifact_name
+            checkpoint_dir / self.pretrained_model_dir_name,
+            policy,
+            wandb_artifact_name=wandb_artifact_name,
         )
-        self.save_training_state(checkpoint_dir, train_step, optimizer, scheduler, interaction_step)
+        self.save_training_state(
+            checkpoint_dir, train_step, optimizer, scheduler, interaction_step
+        )
         os.symlink(checkpoint_dir.absolute(), self.last_checkpoint_dir)
 
-    def load_last_training_state(self, optimizer: Optimizer | dict, scheduler: LRScheduler | None) -> int:
+    def load_last_training_state(
+        self, optimizer: Optimizer | dict, scheduler: LRScheduler | None
+    ) -> int:
         """
         Given the last checkpoint in the logging directory, load the optimizer state, scheduler state, and
         random state, and return the global training step.
         """
-        training_state = torch.load(self.last_checkpoint_dir / self.training_state_file_name)
+        training_state = torch.load(
+            self.last_checkpoint_dir / self.training_state_file_name
+        )
         # For the case where the optimizer is a dictionary of optimizers (e.g., sac)
         if type(training_state["optimizer"]) is dict:
-            assert set(training_state["optimizer"].keys()) == set(optimizer.keys()), (
-                "Optimizer dictionaries do not have the same keys during resume!"
-            )
+            assert set(training_state["optimizer"].keys()) == set(
+                optimizer.keys()
+            ), "Optimizer dictionaries do not have the same keys during resume!"
             for k, v in training_state["optimizer"].items():
                 optimizer[k].load_state_dict(v)
         else:
@@ -248,10 +264,18 @@ class Logger:
                 "The checkpoint contains a scheduler state_dict, but no LRScheduler was provided."
             )
         # Small hack to get the expected keys: use `get_global_random_state`.
-        set_global_random_state({k: training_state[k] for k in get_global_random_state()})
+        set_global_random_state(
+            {k: training_state[k] for k in get_global_random_state()}
+        )
         return training_state["step"]
 
-    def log_dict(self, d, step: int | None = None, mode="train", custom_step_key: str | None = None):
+    def log_dict(
+        self,
+        d,
+        step: int | None = None,
+        mode="train",
+        custom_step_key: str | None = None,
+    ):
         """Log a dictionary of metrics to WandB."""
         assert mode in {"train", "eval"}
         # TODO(alexander-soare): Add local text log.
@@ -280,12 +304,20 @@ class Logger:
                     continue
 
                 # Do not log the custom step key itself.
-                if self._wandb_custom_step_key is not None and k in self._wandb_custom_step_key:
+                if (
+                    self._wandb_custom_step_key is not None
+                    and k in self._wandb_custom_step_key
+                ):
                     continue
 
                 if custom_step_key is not None:
                     value_custom_step = d[custom_step_key]
-                    self._wandb.log({f"{mode}/{k}": v, f"{mode}/{custom_step_key}": value_custom_step})
+                    self._wandb.log(
+                        {
+                            f"{mode}/{k}": v,
+                            f"{mode}/{custom_step_key}": value_custom_step,
+                        }
+                    )
                     continue
 
                 self._wandb.log(data={f"{mode}/{k}": v}, step=step)

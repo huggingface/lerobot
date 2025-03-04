@@ -44,7 +44,9 @@ from lerobot.common.datasets.video_utils import VideoFrame, encode_video_frames
 def get_cameras(hdf5_data):
     # ignore depth channel, not currently handled
     # TODO(rcadene): add depth
-    rgb_cameras = [key for key in hdf5_data["/observations/images"].keys() if "depth" not in key]  # noqa: SIM118
+    rgb_cameras = [
+        key for key in hdf5_data["/observations/images"].keys() if "depth" not in key
+    ]  # noqa: SIM118
     return rgb_cameras
 
 
@@ -73,7 +75,9 @@ def check_format(raw_dir) -> bool:
                 else:
                     assert data[f"/observations/images/{camera}"].ndim == 4
                     b, h, w, c = data[f"/observations/images/{camera}"].shape
-                    assert c < h and c < w, f"Expect (h,w,c) image format but ({h=},{w=},{c=}) provided."
+                    assert (
+                        c < h and c < w
+                    ), f"Expect (h,w,c) image format but ({h=},{w=},{c=}) provided."
 
 
 def load_from_raw(
@@ -134,14 +138,17 @@ def load_from_raw(
                     # encode images to a mp4 video
                     fname = f"{img_key}_episode_{ep_idx:06d}.mp4"
                     video_path = videos_dir / fname
-                    encode_video_frames(tmp_imgs_dir, video_path, fps, **(encoding or {}))
+                    encode_video_frames(
+                        tmp_imgs_dir, video_path, fps, **(encoding or {})
+                    )
 
                     # clean temporary images directory
                     shutil.rmtree(tmp_imgs_dir)
 
                     # store the reference to the video frame
                     ep_dict[img_key] = [
-                        {"path": f"videos/{fname}", "timestamp": i / fps} for i in range(num_frames)
+                        {"path": f"videos/{fname}", "timestamp": i / fps}
+                        for i in range(num_frames)
                     ]
                 else:
                     ep_dict[img_key] = [PILImage.fromarray(x) for x in imgs_array]
@@ -181,15 +188,18 @@ def to_hf_dataset(data_dict, video) -> Dataset:
             features[key] = Image()
 
     features["observation.state"] = Sequence(
-        length=data_dict["observation.state"].shape[1], feature=Value(dtype="float32", id=None)
+        length=data_dict["observation.state"].shape[1],
+        feature=Value(dtype="float32", id=None),
     )
     if "observation.velocity" in data_dict:
         features["observation.velocity"] = Sequence(
-            length=data_dict["observation.velocity"].shape[1], feature=Value(dtype="float32", id=None)
+            length=data_dict["observation.velocity"].shape[1],
+            feature=Value(dtype="float32", id=None),
         )
     if "observation.effort" in data_dict:
         features["observation.effort"] = Sequence(
-            length=data_dict["observation.effort"].shape[1], feature=Value(dtype="float32", id=None)
+            length=data_dict["observation.effort"].shape[1],
+            feature=Value(dtype="float32", id=None),
         )
     features["action"] = Sequence(
         length=data_dict["action"].shape[1], feature=Value(dtype="float32", id=None)

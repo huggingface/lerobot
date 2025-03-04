@@ -43,9 +43,15 @@ EPISODES_PATH = "meta/episodes.jsonl"
 STATS_PATH = "meta/stats.json"
 TASKS_PATH = "meta/tasks.jsonl"
 
-DEFAULT_VIDEO_PATH = "videos/chunk-{episode_chunk:03d}/{video_key}/episode_{episode_index:06d}.mp4"
-DEFAULT_PARQUET_PATH = "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet"
-DEFAULT_IMAGE_PATH = "images/{image_key}/episode_{episode_index:06d}/frame_{frame_index:06d}.png"
+DEFAULT_VIDEO_PATH = (
+    "videos/chunk-{episode_chunk:03d}/{video_key}/episode_{episode_index:06d}.mp4"
+)
+DEFAULT_PARQUET_PATH = (
+    "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet"
+)
+DEFAULT_IMAGE_PATH = (
+    "images/{image_key}/episode_{episode_index:06d}/frame_{frame_index:06d}.png"
+)
 
 DATASET_CARD_TEMPLATE = """
 ---
@@ -99,7 +105,9 @@ def unflatten_dict(d: dict, sep: str = "/") -> dict:
 
 
 def serialize_dict(stats: dict[str, torch.Tensor | np.ndarray | dict]) -> dict:
-    serialized_dict = {key: value.tolist() for key, value in flatten_dict(stats).items()}
+    serialized_dict = {
+        key: value.tolist() for key, value in flatten_dict(stats).items()
+    }
     return unflatten_dict(serialized_dict)
 
 
@@ -157,14 +165,19 @@ def load_stats(local_dir: Path) -> dict:
 
 def load_tasks(local_dir: Path) -> dict:
     tasks = load_jsonlines(local_dir / TASKS_PATH)
-    return {item["task_index"]: item["task"] for item in sorted(tasks, key=lambda x: x["task_index"])}
+    return {
+        item["task_index"]: item["task"]
+        for item in sorted(tasks, key=lambda x: x["task_index"])
+    }
 
 
 def load_episodes(local_dir: Path) -> dict:
     return load_jsonlines(local_dir / EPISODES_PATH)
 
 
-def load_image_as_numpy(fpath: str | Path, dtype="float32", channel_first: bool = True) -> np.ndarray:
+def load_image_as_numpy(
+    fpath: str | Path, dtype="float32", channel_first: bool = True
+) -> np.ndarray:
     img = PILImage.open(fpath).convert("RGB")
     img_array = np.array(img, dtype=dtype)
     if channel_first:  # (H, W, C) -> (C, H, W)
@@ -222,7 +235,10 @@ class BackwardCompatibilityError(Exception):
 
 
 def check_version_compatibility(
-    repo_id: str, version_to_check: str, current_version: str, enforce_breaking_major: bool = True
+    repo_id: str,
+    version_to_check: str,
+    current_version: str,
+    enforce_breaking_major: bool = True,
 ) -> None:
     current_major, _ = _get_major_minor(current_version)
     major_to_check, _ = _get_major_minor(version_to_check)
@@ -317,7 +333,9 @@ def create_empty_dataset_info(
 def get_episode_data_index(
     episode_dicts: list[dict], episodes: list[int] | None = None
 ) -> dict[str, torch.Tensor]:
-    episode_lengths = {ep_idx: ep_dict["length"] for ep_idx, ep_dict in enumerate(episode_dicts)}
+    episode_lengths = {
+        ep_idx: ep_dict["length"] for ep_idx, ep_dict in enumerate(episode_dicts)
+    }
     if episodes is not None:
         episode_lengths = {ep_idx: episode_lengths[ep_idx] for ep_idx in episodes}
 
@@ -338,7 +356,9 @@ def calculate_total_episode(
     return total_episodes
 
 
-def calculate_episode_data_index(hf_dataset: datasets.Dataset) -> dict[str, torch.Tensor]:
+def calculate_episode_data_index(
+    hf_dataset: datasets.Dataset,
+) -> dict[str, torch.Tensor]:
     episode_lengths = []
     table = hf_dataset.data.table
     total_episodes = calculate_total_episode(hf_dataset)
@@ -380,7 +400,9 @@ def check_timestamps_sync(
         # Track original indices before masking
         original_indices = torch.arange(len(diffs))
         filtered_indices = original_indices[mask]
-        outside_tolerance_filtered_indices = torch.nonzero(~filtered_within_tolerance)  # .squeeze()
+        outside_tolerance_filtered_indices = torch.nonzero(
+            ~filtered_within_tolerance
+        )  # .squeeze()
         outside_tolerance_indices = filtered_indices[outside_tolerance_filtered_indices]
         episode_indices = torch.stack(hf_dataset["episode_index"])
 
@@ -405,7 +427,10 @@ def check_timestamps_sync(
 
 
 def check_delta_timestamps(
-    delta_timestamps: dict[str, list[float]], fps: int, tolerance_s: float, raise_value_error: bool = True
+    delta_timestamps: dict[str, list[float]],
+    fps: int,
+    tolerance_s: float,
+    raise_value_error: bool = True,
 ) -> bool:
     """This will check if all the values in delta_timestamps are multiples of 1/fps +/- tolerance.
     This is to ensure that these delta_timestamps added to any timestamp from a dataset will themselves be
@@ -413,10 +438,14 @@ def check_delta_timestamps(
     """
     outside_tolerance = {}
     for key, delta_ts in delta_timestamps.items():
-        within_tolerance = [abs(ts * fps - round(ts * fps)) / fps <= tolerance_s for ts in delta_ts]
+        within_tolerance = [
+            abs(ts * fps - round(ts * fps)) / fps <= tolerance_s for ts in delta_ts
+        ]
         if not all(within_tolerance):
             outside_tolerance[key] = [
-                ts for ts, is_within in zip(delta_ts, within_tolerance, strict=True) if not is_within
+                ts
+                for ts, is_within in zip(delta_ts, within_tolerance, strict=True)
+                if not is_within
             ]
 
     if len(outside_tolerance) > 0:
@@ -434,7 +463,9 @@ def check_delta_timestamps(
     return True
 
 
-def get_delta_indices(delta_timestamps: dict[str, list[float]], fps: int) -> dict[str, list[int]]:
+def get_delta_indices(
+    delta_timestamps: dict[str, list[float]], fps: int
+) -> dict[str, list[int]]:
     delta_indices = {}
     for key, delta_ts in delta_timestamps.items():
         delta_indices[key] = (torch.tensor(delta_ts) * fps).long().tolist()
@@ -499,7 +530,9 @@ def create_lerobot_dataset_card(
         ],
     )
 
-    card_template = (importlib.resources.files("lerobot.common.datasets") / "card_template.md").read_text()
+    card_template = (
+        importlib.resources.files("lerobot.common.datasets") / "card_template.md"
+    ).read_text()
 
     return DatasetCard.from_template(
         card_data=card_data,

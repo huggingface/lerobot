@@ -69,7 +69,9 @@ def load_raw_dataset(zarr_path: Path):
             ReplayBuffer as DiffusionPolicyReplayBuffer,
         )
     except ModuleNotFoundError as e:
-        print("`gym_pusht` is not installed. Please install it with `pip install 'lerobot[gym_pusht]'`")
+        print(
+            "`gym_pusht` is not installed. Please install it with `pip install 'lerobot[gym_pusht]'`"
+        )
         raise e
 
     zarr_data = DiffusionPolicyReplayBuffer.copy_from_path(zarr_path)
@@ -81,7 +83,9 @@ def calculate_coverage(zarr_data):
         import pymunk
         from gym_pusht.envs.pusht import PushTEnv, pymunk_to_shapely
     except ModuleNotFoundError as e:
-        print("`gym_pusht` is not installed. Please install it with `pip install 'lerobot[gym_pusht]'`")
+        print(
+            "`gym_pusht` is not installed. Please install it with `pip install 'lerobot[gym_pusht]'`"
+        )
         raise e
 
     block_pos = zarr_data["state"][:, 2:4]
@@ -111,7 +115,9 @@ def calculate_coverage(zarr_data):
         ]
         space.add(*walls)
 
-        block_body, block_shapes = PushTEnv.add_tee(space, block_pos[i].tolist(), block_angle[i].item())
+        block_body, block_shapes = PushTEnv.add_tee(
+            space, block_pos[i].tolist(), block_angle[i].item()
+        )
         goal_geom = pymunk_to_shapely(goal_body, block_body.shapes)
         block_geom = pymunk_to_shapely(block_body, block_body.shapes)
         intersection_area = goal_geom.intersection(block_geom).area

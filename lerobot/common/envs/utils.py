@@ -39,7 +39,9 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
             img = img.unsqueeze(0)
         # sanity check that images are channel last
         _, h, w, c = img.shape
-        assert c < h and c < w, f"expect channel last images, but instead got {img.shape=}"
+        assert (
+            c < h and c < w
+        ), f"expect channel last images, but instead got {img.shape=}"
 
         # sanity check that images are uint8
         assert img.dtype == torch.uint8, f"expect torch.uint8, but instead {img.dtype=}"
@@ -65,7 +67,9 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
     return return_observations
 
 
-def preprocess_maniskill_observation(observations: dict[str, np.ndarray]) -> dict[str, Tensor]:
+def preprocess_maniskill_observation(
+    observations: dict[str, np.ndarray],
+) -> dict[str, Tensor]:
     """Convert environment observation to LeRobot format observation.
     Args:
         observation: Dictionary of observation batches from a Gym vector environment.

@@ -26,7 +26,9 @@ from datasets import Dataset, Features, Image, Sequence, Value
 from PIL import Image as PILImage
 
 from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION
-from lerobot.common.datasets.push_dataset_to_hub._umi_imagecodecs_numcodecs import register_codecs
+from lerobot.common.datasets.push_dataset_to_hub._umi_imagecodecs_numcodecs import (
+    register_codecs,
+)
 from lerobot.common.datasets.push_dataset_to_hub.utils import (
     calculate_episode_data_index,
     concatenate_episodes,
@@ -61,7 +63,9 @@ def check_format(raw_dir) -> bool:
     nb_frames = zarr_data["data/camera0_rgb"].shape[0]
 
     required_datasets.remove("meta/episode_ends")
-    assert all(nb_frames == zarr_data[dataset].shape[0] for dataset in required_datasets)
+    assert all(
+        nb_frames == zarr_data[dataset].shape[0] for dataset in required_datasets
+    )
 
 
 def load_from_raw(
@@ -79,7 +83,9 @@ def load_from_raw(
     end_pose = torch.from_numpy(zarr_data["data/robot0_demo_end_pose"][:])
     start_pos = torch.from_numpy(zarr_data["data/robot0_demo_start_pose"][:])
     eff_pos = torch.from_numpy(zarr_data["data/robot0_eef_pos"][:])
-    eff_rot_axis_angle = torch.from_numpy(zarr_data["data/robot0_eef_rot_axis_angle"][:])
+    eff_rot_axis_angle = torch.from_numpy(
+        zarr_data["data/robot0_eef_rot_axis_angle"][:]
+    )
     gripper_width = torch.from_numpy(zarr_data["data/robot0_gripper_width"][:])
 
     states_pos = torch.cat([eff_pos, eff_rot_axis_angle], dim=1)
@@ -129,24 +135,31 @@ def load_from_raw(
                     save_images_concurrently(imgs_array, tmp_imgs_dir)
 
                     # encode images to a mp4 video
-                    encode_video_frames(tmp_imgs_dir, video_path, fps, **(encoding or {}))
+                    encode_video_frames(
+                        tmp_imgs_dir, video_path, fps, **(encoding or {})
+                    )
 
                     # clean temporary images directory
                     shutil.rmtree(tmp_imgs_dir)
 
                 # store the reference to the video frame
                 ep_dict[img_key] = [
-                    {"path": f"videos/{fname}", "timestamp": i / fps} for i in range(num_frames)
+                    {"path": f"videos/{fname}", "timestamp": i / fps}
+                    for i in range(num_frames)
                 ]
             else:
                 ep_dict[img_key] = [PILImage.fromarray(x) for x in imgs_array]
 
             ep_dict["observation.state"] = state
-            ep_dict["episode_index"] = torch.tensor([ep_idx] * num_frames, dtype=torch.int64)
+            ep_dict["episode_index"] = torch.tensor(
+                [ep_idx] * num_frames, dtype=torch.int64
+            )
             ep_dict["frame_index"] = torch.arange(0, num_frames, 1)
             ep_dict["timestamp"] = torch.arange(0, num_frames, 1) / fps
             ep_dict["episode_data_index_from"] = torch.tensor([from_idx] * num_frames)
-            ep_dict["episode_data_index_to"] = torch.tensor([from_idx + num_frames] * num_frames)
+            ep_dict["episode_data_index_to"] = torch.tensor(
+                [from_idx + num_frames] * num_frames
+            )
             ep_dict["end_pose"] = end_pose[from_idx:to_idx]
             ep_dict["start_pos"] = start_pos[from_idx:to_idx]
             ep_dict["gripper_width"] = gripper_width[from_idx:to_idx]
@@ -172,7 +185,8 @@ def to_hf_dataset(data_dict, video):
         features["observation.image"] = Image()
 
     features["observation.state"] = Sequence(
-        length=data_dict["observation.state"].shape[1], feature=Value(dtype="float32", id=None)
+        length=data_dict["observation.state"].shape[1],
+        feature=Value(dtype="float32", id=None),
     )
     features["episode_index"] = Value(dtype="int64", id=None)
     features["frame_index"] = Value(dtype="int64", id=None)
@@ -192,7 +206,8 @@ def to_hf_dataset(data_dict, video):
         length=data_dict["start_pos"].shape[1], feature=Value(dtype="float32", id=None)
     )
     features["gripper_width"] = Sequence(
-        length=data_dict["gripper_width"].shape[1], feature=Value(dtype="float32", id=None)
+        length=data_dict["gripper_width"].shape[1],
+        feature=Value(dtype="float32", id=None),
     )
 
     hf_dataset = Dataset.from_dict(data_dict, features=Features(features))

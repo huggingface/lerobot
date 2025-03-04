@@ -52,7 +52,9 @@ def get_policy_and_config_classes(name: str) -> tuple[Policy, object]:
 
         return TDMPCPolicy, TDMPCConfig
     elif name == "diffusion":
-        from lerobot.common.policies.diffusion.configuration_diffusion import DiffusionConfig
+        from lerobot.common.policies.diffusion.configuration_diffusion import (
+            DiffusionConfig,
+        )
         from lerobot.common.policies.diffusion.modeling_diffusion import DiffusionPolicy
 
         return DiffusionPolicy, DiffusionConfig
@@ -115,7 +117,9 @@ def make_policy(
         # huggingface_hub should make it possible to avoid the hack:
         # https://github.com/huggingface/huggingface_hub/pull/2274.
         policy = policy_cls(policy_cfg)
-        policy.load_state_dict(policy_cls.from_pretrained(pretrained_policy_name_or_path).state_dict())
+        policy.load_state_dict(
+            policy_cls.from_pretrained(pretrained_policy_name_or_path).state_dict()
+        )
 
     policy.to(get_safe_torch_device(hydra_cfg.device))
 

@@ -191,6 +191,10 @@ class TDMPCConfig:
                     "If `n_action_steps > 1`, `n_action_repeats` must be left to its default value of 1."
                 )
             if not self.use_mpc:
-                raise ValueError("If `n_action_steps > 1`, `use_mpc` must be set to `True`.")
+                raise ValueError(
+                    "If `n_action_steps > 1`, `use_mpc` must be set to `True`."
+                )
             if self.n_action_steps > self.horizon:
-                raise ValueError("`n_action_steps` must be less than or equal to `horizon`.")
+                raise ValueError(
+                    "`n_action_steps` must be less than or equal to `horizon`."
+                )

@@ -22,13 +22,17 @@ def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
         from lerobot.common.robot_devices.motors.feetech import (
             SCS_SERIES_BAUDRATE_TABLE as SERIES_BAUDRATE_TABLE,
         )
-        from lerobot.common.robot_devices.motors.feetech import FeetechMotorsBus as MotorsBusClass
+        from lerobot.common.robot_devices.motors.feetech import (
+            FeetechMotorsBus as MotorsBusClass,
+        )
     elif brand == "dynamixel":
         from lerobot.common.robot_devices.motors.dynamixel import MODEL_BAUDRATE_TABLE
         from lerobot.common.robot_devices.motors.dynamixel import (
             X_SERIES_BAUDRATE_TABLE as SERIES_BAUDRATE_TABLE,
         )
-        from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus as MotorsBusClass
+        from lerobot.common.robot_devices.motors.dynamixel import (
+            DynamixelMotorsBus as MotorsBusClass,
+        )
     else:
         raise ValueError(
             f"Currently we do not support this motor brand: {brand}. We currently support feetech and dynamixel motors."
@@ -46,7 +50,9 @@ def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
     motor_model = model  # Use the motor model passed via argument
 
     # Initialize the MotorBus with the correct port and motor configurations
-    motor_bus = MotorsBusClass(port=port, motors={motor_name: (motor_index_arbitrary, motor_model)})
+    motor_bus = MotorsBusClass(
+        port=port, motors={motor_name: (motor_index_arbitrary, motor_model)}
+    )
 
     # Try to connect to the motor bus and handle any connection-specific errors
     try:
@@ -78,20 +84,26 @@ def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
                 motor_index = present_ids[0]
 
         if motor_index == -1:
-            raise ValueError("No motors detected. Please ensure you have one motor connected.")
+            raise ValueError(
+                "No motors detected. Please ensure you have one motor connected."
+            )
 
         print(f"Motor index found at: {motor_index}")
 
         if brand == "feetech":
             # Allows ID and BAUDRATE to be written in memory
-            motor_bus.write_with_motor_ids(motor_bus.motor_models, motor_index, "Lock", 0)
+            motor_bus.write_with_motor_ids(
+                motor_bus.motor_models, motor_index, "Lock", 0
+            )
 
         if baudrate != baudrate_des:
             print(f"Setting its baudrate to {baudrate_des}")
             baudrate_idx = list(SERIES_BAUDRATE_TABLE.values()).index(baudrate_des)
 
             # The write can fail, so we allow retries
-            motor_bus.write_with_motor_ids(motor_bus.motor_models, motor_index, "Baud_Rate", baudrate_idx)
+            motor_bus.write_with_motor_ids(
+                motor_bus.motor_models, motor_index, "Baud_Rate", baudrate_idx
+            )
             time.sleep(0.5)
             motor_bus.set_bus_baudrate(baudrate_des)
             present_baudrate_idx = motor_bus.read_with_motor_ids(
@@ -103,9 +115,13 @@ def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
 
         print(f"Setting its index to desired index {motor_idx_des}")
         motor_bus.write_with_motor_ids(motor_bus.motor_models, motor_index, "Lock", 0)
-        motor_bus.write_with_motor_ids(motor_bus.motor_models, motor_index, "ID", motor_idx_des)
+        motor_bus.write_with_motor_ids(
+            motor_bus.motor_models, motor_index, "ID", motor_idx_des
+        )
 
-        present_idx = motor_bus.read_with_motor_ids(motor_bus.motor_models, motor_idx_des, "ID", num_retry=2)
+        present_idx = motor_bus.read_with_motor_ids(
+            motor_bus.motor_models, motor_idx_des, "ID", num_retry=2
+        )
         if present_idx != motor_idx_des:
             raise OSError("Failed to write index.")
 
@@ -133,12 +149,29 @@ def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--port", type=str, required=True, help="Motors bus port (e.g. dynamixel,feetech)")
-    parser.add_argument("--brand", type=str, required=True, help="Motor brand (e.g. dynamixel,feetech)")
-    parser.add_argument("--model", type=str, required=True, help="Motor model (e.g. xl330-m077,sts3215)")
-    parser.add_argument("--ID", type=int, required=True, help="Desired ID of the current motor (e.g. 1,2,3)")
     parser.add_argument(
-        "--baudrate", type=int, default=1000000, help="Desired baudrate for the motor (default: 1000000)"
+        "--port",
+        type=str,
+        required=True,
+        help="Motors bus port (e.g. dynamixel,feetech)",
+    )
+    parser.add_argument(
+        "--brand", type=str, required=True, help="Motor brand (e.g. dynamixel,feetech)"
+    )
+    parser.add_argument(
+        "--model", type=str, required=True, help="Motor model (e.g. xl330-m077,sts3215)"
+    )
+    parser.add_argument(
+        "--ID",
+        type=int,
+        required=True,
+        help="Desired ID of the current motor (e.g. 1,2,3)",
+    )
+    parser.add_argument(
+        "--baudrate",
+        type=int,
+        default=1000000,
+        help="Desired baudrate for the motor (default: 1000000)",
     )
     args = parser.parse_args()
 

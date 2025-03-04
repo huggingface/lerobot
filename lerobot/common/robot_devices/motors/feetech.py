@@ -8,7 +8,10 @@ from copy import deepcopy
 import numpy as np
 import tqdm
 
-from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
+from lerobot.common.robot_devices.utils import (
+    RobotDeviceAlreadyConnectedError,
+    RobotDeviceNotConnectedError,
+)
 from lerobot.common.utils.utils import capture_timestamp_utc
 
 PROTOCOL_VERSION = 0
@@ -122,7 +125,9 @@ NUM_READ_RETRY = 20
 NUM_WRITE_RETRY = 20
 
 
-def convert_degrees_to_steps(degrees: float | np.ndarray, models: str | list[str]) -> np.ndarray:
+def convert_degrees_to_steps(
+    degrees: float | np.ndarray, models: str | list[str]
+) -> np.ndarray:
     """This function converts the degree range to the step range for indicating motors rotation.
     It assumes a motor achieves a full rotation by going from -180 degree position to +180.
     The motor resolution (e.g. 4096) corresponds to the number of steps needed to achieve a full rotation.
@@ -358,7 +363,9 @@ class FeetechMotorsBus:
         indices = []
         for idx in tqdm.tqdm(possible_ids):
             try:
-                present_idx = self.read_with_motor_ids(self.motor_models, [idx], "ID", num_retry=num_retry)[0]
+                present_idx = self.read_with_motor_ids(
+                    self.motor_models, [idx], "ID", num_retry=num_retry
+                )[0]
             except ConnectionError:
                 continue
 
@@ -374,7 +381,9 @@ class FeetechMotorsBus:
     def set_bus_baudrate(self, baudrate):
         present_bus_baudrate = self.port_handler.getBaudRate()
         if present_bus_baudrate != baudrate:
-            print(f"Setting bus baud rate to {baudrate}. Previously {present_bus_baudrate}.")
+            print(
+                f"Setting bus baud rate to {baudrate}. Previously {present_bus_baudrate}."
+            )
             self.port_handler.setBaudRate(baudrate)
 
             if self.port_handler.getBaudRate() != baudrate:
@@ -395,7 +404,9 @@ class FeetechMotorsBus:
     def set_calibration(self, calibration: dict[str, list]):
         self.calibration = calibration
 
-    def apply_calibration_autocorrect(self, values: np.ndarray | list, motor_names: list[str] | None):
+    def apply_calibration_autocorrect(
+        self, values: np.ndarray | list, motor_names: list[str] | None
+    ):
         """This function apply the calibration, automatically detects out of range errors for motors values and attempt to correct.
 
         For more info, see docstring of `apply_calibration` and `autocorrect_calibration`.
@@ -408,7 +419,9 @@ class FeetechMotorsBus:
             values = self.apply_calibration(values, motor_names)
         return values
 
-    def apply_calibration(self, values: np.ndarray | list, motor_names: list[str] | None):
+    def apply_calibration(
+        self, values: np.ndarray | list, motor_names: list[str] | None
+    ):
         """Convert from unsigned int32 joint position range [0, 2**32[ to the universal float32 nominal degree range ]-180.0, 180.0[ with
         a "zero position" at 0 degree.
 
@@ -482,7 +495,9 @@ class FeetechMotorsBus:
 
         return values
 
-    def autocorrect_calibration(self, values: np.ndarray | list, motor_names: list[str] | None):
+    def autocorrect_calibration(
+        self, values: np.ndarray | list, motor_names: list[str] | None
+    ):
         """This function automatically detects issues with values of motors after calibration, and correct for these issues.
 
         Some motors might have values outside of expected maximum bounds after calibration.
@@ -521,18 +536,26 @@ class FeetechMotorsBus:
                     values[i] *= -1
 
                 # Convert from initial range to range [-180, 180] degrees
-                calib_val = (values[i] + homing_offset) / (resolution // 2) * HALF_TURN_DEGREE
-                in_range = (calib_val > LOWER_BOUND_DEGREE) and (calib_val < UPPER_BOUND_DEGREE)
+                calib_val = (
+                    (values[i] + homing_offset) / (resolution // 2) * HALF_TURN_DEGREE
+                )
+                in_range = (calib_val > LOWER_BOUND_DEGREE) and (
+                    calib_val < UPPER_BOUND_DEGREE
+                )
 
                 # Solve this inequality to find the factor to shift the range into [-180, 180] degrees
                 # values[i] = (values[i] + homing_offset + resolution * factor) / (resolution // 2) * HALF_TURN_DEGREE
                 # - HALF_TURN_DEGREE <= (values[i] + homing_offset + resolution * factor) / (resolution // 2) * HALF_TURN_DEGREE <= HALF_TURN_DEGREE
                 # (- HALF_TURN_DEGREE / HALF_TURN_DEGREE * (resolution // 2) - values[i] - homing_offset) / resolution <= factor <= (HALF_TURN_DEGREE / 180 * (resolution // 2) - values[i] - homing_offset) / resolution
                 low_factor = (
-                    -HALF_TURN_DEGREE / HALF_TURN_DEGREE * (resolution // 2) - values[i] - homing_offset
+                    -HALF_TURN_DEGREE / HALF_TURN_DEGREE * (resolution // 2)
+                    - values[i]
+                    - homing_offset
                 ) / resolution
                 upp_factor = (
-                    HALF_TURN_DEGREE / HALF_TURN_DEGREE * (resolution // 2) - values[i] - homing_offset
+                    HALF_TURN_DEGREE / HALF_TURN_DEGREE * (resolution // 2)
+                    - values[i]
+                    - homing_offset
                 ) / resolution
 
             elif CalibrationMode[calib_mode] == CalibrationMode.LINEAR:
@@ -541,7 +564,9 @@ class FeetechMotorsBus:
 
                 # Convert from initial range to range [0, 100] in %
                 calib_val = (values[i] - start_pos) / (end_pos - start_pos) * 100
-                in_range = (calib_val > LOWER_BOUND_LINEAR) and (calib_val < UPPER_BOUND_LINEAR)
+                in_range = (calib_val > LOWER_BOUND_LINEAR) and (
+                    calib_val < UPPER_BOUND_LINEAR
+                )
 
                 # Solve this inequality to find the factor to shift the range into [0, 100] %
                 # values[i] = (values[i] - start_pos + resolution * factor) / (end_pos + resolution * factor - start_pos - resolution * factor) * 100
@@ -557,19 +582,27 @@ class FeetechMotorsBus:
                     factor = math.ceil(low_factor)
 
                     if factor > upp_factor:
-                        raise ValueError(f"No integer found between bounds [{low_factor=}, {upp_factor=}]")
+                        raise ValueError(
+                            f"No integer found between bounds [{low_factor=}, {upp_factor=}]"
+                        )
                 else:
                     factor = math.ceil(upp_factor)
 
                     if factor > low_factor:
-                        raise ValueError(f"No integer found between bounds [{low_factor=}, {upp_factor=}]")
+                        raise ValueError(
+                            f"No integer found between bounds [{low_factor=}, {upp_factor=}]"
+                        )
 
                 if CalibrationMode[calib_mode] == CalibrationMode.DEGREE:
                     out_of_range_str = f"{LOWER_BOUND_DEGREE} < {calib_val} < {UPPER_BOUND_DEGREE} degrees"
                     in_range_str = f"{LOWER_BOUND_DEGREE} < {calib_val} < {UPPER_BOUND_DEGREE} degrees"
                 elif CalibrationMode[calib_mode] == CalibrationMode.LINEAR:
-                    out_of_range_str = f"{LOWER_BOUND_LINEAR} < {calib_val} < {UPPER_BOUND_LINEAR} %"
-                    in_range_str = f"{LOWER_BOUND_LINEAR} < {calib_val} < {UPPER_BOUND_LINEAR} %"
+                    out_of_range_str = (
+                        f"{LOWER_BOUND_LINEAR} < {calib_val} < {UPPER_BOUND_LINEAR} %"
+                    )
+                    in_range_str = (
+                        f"{LOWER_BOUND_LINEAR} < {calib_val} < {UPPER_BOUND_LINEAR} %"
+                    )
 
                 logging.warning(
                     f"Auto-correct calibration of motor '{name}' by shifting value by {abs(factor)} full turns, "
@@ -579,7 +612,9 @@ class FeetechMotorsBus:
                 # A full turn corresponds to 360 degrees but also to 4096 steps for a motor resolution of 4096.
                 self.calibration["homing_offset"][calib_idx] += resolution * factor
 
-    def revert_calibration(self, values: np.ndarray | list, motor_names: list[str] | None):
+    def revert_calibration(
+        self, values: np.ndarray | list, motor_names: list[str] | None
+    ):
         """Inverse of `apply_calibration`."""
         if motor_names is None:
             motor_names = self.motor_names
@@ -655,7 +690,9 @@ class FeetechMotorsBus:
 
         return values
 
-    def read_with_motor_ids(self, motor_models, motor_ids, data_name, num_retry=NUM_READ_RETRY):
+    def read_with_motor_ids(
+        self, motor_models, motor_ids, data_name, num_retry=NUM_READ_RETRY
+    ):
         if self.mock:
             import tests.mock_scservo_sdk as scs
         else:
@@ -760,7 +797,9 @@ class FeetechMotorsBus:
             values = self.apply_calibration_autocorrect(values, motor_names)
 
         # log the number of seconds it took to read the data from the motors
-        delta_ts_name = get_log_name("delta_timestamp_s", "read", data_name, motor_names)
+        delta_ts_name = get_log_name(
+            "delta_timestamp_s", "read", data_name, motor_names
+        )
         self.logs[delta_ts_name] = time.perf_counter() - start_time
 
         # log the utc time at which the data was received
@@ -769,7 +808,9 @@ class FeetechMotorsBus:
 
         return values
 
-    def write_with_motor_ids(self, motor_models, motor_ids, data_name, values, num_retry=NUM_WRITE_RETRY):
+    def write_with_motor_ids(
+        self, motor_models, motor_ids, data_name, values, num_retry=NUM_WRITE_RETRY
+    ):
         if self.mock:
             import tests.mock_scservo_sdk as scs
         else:
@@ -798,7 +839,12 @@ class FeetechMotorsBus:
                 f"{self.packet_handler.getTxRxResult(comm)}"
             )
 
-    def write(self, data_name, values: int | float | np.ndarray, motor_names: str | list[str] | None = None):
+    def write(
+        self,
+        data_name,
+        values: int | float | np.ndarray,
+        motor_names: str | list[str] | None = None,
+    ):
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
                 f"FeetechMotorsBus({self.port}) is not connected. You need to run `motors_bus.connect()`."
@@ -859,7 +905,9 @@ class FeetechMotorsBus:
             )
 
         # log the number of seconds it took to write the data to the motors
-        delta_ts_name = get_log_name("delta_timestamp_s", "write", data_name, motor_names)
+        delta_ts_name = get_log_name(
+            "delta_timestamp_s", "write", data_name, motor_names
+        )
         self.logs[delta_ts_name] = time.perf_counter() - start_time
 
         # TODO(rcadene): should we log the time before sending the write command?

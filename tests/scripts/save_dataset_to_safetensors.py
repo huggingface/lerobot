@@ -51,7 +51,13 @@ def save_dataset_to_safetensors(output_dir, repo_id="lerobot/pusht"):
     save_file(dataset[i + 1], repo_dir / f"frame_{i+1}.safetensors")
 
     # save 2 frames at the middle of first episode
-    i = int((dataset.episode_data_index["to"][0].item() - dataset.episode_data_index["from"][0].item()) / 2)
+    i = int(
+        (
+            dataset.episode_data_index["to"][0].item()
+            - dataset.episode_data_index["from"][0].item()
+        )
+        / 2
+    )
     save_file(dataset[i], repo_dir / f"frame_{i}.safetensors")
     save_file(dataset[i + 1], repo_dir / f"frame_{i+1}.safetensors")
 
@@ -87,4 +93,6 @@ if __name__ == "__main__":
         "lerobot/nyu_franka_play_dataset",
         "lerobot/cmu_stretch",
     ]:
-        save_dataset_to_safetensors("tests/data/save_dataset_to_safetensors", repo_id=dataset)
+        save_dataset_to_safetensors(
+            "tests/data/save_dataset_to_safetensors", repo_id=dataset
+        )

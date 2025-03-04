@@ -7,7 +7,12 @@ import pyarrow.compute as pc
 import pyarrow.parquet as pq
 import pytest
 
-from lerobot.common.datasets.utils import EPISODES_PATH, INFO_PATH, STATS_PATH, TASKS_PATH
+from lerobot.common.datasets.utils import (
+    EPISODES_PATH,
+    INFO_PATH,
+    STATS_PATH,
+    TASKS_PATH,
+)
 
 
 @pytest.fixture(scope="session")
@@ -69,7 +74,10 @@ def episode_path(episodes_factory):
 @pytest.fixture(scope="session")
 def single_episode_parquet_path(hf_dataset_factory, info_factory):
     def _create_single_episode_parquet(
-        dir: Path, ep_idx: int = 0, hf_dataset: datasets.Dataset | None = None, info: dict | None = None
+        dir: Path,
+        ep_idx: int = 0,
+        hf_dataset: datasets.Dataset | None = None,
+        info: dict | None = None,
     ) -> Path:
         if not info:
             info = info_factory()

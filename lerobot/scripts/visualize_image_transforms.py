@@ -162,8 +162,12 @@ def visualize_transforms(cfg, output_dir: Path, n_examples: int = 5):
     print("\nOriginal frame saved to:")
     print(f"    {output_dir / 'original_frame.png'}.")
 
-    save_config_all_transforms(cfg.training.image_transforms, original_frame, output_dir, n_examples)
-    save_config_single_transforms(cfg.training.image_transforms, original_frame, output_dir, n_examples)
+    save_config_all_transforms(
+        cfg.training.image_transforms, original_frame, output_dir, n_examples
+    )
+    save_config_single_transforms(
+        cfg.training.image_transforms, original_frame, output_dir, n_examples
+    )
 
 
 @hydra.main(version_base="1.2", config_name="default", config_path="../configs")

@@ -7,7 +7,9 @@ import pytest
 import torch
 from datasets import Dataset
 
-from lerobot.common.datasets.push_dataset_to_hub.utils import calculate_episode_data_index
+from lerobot.common.datasets.push_dataset_to_hub.utils import (
+    calculate_episode_data_index,
+)
 from lerobot.common.datasets.utils import (
     hf_transform_to_torch,
 )

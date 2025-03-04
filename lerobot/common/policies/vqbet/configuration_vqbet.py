@@ -109,7 +109,9 @@ class VQBeTConfig:
             "observation.state": "min_max",
         }
     )
-    output_normalization_modes: dict[str, str] = field(default_factory=lambda: {"action": "min_max"})
+    output_normalization_modes: dict[str, str] = field(
+        default_factory=lambda: {"action": "min_max"}
+    )
 
     # Architecture / modeling.
     # Vision backbone.

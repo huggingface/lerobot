@@ -129,7 +129,12 @@ def patch_builtins_input(monkeypatch):
 
 
 def pytest_addoption(parser):
-    parser.addoption("--seed", action="store", default="42", help="Set random seed for reproducibility")
+    parser.addoption(
+        "--seed",
+        action="store",
+        default="42",
+        help="Set random seed for reproducibility",
+    )
 
 
 @pytest.fixture(autouse=True)

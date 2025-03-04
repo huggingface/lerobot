@@ -168,4 +168,6 @@ class ACTConfig:
             not any(k.startswith("observation.image") for k in self.input_shapes)
             and "observation.environment_state" not in self.input_shapes
         ):
-            raise ValueError("You must provide at least one image or the environment state among the inputs.")
+            raise ValueError(
+                "You must provide at least one image or the environment state among the inputs."
+            )

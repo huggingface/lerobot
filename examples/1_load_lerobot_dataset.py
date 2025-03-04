@@ -18,7 +18,10 @@ import torch
 from huggingface_hub import HfApi
 
 import lerobot
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
+from lerobot.common.datasets.lerobot_dataset import (
+    LeRobotDataset,
+    LeRobotDatasetMetadata,
+)
 
 # We ported a number of existing datasets ourselves, use this to see the list:
 print("List of available datasets:")
@@ -26,7 +29,10 @@ pprint(lerobot.available_datasets)
 
 # You can also browse through the datasets created/ported by the community on the hub using the hub api:
 hub_api = HfApi()
-repo_ids = [info.id for info in hub_api.list_datasets(task_categories="robotics", tags=["LeRobot"])]
+repo_ids = [
+    info.id
+    for info in hub_api.list_datasets(task_categories="robotics", tags=["LeRobot"])
+]
 pprint(repo_ids)
 
 # Or simply explore them in your web browser directly at:
@@ -41,7 +47,9 @@ ds_meta = LeRobotDatasetMetadata(repo_id)
 # structure of the dataset without downloading the actual data yet (only metadata files — which are
 # lightweight).
 print(f"Total number of episodes: {ds_meta.total_episodes}")
-print(f"Average number of frames per episode: {ds_meta.total_frames / ds_meta.total_episodes:.3f}")
+print(
+    f"Average number of frames per episode: {ds_meta.total_frames / ds_meta.total_episodes:.3f}"
+)
 print(f"Frames per second used during data collection: {ds_meta.fps}")
 print(f"Robot type: {ds_meta.robot_type}")
 print(f"keys to access images from cameras: {ds_meta.camera_keys=}\n")

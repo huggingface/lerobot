@@ -30,7 +30,10 @@ import time
 import numpy as np
 import pytest
 
-from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
+from lerobot.common.robot_devices.utils import (
+    RobotDeviceAlreadyConnectedError,
+    RobotDeviceNotConnectedError,
+)
 from lerobot.scripts.find_motors_bus_port import find_port
 from tests.utils import TEST_MOTOR_TYPES, make_motors_bus, require_motor
 
@@ -63,7 +66,9 @@ def test_configure_motors_all_ids_1(request, motor_type, mock):
     else:
         raise ValueError(motor_type)
 
-    input("Are you sure you want to re-configure the motors? Press enter to continue...")
+    input(
+        "Are you sure you want to re-configure the motors? Press enter to continue..."
+    )
     # This test expect the configuration was already correct.
     motors_bus = make_motors_bus(motor_type, mock=mock)
     motors_bus.connect()

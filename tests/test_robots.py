@@ -29,8 +29,16 @@ import pytest
 import torch
 
 from lerobot.common.robot_devices.robots.manipulator import ManipulatorRobot
-from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
-from tests.utils import TEST_ROBOT_TYPES, make_robot, mock_calibration_dir, require_robot
+from lerobot.common.robot_devices.utils import (
+    RobotDeviceAlreadyConnectedError,
+    RobotDeviceNotConnectedError,
+)
+from tests.utils import (
+    TEST_ROBOT_TYPES,
+    make_robot,
+    mock_calibration_dir,
+    require_robot,
+)
 
 
 @pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)
@@ -104,7 +112,9 @@ def test_robot(tmpdir, request, robot_type, mock):
     assert "observation.state" in observation
     assert isinstance(observation["observation.state"], torch.Tensor)
     assert observation["observation.state"].ndim == 1
-    dim_state = sum(len(robot.follower_arms[name].motors) for name in robot.follower_arms)
+    dim_state = sum(
+        len(robot.follower_arms[name].motors) for name in robot.follower_arms
+    )
     assert observation["observation.state"].shape[0] == dim_state
     # Cameras
     for name in robot.cameras:
@@ -115,7 +125,9 @@ def test_robot(tmpdir, request, robot_type, mock):
     assert "action" in action
     assert isinstance(action["action"], torch.Tensor)
     assert action["action"].ndim == 1
-    dim_action = sum(len(robot.follower_arms[name].motors) for name in robot.follower_arms)
+    dim_action = sum(
+        len(robot.follower_arms[name].motors) for name in robot.follower_arms
+    )
     assert action["action"].shape[0] == dim_action
     # TODO(rcadene): test if observation and action data are returned as expected
 

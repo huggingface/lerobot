@@ -34,10 +34,14 @@ transforms = v2.Compose(
 )
 
 # Create another LeRobotDataset with the defined transformations
-transformed_dataset = LeRobotDataset(dataset_repo_id, episodes=[0], image_transforms=transforms)
+transformed_dataset = LeRobotDataset(
+    dataset_repo_id, episodes=[0], image_transforms=transforms
+)
 
 # Get a frame from the transformed dataset
-transformed_frame = transformed_dataset[first_idx][transformed_dataset.meta.camera_keys[0]]
+transformed_frame = transformed_dataset[first_idx][
+    transformed_dataset.meta.camera_keys[0]
+]
 
 # Create a directory to store output images
 output_dir = Path("outputs/image_transforms")

@@ -133,7 +133,9 @@ class Jpeg2k(Codec):
         )
 
     def decode(self, buf, out=None):
-        return imagecodecs.jpeg2k_decode(buf, verbose=self.verbose, numthreads=self.numthreads, out=out)
+        return imagecodecs.jpeg2k_decode(
+            buf, verbose=self.verbose, numthreads=self.numthreads, out=out
+        )
 
 
 class JpegXl(Codec):

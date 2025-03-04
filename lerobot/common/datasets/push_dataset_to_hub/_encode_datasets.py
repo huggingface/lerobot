@@ -38,7 +38,9 @@ import argparse
 from pathlib import Path
 
 from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION
-from lerobot.common.datasets.push_dataset_to_hub._download_raw import AVAILABLE_RAW_REPO_IDS
+from lerobot.common.datasets.push_dataset_to_hub._download_raw import (
+    AVAILABLE_RAW_REPO_IDS,
+)
 from lerobot.common.datasets.push_dataset_to_hub.utils import check_repo_id
 from lerobot.scripts.push_dataset_to_hub import push_dataset_to_hub
 
@@ -73,7 +75,9 @@ def encode_datasets(
         check_repo_id(raw_repo_id)
         dataset_repo_id_push = get_push_repo_id_from_raw(raw_repo_id, push_repo)
         dataset_raw_dir = raw_dir / raw_repo_id
-        dataset_dir = local_dir / dataset_repo_id_push if local_dir is not None else None
+        dataset_dir = (
+            local_dir / dataset_repo_id_push if local_dir is not None else None
+        )
         encoding = {
             "vcodec": vcodec,
             "pix_fmt": pix_fmt,
