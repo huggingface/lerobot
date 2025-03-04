@@ -363,7 +363,7 @@ def add_actor_information_and_train(
 
     device = get_safe_torch_device(cfg.device, log=True)
     storage_device = get_safe_torch_device(cfg_device=cfg.training.storage_device)
-    
+
     logging.info("Initializing policy")
     ### Instantiate the policy in both the actor and learner processes
     ### To avoid sending a SACPolicy object through the port, we create a policy intance
