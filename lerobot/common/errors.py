@@ -1,9 +1,3 @@
-class ConnectionError(Exception):
-    """Base exception class for connection errors."""
-
-    pass
-
-
 class DeviceNotConnectedError(ConnectionError):
     """Exception raised when the device is not connected."""
 
