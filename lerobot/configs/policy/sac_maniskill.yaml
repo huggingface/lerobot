@@ -8,7 +8,7 @@
 #   env.gym.obs_type=environment_state_agent_pos \
 
 seed: 1
-# dataset_repo_id: "AdilZtn/Maniskill-Pushcube-demonstration-medium"
+dataset_repo_id: null
 
 training:
   # Offline training dataloader
