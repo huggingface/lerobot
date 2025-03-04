@@ -161,7 +161,16 @@ def decode_video_frames_torchcodec(
     device: str = "cpu",
     log_loaded_timestamps: bool = False,
 ) -> torch.Tensor:
-    """Loads frames associated with the requested timestamps of a video using torchcodec."""
+    """Loads frames associated with the requested timestamps of a video using torchcodec.
+    
+    Note: Setting device="cuda" outside the main process, e.g. in data loader workers, will lead to CUDA initialization errors.
+    
+    Note: Video benefits from inter-frame compression. Instead of storing every frame individually,
+    the encoder stores a reference frame (or a key frame) and subsequent frames as differences relative to
+    that key frame. As a consequence, to access a requested frame, we need to load the preceding key frame,
+    and all subsequent frames until reaching the requested frame. The number of key frames in a video
+    can be adjusted during encoding to take into account decoding time and video size in bytes.
+    """
     video_path = str(video_path)
     # initialize video decoder
     decoder = VideoDecoder(video_path, device=device)
