@@ -3,3 +3,4 @@ from .diffusion.configuration_diffusion import DiffusionConfig as DiffusionConfi
 from .pi0.configuration_pi0 import PI0Config as PI0Config
 from .tdmpc.configuration_tdmpc import TDMPCConfig as TDMPCConfig
 from .vqbet.configuration_vqbet import VQBeTConfig as VQBeTConfig
+from .dexvla.configuration_dexvla import DexVLAConfig as DexVLAConfig
