@@ -3,6 +3,14 @@
 defaults:
   - _self_
 
+hydra:
+  run:
+    # Set `dir` to where you would like to save all of the run outputs. If you run another training session
+    # with the same value for `dir` its contents will be overwritten unless you set `resume` to true.
+    dir: outputs/train_hilserl_classifier/${now:%Y-%m-%d}/${now:%H-%M-%S}_${env.name}_${hydra.job.name}
+  job:
+    name: default
+
 seed: 13
 dataset_repo_id: aractingi/push_cube_square_light_reward_cropped_resized
 # aractingi/push_cube_square_reward_1_cropped_resized
