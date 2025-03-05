@@ -259,7 +259,6 @@ def record(
     if not robot.is_connected:
         robot.connect()
 
-    #listener, events = init_keyboard_listener()
     listener, events = init_keyboard_listener()
 
     # Execute a few seconds without recording to:
@@ -315,9 +314,7 @@ def record(
         if events["stop_recording"]:
             break
 
-    # log_say("Stop recording", cfg.play_sounds, blocking=True)
-    log_say("Stop recording", cfg.play_sounds)
-
+    log_say("Stop recording", cfg.play_sounds, blocking=True)
     stop_recording(robot, listener, cfg.display_cameras)
 
     if cfg.push_to_hub:
