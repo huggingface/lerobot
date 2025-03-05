@@ -28,4 +28,3 @@ env:
   reward_classifier:
     pretrained_path:  outputs/classifier/13-02-random-sample-resnet10-frozen/checkpoints/best/pretrained_model
     config_path: lerobot/configs/policy/hilserl_classifier.yaml
-
