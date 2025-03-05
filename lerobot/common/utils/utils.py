@@ -18,6 +18,7 @@ import os
 import os.path as osp
 import platform
 import random
+import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -115,11 +116,11 @@ def seeded_context(seed: int) -> Generator[None, None, None]:
     set_global_random_state(random_state_dict)
 
 
-def init_logging():
+def init_logging(log_file=None):
     def custom_format(record):
         dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         fnameline = f"{record.pathname}:{record.lineno}"
-        message = f"{record.levelname} {dt} {fnameline[-15:]:>15} {record.msg}"
+        message = f"{record.levelname} [PID: {os.getpid()}] {dt} {fnameline[-15:]:>15} {record.msg}"
         return message
 
     logging.basicConfig(level=logging.INFO)
@@ -132,6 +133,12 @@ def init_logging():
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(formatter)
     logging.getLogger().addHandler(console_handler)
+
+    if log_file is not None:
+        # File handler
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setFormatter(formatter)
+        logging.getLogger().addHandler(file_handler)
 
 
 def format_big_number(num, precision=0):
@@ -155,11 +162,16 @@ def _relative_path_between(path1: Path, path2: Path) -> Path:
     except ValueError:  # most likely because path1 is not a subpath of path2
         common_parts = Path(osp.commonpath([path1, path2])).parts
         return Path(
-            "/".join([".."] * (len(path2.parts) - len(common_parts)) + list(path1.parts[len(common_parts) :]))
+            "/".join(
+                [".."] * (len(path2.parts) - len(common_parts))
+                + list(path1.parts[len(common_parts) :])
+            )
         )
 
 
-def init_hydra_config(config_path: str, overrides: list[str] | None = None) -> DictConfig:
+def init_hydra_config(
+    config_path: str, overrides: list[str] | None = None
+) -> DictConfig:
     """Initialize a Hydra config given only the path to the relevant config file.
 
     For config resolution, it is assumed that the config file's parent is the Hydra config dir.
@@ -168,7 +180,11 @@ def init_hydra_config(config_path: str, overrides: list[str] | None = None) -> D
     hydra.core.global_hydra.GlobalHydra.instance().clear()
     # Hydra needs a path relative to this file.
     hydra.initialize(
-        str(_relative_path_between(Path(config_path).absolute().parent, Path(__file__).absolute().parent)),
+        str(
+            _relative_path_between(
+                Path(config_path).absolute().parent, Path(__file__).absolute().parent
+            )
+        ),
         version_base="1.2",
     )
     cfg = hydra.compose(Path(config_path).stem, overrides)
@@ -182,10 +198,26 @@ def print_cuda_memory_usage():
     gc.collect()
     # Also clear the cache if you want to fully release the memory
     torch.cuda.empty_cache()
-    print("Current GPU Memory Allocated: {:.2f} MB".format(torch.cuda.memory_allocated(0) / 1024**2))
-    print("Maximum GPU Memory Allocated: {:.2f} MB".format(torch.cuda.max_memory_allocated(0) / 1024**2))
-    print("Current GPU Memory Reserved: {:.2f} MB".format(torch.cuda.memory_reserved(0) / 1024**2))
-    print("Maximum GPU Memory Reserved: {:.2f} MB".format(torch.cuda.max_memory_reserved(0) / 1024**2))
+    print(
+        "Current GPU Memory Allocated: {:.2f} MB".format(
+            torch.cuda.memory_allocated(0) / 1024**2
+        )
+    )
+    print(
+        "Maximum GPU Memory Allocated: {:.2f} MB".format(
+            torch.cuda.max_memory_allocated(0) / 1024**2
+        )
+    )
+    print(
+        "Current GPU Memory Reserved: {:.2f} MB".format(
+            torch.cuda.memory_reserved(0) / 1024**2
+        )
+    )
+    print(
+        "Maximum GPU Memory Reserved: {:.2f} MB".format(
+            torch.cuda.max_memory_reserved(0) / 1024**2
+        )
+    )
 
 
 def capture_timestamp_utc():
@@ -217,3 +249,33 @@ def log_say(text, play_sounds, blocking=False):
 
     if play_sounds:
         say(text, blocking)
+
+
+class TimerManager:
+    def __init__(
+        self,
+        elapsed_time_list: list[float] | None = None,
+        label="Elapsed time",
+        log=True,
+    ):
+        self.label = label
+        self.elapsed_time_list = elapsed_time_list
+        self.log = log
+        self.elapsed = 0.0
+
+    def __enter__(self):
+        self.start = time.perf_counter()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.elapsed: float = time.perf_counter() - self.start
+
+        if self.elapsed_time_list is not None:
+            self.elapsed_time_list.append(self.elapsed)
+
+        if self.log:
+            print(f"{self.label}: {self.elapsed:.6f} seconds")
+
+    @property
+    def elapsed_seconds(self):
+        return self.elapsed

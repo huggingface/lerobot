@@ -26,7 +26,9 @@ import torch
 from datasets import Dataset, Features, Image, Sequence, Value
 
 from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION
-from lerobot.common.datasets.push_dataset_to_hub.utils import calculate_episode_data_index
+from lerobot.common.datasets.push_dataset_to_hub.utils import (
+    calculate_episode_data_index,
+)
 from lerobot.common.datasets.utils import (
     hf_transform_to_torch,
 )
@@ -42,11 +44,19 @@ def check_format(raw_dir) -> bool:
     return True
 
 
-def load_from_raw(raw_dir: Path, videos_dir: Path, fps: int, video: bool, episodes: list[int] | None = None):
+def load_from_raw(
+    raw_dir: Path,
+    videos_dir: Path,
+    fps: int,
+    video: bool,
+    episodes: list[int] | None = None,
+):
     # Load data stream that will be used as reference for the timestamps synchronization
     reference_files = list(raw_dir.glob("observation.images.cam_*.parquet"))
     if len(reference_files) == 0:
-        raise ValueError(f"Missing reference files for camera, starting with  in '{raw_dir}'")
+        raise ValueError(
+            f"Missing reference files for camera, starting with  in '{raw_dir}'"
+        )
     # select first camera in alphanumeric order
     reference_key = sorted(reference_files)[0].stem
     reference_df = pd.read_parquet(raw_dir / f"{reference_key}.parquet")
@@ -107,7 +117,9 @@ def load_from_raw(raw_dir: Path, videos_dir: Path, fps: int, video: bool, episod
 
     df["timestamp"] = df["timestamp_utc"].map(lambda x: x.timestamp())
     # each episode starts with timestamp 0 to match the ones from the video
-    df["timestamp"] = df.groupby("episode_index")["timestamp"].transform(lambda x: x - x.iloc[0])
+    df["timestamp"] = df.groupby("episode_index")["timestamp"].transform(
+        lambda x: x - x.iloc[0]
+    )
 
     del df["timestamp_utc"]
 
@@ -120,7 +132,9 @@ def load_from_raw(raw_dir: Path, videos_dir: Path, fps: int, video: bool, episod
     ep_ids = [ep_idx for ep_idx, _ in df.groupby("episode_index")]
     expected_ep_ids = list(range(df["episode_index"].max() + 1))
     if ep_ids != expected_ep_ids:
-        raise ValueError(f"Episodes indices go from {ep_ids} instead of {expected_ep_ids}")
+        raise ValueError(
+            f"Episodes indices go from {ep_ids} instead of {expected_ep_ids}"
+        )
 
     # Create symlink to raw videos directory (that needs to be absolute not relative)
     videos_dir.parent.mkdir(parents=True, exist_ok=True)
@@ -152,7 +166,9 @@ def load_from_raw(raw_dir: Path, videos_dir: Path, fps: int, video: bool, episod
             data_dict[key] = torch.from_numpy(df[key].values)
         # is vector
         elif df[key].iloc[0].shape[0] > 1:
-            data_dict[key] = torch.stack([torch.from_numpy(x.copy()) for x in df[key].values])
+            data_dict[key] = torch.stack(
+                [torch.from_numpy(x.copy()) for x in df[key].values]
+            )
         else:
             raise ValueError(key)
 
@@ -170,15 +186,18 @@ def to_hf_dataset(data_dict, video) -> Dataset:
             features[key] = Image()
 
     features["observation.state"] = Sequence(
-        length=data_dict["observation.state"].shape[1], feature=Value(dtype="float32", id=None)
+        length=data_dict["observation.state"].shape[1],
+        feature=Value(dtype="float32", id=None),
     )
     if "observation.velocity" in data_dict:
         features["observation.velocity"] = Sequence(
-            length=data_dict["observation.velocity"].shape[1], feature=Value(dtype="float32", id=None)
+            length=data_dict["observation.velocity"].shape[1],
+            feature=Value(dtype="float32", id=None),
         )
     if "observation.effort" in data_dict:
         features["observation.effort"] = Sequence(
-            length=data_dict["observation.effort"].shape[1], feature=Value(dtype="float32", id=None)
+            length=data_dict["observation.effort"].shape[1],
+            feature=Value(dtype="float32", id=None),
         )
     features["action"] = Sequence(
         length=data_dict["action"].shape[1], feature=Value(dtype="float32", id=None)

@@ -17,7 +17,9 @@ import importlib
 import logging
 
 
-def is_package_available(pkg_name: str, return_version: bool = False) -> tuple[bool, str] | bool:
+def is_package_available(
+    pkg_name: str, return_version: bool = False
+) -> tuple[bool, str] | bool:
     """Copied from https://github.com/huggingface/transformers/blob/main/src/transformers/utils/import_utils.py
     Check if the package spec exists and grab its version to avoid importing a local directory.
     **Note:** this doesn't work for all packages.

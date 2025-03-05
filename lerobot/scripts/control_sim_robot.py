@@ -135,7 +135,11 @@ def init_sim_calibration(robot, cfg):
     axis_directions = np.array(cfg.get("axis_directions", [1]))
     offsets = np.array(cfg.get("offsets", [0])) * np.pi
 
-    return {"start_pos": start_pos, "axis_directions": axis_directions, "offsets": offsets}
+    return {
+        "start_pos": start_pos,
+        "axis_directions": axis_directions,
+        "offsets": offsets,
+    }
 
 
 def real_positions_to_sim(real_positions, axis_directions, start_pos, offsets):
@@ -156,7 +160,10 @@ def teleoperate(env, robot: Robot, process_action_fn, teleop_time_s=None):
         leader_pos = robot.leader_arms.main.read("Present_Position")
         action = process_action_fn(leader_pos)
         env.step(np.expand_dims(action, 0))
-        if teleop_time_s is not None and time.perf_counter() - start_teleop_t > teleop_time_s:
+        if (
+            teleop_time_s is not None
+            and time.perf_counter() - start_teleop_t > teleop_time_s
+        ):
             print("Teleoperation processes finished.")
             break
 
@@ -188,19 +195,27 @@ def record(
     # Load pretrained policy
 
     extra_features = (
-        {"next.reward": {"dtype": "int64", "shape": (1,), "names": None}} if assign_rewards else None
+        {"next.reward": {"dtype": "int64", "shape": (1,), "names": None}}
+        if assign_rewards
+        else None
     )
 
     policy = None
     if pretrained_policy_name_or_path is not None:
-        policy, policy_fps, device, use_amp = init_policy(pretrained_policy_name_or_path, policy_overrides)
+        policy, policy_fps, device, use_amp = init_policy(
+            pretrained_policy_name_or_path, policy_overrides
+        )
 
         if fps is None:
             fps = policy_fps
-            logging.warning(f"No fps provided, so using the fps from policy config ({policy_fps}).")
+            logging.warning(
+                f"No fps provided, so using the fps from policy config ({policy_fps})."
+            )
 
     if policy is None and process_action_from_leader is None:
-        raise ValueError("Either policy or process_action_fn has to be set to enable control in sim.")
+        raise ValueError(
+            "Either policy or process_action_fn has to be set to enable control in sim."
+        )
 
     # initialize listener before sim env
     listener, events = init_keyboard_listener(assign_rewards=assign_rewards)
@@ -233,7 +248,11 @@ def record(
             shape = env.observation_space[key].shape
             if not key.startswith("observation.image."):
                 key = "observation.image." + key
-            features[key] = {"dtype": "video", "names": ["channel", "height", "width"], "shape": shape}
+            features[key] = {
+                "dtype": "video",
+                "names": ["channel", "height", "width"],
+                "shape": shape,
+            }
 
         for key, obs_key in state_keys_dict.items():
             features[key] = {
@@ -242,7 +261,11 @@ def record(
                 "shape": env.observation_space[obs_key].shape,
             }
 
-        features["action"] = {"dtype": "float32", "shape": env.action_space.shape, "names": None}
+        features["action"] = {
+            "dtype": "float32",
+            "shape": env.action_space.shape,
+            "names": None,
+        }
         features = {**features, **extra_features}
 
         # Create empty dataset or load existing saved episodes
@@ -343,7 +366,9 @@ def record(
         if events["stop_recording"] or recorded_episodes >= num_episodes:
             break
         else:
-            logging.info("Waiting for a few seconds before starting next episode recording...")
+            logging.info(
+                "Waiting for a few seconds before starting next episode recording..."
+            )
             busy_wait(3)
 
     log_say("Stop recording", play_sounds, blocking=True)
@@ -361,7 +386,12 @@ def record(
 
 
 def replay(
-    env, root: Path, repo_id: str, episode: int, fps: int | None = None, local_files_only: bool = True
+    env,
+    root: Path,
+    repo_id: str,
+    episode: int,
+    fps: int | None = None,
+    local_files_only: bool = True,
 ):
     env = env()
 
@@ -408,7 +438,10 @@ if __name__ == "__main__":
 
     parser_record = subparsers.add_parser("record", parents=[base_parser])
     parser_record.add_argument(
-        "--fps", type=none_or_int, default=None, help="Frames per second (set to None to disable)"
+        "--fps",
+        type=none_or_int,
+        default=None,
+        help="Frames per second (set to None to disable)",
     )
     parser_record.add_argument(
         "--root",
@@ -434,7 +467,9 @@ if __name__ == "__main__":
         required=True,
         help="A description of the task preformed during recording that can be used as a language instruction.",
     )
-    parser_record.add_argument("--num-episodes", type=int, default=50, help="Number of episodes to record.")
+    parser_record.add_argument(
+        "--num-episodes", type=int, default=50, help="Number of episodes to record."
+    )
     parser_record.add_argument(
         "--run-compute-stats",
         type=int,
@@ -495,7 +530,10 @@ if __name__ == "__main__":
 
     parser_replay = subparsers.add_parser("replay", parents=[base_parser])
     parser_replay.add_argument(
-        "--fps", type=none_or_int, default=None, help="Frames per second (set to None to disable)"
+        "--fps",
+        type=none_or_int,
+        default=None,
+        help="Frames per second (set to None to disable)",
     )
     parser_replay.add_argument(
         "--root",
@@ -509,7 +547,9 @@ if __name__ == "__main__":
         default="lerobot/test",
         help="Dataset identifier. By convention it should match '{hf_username}/{dataset_name}' (e.g. `lerobot/test`).",
     )
-    parser_replay.add_argument("--episode", type=int, default=0, help="Index of the episodes to replay.")
+    parser_replay.add_argument(
+        "--episode", type=int, default=0, help="Index of the episodes to replay."
+    )
 
     args = parser.parse_args()
 

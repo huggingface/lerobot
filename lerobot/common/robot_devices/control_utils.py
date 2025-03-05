@@ -23,11 +23,17 @@ from lerobot.common.datasets.utils import get_features_from_robot
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.robot_devices.robots.utils import Robot
 from lerobot.common.robot_devices.utils import busy_wait
-from lerobot.common.utils.utils import get_safe_torch_device, init_hydra_config, set_global_seed
+from lerobot.common.utils.utils import (
+    get_safe_torch_device,
+    init_hydra_config,
+    set_global_seed,
+)
 from lerobot.scripts.eval import get_pretrained_policy_path
 
 
-def log_control_info(robot: Robot, dt_s, episode_index=None, frame_index=None, fps=None):
+def log_control_info(
+    robot: Robot, dt_s, episode_index=None, frame_index=None, fps=None
+):
     log_items = []
     if episode_index is not None:
         log_items.append(f"ep:{episode_index}")
@@ -36,7 +42,7 @@ def log_control_info(robot: Robot, dt_s, episode_index=None, frame_index=None, f
 
     def log_dt(shortname, dt_val_s):
         nonlocal log_items, fps
-        info_str = f"{shortname}:{dt_val_s * 1000:5.2f} ({1/ dt_val_s:3.1f}hz)"
+        info_str = f"{shortname}:{dt_val_s * 1000:5.2f} ({1 / dt_val_s:3.1f}hz)"
         if fps is not None:
             actual_fps = 1 / dt_val_s
             if actual_fps < fps - 1:
@@ -98,7 +104,9 @@ def predict_action(observation, policy, device, use_amp):
     observation = copy(observation)
     with (
         torch.inference_mode(),
-        torch.autocast(device_type=device.type) if device.type == "cuda" and use_amp else nullcontext(),
+        torch.autocast(device_type=device.type)
+        if device.type == "cuda" and use_amp
+        else nullcontext(),
     ):
         # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
         for name in observation:
@@ -154,7 +162,9 @@ def init_keyboard_listener(assign_rewards=False):
                 print("Right arrow key pressed. Exiting loop...")
                 events["exit_early"] = True
             elif key == keyboard.Key.left:
-                print("Left arrow key pressed. Exiting loop and rerecord the last episode...")
+                print(
+                    "Left arrow key pressed. Exiting loop and rerecord the last episode..."
+                )
                 events["rerecord_episode"] = True
                 events["exit_early"] = True
             elif key == keyboard.Key.esc:
@@ -180,8 +190,12 @@ def init_keyboard_listener(assign_rewards=False):
 def init_policy(pretrained_policy_name_or_path, policy_overrides):
     """Instantiate the policy and load fps, device and use_amp from config yaml"""
     pretrained_policy_path = get_pretrained_policy_path(pretrained_policy_name_or_path)
-    hydra_cfg = init_hydra_config(pretrained_policy_path / "config.yaml", policy_overrides)
-    policy = make_policy(hydra_cfg=hydra_cfg, pretrained_policy_name_or_path=pretrained_policy_path)
+    hydra_cfg = init_hydra_config(
+        pretrained_policy_path / "config.yaml", policy_overrides
+    )
+    policy = make_policy(
+        hydra_cfg=hydra_cfg, pretrained_policy_name_or_path=pretrained_policy_path
+    )
 
     # Check device is available
     device = get_safe_torch_device(hydra_cfg.device, log=True)
@@ -225,6 +239,7 @@ def record_episode(
     device,
     use_amp,
     fps,
+    record_delta_actions,
 ):
     control_loop(
         robot=robot,
@@ -236,6 +251,7 @@ def record_episode(
         device=device,
         use_amp=use_amp,
         fps=fps,
+        record_delta_actions=record_delta_actions,
         teleoperate=policy is None,
     )
 
@@ -252,6 +268,7 @@ def control_loop(
     device=None,
     use_amp=None,
     fps=None,
+    record_delta_actions=False,
 ):
     # TODO(rcadene): Add option to record logs
     if not robot.is_connected:
@@ -267,15 +284,21 @@ def control_loop(
         raise ValueError("When `teleoperate` is True, `policy` should be None.")
 
     if dataset is not None and fps is not None and dataset.fps != fps:
-        raise ValueError(f"The dataset fps should be equal to requested fps ({dataset['fps']} != {fps}).")
+        raise ValueError(
+            f"The dataset fps should be equal to requested fps ({dataset['fps']} != {fps})."
+        )
 
     timestamp = 0
     start_episode_t = time.perf_counter()
     while timestamp < control_time_s:
         start_loop_t = time.perf_counter()
 
+        current_joint_positions = robot.follower_arms["main"].read("Present_Position")
+
         if teleoperate:
             observation, action = robot.teleop_step(record_data=True)
+            if record_delta_actions:
+                action["action"] = action["action"] - current_joint_positions
         else:
             observation = robot.capture_observation()
 
@@ -290,12 +313,20 @@ def control_loop(
             frame = {**observation, **action}
             if "next.reward" in events:
                 frame["next.reward"] = events["next.reward"]
+                frame["next.done"] = (events["next.reward"] == 1) or (
+                    events["exit_early"]
+                )
             dataset.add_frame(frame)
+
+            # if frame["next.done"]:
+            # break
 
         if display_cameras and not is_headless():
             image_keys = [key for key in observation if "image" in key]
             for key in image_keys:
-                cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
+                cv2.imshow(
+                    key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR)
+                )
             cv2.waitKey(1)
 
         if fps is not None:
@@ -335,7 +366,9 @@ def reset_environment(robot, events, reset_time_s):
 
 def reset_follower_position(robot: Robot, target_position):
     current_position = robot.follower_arms["main"].read("Present_Position")
-    trajectory = torch.from_numpy(np.linspace(current_position, target_position, 30)) # NOTE: 30 is just an aribtrary number 
+    trajectory = torch.from_numpy(
+        np.linspace(current_position, target_position, 30)
+    )  # NOTE: 30 is just an aribtrary number
     for pose in trajectory:
         robot.send_action(pose)
         busy_wait(0.015)
@@ -371,7 +404,11 @@ def sanity_check_dataset_name(repo_id, policy):
 
 
 def sanity_check_dataset_robot_compatibility(
-    dataset: LeRobotDataset, robot: Robot, fps: int, use_videos: bool, extra_features: dict = None
+    dataset: LeRobotDataset,
+    robot: Robot,
+    fps: int,
+    use_videos: bool,
+    extra_features: dict = None,
 ) -> None:
     features_from_robot = get_features_from_robot(robot, use_videos)
     if extra_features is not None:
@@ -385,11 +422,14 @@ def sanity_check_dataset_robot_compatibility(
 
     mismatches = []
     for field, dataset_value, present_value in fields:
-        diff = DeepDiff(dataset_value, present_value, exclude_regex_paths=[r".*\['info'\]$"])
+        diff = DeepDiff(
+            dataset_value, present_value, exclude_regex_paths=[r".*\['info'\]$"]
+        )
         if diff:
             mismatches.append(f"{field}: expected {present_value}, got {dataset_value}")
 
     if mismatches:
         raise ValueError(
-            "Dataset metadata compatibility check failed with mismatches:\n" + "\n".join(mismatches)
+            "Dataset metadata compatibility check failed with mismatches:\n"
+            + "\n".join(mismatches)
         )

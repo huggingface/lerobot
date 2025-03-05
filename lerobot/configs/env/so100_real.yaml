@@ -1,6 +1,6 @@
 # @package _global_
 
-fps: 30
+fps: 10
 
 env:
   name: real_world
@@ -8,3 +8,23 @@ env:
   state_dim: 6
   action_dim: 6
   fps: ${fps}
+  device: mps
+
+  wrapper:
+    crop_params_dict:
+      observation.images.front: [102, 43, 358, 523]
+      observation.images.side: [92, 123, 379, 349]
+      # observation.images.front: [109, 37, 361, 557]
+      # observation.images.side: [94, 161, 372, 315]
+    resize_size: [128, 128]
+    control_time_s: 20
+    reset_follower_pos: true
+    use_relative_joint_positions: true
+    reset_time_s: 5
+    display_cameras: false
+    delta_action: 0.1
+    joint_masking_action_space: [1, 1, 1, 1, 0, 0] # disable wrist and gripper
+
+  reward_classifier:
+    pretrained_path:  outputs/classifier/13-02-random-sample-resnet10-frozen/checkpoints/best/pretrained_model
+    config_path: lerobot/configs/policy/hilserl_classifier.yaml

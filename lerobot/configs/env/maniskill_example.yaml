@@ -1,0 +1,30 @@
+# @package _global_
+
+fps: 20
+
+env:
+  name: maniskill/pushcube
+  task:  PushCube-v1
+  image_size: 64
+  control_mode: pd_ee_delta_pose
+  state_dim: 25
+  action_dim: 7
+  fps: ${fps}
+  obs: rgb
+  render_mode: rgb_array
+  render_size: 64
+  device: cuda
+
+  reward_classifier:
+    pretrained_path: null
+    config_path: null
+
+  wrapper:
+    joint_masking_action_space: null
+    delta_action: null
+
+  video_record:
+    enabled: false
+    record_dir: maniskill_videos
+    trajectory_name: trajectory
+    fps: ${fps}

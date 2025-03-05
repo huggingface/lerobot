@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Video Background Page</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body class="h-screen overflow-hidden font-mono text-white" x-data="{
+    inputValue: '',
+    navigateToDataset() {
+        const trimmedValue = this.inputValue.trim();
+        if (trimmedValue) {
+            window.location.href = `/${trimmedValue}`;
+        }
+    }
+}">
+    <div class="fixed inset-0 w-full h-full overflow-hidden">
+        <video class="absolute min-w-full min-h-full w-auto h-auto top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2" autoplay muted loop>
+            <source src="https://huggingface.co/datasets/cadene/koch_bimanual_folding/resolve/v1.6/videos/observation.images.phone_episode_000037.mp4" type="video/mp4">
+            Your browser does not support HTML5 video.
+        </video>
+    </div>
+    <div class="fixed inset-0 bg-black bg-opacity-80"></div>
+    <div class="relative z-10 flex flex-col items-center justify-center h-screen">
+        <div class="text-center mb-8">
+            <h1 class="text-4xl font-bold mb-4">LeRobot Dataset Visualizer</h1>
+
+            <a href="https://x.com/RemiCadene/status/1825455895561859185" target="_blank" rel="noopener noreferrer" class="underline">create & train your own robots</a>
+
+            <p class="text-xl mb-4"></p>
+            <div class="text-left inline-block">
+                <h3 class="font-semibold mb-2 mt-4">Example Datasets:</h3>
+                <ul class="list-disc list-inside">
+                    {% for dataset in featured_datasets %}
+                        <li><a href="/{{ dataset }}" class="text-blue-300 hover:text-blue-100 hover:underline">{{ dataset }}</a></li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+        <div class="flex w-full max-w-lg px-4 mb-4">
+            <input
+                type="text"
+                x-model="inputValue"
+                @keyup.enter="navigateToDataset"
+                placeholder="enter dataset id (ex: lerobot/droid_100)"
+                class="flex-grow px-4 py-2 rounded-l bg-white bg-opacity-20 text-white placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-300"
+            >
+            <button
+                @click="navigateToDataset"
+                class="px-4 py-2 bg-blue-500 text-white rounded-r hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-300"
+            >
+                Go
+            </button>
+        </div>
+
+        <details class="mt-4 max-w-full px-4">
+            <summary>More example datasets</summary>
+            <ul class="list-disc list-inside max-h-28 overflow-y-auto break-all">
+                {% for dataset in lerobot_datasets %}
+                    <li><a href="/{{ dataset }}" class="text-blue-300 hover:text-blue-100 hover:underline">{{ dataset }}</a></li>
+                {% endfor %}
+            </ul>
+        </details>
+    </div>
+</body>
+</html>

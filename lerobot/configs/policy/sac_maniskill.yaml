@@ -1,0 +1,117 @@
+# @package _global_
+
+# Train with:
+#
+# python lerobot/scripts/train.py \
+#   +dataset=lerobot/pusht_keypoints
+#   env=pusht \
+#   env.gym.obs_type=environment_state_agent_pos \
+
+seed: 1
+dataset_repo_id: "AdilZtn/Maniskill-Pushcube-demonstration-medium"
+
+training:
+  # Offline training dataloader
+  num_workers: 4
+
+  batch_size: 512
+  grad_clip_norm: 10.0
+  lr: 3e-4
+
+
+  storage_device: "cpu"
+
+  eval_freq: 2500
+  log_freq: 10
+  save_freq: 2000000
+
+  online_steps: 1000000
+  online_rollout_n_episodes: 10
+  online_rollout_batch_size: 10
+  online_steps_between_rollouts: 1000
+  online_sampling_ratio: 1.0
+  online_env_seed: 10000
+  online_buffer_capacity: 200000
+  online_buffer_seed_size: 0
+  online_step_before_learning: 500
+  do_online_rollout_async: false
+  policy_update_freq: 1
+
+  # delta_timestamps:
+  #   observation.environment_state: "[i / ${fps} for i in range(${policy.horizon} + 1)]"
+  #   observation.state: "[i / ${fps} for i in range(${policy.horizon} + 1)]"
+  #   action: "[i / ${fps} for i in range(${policy.horizon})]"
+  #   next.reward: "[i / ${fps} for i in range(${policy.horizon})]"
+
+policy:
+  name: sac
+
+  pretrained_model_path:
+
+  # Input / output structure.
+  n_action_repeats: 1
+  horizon: 1
+  n_action_steps: 1
+
+  shared_encoder: true
+  # vision_encoder_name: "helper2424/resnet10"
+  vision_encoder_name: null
+  # freeze_vision_encoder: true
+  freeze_vision_encoder: false
+  input_shapes:
+    # # TODO(rcadene, alexander-soare): add variables for height and width from the dataset/env?
+    observation.state: ["${env.state_dim}"]
+    observation.image: [3, 64, 64]
+  output_shapes:
+    action: [7]
+
+  camera_number: 1
+
+  # Normalization / Unnormalization
+  input_normalization_modes: null
+  # input_normalization_modes:
+  #  observation.state: min_max
+  input_normalization_params: null
+    # observation.state:
+    #   min: [-1.9361e+00, -7.7640e-01, -7.7094e-01, -2.9709e+00, -8.5656e-01,
+    #       1.0764e+00, -1.2680e+00,  0.0000e+00,  0.0000e+00, -9.3448e+00,
+    #      -3.3828e+00, -3.8420e+00, -5.2553e+00, -3.4154e+00, -6.5082e+00,
+    #      -6.0500e+00, -8.7193e+00, -8.2337e+00, -3.4650e-01, -4.9441e-01,
+    #       8.3516e-03, -3.1114e-01, -9.9700e-01, -2.3471e-01, -2.7137e-01]
+
+    #   max: [ 0.8644,  1.4306,  1.8520, -0.7578,  0.9508,  3.4901,  1.9381,  0.0400,
+    #       0.0400,  5.0885,  4.7156,  7.9393,  7.9100,  2.9796,  5.7720,  4.7163,
+    #       7.8145,  9.7415,  0.2422,  0.4505,  0.6306,  0.2622,  1.0000,  0.5135,
+    #       0.4001]
+
+  output_normalization_modes:
+    action: min_max
+  output_normalization_params:
+    action:
+      min: [-1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0]
+      max: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+  output_normalization_shapes:
+    action: [7]
+
+  # Architecture / modeling.
+  # Neural networks.
+  image_encoder_hidden_dim: 32
+  # discount: 0.99
+  discount: 0.80
+  temperature_init: 1.0
+  num_critics: 10 #10
+  num_subsample_critics: 2
+  critic_lr: 3e-4
+  actor_lr: 3e-4
+  temperature_lr: 3e-4
+  # critic_target_update_weight: 0.005
+  critic_target_update_weight: 0.01
+  utd_ratio: 2 # 10
+
+actor_learner_config:
+  learner_host: "127.0.0.1"
+  learner_port: 50051
+  policy_parameters_push_frequency: 1
+  concurrency:
+    actor: 'processes'
+    learner: 'processes'

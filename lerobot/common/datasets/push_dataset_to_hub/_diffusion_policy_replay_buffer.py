@@ -37,10 +37,16 @@ def check_chunks_compatible(chunks: tuple, shape: tuple):
         assert c > 0
 
 
-def rechunk_recompress_array(group, name, chunks=None, chunk_length=None, compressor=None, tmp_key="_temp"):
+def rechunk_recompress_array(
+    group, name, chunks=None, chunk_length=None, compressor=None, tmp_key="_temp"
+):
     old_arr = group[name]
     if chunks is None:
-        chunks = (chunk_length,) + old_arr.chunks[1:] if chunk_length is not None else old_arr.chunks
+        chunks = (
+            (chunk_length,) + old_arr.chunks[1:]
+            if chunk_length is not None
+            else old_arr.chunks
+        )
     check_chunks_compatible(chunks, old_arr.shape)
 
     if compressor is None:
@@ -82,13 +88,18 @@ def get_optimal_chunks(shape, dtype, target_chunk_bytes=2e6, max_chunk_length=No
     for i in range(len(shape) - 1):
         this_chunk_bytes = itemsize * np.prod(rshape[:i])
         next_chunk_bytes = itemsize * np.prod(rshape[: i + 1])
-        if this_chunk_bytes <= target_chunk_bytes and next_chunk_bytes > target_chunk_bytes:
+        if (
+            this_chunk_bytes <= target_chunk_bytes
+            and next_chunk_bytes > target_chunk_bytes
+        ):
             split_idx = i
 
     rchunks = rshape[:split_idx]
     item_chunk_bytes = itemsize * np.prod(rshape[:split_idx])
     this_max_chunk_length = rshape[split_idx]
-    next_chunk_length = min(this_max_chunk_length, math.ceil(target_chunk_bytes / item_chunk_bytes))
+    next_chunk_length = min(
+        this_max_chunk_length, math.ceil(target_chunk_bytes / item_chunk_bytes)
+    )
     rchunks.append(next_chunk_length)
     len_diff = len(shape) - len(rchunks)
     rchunks.extend([1] * len_diff)
@@ -124,7 +135,13 @@ class ReplayBuffer:
         root.require_group("data", overwrite=False)
         meta = root.require_group("meta", overwrite=False)
         if "episode_ends" not in meta:
-            meta.zeros("episode_ends", shape=(0,), dtype=np.int64, compressor=None, overwrite=False)
+            meta.zeros(
+                "episode_ends",
+                shape=(0,),
+                dtype=np.int64,
+                compressor=None,
+                overwrite=False,
+            )
         return cls(root=root)
 
     @classmethod
@@ -193,7 +210,11 @@ class ReplayBuffer:
             root = zarr.group(store=store)
             # copy without recompression
             n_copied, n_skipped, n_bytes_copied = zarr.copy_store(
-                source=src_store, dest=store, source_path="/meta", dest_path="/meta", if_exists=if_exists
+                source=src_store,
+                dest=store,
+                source_path="/meta",
+                dest_path="/meta",
+                if_exists=if_exists,
             )
             data_group = root.create_group("data", overwrite=True)
             if keys is None:
@@ -201,7 +222,9 @@ class ReplayBuffer:
             for key in keys:
                 value = src_root["data"][key]
                 cks = cls._resolve_array_chunks(chunks=chunks, key=key, array=value)
-                cpr = cls._resolve_array_compressor(compressors=compressors, key=key, array=value)
+                cpr = cls._resolve_array_compressor(
+                    compressors=compressors, key=key, array=value
+                )
                 if cks == value.chunks and cpr == value.compressor:
                     # copy without recompression
                     this_path = "/data/" + key
@@ -286,13 +309,17 @@ class ReplayBuffer:
             meta_group = root.create_group("meta", overwrite=True)
             # save meta, no chunking
             for key, value in self.root["meta"].items():
-                _ = meta_group.array(name=key, data=value, shape=value.shape, chunks=value.shape)
+                _ = meta_group.array(
+                    name=key, data=value, shape=value.shape, chunks=value.shape
+                )
 
         # save data, chunk
         data_group = root.create_group("data", overwrite=True)
         for key, value in self.root["data"].items():
             cks = self._resolve_array_chunks(chunks=chunks, key=key, array=value)
-            cpr = self._resolve_array_compressor(compressors=compressors, key=key, array=value)
+            cpr = self._resolve_array_compressor(
+                compressors=compressors, key=key, array=value
+            )
             if isinstance(value, zarr.Array):
                 if cks == value.chunks and cpr == value.compressor:
                     # copy without recompression
@@ -339,13 +366,19 @@ class ReplayBuffer:
     @staticmethod
     def resolve_compressor(compressor="default"):
         if compressor == "default":
-            compressor = numcodecs.Blosc(cname="lz4", clevel=5, shuffle=numcodecs.Blosc.NOSHUFFLE)
+            compressor = numcodecs.Blosc(
+                cname="lz4", clevel=5, shuffle=numcodecs.Blosc.NOSHUFFLE
+            )
         elif compressor == "disk":
-            compressor = numcodecs.Blosc("zstd", clevel=5, shuffle=numcodecs.Blosc.BITSHUFFLE)
+            compressor = numcodecs.Blosc(
+                "zstd", clevel=5, shuffle=numcodecs.Blosc.BITSHUFFLE
+            )
         return compressor
 
     @classmethod
-    def _resolve_array_compressor(cls, compressors: dict | str | numcodecs.abc.Codec, key, array):
+    def _resolve_array_compressor(
+        cls, compressors: dict | str | numcodecs.abc.Codec, key, array
+    ):
         # allows compressor to be explicitly set to None
         cpr = "nil"
         if isinstance(compressors, dict):
@@ -404,7 +437,11 @@ class ReplayBuffer:
         if self.backend == "zarr":
             for key, value in np_data.items():
                 _ = meta_group.array(
-                    name=key, data=value, shape=value.shape, chunks=value.shape, overwrite=True
+                    name=key,
+                    data=value,
+                    shape=value.shape,
+                    chunks=value.shape,
+                    overwrite=True,
                 )
         else:
             meta_group.update(np_data)
@@ -514,10 +551,18 @@ class ReplayBuffer:
             # create array
             if key not in self.data:
                 if is_zarr:
-                    cks = self._resolve_array_chunks(chunks=chunks, key=key, array=value)
-                    cpr = self._resolve_array_compressor(compressors=compressors, key=key, array=value)
+                    cks = self._resolve_array_chunks(
+                        chunks=chunks, key=key, array=value
+                    )
+                    cpr = self._resolve_array_compressor(
+                        compressors=compressors, key=key, array=value
+                    )
                     arr = self.data.zeros(
-                        name=key, shape=new_shape, chunks=cks, dtype=value.dtype, compressor=cpr
+                        name=key,
+                        shape=new_shape,
+                        chunks=cks,
+                        dtype=value.dtype,
+                        compressor=cpr,
                     )
                 else:
                     # copy data to prevent modify
@@ -544,7 +589,9 @@ class ReplayBuffer:
 
         # rechunk
         if is_zarr and episode_ends.chunks[0] < episode_ends.shape[0]:
-            rechunk_recompress_array(self.meta, "episode_ends", chunk_length=int(episode_ends.shape[0] * 1.5))
+            rechunk_recompress_array(
+                self.meta, "episode_ends", chunk_length=int(episode_ends.shape[0] * 1.5)
+            )
 
     def drop_episode(self):
         is_zarr = self.backend == "zarr"
