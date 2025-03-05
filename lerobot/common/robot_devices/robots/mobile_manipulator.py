@@ -392,21 +392,19 @@ class MobileManipulator:
         for name in self.leader_arms:
             pos = self.leader_arms[name].read("Present_Position")
             pos_tensor = torch.from_numpy(pos).float()
-            # Instead of pos_tensor.item(), use tolist() to convert the entire tensor to a list
             arm_positions.extend(pos_tensor.tolist())
 
-        # (The rest of your code for generating wheel commands remains unchanged)
-        x_cmd = 0.0  # m/s forward/backward
-        y_cmd = 0.0  # m/s lateral
+        y_cmd = 0.0  # m/s forward/backward
+        x_cmd = 0.0  # m/s lateral
         theta_cmd = 0.0  # deg/s rotation
         if self.pressed_keys["forward"]:
-            x_cmd += xy_speed
-        if self.pressed_keys["backward"]:
-            x_cmd -= xy_speed
-        if self.pressed_keys["left"]:
             y_cmd += xy_speed
-        if self.pressed_keys["right"]:
+        if self.pressed_keys["backward"]:
             y_cmd -= xy_speed
+        if self.pressed_keys["left"]:
+            x_cmd += xy_speed
+        if self.pressed_keys["right"]:
+            x_cmd -= xy_speed
         if self.pressed_keys["rotate_left"]:
             theta_cmd += theta_speed
         if self.pressed_keys["rotate_right"]:
@@ -584,8 +582,8 @@ class MobileManipulator:
         # Create the body velocity vector [x, y, theta_rad].
         velocity_vector = np.array([x_cmd, y_cmd, theta_rad])
 
-        # Define the wheel mounting angles with a -90° offset.
-        angles = np.radians(np.array([240, 120, 0]) - 90)
+        # Define the wheel mounting angles (defined from y axis cw)
+        angles = np.radians(np.array([300, 180, 60]))
         # Build the kinematic matrix: each row maps body velocities to a wheel’s linear speed.
         # The third column (base_radius) accounts for the effect of rotation.
         m = np.array([[np.cos(a), np.sin(a), base_radius] for a in angles])
@@ -641,8 +639,8 @@ class MobileManipulator:
         # Compute each wheel’s linear speed (m/s) from its angular speed.
         wheel_linear_speeds = wheel_radps * wheel_radius
 
-        # Define the wheel mounting angles with a -90° offset.
-        angles = np.radians(np.array([240, 120, 0]) - 90)
+        # Define the wheel mounting angles (defined from y axis cw)
+        angles = np.radians(np.array([300, 180, 60]))
         m = np.array([[np.cos(a), np.sin(a), base_radius] for a in angles])
 
         # Solve the inverse kinematics: body_velocity = M⁻¹ · wheel_linear_speeds.
