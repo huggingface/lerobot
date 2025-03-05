@@ -8,14 +8,12 @@
 #   env.gym.obs_type=environment_state_agent_pos \
 
 seed: 1
-# dataset_repo_id: null
 dataset_repo_id: "AdilZtn/Maniskill-Pushcube-demonstration-medium"
 
 training:
   # Offline training dataloader
   num_workers: 4
 
-  # batch_size: 256
   batch_size: 512
   grad_clip_norm: 10.0
   lr: 3e-4
@@ -113,4 +111,7 @@ policy:
 actor_learner_config:
   learner_host: "127.0.0.1"
   learner_port: 50051
-  policy_parameters_push_frequency: 15
+  policy_parameters_push_frequency: 1
+  concurrency:
+    actor: 'processes'
+    learner: 'processes'

@@ -108,11 +108,11 @@ def is_amp_available(device: str):
         raise ValueError(f"Unknown device '{device}.")
 
 
-def init_logging():
+def init_logging(log_file=None):
     def custom_format(record):
         dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         fnameline = f"{record.pathname}:{record.lineno}"
-        message = f"{record.levelname} {dt} {fnameline[-15:]:>15} {record.msg}"
+        message = f"{record.levelname} [PID: {os.getpid()}] {dt} {fnameline[-15:]:>15} {record.msg}"
         return message
 
     logging.basicConfig(level=logging.INFO)
@@ -125,6 +125,12 @@ def init_logging():
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(formatter)
     logging.getLogger().addHandler(console_handler)
+
+    if log_file is not None:
+        # File handler
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setFormatter(formatter)
+        logging.getLogger().addHandler(file_handler)
 
 
 def format_big_number(num, precision=0):
