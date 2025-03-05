@@ -15,7 +15,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from multiprocessing import Event
 import logging
 import signal
 import sys
@@ -25,7 +24,12 @@ from queue import Empty
 shutdown_event_counter = 0
 
 
-def setup_process_handlers() -> Event:
+def setup_process_handlers(use_threads: bool) -> any:
+    if use_threads:
+        from threading import Event
+    else:
+        from multiprocessing import Event
+
     shutdown_event = Event()
 
     # Define signal handler

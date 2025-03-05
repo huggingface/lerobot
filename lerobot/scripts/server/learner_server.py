@@ -278,7 +278,7 @@ def start_learner_server(
         # Setup process handlers to handle shutdown signal
         # But use shutdown event from the main process
         # Return back for MP
-        setup_process_handlers()
+        setup_process_handlers(False)
 
     service = learner_service.LearnerService(
         shutdown_event,
@@ -706,7 +706,7 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
 
-    shutdown_event = setup_process_handlers()
+    shutdown_event = setup_process_handlers(use_threads(cfg))
 
     start_learner_threads(
         cfg,

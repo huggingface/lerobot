@@ -77,7 +77,7 @@ def receive_policy(
     if not use_threads(cfg):
         # Setup process handlers to handle shutdown signal
         # But use shutdown event from the main process
-        setup_process_handlers()
+        setup_process_handlers(False)
 
     if grpc_channel is None or learner_client is None:
         learner_client, grpc_channel = learner_service_client(
@@ -159,7 +159,7 @@ def send_transitions(
     if not use_threads(cfg):
         # Setup process handlers to handle shutdown signal
         # But use shutdown event from the main process
-        setup_process_handlers()
+        setup_process_handlers(False)
 
     if grpc_channel is None or learner_client is None:
         learner_client, grpc_channel = learner_service_client(
@@ -201,7 +201,7 @@ def send_interactions(
     if not use_threads(cfg):
         # Setup process handlers to handle shutdown signal
         # But use shutdown event from the main process
-        setup_process_handlers()
+        setup_process_handlers(False)
 
     if grpc_channel is None or learner_client is None:
         learner_client, grpc_channel = learner_service_client(
@@ -529,7 +529,7 @@ def actor_cli(cfg: dict):
     init_logging(log_file="actor.log")
     robot = make_robot(cfg=cfg.robot)
 
-    shutdown_event = setup_process_handlers()
+    shutdown_event = setup_process_handlers(use_threads(cfg))
 
     learner_client, grpc_channel = learner_service_client(
         host=cfg.actor_learner_config.learner_host,
