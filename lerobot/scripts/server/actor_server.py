@@ -69,6 +69,7 @@ def receive_policy(
     cfg: DictConfig,
     parameters_queue: Queue,
     shutdown_event: any,  # Event,
+    learner_client: hilserl_pb2_grpc.LearnerServiceStub | None = None,
     grpc_channel: grpc.Channel | None = None,
 ):
     logging.info("[ACTOR] Start receiving parameters from the Learner")
@@ -78,7 +79,7 @@ def receive_policy(
         # But use shutdown event from the main process
         setup_process_handlers()
 
-    if grpc_channel is None:
+    if grpc_channel is None or learner_client is None:
         learner_client, grpc_channel = learner_service_client(
             host=cfg.actor_learner_config.learner_host,
             port=cfg.actor_learner_config.learner_port,
@@ -141,6 +142,7 @@ def send_transitions(
     cfg: DictConfig,
     transitions_queue: Queue,
     shutdown_event: any,  # Event,
+    learner_client: hilserl_pb2_grpc.LearnerServiceStub | None = None,
     grpc_channel: grpc.Channel | None = None,
 ) -> hilserl_pb2.Empty:
     """
@@ -159,7 +161,7 @@ def send_transitions(
         # But use shutdown event from the main process
         setup_process_handlers()
 
-    if grpc_channel is None:
+    if grpc_channel is None or learner_client is None:
         learner_client, grpc_channel = learner_service_client(
             host=cfg.actor_learner_config.learner_host,
             port=cfg.actor_learner_config.learner_port,
@@ -183,6 +185,7 @@ def send_interactions(
     cfg: DictConfig,
     interactions_queue: Queue,
     shutdown_event: any,  # Event,
+    learner_client: hilserl_pb2_grpc.LearnerServiceStub | None = None,
     grpc_channel: grpc.Channel | None = None,
 ) -> hilserl_pb2.Empty:
     """
@@ -200,7 +203,7 @@ def send_interactions(
         # But use shutdown event from the main process
         setup_process_handlers()
 
-    if grpc_channel is None:
+    if grpc_channel is None or learner_client is None:
         learner_client, grpc_channel = learner_service_client(
             host=cfg.actor_learner_config.learner_host,
             port=cfg.actor_learner_config.learner_port,
