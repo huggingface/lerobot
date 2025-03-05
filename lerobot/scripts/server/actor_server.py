@@ -518,6 +518,11 @@ def use_threads(cfg: DictConfig) -> bool:
 
 @hydra.main(version_base="1.2", config_name="default", config_path="../../configs")
 def actor_cli(cfg: dict):
+    if not use_threads(cfg):
+        import torch.multiprocessing as mp
+
+        mp.set_start_method("spawn")
+
     init_logging(log_file="actor.log")
     robot = make_robot(cfg=cfg.robot)
 
@@ -551,9 +556,6 @@ def actor_cli(cfg: dict):
         concurrency_entity = Thread
     else:
         from multiprocessing import Process
-        import torch.multiprocessing as mp
-
-        mp.set_start_method("spawn")
 
         concurrency_entity = Process
 
