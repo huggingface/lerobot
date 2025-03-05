@@ -443,7 +443,7 @@ def run_arm_manual_calibration(arm: MotorsBus, robot_type: str, arm_name: str, a
     # For instance, if the motor rotates 90 degree, and its value is -90 after applying the homing offset, then we know its rotation direction
     # is inverted. However, for the calibration being successful, we need everyone to follow the same target position.
     # Sometimes, there is only one possible rotation direction. For instance, if the gripper is closed, there is only one direction which
-    # corresponds to opening the gripper. When the rotation direction is ambiguous, we arbitrarely rotate clockwise from the point of view
+    # corresponds to opening the gripper. When the rotation direction is ambiguous, we arbitrarily rotate clockwise from the point of view
     # of the previous motor in the kinetic chain.
     print("\nMove arm to rotated target position")
     print("See: " + URL_TEMPLATE.format(robot=robot_type, arm=arm_type, position="rotated"))

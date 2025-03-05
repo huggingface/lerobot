@@ -7,6 +7,8 @@ on:
   schedule:
     - cron: "0 2 * * *"
 
+permissions: {}
+
 # env:
   # SLACK_API_TOKEN: ${{ secrets.SLACK_API_TOKEN }}
 jobs:

@@ -409,9 +409,9 @@ class ACT(nn.Module):
             latent dimension.
         """
         if self.config.use_vae and self.training:
-            assert (
-                "action" in batch
-            ), "actions must be provided when using the variational objective in training mode."
+            assert "action" in batch, (
+                "actions must be provided when using the variational objective in training mode."
+            )
 
         batch_size = (
             batch["observation.images"]

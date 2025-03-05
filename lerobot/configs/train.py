@@ -102,7 +102,7 @@ class TrainPipelineConfig(HubMixin):
 
         if not self.resume and isinstance(self.output_dir, Path) and self.output_dir.is_dir():
             raise FileExistsError(
-                f"Output directory {self.output_dir} alreay exists and resume is {self.resume}. "
+                f"Output directory {self.output_dir} already exists and resume is {self.resume}. "
                 f"Please change your output directory so that {self.output_dir} is not overwritten."
             )
         elif not self.output_dir:

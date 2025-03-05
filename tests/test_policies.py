@@ -193,12 +193,12 @@ def test_policy(ds_repo_id, env_name, env_kwargs, policy_name, policy_kwargs):
     observation_ = deepcopy(observation)
     with torch.inference_mode():
         action = policy.select_action(observation).cpu().numpy()
-    assert set(observation) == set(
-        observation_
-    ), "Observation batch keys are not the same after a forward pass."
-    assert all(
-        torch.equal(observation[k], observation_[k]) for k in observation
-    ), "Observation batch values are not the same after a forward pass."
+    assert set(observation) == set(observation_), (
+        "Observation batch keys are not the same after a forward pass."
+    )
+    assert all(torch.equal(observation[k], observation_[k]) for k in observation), (
+        "Observation batch values are not the same after a forward pass."
+    )
 
     # Test step through policy
     env.step(action)
@@ -363,37 +363,33 @@ def test_normalize(insert_temporal_dim):
 
 
 @pytest.mark.parametrize(
-    "ds_repo_id, env_name, policy_name, policy_kwargs, train_kwargs, file_name_extra",
+    "ds_repo_id, policy_name, policy_kwargs, file_name_extra",
     [
         # TODO(alexander-soare): `policy.use_mpc=false` was previously the default in the config yaml but it
         # was changed to true. For some reason, tests would pass locally, but not in CI. So here we override
         # to test with `policy.use_mpc=false`.
-        ("lerobot/xarm_lift_medium", "xarm", "tdmpc", {"use_mpc": False}, {"batch_size": 25}, "use_policy"),
-        # ("lerobot/xarm_lift_medium", "xarm", "tdmpc", {"use_mpc": True}, {}, "use_mpc"),
+        ("lerobot/xarm_lift_medium", "tdmpc", {"use_mpc": False}, "use_policy"),
+        ("lerobot/xarm_lift_medium", "tdmpc", {"use_mpc": True}, "use_mpc"),
         # TODO(rcadene): the diffusion model was normalizing the image in mean=0.5 std=0.5 which is a hack supposed to
         # to normalize the image at all. In our current codebase we dont normalize at all. But there is still a minor difference
         # that fails the test. However, by testing to normalize the image with 0.5 0.5 in the current codebase, the test pass.
         # Thus, we deactivate this test for now.
-        # (
-        #     "lerobot/pusht",
-        #     "pusht",
-        #     "diffusion",
-        #     {
-        #         "n_action_steps": 8,
-        #         "num_inference_steps": 10,
-        #         "down_dims": [128, 256, 512],
-        #     },
-        #     {"batch_size": 64},
-        #     "",
-        # ),
-        ("lerobot/aloha_sim_insertion_human", "aloha", "act", {"n_action_steps": 10}, {}, ""),
+        (
+            "lerobot/pusht",
+            "diffusion",
+            {
+                "n_action_steps": 8,
+                "num_inference_steps": 10,
+                "down_dims": [128, 256, 512],
+            },
+            "",
+        ),
+        ("lerobot/aloha_sim_insertion_human", "act", {"n_action_steps": 10}, ""),
         (
             "lerobot/aloha_sim_insertion_human",
-            "aloha",
             "act",
             {"n_action_steps": 1000, "chunk_size": 1000},
-            {},
-            "_1000_steps",
+            "1000_steps",
         ),
     ],
 )
@@ -401,9 +397,7 @@ def test_normalize(insert_temporal_dim):
 # pass if it's run on another platform due to floating point errors
 @require_x86_64_kernel
 @require_cpu
-def test_backward_compatibility(
-    ds_repo_id, env_name, policy_name, policy_kwargs, train_kwargs, file_name_extra
-):
+def test_backward_compatibility(ds_repo_id: str, policy_name: str, policy_kwargs: dict, file_name_extra: str):
     """
     NOTE: If this test does not pass, and you have intentionally changed something in the policy:
         1. Inspect the differences in policy outputs and make sure you can account for them. Your PR should
@@ -416,26 +410,26 @@ def test_backward_compatibility(
         5. Remember to restore `tests/scripts/save_policy_to_safetensors.py` to its original state.
         6. Remember to stage and commit the resulting changes to `tests/data`.
     """
-    env_policy_dir = (
-        Path("tests/data/save_policy_to_safetensors") / f"{env_name}_{policy_name}{file_name_extra}"
+    ds_name = ds_repo_id.split("/")[-1]
+    artifact_dir = (
+        Path("tests/data/save_policy_to_safetensors") / f"{ds_name}_{policy_name}_{file_name_extra}"
     )
-    saved_output_dict = load_file(env_policy_dir / "output_dict.safetensors")
-    saved_grad_stats = load_file(env_policy_dir / "grad_stats.safetensors")
-    saved_param_stats = load_file(env_policy_dir / "param_stats.safetensors")
-    saved_actions = load_file(env_policy_dir / "actions.safetensors")
+    saved_output_dict = load_file(artifact_dir / "output_dict.safetensors")
+    saved_grad_stats = load_file(artifact_dir / "grad_stats.safetensors")
+    saved_param_stats = load_file(artifact_dir / "param_stats.safetensors")
+    saved_actions = load_file(artifact_dir / "actions.safetensors")
 
-    output_dict, grad_stats, param_stats, actions = get_policy_stats(
-        ds_repo_id, env_name, policy_name, policy_kwargs, train_kwargs
-    )
+    output_dict, grad_stats, param_stats, actions = get_policy_stats(ds_repo_id, policy_name, policy_kwargs)
 
     for key in saved_output_dict:
-        assert torch.allclose(output_dict[key], saved_output_dict[key], rtol=0.1, atol=1e-7)
+        torch.testing.assert_close(output_dict[key], saved_output_dict[key])
     for key in saved_grad_stats:
-        assert torch.allclose(grad_stats[key], saved_grad_stats[key], rtol=0.1, atol=1e-7)
+        torch.testing.assert_close(grad_stats[key], saved_grad_stats[key])
     for key in saved_param_stats:
-        assert torch.allclose(param_stats[key], saved_param_stats[key], rtol=0.1, atol=1e-7)
+        torch.testing.assert_close(param_stats[key], saved_param_stats[key])
     for key in saved_actions:
-        assert torch.allclose(actions[key], saved_actions[key], rtol=0.1, atol=1e-7)
+        rtol, atol = (2e-3, 5e-6) if policy_name == "diffusion" else (None, None)  # HACK
+        torch.testing.assert_close(actions[key], saved_actions[key], rtol=rtol, atol=atol)
 
 
 def test_act_temporal_ensembler():
@@ -490,4 +484,4 @@ def test_act_temporal_ensembler():
         assert torch.all(einops.reduce(seq_slice, "b s 1 -> b 1", "min") <= offline_avg)
         assert torch.all(offline_avg <= einops.reduce(seq_slice, "b s 1 -> b 1", "max"))
         # Selected atol=1e-4 keeping in mind actions in [-1, 1] and excepting 0.01% error.
-        assert torch.allclose(online_avg, offline_avg, atol=1e-4)
+        torch.testing.assert_close(online_avg, offline_avg, rtol=1e-4, atol=1e-4)

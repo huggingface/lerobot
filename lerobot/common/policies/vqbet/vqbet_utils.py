@@ -38,7 +38,7 @@ from lerobot.common.policies.vqbet.configuration_vqbet import VQBeTConfig
 This file is part of a VQ-BeT that utilizes code from the following repositories:
 
     - Vector Quantize PyTorch code is licensed under the MIT License:
-        Origianl source: https://github.com/lucidrains/vector-quantize-pytorch
+        Original source: https://github.com/lucidrains/vector-quantize-pytorch
 
     - nanoGPT part is an adaptation of Andrej Karpathy's nanoGPT implementation in PyTorch.
         Original source: https://github.com/karpathy/nanoGPT
@@ -203,9 +203,9 @@ class GPT(nn.Module):
     def forward(self, input, targets=None):
         device = input.device
         b, t, d = input.size()
-        assert (
-            t <= self.config.gpt_block_size
-        ), f"Cannot forward sequence of length {t}, block size is only {self.config.gpt_block_size}"
+        assert t <= self.config.gpt_block_size, (
+            f"Cannot forward sequence of length {t}, block size is only {self.config.gpt_block_size}"
+        )
 
         # positional encodings that are added to the input embeddings
         pos = torch.arange(0, t, dtype=torch.long, device=device).unsqueeze(0)  # shape (1, t)
@@ -273,10 +273,10 @@ class GPT(nn.Module):
         assert len(inter_params) == 0, "parameters {} made it into both decay/no_decay sets!".format(
             str(inter_params)
         )
-        assert (
-            len(param_dict.keys() - union_params) == 0
-        ), "parameters {} were not separated into either decay/no_decay set!".format(
-            str(param_dict.keys() - union_params),
+        assert len(param_dict.keys() - union_params) == 0, (
+            "parameters {} were not separated into either decay/no_decay set!".format(
+                str(param_dict.keys() - union_params),
+            )
         )
 
         decay = [param_dict[pn] for pn in sorted(decay)]
@@ -289,7 +289,7 @@ class GPT(nn.Module):
 This file is a part for Residual Vector Quantization that utilizes code from the following repository:
 
     - Phil Wang's vector-quantize-pytorch implementation in PyTorch.
-        Origianl source: https://github.com/lucidrains/vector-quantize-pytorch
+        Original source: https://github.com/lucidrains/vector-quantize-pytorch
 
     - The vector-quantize-pytorch code is licensed under the MIT License:
 
@@ -419,9 +419,9 @@ class ResidualVQ(nn.Module):
         # and the network should be able to reconstruct
 
         if quantize_dim < self.num_quantizers:
-            assert (
-                self.quantize_dropout > 0.0
-            ), "quantize dropout must be greater than 0 if you wish to reconstruct from a signal with less fine quantizations"
+            assert self.quantize_dropout > 0.0, (
+                "quantize dropout must be greater than 0 if you wish to reconstruct from a signal with less fine quantizations"
+            )
             indices = F.pad(indices, (0, self.num_quantizers - quantize_dim), value=-1)
 
         # get ready for gathering
@@ -472,9 +472,9 @@ class ResidualVQ(nn.Module):
         all_indices = []
 
         if return_loss:
-            assert not torch.any(
-                indices == -1
-            ), "some of the residual vq indices were dropped out. please use indices derived when the module is in eval mode to derive cross entropy loss"
+            assert not torch.any(indices == -1), (
+                "some of the residual vq indices were dropped out. please use indices derived when the module is in eval mode to derive cross entropy loss"
+            )
             ce_losses = []
 
         should_quantize_dropout = self.training and self.quantize_dropout and not return_loss
@@ -887,9 +887,9 @@ class VectorQuantize(nn.Module):
                 # only calculate orthogonal loss for the activated codes for this batch
 
                 if self.orthogonal_reg_active_codes_only:
-                    assert not (
-                        is_multiheaded and self.separate_codebook_per_head
-                    ), "orthogonal regularization for only active codes not compatible with multi-headed with separate codebooks yet"
+                    assert not (is_multiheaded and self.separate_codebook_per_head), (
+                        "orthogonal regularization for only active codes not compatible with multi-headed with separate codebooks yet"
+                    )
                     unique_code_ids = torch.unique(embed_ind)
                     codebook = codebook[:, unique_code_ids]
 
@@ -999,9 +999,9 @@ def gumbel_sample(
     ind = sampling_logits.argmax(dim=dim)
     one_hot = F.one_hot(ind, size).type(dtype)
 
-    assert not (
-        reinmax and not straight_through
-    ), "reinmax can only be turned on if using straight through gumbel softmax"
+    assert not (reinmax and not straight_through), (
+        "reinmax can only be turned on if using straight through gumbel softmax"
+    )
 
     if not straight_through or temperature <= 0.0 or not training:
         return ind, one_hot
@@ -1209,9 +1209,9 @@ class EuclideanCodebook(nn.Module):
         self.gumbel_sample = gumbel_sample
         self.sample_codebook_temp = sample_codebook_temp
 
-        assert not (
-            use_ddp and num_codebooks > 1 and kmeans_init
-        ), "kmeans init is not compatible with multiple codebooks in distributed environment for now"
+        assert not (use_ddp and num_codebooks > 1 and kmeans_init), (
+            "kmeans init is not compatible with multiple codebooks in distributed environment for now"
+        )
 
         self.sample_fn = sample_vectors_distributed if use_ddp and sync_kmeans else batched_sample_vectors
         self.kmeans_all_reduce_fn = distributed.all_reduce if use_ddp and sync_kmeans else noop
@@ -1349,9 +1349,9 @@ class EuclideanCodebook(nn.Module):
 
         # calculate distributed variance
 
-        variance_numer = reduce((data - batch_mean) ** 2, "h n d -> h 1 d", "sum")
-        distributed.all_reduce(variance_numer)
-        batch_variance = variance_numer / num_vectors
+        variance_number = reduce((data - batch_mean) ** 2, "h n d -> h 1 d", "sum")
+        distributed.all_reduce(variance_number)
+        batch_variance = variance_number / num_vectors
 
         self.update_with_decay("batch_variance", batch_variance, self.affine_param_batch_decay)
 

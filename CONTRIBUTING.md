@@ -129,37 +129,70 @@ Follow these steps to start contributing:
 
    🚨 **Do not** work on the `main` branch.
 
-4. for development, we use `poetry` instead of just `pip` to easily track our dependencies.
-   If you don't have it already, follow the [instructions](https://python-poetry.org/docs/#installation) to install it.
+4. for development, we advise to use a tool like `poetry` or `uv` instead of just `pip` to easily track our dependencies.
+   Follow the instructions to [install poetry](https://python-poetry.org/docs/#installation) (use a version >=2.1.0) or to [install uv](https://docs.astral.sh/uv/getting-started/installation/#installation-methods) if you don't have one of them already.
 
    Set up a development environment with conda or miniconda:
    ```bash
    conda create -y -n lerobot-dev python=3.10 && conda activate lerobot-dev
    ```
 
-   To develop on 🤗 LeRobot, you will at least need to install the `dev` and `test` extras dependencies along with the core library:
+   If you're using `uv`, it can manage python versions so you can instead do:
    ```bash
-   poetry install --sync --extras "dev test"
+   uv venv --python 3.10 && source .venv/bin/activate
+   ```
+
+   To develop on 🤗 LeRobot, you will at least need to install the `dev` and `test` extras dependencies along with the core library:
+
+   using `poetry`
+   ```bash
+   poetry sync --extras "dev test"
+   ```
+
+   using `uv`
+   ```bash
+   uv sync --extra dev --extra test
    ```
 
    You can also install the project with all its dependencies (including environments):
+
+   using `poetry`
    ```bash
-   poetry install --sync --all-extras
+   poetry sync --all-extras
+   ```
+
+   using `uv`
+   ```bash
+   uv sync --all-extras
    ```
 
    > **Note:** If you don't install simulation environments with `--all-extras`, the tests that require them will be skipped when running the pytest suite locally. However, they *will* be tested in the CI. In general, we advise you to install everything and test locally before pushing.
 
-   Whichever command you chose to install the project (e.g. `poetry install --sync --all-extras`), you should run it again when pulling code with an updated version of `pyproject.toml` and `poetry.lock` in order to synchronize your virtual environment with the new dependencies.
+   Whichever command you chose to install the project (e.g. `poetry sync --all-extras`), you should run it again when pulling code with an updated version of `pyproject.toml` and `poetry.lock` in order to synchronize your virtual environment with the new dependencies.
 
    The equivalent of `pip install some-package`, would just be:
+
+   using `poetry`
    ```bash
    poetry add some-package
    ```
 
-   When making changes to the poetry sections of the `pyproject.toml`, you should run the following command to lock dependencies.
+   using `uv`
    ```bash
-   poetry lock --no-update
+   uv add some-package
    ```
+
+   When making changes to the poetry sections of the `pyproject.toml`, you should run the following command to lock dependencies.
+   using `poetry`
+   ```bash
+   poetry lock
+   ```
+
+   using `uv`
+   ```bash
+   uv lock
+   ```
+
 
 5. Develop the features on your branch.
 
@@ -195,7 +228,7 @@ Follow these steps to start contributing:
    git commit
    ```
 
-   Note, if you already commited some changes that have a wrong formatting, you can use:
+   Note, if you already committed some changes that have a wrong formatting, you can use:
    ```bash
    pre-commit run --all-files
    ```

@@ -12,7 +12,6 @@ from functools import cache
 
 import cv2
 import torch
-import tqdm
 from deepdiff import DeepDiff
 from termcolor import colored
 
@@ -33,7 +32,7 @@ def log_control_info(robot: Robot, dt_s, episode_index=None, frame_index=None, f
 
     def log_dt(shortname, dt_val_s):
         nonlocal log_items, fps
-        info_str = f"{shortname}:{dt_val_s * 1000:5.2f} ({1/ dt_val_s:3.1f}hz)"
+        info_str = f"{shortname}:{dt_val_s * 1000:5.2f} ({1 / dt_val_s:3.1f}hz)"
         if fps is not None:
             actual_fps = 1 / dt_val_s
             if actual_fps < fps - 1:
@@ -183,6 +182,7 @@ def record_episode(
     device,
     use_amp,
     fps,
+    single_task,
 ):
     control_loop(
         robot=robot,
@@ -195,6 +195,7 @@ def record_episode(
         use_amp=use_amp,
         fps=fps,
         teleoperate=policy is None,
+        single_task=single_task,
     )
 
 
@@ -210,6 +211,7 @@ def control_loop(
     device: torch.device | str | None = None,
     use_amp: bool | None = None,
     fps: int | None = None,
+    single_task: str | None = None,
 ):
     # TODO(rcadene): Add option to record logs
     if not robot.is_connected:
@@ -223,6 +225,9 @@ def control_loop(
 
     if teleoperate and policy is not None:
         raise ValueError("When `teleoperate` is True, `policy` should be None.")
+
+    if dataset is not None and single_task is None:
+        raise ValueError("You need to provide a task as argument in `single_task`.")
 
     if dataset is not None and fps is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset['fps']} != {fps}).")
@@ -248,7 +253,7 @@ def control_loop(
                 action = {"action": action}
 
         if dataset is not None:
-            frame = {**observation, **action}
+            frame = {**observation, **action, "task": single_task}
             dataset.add_frame(frame)
 
         if display_cameras and not is_headless():
@@ -270,24 +275,18 @@ def control_loop(
             break
 
 
-def reset_environment(robot, events, reset_time_s):
+def reset_environment(robot, events, reset_time_s, fps):
     # TODO(rcadene): refactor warmup_record and reset_environment
-    # TODO(alibets): allow for teleop during reset
     if has_method(robot, "teleop_safety_stop"):
         robot.teleop_safety_stop()
 
-    timestamp = 0
-    start_vencod_t = time.perf_counter()
-
-    # Wait if necessary
-    with tqdm.tqdm(total=reset_time_s, desc="Waiting") as pbar:
-        while timestamp < reset_time_s:
-            time.sleep(1)
-            timestamp = time.perf_counter() - start_vencod_t
-            pbar.update(1)
-            if events["exit_early"]:
-                events["exit_early"] = False
-                break
+    control_loop(
+        robot=robot,
+        control_time_s=reset_time_s,
+        events=events,
+        fps=fps,
+        teleoperate=True,
+    )
 
 
 def stop_recording(robot, listener, display_cameras):

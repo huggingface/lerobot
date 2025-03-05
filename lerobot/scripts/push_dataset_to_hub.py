@@ -175,7 +175,7 @@ def push_dataset_to_hub(
         # Robustify when `local_dir` is str instead of Path
         local_dir = Path(local_dir)
 
-        # Send warning if local_dir isn't well formated
+        # Send warning if local_dir isn't well formatted
         if local_dir.parts[-2] != user_id or local_dir.parts[-1] != dataset_id:
             warnings.warn(
                 f"`local_dir` ({local_dir}) doesn't contain a community or user id `/` the name of the dataset that match the `repo_id` (e.g. 'data/lerobot/pusht'). Following this naming convention is advised, but not mandatory.",
