@@ -55,12 +55,10 @@ from lerobot.scripts.server.network_utils import (
 from lerobot.scripts.server.gym_manipulator import get_classifier, make_robot_env
 from lerobot.scripts.server import learner_service
 
-from torch.multiprocessing import Process, Queue, Event
+from torch.multiprocessing import Queue, Event
 from queue import Empty
 
 from lerobot.common.utils.utils import init_logging
-
-import torch.multiprocessing as mp
 
 from lerobot.scripts.server.utils import get_last_item_from_queue
 
@@ -71,17 +69,20 @@ def receive_policy(
     cfg: DictConfig,
     parameters_queue: Queue,
     shutdown_event: any,  # Event,
+    grpc_channel: grpc.Channel | None = None,
 ):
     logging.info("[ACTOR] Start receiving parameters from the Learner")
 
-    # Setup process handlers to handle shutdown signal
-    # But use shutdown event from the main process
-    setup_process_handlers()
+    if not use_threads(cfg):
+        # Setup process handlers to handle shutdown signal
+        # But use shutdown event from the main process
+        setup_process_handlers()
 
-    learner_client, grpc_channel = learner_service_client(
-        host=cfg.actor_learner_config.learner_host,
-        port=cfg.actor_learner_config.learner_port,
-    )
+    if grpc_channel is None:
+        learner_client, grpc_channel = learner_service_client(
+            host=cfg.actor_learner_config.learner_host,
+            port=cfg.actor_learner_config.learner_port,
+        )
 
     try:
         iterator = learner_client.StreamParameters(hilserl_pb2.Empty())
@@ -94,7 +95,8 @@ def receive_policy(
     except grpc.RpcError as e:
         logging.error(f"[ACTOR] gRPC error: {e}")
 
-    grpc_channel.close()
+    if not use_threads(cfg):
+        grpc_channel.close()
     logging.info("[ACTOR] Received policy loop stopped")
 
 
@@ -139,6 +141,7 @@ def send_transitions(
     cfg: DictConfig,
     transitions_queue: Queue,
     shutdown_event: any,  # Event,
+    grpc_channel: grpc.Channel | None = None,
 ) -> hilserl_pb2.Empty:
     """
     Sends transitions to the learner.
@@ -151,14 +154,16 @@ def send_transitions(
         - The serialized data is wrapped in a `hilserl_pb2.Transition` message and sent to the learner.
     """
 
-    # Setup process handlers to handle shutdown signal
-    # But use shutdown event from the main process
-    setup_process_handlers()
+    if not use_threads(cfg):
+        # Setup process handlers to handle shutdown signal
+        # But use shutdown event from the main process
+        setup_process_handlers()
 
-    learner_client, grpc_channel = learner_service_client(
-        host=cfg.actor_learner_config.learner_host,
-        port=cfg.actor_learner_config.learner_port,
-    )
+    if grpc_channel is None:
+        learner_client, grpc_channel = learner_service_client(
+            host=cfg.actor_learner_config.learner_host,
+            port=cfg.actor_learner_config.learner_port,
+        )
 
     try:
         learner_client.SendTransitions(
@@ -169,7 +174,8 @@ def send_transitions(
 
     logging.info("[ACTOR] Finished streaming transitions")
 
-    grpc_channel.close()
+    if not use_threads(cfg):
+        grpc_channel.close()
     logging.info("[ACTOR] Transitions process stopped")
 
 
@@ -177,6 +183,7 @@ def send_interactions(
     cfg: DictConfig,
     interactions_queue: Queue,
     shutdown_event: any,  # Event,
+    grpc_channel: grpc.Channel | None = None,
 ) -> hilserl_pb2.Empty:
     """
     Sends interactions to the learner.
@@ -187,14 +194,17 @@ def send_interactions(
         - Contains useful statistics about episodic rewards and policy timings.
         - The message is serialized using `pickle` and sent to the learner.
     """
-    # Setup process handlers to handle shutdown signal
-    # But use shutdown event from the main process
-    setup_process_handlers()
 
-    learner_client, grpc_channel = learner_service_client(
-        host=cfg.actor_learner_config.learner_host,
-        port=cfg.actor_learner_config.learner_port,
-    )
+    if not use_threads(cfg):
+        # Setup process handlers to handle shutdown signal
+        # But use shutdown event from the main process
+        setup_process_handlers()
+
+    if grpc_channel is None:
+        learner_client, grpc_channel = learner_service_client(
+            host=cfg.actor_learner_config.learner_host,
+            port=cfg.actor_learner_config.learner_port,
+        )
 
     try:
         learner_client.SendInteractions(
@@ -205,7 +215,8 @@ def send_interactions(
 
     logging.info("[ACTOR] Finished streaming interactions")
 
-    grpc_channel.close()
+    if not use_threads(cfg):
+        grpc_channel.close()
     logging.info("[ACTOR] Interactions process stopped")
 
 
@@ -501,6 +512,10 @@ def establish_learner_connection(
     return False
 
 
+def use_threads(cfg: DictConfig) -> bool:
+    return cfg.actor_learner_config.concurrency.actor == "threads"
+
+
 @hydra.main(version_base="1.2", config_name="default", config_path="../../configs")
 def actor_cli(cfg: dict):
     init_logging(log_file="actor.log")
@@ -518,7 +533,10 @@ def actor_cli(cfg: dict):
         logging.error("[ACTOR] Failed to establish connection with Learner")
         return
 
-    grpc_channel.close()
+    if not use_threads(cfg):
+        # If we use multithreading, we can reuse the channel
+        grpc_channel.close()
+        grpc_channel = None
 
     logging.info("[ACTOR] Connection with Learner established")
 
@@ -526,21 +544,34 @@ def actor_cli(cfg: dict):
     transitions_queue = Queue()
     interactions_queue = Queue()
 
-    receive_policy_process = Process(
+    concurrency_entity = None
+    if use_threads(cfg):
+        from threading import Thread
+
+        concurrency_entity = Thread
+    else:
+        from multiprocessing import Process
+        import torch.multiprocessing as mp
+
+        mp.set_start_method("spawn")
+
+        concurrency_entity = Process
+
+    receive_policy_process = concurrency_entity(
         target=receive_policy,
-        args=(cfg, parameters_queue, shutdown_event),
+        args=(cfg, parameters_queue, shutdown_event, grpc_channel),
         daemon=True,
     )
 
-    transitions_process = Process(
+    transitions_process = concurrency_entity(
         target=send_transitions,
-        args=(cfg, transitions_queue, shutdown_event),
+        args=(cfg, transitions_queue, shutdown_event, grpc_channel),
         daemon=True,
     )
 
-    interactions_process = Process(
+    interactions_process = concurrency_entity(
         target=send_interactions,
-        args=(cfg, interactions_queue, shutdown_event),
+        args=(cfg, interactions_queue, shutdown_event, grpc_channel),
         daemon=True,
     )
 
@@ -592,6 +623,4 @@ def actor_cli(cfg: dict):
 
 
 if __name__ == "__main__":
-    mp.set_start_method("spawn")
-
     actor_cli()

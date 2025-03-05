@@ -68,9 +68,6 @@ from lerobot.scripts.server.buffer import (
 
 from lerobot.scripts.server import learner_service
 
-import torch.multiprocessing as mp
-from torch.multiprocessing import Process
-
 
 def handle_resume_logic(cfg: DictConfig, out_dir: str) -> DictConfig:
     if not cfg.resume:
@@ -201,6 +198,10 @@ def get_observation_features(
     return observation_features, next_observation_features
 
 
+def use_threads(cfg: DictConfig) -> bool:
+    return cfg.actor_learner_config.concurrency.learner == "threads"
+
+
 def start_learner_threads(
     cfg: DictConfig,
     logger: Logger,
@@ -212,7 +213,18 @@ def start_learner_threads(
     interaction_message_queue = Queue()
     parameters_queue = Queue()
 
-    communication_process = Process(
+    concurrency_entity = None
+
+    if use_threads(cfg):
+        from threading import Thread
+
+        concurrency_entity = Thread
+    else:
+        from torch.multiprocessing import Process
+
+        concurrency_entity = Process
+
+    communication_process = concurrency_entity(
         target=start_learner_server,
         args=(
             parameters_queue,
@@ -259,13 +271,14 @@ def start_learner_server(
     shutdown_event: any,  # Event,
     cfg: DictConfig,
 ):
-    # Return back for MP
-    init_logging()
+    if not use_threads(cfg):
+        # We need init logging for MP separataly
+        init_logging()
 
-    # Setup process handlers to handle shutdown signal
-    # But use shutdown event from the main process
-    # Return back for MP
-    setup_process_handlers()
+        # Setup process handlers to handle shutdown signal
+        # But use shutdown event from the main process
+        # Return back for MP
+        setup_process_handlers()
 
     service = learner_service.LearnerService(
         shutdown_event,
@@ -705,6 +718,11 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
 
 @hydra.main(version_base="1.2", config_name="default", config_path="../../configs")
 def train_cli(cfg: dict):
+    if not use_threads(cfg):
+        import torch.multiprocessing as mp
+
+        mp.set_start_method("spawn")
+
     train(
         cfg,
         out_dir=hydra.core.hydra_config.HydraConfig.get().run.dir,
@@ -715,8 +733,6 @@ def train_cli(cfg: dict):
 
 
 if __name__ == "__main__":
-    mp.set_start_method("spawn")
-
     train_cli()
 
     logging.info("[LEARNER] main finished")
