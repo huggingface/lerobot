@@ -454,7 +454,7 @@ def _compile_episode_data(
 
 
 @parser.wrap()
-def eval_main(cfg: EvalPipelineConfig):
+def eval(cfg: EvalPipelineConfig):
     logging.info(pformat(asdict(cfg)))
 
     # Check device is available
@@ -499,4 +499,4 @@ def eval_main(cfg: EvalPipelineConfig):
 
 if __name__ == "__main__":
     init_logging()
-    eval_main()
+    eval()

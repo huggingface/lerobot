@@ -13,7 +13,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import contextlib
 import logging
 import shutil
 from pathlib import Path
@@ -28,7 +27,6 @@ import torch.utils
 from datasets import concatenate_datasets, load_dataset
 from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.constants import REPOCARD_NAME
-from huggingface_hub.errors import RevisionNotFoundError
 
 from lerobot.common.constants import HF_LEROBOT_HOME
 from lerobot.common.datasets.compute_stats import aggregate_stats, compute_episode_stats
@@ -314,7 +312,7 @@ class LeRobotDatasetMetadata:
         obj.repo_id = repo_id
         obj.root = Path(root) if root is not None else HF_LEROBOT_HOME / repo_id
 
-        obj.root.mkdir(parents=True, exist_ok=False)
+        obj.root.mkdir(parents=True, exist_ok=True)
 
         if robot is not None:
             features = get_features_from_robot(robot, use_videos)
@@ -480,7 +478,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.image_writer = None
         self.episode_buffer = None
 
-        self.root.mkdir(exist_ok=True, parents=True)
+        self.root.mkdir(exist_ok=False, parents=True)
 
         # Load metadata
         self.meta = LeRobotDatasetMetadata(
@@ -519,7 +517,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         branch: str | None = None,
         tags: list | None = None,
         license: str | None = "apache-2.0",
-        tag_version: bool = True,
         push_videos: bool = True,
         private: bool = False,
         allow_patterns: list[str] | str | None = None,
@@ -564,11 +561,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 tags=tags, dataset_info=self.meta.info, license=license, **card_kwargs
             )
             card.push_to_hub(repo_id=self.repo_id, repo_type="dataset", revision=branch)
-
-        if tag_version:
-            with contextlib.suppress(RevisionNotFoundError):
-                hub_api.delete_tag(self.repo_id, tag=CODEBASE_VERSION, repo_type="dataset")
-            hub_api.create_tag(self.repo_id, tag=CODEBASE_VERSION, revision=branch, repo_type="dataset")
 
     def pull_from_repo(
         self,

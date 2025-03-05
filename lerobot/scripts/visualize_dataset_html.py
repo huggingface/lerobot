@@ -158,7 +158,7 @@ def run_server(
             if major_version < 2:
                 return "Make sure to convert your LeRobotDataset to v2 & above."
 
-        episode_data_csv_str, columns, ignored_columns = get_episode_data(dataset, episode_id)
+        episode_data_csv_str, columns = get_episode_data(dataset, episode_id)
         dataset_info = {
             "repo_id": f"{dataset_namespace}/{dataset_name}",
             "num_samples": dataset.num_frames
@@ -194,7 +194,7 @@ def run_server(
             ]
 
             response = requests.get(
-                f"https://huggingface.co/datasets/{repo_id}/resolve/main/meta/episodes.jsonl", timeout=5
+                f"https://huggingface.co/datasets/{repo_id}/resolve/main/meta/episodes.jsonl"
             )
             response.raise_for_status()
             # Split into lines and parse each line as JSON
@@ -218,7 +218,6 @@ def run_server(
             videos_info=videos_info,
             episode_data_csv_str=episode_data_csv_str,
             columns=columns,
-            ignored_columns=ignored_columns,
         )
 
     app.run(host=host, port=port)
@@ -236,14 +235,6 @@ def get_episode_data(dataset: LeRobotDataset | IterableNamespace, episode_index)
 
     selected_columns = [col for col, ft in dataset.features.items() if ft["dtype"] == "float32"]
     selected_columns.remove("timestamp")
-
-    ignored_columns = []
-    for column_name in selected_columns:
-        shape = dataset.features[column_name]["shape"]
-        shape_dim = len(shape)
-        if shape_dim > 1:
-            selected_columns.remove(column_name)
-            ignored_columns.append(column_name)
 
     # init header of csv with state and action names
     header = ["timestamp"]
@@ -300,7 +291,7 @@ def get_episode_data(dataset: LeRobotDataset | IterableNamespace, episode_index)
     csv_writer.writerows(rows)
     csv_string = csv_buffer.getvalue()
 
-    return csv_string, columns, ignored_columns
+    return csv_string, columns
 
 
 def get_episode_video_paths(dataset: LeRobotDataset, ep_index: int) -> list[str]:
@@ -327,9 +318,7 @@ def get_episode_language_instruction(dataset: LeRobotDataset, ep_index: int) -> 
 
 
 def get_dataset_info(repo_id: str) -> IterableNamespace:
-    response = requests.get(
-        f"https://huggingface.co/datasets/{repo_id}/resolve/main/meta/info.json", timeout=5
-    )
+    response = requests.get(f"https://huggingface.co/datasets/{repo_id}/resolve/main/meta/info.json")
     response.raise_for_status()  # Raises an HTTPError for bad responses
     dataset_info = response.json()
     dataset_info["repo_id"] = repo_id

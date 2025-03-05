@@ -17,7 +17,6 @@ import logging
 import os
 import os.path as osp
 import platform
-import subprocess
 from copy import copy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -166,31 +165,23 @@ def capture_timestamp_utc():
 
 
 def say(text, blocking=False):
-    system = platform.system()
-
-    if system == "Darwin":
-        cmd = ["say", text]
-
-    elif system == "Linux":
-        cmd = ["spd-say", text]
+    # Check if mac, linux, or windows.
+    if platform.system() == "Darwin":
+        cmd = f'say "{text}"'
+        if not blocking:
+            cmd += " &"
+    elif platform.system() == "Linux":
+        cmd = f'spd-say "{text}"'
         if blocking:
-            cmd.append("--wait")
+            cmd += "  --wait"
+    elif platform.system() == "Windows":
+        # TODO(rcadene): Make blocking option work for Windows
+        cmd = (
+            'PowerShell -Command "Add-Type -AssemblyName System.Speech; '
+            f"(New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('{text}')\""
+        )
 
-    elif system == "Windows":
-        cmd = [
-            "PowerShell",
-            "-Command",
-            "Add-Type -AssemblyName System.Speech; "
-            f"(New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('{text}')",
-        ]
-
-    else:
-        raise RuntimeError("Unsupported operating system for text-to-speech.")
-
-    if blocking:
-        subprocess.run(cmd, check=True)
-    else:
-        subprocess.Popen(cmd, creationflags=subprocess.CREATE_NO_WINDOW if system == "Windows" else 0)
+    os.system(cmd)
 
 
 def log_say(text, play_sounds, blocking=False):
