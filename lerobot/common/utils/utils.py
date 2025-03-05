@@ -17,10 +17,12 @@ import logging
 import os
 import os.path as osp
 import platform
+import subprocess
 from copy import copy
 from datetime import datetime, timezone
 from pathlib import Path
 
+import numpy as np
 import torch
 
 
@@ -164,23 +166,31 @@ def capture_timestamp_utc():
 
 
 def say(text, blocking=False):
-    # Check if mac, linux, or windows.
-    if platform.system() == "Darwin":
-        cmd = f'say "{text}"'
-        if not blocking:
-            cmd += " &"
-    elif platform.system() == "Linux":
-        cmd = f'spd-say "{text}"'
-        if blocking:
-            cmd += "  --wait"
-    elif platform.system() == "Windows":
-        # TODO(rcadene): Make blocking option work for Windows
-        cmd = (
-            'PowerShell -Command "Add-Type -AssemblyName System.Speech; '
-            f"(New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('{text}')\""
-        )
+    system = platform.system()
 
-    os.system(cmd)
+    if system == "Darwin":
+        cmd = ["say", text]
+
+    elif system == "Linux":
+        cmd = ["spd-say", text]
+        if blocking:
+            cmd.append("--wait")
+
+    elif system == "Windows":
+        cmd = [
+            "PowerShell",
+            "-Command",
+            "Add-Type -AssemblyName System.Speech; "
+            f"(New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('{text}')",
+        ]
+
+    else:
+        raise RuntimeError("Unsupported operating system for text-to-speech.")
+
+    if blocking:
+        subprocess.run(cmd, check=True)
+    else:
+        subprocess.Popen(cmd, creationflags=subprocess.CREATE_NO_WINDOW if system == "Windows" else 0)
 
 
 def log_say(text, play_sounds, blocking=False):
@@ -200,5 +210,18 @@ def get_channel_first_image_shape(image_shape: tuple) -> tuple:
     return shape
 
 
-def has_method(cls: object, method_name: str):
+def has_method(cls: object, method_name: str) -> bool:
     return hasattr(cls, method_name) and callable(getattr(cls, method_name))
+
+
+def is_valid_numpy_dtype_string(dtype_str: str) -> bool:
+    """
+    Return True if a given string can be converted to a numpy dtype.
+    """
+    try:
+        # Attempt to convert the string to a numpy dtype
+        np.dtype(dtype_str)
+        return True
+    except TypeError:
+        # If a TypeError is raised, the string is not a valid dtype
+        return False

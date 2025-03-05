@@ -32,21 +32,18 @@ jobs:
           files: docker/**
           json: "true"
 
-      - name: Run step if only the files listed above change
+      - name: Run step if only the files listed above change  # zizmor: ignore[template-injection]
         if: steps.changed-files.outputs.any_changed == 'true'
         id: set-matrix
-        env:
-          ALL_CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
         run: |
-          echo "matrix=${ALL_CHANGED_FILES}" >> $GITHUB_OUTPUT
-
+          echo "matrix=${{ steps.changed-files.outputs.all_changed_files}}" >> $GITHUB_OUTPUT
 
   build_modified_dockerfiles:
     name: Build modified Docker images
     needs: get_changed_files
     runs-on:
       group: aws-general-8-plus
-    if: ${{ needs.get_changed_files.outputs.matrix }} != ''
+    if: needs.get_changed_files.outputs.matrix != ''
     strategy:
       fail-fast: false
       matrix:

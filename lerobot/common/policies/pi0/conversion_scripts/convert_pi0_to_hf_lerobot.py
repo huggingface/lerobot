@@ -2,7 +2,7 @@
 Convert pi0 parameters from Jax to Pytorch
 
 Follow [README of openpi](https://github.com/Physical-Intelligence/openpi) to create a new environment
-and install the required librairies.
+and install the required libraries.
 
 ```bash
 cd ~/code/openpi
