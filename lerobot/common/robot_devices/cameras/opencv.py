@@ -31,19 +31,19 @@ from lerobot.common.utils.utils import capture_timestamp_utc
 MAX_OPENCV_INDEX = 60
 
 undistort = True
+
+
 def undistort_image(image):
     import cv2
-    camera_matrix = np.array([
-        [289.11451, 0., 347.23664],
-        [0., 289.75319, 235.67429],
-        [0., 0., 1.]
-    ])
-    
+
+    camera_matrix = np.array([[289.11451, 0.0, 347.23664], [0.0, 289.75319, 235.67429], [0.0, 0.0, 1.0]])
+
     dist_coeffs = np.array([-0.208848, 0.028006, -0.000705, -0.000820, 0.000000])
-    
+
     undistorted_image = cv2.undistort(image, camera_matrix, dist_coeffs)
-    
+
     return undistorted_image
+
 
 def find_cameras(raise_when_empty=False, max_index_search_range=MAX_OPENCV_INDEX, mock=False) -> list[dict]:
     cameras = []

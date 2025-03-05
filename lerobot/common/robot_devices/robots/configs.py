@@ -479,6 +479,7 @@ class So100RobotConfig(ManipulatorRobotConfig):
 
     mock: bool = False
 
+
 @RobotConfig.register_subclass("roarm_m3")
 @dataclass
 class RoarmRobotConfig(RobotConfig):
@@ -489,14 +490,14 @@ class RoarmRobotConfig(RobotConfig):
 
     leader_arms: dict[str, str] = field(
         default_factory=lambda: {
-            "main": "/dev/ttyUSB0",  
+            "main": "/dev/ttyUSB0",
         }
     )
 
     # Follower arms configuration: left and right ports
     follower_arms: dict[str, str] = field(
         default_factory=lambda: {
-            "main": "/dev/ttyUSB1",  
+            "main": "/dev/ttyUSB1",
         }
     )
 
@@ -518,6 +519,7 @@ class RoarmRobotConfig(RobotConfig):
     )
 
     mock: bool = False
+
 
 @RobotConfig.register_subclass("stretch")
 @dataclass
@@ -553,6 +555,7 @@ class StretchRobotConfig(RobotConfig):
     )
 
     mock: bool = False
+
 
 @RobotConfig.register_subclass("lekiwi")
 @dataclass
