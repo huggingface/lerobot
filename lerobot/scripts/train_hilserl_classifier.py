@@ -62,8 +62,10 @@ def get_model(cfg, logger):  # noqa I001
 
 def create_balanced_sampler(dataset, cfg):
     # Get underlying dataset if using Subset
-    original_dataset = dataset.dataset if isinstance(dataset, torch.utils.data.Subset) else dataset
-    
+    original_dataset = (
+        dataset.dataset if isinstance(dataset, torch.utils.data.Subset) else dataset
+    )
+
     # Get indices if using Subset (for slicing)
     indices = dataset.indices if isinstance(dataset, torch.utils.data.Subset) else None
 
@@ -312,7 +314,9 @@ def benchmark_inference_time(model, dataset, logger, cfg, device, step):
     return avg, median, std
 
 
-def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = None) -> None:
+def train(
+    cfg: DictConfig, out_dir: str | None = None, job_name: str | None = None
+) -> None:
     if out_dir is None:
         raise NotImplementedError()
     if job_name is None:
@@ -476,7 +480,11 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     logging.info("Training completed")
 
 
-@hydra.main(version_base="1.2", config_name="hilserl_classifier", config_path="../configs/policy")
+@hydra.main(
+    version_base="1.2",
+    config_name="hilserl_classifier",
+    config_path="../configs/policy",
+)
 def train_cli(cfg: dict):
     train(
         cfg,
@@ -485,7 +493,12 @@ def train_cli(cfg: dict):
     )
 
 
-def train_notebook(out_dir=None, job_name=None, config_name="hilserl_classifier", config_path="../configs/policy"):
+def train_notebook(
+    out_dir=None,
+    job_name=None,
+    config_name="hilserl_classifier",
+    config_path="../configs/policy",
+):
     from hydra import compose, initialize
 
     hydra.core.global_hydra.GlobalHydra.instance().clear()
