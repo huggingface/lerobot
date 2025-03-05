@@ -55,8 +55,6 @@ from lerobot.configs.train import TrainPipelineConfig
 from lerobot.scripts.eval import eval_policy
 
 
-
-
 # TODO: move elsewhere:
 def merge_feature_stats(datasets_stats: List[Dict[str, Dict[str, np.ndarray]]], 
                        total_frames: List[int]) -> Dict[str, Dict[str, np.ndarray]]:
@@ -116,12 +114,16 @@ def merge_feature_stats(datasets_stats: List[Dict[str, Dict[str, np.ndarray]]],
         mins = np.array(mins)
         
         # Calculate combined statistics
+        # Ensure proper broadcasting by reshaping total_frames_array
+        weights = total_frames_array.reshape(-1, 1)
+        
         # Weighted mean
-        combined_mean = np.sum(means * total_frames_array[:, None], axis=0) / N
+        combined_mean = np.sum(means * weights, axis=0) / N
         
         # Combined standard deviation
+        # We need to use the correct formula with individual means
         combined_variance = np.sum(
-            total_frames_array[:, None] * (stds**2 + (means - combined_mean)**2),
+            weights * (stds**2 + (means - combined_mean)**2),
             axis=0
         ) / N
         combined_std = np.sqrt(combined_variance)
@@ -129,6 +131,10 @@ def merge_feature_stats(datasets_stats: List[Dict[str, Dict[str, np.ndarray]]],
         # Global min and max
         combined_max = np.max(maxs, axis=0)
         combined_min = np.min(mins, axis=0)
+        
+        # Validate results - mean should be within min and max
+        assert np.all(combined_mean <= combined_max + 1e-5), f"Mean exceeds max for feature {feature}"
+        assert np.all(combined_mean >= combined_min - 1e-5), f"Mean is less than min for feature {feature}"
         
         merged_stats[feature] = {
             "mean": combined_mean,
@@ -153,13 +159,13 @@ def merge_lerobot_datasets_metadata(datasets: List[LeRobotDatasetMetadata]) -> D
         return {}
     
     total_frames = [ds.total_frames for ds in datasets]
-    merged_stats = merge_feature_stats([ds.stats for ds in datasets], total_frames)
+    # merged_stats = merge_feature_stats([ds.stats for ds in datasets], total_frames)
     
     # Additional metadata merging can be added here if needed
     # For example, merging tasks, episodes, etc.
     
     return {
-        "stats": merged_stats,
+        # "stats": merged_stats,
         "total_frames": sum(total_frames),
         "total_episodes": sum(ds.total_episodes for ds in datasets),
         # Add other metadata as needed
@@ -255,7 +261,8 @@ def train(cfg: TrainPipelineConfig):
         for ds in dataset._datasets:
             metadatas.append(ds.meta)
         x = merge_lerobot_datasets_metadata(metadatas)
-        ds_meta.stats = x["stats"]
+        # ds_meta.stats = x["stats"]
+        ds_meta.stats = dataset.stats
     else:
         ds_meta = dataset.meta
     policy = make_policy(

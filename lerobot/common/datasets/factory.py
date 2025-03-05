@@ -86,7 +86,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
         datasets = [x.strip() for x in datasets]
         delta_timestamps = {}
         for ds in datasets:
-            ds_meta = LeRobotDatasetMetadata(ds, local_files_only=cfg.dataset.local_files_only)
+            ds_meta = LeRobotDatasetMetadata(ds)
             d_ts = resolve_delta_timestamps(cfg.policy, ds_meta)
             delta_timestamps[ds] = d_ts
         dataset = MultiLeRobotDataset(

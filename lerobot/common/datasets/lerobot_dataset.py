@@ -86,7 +86,7 @@ class LeRobotDatasetMetadata:
     ):
         self.repo_id = repo_id
         self.revision = revision if revision else CODEBASE_VERSION
-        self.root = Path(root) if root is not None else HF_LEROBOT_HOME / repo_id
+        self.root = Path(root) if root is not None else HF_LEROBOT_HOME
 
         try:
             if force_cache_sync:
@@ -318,7 +318,7 @@ class LeRobotDatasetMetadata:
         """Creates metadata for a LeRobotDataset."""
         obj = cls.__new__(cls)
         obj.repo_id = repo_id
-        obj.root = Path(root) / repo_id if root is not None else HF_LEROBOT_HOME / repo_id
+        obj.root = Path(root) if root is not None else HF_LEROBOT_HOME
 
         obj.root.mkdir(parents=True, exist_ok=False)
 
@@ -473,7 +473,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """
         super().__init__()
         self.repo_id = repo_id
-        self.root = Path(root) / repo_id if root else HF_LEROBOT_HOME / repo_id
+        self.root = Path(root) if root else HF_LEROBOT_HOME
         self.image_transforms = image_transforms
         self.delta_timestamps = delta_timestamps
         self.episodes = episodes
@@ -753,7 +753,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         # add next.done, but only for non-dAgger datasets
         done = False
-        ep_idx = item['episode_index']
+        ep_idx = item['episode_index'].item()
         if "dAgger" not in self.repo_id and item['frame_index'] >= (self.meta.episodes[ep_idx]['length']) - 11:
             # mark everything within 10 timestamps (0.5 seconds) of end as the end episode
             done = True

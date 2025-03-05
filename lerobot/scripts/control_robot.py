@@ -236,7 +236,7 @@ def record(
     if cfg.resume:
         dataset = LeRobotDataset(
             cfg.repo_id,
-            root=cfg.root,
+            root=f'{cfg.root}/{cfg.repo_id}',
         )
         if len(robot.cameras) > 0:
             dataset.start_image_writer(
@@ -251,7 +251,7 @@ def record(
         dataset = LeRobotDataset.create(
             cfg.repo_id,
             cfg.fps,
-            root=cfg.root,
+            root=f'{cfg.root}/{cfg.repo_id}',
             robot=robot,
             use_videos=cfg.video,
             image_writer_processes=cfg.num_image_writer_processes,

@@ -5,6 +5,8 @@ class NoOpRobot:
    Robot that does nothing. 
     """
     cameras = {}
+    leader_arms = []
+    follower_arms = []
     robot_type: str | None = "no_op"
 
     @property

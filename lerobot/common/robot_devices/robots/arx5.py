@@ -92,6 +92,8 @@ class ARX5Arm:
         else:
             # gripper - make it less aggressive
             gain = self.joint_controller.get_gain()
+            gain.kd()[:3] /= 1.2
+            gain.kd()[3:] *= 1.2
             gain.gripper_kp /= 1.8
             gain.gripper_kd *= 1.8
             self.joint_controller.set_gain(gain)
