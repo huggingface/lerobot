@@ -23,15 +23,24 @@
 </div>
 
 <h2 align="center">
-    <p><a href="https://github.com/huggingface/lerobot/blob/main/examples/10_use_so100.md">New robot in town: SO-100</a></p>
+    <p><a href="https://github.com/huggingface/lerobot/blob/main/examples/10_use_so100.md">
+        Build Your Own SO-100 Robot!</a></p>
 </h2>
 
 <div align="center">
-    <img src="media/so100/leader_follower.webp?raw=true" alt="SO-100 leader and follower arms" title="SO-100 leader and follower arms" width="50%">
-    <p>We just added a new tutorial on how to build a more affordable robot, at the price of $110 per arm!</p>
-    <p>Teach it new skills by showing it a few moves with just a laptop.</p>
-    <p>Then watch your homemade robot act autonomously 🤯</p>
-    <p>Follow the link to the <a href="https://github.com/huggingface/lerobot/blob/main/examples/10_use_so100.md">full tutorial for SO-100</a>.</p>
+  <img src="media/so100/leader_follower.webp?raw=true" alt="SO-100 leader and follower arms" title="SO-100 leader and follower arms" width="50%">
+
+  <p><strong>Meet the SO-100 – Just $110 per arm!</strong></p>
+  <p>Train it in minutes with a few simple moves on your laptop.</p>
+  <p>Then sit back and watch your creation act autonomously! 🤯</p>
+
+  <p><a href="https://github.com/huggingface/lerobot/blob/main/examples/10_use_so100.md">
+      Get the full SO-100 tutorial here.</a></p>
+
+  <p>Want to take it to the next level? Make your SO-100 mobile by building LeKiwi!</p>
+  <p>Check out the <a href="https://github.com/huggingface/lerobot/blob/main/examples/11_use_lekiwi.md">LeKiwi tutorial</a> and bring your robot to life on wheels.</p>
+
+  <img src="media/lekiwi/kiwi.webp?raw=true" alt="LeKiwi mobile robot" title="LeKiwi mobile robot" width="50%">
 </div>
 
 <br/>
@@ -83,15 +92,20 @@ git clone https://github.com/huggingface/lerobot.git
 cd lerobot
 ```
 
-Create a virtual environment with Python 3.10 and activate it, e.g. with [`miniconda`](https://docs.anaconda.com/free/miniconda/index.html):
+Create a virtual environment with Python 3.10 and activate it using [`uv`](https://github.com/astral-sh/uv):
 ```bash
-conda create -y -n lerobot python=3.10
-conda activate lerobot
+# Install uv if you haven't already
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Create and activate virtual environment with Python 3.10
+uv venv .venv --python=3.10
+source .venv/bin/activate  # On Unix/macOS
+# .venv\Scripts\activate  # On Windows
 ```
 
 Install 🤗 LeRobot:
 ```bash
-pip install -e .
+uv pip install -e .
 ```
 
 > **NOTE:** Depending on your platform, If you encounter any build errors during this step
