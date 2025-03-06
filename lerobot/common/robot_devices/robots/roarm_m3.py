@@ -4,19 +4,17 @@ and send orders to its motors.
 # TODO(rcadene, aliberts): reorganize the codebase into one file per robot, with the associated
 # calibration procedure, to make it easy for people to add their own robot.
 
-import json
 import logging
 import time
-import warnings
-from pathlib import Path
 
 import numpy as np
 import torch
+from roarm_sdk.roarm import roarm
 
 from lerobot.common.robot_devices.cameras.utils import make_cameras_from_configs
 from lerobot.common.robot_devices.robots.configs import RoarmRobotConfig
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
-from roarm_sdk.roarm import roarm
+
 
 def ensure_safe_goal_position(
     goal_pos: torch.Tensor, present_pos: torch.Tensor, max_relative_target: float | list[float]
@@ -37,7 +35,8 @@ def ensure_safe_goal_position(
 
     return safe_goal_pos
 
-def make_roarm_from_configs(configs: dict[str, str]) -> (dict[str, roarm]):
+
+def make_roarm_from_configs(configs: dict[str, str]) -> dict[str, roarm]:
     roarms = {}
 
     for key, port in configs.items():
@@ -45,8 +44,8 @@ def make_roarm_from_configs(configs: dict[str, str]) -> (dict[str, roarm]):
 
     return roarms
 
-class RoarmRobot:
 
+class RoarmRobot:
     def __init__(
         self,
         config: RoarmRobotConfig,
@@ -58,7 +57,7 @@ class RoarmRobot:
         self.cameras = make_cameras_from_configs(self.config.cameras)
         self.is_connected = False
         self.logs = {}
-        
+
     @property
     def camera_features(self) -> dict:
         cam_ft = {}

@@ -153,13 +153,16 @@ def predict_action(observation, policy, device, use_amp):
 
 #     return listener, events
 
+
 def init_keyboard_listener():
     events = {}
     events["exit_early"] = False
     events["rerecord_episode"] = False
     events["stop_recording"] = False
+    import threading
+
     from sshkeyboard import listen_keyboard
-    import threading    
+
     def on_press(key):
         try:
             if key == "right":
@@ -179,7 +182,8 @@ def init_keyboard_listener():
     listener = threading.Thread(target=listen_keyboard, kwargs={"on_press": on_press})
     listener.start()
 
-    return listener,events
+    return listener, events
+
 
 def warmup_record(
     robot,
@@ -284,7 +288,7 @@ def control_loop(
             dataset.add_frame(frame)
 
         if display_cameras:
-        # if display_cameras and not is_headless():
+            # if display_cameras and not is_headless():
             image_keys = [key for key in observation if "image" in key]
             for key in image_keys:
                 cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
@@ -316,6 +320,7 @@ def reset_environment(robot, events, reset_time_s, fps):
         teleoperate=True,
     )
 
+
 # def stop_recording(robot, listener, display_cameras):
 #     robot.disconnect()
 
@@ -326,15 +331,18 @@ def reset_environment(robot, events, reset_time_s, fps):
 #         if display_cameras:
 #             cv2.destroyAllWindows()
 
+
 def stop_recording(robot, listener, display_cameras):
     robot.disconnect()
 
     from sshkeyboard import stop_listening
+
     if listener is not None:
         stop_listening()
 
     if display_cameras:
         cv2.destroyAllWindows()
+
 
 def sanity_check_dataset_name(repo_id, policy_cfg):
     _, dataset_name = repo_id.split("/")

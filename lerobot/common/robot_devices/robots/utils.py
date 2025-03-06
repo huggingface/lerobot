@@ -7,9 +7,9 @@ from lerobot.common.robot_devices.robots.configs import (
     LeKiwiRobotConfig,
     ManipulatorRobotConfig,
     MossRobotConfig,
+    RoarmRobotConfig,
     RobotConfig,
     So100RobotConfig,
-    RoarmRobotConfig,
     StretchRobotConfig,
 )
 
@@ -72,6 +72,7 @@ def make_robot_from_config(config: RobotConfig):
         from lerobot.common.robot_devices.robots.stretch import StretchRobot
 
         return StretchRobot(config)
+
 
 def make_robot(robot_type: str, **kwargs) -> Robot:
     config = make_robot_config(robot_type, **kwargs)
