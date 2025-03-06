@@ -92,20 +92,15 @@ git clone https://github.com/huggingface/lerobot.git
 cd lerobot
 ```
 
-Create a virtual environment with Python 3.10 and activate it using [`uv`](https://github.com/astral-sh/uv):
+Create a virtual environment with Python 3.10 and activate it, e.g. with [`miniconda`](https://docs.anaconda.com/free/miniconda/index.html):
 ```bash
-# Install uv if you haven't already
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Create and activate virtual environment with Python 3.10
-uv venv .venv --python=3.10
-source .venv/bin/activate  # On Unix/macOS
-# .venv\Scripts\activate  # On Windows
+conda create -y -n lerobot python=3.10
+conda activate lerobot
 ```
 
 Install 🤗 LeRobot:
 ```bash
-uv pip install -e .
+pip install -e .
 ```
 
 > **NOTE:** Depending on your platform, If you encounter any build errors during this step
@@ -389,3 +384,6 @@ Additionally, if you are using any of the particular policy architecture, pretra
   year={2024}
 }
 ```
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=huggingface/lerobot&type=Timeline)](https://star-history.com/#huggingface/lerobot&Timeline)
