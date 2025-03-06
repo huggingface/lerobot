@@ -143,12 +143,11 @@ def test_policy(ds_repo_id, env_name, env_kwargs, policy_name, policy_kwargs):
         dataset=DatasetConfig(repo_id=ds_repo_id, episodes=[0]),
         policy=make_policy_config(policy_name, **policy_kwargs),
         env=make_env_config(env_name, **env_kwargs),
-        device=DEVICE,
     )
 
     # Check that we can make the policy object.
     dataset = make_dataset(train_cfg)
-    policy = make_policy(train_cfg.policy, ds_meta=dataset.meta, device=DEVICE)
+    policy = make_policy(train_cfg.policy, ds_meta=dataset.meta)
     assert isinstance(policy, PreTrainedPolicy)
 
     # Check that we run select_actions and get the appropriate output.
@@ -214,7 +213,6 @@ def test_act_backbone_lr():
         # TODO(rcadene, aliberts): remove dataset download
         dataset=DatasetConfig(repo_id="lerobot/aloha_sim_insertion_scripted", episodes=[0]),
         policy=make_policy_config("act", optimizer_lr=0.01, optimizer_lr_backbone=0.001),
-        device=DEVICE,
     )
     cfg.validate()  # Needed for auto-setting some parameters
 
@@ -222,7 +220,7 @@ def test_act_backbone_lr():
     assert cfg.policy.optimizer_lr_backbone == 0.001
 
     dataset = make_dataset(cfg)
-    policy = make_policy(cfg.policy, device=DEVICE, ds_meta=dataset.meta)
+    policy = make_policy(cfg.policy, ds_meta=dataset.meta)
     optimizer, _ = make_optimizer_and_scheduler(cfg, policy)
     assert len(optimizer.param_groups) == 2
     assert optimizer.param_groups[0]["lr"] == cfg.policy.optimizer_lr

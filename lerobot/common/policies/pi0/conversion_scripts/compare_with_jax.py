@@ -101,7 +101,7 @@ def main():
 
     cfg = PreTrainedConfig.from_pretrained(ckpt_torch_dir)
     cfg.pretrained_path = ckpt_torch_dir
-    policy = make_policy(cfg, device, dataset_meta)
+    policy = make_policy(cfg, dataset_meta)
 
     # loss_dict = policy.forward(batch, noise=noise, time=time_beta)
     # loss_dict["loss"].backward()

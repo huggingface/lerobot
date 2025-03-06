@@ -90,6 +90,7 @@ class PI0Config(PreTrainedConfig):
     def __post_init__(self):
         super().__post_init__()
 
+        # TODO(Steven): Validate device and amp? in all policy configs?
         """Input validation (not exhaustive)."""
         if self.n_action_steps > self.chunk_size:
             raise ValueError(

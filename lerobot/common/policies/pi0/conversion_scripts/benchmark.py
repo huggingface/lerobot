@@ -45,7 +45,7 @@ def main():
 
     cfg = PreTrainedConfig.from_pretrained(ckpt_torch_dir)
     cfg.pretrained_path = ckpt_torch_dir
-    policy = make_policy(cfg, device, ds_meta=dataset.meta)
+    policy = make_policy(cfg, ds_meta=dataset.meta)
 
     # policy = torch.compile(policy, mode="reduce-overhead")
 
