@@ -47,6 +47,15 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     def type(self) -> str:
         return self.get_choice_name(self.__class__)
 
+    # TODO(Steven): Find a better way to do deal with this
+    @classmethod
+    def get_type_str(cls) -> str:
+        """Get the policy type identifier for this configuration class."""
+        class_name = cls.__name__.lower()
+        if class_name.endswith("config"):
+            return class_name[:-6]  # Remove 'config' suffix
+        return class_name
+
     @abc.abstractproperty
     def observation_delta_indices(self) -> list | None:
         raise NotImplementedError
