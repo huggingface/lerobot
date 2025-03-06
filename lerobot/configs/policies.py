@@ -55,7 +55,6 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     input_features: dict[str, PolicyFeature] = field(default_factory=dict)
     output_features: dict[str, PolicyFeature] = field(default_factory=dict)
 
-    # TODO(Steven): Should we implement a getter for these?
     device: str | None = None  # cuda | cpu | mp
     # `use_amp` determines whether to use Automatic Mixed Precision (AMP) for training and evaluation. With AMP,
     # automatic gradient scaling is used.
@@ -63,11 +62,10 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
 
     def __post_init__(self):
         self.pretrained_path = None
-        if self.device is None:
+        if not self.device or not is_torch_device_available(self.device):
             auto_device = auto_select_torch_device()
             logging.warning(f"Device '{self.device}' is not available. Switching to '{auto_device}'.")
             self.device = auto_device.type
-        is_torch_device_available(self.device)
 
         # Automatically deactivate AMP if necessary
         if self.use_amp and not is_amp_available(self.device):
