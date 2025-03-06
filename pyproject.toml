@@ -93,6 +93,7 @@ stretch = [
     "pynput>=1.7.7",
 ]
 test = ["pytest>=8.1.0", "pytest-cov>=5.0.0", "pyserial>=3.5"]
+trossen_ai = ["pyrealsense2>=2.55.1.6486", "trossen-arm>=1.6.0"]
 umi = ["imagecodecs>=2024.1.1"]
 video_benchmark = ["scikit-image>=0.23.2", "pandas>=2.2.2"]
 xarm = ["gym-xarm>=0.1.1 ; python_version < '4.0'"]
