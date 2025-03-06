@@ -8,7 +8,7 @@
 #   env.gym.obs_type=environment_state_agent_pos \
 
 seed: 1
-dataset_repo_id: aractingi/pushcube_gamepad # aractingi/push_cube_vel # aractingi/push_cube_simp_cropped_resized
+dataset_repo_id:  aractingi/pushcube_gamepad # aractingi/push_cube_vel # aractingi/push_cube_simp_cropped_resized
 #aractingi/push_cube_square_offline_demo_cropped_resized
 
 training:
@@ -117,7 +117,7 @@ policy:
   utd_ratio: 2 # 10
 
 actor_learner_config:
-  learner_host: "127.0.0.1"
+  learner_host: "172.18.128.70"
   learner_port: 50051
   policy_parameters_push_frequency: 15
 

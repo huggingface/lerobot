@@ -1,9 +1,10 @@
 import argparse
+import sys
+
 import logging
 import time
 from threading import Lock
-from typing import Annotated, Any, Callable, Dict, Optional, Tuple
-
+from typing import Annotated, Any, Dict, Tuple
 import gymnasium as gym
 import numpy as np
 import torch
@@ -537,8 +538,8 @@ class TimeLimitWrapper(gym.Wrapper):
         if 1.0 / time_since_last_step < self.fps:
             logging.debug(f"Current timestep exceeded expected fps {self.fps}")
 
-        if self.episode_time_in_s > self.control_time_s:
-            # if self.current_step >= self.max_episode_steps:
+        # if self.episode_time_in_s > self.control_time_s:
+        if self.current_step >= self.max_episode_steps:
             # Terminated = True
             terminated = True
         return obs, reward, terminated, truncated, info
@@ -897,9 +898,7 @@ class GamepadControlWrapper(gym.Wrapper):
         x_step_size=0.01,
         y_step_size=0.01,
         z_step_size=0.05,
-        vendor_id=0x046D,
-        product_id=0xC219,
-        auto_reset=True,
+        auto_reset=False,
         input_threshold=0.001,
     ):
         """
@@ -918,15 +917,22 @@ class GamepadControlWrapper(gym.Wrapper):
         super().__init__(env)
         from lerobot.scripts.server.end_effector_control_utils import (
             GamepadControllerHID,
+            GamepadController,
         )
 
-        self.controller = GamepadControllerHID(
-            x_step_size=x_step_size,
-            y_step_size=y_step_size,
-            z_step_size=z_step_size,
-            vendor_id=vendor_id,
-            product_id=product_id,
-        )
+        # use HidApi for macos
+        if sys.platform == "darwin":
+            self.controller = GamepadControllerHID(
+                x_step_size=x_step_size,
+                y_step_size=y_step_size,
+                z_step_size=z_step_size,
+            )
+        else:
+            self.controller = GamepadController(
+                x_step_size=x_step_size,
+                y_step_size=y_step_size,
+                z_step_size=z_step_size,
+            )
         self.auto_reset = auto_reset
         self.input_threshold = input_threshold
         self.controller.start()
@@ -964,8 +970,15 @@ class GamepadControlWrapper(gym.Wrapper):
         episode_end_status = self.controller.get_episode_end_status()
         terminate_episode = episode_end_status is not None
         success = episode_end_status == "success"
+        rerecord_episode = episode_end_status == "rerecord_episode"
 
-        return intervention_is_active, gamepad_action, terminate_episode, success
+        return (
+            intervention_is_active,
+            gamepad_action,
+            terminate_episode,
+            success,
+            rerecord_episode,
+        )
 
     def step(self, action):
         """
@@ -978,9 +991,13 @@ class GamepadControlWrapper(gym.Wrapper):
             observation, reward, terminated, truncated, info
         """
         # Get gamepad state and action
-        is_intervention, gamepad_action, terminate_episode, success = (
-            self.get_gamepad_action()
-        )
+        (
+            is_intervention,
+            gamepad_action,
+            terminate_episode,
+            success,
+            rerecord_episode,
+        ) = self.get_gamepad_action()
 
         # Update episode ending state if requested
         if terminate_episode:
@@ -1017,6 +1034,7 @@ class GamepadControlWrapper(gym.Wrapper):
         if isinstance(action_intervention, np.ndarray):
             action_intervention = torch.from_numpy(action_intervention)
         info["action_intervention"] = action_intervention
+        info["rerecord_episode"] = rerecord_episode
 
         # If episode ended, reset the state
         if terminated or truncated:
@@ -1203,13 +1221,17 @@ def record_dataset(
         image_writer_processes=0,
         features=features,
     )
-    for _ in range(num_episodes):
+    episode_index = 0
+    while episode_index < num_episodes:
         env.reset()
         start_episode_t = time.perf_counter()
+        log_say(f"Recording episode {episode_index}", play_sounds=True)
 
         while time.perf_counter() - start_episode_t < control_time_s:
             start_loop_t = time.perf_counter()
             obs, reward, terminated, truncated, info = env.step(dummy_action)
+            if info["rerecord_episode"]:
+                break
             action = {"action": info["action_intervention"].cpu().squeeze(0).float()}
             obs = {k: v.cpu().squeeze(0).float() for k, v in obs.items()}
 
@@ -1224,7 +1246,12 @@ def record_dataset(
             if terminated or truncated:
                 break
 
+        if info["rerecord_episode"]:
+            dataset.clear_episode_buffer()
+            logging.info(f"Re-recording episode {episode_index}")
+            continue
         dataset.save_episode(task_description)
+        episode_index += 1
     dataset.consolidate(run_compute_stats=True)
 
     if push_to_hub:

@@ -193,6 +193,7 @@ class GamepadController(InputController):
         super().__init__(x_step_size, y_step_size, z_step_size)
         self.deadzone = deadzone
         self.joystick = None
+        self.intervention_flag = False
 
     def start(self):
         """Initialize pygame and the gamepad."""
@@ -215,7 +216,10 @@ class GamepadController(InputController):
         print("Gamepad controls:")
         print("  Left analog stick: Move in X-Y plane")
         print("  Right analog stick (vertical): Move in Z axis")
-        print("  B or Circle button: Exit")
+        print("  B/Circle button: Exit")
+        print("  Y/Triangle button: End episode with SUCCESS")
+        print("  A/Cross button: End episode with FAILURE")
+        print("  X/Square button: Rerecord episode")
 
     def stop(self):
         """Clean up pygame resources."""
@@ -233,10 +237,25 @@ class GamepadController(InputController):
 
         for event in pygame.event.get():
             if event.type == pygame.JOYBUTTONDOWN:
-                # B button on Xbox or Circle on PlayStation typically has index 1
-                if event.button == 1:
-                    self.running = False
-                    break
+                if event.button == 3:
+                    self.episode_end_status = "success"
+                # A button (1) for failure
+                elif event.button == 1:
+                    self.episode_end_status = "failure"
+                # X button (0) for rerecord
+                elif event.button == 0:
+                    self.episode_end_status = "rerecord_episode"
+
+            # Reset episode status on button release
+            elif event.type == pygame.JOYBUTTONUP:
+                if event.button in [0, 2, 3]:
+                    self.episode_end_status = None
+
+            # Check for RB button (typically button 5) for intervention flag
+            if self.joystick.get_button(5):
+                self.intervention_flag = True
+            else:
+                self.intervention_flag = False
 
     def get_deltas(self):
         """Get the current movement deltas from gamepad state."""
@@ -266,6 +285,10 @@ class GamepadController(InputController):
         except pygame.error:
             logging.error("Error reading gamepad. Is it still connected?")
             return 0.0, 0.0, 0.0
+
+    def should_intervene(self):
+        """Return True if intervention flag was set."""
+        return self.intervention_flag
 
 
 class GamepadControllerHID(InputController):
@@ -414,6 +437,8 @@ class GamepadControllerHID(InputController):
                         self.episode_end_status = "success"
                     elif buttons & 1 << 5:
                         self.episode_end_status = "failure"
+                    elif buttons & 1 << 4:
+                        self.episode_end_status = "rerecord_episode"
                     else:
                         self.episode_end_status = None
 
@@ -911,8 +936,8 @@ if __name__ == "__main__":
 
     # Example bounds
     bounds = {
-        "min": np.array([0.19649909, -0.13425782, 0.04092906]),
-        "max": np.array([0.31110661, 0.10965551, 0.09415007]),
+        "max": np.array([0.32170487, 0.201285, 0.10273342]),
+        "min": np.array([0.16631757, -0.08237468, 0.03364977]),
     }
 
     try:
@@ -927,7 +952,7 @@ if __name__ == "__main__":
         elif any(
             args.mode.startswith(prefix) for prefix in ["gamepad", "record_gamepad"]
         ):
-            controller = GamepadControllerHID(
+            controller = GamepadController(
                 x_step_size=0.02, y_step_size=0.02, z_step_size=0.05
             )
 
@@ -943,8 +968,8 @@ if __name__ == "__main__":
             from lerobot.scripts.server.gym_manipulator import make_robot_env
 
             cfg = init_hydra_config("lerobot/configs/env/so100_real.yaml", [])
+            cfg.env.wrapper.ee_action_space_params.use_gamepad = False
             env = make_robot_env(robot, None, cfg)
-            env.cfg.env.wrapper.use_gamepad = False
             teleoperate_gym_env(env, controller)
 
         elif args.mode in ["record_keyboard", "record_gamepad"]:

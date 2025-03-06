@@ -312,17 +312,6 @@ def act_with_policy(
 
     logging.info("make_policy")
 
-    # HACK: This is an ugly hack to pass the normalization parameters to the policy
-    # Because the action space is dynamic so we override the output normalization parameters
-    # it's ugly, we know ... and we will fix it
-    # min_action_space: list = online_env.action_space.spaces[0].low.tolist()
-    # max_action_space: list = online_env.action_space.spaces[0].high.tolist()
-    # output_normalization_params: dict[dict[str, list]] = {
-    #     "action": {"min": min_action_space, "max": max_action_space}
-    # }
-    # cfg.policy.output_normalization_params = output_normalization_params
-    # cfg.policy.output_shapes["action"] = online_env.action_space.spaces[0].shape
-
     ### Instantiate the policy in both the actor and learner processes
     ### To avoid sending a SACPolicy object through the port, we create a policy intance
     ### on both sides, the learner sends the updated parameters every n steps to update the actor's parameters
@@ -449,9 +438,9 @@ def act_with_policy(
             episode_intervention = False
             obs, info = online_env.reset()
 
-    if cfg.fps is not None:
-        dt_time = time.perf_counter() - start_time
-        busy_wait(1 / cfg.fps - dt_time)
+        if cfg.fps is not None:
+            dt_time = time.perf_counter() - start_time
+            busy_wait(1 / cfg.fps - dt_time)
 
 
 def push_transitions_to_transport_queue(transitions: list, transitions_queue):

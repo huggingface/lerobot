@@ -12,6 +12,7 @@ from lerobot.scripts.server.kinematics import RobotKinematics
 
 def find_joint_bounds(
     robot,
+    control_time_s=30,
     display_cameras=False,
 ):
     if not robot.is_connected:
@@ -36,7 +37,7 @@ def find_joint_bounds(
                 )
             cv2.waitKey(1)
 
-        if time.perf_counter() - start_episode_t > 30:
+        if time.perf_counter() - start_episode_t > control_time_s:
             max = np.max(np.stack(pos_list), 0)
             min = np.min(np.stack(pos_list), 0)
             print(f"Max angle position per joint {max}")
@@ -46,6 +47,7 @@ def find_joint_bounds(
 
 def find_ee_bounds(
     robot,
+    control_time_s=30,
     display_cameras=False,
 ):
     if not robot.is_connected:
@@ -61,6 +63,7 @@ def find_ee_bounds(
             continue
 
         joint_positions = robot.follower_arms["main"].read("Present_Position")
+        print(f"Joint positions: {joint_positions}")
         ee_list.append(RobotKinematics.fk_gripper_tip(joint_positions)[:3, 3])
 
         if display_cameras and not is_headless():
@@ -71,7 +74,7 @@ def find_ee_bounds(
                 )
             cv2.waitKey(1)
 
-        if time.perf_counter() - start_episode_t > 30:
+        if time.perf_counter() - start_episode_t > control_time_s:
             max = np.max(np.stack(ee_list), 0)
             min = np.min(np.stack(ee_list), 0)
             print(f"Max ee position {max}")
@@ -94,16 +97,25 @@ if __name__ == "__main__":
         help="Any key=value arguments to override config values (use dots for.nested=overrides)",
     )
     parser.add_argument(
+        "--mode",
+        type=str,
+        default="joint",
+        choices=["joint", "ee"],
+        help="Mode to run the script in. Can be 'joint' or 'ee'.",
+    )
+    parser.add_argument(
         "--control-time-s",
-        type=float,
-        default=20,
-        help="Maximum episode length in seconds",
+        type=int,
+        default=30,
+        help="Time step to use for control.",
     )
     args = parser.parse_args()
     robot_cfg = init_hydra_config(args.robot_path, args.robot_overrides)
 
     robot = make_robot(robot_cfg)
-    find_joint_bounds(robot)
-    # find_ee_bounds(robot)
+    if args.mode == "joint":
+        find_joint_bounds(robot, args.control_time_s)
+    elif args.mode == "ee":
+        find_ee_bounds(robot, args.control_time_s)
     if robot.is_connected:
         robot.disconnect()

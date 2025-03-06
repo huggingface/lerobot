@@ -315,14 +315,42 @@ def start_learner_server(
 
 
 def check_nan_in_transition(
-    observations: torch.Tensor, actions: torch.Tensor, next_state: torch.Tensor
-):
-    for k in observations:
-        if torch.isnan(observations[k]).any():
-            logging.error(f"observations[{k}] contains NaN values")
-    for k in next_state:
-        if torch.isnan(next_state[k]).any():
-            logging.error(f"next_state[{k}] contains NaN values")
+    observations: torch.Tensor,
+    actions: torch.Tensor,
+    next_state: torch.Tensor,
+    raise_error: bool = False,
+) -> bool:
+    """
+    Check for NaN values in transition data.
+
+    Args:
+        observations: Dictionary of observation tensors
+        actions: Action tensor
+        next_state: Dictionary of next state tensors
+        raise_error: If True, raises ValueError when NaN is detected
+
+    Returns:
+        bool: True if NaN values were detected, False otherwise
+    """
+    nan_detected = False
+
+    # Check observations
+    for key, tensor in observations.items():
+        if torch.isnan(tensor).any():
+            logging.error(f"observations[{key}] contains NaN values")
+            nan_detected = True
+            if raise_error:
+                raise ValueError(f"NaN detected in observations[{key}]")
+
+    # Check next state
+    for key, tensor in next_state.items():
+        if torch.isnan(tensor).any():
+            logging.error(f"next_state[{key}] contains NaN values")
+            nan_detected = True
+            if raise_error:
+                raise ValueError(f"NaN detected in next_state[{key}]")
+
+    # Check actions
     if torch.isnan(actions).any():
         logging.error("actions contains NaN values")
 
@@ -456,7 +484,16 @@ def add_actor_information_and_train(
 
             for transition in transition_list:
                 transition = move_transition_to_device(transition, device=device)
+                if check_nan_in_transition(
+                    transition["state"], transition["action"], transition["next_state"]
+                ):
+                    logging.warning("NaN detected in transition, skipping")
+                    continue
                 replay_buffer.add(**transition)
+
+                if cfg.dataset_repo_id is not None and transition.get(
+                    "complementary_info", {}
+                ).get("is_intervention"):
                 if transition.get("complementary_info", {}).get("is_intervention"):
                     offline_replay_buffer.add(**transition)
         logging.debug("[LEARNER] Received transitions")
