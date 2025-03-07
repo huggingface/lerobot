@@ -44,7 +44,7 @@ class OptimizerConfig(draccus.ChoiceRegistry, abc.ABC):
         return "adam"
 
     @abc.abstractmethod
-    def build(self) -> torch.optim.Optimizer:
+    def build(self, params: dict) -> torch.optim.Optimizer:
         raise NotImplementedError
 
 
