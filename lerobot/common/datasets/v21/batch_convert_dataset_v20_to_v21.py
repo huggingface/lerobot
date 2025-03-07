@@ -46,7 +46,7 @@ def batch_convert():
         except Exception:
             status = f"{repo_id}: failed\n    {traceback.format_exc()}"
 
-        with open(logfile, "a") as file:
+        with open(logfile, "a", encoding="utf-8") as file:
             file.write(status + "\n")
 
 

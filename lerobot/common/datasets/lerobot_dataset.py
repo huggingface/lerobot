@@ -87,6 +87,7 @@ class LeRobotDatasetMetadata:
         self.repo_id = repo_id
         self.revision = revision if revision else CODEBASE_VERSION
         self.root = Path(root) if root is not None else HF_LEROBOT_HOME / repo_id
+        self.stats = None
 
         try:
             if force_cache_sync:
@@ -102,10 +103,10 @@ class LeRobotDatasetMetadata:
 
     def load_metadata(self):
         self.info = load_info(self.root)
-        check_version_compatibility(self.repo_id, self._version, CODEBASE_VERSION)
+        check_version_compatibility(self.repo_id, self.version, CODEBASE_VERSION)
         self.tasks, self.task_to_task_index = load_tasks(self.root)
         self.episodes = load_episodes(self.root)
-        if self._version < packaging.version.parse("v2.1"):
+        if self.version < packaging.version.parse("v2.1"):
             self.stats = load_stats(self.root)
             self.episodes_stats = backward_compatible_episodes_stats(self.stats, self.episodes)
         else:
@@ -127,7 +128,7 @@ class LeRobotDatasetMetadata:
         )
 
     @property
-    def _version(self) -> packaging.version.Version:
+    def version(self) -> packaging.version.Version:
         """Codebase version used to create this dataset."""
         return packaging.version.parse(self.info["codebase_version"])
 
@@ -321,8 +322,9 @@ class LeRobotDatasetMetadata:
             robot_type = robot.robot_type
             if not all(cam.fps == fps for cam in robot.cameras.values()):
                 logging.warning(
-                    f"Some cameras in your {robot.robot_type} robot don't have an fps matching the fps of your dataset."
-                    "In this case, frames from lower fps cameras will be repeated to fill in the blanks."
+                    "Some cameras in your %s robot don't have an fps matching the fps of your dataset."
+                    "In this case, frames from lower fps cameras will be repeated to fill in the blanks.",
+                    robot.robot_type,
                 )
         elif features is None:
             raise ValueError(
@@ -486,7 +488,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.meta = LeRobotDatasetMetadata(
             self.repo_id, self.root, self.revision, force_cache_sync=force_cache_sync
         )
-        if self.episodes is not None and self.meta._version >= packaging.version.parse("v2.1"):
+        if self.episodes is not None and self.meta.version >= packaging.version.parse("v2.1"):
             episodes_stats = [self.meta.episodes_stats[ep_idx] for ep_idx in self.episodes]
             self.stats = aggregate_stats(episodes_stats)
 
@@ -518,7 +520,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self,
         branch: str | None = None,
         tags: list | None = None,
-        license: str | None = "apache-2.0",
+        dataset_license: str | None = "apache-2.0",
         tag_version: bool = True,
         push_videos: bool = True,
         private: bool = False,
@@ -561,7 +563,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         if not hub_api.file_exists(self.repo_id, REPOCARD_NAME, repo_type="dataset", revision=branch):
             card = create_lerobot_dataset_card(
-                tags=tags, dataset_info=self.meta.info, license=license, **card_kwargs
+                tags=tags, dataset_info=self.meta.info, license=dataset_license, **card_kwargs
             )
             card.push_to_hub(repo_id=self.repo_id, repo_type="dataset", revision=branch)
 
@@ -842,6 +844,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 save the current episode in self.episode_buffer, which is filled with 'add_frame'. Defaults to
                 None.
         """
+        episode_buffer = None
         if not episode_data:
             episode_buffer = self.episode_buffer
 
@@ -1086,8 +1089,9 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         for repo_id, ds in zip(self.repo_ids, self._datasets, strict=True):
             extra_keys = set(ds.features).difference(intersection_features)
             logging.warning(
-                f"keys {extra_keys} of {repo_id} were disabled as they are not contained in all the "
-                "other datasets."
+                "keys %s of %s were disabled as they are not contained in all the other datasets.",
+                extra_keys,
+                repo_id,
             )
             self.disabled_features.update(extra_keys)
 

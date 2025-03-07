@@ -190,11 +190,11 @@ def convert_stats_to_json(v1_dir: Path, v2_dir: Path) -> None:
 
     json_path = v2_dir / STATS_PATH
     json_path.parent.mkdir(exist_ok=True, parents=True)
-    with open(json_path, "w") as f:
+    with open(json_path, "w", encoding="utf-8") as f:
         json.dump(serialized_stats, f, indent=4)
 
     # Sanity check
-    with open(json_path) as f:
+    with open(json_path, encoding="utf-8") as f:
         stats_json = json.load(f)
 
     stats_json = flatten_dict(stats_json)
@@ -213,7 +213,7 @@ def get_features_from_hf_dataset(
             dtype = ft.dtype
             shape = (1,)
             names = None
-        if isinstance(ft, datasets.Sequence):
+        elif isinstance(ft, datasets.Sequence):
             assert isinstance(ft.feature, datasets.Value)
             dtype = ft.feature.dtype
             shape = (ft.length,)
@@ -232,6 +232,8 @@ def get_features_from_hf_dataset(
             dtype = "video"
             shape = None  # Add shape later
             names = ["height", "width", "channels"]
+        else:
+            raise NotImplementedError(f"Feature type {ft._type} not supported.")
 
         features[key] = {
             "dtype": dtype,
@@ -358,9 +360,9 @@ def move_videos(
                 if len(video_dirs) == 1:
                     video_path = video_dirs[0] / video_file
                 else:
-                    for dir in video_dirs:
-                        if (dir / video_file).is_file():
-                            video_path = dir / video_file
+                    for v_dir in video_dirs:
+                        if (v_dir / video_file).is_file():
+                            video_path = v_dir / video_file
                             break
 
                 video_path.rename(work_dir / target_path)
@@ -652,6 +654,7 @@ def main():
     if not args.local_dir:
         args.local_dir = Path("/tmp/lerobot_dataset_v2")
 
+    robot_config = None
     if args.robot is not None:
         robot_config = make_robot_config(args.robot)
 

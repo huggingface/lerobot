@@ -83,7 +83,7 @@ def decode_video_frames_torchvision(
     for frame in reader:
         current_ts = frame["pts"]
         if log_loaded_timestamps:
-            logging.info(f"frame loaded at timestamp={current_ts:.4f}")
+            logging.info("frame loaded at timestamp=%.4f", current_ts)
         loaded_frames.append(frame["data"])
         loaded_ts.append(current_ts)
         if current_ts >= last_ts:
@@ -118,7 +118,7 @@ def decode_video_frames_torchvision(
     closest_ts = loaded_ts[argmin_]
 
     if log_loaded_timestamps:
-        logging.info(f"{closest_ts=}")
+        logging.info("closest_ts=%s", closest_ts)
 
     # convert to the pytorch format which is float32 in [0,1] range (and channel first)
     closest_frames = closest_frames.type(torch.float32) / 255
@@ -227,7 +227,9 @@ def get_audio_info(video_path: Path | str) -> dict:
         "json",
         str(video_path),
     ]
-    result = subprocess.run(ffprobe_audio_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    result = subprocess.run(
+        ffprobe_audio_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True
+    )
     if result.returncode != 0:
         raise RuntimeError(f"Error running ffprobe: {result.stderr}")
 
@@ -263,7 +265,9 @@ def get_video_info(video_path: Path | str) -> dict:
         "json",
         str(video_path),
     ]
-    result = subprocess.run(ffprobe_video_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    result = subprocess.run(
+        ffprobe_video_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True
+    )
     if result.returncode != 0:
         raise RuntimeError(f"Error running ffprobe: {result.stderr}")
 

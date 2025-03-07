@@ -55,7 +55,7 @@ def save_images_concurrently(imgs_array: numpy.array, out_dir: Path, max_workers
 
     num_images = len(imgs_array)
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        [executor.submit(save_image, imgs_array[i], i, out_dir) for i in range(num_images)]
+        _ = [executor.submit(save_image, imgs_array[i], i, out_dir) for i in range(num_images)]
 
 
 def get_default_encoding() -> dict:
@@ -92,24 +92,23 @@ def calculate_episode_data_index(hf_dataset: datasets.Dataset) -> Dict[str, torc
     episode_data_index = {"from": [], "to": []}
 
     current_episode = None
-    """
-    The episode_index is a list of integers, each representing the episode index of the corresponding example.
-    For instance, the following is a valid episode_index:
-      [0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 2]
-
-    Below, we iterate through the episode_index and populate the episode_data_index dictionary with the starting and
-    ending index of each episode. For the episode_index above, the episode_data_index dictionary will look like this:
-        {
-            "from": [0, 3, 7],
-            "to": [3, 7, 12]
-        }
-    """
+    # The episode_index is a list of integers, each representing the episode index of the corresponding example.
+    # For instance, the following is a valid episode_index:
+    #   [0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 2]
+    #
+    # Below, we iterate through the episode_index and populate the episode_data_index dictionary with the starting and
+    # ending index of each episode. For the episode_index above, the episode_data_index dictionary will look like this:
+    #     {
+    #         "from": [0, 3, 7],
+    #         "to": [3, 7, 12]
+    #     }
     if len(hf_dataset) == 0:
         episode_data_index = {
             "from": torch.tensor([]),
             "to": torch.tensor([]),
         }
         return episode_data_index
+    idx = None
     for idx, episode_idx in enumerate(hf_dataset["episode_index"]):
         if episode_idx != current_episode:
             # We encountered a new episode, so we append its starting location to the "from" list
