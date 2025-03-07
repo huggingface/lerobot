@@ -252,11 +252,12 @@ def test_save_and_load_pretrained(dummy_dataset_metadata, tmp_path, policy_name:
     policy_cfg.input_features = {
         key: ft for key, ft in features.items() if key not in policy_cfg.output_features
     }
-    policy = policy_cls(policy_cfg)  # config.device = gpu
+    policy = policy_cls(policy_cfg)
+    policy.to(policy_cfg.device)
     save_dir = tmp_path / f"test_save_and_load_pretrained_{policy_cls.__name__}"
     policy.save_pretrained(save_dir)
-    policy_ = policy_cls.from_pretrained(save_dir, config=policy_cfg)
-    assert all(torch.equal(p, p_) for p, p_ in zip(policy.parameters(), policy_.parameters(), strict=True))
+    loaded_policy = policy_cls.from_pretrained(save_dir, config=policy_cfg)
+    torch.testing.assert_close(list(policy.parameters()), list(loaded_policy.parameters()), rtol=0, atol=0)
 
 
 @pytest.mark.parametrize("insert_temporal_dim", [False, True])
