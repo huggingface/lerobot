@@ -1,3 +1,16 @@
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 """
 Utilities to control a robot.
 
@@ -254,7 +267,7 @@ def record(
         )
 
     # Load pretrained policy
-    policy = None if cfg.policy is None else make_policy(cfg.policy, cfg.device, ds_meta=dataset.meta)
+    policy = None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
 
     if not robot.is_connected:
         robot.connect()
@@ -285,8 +298,6 @@ def record(
             episode_time_s=cfg.episode_time_s,
             display_cameras=cfg.display_cameras,
             policy=policy,
-            device=cfg.device,
-            use_amp=cfg.use_amp,
             fps=cfg.fps,
             single_task=cfg.single_task,
         )
@@ -299,7 +310,7 @@ def record(
             (recorded_episodes < cfg.num_episodes - 1) or events["rerecord_episode"]
         ):
             log_say("Reset the environment", cfg.play_sounds)
-            reset_environment(robot, events, cfg.reset_time_s)
+            reset_environment(robot, events, cfg.reset_time_s, cfg.fps)
 
         if events["rerecord_episode"]:
             log_say("Re-record episode", cfg.play_sounds)

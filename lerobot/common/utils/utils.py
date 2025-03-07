@@ -17,6 +17,7 @@ import logging
 import os
 import os.path as osp
 import platform
+import subprocess
 from copy import copy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -50,8 +51,10 @@ def auto_select_torch_device() -> torch.device:
         return torch.device("cpu")
 
 
+# TODO(Steven): Remove log. log shouldn't be an argument, this should be handled by the logger level
 def get_safe_torch_device(try_device: str, log: bool = False) -> torch.device:
     """Given a string, return a torch.device with checks on whether the device is available."""
+    try_device = str(try_device)
     match try_device:
         case "cuda":
             assert torch.cuda.is_available()
@@ -84,6 +87,7 @@ def get_safe_dtype(dtype: torch.dtype, device: str | torch.device):
 
 
 def is_torch_device_available(try_device: str) -> bool:
+    try_device = str(try_device)  # Ensure try_device is a string
     if try_device == "cuda":
         return torch.cuda.is_available()
     elif try_device == "mps":
@@ -91,7 +95,7 @@ def is_torch_device_available(try_device: str) -> bool:
     elif try_device == "cpu":
         return True
     else:
-        raise ValueError(f"Unknown device '{try_device}.")
+        raise ValueError(f"Unknown device {try_device}. Supported devices are: cuda, mps or cpu.")
 
 
 def is_amp_available(device: str):
@@ -165,23 +169,31 @@ def capture_timestamp_utc():
 
 
 def say(text, blocking=False):
-    # Check if mac, linux, or windows.
-    if platform.system() == "Darwin":
-        cmd = f'say "{text}"'
-        if not blocking:
-            cmd += " &"
-    elif platform.system() == "Linux":
-        cmd = f'spd-say "{text}"'
-        if blocking:
-            cmd += "  --wait"
-    elif platform.system() == "Windows":
-        # TODO(rcadene): Make blocking option work for Windows
-        cmd = (
-            'PowerShell -Command "Add-Type -AssemblyName System.Speech; '
-            f"(New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('{text}')\""
-        )
+    system = platform.system()
 
-    os.system(cmd)
+    if system == "Darwin":
+        cmd = ["say", text]
+
+    elif system == "Linux":
+        cmd = ["spd-say", text]
+        if blocking:
+            cmd.append("--wait")
+
+    elif system == "Windows":
+        cmd = [
+            "PowerShell",
+            "-Command",
+            "Add-Type -AssemblyName System.Speech; "
+            f"(New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('{text}')",
+        ]
+
+    else:
+        raise RuntimeError("Unsupported operating system for text-to-speech.")
+
+    if blocking:
+        subprocess.run(cmd, check=True)
+    else:
+        subprocess.Popen(cmd, creationflags=subprocess.CREATE_NO_WINDOW if system == "Windows" else 0)
 
 
 def log_say(text, play_sounds, blocking=False):

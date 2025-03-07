@@ -31,6 +31,7 @@ import packaging.version
 import torch
 from datasets.table import embed_table_storage
 from huggingface_hub import DatasetCard, DatasetCardData, HfApi
+from huggingface_hub.errors import RevisionNotFoundError
 from PIL import Image as PILImage
 from torchvision import transforms
 
@@ -222,7 +223,7 @@ def load_episodes(local_dir: Path) -> dict:
 
 
 def write_episode_stats(episode_index: int, episode_stats: dict, local_dir: Path):
-    # We wrap episode_stats in a dictionnary since `episode_stats["episode_index"]`
+    # We wrap episode_stats in a dictionary since `episode_stats["episode_index"]`
     # is a dictionary of stats and not an integer.
     episode_stats = {"episode_index": episode_index, "stats": serialize_dict(episode_stats)}
     append_jsonlines(episode_stats, local_dir / EPISODES_STATS_PATH)
@@ -324,6 +325,19 @@ def get_safe_version(repo_id: str, version: str | packaging.version.Version) -> 
         packaging.version.parse(version) if not isinstance(version, packaging.version.Version) else version
     )
     hub_versions = get_repo_versions(repo_id)
+
+    if not hub_versions:
+        raise RevisionNotFoundError(
+            f"""Your dataset must be tagged with a codebase version.
+            Assuming _version_ is the codebase_version value in the info.json, you can run this:
+            ```python
+            from huggingface_hub import HfApi
+
+            hub_api = HfApi()
+            hub_api.create_tag("{repo_id}", tag="_version_", repo_type="dataset")
+            ```
+            """
+        )
 
     if target_version in hub_versions:
         return f"v{target_version}"
@@ -445,10 +459,10 @@ def get_episode_data_index(
     if episodes is not None:
         episode_lengths = {ep_idx: episode_lengths[ep_idx] for ep_idx in episodes}
 
-    cumulative_lenghts = list(accumulate(episode_lengths.values()))
+    cumulative_lengths = list(accumulate(episode_lengths.values()))
     return {
-        "from": torch.LongTensor([0] + cumulative_lenghts[:-1]),
-        "to": torch.LongTensor(cumulative_lenghts),
+        "from": torch.LongTensor([0] + cumulative_lengths[:-1]),
+        "to": torch.LongTensor(cumulative_lengths),
     }
 
 
