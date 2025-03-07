@@ -64,13 +64,13 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
         self.pretrained_path = None
         if not self.device or not is_torch_device_available(self.device):
             auto_device = auto_select_torch_device()
-            logging.warning(f"Device '{self.device}' is not available. Switching to '{auto_device}'.")
+            logging.warning("Device '%s' is not available. Switching to '%s'.",self.device,auto_device)
             self.device = auto_device.type
 
         # Automatically deactivate AMP if necessary
         if self.use_amp and not is_amp_available(self.device):
             logging.warning(
-                f"Automatic Mixed Precision (amp) is not available on device '{self.device}'. Deactivating AMP."
+                "Automatic Mixed Precision (amp) is not available on device '%s'. Deactivating AMP.",self.device
             )
             self.use_amp = False
 
@@ -78,15 +78,18 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     def type(self) -> str:
         return self.get_choice_name(self.__class__)
 
-    @abc.abstractproperty
+    @property
+    @abc.abstractmethod
     def observation_delta_indices(self) -> list | None:
         raise NotImplementedError
 
-    @abc.abstractproperty
+    @property
+    @abc.abstractmethod
     def action_delta_indices(self) -> list | None:
         raise NotImplementedError
 
-    @abc.abstractproperty
+    @property
+    @abc.abstractmethod
     def reward_delta_indices(self) -> list | None:
         raise NotImplementedError
 
@@ -128,7 +131,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
         return None
 
     def _save_pretrained(self, save_directory: Path) -> None:
-        with open(save_directory / CONFIG_NAME, "w") as f, draccus.config_type("json"):
+        with open(save_directory / CONFIG_NAME, "w", encoding="utf-8") as f, draccus.config_type("json"):
             draccus.dump(self, f, indent=4)
 
     @classmethod

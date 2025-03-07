@@ -123,7 +123,10 @@ class TrainPipelineConfig(HubMixin):
         return draccus.encode(self)
 
     def _save_pretrained(self, save_directory: Path) -> None:
-        with open(save_directory / TRAIN_CONFIG_NAME, "w") as f, draccus.config_type("json"):
+        with (
+            open(save_directory / TRAIN_CONFIG_NAME, "w", encoding="utf-8") as f,
+            draccus.config_type("json"),
+        ):
             draccus.dump(self, f, indent=4)
 
     @classmethod
