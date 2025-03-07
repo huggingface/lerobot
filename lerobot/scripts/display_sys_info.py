@@ -59,7 +59,7 @@ np_version = np.__version__ if HAS_NP else "N/A"
 
 torch_version = torch.__version__ if HAS_TORCH else "N/A"
 torch_cuda_available = torch.cuda.is_available() if HAS_TORCH else "N/A"
-cuda_version = torch._C._cuda_getCompiledVersion() if HAS_TORCH and torch.version.cuda is not None else "N/A"
+cuda_version = torch.version.cuda if HAS_TORCH and torch.version.cuda is not None else "N/A"
 
 
 # TODO(aliberts): refactor into an actual command `lerobot env`

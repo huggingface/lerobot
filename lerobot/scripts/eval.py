@@ -259,6 +259,10 @@ def eval_policy(
     threads = []  # for video saving threads
     n_episodes_rendered = 0  # for saving the correct number of videos
 
+    video_paths: list[str] = []  # max_episodes_rendered > 0:
+    ep_frames: list[np.ndarray] = []  # max_episodes_rendered > 0
+    episode_data: dict | None = None  # return_episode_data == True
+
     # Callback for visualization.
     def render_frame(env: gym.vector.VectorEnv):
         # noqa: B023
@@ -271,19 +275,11 @@ def eval_policy(
             # Here we must render all frames and discard any we don't need.
             ep_frames.append(np.stack(env.call("render")[:n_to_render_now]))
 
-    if max_episodes_rendered > 0:
-        video_paths: list[str] = []
-
-    if return_episode_data:
-        episode_data: dict | None = None
-
     # we dont want progress bar when we use slurm, since it clutters the logs
     progbar = trange(n_batches, desc="Stepping through eval batches", disable=inside_slurm())
     for batch_ix in progbar:
         # Cache frames for rendering videos. Each item will be (b, h, w, c), and the list indexes the rollout
         # step.
-        if max_episodes_rendered > 0:
-            ep_frames: list[np.ndarray] = []
 
         if start_seed is None:
             seeds = None
@@ -320,13 +316,19 @@ def eval_policy(
         else:
             all_seeds.append(None)
 
-        # FIXME: episode_data is either None or it doesn't exist
         if return_episode_data:
+            if episode_data is None:
+                start_data_index = 0
+            elif isinstance(episode_data, dict):
+                start_data_index = episode_data["index"][-1].item() + 1
+            else:
+                start_data_index = 0
+
             this_episode_data = _compile_episode_data(
                 rollout_data,
                 done_indices,
                 start_episode_index=batch_ix * env.num_envs,
-                start_data_index=(0 if episode_data is None else (episode_data["index"][-1].item() + 1)),
+                start_data_index=start_data_index,
                 fps=env.unwrapped.metadata["render_fps"],
             )
             if episode_data is None:
@@ -453,6 +455,7 @@ def _compile_episode_data(
     return data_dict
 
 
+# TODO(Steven): [WARN] Redefining built-in 'eval'
 @parser.wrap()
 def eval_main(cfg: EvalPipelineConfig):
     logging.info(pformat(asdict(cfg)))
@@ -489,7 +492,7 @@ def eval_main(cfg: EvalPipelineConfig):
     print(info["aggregated"])
 
     # Save info
-    with open(Path(cfg.output_dir) / "eval_info.json", "w") as f:
+    with open(Path(cfg.output_dir) / "eval_info.json", "w", encoding="utf-8") as f:
         json.dump(info, f, indent=2)
 
     env.close()

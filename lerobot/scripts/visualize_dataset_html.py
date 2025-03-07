@@ -150,7 +150,7 @@ def run_server(
                 400,
             )
         dataset_version = (
-            str(dataset.meta._version) if isinstance(dataset, LeRobotDataset) else dataset.codebase_version
+            str(dataset.meta.version) if isinstance(dataset, LeRobotDataset) else dataset.codebase_version
         )
         match = re.search(r"v(\d+)\.", dataset_version)
         if match:
@@ -358,7 +358,7 @@ def visualize_dataset_html(
         if force_override:
             shutil.rmtree(output_dir)
         else:
-            logging.info(f"Output directory already exists. Loading from it: '{output_dir}'")
+            logging.info("Output directory already exists. Loading from it: '%s'", {output_dir})
 
     output_dir.mkdir(parents=True, exist_ok=True)
 

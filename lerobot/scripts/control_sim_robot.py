@@ -80,7 +80,7 @@ This might require a sudo permission to allow your terminal to monitor keyboard 
 
 **NOTE**: You can resume/continue data recording by running the same data recording command twice.
 """
-
+# TODO(Steven): This script should be updated to use the new robot API and the new dataset API.
 import argparse
 import importlib
 import logging
