@@ -19,6 +19,7 @@ import re
 from copy import deepcopy
 from itertools import chain
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -28,6 +29,7 @@ from PIL import Image
 from safetensors.torch import load_file
 
 import lerobot
+from lerobot.common.datasets.episode_utils import remove_episodes
 from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.datasets.image_writer import image_array_to_pil_image
 from lerobot.common.datasets.lerobot_dataset import (
@@ -580,3 +582,37 @@ def test_dataset_feature_with_forward_slash_raises_error():
             fps=30,
             features={"a/b": {"dtype": "float32", "shape": 2, "names": None}},
         )
+
+
+@pytest.mark.parametrize(
+    "total_episodes, total_frames, episodes_to_remove",
+    [
+        (3, 30, [1]),
+        (3, 30, [0, 2]),
+        (4, 50, [1, 2]),
+    ],
+)
+def test_remove_episodes(tmp_path, lerobot_dataset_factory, total_episodes, total_frames, episodes_to_remove):
+    dataset = lerobot_dataset_factory(
+        root=tmp_path / "test",
+        total_episodes=total_episodes,
+        total_frames=total_frames,
+    )
+    num_frames_to_remove = 0
+    for ep in episodes_to_remove:
+        num_frames_to_remove += (
+            dataset.episode_data_index["to"][ep].item() - dataset.episode_data_index["from"][ep].item()
+        )
+
+    with (
+        patch("lerobot.common.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.common.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.side_effect = lambda repo_id, version: version
+        mock_snapshot_download.side_effect = lambda repo_id, **kwargs: str(dataset.root)
+        updated_dataset = remove_episodes(dataset, episodes_to_remove)
+
+    assert updated_dataset.meta.total_episodes == total_episodes - len(episodes_to_remove)
+    assert updated_dataset.meta.total_frames == total_frames - num_frames_to_remove
+    for i, ep_meta in enumerate(updated_dataset.meta.episodes.values()):
+        assert ep_meta["episode_index"] == i
