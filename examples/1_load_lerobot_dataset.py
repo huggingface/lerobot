@@ -119,7 +119,7 @@ print(dataset.features[camera_key]["shape"])
 delta_timestamps = {
     # loads 4 images: 1 second before current frame, 500 ms before, 200 ms before, and current frame
     camera_key: [-1, -0.5, -0.20, 0],
-    # loads 8 state vectors: 1.5 seconds before, 1 second before, ... 200 ms, 100 ms, and current frame
+    # loads 6 state vectors: 1.5 seconds before, 1 second before, ... 200 ms, 100 ms, and current frame
     "observation.state": [-1.5, -1, -0.5, -0.20, -0.10, 0],
     # loads 64 action vectors: current frame, 1 frame in the future, 2 frames, ... 63 frames in the future
     "action": [t / dataset.fps for t in range(64)],
@@ -143,6 +143,6 @@ dataloader = torch.utils.data.DataLoader(
 
 for batch in dataloader:
     print(f"{batch[camera_key].shape=}")  # (32, 4, c, h, w)
-    print(f"{batch['observation.state'].shape=}")  # (32, 5, c)
+    print(f"{batch['observation.state'].shape=}")  # (32, 6, c)
     print(f"{batch['action'].shape=}")  # (32, 64, c)
     break
