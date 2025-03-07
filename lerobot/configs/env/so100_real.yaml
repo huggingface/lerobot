@@ -12,8 +12,8 @@ env:
 
   wrapper:
     crop_params_dict:
-      observation.images.front: [183, 181, 100, 253]
-      observation.images.side: [218, 186, 254, 282]
+      observation.images.front: [171, 207, 116, 251]
+      observation.images.side: [232, 200, 142, 204]
     resize_size: [128, 128]
     control_time_s: 40
     reset_follower_pos: false
@@ -23,12 +23,23 @@ env:
     delta_action: null #0.3
     joint_masking_action_space: [1, 1, 1, 1, 0, 0] # disable wrist and gripper
     add_joint_velocity_to_observation: true
+    add_ee_pose_to_observation: true
 
     # If null then the teleoperation will be used to reset the robot
-    fixed_reset_joint_positions: [-19.86, 103.19, 117.33, 42.7, 13.89, 0.297]
-    ee_action_space_params: # If null then ee_action_space is not used
+    # Bounds for pushcube_gamepad_lerobot15 dataset and experiments
+    # fixed_reset_joint_positions: [-19.86, 103.19, 117.33, 42.7, 13.89, 0.297]
+    # ee_action_space_params: # If null then ee_action_space is not used
+    #   bounds:
+    #     max: [0.291, 0.147, 0.074]
+    #     min: [0.139, -0.143, 0.03]
+    
+    # Bounds for insertcube_gamepad dataset and experiments
+    fixed_reset_joint_positions: [42.802734,  85.51758,   90.52734,   53.789062,  -0.7910156, -0.5673759]
+    ee_action_space_params:
       bounds:
-        max: [0.291, 0.147, 0.074]
+        max: [0.27789699, -0.01418931, 0.0932141]
+        min: [0.14965773, -0.21805821, 0.0489645]
+
       use_gamepad: true
       x_step_size: 0.03
       y_step_size: 0.03

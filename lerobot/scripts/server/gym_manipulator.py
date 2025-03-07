@@ -877,11 +877,36 @@ class EEActionWrapper(gym.ActionWrapper):
 
 
 class EEObservationWrapper(gym.ObservationWrapper):
-    def __init__(self, env):
+    def __init__(self, env, ee_pose_limits):
         super().__init__(env)
 
+        # Extend observation space to include end effector pose
+        prev_space = self.observation_space["observation.state"]["observation.state"]
+
+        self.observation_space["observation.state"]["observation.state"] = (
+            gym.spaces.Box(
+                low=np.concatenate([prev_space.low, ee_pose_limits["min"]]),
+                high=np.concatenate([prev_space.high, ee_pose_limits["max"]]),
+                shape=(prev_space.shape[0] + 3,),
+                dtype=np.float32,
+            )
+        )
+
+        self.fk_function = RobotKinematics.fk_gripper_tip
+
     def observation(self, observation):
-        return observation["observation.ee_pose"]
+        current_joint_pos = self.unwrapped.robot.follower_arms["main"].read(
+            "Present_Position"
+        )
+        current_ee_pos = self.fk_function(current_joint_pos)
+        observation["observation.state"] = torch.cat(
+            [
+                observation["observation.state"],
+                torch.from_numpy(current_ee_pos[:3, 3]),
+            ],
+            dim=-1,
+        )
+        return observation
 
 
 class GamepadControlWrapper(gym.Wrapper):
@@ -1097,6 +1122,10 @@ def make_robot_env(
     # Add observation and image processing
     if cfg.env.wrapper.add_joint_velocity_to_observation:
         env = AddJointVelocityToObservation(env=env, fps=cfg.fps)
+    if cfg.env.wrapper.add_ee_pose_to_observation:
+        env = EEObservationWrapper(
+            env=env, ee_pose_limits=cfg.env.wrapper.ee_action_space_params.bounds
+        )
 
     env = ConvertToLeRobotObservation(env=env, device=cfg.env.device)
 
