@@ -91,7 +91,7 @@ class PI0Config(PreTrainedConfig):
         super().__post_init__()
 
         # TODO(Steven): Validate device and amp? in all policy configs?
-        """Input validation (not exhaustive)."""
+        # Input validation (not exhaustive).
         if self.n_action_steps > self.chunk_size:
             raise ValueError(
                 f"The chunk size is the upper bound for the number of action steps per model invocation. Got "

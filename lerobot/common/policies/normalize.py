@@ -69,12 +69,12 @@ def create_stats_buffers(
                 }
             )
         elif norm_mode is NormalizationMode.MIN_MAX:
-            min = torch.ones(shape, dtype=torch.float32) * torch.inf
-            max = torch.ones(shape, dtype=torch.float32) * torch.inf
+            min_norm = torch.ones(shape, dtype=torch.float32) * torch.inf
+            max_norm = torch.ones(shape, dtype=torch.float32) * torch.inf
             buffer = nn.ParameterDict(
                 {
-                    "min": nn.Parameter(min, requires_grad=False),
-                    "max": nn.Parameter(max, requires_grad=False),
+                    "min": nn.Parameter(min_norm, requires_grad=False),
+                    "max": nn.Parameter(max_norm, requires_grad=False),
                 }
             )
 
@@ -170,12 +170,12 @@ class Normalize(nn.Module):
                 assert not torch.isinf(std).any(), _no_stats_error_str("std")
                 batch[key] = (batch[key] - mean) / (std + 1e-8)
             elif norm_mode is NormalizationMode.MIN_MAX:
-                min = buffer["min"]
-                max = buffer["max"]
-                assert not torch.isinf(min).any(), _no_stats_error_str("min")
-                assert not torch.isinf(max).any(), _no_stats_error_str("max")
+                min_norm = buffer["min"]
+                max_norm = buffer["max"]
+                assert not torch.isinf(min_norm).any(), _no_stats_error_str("min")
+                assert not torch.isinf(max_norm).any(), _no_stats_error_str("max")
                 # normalize to [0,1]
-                batch[key] = (batch[key] - min) / (max - min + 1e-8)
+                batch[key] = (batch[key] - min_norm) / (max_norm - min_norm + 1e-8)
                 # normalize to [-1, 1]
                 batch[key] = batch[key] * 2 - 1
             else:
@@ -243,12 +243,12 @@ class Unnormalize(nn.Module):
                 assert not torch.isinf(std).any(), _no_stats_error_str("std")
                 batch[key] = batch[key] * std + mean
             elif norm_mode is NormalizationMode.MIN_MAX:
-                min = buffer["min"]
-                max = buffer["max"]
-                assert not torch.isinf(min).any(), _no_stats_error_str("min")
-                assert not torch.isinf(max).any(), _no_stats_error_str("max")
+                min_norm = buffer["min"]
+                max_norm = buffer["max"]
+                assert not torch.isinf(min_norm).any(), _no_stats_error_str("min")
+                assert not torch.isinf(max_norm).any(), _no_stats_error_str("max")
                 batch[key] = (batch[key] + 1) / 2
-                batch[key] = batch[key] * (max - min) + min
+                batch[key] = batch[key] * (max_norm - min_norm) + min_norm
             else:
                 raise ValueError(norm_mode)
         return batch

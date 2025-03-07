@@ -88,6 +88,9 @@ class TDMPCPolicy(PreTrainedPolicy):
         for param in self.model_target.parameters():
             param.requires_grad = False
 
+        self._queues = None
+        self._prev_mean: torch.Tensor | None = None
+
         self.reset()
 
     def get_optim_params(self) -> dict:
@@ -108,7 +111,7 @@ class TDMPCPolicy(PreTrainedPolicy):
             self._queues["observation.environment_state"] = deque(maxlen=1)
         # Previous mean obtained from the cross-entropy method (CEM) used during MPC. It is used to warm start
         # CEM for the next step.
-        self._prev_mean: torch.Tensor | None = None
+        self._prev_mean = None
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
@@ -514,6 +517,7 @@ class TDMPCPolicy(PreTrainedPolicy):
         update_ema_parameters(self.model_target, self.model, self.config.target_model_momentum)
 
 
+# TODO(Steven): forward implementation missing
 class TDMPCTOLD(nn.Module):
     """Task-Oriented Latent Dynamics (TOLD) model used in TD-MPC."""
 

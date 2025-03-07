@@ -222,6 +222,8 @@ class ACTTemporalEnsembler:
         self.chunk_size = chunk_size
         self.ensemble_weights = torch.exp(-temporal_ensemble_coeff * torch.arange(chunk_size))
         self.ensemble_weights_cumsum = torch.cumsum(self.ensemble_weights, dim=0)
+        self.ensembled_actions = None
+        self.ensembled_actions_count = None
         self.reset()
 
     def reset(self):

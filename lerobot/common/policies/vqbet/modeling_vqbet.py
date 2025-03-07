@@ -70,6 +70,8 @@ class VQBeTPolicy(PreTrainedPolicy):
 
         self.vqbet = VQBeTModel(config)
 
+        self._queues = None
+
         self.reset()
 
     def get_optim_params(self) -> dict:
@@ -535,7 +537,7 @@ class VQBeTHead(nn.Module):
                 cbet_logits, "(NT) (G C) -> (NT) G C", G=self.vqvae_model.vqvae_num_layers
             )
             cbet_probs = torch.softmax(cbet_logits / self.config.bet_softmax_temperature, dim=-1)
-            NT, G, choices = cbet_probs.shape
+            NT, _G, choices = cbet_probs.shape
             sampled_centers = einops.rearrange(
                 torch.multinomial(cbet_probs.view(-1, choices), num_samples=1),
                 "(NT G) 1 -> NT G",
@@ -578,7 +580,7 @@ class VQBeTHead(nn.Module):
             "decoded_action": decoded_action,
         }
 
-    def loss_fn(self, pred, target, **kwargs):
+    def loss_fn(self, pred, target, **_kwargs):
         """
         for given ground truth action values (target), and prediction (pred) this function calculates the overall loss.
 
@@ -605,7 +607,7 @@ class VQBeTHead(nn.Module):
         # Figure out the loss for the actions.
         # First, we need to find the closest cluster center for each ground truth action.
         with torch.no_grad():
-            state_vq, action_bins = self.vqvae_model.get_code(action_seq)  # action_bins: NT, G
+            _state_vq, action_bins = self.vqvae_model.get_code(action_seq)  # action_bins: NT, G
 
         # Now we can compute the loss.
 
@@ -762,6 +764,7 @@ def _replace_submodules(
     return root_module
 
 
+# TODO(Steven): Missing implementation of forward, is it maybe vqvae_forward?
 class VqVae(nn.Module):
     def __init__(
         self,
@@ -876,13 +879,13 @@ class FocalLoss(nn.Module):
         self.gamma = gamma
         self.size_average = size_average
 
-    def forward(self, input, target):
-        if len(input.shape) == 3:
-            N, T, _ = input.shape
-            logpt = F.log_softmax(input, dim=-1)
+    def forward(self, forward_input, target):
+        if len(forward_input.shape) == 3:
+            N, T, _ = forward_input.shape
+            logpt = F.log_softmax(forward_input, dim=-1)
             logpt = logpt.gather(-1, target.view(N, T, 1)).view(N, T)
-        elif len(input.shape) == 2:
-            logpt = F.log_softmax(input, dim=-1)
+        elif len(forward_input.shape) == 2:
+            logpt = F.log_softmax(forward_input, dim=-1)
             logpt = logpt.gather(-1, target.view(-1, 1)).view(-1)
         pt = logpt.exp()
 
