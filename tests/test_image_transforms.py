@@ -51,7 +51,7 @@ def fixture_single_transforms():
     return load_file(ARTIFACT_DIR / "single_transforms.safetensors")
 
 
-@pytest.fixture(name="single_transforms")
+@pytest.fixture(name="img_tensor")
 def fixture_img_tensor(single_transforms):
     return single_transforms["original_frame"]
 
