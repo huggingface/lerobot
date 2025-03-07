@@ -1,3 +1,16 @@
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 """
 Tests for physical robots and their mocked versions.
 If the physical robots are not connected to the computer, or not working,
@@ -39,7 +52,7 @@ from lerobot.common.robot_devices.control_configs import (
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.scripts.control_robot import calibrate, record, replay, teleoperate
 from tests.test_robots import make_robot
-from tests.utils import DEVICE, TEST_ROBOT_TYPES, mock_calibration_dir, require_robot
+from tests.utils import TEST_ROBOT_TYPES, mock_calibration_dir, require_robot
 
 
 @pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)
@@ -171,7 +184,7 @@ def test_record_and_replay_and_policy(tmp_path, request, robot_type, mock):
     replay(robot, replay_cfg)
 
     policy_cfg = ACTConfig()
-    policy = make_policy(policy_cfg, ds_meta=dataset.meta, device=DEVICE)
+    policy = make_policy(policy_cfg, ds_meta=dataset.meta)
 
     out_dir = tmp_path / "logger"
 
@@ -216,8 +229,6 @@ def test_record_and_replay_and_policy(tmp_path, request, robot_type, mock):
         display_cameras=False,
         play_sounds=False,
         num_image_writer_processes=num_image_writer_processes,
-        device=DEVICE,
-        use_amp=False,
     )
 
     rec_eval_cfg.policy = PreTrainedConfig.from_pretrained(pretrained_policy_path)
