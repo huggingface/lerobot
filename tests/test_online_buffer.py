@@ -74,7 +74,7 @@ def test_non_mutate():
 def test_index_error_no_data():
     buffer, _ = make_new_buffer()
     with pytest.raises(IndexError):
-        buffer[0]
+        _ = buffer[0]
 
 
 def test_index_error_with_data():
@@ -83,9 +83,9 @@ def test_index_error_with_data():
     new_data = make_spoof_data_frames(1, n_frames)
     buffer.add_data(new_data)
     with pytest.raises(IndexError):
-        buffer[n_frames]
+        _ = buffer[n_frames]
     with pytest.raises(IndexError):
-        buffer[-n_frames - 1]
+        _ = buffer[-n_frames - 1]
 
 
 @pytest.mark.parametrize("do_reload", [False, True])
@@ -185,7 +185,7 @@ def test_delta_timestamps_outside_tolerance_inside_episode_range():
     buffer.add_data(new_data)
     buffer.tolerance_s = 0.04
     with pytest.raises(AssertionError):
-        buffer[2]
+        _ = buffer[2]
 
 
 def test_delta_timestamps_outside_tolerance_outside_episode_range():
@@ -229,6 +229,7 @@ def test_compute_sampler_weights_trivial(
     weights = compute_sampler_weights(
         offline_dataset, online_dataset=online_dataset, online_sampling_ratio=online_sampling_ratio
     )
+    expected_weights: torch.Tensor = None
     if offline_dataset_size == 0 or online_dataset_size == 0:
         expected_weights = torch.ones(offline_dataset_size + online_dataset_size)
     elif online_sampling_ratio == 0:

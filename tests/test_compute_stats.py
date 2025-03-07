@@ -30,12 +30,12 @@ from lerobot.common.datasets.compute_stats import (
 )
 
 
-def mock_load_image_as_numpy(path, dtype, channel_first):
+def mock_load_image_as_numpy(_path, dtype, channel_first):
     return np.ones((3, 32, 32), dtype=dtype) if channel_first else np.ones((32, 32, 3), dtype=dtype)
 
 
-@pytest.fixture
-def sample_array():
+@pytest.fixture(name="sample_array")
+def fixture_sample_array():
     return np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]])
 
 
@@ -62,7 +62,7 @@ def test_sample_indices():
 
 
 @patch("lerobot.common.datasets.compute_stats.load_image_as_numpy", side_effect=mock_load_image_as_numpy)
-def test_sample_images(mock_load):
+def test_sample_images(_mock_load):
     image_paths = [f"image_{i}.jpg" for i in range(100)]
     images = sample_images(image_paths)
     assert isinstance(images, np.ndarray)

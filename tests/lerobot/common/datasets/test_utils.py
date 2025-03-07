@@ -22,6 +22,8 @@ from lerobot.common.datasets.utils import create_lerobot_dataset_card
 def test_default_parameters():
     card = create_lerobot_dataset_card()
     assert isinstance(card, DatasetCard)
+    # TODO(Steven): Base class CardDate should have 'tags' as a member if we want RepoCard to hold a reference to this abstraction
+    # card.data gives a CardDate type, implementations of this class do have 'tags' but the base class doesn't
     assert card.data.tags == ["LeRobot"]
     assert card.data.task_categories == ["robotics"]
     assert card.data.configs == [

@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+# pylint: disable=redefined-outer-name, unused-argument
 import inspect
 from copy import deepcopy
 from pathlib import Path
@@ -251,7 +252,7 @@ def test_save_and_load_pretrained(dummy_dataset_metadata, tmp_path, policy_name:
     policy_cfg.input_features = {
         key: ft for key, ft in features.items() if key not in policy_cfg.output_features
     }
-    policy = policy_cls(policy_cfg)
+    policy = policy_cls(policy_cfg)  # config.device = gpu
     save_dir = tmp_path / f"test_save_and_load_pretrained_{policy_cls.__name__}"
     policy.save_pretrained(save_dir)
     policy_ = policy_cls.from_pretrained(save_dir, config=policy_cfg)

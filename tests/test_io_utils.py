@@ -20,8 +20,8 @@ import pytest
 from lerobot.common.utils.io_utils import deserialize_json_into_object
 
 
-@pytest.fixture
-def tmp_json_file(tmp_path: Path):
+@pytest.fixture(name="tmp_json_file")
+def fixture_tmp_json_file(tmp_path: Path):
     """Writes `data` to a temporary JSON file and returns the file's path."""
 
     def _write(data: Any) -> Path:

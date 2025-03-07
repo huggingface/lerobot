@@ -32,16 +32,16 @@ from lerobot.common.utils.import_utils import is_package_available
 DEVICE = os.environ.get("LEROBOT_TEST_DEVICE", "cuda") if torch.cuda.is_available() else "cpu"
 
 TEST_ROBOT_TYPES = []
-for robot_type in available_robots:
-    TEST_ROBOT_TYPES += [(robot_type, True), (robot_type, False)]
+for available_robot_type in available_robots:
+    TEST_ROBOT_TYPES += [(available_robot_type, True), (available_robot_type, False)]
 
 TEST_CAMERA_TYPES = []
-for camera_type in available_cameras:
-    TEST_CAMERA_TYPES += [(camera_type, True), (camera_type, False)]
+for available_camera_type in available_cameras:
+    TEST_CAMERA_TYPES += [(available_camera_type, True), (available_camera_type, False)]
 
 TEST_MOTOR_TYPES = []
-for motor_type in available_motors:
-    TEST_MOTOR_TYPES += [(motor_type, True), (motor_type, False)]
+for available_motor_type in available_motors:
+    TEST_MOTOR_TYPES += [(available_motor_type, True), (available_motor_type, False)]
 
 # Camera indices used for connecting physical cameras
 OPENCV_CAMERA_INDEX = int(os.environ.get("LEROBOT_TEST_OPENCV_CAMERA_INDEX", 0))
@@ -72,7 +72,6 @@ def require_x86_64_kernel(func):
     """
     Decorator that skips the test if plateform device is not an x86_64 cpu.
     """
-    from functools import wraps
 
     @wraps(func)
     def wrapper(*args, **kwargs):
@@ -87,7 +86,6 @@ def require_cpu(func):
     """
     Decorator that skips the test if device is not cpu.
     """
-    from functools import wraps
 
     @wraps(func)
     def wrapper(*args, **kwargs):
@@ -102,7 +100,6 @@ def require_cuda(func):
     """
     Decorator that skips the test if cuda is not available.
     """
-    from functools import wraps
 
     @wraps(func)
     def wrapper(*args, **kwargs):
@@ -288,17 +285,17 @@ def mock_calibration_dir(calibration_dir):
         "motor_names": ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"],
     }
     Path(str(calibration_dir)).mkdir(parents=True, exist_ok=True)
-    with open(calibration_dir / "main_follower.json", "w") as f:
+    with open(calibration_dir / "main_follower.json", "w", encoding="utf-8") as f:
         json.dump(example_calib, f)
-    with open(calibration_dir / "main_leader.json", "w") as f:
+    with open(calibration_dir / "main_leader.json", "w", encoding="utf-8") as f:
         json.dump(example_calib, f)
-    with open(calibration_dir / "left_follower.json", "w") as f:
+    with open(calibration_dir / "left_follower.json", "w", encoding="utf-8") as f:
         json.dump(example_calib, f)
-    with open(calibration_dir / "left_leader.json", "w") as f:
+    with open(calibration_dir / "left_leader.json", "w", encoding="utf-8") as f:
         json.dump(example_calib, f)
-    with open(calibration_dir / "right_follower.json", "w") as f:
+    with open(calibration_dir / "right_follower.json", "w", encoding="utf-8") as f:
         json.dump(example_calib, f)
-    with open(calibration_dir / "right_leader.json", "w") as f:
+    with open(calibration_dir / "right_leader.json", "w", encoding="utf-8") as f:
         json.dump(example_calib, f)
 
 

@@ -81,11 +81,11 @@ def save_dataset_to_safetensors(output_dir, repo_id="lerobot/pusht"):
 
 
 if __name__ == "__main__":
-    for dataset in [
+    for available_dataset in [
         "lerobot/pusht",
         "lerobot/aloha_sim_insertion_human",
         "lerobot/xarm_lift_medium",
         "lerobot/nyu_franka_play_dataset",
         "lerobot/cmu_stretch",
     ]:
-        save_dataset_to_safetensors("tests/data/save_dataset_to_safetensors", repo_id=dataset)
+        save_dataset_to_safetensors("tests/data/save_dataset_to_safetensors", repo_id=available_dataset)

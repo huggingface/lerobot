@@ -37,8 +37,8 @@ from tests.scripts.save_image_transforms_to_safetensors import ARTIFACT_DIR
 from tests.utils import require_x86_64_kernel
 
 
-@pytest.fixture
-def color_jitters():
+@pytest.fixture(name="color_jitters")
+def fixture_color_jitters():
     return [
         v2.ColorJitter(brightness=0.5),
         v2.ColorJitter(contrast=0.5),
@@ -46,18 +46,18 @@ def color_jitters():
     ]
 
 
-@pytest.fixture
-def single_transforms():
+@pytest.fixture(name="single_transforms")
+def fixture_single_transforms():
     return load_file(ARTIFACT_DIR / "single_transforms.safetensors")
 
 
-@pytest.fixture
-def img_tensor(single_transforms):
+@pytest.fixture(name="single_transforms")
+def fixture_img_tensor(single_transforms):
     return single_transforms["original_frame"]
 
 
-@pytest.fixture
-def default_transforms():
+@pytest.fixture(name="default_transforms")
+def fixture_default_transforms():
     return load_file(ARTIFACT_DIR / "default_transforms.safetensors")
 
 

@@ -108,7 +108,7 @@ def compute_episode_stats(episode_data: dict[str, list[str] | np.ndarray], featu
 
 
 def _assert_type_and_shape(stats_list: list[dict[str, dict]]):
-    for i in enumerate(stats_list):
+    for i in range(len(stats_list)):
         for fkey in stats_list[i]:
             for k, v in stats_list[i][fkey].items():
                 if not isinstance(v, np.ndarray):

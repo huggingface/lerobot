@@ -52,7 +52,7 @@ def rotate(color_image, rotation):
 
 
 class VideoCapture:
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *_args, **_kwargs):
         self._mock_dict = {
             CAP_PROP_FPS: 30,
             CAP_PROP_FRAME_WIDTH: 640,

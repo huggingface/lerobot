@@ -31,12 +31,12 @@ from lerobot.common.datasets.utils import (
 
 @pytest.fixture(scope="session")
 def info_path(info_factory):
-    def _create_info_json_file(dir: Path, info: dict | None = None) -> Path:
+    def _create_info_json_file(input_dir: Path, info: dict | None = None) -> Path:
         if not info:
             info = info_factory()
-        fpath = dir / INFO_PATH
+        fpath = input_dir / INFO_PATH
         fpath.parent.mkdir(parents=True, exist_ok=True)
-        with open(fpath, "w") as f:
+        with open(fpath, "w", encoding="utf-8") as f:
             json.dump(info, f, indent=4, ensure_ascii=False)
         return fpath
 
@@ -45,12 +45,12 @@ def info_path(info_factory):
 
 @pytest.fixture(scope="session")
 def stats_path(stats_factory):
-    def _create_stats_json_file(dir: Path, stats: dict | None = None) -> Path:
+    def _create_stats_json_file(input_dir: Path, stats: dict | None = None) -> Path:
         if not stats:
             stats = stats_factory()
-        fpath = dir / STATS_PATH
+        fpath = input_dir / STATS_PATH
         fpath.parent.mkdir(parents=True, exist_ok=True)
-        with open(fpath, "w") as f:
+        with open(fpath, "w", encoding="utf-8") as f:
             json.dump(stats, f, indent=4, ensure_ascii=False)
         return fpath
 
@@ -59,10 +59,10 @@ def stats_path(stats_factory):
 
 @pytest.fixture(scope="session")
 def episodes_stats_path(episodes_stats_factory):
-    def _create_episodes_stats_jsonl_file(dir: Path, episodes_stats: list[dict] | None = None) -> Path:
+    def _create_episodes_stats_jsonl_file(input_dir: Path, episodes_stats: list[dict] | None = None) -> Path:
         if not episodes_stats:
             episodes_stats = episodes_stats_factory()
-        fpath = dir / EPISODES_STATS_PATH
+        fpath = input_dir / EPISODES_STATS_PATH
         fpath.parent.mkdir(parents=True, exist_ok=True)
         with jsonlines.open(fpath, "w") as writer:
             writer.write_all(episodes_stats.values())
@@ -73,10 +73,10 @@ def episodes_stats_path(episodes_stats_factory):
 
 @pytest.fixture(scope="session")
 def tasks_path(tasks_factory):
-    def _create_tasks_jsonl_file(dir: Path, tasks: list | None = None) -> Path:
+    def _create_tasks_jsonl_file(input_dir: Path, tasks: list | None = None) -> Path:
         if not tasks:
             tasks = tasks_factory()
-        fpath = dir / TASKS_PATH
+        fpath = input_dir / TASKS_PATH
         fpath.parent.mkdir(parents=True, exist_ok=True)
         with jsonlines.open(fpath, "w") as writer:
             writer.write_all(tasks.values())
@@ -87,10 +87,10 @@ def tasks_path(tasks_factory):
 
 @pytest.fixture(scope="session")
 def episode_path(episodes_factory):
-    def _create_episodes_jsonl_file(dir: Path, episodes: list | None = None) -> Path:
+    def _create_episodes_jsonl_file(input_dir: Path, episodes: list | None = None) -> Path:
         if not episodes:
             episodes = episodes_factory()
-        fpath = dir / EPISODES_PATH
+        fpath = input_dir / EPISODES_PATH
         fpath.parent.mkdir(parents=True, exist_ok=True)
         with jsonlines.open(fpath, "w") as writer:
             writer.write_all(episodes.values())
@@ -102,7 +102,7 @@ def episode_path(episodes_factory):
 @pytest.fixture(scope="session")
 def single_episode_parquet_path(hf_dataset_factory, info_factory):
     def _create_single_episode_parquet(
-        dir: Path, ep_idx: int = 0, hf_dataset: datasets.Dataset | None = None, info: dict | None = None
+        input_dir: Path, ep_idx: int = 0, hf_dataset: datasets.Dataset | None = None, info: dict | None = None
     ) -> Path:
         if not info:
             info = info_factory()
@@ -112,7 +112,7 @@ def single_episode_parquet_path(hf_dataset_factory, info_factory):
         data_path = info["data_path"]
         chunks_size = info["chunks_size"]
         ep_chunk = ep_idx // chunks_size
-        fpath = dir / data_path.format(episode_chunk=ep_chunk, episode_index=ep_idx)
+        fpath = input_dir / data_path.format(episode_chunk=ep_chunk, episode_index=ep_idx)
         fpath.parent.mkdir(parents=True, exist_ok=True)
         table = hf_dataset.data.table
         ep_table = table.filter(pc.equal(table["episode_index"], ep_idx))
@@ -125,7 +125,7 @@ def single_episode_parquet_path(hf_dataset_factory, info_factory):
 @pytest.fixture(scope="session")
 def multi_episode_parquet_path(hf_dataset_factory, info_factory):
     def _create_multi_episode_parquet(
-        dir: Path, hf_dataset: datasets.Dataset | None = None, info: dict | None = None
+        input_dir: Path, hf_dataset: datasets.Dataset | None = None, info: dict | None = None
     ) -> Path:
         if not info:
             info = info_factory()
@@ -137,11 +137,11 @@ def multi_episode_parquet_path(hf_dataset_factory, info_factory):
         total_episodes = info["total_episodes"]
         for ep_idx in range(total_episodes):
             ep_chunk = ep_idx // chunks_size
-            fpath = dir / data_path.format(episode_chunk=ep_chunk, episode_index=ep_idx)
+            fpath = input_dir / data_path.format(episode_chunk=ep_chunk, episode_index=ep_idx)
             fpath.parent.mkdir(parents=True, exist_ok=True)
             table = hf_dataset.data.table
             ep_table = table.filter(pc.equal(table["episode_index"], ep_idx))
             pq.write_table(ep_table, fpath)
-        return dir / "data"
+        return input_dir / "data"
 
     return _create_multi_episode_parquet

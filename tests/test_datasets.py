@@ -48,8 +48,8 @@ from tests.fixtures.constants import DUMMY_CHW, DUMMY_HWC, DUMMY_REPO_ID
 from tests.utils import require_x86_64_kernel
 
 
-@pytest.fixture
-def image_dataset(tmp_path, empty_lerobot_dataset_factory):
+@pytest.fixture(name="image_dataset")
+def fixture_image_dataset(tmp_path, empty_lerobot_dataset_factory):
     features = {
         "image": {
             "dtype": "image",
@@ -374,7 +374,7 @@ def test_factory(env_name, repo_id, policy_name):
             if required:
                 assert key in item, f"{key}"
             else:
-                logging.warning(f'Missing key in dataset: "{key}" not in {dataset}.')
+                logging.warning('Missing key in dataset: "%s" not in %s.', key, dataset)
                 continue
 
         if delta_timestamps is not None and key in delta_timestamps:

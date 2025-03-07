@@ -81,12 +81,12 @@ def mock_snapshot_download_factory(
                 return None
 
         def _mock_snapshot_download(
-            repo_id: str,
+            _repo_id: str,
+            *_args,
             local_dir: str | Path | None = None,
             allow_patterns: str | list[str] | None = None,
             ignore_patterns: str | list[str] | None = None,
-            *args,
-            **kwargs,
+            **_kwargs,
         ) -> str:
             if not local_dir:
                 local_dir = LEROBOT_TEST_DIR
