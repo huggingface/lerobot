@@ -95,6 +95,8 @@ def move_to_calibrate(
     while_move_hook=None,
 ):
     initial_pos = arm.read("Present_Position", motor_name)
+    p_present_pos = None
+    n_present_pos = None
 
     if positive_first:
         p_present_pos = move_until_block(
@@ -196,7 +198,7 @@ def run_arm_auto_calibration_so100(arm: MotorsBus, robot_type: str, arm_name: st
     calib["wrist_flex"] = move_to_calibrate(arm, "wrist_flex")
     calib["wrist_flex"] = apply_offset(calib["wrist_flex"], offset=80)
 
-    def in_between_move_hook():
+    def in_between_move_hook_elbow():
         nonlocal arm, calib
         time.sleep(2)
         ef_pos = arm.read("Present_Position", "elbow_flex")
@@ -207,14 +209,14 @@ def run_arm_auto_calibration_so100(arm: MotorsBus, robot_type: str, arm_name: st
 
     print("Calibrate elbow_flex")
     calib["elbow_flex"] = move_to_calibrate(
-        arm, "elbow_flex", positive_first=False, in_between_move_hook=in_between_move_hook
+        arm, "elbow_flex", positive_first=False, in_between_move_hook=in_between_move_hook_elbow
     )
     calib["elbow_flex"] = apply_offset(calib["elbow_flex"], offset=80 - 1024)
 
     arm.write("Goal_Position", calib["elbow_flex"]["zero_pos"] + 1024 + 512, "elbow_flex")
     time.sleep(1)
 
-    def in_between_move_hook():
+    def in_between_move_hook_shoulder():
         nonlocal arm, calib
         arm.write("Goal_Position", calib["elbow_flex"]["zero_pos"], "elbow_flex")
 
@@ -224,7 +226,7 @@ def run_arm_auto_calibration_so100(arm: MotorsBus, robot_type: str, arm_name: st
         "shoulder_lift",
         invert_drive_mode=True,
         positive_first=False,
-        in_between_move_hook=in_between_move_hook,
+        in_between_move_hook=in_between_move_hook_shoulder,
     )
     # add an 30 steps as offset to align with body
     calib["shoulder_lift"] = apply_offset(calib["shoulder_lift"], offset=1024 - 50)

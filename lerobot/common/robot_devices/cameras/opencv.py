@@ -45,7 +45,7 @@ from lerobot.common.utils.utils import capture_timestamp_utc
 MAX_OPENCV_INDEX = 60
 
 
-def find_cameras(raise_when_empty=False, max_index_search_range=MAX_OPENCV_INDEX, mock=False) -> list[dict]:
+def find_cameras(max_index_search_range=MAX_OPENCV_INDEX, mock=False) -> list[dict]:
     cameras = []
     if platform.system() == "Linux":
         print("Linux detected. Finding available camera indices through scanning '/dev/video*' ports")

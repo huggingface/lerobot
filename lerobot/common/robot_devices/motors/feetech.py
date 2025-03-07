@@ -148,7 +148,7 @@ def convert_degrees_to_steps(degrees: float | np.ndarray, models: str | list[str
     return steps
 
 
-def convert_to_bytes(value, bytes, mock=False):
+def convert_to_bytes(value, byte, mock=False):
     if mock:
         return value
 
@@ -156,16 +156,16 @@ def convert_to_bytes(value, bytes, mock=False):
 
     # Note: No need to convert back into unsigned int, since this byte preprocessing
     # already handles it for us.
-    if bytes == 1:
+    if byte == 1:
         data = [
             scs.SCS_LOBYTE(scs.SCS_LOWORD(value)),
         ]
-    elif bytes == 2:
+    elif byte == 2:
         data = [
             scs.SCS_LOBYTE(scs.SCS_LOWORD(value)),
             scs.SCS_HIBYTE(scs.SCS_LOWORD(value)),
         ]
-    elif bytes == 4:
+    elif byte == 4:
         data = [
             scs.SCS_LOBYTE(scs.SCS_LOWORD(value)),
             scs.SCS_HIBYTE(scs.SCS_LOWORD(value)),
@@ -175,7 +175,7 @@ def convert_to_bytes(value, bytes, mock=False):
     else:
         raise NotImplementedError(
             f"Value of the number of bytes to be sent is expected to be in [1, 2, 4], but "
-            f"{bytes} is provided instead."
+            f"{byte} is provided instead."
         )
     return data
 
@@ -207,9 +207,9 @@ def assert_same_address(model_ctrl_table, motor_models, data_name):
     all_addr = []
     all_bytes = []
     for model in motor_models:
-        addr, bytes = model_ctrl_table[model][data_name]
+        addr, byte = model_ctrl_table[model][data_name]
         all_addr.append(addr)
-        all_bytes.append(bytes)
+        all_bytes.append(byte)
 
     if len(set(all_addr)) != 1:
         raise NotImplementedError(
@@ -557,6 +557,8 @@ class FeetechMotorsBus:
                 # (start_pos - values[i]) / resolution <= factor <= (end_pos - values[i]) / resolution
                 low_factor = (start_pos - values[i]) / resolution
                 upp_factor = (end_pos - values[i]) / resolution
+            else:
+                raise ValueError(f"Unknown calibration mode {calib_mode}")
 
             if not in_range:
                 # Get first integer between the two bounds
@@ -577,10 +579,16 @@ class FeetechMotorsBus:
                 elif CalibrationMode[calib_mode] == CalibrationMode.LINEAR:
                     out_of_range_str = f"{LOWER_BOUND_LINEAR} < {calib_val} < {UPPER_BOUND_LINEAR} %"
                     in_range_str = f"{LOWER_BOUND_LINEAR} < {calib_val} < {UPPER_BOUND_LINEAR} %"
+                else:
+                    raise ValueError(f"Unknown calibration mode {calib_mode}")
 
                 logging.warning(
-                    f"Auto-correct calibration of motor '{name}' by shifting value by {abs(factor)} full turns, "
-                    f"from '{out_of_range_str}' to '{in_range_str}'."
+                    "Auto-correct calibration of motor '%s' by shifting value by %s full turns, "
+                    "from '%s' to '%s'.",
+                    name,
+                    abs(factor),
+                    out_of_range_str,
+                    in_range_str,
                 )
 
                 # A full turn corresponds to 360 degrees but also to 4096 steps for a motor resolution of 4096.
@@ -674,8 +682,8 @@ class FeetechMotorsBus:
             motor_ids = [motor_ids]
 
         assert_same_address(self.model_ctrl_table, self.motor_models, data_name)
-        addr, bytes = self.model_ctrl_table[motor_models[0]][data_name]
-        group = scs.GroupSyncRead(self.port_handler, self.packet_handler, addr, bytes)
+        addr, byte = self.model_ctrl_table[motor_models[0]][data_name]
+        group = scs.GroupSyncRead(self.port_handler, self.packet_handler, addr, byte)
         for idx in motor_ids:
             group.addParam(idx)
 
@@ -692,7 +700,7 @@ class FeetechMotorsBus:
 
         values = []
         for idx in motor_ids:
-            value = group.getData(idx, addr, bytes)
+            value = group.getData(idx, addr, byte)
             values.append(value)
 
         if return_list:
@@ -727,7 +735,7 @@ class FeetechMotorsBus:
             models.append(model)
 
         assert_same_address(self.model_ctrl_table, models, data_name)
-        addr, bytes = self.model_ctrl_table[model][data_name]
+        addr, byte = self.model_ctrl_table[model][data_name]
         group_key = get_group_sync_key(data_name, motor_names)
 
         if data_name not in self.group_readers:
@@ -737,7 +745,7 @@ class FeetechMotorsBus:
 
             # create new group reader
             self.group_readers[group_key] = scs.GroupSyncRead(
-                self.port_handler, self.packet_handler, addr, bytes
+                self.port_handler, self.packet_handler, addr, byte
             )
             for idx in motor_ids:
                 self.group_readers[group_key].addParam(idx)
@@ -755,7 +763,7 @@ class FeetechMotorsBus:
 
         values = []
         for idx in motor_ids:
-            value = self.group_readers[group_key].getData(idx, addr, bytes)
+            value = self.group_readers[group_key].getData(idx, addr, byte)
             values.append(value)
 
         values = np.array(values)
@@ -792,10 +800,10 @@ class FeetechMotorsBus:
             values = [values]
 
         assert_same_address(self.model_ctrl_table, motor_models, data_name)
-        addr, bytes = self.model_ctrl_table[motor_models[0]][data_name]
-        group = scs.GroupSyncWrite(self.port_handler, self.packet_handler, addr, bytes)
+        addr, byte = self.model_ctrl_table[motor_models[0]][data_name]
+        group = scs.GroupSyncWrite(self.port_handler, self.packet_handler, addr, byte)
         for idx, value in zip(motor_ids, values, strict=True):
-            data = convert_to_bytes(value, bytes, self.mock)
+            data = convert_to_bytes(value, byte, self.mock)
             group.addParam(idx, data)
 
         for _ in range(num_retry):
@@ -846,17 +854,17 @@ class FeetechMotorsBus:
         values = values.tolist()
 
         assert_same_address(self.model_ctrl_table, models, data_name)
-        addr, bytes = self.model_ctrl_table[model][data_name]
+        addr, byte = self.model_ctrl_table[model][data_name]
         group_key = get_group_sync_key(data_name, motor_names)
 
         init_group = data_name not in self.group_readers
         if init_group:
             self.group_writers[group_key] = scs.GroupSyncWrite(
-                self.port_handler, self.packet_handler, addr, bytes
+                self.port_handler, self.packet_handler, addr, byte
             )
 
         for idx, value in zip(motor_ids, values, strict=True):
-            data = convert_to_bytes(value, bytes, self.mock)
+            data = convert_to_bytes(value, byte, self.mock)
             if init_group:
                 self.group_writers[group_key].addParam(idx, data)
             else:
