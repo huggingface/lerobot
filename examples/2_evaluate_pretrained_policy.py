@@ -44,7 +44,7 @@ pretrained_policy_path = "lerobot/diffusion_pusht"
 # OR a path to a local outputs/train folder.
 # pretrained_policy_path = Path("outputs/train/example_pusht_diffusion")
 
-policy = DiffusionPolicy.from_pretrained(pretrained_policy_path, map_location=device)
+policy = DiffusionPolicy.from_pretrained(pretrained_policy_path)
 
 # Initialize evaluation environment to render two observation types:
 # an image of the scene and state/position of the agent. The environment
