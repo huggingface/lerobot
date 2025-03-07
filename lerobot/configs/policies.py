@@ -64,13 +64,14 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
         self.pretrained_path = None
         if not self.device or not is_torch_device_available(self.device):
             auto_device = auto_select_torch_device()
-            logging.warning("Device '%s' is not available. Switching to '%s'.",self.device,auto_device)
+            logging.warning("Device '%s' is not available. Switching to '%s'.", self.device, auto_device)
             self.device = auto_device.type
 
         # Automatically deactivate AMP if necessary
         if self.use_amp and not is_amp_available(self.device):
             logging.warning(
-                "Automatic Mixed Precision (amp) is not available on device '%s'. Deactivating AMP.",self.device
+                "Automatic Mixed Precision (amp) is not available on device '%s'. Deactivating AMP.",
+                self.device,
             )
             self.use_amp = False
 
