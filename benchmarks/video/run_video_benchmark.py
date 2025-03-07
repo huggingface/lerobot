@@ -67,6 +67,7 @@ def parse_int_or_none(value) -> int | None:
 def check_datasets_formats(repo_ids: list) -> None:
     for repo_id in repo_ids:
         dataset = LeRobotDataset(repo_id)
+        # TODO(Steven): Seems this API has changed
         if dataset.video:
             raise ValueError(
                 f"Use only image dataset for running this benchmark. Video dataset provided: {repo_id}"
