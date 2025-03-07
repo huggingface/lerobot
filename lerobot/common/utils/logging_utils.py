@@ -27,6 +27,8 @@ class AverageMeter:
     def __init__(self, name: str, fmt: str = ":f"):
         self.name = name
         self.fmt = fmt
+        self.val = 0.0
+        self.avg = 0.0
         self.reset()
 
     def reset(self) -> None:

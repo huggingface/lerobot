@@ -69,7 +69,7 @@ def get_safe_torch_device(try_device: str, log: bool = False) -> torch.device:
         case _:
             device = torch.device(try_device)
             if log:
-                logging.warning(f"Using custom {try_device} device.")
+                logging.warning("Using custom %s device.", try_device)
 
     return device
 
