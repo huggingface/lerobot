@@ -286,10 +286,13 @@ class OpenCVCamera:
             cv2.setNumThreads(1)
 
         backend = (
-            cv2.CAP_V4L2 if platform.system() == "Linux" else
-            cv2.CAP_DSHOW if platform.system() == "Windows" else
-            cv2.CAP_AVFOUNDATION if platform.system() == "Darwin" else
-            cv2.CAP_ANY
+            cv2.CAP_V4L2
+            if platform.system() == "Linux"
+            else cv2.CAP_DSHOW
+            if platform.system() == "Windows"
+            else cv2.CAP_AVFOUNDATION
+            if platform.system() == "Darwin"
+            else cv2.CAP_ANY
         )
 
         camera_idx = f"/dev/video{self.camera_index}" if platform.system() == "Linux" else self.camera_index
