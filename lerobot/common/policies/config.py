@@ -178,7 +178,7 @@ class PreTrainedConfig(
         return draccus.parse(cls, config_file, args=cli_overrides)
 
     @classmethod
-    def register(cls, config_type: str, config: "PreTrainedConfig", exist_ok: bool = False):
+    def register(cls, config_type: str, config: Type[T], exist_ok: bool = False):
         """Register a new configuration for this class."""
         if config_type in cls._choice_registry and not exist_ok:
             raise ValueError(
