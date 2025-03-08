@@ -114,20 +114,19 @@ print(dataset.features[camera_key]["shape"])
 # The shape is in (h, w, c) which is a more universal format.
 
 # For many machine learning applications we need to load the history of past observations or trajectories of
-# future actions. Our datasets can load previous and future frames for each key/modality, using timestamps
+# future actions. Our datasets can load previous and future frames for each key/modality, using index
 # differences with the current loaded frame. For instance:
-delta_timestamps = {
+delta_indices = {
     # loads 4 images: 1 second before current frame, 500 ms before, 200 ms before, and current frame
-    camera_key: [-1, -0.5, -0.20, 0],
+    # dataset has 50 fps so we use 50 * t to get the frame index
+    camera_key: [-50, -25, -10, 0],
     # loads 8 state vectors: 1.5 seconds before, 1 second before, ... 200 ms, 100 ms, and current frame
-    "observation.state": [-1.5, -1, -0.5, -0.20, -0.10, 0],
+    "observation.state": [-75, -50, -25, -10, -5, 0],
     # loads 64 action vectors: current frame, 1 frame in the future, 2 frames, ... 63 frames in the future
-    "action": [t / dataset.fps for t in range(64)],
+    "action": list(range(64)),
 }
-# Note that in any case, these delta_timestamps values need to be multiples of (1/fps) so that added to any
-# timestamp, you still get a valid timestamp.
 
-dataset = LeRobotDataset(repo_id, delta_timestamps=delta_timestamps)
+dataset = LeRobotDataset(repo_id, delta_indices=delta_indices)
 print(f"\n{dataset[0][camera_key].shape=}")  # (4, c, h, w)
 print(f"{dataset[0]['observation.state'].shape=}")  # (6, c)
 print(f"{dataset[0]['action'].shape=}\n")  # (64, c)

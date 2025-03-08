@@ -352,7 +352,7 @@ def test_factory(env_name, repo_id, policy_name):
     )
 
     dataset = make_dataset(cfg)
-    delta_timestamps = dataset.delta_timestamps
+    delta_indices = dataset.delta_indices
     camera_keys = dataset.meta.camera_keys
 
     item = dataset[0]
@@ -377,9 +377,9 @@ def test_factory(env_name, repo_id, policy_name):
                 logging.warning(f'Missing key in dataset: "{key}" not in {dataset}.')
                 continue
 
-        if delta_timestamps is not None and key in delta_timestamps:
+        if delta_indices is not None and key in delta_indices:
             assert item[key].ndim == ndim + 1, f"{key}"
-            assert item[key].shape[0] == len(delta_timestamps[key]), f"{key}"
+            assert item[key].shape[0] == len(delta_indices[key]), f"{key}"
         else:
             assert item[key].ndim == ndim, f"{key}"
 
@@ -389,16 +389,16 @@ def test_factory(env_name, repo_id, policy_name):
             assert item[key].max() <= 1.0, f"{key}"
             assert item[key].min() >= 0.0, f"{key}"
 
-            if delta_timestamps is not None and key in delta_timestamps:
+            if delta_indices is not None and key in delta_indices:
                 # test t,c,h,w
                 assert item[key].shape[1] == 3, f"{key}"
             else:
                 # test c,h,w
                 assert item[key].shape[0] == 3, f"{key}"
 
-    if delta_timestamps is not None:
-        # test missing keys in delta_timestamps
-        for key in delta_timestamps:
+    if delta_indices is not None:
+        # test missing keys in delta_indices
+        for key in delta_indices:
             assert key in item, f"{key}"
 
 

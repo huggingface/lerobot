@@ -43,15 +43,15 @@ def main():
     policy.to(device)
 
     # Set up the dataset.
-    delta_timestamps = {
-        # Load the previous image and state at -0.1 seconds before current frame,
+    delta_indices = {
+        # Load the previous image and state at -1 * 1/FPS = -0.1 seconds before current frame,
         # then load current image and state corresponding to 0.0 second.
-        "observation.image": [-0.1, 0.0],
-        "observation.state": [-0.1, 0.0],
+        "observation.image": [-1, 0],
+        "observation.state": [-1, 0],
         # Load the previous action (-0.1), the next action to be executed (0.0),
         # and 14 future actions with a 0.1 seconds spacing. All these actions will be
         # used to calculate the loss.
-        "action": [-0.1, 0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4],
+        "action": [-1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
     }
 
     # Load the last 10% of episodes of the dataset as a validation set.
@@ -67,10 +67,8 @@ def main():
     print(f"Number of episodes in training dataset (90% subset): {len(train_episodes)}")
     print(f"Number of episodes in validation dataset (10% subset): {len(val_episodes)}")
     # - Load train an val datasets
-    train_dataset = LeRobotDataset(
-        "lerobot/pusht", episodes=train_episodes, delta_timestamps=delta_timestamps
-    )
-    val_dataset = LeRobotDataset("lerobot/pusht", episodes=val_episodes, delta_timestamps=delta_timestamps)
+    train_dataset = LeRobotDataset("lerobot/pusht", episodes=train_episodes, delta_indices=delta_indices)
+    val_dataset = LeRobotDataset("lerobot/pusht", episodes=val_episodes, delta_indices=delta_indices)
     print(f"Number of frames in training dataset (90% subset): {len(train_dataset)}")
     print(f"Number of frames in validation dataset (10% subset): {len(val_dataset)}")
 
