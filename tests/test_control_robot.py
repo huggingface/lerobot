@@ -41,9 +41,8 @@ from unittest.mock import patch
 
 import pytest
 
+from lerobot.common.policies import PreTrainedConfig, make_policy
 from lerobot.common.policies.act.configuration_act import ACTConfig
-from lerobot.common.policies.config import PreTrainedConfig
-from lerobot.common.policies.factory import make_policy
 from lerobot.common.robot_devices.control_configs import (
     CalibrateControlConfig,
     RecordControlConfig,

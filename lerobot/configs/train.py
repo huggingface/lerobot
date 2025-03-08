@@ -24,7 +24,7 @@ from huggingface_hub.errors import HfHubHTTPError
 from lerobot.common import envs
 from lerobot.common.optim import OptimizerConfig
 from lerobot.common.optim.schedulers import LRSchedulerConfig
-from lerobot.common.policies.config import PreTrainedConfig
+from lerobot.common.policies import PreTrainedConfig
 from lerobot.common.utils.hub import HubMixin
 from lerobot.configs import parser
 from lerobot.configs.default import DatasetConfig, EvalConfig, WandBConfig

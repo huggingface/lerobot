@@ -13,6 +13,8 @@
 # limitations under the License.
 
 from . import act, diffusion, pi0, tdmpc, vqbet
+from .config import PreTrainedConfig
 from .factory import make_policy
+from .pretrained import PreTrainedPolicy
 
-__all__ = ["act", "diffusion", "pi0", "tdmpc", "vqbet", "make_policy"]
+__all__ = ["act", "diffusion", "pi0", "tdmpc", "vqbet", "make_policy", "PreTrainedConfig", "PreTrainedPolicy"]

@@ -21,7 +21,8 @@ from safetensors.torch import save_file
 
 from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.optim.factory import make_optimizer_and_scheduler
-from lerobot.common.policies.factory import make_policy, make_policy_config
+from lerobot.common.policies import make_policy
+from lerobot.common.policies.factory import make_policy_config
 from lerobot.common.utils.random_utils import set_seed
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
