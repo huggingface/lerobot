@@ -232,7 +232,9 @@ def train(cfg: TrainPipelineConfig):
         if is_log_step:
             logging.info(train_tracker)
             if wandb_logger:
-                wandb_log_dict = {**train_tracker.to_dict(), **output_dict}
+                wandb_log_dict = train_tracker.to_dict()
+                if output_dict:
+                    wandb_log_dict.update(output_dict)
                 wandb_logger.log_dict(wandb_log_dict, step)
             train_tracker.reset_averages()
 
