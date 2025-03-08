@@ -22,11 +22,6 @@
 
 Designed by Physical Intelligence. Ported from Jax by Hugging Face.
 
-Install pi0 extra dependencies:
-```bash
-pip install -e ".[pi0]"
-```
-
 Example of finetuning the pi0 pretrained model (`pi0_base` in `openpi`):
 ```bash
 python lerobot/scripts/train.py \
