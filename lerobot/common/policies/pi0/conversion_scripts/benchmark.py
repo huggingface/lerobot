@@ -15,8 +15,8 @@
 import torch
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.common.policies.config import PreTrainedConfig
 from lerobot.common.policies.factory import make_policy
-from lerobot.configs.policies import PreTrainedConfig
 
 torch.backends.cudnn.benchmark = True
 

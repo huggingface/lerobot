@@ -18,8 +18,9 @@ from lerobot.common.optim.optimizers import AdamWConfig
 from lerobot.common.optim.schedulers import (
     CosineDecayWithWarmupSchedulerConfig,
 )
-from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
+
+from ..config import PreTrainedConfig
 
 
 @PreTrainedConfig.register_subclass("pi0")
