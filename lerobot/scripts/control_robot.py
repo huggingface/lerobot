@@ -141,7 +141,7 @@ from pprint import pformat
 
 # from safetensors.torch import load_file, save_file
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.policies.factory import make_policy
+from lerobot.common.policies import make_policy
 from lerobot.common.robot_devices.control_configs import (
     CalibrateControlConfig,
     ControlPipelineConfig,

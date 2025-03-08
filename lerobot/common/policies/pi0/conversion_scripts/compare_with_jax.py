@@ -19,8 +19,7 @@ from pathlib import Path
 import torch
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
-from lerobot.common.policies.factory import make_policy
-from lerobot.configs.policies import PreTrainedConfig
+from lerobot.common.policies import PreTrainedConfig, make_policy
 
 
 def display(tensor: torch.Tensor):

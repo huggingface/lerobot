@@ -27,7 +27,8 @@ from safetensors.torch import save_model as save_model_as_safetensor
 from torch import Tensor, nn
 
 from lerobot.common.utils.hub import HubMixin
-from lerobot.configs.policies import PreTrainedConfig
+
+from .config import PreTrainedConfig
 
 T = TypeVar("T", bound="PreTrainedPolicy")
 

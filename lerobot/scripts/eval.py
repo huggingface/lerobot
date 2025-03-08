@@ -67,8 +67,7 @@ from tqdm import trange
 
 from lerobot.common.envs.factory import make_env
 from lerobot.common.envs.utils import preprocess_observation
-from lerobot.common.policies.factory import make_policy
-from lerobot.common.policies.pretrained import PreTrainedPolicy
+from lerobot.common.policies import PreTrainedPolicy, make_policy
 from lerobot.common.policies.utils import get_device_from_parameters
 from lerobot.common.utils.io_utils import write_video
 from lerobot.common.utils.random_utils import set_seed

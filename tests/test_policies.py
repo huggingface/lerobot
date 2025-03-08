@@ -28,11 +28,11 @@ from lerobot.common.datasets.utils import cycle, dataset_to_policy_features
 from lerobot.common.envs.factory import make_env, make_env_config
 from lerobot.common.envs.utils import preprocess_observation
 from lerobot.common.optim.factory import make_optimizer_and_scheduler
+from lerobot.common.policies.act import ACTConfig
 from lerobot.common.policies.act.modeling_act import ACTTemporalEnsembler
 from lerobot.common.policies.factory import (
     get_policy_class,
     make_policy,
-    make_policy_config,
 )
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.pretrained import PreTrainedPolicy
@@ -41,7 +41,7 @@ from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from tests.scripts.save_policy_to_safetensors import get_policy_stats
-from tests.utils import DEVICE, require_cpu, require_env, require_x86_64_kernel
+from tests.utils import DEVICE, make_policy_config, require_cpu, require_env, require_x86_64_kernel
 
 
 @pytest.fixture
@@ -208,11 +208,10 @@ def test_act_backbone_lr():
     """
     Test that the ACT policy can be instantiated with a different learning rate for the backbone.
     """
-
     cfg = TrainPipelineConfig(
         # TODO(rcadene, aliberts): remove dataset download
         dataset=DatasetConfig(repo_id="lerobot/aloha_sim_insertion_scripted", episodes=[0]),
-        policy=make_policy_config("act", optimizer_lr=0.01, optimizer_lr_backbone=0.001),
+        policy=ACTConfig(optimizer_lr=0.01, optimizer_lr_backbone=0.001),
     )
     cfg.validate()  # Needed for auto-setting some parameters
 
