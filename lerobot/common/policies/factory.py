@@ -54,31 +54,6 @@ def get_policy_class(name: str) -> PreTrainedPolicy:
         raise NotImplementedError(f"Policy with name {name} is not implemented.")
 
 
-def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
-    if policy_type == "act":
-        from .act import ACTConfig
-
-        return ACTConfig(**kwargs)
-    elif policy_type == "diffusion":
-        from .diffusion import DiffusionConfig
-
-        return DiffusionConfig(**kwargs)
-    elif policy_type == "pi0":
-        from .pi0 import PI0Config
-
-        return PI0Config(**kwargs)
-    elif policy_type == "tdmpc":
-        from .tdmpc import TDMPCConfig
-
-        return TDMPCConfig(**kwargs)
-    elif policy_type == "vqbet":
-        from .vqbet import VQBeTConfig
-
-        return VQBeTConfig(**kwargs)
-    else:
-        raise ValueError(f"Policy type '{policy_type}' is not available.")
-
-
 def make_policy(
     cfg: PreTrainedConfig,
     ds_meta: LeRobotDatasetMetadata | None = None,

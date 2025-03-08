@@ -40,12 +40,11 @@ from lerobot.common.datasets.utils import (
     unflatten_dict,
 )
 from lerobot.common.envs.factory import make_env_config
-from lerobot.common.policies.factory import make_policy_config
 from lerobot.common.robot_devices.robots.utils import make_robot
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
 from tests.fixtures.constants import DUMMY_CHW, DUMMY_HWC, DUMMY_REPO_ID
-from tests.utils import require_x86_64_kernel
+from tests.utils import make_policy_config, require_x86_64_kernel
 
 
 @pytest.fixture
