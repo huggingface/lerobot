@@ -143,12 +143,11 @@ def test_policy(ds_repo_id, env_name, env_kwargs, policy_name, policy_kwargs):
         dataset=DatasetConfig(repo_id=ds_repo_id, episodes=[0]),
         policy=make_policy_config(policy_name, **policy_kwargs),
         env=make_env_config(env_name, **env_kwargs),
-        device=DEVICE,
     )
 
     # Check that we can make the policy object.
     dataset = make_dataset(train_cfg)
-    policy = make_policy(train_cfg.policy, ds_meta=dataset.meta, device=DEVICE)
+    policy = make_policy(train_cfg.policy, ds_meta=dataset.meta)
     assert isinstance(policy, PreTrainedPolicy)
 
     # Check that we run select_actions and get the appropriate output.
@@ -214,7 +213,6 @@ def test_act_backbone_lr():
         # TODO(rcadene, aliberts): remove dataset download
         dataset=DatasetConfig(repo_id="lerobot/aloha_sim_insertion_scripted", episodes=[0]),
         policy=make_policy_config("act", optimizer_lr=0.01, optimizer_lr_backbone=0.001),
-        device=DEVICE,
     )
     cfg.validate()  # Needed for auto-setting some parameters
 
@@ -222,7 +220,7 @@ def test_act_backbone_lr():
     assert cfg.policy.optimizer_lr_backbone == 0.001
 
     dataset = make_dataset(cfg)
-    policy = make_policy(cfg.policy, device=DEVICE, ds_meta=dataset.meta)
+    policy = make_policy(cfg.policy, ds_meta=dataset.meta)
     optimizer, _ = make_optimizer_and_scheduler(cfg, policy)
     assert len(optimizer.param_groups) == 2
     assert optimizer.param_groups[0]["lr"] == cfg.policy.optimizer_lr
@@ -254,10 +252,11 @@ def test_save_and_load_pretrained(dummy_dataset_metadata, tmp_path, policy_name:
         key: ft for key, ft in features.items() if key not in policy_cfg.output_features
     }
     policy = policy_cls(policy_cfg)
+    policy.to(policy_cfg.device)
     save_dir = tmp_path / f"test_save_and_load_pretrained_{policy_cls.__name__}"
     policy.save_pretrained(save_dir)
-    policy_ = policy_cls.from_pretrained(save_dir, config=policy_cfg)
-    assert all(torch.equal(p, p_) for p, p_ in zip(policy.parameters(), policy_.parameters(), strict=True))
+    loaded_policy = policy_cls.from_pretrained(save_dir, config=policy_cfg)
+    torch.testing.assert_close(list(policy.parameters()), list(loaded_policy.parameters()), rtol=0, atol=0)
 
 
 @pytest.mark.parametrize("insert_temporal_dim", [False, True])

@@ -1,3 +1,17 @@
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 This file contains utilities for recording frames from cameras. For more info look at `OpenCVCamera` docstring.
 """
@@ -271,10 +285,20 @@ class OpenCVCamera:
             # when other threads are used to save the images.
             cv2.setNumThreads(1)
 
+        backend = (
+            cv2.CAP_V4L2
+            if platform.system() == "Linux"
+            else cv2.CAP_DSHOW
+            if platform.system() == "Windows"
+            else cv2.CAP_AVFOUNDATION
+            if platform.system() == "Darwin"
+            else cv2.CAP_ANY
+        )
+
         camera_idx = f"/dev/video{self.camera_index}" if platform.system() == "Linux" else self.camera_index
         # First create a temporary camera trying to access `camera_index`,
         # and verify it is a valid camera by calling `isOpened`.
-        tmp_camera = cv2.VideoCapture(camera_idx)
+        tmp_camera = cv2.VideoCapture(camera_idx, backend)
         is_camera_open = tmp_camera.isOpened()
         # Release camera to make it accessible for `find_camera_indices`
         tmp_camera.release()
@@ -297,7 +321,7 @@ class OpenCVCamera:
         # Secondly, create the camera that will be used downstream.
         # Note: For some unknown reason, calling `isOpened` blocks the camera which then
         # needs to be re-created.
-        self.camera = cv2.VideoCapture(camera_idx)
+        self.camera = cv2.VideoCapture(camera_idx, backend)
 
         if not self.camera.isOpened():
             raise OSError(f"Camera {self.camera_index} could not be opened.")
