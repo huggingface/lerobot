@@ -34,63 +34,58 @@ from lerobot.common.policies.vqbet.configuration_vqbet import VQBeTConfig
 
 # ruff: noqa: N806
 
-"""
-This file is part of a VQ-BeT that utilizes code from the following repositories:
+# This file is part of a VQ-BeT that utilizes code from the following repositories:
+#
+#     - Vector Quantize PyTorch code is licensed under the MIT License:
+#         Original source: https://github.com/lucidrains/vector-quantize-pytorch
+#
+#     - nanoGPT part is an adaptation of Andrej Karpathy's nanoGPT implementation in PyTorch.
+#         Original source: https://github.com/karpathy/nanoGPT
+#
+# We also made some changes to the original code to adapt it to our needs. The changes are described in the code below.
 
-    - Vector Quantize PyTorch code is licensed under the MIT License:
-        Original source: https://github.com/lucidrains/vector-quantize-pytorch
-
-    - nanoGPT part is an adaptation of Andrej Karpathy's nanoGPT implementation in PyTorch.
-        Original source: https://github.com/karpathy/nanoGPT
-
-We also made some changes to the original code to adapt it to our needs. The changes are described in the code below.
-"""
-
-"""
-This is a part for nanoGPT that utilizes code from the following repository:
-
-    - Andrej Karpathy's nanoGPT implementation in PyTorch.
-        Original source: https://github.com/karpathy/nanoGPT
-
-    - The nanoGPT code is licensed under the MIT License:
-
-    MIT License
-
-    Copyright (c) 2022 Andrej Karpathy
-
-    Permission is hereby granted, free of charge, to any person obtaining a copy
-    of this software and associated documentation files (the "Software"), to deal
-    in the Software without restriction, including without limitation the rights
-    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-    copies of the Software, and to permit persons to whom the Software is
-    furnished to do so, subject to the following conditions:
-
-    The above copyright notice and this permission notice shall be included in all
-    copies or substantial portions of the Software.
-
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-    SOFTWARE.
-
-    - We've made some changes to the original code to adapt it to our needs.
-
-        Changed variable names:
-            - n_head -> gpt_n_head
-            - n_embd -> gpt_hidden_dim
-            - block_size -> gpt_block_size
-            - n_layer -> gpt_n_layer
-
-
-        class GPT(nn.Module):
-            - removed unused functions `def generate`, `def estimate_mfu`, and `def from_pretrained`
-            - changed the `configure_optimizers` to `def configure_parameters` and made it to return only the parameters of the model: we use an external optimizer in our training loop.
-            - in the function `forward`, we removed target loss calculation parts, since it will be calculated in the training loop (after passing through bin prediction and offset prediction heads).
-
-"""
+# This is a part for nanoGPT that utilizes code from the following repository:
+#
+#     - Andrej Karpathy's nanoGPT implementation in PyTorch.
+#         Original source: https://github.com/karpathy/nanoGPT
+#
+#     - The nanoGPT code is licensed under the MIT License:
+#
+#     MIT License
+#
+#     Copyright (c) 2022 Andrej Karpathy
+#
+#     Permission is hereby granted, free of charge, to any person obtaining a copy
+#     of this software and associated documentation files (the "Software"), to deal
+#     in the Software without restriction, including without limitation the rights
+#     to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+#     copies of the Software, and to permit persons to whom the Software is
+#     furnished to do so, subject to the following conditions:
+#
+#     The above copyright notice and this permission notice shall be included in all
+#     copies or substantial portions of the Software.
+#
+#     THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+#     IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+#     FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+#     AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+#     LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+#     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+#     SOFTWARE.
+#
+#     - We've made some changes to the original code to adapt it to our needs.
+#
+#         Changed variable names:
+#             - n_head -> gpt_n_head
+#             - n_embd -> gpt_hidden_dim
+#             - block_size -> gpt_block_size
+#             - n_layer -> gpt_n_layer
+#
+#
+#         class GPT(nn.Module):
+#             - removed unused functions `def generate`, `def estimate_mfu`, and `def from_pretrained`
+#             - changed the `configure_optimizers` to `def configure_parameters` and made it to return only the parameters of the model: we use an external optimizer in our training loop.
+#             - in the function `forward`, we removed target loss calculation parts, since it will be calculated in the training loop (after passing through bin prediction and offset prediction heads).
 
 
 class CausalSelfAttention(nn.Module):
@@ -200,9 +195,9 @@ class GPT(nn.Module):
         n_params = sum(p.numel() for p in self.parameters())
         print("number of parameters: {:.2f}M".format(n_params / 1e6))
 
-    def forward(self, input, targets=None):
-        device = input.device
-        b, t, d = input.size()
+    def forward(self, forward_input):
+        device = forward_input.device
+        _, t, _ = forward_input.size()
         assert t <= self.config.gpt_block_size, (
             f"Cannot forward sequence of length {t}, block size is only {self.config.gpt_block_size}"
         )
@@ -211,7 +206,7 @@ class GPT(nn.Module):
         pos = torch.arange(0, t, dtype=torch.long, device=device).unsqueeze(0)  # shape (1, t)
 
         # forward the GPT model itself
-        tok_emb = self.transformer.wte(input)  # token embeddings of shape (b, t, gpt_hidden_dim)
+        tok_emb = self.transformer.wte(forward_input)  # token embeddings of shape (b, t, gpt_hidden_dim)
         pos_emb = self.transformer.wpe(pos)  # position embeddings of shape (1, t, gpt_hidden_dim)
         x = self.transformer.drop(tok_emb + pos_emb)
         for block in self.transformer.h:
@@ -285,51 +280,48 @@ class GPT(nn.Module):
         return decay, no_decay
 
 
-"""
-This file is a part for Residual Vector Quantization that utilizes code from the following repository:
-
-    - Phil Wang's vector-quantize-pytorch implementation in PyTorch.
-        Original source: https://github.com/lucidrains/vector-quantize-pytorch
-
-    - The vector-quantize-pytorch code is licensed under the MIT License:
-
-        MIT License
-
-        Copyright (c) 2020 Phil Wang
-
-        Permission is hereby granted, free of charge, to any person obtaining a copy
-        of this software and associated documentation files (the "Software"), to deal
-        in the Software without restriction, including without limitation the rights
-        to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-        copies of the Software, and to permit persons to whom the Software is
-        furnished to do so, subject to the following conditions:
-
-        The above copyright notice and this permission notice shall be included in all
-        copies or substantial portions of the Software.
-
-        THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-        IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-        FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-        AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-        LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-        OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-        SOFTWARE.
-
-    - We've made some changes to the original code to adapt it to our needs.
-
-        class ResidualVQ(nn.Module):
-            - added `self.register_buffer('freeze_codebook', torch.tensor(False))` to the __init__ method:
-                This enables the user to save an indicator whether the codebook is frozen or not.
-            - changed the name of function `get_codes_from_indices` → `get_codebook_vector_from_indices`:
-                This is to make the function name more descriptive.
-
-        class VectorQuantize(nn.Module):
-            - removed the `use_cosine_sim` and `layernorm_after_project_in` parameters from the __init__ method:
-                These parameters are not used in the code.
-            - changed the name of function `get_codes_from_indices` → `get_codebook_vector_from_indices`:
-                This is to make the function name more descriptive.
-
-"""
+# This file is a part for Residual Vector Quantization that utilizes code from the following repository:
+#
+#     - Phil Wang's vector-quantize-pytorch implementation in PyTorch.
+#         Original source: https://github.com/lucidrains/vector-quantize-pytorch
+#
+#     - The vector-quantize-pytorch code is licensed under the MIT License:
+#
+#         MIT License
+#
+#         Copyright (c) 2020 Phil Wang
+#
+#         Permission is hereby granted, free of charge, to any person obtaining a copy
+#         of this software and associated documentation files (the "Software"), to deal
+#         in the Software without restriction, including without limitation the rights
+#         to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+#         copies of the Software, and to permit persons to whom the Software is
+#         furnished to do so, subject to the following conditions:
+#
+#         The above copyright notice and this permission notice shall be included in all
+#         copies or substantial portions of the Software.
+#
+#         THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+#         IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+#         FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+#         AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+#         LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+#         OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+#         SOFTWARE.
+#
+#     - We've made some changes to the original code to adapt it to our needs.
+#
+#         class ResidualVQ(nn.Module):
+#             - added `self.register_buffer('freeze_codebook', torch.tensor(False))` to the __init__ method:
+#                 This enables the user to save an indicator whether the codebook is frozen or not.
+#             - changed the name of function `get_codes_from_indices` → `get_codebook_vector_from_indices`:
+#                 This is to make the function name more descriptive.
+#
+#         class VectorQuantize(nn.Module):
+#             - removed the `use_cosine_sim` and `layernorm_after_project_in` parameters from the __init__ method:
+#                 These parameters are not used in the code.
+#             - changed the name of function `get_codes_from_indices` → `get_codebook_vector_from_indices`:
+#                 This is to make the function name more descriptive.
 
 
 class ResidualVQ(nn.Module):
@@ -478,6 +470,9 @@ class ResidualVQ(nn.Module):
             ce_losses = []
 
         should_quantize_dropout = self.training and self.quantize_dropout and not return_loss
+
+        null_indices = None
+        null_loss = None
 
         # sample a layer index at which to dropout further residual quantization
         # also prepare null indices and loss
@@ -933,7 +928,7 @@ class VectorQuantize(nn.Module):
         return quantize, embed_ind, loss
 
 
-def noop(*args, **kwargs):
+def noop(*_args, **_kwargs):
     pass
 
 

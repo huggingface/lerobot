@@ -13,8 +13,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import logging
-from pprint import pformat
 
 import torch
 
@@ -98,17 +96,17 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
         )
     else:
         raise NotImplementedError("The MultiLeRobotDataset isn't supported for now.")
-        dataset = MultiLeRobotDataset(
-            cfg.dataset.repo_id,
-            # TODO(aliberts): add proper support for multi dataset
-            # delta_timestamps=delta_timestamps,
-            image_transforms=image_transforms,
-            video_backend=cfg.dataset.video_backend,
-        )
-        logging.info(
-            "Multiple datasets were provided. Applied the following index mapping to the provided datasets: "
-            f"{pformat(dataset.repo_id_to_index, indent=2)}"
-        )
+        # dataset = MultiLeRobotDataset(
+        #     cfg.dataset.repo_id,
+        #     # TODO(aliberts): add proper support for multi dataset
+        #     # delta_timestamps=delta_timestamps,
+        #     image_transforms=image_transforms,
+        #     video_backend=cfg.dataset.video_backend,
+        # )
+        # logging.info(
+        #     "Multiple datasets were provided. Applied the following index mapping to the provided datasets: "
+        #     f"{pformat(dataset.repo_id_to_index, indent=2)}"
+        # )
 
     if cfg.dataset.use_imagenet_stats:
         for key in dataset.meta.camera_keys:

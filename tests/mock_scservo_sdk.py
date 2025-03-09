@@ -24,10 +24,10 @@ DEFAULT_BAUDRATE = 1_000_000
 COMM_SUCCESS = 0  # tx or rx packet communication success
 
 
-def convert_to_bytes(value, bytes):
+def convert_to_bytes(value, byte):
     # TODO(rcadene): remove need to mock `convert_to_bytes` by implemented the inverse transform
     # `convert_bytes_to_value`
-    del bytes  # unused
+    del byte  # unused
     return value
 
 
@@ -85,7 +85,7 @@ class PacketHandler:
 
 
 class GroupSyncRead:
-    def __init__(self, port_handler, packet_handler, address, bytes):
+    def __init__(self, _port_handler, packet_handler, _address, _byte):
         self.packet_handler = packet_handler
 
     def addParam(self, motor_index):  # noqa: N802
@@ -96,12 +96,12 @@ class GroupSyncRead:
     def txRxPacket(self):  # noqa: N802
         return COMM_SUCCESS
 
-    def getData(self, index, address, bytes):  # noqa: N802
+    def getData(self, index, address, _byte):  # noqa: N802
         return self.packet_handler.data[index][address]
 
 
 class GroupSyncWrite:
-    def __init__(self, port_handler, packet_handler, address, bytes):
+    def __init__(self, _port_handler, packet_handler, address, _byte):
         self.packet_handler = packet_handler
         self.address = address
 

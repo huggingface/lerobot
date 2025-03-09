@@ -77,9 +77,9 @@ def save_image(img_array, serial_number, frame_index, images_dir):
         path = images_dir / f"camera_{serial_number}_frame_{frame_index:06d}.png"
         path.parent.mkdir(parents=True, exist_ok=True)
         img.save(str(path), quality=100)
-        logging.info(f"Saved image: {path}")
+        logging.info("Saved image: %s", path)
     except Exception as e:
-        logging.error(f"Failed to save image for camera {serial_number} frame {frame_index}: {e}")
+        logging.error("Failed to save image for camera %s frame %s: %s", serial_number, frame_index, e)
 
 
 def save_images_from_cameras(
@@ -447,7 +447,7 @@ class IntelRealSenseCamera:
             num_tries += 1
             time.sleep(1 / self.fps)
             if num_tries > self.fps and (self.thread.ident is None or not self.thread.is_alive()):
-                raise Exception(
+                raise TimeoutError(
                     "The thread responsible for `self.async_read()` took too much time to start. There might be an issue. Verify that `self.thread.start()` has been called."
                 )
 

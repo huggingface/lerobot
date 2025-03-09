@@ -47,8 +47,10 @@ def ensure_safe_goal_position(
     if not torch.allclose(goal_pos, safe_goal_pos):
         logging.warning(
             "Relative goal position magnitude had to be clamped to be safe.\n"
-            f"  requested relative goal position target: {diff}\n"
-            f"    clamped relative goal position target: {safe_diff}"
+            "  requested relative goal position target: %s\n"
+            "    clamped relative goal position target: %s",
+            diff,
+            safe_diff,
         )
 
     return safe_goal_pos
@@ -245,6 +247,8 @@ class ManipulatorRobot:
             from lerobot.common.robot_devices.motors.dynamixel import TorqueMode
         elif self.robot_type in ["so100", "moss", "lekiwi"]:
             from lerobot.common.robot_devices.motors.feetech import TorqueMode
+        else:
+            raise NotImplementedError(f"Robot type {self.robot_type} is not supported")
 
         # We assume that at connection time, arms are in a rest position, and torque can
         # be safely disabled to run calibration and/or set robot preset configurations.
@@ -302,7 +306,7 @@ class ManipulatorRobot:
             arm_calib_path = self.calibration_dir / f"{arm_id}.json"
 
             if arm_calib_path.exists():
-                with open(arm_calib_path) as f:
+                with open(arm_calib_path, encoding="utf-8") as f:
                     calibration = json.load(f)
             else:
                 # TODO(rcadene): display a warning in __init__ if calibration file not available
@@ -322,7 +326,7 @@ class ManipulatorRobot:
 
                 print(f"Calibration is done! Saving calibration file '{arm_calib_path}'")
                 arm_calib_path.parent.mkdir(parents=True, exist_ok=True)
-                with open(arm_calib_path, "w") as f:
+                with open(arm_calib_path, "w", encoding="utf-8") as f:
                     json.dump(calibration, f)
 
             return calibration

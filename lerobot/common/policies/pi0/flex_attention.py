@@ -16,6 +16,7 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 from packaging.version import Version
 
+# TODO(Steven): Consider settings this a dependency constraint
 if Version(torch.__version__) > Version("2.5.0"):
     # Ffex attention is only available from torch 2.5 onwards
     from torch.nn.attention.flex_attention import (
@@ -121,7 +122,7 @@ def flex_attention_forward(
     )
 
     #  mask is applied inside the kernel, ideally more efficiently than score_mod.
-    attn_output, attention_weights = flex_attention(
+    attn_output, _attention_weights = flex_attention(
         query_states,
         key_states,
         value_states,

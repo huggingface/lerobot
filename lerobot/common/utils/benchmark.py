@@ -68,9 +68,9 @@ class TimeBenchmark(ContextDecorator):
         Block took approximately 10.00 milliseconds
     """
 
-    def __init__(self, print=False):
+    def __init__(self, print_time=False):
         self.local = threading.local()
-        self.print_time = print
+        self.print_time = print_time
 
     def __enter__(self):
         self.local.start_time = time.perf_counter()

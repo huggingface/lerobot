@@ -27,6 +27,13 @@ class format(enum.Enum):  # noqa: N801
 
 
 class config:  # noqa: N801
+    device_enabled = None
+    stream_type = None
+    width = None
+    height = None
+    color_format = None
+    fps = None
+
     def enable_device(self, device_id: str):
         self.device_enabled = device_id
 
@@ -125,8 +132,7 @@ class RSDevice:
     def __init__(self):
         pass
 
-    def get_info(self, camera_info) -> str:
-        del camera_info  # unused
+    def get_info(self, _camera_info) -> str:
         # return fake serial number
         return "123456789"
 
@@ -145,4 +151,3 @@ class camera_info:  # noqa: N801
 
     def __init__(self, serial_number):
         del serial_number
-        pass

@@ -318,7 +318,7 @@ def update_keys_with_prefix(d: dict, prefix: str) -> dict:
     return {f"{prefix}{key}": value for key, value in d.items()}
 
 
-def convert_pi0_checkpoint(checkpoint_dir: str, precision: str, tokenizer_id: str, output_path: str):
+def convert_pi0_checkpoint(checkpoint_dir: str, precision: str, _tokenizer_id: str, output_path: str):
     # Break down orbax ckpts - they are in OCDBT
     initial_params = slice_initial_orbax_checkpoint(checkpoint_dir=checkpoint_dir)
     # process projection params
@@ -432,6 +432,6 @@ if __name__ == "__main__":
     convert_pi0_checkpoint(
         checkpoint_dir=args.checkpoint_dir,
         precision=args.precision,
-        tokenizer_id=args.tokenizer_hub_id,
+        _tokenizer_id=args.tokenizer_hub_id,
         output_path=args.output_path,
     )

@@ -150,6 +150,7 @@ def test_camera(request, camera_type, mock):
         else:
             import cv2
 
+        manual_rot_img: np.ndarray = None
         if rotation is None:
             manual_rot_img = ori_color_image
             assert camera.rotation is None
@@ -197,10 +198,14 @@ def test_camera(request, camera_type, mock):
 @require_camera
 def test_save_images_from_cameras(tmp_path, request, camera_type, mock):
     # TODO(rcadene): refactor
+    save_images_from_cameras = None
+
     if camera_type == "opencv":
         from lerobot.common.robot_devices.cameras.opencv import save_images_from_cameras
     elif camera_type == "intelrealsense":
         from lerobot.common.robot_devices.cameras.intelrealsense import save_images_from_cameras
+    else:
+        raise ValueError(f"Unsupported camera type: {camera_type}")
 
     # Small `record_time_s` to speedup unit tests
     save_images_from_cameras(tmp_path, record_time_s=0.02, mock=mock)

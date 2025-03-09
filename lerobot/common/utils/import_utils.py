@@ -46,7 +46,7 @@ def is_package_available(pkg_name: str, return_version: bool = False) -> tuple[b
             else:
                 # For packages other than "torch", don't attempt the fallback and set as not available
                 package_exists = False
-        logging.debug(f"Detected {pkg_name} version: {package_version}")
+        logging.debug("Detected %s version: %s", {pkg_name}, package_version)
     if return_version:
         return package_exists, package_version
     else:

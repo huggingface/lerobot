@@ -42,7 +42,9 @@ def check_format(raw_dir) -> bool:
     return True
 
 
-def load_from_raw(raw_dir: Path, videos_dir: Path, fps: int, video: bool, episodes: list[int] | None = None):
+def load_from_raw(
+    raw_dir: Path, videos_dir: Path, fps: int, _video: bool, _episodes: list[int] | None = None
+):
     # Load data stream that will be used as reference for the timestamps synchronization
     reference_files = list(raw_dir.glob("observation.images.cam_*.parquet"))
     if len(reference_files) == 0:

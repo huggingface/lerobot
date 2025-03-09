@@ -155,12 +155,14 @@ def train(cfg: TrainPipelineConfig):
 
     logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}")
     if cfg.env is not None:
-        logging.info(f"{cfg.env.task=}")
-    logging.info(f"{cfg.steps=} ({format_big_number(cfg.steps)})")
-    logging.info(f"{dataset.num_frames=} ({format_big_number(dataset.num_frames)})")
-    logging.info(f"{dataset.num_episodes=}")
-    logging.info(f"{num_learnable_params=} ({format_big_number(num_learnable_params)})")
-    logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
+        logging.info("cfg.env.task=%s", cfg.env.task)
+    logging.info("cfg.steps=%s (%s)", cfg.steps, format_big_number(cfg.steps))
+    logging.info("dataset.num_frames=%s (%s)", dataset.num_frames, format_big_number(dataset.num_frames))
+    logging.info("dataset.num_episodes=%s", dataset.num_episodes)
+    logging.info(
+        "num_learnable_params=%s (%s)", num_learnable_params, format_big_number(num_learnable_params)
+    )
+    logging.info("num_total_params=%s (%s)", num_total_params, format_big_number(num_total_params))
 
     # create dataloader for offline training
     if hasattr(cfg.policy, "drop_n_last_frames"):
@@ -238,7 +240,7 @@ def train(cfg: TrainPipelineConfig):
             train_tracker.reset_averages()
 
         if cfg.save_checkpoint and is_saving_step:
-            logging.info(f"Checkpoint policy after step {step}")
+            logging.info("Checkpoint policy after step %s", step)
             checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, cfg.steps, step)
             save_checkpoint(checkpoint_dir, step, cfg, policy, optimizer, lr_scheduler)
             update_last_checkpoint(checkpoint_dir)
@@ -247,7 +249,7 @@ def train(cfg: TrainPipelineConfig):
 
         if cfg.env and is_eval_step:
             step_id = get_step_identifier(step, cfg.steps)
-            logging.info(f"Eval policy at step {step}")
+            logging.info("Eval policy at step %s", step)
             with (
                 torch.no_grad(),
                 torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext(),

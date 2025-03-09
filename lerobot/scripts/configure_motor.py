@@ -90,6 +90,7 @@ def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
         print("Scanning all baudrates and motor indices")
         all_baudrates = set(series_baudrate_table.values())
         motor_index = -1  # Set the motor index to an out-of-range value.
+        baudrate = None
 
         for baudrate in all_baudrates:
             motor_bus.set_bus_baudrate(baudrate)
