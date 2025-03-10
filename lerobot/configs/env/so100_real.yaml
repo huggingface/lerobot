@@ -5,7 +5,7 @@ fps: 10
 env:
   name: real_world
   task: null
-  state_dim: 12
+  state_dim: 15
   action_dim: 3
   fps: ${fps}
   device: mps
@@ -15,13 +15,13 @@ env:
       observation.images.front: [171, 207, 116, 251]
       observation.images.side: [232, 200, 142, 204]
     resize_size: [128, 128]
-    control_time_s: 40
+    control_time_s: 10
     reset_follower_pos: false
     use_relative_joint_positions: true
     reset_time_s: 5
     display_cameras: false
     delta_action: null #0.3
-    joint_masking_action_space: [1, 1, 1, 1, 0, 0] # disable wrist and gripper
+    joint_masking_action_space: null #[1, 1, 1, 1, 0, 0] # disable wrist and gripper
     add_joint_velocity_to_observation: true
     add_ee_pose_to_observation: true
 

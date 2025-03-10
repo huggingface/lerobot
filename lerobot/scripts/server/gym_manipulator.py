@@ -920,9 +920,9 @@ class GamepadControlWrapper(gym.Wrapper):
     def __init__(
         self,
         env,
-        x_step_size=0.01,
-        y_step_size=0.01,
-        z_step_size=0.05,
+        x_step_size=1.0,
+        y_step_size=1.0,
+        z_step_size=1.0,
         auto_reset=False,
         input_threshold=0.001,
     ):
@@ -978,9 +978,7 @@ class GamepadControlWrapper(gym.Wrapper):
             Tuple of (is_active, action, terminate_episode, success)
         """
         # Update the controller to get fresh inputs
-        # Run the update method 10 times to get a stable reading
-        # TODO: This is a hack to get a stable reading, we should find a better way to do this
-        [self.controller.update() for _ in range(10)]
+        self.controller.update()
 
         # Get movement deltas from the controller
         delta_x, delta_y, delta_z = self.controller.get_deltas()
@@ -1083,6 +1081,30 @@ class GamepadControlWrapper(gym.Wrapper):
         return self.env.close()
 
 
+class ActionScaleWrapper(gym.ActionWrapper):
+    def __init__(self, env, ee_action_space_params=None):
+        super().__init__(env)
+        assert (
+            ee_action_space_params is not None
+        ), "TODO: method implemented for ee action space only so far"
+        self.scale_vector = torch.tensor(
+            [
+                [
+                    ee_action_space_params.x_step_size,
+                    ee_action_space_params.y_step_size,
+                    ee_action_space_params.z_step_size,
+                ]
+            ]
+        )
+
+    def action(self, action):
+        is_intervention = False
+        if isinstance(action, tuple):
+            action, is_intervention = action
+
+        return action * self.scale_vector, is_intervention
+
+
 def make_robot_env(
     robot,
     reward_classifier,
@@ -1146,12 +1168,10 @@ def make_robot_env(
             env=env, ee_action_space_params=cfg.env.wrapper.ee_action_space_params
         )
     if cfg.env.wrapper.ee_action_space_params.use_gamepad:
-        env = GamepadControlWrapper(
-            env=env,
-            x_step_size=cfg.env.wrapper.ee_action_space_params.x_step_size,
-            y_step_size=cfg.env.wrapper.ee_action_space_params.y_step_size,
-            z_step_size=cfg.env.wrapper.ee_action_space_params.z_step_size,
+        env = ActionScaleWrapper(
+            env=env, ee_action_space_params=cfg.env.wrapper.ee_action_space_params
         )
+        env = GamepadControlWrapper(env=env)
     else:
         env = KeyboardInterfaceWrapper(env=env)
 

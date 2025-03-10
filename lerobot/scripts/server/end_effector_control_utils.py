@@ -393,6 +393,14 @@ class GamepadControllerHID(InputController):
             self.device = None
 
     def update(self):
+        """
+        Read and process the latest gamepad data.
+        Due to an issue with the HIDAPI, we need to read the read the device several times in order to get a stable reading
+        """
+        for _ in range(10):
+            self._update()
+
+    def _update(self):
         """Read and process the latest gamepad data."""
         if not self.device or not self.running:
             return
@@ -422,17 +430,13 @@ class GamepadControllerHID(InputController):
 
                     # Parse button states (byte 5 in the Logitech RumblePad 2)
                     buttons = data[5]
-                    # Check if B/Circle button (bit 1) is pressed
-                    # TODO (michel-aractingi): Disable quitting button for now
-                    if False and buttons & 0x02:
-                        self.quit_requested = True
-                        self.running = False
 
                     # Check if RB is pressed then the intervention flag should be set
                     self.intervention_flag = data[6] == 2
 
                     # Check if Y/Triangle button (bit 7) is pressed for saving
                     # Check if X/Square button (bit 5) is pressed for failure
+                    # Check if A/Cross button (bit 4) is pressed for rerecording
                     if buttons & 1 << 7:
                         self.episode_end_status = "success"
                     elif buttons & 1 << 5:
