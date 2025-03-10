@@ -10,12 +10,13 @@ import torch
 import zmq
 
 from lerobot.common.cameras.utils import make_cameras_from_configs
-from lerobot.common.motors.feetech import TorqueMode
-from lerobot.common.motors.feetech_calibration import run_arm_manual_calibration
-from lerobot.common.motors.utils import MotorsBus, make_motors_buses_from_configs
+from lerobot.common.errors import DeviceNotConnectedError
+from lerobot.common.motors.feetech.feetech import TorqueMode
+from lerobot.common.motors.feetech.feetech_calibration import run_arm_manual_calibration
+from lerobot.common.motors.motors_bus import MotorsBus
+from lerobot.common.motors.utils import make_motors_buses_from_configs
 from lerobot.common.robots.lekiwi.configuration_lekiwi import LeKiwiRobotConfig
 from lerobot.common.robots.utils import get_arm_id
-from lerobot.common.utils.robot_utils import RobotDeviceNotConnectedError
 
 PYNPUT_AVAILABLE = True
 try:
@@ -381,7 +382,7 @@ class MobileManipulator:
         self, record_data: bool = False
     ) -> None | tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
         if not self.is_connected:
-            raise RobotDeviceNotConnectedError("MobileManipulator is not connected. Run `connect()` first.")
+            raise DeviceNotConnectedError("MobileManipulator is not connected. Run `connect()` first.")
 
         speed_setting = self.speed_levels[self.speed_index]
         xy_speed = speed_setting["xy"]  # e.g. 0.1, 0.25, or 0.4
@@ -443,7 +444,7 @@ class MobileManipulator:
         and a camera frame.
         """
         if not self.is_connected:
-            raise RobotDeviceNotConnectedError("Not connected. Run `connect()` first.")
+            raise DeviceNotConnectedError("Not connected. Run `connect()` first.")
 
         frames, present_speed, remote_arm_state_tensor = self._get_data()
 
@@ -467,7 +468,7 @@ class MobileManipulator:
 
     def send_action(self, action: torch.Tensor) -> torch.Tensor:
         if not self.is_connected:
-            raise RobotDeviceNotConnectedError("Not connected. Run `connect()` first.")
+            raise DeviceNotConnectedError("Not connected. Run `connect()` first.")
 
         # Ensure the action tensor has at least 9 elements:
         #   - First 6: arm positions.
@@ -505,7 +506,7 @@ class MobileManipulator:
 
     def disconnect(self):
         if not self.is_connected:
-            raise RobotDeviceNotConnectedError("Not connected.")
+            raise DeviceNotConnectedError("Not connected.")
         if self.cmd_socket:
             stop_cmd = {
                 "raw_velocity": {"left_wheel": 0, "back_wheel": 0, "right_wheel": 0},

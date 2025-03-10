@@ -1,8 +1,9 @@
 from dataclasses import dataclass, field
 
-from lerobot.common.cameras.configs import CameraConfig, OpenCVCameraConfig
+from lerobot.common.cameras.configs import CameraConfig
+from lerobot.common.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.common.motors.configs import FeetechMotorsBusConfig, MotorsBusConfig
-from lerobot.common.robots.config_abc import RobotConfig
+from lerobot.common.robots.config import RobotConfig
 
 
 @RobotConfig.register_subclass("lekiwi")

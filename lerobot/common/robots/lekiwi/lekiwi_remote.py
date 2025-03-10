@@ -47,7 +47,7 @@ def calibrate_follower_arm(motors_bus, calib_dir_str):
     calib_dir.mkdir(parents=True, exist_ok=True)
     calib_file = calib_dir / "main_follower.json"
     try:
-        from lerobot.common.motors.feetech_calibration import run_arm_manual_calibration
+        from lerobot.common.motors.feetech.feetech_calibration import run_arm_manual_calibration
     except ImportError:
         print("[WARNING] Calibration function not available. Skipping calibration.")
         return
@@ -80,7 +80,7 @@ def run_lekiwi(robot_config):
     """
     # Import helper functions and classes
     from lerobot.common.cameras.utils import make_cameras_from_configs
-    from lerobot.common.motors.feetech import FeetechMotorsBus, TorqueMode
+    from lerobot.common.motors.feetech.feetech import FeetechMotorsBus, TorqueMode
 
     # Initialize cameras from the robot configuration.
     cameras = make_cameras_from_configs(robot_config.cameras)
