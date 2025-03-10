@@ -33,9 +33,7 @@ T = TypeVar("T", bound="PreTrainedConfig")
 
 
 @dataclass
-class PreTrainedConfig(
-    draccus.PluginRegistry, HubMixin, abc.ABC, discover_packages_path="lerobot.common.policies"
-):
+class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     """
     Base configuration class for policy models.
 
@@ -175,13 +173,3 @@ class PreTrainedConfig(
         # something like --policy.path (in addition to --policy.type)
         cli_overrides = policy_kwargs.pop("cli_overrides", [])
         return draccus.parse(cls, config_file, args=cli_overrides)
-
-    @classmethod
-    def register(cls, config_type: str, config: Type[T], exist_ok: bool = False):
-        """Register a new configuration for this class."""
-        if config_type in cls._choice_registry and not exist_ok:
-            raise ValueError(
-                f"'{config_type}' is already used by a {cls.__name__}, please pick another name."
-            )
-
-        cls._choice_registry[config_type] = config
