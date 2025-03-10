@@ -151,7 +151,9 @@ def rollout(
         if return_observations:
             all_observations.append(deepcopy(observation))
 
-        observation = {key: observation[key].to(device, non_blocking=True) for key in observation}
+        observation = {
+            key: observation[key].to(device, non_blocking=device.type == "cuda") for key in observation
+        }
 
         with torch.inference_mode():
             action = policy.select_action(observation)
@@ -452,11 +454,11 @@ def _compile_episode_data(
 
 
 @parser.wrap()
-def eval(cfg: EvalPipelineConfig):
+def eval_main(cfg: EvalPipelineConfig):
     logging.info(pformat(asdict(cfg)))
 
     # Check device is available
-    device = get_safe_torch_device(cfg.device, log=True)
+    device = get_safe_torch_device(cfg.policy.device, log=True)
 
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
@@ -468,14 +470,14 @@ def eval(cfg: EvalPipelineConfig):
     env = make_env(cfg.env, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs)
 
     logging.info("Making policy.")
+
     policy = make_policy(
         cfg=cfg.policy,
-        device=device,
         env_cfg=cfg.env,
     )
     policy.eval()
 
-    with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.use_amp else nullcontext():
+    with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext():
         info = eval_policy(
             env,
             policy,
@@ -497,4 +499,4 @@ def eval(cfg: EvalPipelineConfig):
 
 if __name__ == "__main__":
     init_logging()
-    eval()
+    eval_main()

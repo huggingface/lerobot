@@ -1,3 +1,17 @@
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import enum
 import logging
 import math
@@ -221,7 +235,7 @@ class DriveMode(enum.Enum):
 class CalibrationMode(enum.Enum):
     # Joints with rotational motions are expressed in degrees in nominal range of [-180, 180]
     DEGREE = 0
-    # Joints with linear motions (like gripper of Aloha) are experessed in nominal range of [0, 100]
+    # Joints with linear motions (like gripper of Aloha) are expressed in nominal range of [0, 100]
     LINEAR = 1
 
 
@@ -591,7 +605,7 @@ class FeetechMotorsBus:
                 # 0-centered resolution range (e.g. [-2048, 2048] for resolution=4096)
                 values[i] = values[i] / HALF_TURN_DEGREE * (resolution // 2)
 
-                # Substract the homing offsets to come back to actual motor range of values
+                # Subtract the homing offsets to come back to actual motor range of values
                 # which can be arbitrary.
                 values[i] -= homing_offset
 
@@ -632,7 +646,7 @@ class FeetechMotorsBus:
                 track["prev"][idx] = values[i]
                 continue
 
-            # Detect a full rotation occured
+            # Detect a full rotation occurred
             if abs(track["prev"][idx] - values[i]) > 2048:
                 # Position went below 0 and got reset to 4095
                 if track["prev"][idx] < values[i]:

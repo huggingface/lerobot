@@ -72,7 +72,7 @@ def update_policy(
         # TODO(rcadene): policy.unnormalize_outputs(out_dict)
     grad_scaler.scale(loss).backward()
 
-    # Unscale the graident of the optimzer's assigned params in-place **prior to gradient clipping**.
+    # Unscale the gradient of the optimizer's assigned params in-place **prior to gradient clipping**.
     grad_scaler.unscale_(optimizer)
 
     grad_norm = torch.nn.utils.clip_grad_norm_(
@@ -120,7 +120,7 @@ def train(cfg: TrainPipelineConfig):
         set_seed(cfg.seed)
 
     # Check device is available
-    device = get_safe_torch_device(cfg.device, log=True)
+    device = get_safe_torch_device(cfg.policy.device, log=True)
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
 
@@ -138,13 +138,12 @@ def train(cfg: TrainPipelineConfig):
     logging.info("Creating policy")
     policy = make_policy(
         cfg=cfg.policy,
-        device=device,
         ds_meta=dataset.meta,
     )
 
     logging.info("Creating optimizer and scheduler")
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
-    grad_scaler = GradScaler(device, enabled=cfg.use_amp)
+    grad_scaler = GradScaler(device.type, enabled=cfg.policy.use_amp)
 
     step = 0  # number of policy updates (forward + backward + optim)
 
@@ -218,7 +217,7 @@ def train(cfg: TrainPipelineConfig):
             cfg.optimizer.grad_clip_norm,
             grad_scaler=grad_scaler,
             lr_scheduler=lr_scheduler,
-            use_amp=cfg.use_amp,
+            use_amp=cfg.policy.use_amp,
         )
 
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
@@ -232,8 +231,10 @@ def train(cfg: TrainPipelineConfig):
         if is_log_step:
             logging.info(train_tracker)
             if wandb_logger:
-                wandb_log_dict = {**train_tracker.to_dict(), **output_dict}
-                wandb_logger.log_dict(wandb_log_dict)
+                wandb_log_dict = train_tracker.to_dict()
+                if output_dict:
+                    wandb_log_dict.update(output_dict)
+                wandb_logger.log_dict(wandb_log_dict, step)
             train_tracker.reset_averages()
 
         if cfg.save_checkpoint and is_saving_step:
@@ -247,7 +248,10 @@ def train(cfg: TrainPipelineConfig):
         if cfg.env and is_eval_step:
             step_id = get_step_identifier(step, cfg.steps)
             logging.info(f"Eval policy at step {step}")
-            with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.use_amp else nullcontext():
+            with (
+                torch.no_grad(),
+                torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext(),
+            ):
                 eval_info = eval_policy(
                     eval_env,
                     policy,
@@ -271,6 +275,7 @@ def train(cfg: TrainPipelineConfig):
             logging.info(eval_tracker)
             if wandb_logger:
                 wandb_log_dict = {**eval_tracker.to_dict(), **eval_info}
+                wandb_logger.log_dict(wandb_log_dict, step, mode="eval")
                 wandb_logger.log_video(eval_info["video_paths"][0], step, mode="eval")
 
     if eval_env:
