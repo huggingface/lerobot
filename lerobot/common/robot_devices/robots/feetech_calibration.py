@@ -161,7 +161,7 @@ def run_full_arm_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm
     print(f"\n calibration of {robot_type} {arm_name} {arm_type} done!")
 
     # Force drive_mode values: motors 2 and 5 -> drive_mode 1; all others -> 0. 1 = clockwise = positive range (0..180), 0 = clockwise = negative range (0..-180)
-    drive_modes = [0, 1, 0, 0, 1, 0] 
+    drive_modes = [0, 1, 0, 0, 1, 0]
 
     calib_dict = {
         "homing_offset": encoder_offsets.astype(int).tolist(),

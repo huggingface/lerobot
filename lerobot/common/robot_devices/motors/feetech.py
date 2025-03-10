@@ -127,14 +127,14 @@ NUM_WRITE_RETRY = 20
 
 def convert_ticks_to_degrees(ticks, model):
     resolutions = MODEL_RESOLUTION[model]
-    # Convert the ticks to degrees 
-    return ticks * (360.0/resolutions)
+    # Convert the ticks to degrees
+    return ticks * (360.0 / resolutions)
 
 
 def convert_degrees_to_ticks(degrees, model):
     resolutions = MODEL_RESOLUTION[model]
     # Convert degrees to motor ticks
-    return int(degrees * (resolutions/360.0))
+    return int(degrees * (resolutions / 360.0))
 
 
 def adjusted_to_homing_ticks(
@@ -158,7 +158,7 @@ def adjusted_to_homing_ticks(
     drive_mode = 0
     if motorbus.calibration is not None:
         drive_mode = motorbus.calibration["drive_mode"][motor_id - 1]
-    
+
     if drive_mode:
         ticks *= -1
 
@@ -177,7 +177,7 @@ def adjusted_to_motor_ticks(
     drive_mode = 0
     if motorbus.calibration is not None:
         drive_mode = motorbus.calibration["drive_mode"][motor_id - 1]
-    
+
     if drive_mode:
         adjusted_pos *= -1
 
@@ -508,7 +508,6 @@ class FeetechMotorsBus:
         values = np.round(values).astype(np.int32)
         return values
 
-
     def read_with_motor_ids(self, motor_models, motor_ids, data_name, num_retry=NUM_READ_RETRY):
         if self.mock:
             import tests.mock_scservo_sdk as scs
@@ -736,4 +735,3 @@ class FeetechMotorsBus:
     def __del__(self):
         if getattr(self, "is_connected", False):
             self.disconnect()
-
