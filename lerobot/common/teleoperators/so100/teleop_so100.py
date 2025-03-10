@@ -86,11 +86,6 @@ class SO100Teleop(Teleoperator):
         self.arm.write("Torque_Enable", TorqueMode.DISABLED.value)
         self.calibrate()
 
-        # Enable torque on the gripper and move it to 45 degrees so that we can use it as a trigger.
-        logging.info("Activating torque.")
-        self.arm.write("Torque_Enable", TorqueMode.ENABLED.value, "gripper")
-        self.arm.write("Goal_Position", self.config.gripper_open_degree, "gripper")
-
         # Check arm can be read
         self.arm.read("Present_Position")
 

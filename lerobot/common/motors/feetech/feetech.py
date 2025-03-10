@@ -508,43 +508,6 @@ class FeetechMotorsBus:
         values = np.round(values).astype(np.int32)
         return values
 
-    def avoid_rotation_reset(self, values, motor_names, data_name):
-        if data_name not in self.track_positions:
-            self.track_positions[data_name] = {
-                "prev": [None] * len(self.motor_names),
-                # Assume False at initialization
-                "below_zero": [False] * len(self.motor_names),
-                "above_max": [False] * len(self.motor_names),
-            }
-
-        track = self.track_positions[data_name]
-
-        if motor_names is None:
-            motor_names = self.motor_names
-
-        for i, name in enumerate(motor_names):
-            idx = self.motor_names.index(name)
-
-            if track["prev"][idx] is None:
-                track["prev"][idx] = values[i]
-                continue
-
-            # Detect a full rotation occurred
-            if abs(track["prev"][idx] - values[i]) > 2048:
-                # Position went below 0 and got reset to 4095
-                if track["prev"][idx] < values[i]:
-                    # So we set negative value by adding a full rotation
-                    values[i] -= 4096
-
-                # Position went above 4095 and got reset to 0
-                elif track["prev"][idx] > values[i]:
-                    # So we add a full rotation
-                    values[i] += 4096
-
-            track["prev"][idx] = values[i]
-
-        return values
-
     def read_with_motor_ids(self, motor_models, motor_ids, data_name, num_retry=NUM_READ_RETRY):
         if self.mock:
             import tests.mock_scservo_sdk as scs
