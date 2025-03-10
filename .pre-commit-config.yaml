@@ -1,7 +1,22 @@
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 exclude: ^(tests/data)
 default_language_version:
     python: python3.10
 repos:
+  ##### Style / Misc. #####
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
@@ -14,7 +29,7 @@ repos:
       - id: end-of-file-fixer
       - id: trailing-whitespace
   - repo: https://github.com/crate-ci/typos
-    rev: v1.29.10
+    rev: v1.30.0
     hooks:
       - id: typos
         args: [--force-exclude]
@@ -23,16 +38,24 @@ repos:
     hooks:
     -   id: pyupgrade
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.9.6
+    rev: v0.9.9
     hooks:
       - id: ruff
         args: [--fix]
       - id: ruff-format
+
+  ##### Security #####
   - repo: https://github.com/gitleaks/gitleaks
-    rev: v8.23.3
+    rev: v8.24.0
     hooks:
       - id: gitleaks
   - repo: https://github.com/woodruffw/zizmor-pre-commit
-    rev: v1.3.1
+    rev: v1.4.1
     hooks:
       - id: zizmor
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.8.3
+    hooks:
+    - id: bandit
+      args: ["-c", "pyproject.toml"]
+      additional_dependencies: ["bandit[toml]"]
