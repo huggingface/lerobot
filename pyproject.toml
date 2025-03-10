@@ -56,7 +56,6 @@ dependencies = [
     "gymnasium==0.29.1",                                                 # TODO(rcadene, aliberts): Make gym 1.0.0 work
     "h5py>=3.10.0",
     "huggingface-hub[hf-transfer,cli]>=0.27.1 ; python_version < '4.0'",
-    "hydra-core>=1.3.2",
     "imageio[ffmpeg]>=2.34.0",
     "jsonlines>=4.0.0",
     "numba>=0.59.0",
