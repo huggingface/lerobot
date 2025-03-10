@@ -265,13 +265,25 @@ def main():
         ),
     )
 
+    parser.add_argument(
+        "--tolerance-s",
+        type=float,
+        default=1e-4,
+        help=(
+            "Tolerance in seconds used to ensure data timestamps respect the dataset fps value"
+            "This is argument passed to the constructor of LeRobotDataset and maps to its tolerance_s constructor argument"
+            "If not given, defaults to 1e-4."
+        ),
+    )
+
     args = parser.parse_args()
     kwargs = vars(args)
     repo_id = kwargs.pop("repo_id")
     root = kwargs.pop("root")
+    tolerance_s = kwargs.pop("tolerance_s")
 
     logging.info("Loading dataset")
-    dataset = LeRobotDataset(repo_id, root=root)
+    dataset = LeRobotDataset(repo_id, root=root, tolerance_s=tolerance_s)
 
     visualize_dataset(dataset, **vars(args))
 
