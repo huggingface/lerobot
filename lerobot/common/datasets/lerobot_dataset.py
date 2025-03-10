@@ -847,6 +847,126 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         self.episode_buffer["size"] += 1
 
+    def _get_frames_by_timestamp_range(self, episode_id: int, start_ts: float, end_ts: float) -> dict:
+        """
+        Select frames from the dataset where episode_index matches episode_id and 
+        timestamps are within the specified range.
+        
+        Args:
+            episode_id (int): Episode ID to filter by
+            start_ts (float): Start timestamp (inclusive)
+            end_ts (float): End timestamp (exclusive)
+            
+        Returns:
+            dict: Selected frames with their indices
+        """
+        # Create a filter for the dataset
+        def filter_func(example):
+            episode_matches = example["episode_index"] == episode_id
+            ts_in_range = (example["timestamp"] >= start_ts) & (example["timestamp"] < end_ts)
+            return episode_matches & ts_in_range
+        
+        # Apply the filter to the dataset
+        filtered_data = self.hf_dataset.filter(filter_func)
+        
+        # Return the filtered data
+        return filtered_data
+
+    def add_annotation_to_frames(self, episode_id: int, start_ts: float, end_ts: float, annotation: str, expanded_annotations: list[str] = None) -> None:
+        """
+        Add an annotation and expanded annotations to frames within the specified episode and timestamp range.
+        
+        Args:
+            episode_id (int): Episode ID to filter by
+            start_ts (float): Start timestamp (inclusive)
+            end_ts (float): End timestamp (exclusive)
+            annotation (str): The primary annotation text to add
+            expanded_annotations (list[str], optional): A list of alternate annotations
+            
+        Returns:
+            None: Modifies the dataset in place
+        """
+        # Get the frames in the specified range
+        filtered_data = self._get_frames_by_timestamp_range(episode_id, start_ts, end_ts)
+        
+        # If there are no matching frames, log a warning and return
+        if len(filtered_data) == 0:
+            print(f"Warning: No frames found for episode {episode_id} between timestamps {start_ts} and {end_ts}")
+            return
+        
+        # Create a list of indices that match our filter
+        matched_indices = []
+        
+        # Since we can't directly get the indices from filtered_data, we need to match again
+        for i, item in enumerate(self.hf_dataset):
+            if (item["episode_index"] == episode_id and 
+                item["timestamp"] >= start_ts and 
+                item["timestamp"] < end_ts):
+                matched_indices.append(i)
+        
+        # Add the main subtask annotation
+        self._add_column_data("subtask", annotation, matched_indices)
+        
+        # Add expanded annotations if provided
+        if expanded_annotations:
+            self._add_column_data("expanded_subtasks", expanded_annotations, matched_indices)
+        
+        print(f"Added subtask to {len(matched_indices)} frames for episode {episode_id}")
+
+    def _add_column_data(self, column_name: str, data, matched_indices: list[int]):
+        """
+        Helper method to add or update a column in the dataset.
+        
+        Args:
+            column_name (str): Name of the column to add/update
+            data: Data to add (string for single annotation, list for expanded annotations)
+            matched_indices (list[int]): Indices of frames to update
+        """
+        # Check if we have the column, if not, add it
+        if column_name not in self.hf_dataset.features:
+            # Create a new column with empty/None values
+            if isinstance(data, list):
+                # For expanded annotations, use empty lists
+                column_data = [[]] * len(self.hf_dataset)
+            else:
+                # For single annotations, use empty strings
+                column_data = [""] * len(self.hf_dataset)
+            
+            # Add data to the matched indices
+            for idx in matched_indices:
+                column_data[idx] = data
+            
+            # Add the column to the dataset
+            self.hf_dataset = self.hf_dataset.add_column(column_name, column_data)
+        else:
+            # Update existing column data
+            column_data = self.hf_dataset[column_name]
+            for idx in matched_indices:
+                column_data[idx] = data
+            
+            # Replace the column
+            self.hf_dataset = self.hf_dataset.remove_columns([column_name])
+            self.hf_dataset = self.hf_dataset.add_column(column_name, column_data)
+        
+        # Update the dataset features to include the column
+        if column_name not in self.features:
+            if isinstance(data, list):
+                # For lists (expanded annotations)
+                self.meta.info["features"][column_name] = {
+                    "dtype": "list",
+                    "shape": [],
+                    "names": None
+                }
+            else:
+                # For strings (single annotation)
+                self.meta.info["features"][column_name] = {
+                    "dtype": "string", 
+                    "shape": [], 
+                    "names": None
+                }
+            # Save the updated info
+            write_info(self.meta.info, self.meta.root)
+
     def save_episode(
         self,
         episode_data: dict | None = None,
@@ -936,6 +1056,35 @@ class LeRobotDataset(torch.utils.data.Dataset):
         ep_data_path = self.root / self.meta.get_data_file_path(ep_index=episode_index)
         ep_data_path.parent.mkdir(parents=True, exist_ok=True)
         ep_dataset.to_parquet(ep_data_path)
+
+    def save_modified_dataset(self):
+        """
+        Save the modified hf_dataset back to disk.
+        This method should be called after making modifications like adding annotations.
+        """
+        # Group by episode_index
+        episode_indices = set(torch.stack(self.hf_dataset["episode_index"]).numpy())
+        
+        for ep_idx in episode_indices:
+            # Filter dataset for the current episode
+            def filter_func(example):
+                return example["episode_index"] == ep_idx
+            
+            ep_dataset = self.hf_dataset.filter(filter_func)
+            
+            # Convert to format expected by to_parquet
+            ep_dataset.set_format(None)  # Reset format if any was set
+            
+            # Get the path for this episode's parquet file
+            ep_data_path = self.root / self.meta.get_data_file_path(ep_index=ep_idx)
+            ep_data_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Save to parquet
+            print(f"Saving modified data for episode {ep_idx} to {ep_data_path}")
+            ep_dataset.to_parquet(ep_data_path)
+        
+        # Save updated metadata
+        write_info(self.meta.info, self.meta.root)
 
     def clear_episode_buffer(self) -> None:
         episode_index = self.episode_buffer["episode_index"]

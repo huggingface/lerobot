@@ -155,6 +155,9 @@
                       $refs.timer.textContent = formatTime(time) + ' / ' + formatTime(video.duration);
 
                       updateTimeQuery(time.toFixed(2));
+
+                      // Update current subtask based on the time
+                      updateCurrentSubtask(time);
                     }
                 }" @ended="() => {
                     $refs.btnPlay.classList.remove('hidden');
@@ -173,6 +176,30 @@
         <p class="font-medium mt-2">
             Language Instruction: <span class="italic">{{ videos_info[0].language_instruction }}</span>
         </p>
+        {% endif %}
+
+        <!-- Subtask annotation -->
+        {% if subtasks %}
+        <div class="mt-2">
+            <p class="font-medium">Current Subtask: <span x-ref="currentSubtask" class="italic">-</span></p>
+            
+            <!-- Expanded annotations dropdown -->
+            <div x-show="hasExpandedSubtasks" class="mt-1">
+                <button @click="showExpandedSubtasks = !showExpandedSubtasks" 
+                        class="text-sm px-2 py-1 bg-slate-800 rounded">
+                    <span x-text="showExpandedSubtasks ? 'Hide' : 'Show'"></span> Alternative Phrasings
+                </button>
+                
+                <div x-show="showExpandedSubtasks" class="mt-2 ml-4 p-3 bg-slate-800 rounded text-sm max-w-xl">
+                    <p class="font-medium mb-2">Alternative phrasings:</p>
+                    <ul class="list-disc list-inside">
+                        <template x-for="(alt, index) in currentExpandedSubtasks" :key="index">
+                            <li x-text="alt" class="italic ml-2"></li>
+                        </template>
+                    </ul>
+                </div>
+            </div>
+        </div>
         {% endif %}
 
         <!-- Shortcuts info -->
@@ -306,6 +333,12 @@
                 videosKeys: {{ videos_info | map(attribute='filename') | list | tojson }},
                 videosKeysSelected: [],
                 columns: {{ columns | tojson }},
+                subtasks: {{ subtasks | tojson }},
+                expandedSubtasks: {{ expanded_subtasks|tojson }},
+                currentSubtask: "-",
+                currentExpandedSubtasks: [],
+                showExpandedSubtasks: false,
+                hasExpandedSubtasks: false,
 
                 // alpine initialization
                 init() {
@@ -323,6 +356,10 @@
                     const blob = new Blob([csvDataStr], { type: 'text/csv;charset=utf-8;' });
                     // Create a URL for the Blob
                     const csvUrl = URL.createObjectURL(blob);
+
+                    if (this.$refs.currentSubtask) {
+                        this.updateCurrentSubtask(0);
+                    }
 
                     // process CSV data
                     this.videos = document.querySelectorAll('video');
@@ -474,6 +511,56 @@
                     if(this.nVideoReadyToPlay == this.nVideos) {
                         // start autoplay all videos in sync
                         this.$refs.btnPlay.click();
+                    }
+                },
+
+                updateCurrentSubtask(time) {
+                    if (!this.subtasks || Object.keys(this.subtasks).length === 0) {
+                        return;
+                    }
+                    
+                    // Convert subtasks object to array of [timestamp, text] pairs for easier sorting
+                    const subtaskEntries = Object.entries(this.subtasks).map(([ts, text]) => [parseFloat(ts), text]);
+                    
+                    // Sort by timestamp
+                    subtaskEntries.sort((a, b) => a[0] - b[0]);
+                    
+                    // Find the latest subtask that's before or at the current time
+                    let currentSubtask = "-";
+                    let currentTimestamp = null;
+                    
+                    for (let i = subtaskEntries.length - 1; i >= 0; i--) {
+                        if (subtaskEntries[i][0] <= time) {
+                            currentSubtask = subtaskEntries[i][1];
+                            currentTimestamp = subtaskEntries[i][0];
+                            break;
+                        }
+                    }
+                    
+                    this.currentSubtask = currentSubtask;
+                    if (this.$refs.currentSubtask) {
+                        this.$refs.currentSubtask.textContent = currentSubtask;
+                    }
+                    
+                    // Update expanded subtasks if available
+                    this.updateExpandedSubtasks(currentTimestamp);
+                },
+                
+                // Add this new method to update expanded subtasks
+                updateExpandedSubtasks(timestamp) {
+                    // Reset expanded subtasks
+                    this.currentExpandedSubtasks = [];
+                    this.hasExpandedSubtasks = false;
+                    
+                    // If no timestamp or no expanded subtasks, nothing to do
+                    if (!timestamp || !this.expandedSubtasks || Object.keys(this.expandedSubtasks).length === 0) {
+                        return;
+                    }
+                    
+                    // Check if we have expanded subtasks for this timestamp
+                    if (timestamp in this.expandedSubtasks) {
+                        this.currentExpandedSubtasks = this.expandedSubtasks[timestamp];
+                        this.hasExpandedSubtasks = this.currentExpandedSubtasks.length > 0;
                     }
                 }
             };
