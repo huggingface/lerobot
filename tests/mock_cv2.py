@@ -15,6 +15,11 @@ from functools import cache
 
 import numpy as np
 
+CAP_V4L2 = 200
+CAP_DSHOW = 700
+CAP_AVFOUNDATION = 1200
+CAP_ANY = -1
+
 CAP_PROP_FPS = 5
 CAP_PROP_FRAME_WIDTH = 3
 CAP_PROP_FRAME_HEIGHT = 4
