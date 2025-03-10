@@ -250,8 +250,8 @@ class OpenCVCamera:
 
         # If rotated by ±90, swap width and height.
         if config.rotation in [-90, 90]:
-            self.width = config.height  
-            self.height = config.width  
+            self.width = config.height
+            self.height = config.width
         else:
             self.width = config.width
             self.height = config.height
@@ -349,11 +349,15 @@ class OpenCVCamera:
             raise OSError(
                 f"Can't set {self.fps=} for OpenCVCamera({self.camera_index}). Actual value is {actual_fps}."
             )
-        if self.capture_width is not None and not math.isclose(self.capture_width, actual_width, rel_tol=1e-3):
+        if self.capture_width is not None and not math.isclose(
+            self.capture_width, actual_width, rel_tol=1e-3
+        ):
             raise OSError(
                 f"Can't set {self.capture_width=} for OpenCVCamera({self.camera_index}). Actual value is {actual_width}."
             )
-        if self.capture_height is not None and not math.isclose(self.capture_height, actual_height, rel_tol=1e-3):
+        if self.capture_height is not None and not math.isclose(
+            self.capture_height, actual_height, rel_tol=1e-3
+        ):
             raise OSError(
                 f"Can't set {self.capture_height=} for OpenCVCamera({self.camera_index}). Actual value is {actual_height}."
             )
