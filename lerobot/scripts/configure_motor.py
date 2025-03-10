@@ -145,14 +145,18 @@ def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
             # the motors. Note: this configuration is not in the official STS3215 Memory Table
             motor_bus.write("Lock", 0)
             motor_bus.write("Maximum_Acceleration", 254)
-
-            motor_bus.write("Goal_Position", 2048)
-            time.sleep(4)
-            print("Present Position", motor_bus.read("Present_Position"))
-
+            motor_bus.write("Max_Angle_Limit", 4095)  # default 4095
+            motor_bus.write("Min_Angle_Limit", 0)  # default 0
             motor_bus.write("Offset", 0)
-            time.sleep(4)
+            motor_bus.write("Mode", 0)
+            motor_bus.write("Goal_Position", 0)
+            motor_bus.write("Torque_Enable", 0)
+            motor_bus.write("Lock", 1)
             print("Offset", motor_bus.read("Offset"))
+
+            # TODO(pepijn): Add when doing a motor configuration, you instantainesly home the position (while assembling)
+            # single_calibration = single_motor_calibration(motor_bus, motor_idx_des)
+            # Then store single_calibration in yaml via dict (not overwrite but add the single calibration each time for motor id)
 
     except Exception as e:
         print(f"Error occurred during motor configuration: {e}")
