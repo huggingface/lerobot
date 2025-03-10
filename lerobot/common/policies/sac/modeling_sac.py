@@ -210,6 +210,11 @@ class SACPolicy(
                 next_observations, next_observation_features
             )
 
+            # TODO: (maractingi, azouitine) This is to slow, we should find a way to do this in a more efficient way
+            next_action_preds = self.unnormalize_outputs({"action": next_action_preds})[
+                "action"
+            ]
+
             # 2- compute q targets
             q_targets = self.critic_forward(
                 observations=next_observations,
@@ -512,9 +517,9 @@ class Policy(nn.Module):
         # Compute standard deviations
         if self.fixed_std is None:
             log_std = self.std_layer(outputs)
-            assert not torch.isnan(
-                log_std
-            ).any(), "[ERROR] log_std became NaN after std_layer!"
+            assert not torch.isnan(log_std).any(), (
+                "[ERROR] log_std became NaN after std_layer!"
+            )
 
             if self.use_tanh_squash:
                 log_std = torch.tanh(log_std)
