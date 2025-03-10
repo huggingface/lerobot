@@ -5,39 +5,66 @@ and send orders to its motors.
 # calibration procedure, to make it easy for people to add their own robot.
 
 import json
-import logging
 import time
 import warnings
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Sequence
 
 import numpy as np
 import torch
 
+from lerobot.common.cameras.configs import CameraConfig
 from lerobot.common.cameras.utils import make_cameras_from_configs
-from lerobot.common.motors.utils import MotorsBus, make_motors_buses_from_configs
-from lerobot.common.robots.config_abc import ManipulatorRobotConfig
-from lerobot.common.robots.utils import get_arm_id
-from lerobot.common.utils.robot_utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
+from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.common.motors.configs import MotorsBusConfig
+from lerobot.common.motors.motors_bus import MotorsBus
+from lerobot.common.motors.utils import make_motors_buses_from_configs
+from lerobot.common.robots.config import RobotConfig
+from lerobot.common.robots.utils import ensure_safe_goal_position, get_arm_id
 
 
-def ensure_safe_goal_position(
-    goal_pos: torch.Tensor, present_pos: torch.Tensor, max_relative_target: float | list[float]
-):
-    # Cap relative action target magnitude for safety.
-    diff = goal_pos - present_pos
-    max_relative_target = torch.tensor(max_relative_target)
-    safe_diff = torch.minimum(diff, max_relative_target)
-    safe_diff = torch.maximum(safe_diff, -max_relative_target)
-    safe_goal_pos = present_pos + safe_diff
+@dataclass
+class ManipulatorRobotConfig(RobotConfig):
+    leader_arms: dict[str, MotorsBusConfig] = field(default_factory=lambda: {})
+    follower_arms: dict[str, MotorsBusConfig] = field(default_factory=lambda: {})
+    cameras: dict[str, CameraConfig] = field(default_factory=lambda: {})
 
-    if not torch.allclose(goal_pos, safe_goal_pos):
-        logging.warning(
-            "Relative goal position magnitude had to be clamped to be safe.\n"
-            f"  requested relative goal position target: {diff}\n"
-            f"    clamped relative goal position target: {safe_diff}"
-        )
+    # Optionally limit the magnitude of the relative positional target vector for safety purposes.
+    # Set this to a positive scalar to have the same value for all motors, or a list that is the same length
+    # as the number of motors in your follower arms (assumes all follower arms have the same number of
+    # motors).
+    max_relative_target: list[float] | float | None = None
 
-    return safe_goal_pos
+    # Optionally set the leader arm in torque mode with the gripper motor set to this angle. This makes it
+    # possible to squeeze the gripper and have it spring back to an open position on its own. If None, the
+    # gripper is not put in torque mode.
+    gripper_open_degree: float | None = None
+
+    mock: bool = False
+
+    def __post_init__(self):
+        if self.mock:
+            for arm in self.leader_arms.values():
+                if not arm.mock:
+                    arm.mock = True
+            for arm in self.follower_arms.values():
+                if not arm.mock:
+                    arm.mock = True
+            for cam in self.cameras.values():
+                if not cam.mock:
+                    cam.mock = True
+
+        if self.max_relative_target is not None and isinstance(self.max_relative_target, Sequence):
+            for name in self.follower_arms:
+                if len(self.follower_arms[name].motors) != len(self.max_relative_target):
+                    raise ValueError(
+                        f"len(max_relative_target)={len(self.max_relative_target)} but the follower arm with name {name} has "
+                        f"{len(self.follower_arms[name].motors)} motors. Please make sure that the "
+                        f"`max_relative_target` list has as many parameters as there are motors per arm. "
+                        "Note: This feature does not yet work with robots where different follower arms have "
+                        "different numbers of motors."
+                    )
 
 
 class ManipulatorRobot:
@@ -210,7 +237,7 @@ class ManipulatorRobot:
 
     def connect(self):
         if self.is_connected:
-            raise RobotDeviceAlreadyConnectedError(
+            raise DeviceAlreadyConnectedError(
                 "ManipulatorRobot is already connected. Do not run `robot.connect()` twice."
             )
 
@@ -228,9 +255,9 @@ class ManipulatorRobot:
             self.leader_arms[name].connect()
 
         if self.robot_type in ["koch", "koch_bimanual", "aloha"]:
-            from lerobot.common.motors.dynamixel import TorqueMode
+            from lerobot.common.motors.dynamixel.dynamixel import TorqueMode
         elif self.robot_type in ["so100", "moss", "lekiwi"]:
-            from lerobot.common.motors.feetech import TorqueMode
+            from lerobot.common.motors.feetech.feetech import TorqueMode
 
         # We assume that at connection time, arms are in a rest position, and torque can
         # be safely disabled to run calibration and/or set robot preset configurations.
@@ -295,12 +322,12 @@ class ManipulatorRobot:
                 print(f"Missing calibration file '{arm_calib_path}'")
 
                 if self.robot_type in ["koch", "koch_bimanual", "aloha"]:
-                    from lerobot.common.motors.dynamixel_calibration import run_arm_calibration
+                    from lerobot.common.motors.dynamixel.dynamixel_calibration import run_arm_calibration
 
                     calibration = run_arm_calibration(arm, self.robot_type, name, arm_type)
 
                 elif self.robot_type in ["so100", "moss", "lekiwi"]:
-                    from lerobot.common.motors.feetech_calibration import (
+                    from lerobot.common.motors.feetech.feetech_calibration import (
                         run_arm_manual_calibration,
                     )
 
@@ -322,7 +349,7 @@ class ManipulatorRobot:
 
     def set_koch_robot_preset(self):
         def set_operating_mode_(arm):
-            from lerobot.common.motors.dynamixel import TorqueMode
+            from lerobot.common.motors.dynamixel.dynamixel import TorqueMode
 
             if (arm.read("Torque_Enable") != TorqueMode.DISABLED.value).any():
                 raise ValueError("To run set robot preset, the torque must be disabled on all motors.")
@@ -432,7 +459,7 @@ class ManipulatorRobot:
         self, record_data=False
     ) -> None | tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
         if not self.is_connected:
-            raise RobotDeviceNotConnectedError(
+            raise DeviceNotConnectedError(
                 "ManipulatorRobot is not connected. You need to run `robot.connect()`."
             )
 
@@ -512,7 +539,7 @@ class ManipulatorRobot:
     def capture_observation(self):
         """The returned observations do not have a batch dimension."""
         if not self.is_connected:
-            raise RobotDeviceNotConnectedError(
+            raise DeviceNotConnectedError(
                 "ManipulatorRobot is not connected. You need to run `robot.connect()`."
             )
 
@@ -558,7 +585,7 @@ class ManipulatorRobot:
             action: tensor containing the concatenated goal positions for the follower arms.
         """
         if not self.is_connected:
-            raise RobotDeviceNotConnectedError(
+            raise DeviceNotConnectedError(
                 "ManipulatorRobot is not connected. You need to run `robot.connect()`."
             )
 
@@ -593,7 +620,7 @@ class ManipulatorRobot:
 
     def disconnect(self):
         if not self.is_connected:
-            raise RobotDeviceNotConnectedError(
+            raise DeviceNotConnectedError(
                 "ManipulatorRobot is not connected. You need to run `robot.connect()` before disconnecting."
             )
 
