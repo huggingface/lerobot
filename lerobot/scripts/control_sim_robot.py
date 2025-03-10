@@ -88,6 +88,12 @@ import time
 from pathlib import Path
 
 import cv2
+
+# Make sure that the UI gets initialized before PyAV (av) gets imported by torchvision
+# This solves the hanging issue with cv2.imshow on Ubuntu
+cv2.namedWindow("i")
+cv2.destroyAllWindows()
+
 import gymnasium as gym
 import numpy as np
 import torch
