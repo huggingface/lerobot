@@ -23,15 +23,24 @@
 </div>
 
 <h2 align="center">
-    <p><a href="https://github.com/huggingface/lerobot/blob/main/examples/10_use_so100.md">New robot in town: SO-100</a></p>
+    <p><a href="https://github.com/huggingface/lerobot/blob/main/examples/10_use_so100.md">
+        Build Your Own SO-100 Robot!</a></p>
 </h2>
 
 <div align="center">
-    <img src="media/so100/leader_follower.webp?raw=true" alt="SO-100 leader and follower arms" title="SO-100 leader and follower arms" width="50%">
-    <p>We just added a new tutorial on how to build a more affordable robot, at the price of $110 per arm!</p>
-    <p>Teach it new skills by showing it a few moves with just a laptop.</p>
-    <p>Then watch your homemade robot act autonomously 🤯</p>
-    <p>Follow the link to the <a href="https://github.com/huggingface/lerobot/blob/main/examples/10_use_so100.md">full tutorial for SO-100</a>.</p>
+  <img src="media/so100/leader_follower.webp?raw=true" alt="SO-100 leader and follower arms" title="SO-100 leader and follower arms" width="50%">
+
+  <p><strong>Meet the SO-100 – Just $110 per arm!</strong></p>
+  <p>Train it in minutes with a few simple moves on your laptop.</p>
+  <p>Then sit back and watch your creation act autonomously! 🤯</p>
+
+  <p><a href="https://github.com/huggingface/lerobot/blob/main/examples/10_use_so100.md">
+      Get the full SO-100 tutorial here.</a></p>
+
+  <p>Want to take it to the next level? Make your SO-100 mobile by building LeKiwi!</p>
+  <p>Check out the <a href="https://github.com/huggingface/lerobot/blob/main/examples/11_use_lekiwi.md">LeKiwi tutorial</a> and bring your robot to life on wheels.</p>
+
+  <img src="media/lekiwi/kiwi.webp?raw=true" alt="LeKiwi mobile robot" title="LeKiwi mobile robot" width="50%">
 </div>
 
 <br/>
@@ -210,7 +219,7 @@ A `LeRobotDataset` is serialised using several widespread file formats for each 
 - videos are stored in mp4 format to save space
 - metadata are stored in plain json/jsonl files
 
-Dataset can be uploaded/downloaded from the HuggingFace hub seamlessly. To work on a local dataset, you can use the `local_files_only` argument and specify its location with the `root` argument if it's not in the default `~/.cache/huggingface/lerobot` location.
+Dataset can be uploaded/downloaded from the HuggingFace hub seamlessly. To work on a local dataset, you can specify its location with the `root` argument if it's not in the default `~/.cache/huggingface/lerobot` location.
 
 ### Evaluate a pretrained policy
 
@@ -375,3 +384,6 @@ Additionally, if you are using any of the particular policy architecture, pretra
   year={2024}
 }
 ```
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=huggingface/lerobot&type=Timeline)](https://star-history.com/#huggingface/lerobot&Timeline)

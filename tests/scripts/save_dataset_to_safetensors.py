@@ -49,17 +49,17 @@ def save_dataset_to_safetensors(output_dir, repo_id="lerobot/pusht"):
     # save 2 first frames of first episode
     i = dataset.episode_data_index["from"][0].item()
     save_file(dataset[i], repo_dir / f"frame_{i}.safetensors")
-    save_file(dataset[i + 1], repo_dir / f"frame_{i+1}.safetensors")
+    save_file(dataset[i + 1], repo_dir / f"frame_{i + 1}.safetensors")
 
     # save 2 frames at the middle of first episode
     i = int((dataset.episode_data_index["to"][0].item() - dataset.episode_data_index["from"][0].item()) / 2)
     save_file(dataset[i], repo_dir / f"frame_{i}.safetensors")
-    save_file(dataset[i + 1], repo_dir / f"frame_{i+1}.safetensors")
+    save_file(dataset[i + 1], repo_dir / f"frame_{i + 1}.safetensors")
 
     # save 2 last frames of first episode
     i = dataset.episode_data_index["to"][0].item()
-    save_file(dataset[i - 2], repo_dir / f"frame_{i-2}.safetensors")
-    save_file(dataset[i - 1], repo_dir / f"frame_{i-1}.safetensors")
+    save_file(dataset[i - 2], repo_dir / f"frame_{i - 2}.safetensors")
+    save_file(dataset[i - 1], repo_dir / f"frame_{i - 1}.safetensors")
 
     # TODO(rcadene): Enable testing on second and last episode
     # We currently cant because our test dataset only contains the first episode

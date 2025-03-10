@@ -25,7 +25,7 @@ from lerobot.common.datasets.transforms import (
     ImageTransformsConfig,
     make_transform_from_config,
 )
-from lerobot.common.utils.utils import seeded_context
+from lerobot.common.utils.random_utils import seeded_context
 
 ARTIFACT_DIR = Path("tests/data/save_image_transforms_to_safetensors")
 DATASET_REPO_ID = "lerobot/aloha_mobile_shrimp"
