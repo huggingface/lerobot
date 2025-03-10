@@ -86,7 +86,7 @@ class WandBLogger:
             resume="must" if cfg.resume else None,
         )
         print(colored("Logs will be synced with wandb.", "blue", attrs=["bold"]))
-        logging.info(f"Track this run --> {colored(wandb.run.get_url(), 'yellow', attrs=['bold'])}")
+        logging.info("Track this run --> %s", colored(wandb.run.get_url(), "yellow", attrs=["bold"]))
         self._wandb = wandb
 
     def log_policy(self, checkpoint_dir: Path):
@@ -108,7 +108,7 @@ class WandBLogger:
         for k, v in d.items():
             if not isinstance(v, (int, float, str)):
                 logging.warning(
-                    f'WandB logging of key "{k}" was ignored as its type is not handled by this wrapper.'
+                    'WandB logging of key "%s" was ignored as its type is not handled by this wrapper.', k
                 )
                 continue
             self._wandb.log({f"{mode}/{k}": v}, step=step)

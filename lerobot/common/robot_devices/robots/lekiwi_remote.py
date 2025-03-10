@@ -67,14 +67,14 @@ def calibrate_follower_arm(motors_bus, calib_dir_str):
         return
 
     if calib_file.exists():
-        with open(calib_file) as f:
+        with open(calib_file, encoding="utf-8") as f:
             calibration = json.load(f)
         print(f"[INFO] Loaded calibration from {calib_file}")
     else:
         print("[INFO] Calibration file not found. Running manual calibration...")
         calibration = run_arm_manual_calibration(motors_bus, "lekiwi", "follower_arm", "follower")
         print(f"[INFO] Calibration complete. Saving to {calib_file}")
-        with open(calib_file, "w") as f:
+        with open(calib_file, "w", encoding="utf-8") as f:
             json.dump(calibration, f)
     try:
         motors_bus.set_calibration(calibration)

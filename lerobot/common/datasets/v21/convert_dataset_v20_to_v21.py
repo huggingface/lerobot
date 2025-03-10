@@ -45,6 +45,9 @@ V21 = "v2.1"
 
 
 class SuppressWarnings:
+    def __init__(self):
+        self.previous_level = None
+
     def __enter__(self):
         self.previous_level = logging.getLogger().getEffectiveLevel()
         logging.getLogger().setLevel(logging.ERROR)

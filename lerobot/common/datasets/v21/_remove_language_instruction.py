@@ -50,7 +50,7 @@ def fix_dataset(repo_id: str) -> str:
         return f"{repo_id}: skipped (no diff)"
 
     if diff_meta_parquet:
-        logging.warning(f"In info.json not in parquet: {meta_features - parquet_features}")
+        logging.warning("In info.json not in parquet: %s", meta_features - parquet_features)
         assert diff_meta_parquet == {"language_instruction"}
         lerobot_metadata.features.pop("language_instruction")
         write_info(lerobot_metadata.info, lerobot_metadata.root)
@@ -79,7 +79,7 @@ def batch_fix():
             status = f"{repo_id}: failed\n    {traceback.format_exc()}"
 
         logging.info(status)
-        with open(logfile, "a") as file:
+        with open(logfile, "a", encoding="utf-8") as file:
             file.write(status + "\n")
 
 

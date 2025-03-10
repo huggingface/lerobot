@@ -16,8 +16,8 @@ import pytest
 from lerobot.common.utils.logging_utils import AverageMeter, MetricsTracker
 
 
-@pytest.fixture
-def mock_metrics():
+@pytest.fixture(name="mock_metrics")
+def fixture_mock_metrics():
     return {"loss": AverageMeter("loss", ":.3f"), "accuracy": AverageMeter("accuracy", ":.2f")}
 
 
@@ -87,6 +87,7 @@ def test_metrics_tracker_getattr(mock_metrics):
         _ = tracker.non_existent_metric
 
 
+# TODO(Steven): I don't understand what's supposed to happen here
 def test_metrics_tracker_setattr(mock_metrics):
     tracker = MetricsTracker(batch_size=32, num_frames=1000, num_episodes=50, metrics=mock_metrics)
     tracker.loss = 2.0

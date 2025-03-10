@@ -53,6 +53,7 @@ import torch
 from huggingface_hub import HfApi
 from safetensors.torch import save_file
 
+# TODO(Steven): #711 Broke this
 from lerobot.common.datasets.compute_stats import compute_stats
 from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset
 from lerobot.common.datasets.push_dataset_to_hub.utils import check_repo_id
@@ -89,7 +90,7 @@ def save_meta_data(
 
     # save info
     info_path = meta_data_dir / "info.json"
-    with open(str(info_path), "w") as f:
+    with open(str(info_path), "w", encoding="utf-8") as f:
         json.dump(info, f, indent=4)
 
     # save stats
@@ -120,11 +121,11 @@ def push_dataset_card_to_hub(
     repo_id: str,
     revision: str | None,
     tags: list | None = None,
-    license: str = "apache-2.0",
+    dataset_license: str = "apache-2.0",
     **card_kwargs,
 ):
     """Creates and pushes a LeRobotDataset Card with appropriate tags to easily find it on the hub."""
-    card = create_lerobot_dataset_card(tags=tags, license=license, **card_kwargs)
+    card = create_lerobot_dataset_card(tags=tags, license=dataset_license, **card_kwargs)
     card.push_to_hub(repo_id=repo_id, repo_type="dataset", revision=revision)
 
 
@@ -213,6 +214,7 @@ def push_dataset_to_hub(
         encoding,
     )
 
+    # TODO(Steven): This doesn't seem to exist, maybe it was removed/changed recently?
     lerobot_dataset = LeRobotDataset.from_preloaded(
         repo_id=repo_id,
         hf_dataset=hf_dataset,

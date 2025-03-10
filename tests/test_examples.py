@@ -38,7 +38,7 @@ def _run_script(path):
 
 
 def _read_file(path):
-    with open(path) as file:
+    with open(path, encoding="utf-8") as file:
         return file.read()
 
 

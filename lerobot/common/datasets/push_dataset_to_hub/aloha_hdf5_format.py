@@ -72,7 +72,7 @@ def check_format(raw_dir) -> bool:
                     assert data[f"/observations/images/{camera}"].ndim == 2
                 else:
                     assert data[f"/observations/images/{camera}"].ndim == 4
-                    b, h, w, c = data[f"/observations/images/{camera}"].shape
+                    _, h, w, c = data[f"/observations/images/{camera}"].shape
                     assert c < h and c < w, f"Expect (h,w,c) image format but ({h=},{w=},{c=}) provided."
 
 
@@ -103,6 +103,7 @@ def load_from_raw(
 
             state = torch.from_numpy(ep["/observations/qpos"][:])
             action = torch.from_numpy(ep["/action"][:])
+            velocity = None
             if "/observations/qvel" in ep:
                 velocity = torch.from_numpy(ep["/observations/qvel"][:])
             if "/observations/effort" in ep:

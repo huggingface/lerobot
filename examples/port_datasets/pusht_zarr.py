@@ -222,7 +222,7 @@ def main(raw_dir: Path, repo_id: str, mode: str = "video", push_to_hub: bool = T
 
 if __name__ == "__main__":
     # To try this script, modify the repo id with your own HuggingFace user (e.g cadene/pusht)
-    repo_id = "lerobot/pusht"
+    repository_id = "lerobot/pusht"
 
     modes = ["video", "image", "keypoints"]
     # Uncomment if you want to try with a specific mode
@@ -230,13 +230,13 @@ if __name__ == "__main__":
     # modes = ["image"]
     # modes = ["keypoints"]
 
-    raw_dir = Path("data/lerobot-raw/pusht_raw")
-    for mode in modes:
-        if mode in ["image", "keypoints"]:
-            repo_id += f"_{mode}"
+    data_dir = Path("data/lerobot-raw/pusht_raw")
+    for available_mode in modes:
+        if available_mode in ["image", "keypoints"]:
+            repository_id += f"_{available_mode}"
 
         # download and load raw dataset, create LeRobotDataset, populate it, push to hub
-        main(raw_dir, repo_id=repo_id, mode=mode)
+        main(data_dir, repo_id=repository_id, mode=available_mode)
 
         # Uncomment if you want to load the local dataset and explore it
         # dataset = LeRobotDataset(repo_id=repo_id)

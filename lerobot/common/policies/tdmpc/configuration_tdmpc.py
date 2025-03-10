@@ -162,7 +162,7 @@ class TDMPCConfig(PreTrainedConfig):
     def __post_init__(self):
         super().__post_init__()
 
-        """Input validation (not exhaustive)."""
+        # Input validation (not exhaustive).
         if self.n_gaussian_samples <= 0:
             raise ValueError(
                 f"The number of gaussian samples for CEM should be non-zero. Got `{self.n_gaussian_samples=}`"

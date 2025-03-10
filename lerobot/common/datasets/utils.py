@@ -135,21 +135,21 @@ def serialize_dict(stats: dict[str, torch.Tensor | np.ndarray | dict]) -> dict:
 
 def embed_images(dataset: datasets.Dataset) -> datasets.Dataset:
     # Embed image bytes into the table before saving to parquet
-    format = dataset.format
+    ds_format = dataset.format
     dataset = dataset.with_format("arrow")
     dataset = dataset.map(embed_table_storage, batched=False)
-    dataset = dataset.with_format(**format)
+    dataset = dataset.with_format(**ds_format)
     return dataset
 
 
 def load_json(fpath: Path) -> Any:
-    with open(fpath) as f:
+    with open(fpath, encoding="utf-8") as f:
         return json.load(f)
 
 
 def write_json(data: dict, fpath: Path) -> None:
     fpath.parent.mkdir(exist_ok=True, parents=True)
-    with open(fpath, "w") as f:
+    with open(fpath, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=4, ensure_ascii=False)
 
 
@@ -300,7 +300,7 @@ def check_version_compatibility(
     if v_check.major < v_current.major and enforce_breaking_major:
         raise BackwardCompatibilityError(repo_id, v_check)
     elif v_check.minor < v_current.minor:
-        logging.warning(V21_MESSAGE.format(repo_id=repo_id, version=v_check))
+        logging.warning("%s", V21_MESSAGE.format(repo_id=repo_id, version=v_check))
 
 
 def get_repo_versions(repo_id: str) -> list[packaging.version.Version]:
@@ -348,7 +348,9 @@ def get_safe_version(repo_id: str, version: str | packaging.version.Version) -> 
     if compatibles:
         return_version = max(compatibles)
         if return_version < target_version:
-            logging.warning(f"Revision {version} for {repo_id} not found, using version v{return_version}")
+            logging.warning(
+                "Revision %s for %s not found, using version v%s", version, repo_id, return_version
+            )
         return f"v{return_version}"
 
     lower_major = [v for v in hub_versions if v.major < target_version.major]
@@ -403,7 +405,7 @@ def dataset_to_policy_features(features: dict[str, dict]) -> dict[str, PolicyFea
     for key, ft in features.items():
         shape = ft["shape"]
         if ft["dtype"] in ["image", "video"]:
-            type = FeatureType.VISUAL
+            feature_type = FeatureType.VISUAL
             if len(shape) != 3:
                 raise ValueError(f"Number of dimensions of {key} != 3 (shape={shape})")
 
@@ -412,16 +414,16 @@ def dataset_to_policy_features(features: dict[str, dict]) -> dict[str, PolicyFea
             if names[2] in ["channel", "channels"]:  # (h, w, c) -> (c, h, w)
                 shape = (shape[2], shape[0], shape[1])
         elif key == "observation.environment_state":
-            type = FeatureType.ENV
+            feature_type = FeatureType.ENV
         elif key.startswith("observation"):
-            type = FeatureType.STATE
+            feature_type = FeatureType.STATE
         elif key == "action":
-            type = FeatureType.ACTION
+            feature_type = FeatureType.ACTION
         else:
             continue
 
         policy_features[key] = PolicyFeature(
-            type=type,
+            type=feature_type,
             shape=shape,
         )
 

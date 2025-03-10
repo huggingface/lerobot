@@ -262,14 +262,14 @@ class MobileManipulator:
         arm_calib_path = self.calibration_dir / f"{arm_id}.json"
 
         if arm_calib_path.exists():
-            with open(arm_calib_path) as f:
+            with open(arm_calib_path, encoding="utf-8") as f:
                 calibration = json.load(f)
         else:
             print(f"Missing calibration file '{arm_calib_path}'")
             calibration = run_arm_manual_calibration(arm, self.robot_type, name, arm_type)
             print(f"Calibration is done! Saving calibration file '{arm_calib_path}'")
             arm_calib_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(arm_calib_path, "w") as f:
+            with open(arm_calib_path, "w", encoding="utf-8") as f:
                 json.dump(calibration, f)
 
         return calibration
@@ -372,6 +372,7 @@ class MobileManipulator:
 
                 present_speed = self.last_present_speed
 
+        # TODO(Steven): [WARN] Plenty of general exceptions
         except Exception as e:
             print(f"[DEBUG] Error decoding video message: {e}")
             # If decode fails, fall back to old data

@@ -53,7 +53,7 @@ def rechunk_recompress_array(group, name, chunks=None, chunk_length=None, compre
     # rechunk recompress
     group.move(name, tmp_key)
     old_arr = group[tmp_key]
-    n_copied, n_skipped, n_bytes_copied = zarr.copy(
+    _n_copied, _n_skipped, _n_bytes_copied = zarr.copy(
         source=old_arr,
         dest=group,
         name=name,
@@ -192,7 +192,7 @@ class ReplayBuffer:
         else:
             root = zarr.group(store=store)
             # copy without recompression
-            n_copied, n_skipped, n_bytes_copied = zarr.copy_store(
+            _n_copied, _n_skipped, _n_bytes_copied = zarr.copy_store(
                 source=src_store, dest=store, source_path="/meta", dest_path="/meta", if_exists=if_exists
             )
             data_group = root.create_group("data", overwrite=True)
@@ -205,7 +205,7 @@ class ReplayBuffer:
                 if cks == value.chunks and cpr == value.compressor:
                     # copy without recompression
                     this_path = "/data/" + key
-                    n_copied, n_skipped, n_bytes_copied = zarr.copy_store(
+                    _n_copied, _n_skipped, _n_bytes_copied = zarr.copy_store(
                         source=src_store,
                         dest=store,
                         source_path=this_path,
@@ -214,7 +214,7 @@ class ReplayBuffer:
                     )
                 else:
                     # copy with recompression
-                    n_copied, n_skipped, n_bytes_copied = zarr.copy(
+                    _n_copied, _n_skipped, _n_bytes_copied = zarr.copy(
                         source=value,
                         dest=data_group,
                         name=key,
@@ -275,7 +275,7 @@ class ReplayBuffer:
             compressors = {}
         if self.backend == "zarr":
             # recompression free copy
-            n_copied, n_skipped, n_bytes_copied = zarr.copy_store(
+            _n_copied, _n_skipped, _n_bytes_copied = zarr.copy_store(
                 source=self.root.store,
                 dest=store,
                 source_path="/meta",
@@ -297,7 +297,7 @@ class ReplayBuffer:
                 if cks == value.chunks and cpr == value.compressor:
                     # copy without recompression
                     this_path = "/data/" + key
-                    n_copied, n_skipped, n_bytes_copied = zarr.copy_store(
+                    _n_copied, _n_skipped, _n_bytes_copied = zarr.copy_store(
                         source=self.root.store,
                         dest=store,
                         source_path=this_path,

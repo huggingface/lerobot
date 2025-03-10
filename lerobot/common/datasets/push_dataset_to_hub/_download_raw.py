@@ -162,9 +162,9 @@ def download_raw(raw_dir: Path, repo_id: str):
         )
     raw_dir.mkdir(parents=True, exist_ok=True)
 
-    logging.info(f"Start downloading from huggingface.co/{user_id} for {dataset_id}")
+    logging.info("Start downloading from huggingface.co/%s for %s", user_id, dataset_id)
     snapshot_download(repo_id, repo_type="dataset", local_dir=raw_dir)
-    logging.info(f"Finish downloading from huggingface.co/{user_id} for {dataset_id}")
+    logging.info("Finish downloading from huggingface.co/%s for %s", user_id, dataset_id)
 
 
 def download_all_raw_datasets(data_dir: Path | None = None):

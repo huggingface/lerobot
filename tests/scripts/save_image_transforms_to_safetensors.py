@@ -51,7 +51,7 @@ def save_single_transforms(original_frame: torch.Tensor, output_dir: Path):
     }
 
     frames = {"original_frame": original_frame}
-    for tf_type, tf_name, min_max_values in transforms.items():
+    for tf_type, tf_name, min_max_values in transforms:
         for min_max in min_max_values:
             tf_cfg = ImageTransformConfig(type=tf_type, kwargs={tf_name: min_max})
             tf = make_transform_from_config(tf_cfg)

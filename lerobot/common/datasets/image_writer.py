@@ -81,21 +81,21 @@ def write_image(image: np.ndarray | PIL.Image.Image, fpath: Path):
         print(f"Error writing image {fpath}: {e}")
 
 
-def worker_thread_loop(queue: queue.Queue):
+def worker_thread_loop(task_queue: queue.Queue):
     while True:
-        item = queue.get()
+        item = task_queue.get()
         if item is None:
-            queue.task_done()
+            task_queue.task_done()
             break
         image_array, fpath = item
         write_image(image_array, fpath)
-        queue.task_done()
+        task_queue.task_done()
 
 
-def worker_process(queue: queue.Queue, num_threads: int):
+def worker_process(task_queue: queue.Queue, num_threads: int):
     threads = []
     for _ in range(num_threads):
-        t = threading.Thread(target=worker_thread_loop, args=(queue,))
+        t = threading.Thread(target=worker_thread_loop, args=(task_queue,))
         t.daemon = True
         t.start()
         threads.append(t)

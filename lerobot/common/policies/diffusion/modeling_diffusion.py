@@ -170,6 +170,7 @@ def _make_noise_scheduler(name: str, **kwargs: dict) -> DDPMScheduler | DDIMSche
         raise ValueError(f"Unsupported noise scheduler type {name}")
 
 
+# TODO(Steven): Missing forward() implementation
 class DiffusionModel(nn.Module):
     def __init__(self, config: DiffusionConfig):
         super().__init__()
@@ -203,6 +204,7 @@ class DiffusionModel(nn.Module):
         )
 
         if config.num_inference_steps is None:
+            # TODO(Steven): Consider type check?
             self.num_inference_steps = self.noise_scheduler.config.num_train_timesteps
         else:
             self.num_inference_steps = config.num_inference_steps
@@ -333,7 +335,7 @@ class DiffusionModel(nn.Module):
         # Sample a random noising timestep for each item in the batch.
         timesteps = torch.randint(
             low=0,
-            high=self.noise_scheduler.config.num_train_timesteps,
+            high=self.noise_scheduler.config.num_train_timesteps,  # TODO(Steven): Consider type check?
             size=(trajectory.shape[0],),
             device=trajectory.device,
         ).long()

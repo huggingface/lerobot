@@ -55,7 +55,7 @@ def main():
     with open(save_dir / "noise.pkl", "rb") as f:
         noise = pickle.load(f)
 
-    with open(ckpt_jax_dir / "assets/norm_stats.json") as f:
+    with open(ckpt_jax_dir / "assets/norm_stats.json", encoding="utf-8") as f:
         norm_stats = json.load(f)
 
     # Override stats
