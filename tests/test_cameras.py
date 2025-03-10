@@ -205,16 +205,11 @@ def test_save_images_from_cameras(tmp_path, request, camera_type, mock):
     # Small `record_time_s` to speedup unit tests
     save_images_from_cameras(tmp_path, record_time_s=0.02, mock=mock)
 
+
 @pytest.mark.parametrize("camera_type, mock", TEST_CAMERA_TYPES)
 @require_camera
 def test_camera(request, camera_type, mock):
-    config_kwargs = {
-        "camera_type": camera_type,
-        "mock": mock,
-        "width": 640,
-        "height": 480,
-        "fps": 30
-    }
+    config_kwargs = {"camera_type": camera_type, "mock": mock, "width": 640, "height": 480, "fps": 30}
 
     # No rotation.
     camera = make_camera(**config_kwargs, rotation=None)
@@ -234,9 +229,10 @@ def test_camera(request, camera_type, mock):
     # With a 90° rotation, we expect the metadata dimensions to be swapped.
     assert camera.capture_width == 640
     assert camera.capture_height == 480
-    assert camera.width == 480  
-    assert camera.height == 640 
+    assert camera.width == 480
+    assert camera.height == 640
     import cv2
+
     assert camera.rotation == cv2.ROTATE_90_CLOCKWISE
     rot_img = camera.read()
     h, w, c = rot_img.shape
