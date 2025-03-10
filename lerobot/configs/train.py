@@ -22,12 +22,11 @@ from huggingface_hub import hf_hub_download
 from huggingface_hub.errors import HfHubHTTPError
 
 from lerobot.common import envs
-from lerobot.common.optim import OptimizerConfig
-from lerobot.common.optim.schedulers import LRSchedulerConfig
+from lerobot.common.optim import LRSchedulerConfig, OptimizerConfig
+from lerobot.common.policies import PreTrainedConfig
 from lerobot.common.utils.hub import HubMixin
 from lerobot.configs import parser
 from lerobot.configs.default import DatasetConfig, EvalConfig, WandBConfig
-from lerobot.configs.policies import PreTrainedConfig
 
 TRAIN_CONFIG_NAME = "train_config.json"
 

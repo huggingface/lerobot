@@ -17,9 +17,9 @@ from pathlib import Path
 
 import draccus
 
+from lerobot.common.policies import PreTrainedConfig
 from lerobot.common.robot_devices.robots.configs import RobotConfig
 from lerobot.configs import parser
-from lerobot.configs.policies import PreTrainedConfig
 
 
 @dataclass

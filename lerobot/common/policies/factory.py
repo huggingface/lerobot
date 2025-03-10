@@ -22,55 +22,36 @@ from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
 from lerobot.common.datasets.utils import dataset_to_policy_features
 from lerobot.common.envs.configs import EnvConfig
 from lerobot.common.envs.utils import env_to_policy_features
-from lerobot.common.policies.act.configuration_act import ACTConfig
-from lerobot.common.policies.diffusion.configuration_diffusion import DiffusionConfig
-from lerobot.common.policies.pi0.configuration_pi0 import PI0Config
-from lerobot.common.policies.pretrained import PreTrainedPolicy
-from lerobot.common.policies.tdmpc.configuration_tdmpc import TDMPCConfig
-from lerobot.common.policies.vqbet.configuration_vqbet import VQBeTConfig
-from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType
+
+from .config import PreTrainedConfig
+from .pretrained import PreTrainedPolicy
 
 
 def get_policy_class(name: str) -> PreTrainedPolicy:
     """Get the policy's class and config class given a name (matching the policy class' `name` attribute)."""
-    if name == "tdmpc":
-        from lerobot.common.policies.tdmpc.modeling_tdmpc import TDMPCPolicy
-
-        return TDMPCPolicy
-    elif name == "diffusion":
-        from lerobot.common.policies.diffusion.modeling_diffusion import DiffusionPolicy
-
-        return DiffusionPolicy
-    elif name == "act":
-        from lerobot.common.policies.act.modeling_act import ACTPolicy
+    if name == "act":
+        from .act import ACTPolicy
 
         return ACTPolicy
-    elif name == "vqbet":
-        from lerobot.common.policies.vqbet.modeling_vqbet import VQBeTPolicy
+    elif name == "diffusion":
+        from .diffusion import DiffusionPolicy
 
-        return VQBeTPolicy
+        return DiffusionPolicy
     elif name == "pi0":
-        from lerobot.common.policies.pi0.modeling_pi0 import PI0Policy
+        from .pi0 import PI0Policy
 
         return PI0Policy
+    elif name == "tdmpc":
+        from .tdmpc import TDMPCPolicy
+
+        return TDMPCPolicy
+    elif name == "vqbet":
+        from .vqbet import VQBeTPolicy
+
+        return VQBeTPolicy
     else:
         raise NotImplementedError(f"Policy with name {name} is not implemented.")
-
-
-def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
-    if policy_type == "tdmpc":
-        return TDMPCConfig(**kwargs)
-    elif policy_type == "diffusion":
-        return DiffusionConfig(**kwargs)
-    elif policy_type == "act":
-        return ACTConfig(**kwargs)
-    elif policy_type == "vqbet":
-        return VQBeTConfig(**kwargs)
-    elif policy_type == "pi0":
-        return PI0Config(**kwargs)
-    else:
-        raise ValueError(f"Policy type '{policy_type}' is not available.")
 
 
 def make_policy(
