@@ -26,7 +26,7 @@ from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnecte
 from lerobot.common.motors.feetech import (
     FeetechMotorsBus,
     TorqueMode,
-    run_arm_manual_calibration,
+    run_full_arm_calibration,
 )
 
 from ..robot import Robot
@@ -141,7 +141,7 @@ class So100Robot(Robot):
         else:
             # TODO(rcadene): display a warning in __init__ if calibration file not available
             logging.info(f"Missing calibration file '{arm_calib_path}'")
-            calibration = run_arm_manual_calibration(self.arm, self.robot_type, self.name, "follower")
+            calibration = run_full_arm_calibration(self.arm, self.robot_type, self.name, "follower")
 
             logging.info(f"Calibration is done! Saving calibration file '{arm_calib_path}'")
             arm_calib_path.parent.mkdir(parents=True, exist_ok=True)

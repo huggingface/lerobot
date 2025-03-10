@@ -24,7 +24,7 @@ from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnecte
 from lerobot.common.motors.feetech import (
     FeetechMotorsBus,
     TorqueMode,
-    run_arm_manual_calibration,
+    run_full_arm_calibration,
 )
 
 from ..teleoperator import Teleoperator
@@ -86,11 +86,6 @@ class SO100Teleop(Teleoperator):
         self.arm.write("Torque_Enable", TorqueMode.DISABLED.value)
         self.calibrate()
 
-        # Enable torque on the gripper and move it to 45 degrees so that we can use it as a trigger.
-        logging.info("Activating torque.")
-        self.arm.write("Torque_Enable", TorqueMode.ENABLED.value, "gripper")
-        self.arm.write("Goal_Position", self.config.gripper_open_degree, "gripper")
-
         # Check arm can be read
         self.arm.read("Present_Position")
 
@@ -109,7 +104,7 @@ class SO100Teleop(Teleoperator):
         else:
             # TODO(rcadene): display a warning in __init__ if calibration file not available
             logging.info(f"Missing calibration file '{arm_calib_path}'")
-            calibration = run_arm_manual_calibration(self.arm, self.robot_type, self.name, "leader")
+            calibration = run_full_arm_calibration(self.arm, self.robot_type, self.name, "leader")
 
             logging.info(f"Calibration is done! Saving calibration file '{arm_calib_path}'")
             arm_calib_path.parent.mkdir(parents=True, exist_ok=True)

@@ -26,7 +26,7 @@ import zmq
 from lerobot.common.cameras.utils import make_cameras_from_configs
 from lerobot.common.errors import DeviceNotConnectedError
 from lerobot.common.motors.feetech.feetech import TorqueMode
-from lerobot.common.motors.feetech.feetech_calibration import run_arm_manual_calibration
+from lerobot.common.motors.feetech.feetech_calibration import run_full_arm_calibration
 from lerobot.common.motors.motors_bus import MotorsBus
 from lerobot.common.motors.utils import make_motors_buses_from_configs
 from lerobot.common.robots.lekiwi.configuration_lekiwi import LeKiwiRobotConfig
@@ -267,7 +267,7 @@ class MobileManipulator:
                 calibration = json.load(f)
         else:
             print(f"Missing calibration file '{arm_calib_path}'")
-            calibration = run_arm_manual_calibration(arm, self.robot_type, name, arm_type)
+            calibration = run_full_arm_calibration(arm, self.robot_type, name, arm_type)
             print(f"Calibration is done! Saving calibration file '{arm_calib_path}'")
             arm_calib_path.parent.mkdir(parents=True, exist_ok=True)
             with open(arm_calib_path, "w") as f:
