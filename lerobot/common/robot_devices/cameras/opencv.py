@@ -1,3 +1,17 @@
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 This file contains utilities for recording frames from cameras. For more info look at `OpenCVCamera` docstring.
 """
@@ -130,8 +144,8 @@ def save_images_from_cameras(
         camera = OpenCVCamera(config)
         camera.connect()
         print(
-            f"OpenCVCamera({camera.camera_index}, fps={camera.fps}, width={camera.width}, "
-            f"height={camera.height}, color_mode={camera.color_mode})"
+            f"OpenCVCamera({camera.camera_index}, fps={camera.fps}, width={camera.capture_width}, "
+            f"height={camera.capture_height}, color_mode={camera.color_mode})"
         )
         cameras.append(camera)
 
@@ -230,9 +244,19 @@ class OpenCVCamera:
             else:
                 raise ValueError(f"Please check the provided camera_index: {self.camera_index}")
 
+        # Store the raw (capture) resolution from the config.
+        self.capture_width = config.width
+        self.capture_height = config.height
+
+        # If rotated by ±90, swap width and height.
+        if config.rotation in [-90, 90]:
+            self.width = config.height
+            self.height = config.width
+        else:
+            self.width = config.width
+            self.height = config.height
+
         self.fps = config.fps
-        self.width = config.width
-        self.height = config.height
         self.channels = config.channels
         self.color_mode = config.color_mode
         self.mock = config.mock
@@ -249,7 +273,6 @@ class OpenCVCamera:
         else:
             import cv2
 
-        # TODO(aliberts): Do we keep original width/height or do we define them after rotation?
         self.rotation = None
         if config.rotation == -90:
             self.rotation = cv2.ROTATE_90_COUNTERCLOCKWISE
@@ -271,10 +294,20 @@ class OpenCVCamera:
             # when other threads are used to save the images.
             cv2.setNumThreads(1)
 
+        backend = (
+            cv2.CAP_V4L2
+            if platform.system() == "Linux"
+            else cv2.CAP_DSHOW
+            if platform.system() == "Windows"
+            else cv2.CAP_AVFOUNDATION
+            if platform.system() == "Darwin"
+            else cv2.CAP_ANY
+        )
+
         camera_idx = f"/dev/video{self.camera_index}" if platform.system() == "Linux" else self.camera_index
         # First create a temporary camera trying to access `camera_index`,
         # and verify it is a valid camera by calling `isOpened`.
-        tmp_camera = cv2.VideoCapture(camera_idx)
+        tmp_camera = cv2.VideoCapture(camera_idx, backend)
         is_camera_open = tmp_camera.isOpened()
         # Release camera to make it accessible for `find_camera_indices`
         tmp_camera.release()
@@ -297,14 +330,14 @@ class OpenCVCamera:
         # Secondly, create the camera that will be used downstream.
         # Note: For some unknown reason, calling `isOpened` blocks the camera which then
         # needs to be re-created.
-        self.camera = cv2.VideoCapture(camera_idx)
+        self.camera = cv2.VideoCapture(camera_idx, backend)
 
         if self.fps is not None:
             self.camera.set(cv2.CAP_PROP_FPS, self.fps)
-        if self.width is not None:
-            self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
-        if self.height is not None:
-            self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+        if self.capture_width is not None:
+            self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, self.capture_width)
+        if self.capture_height is not None:
+            self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, self.capture_height)
 
         actual_fps = self.camera.get(cv2.CAP_PROP_FPS)
         actual_width = self.camera.get(cv2.CAP_PROP_FRAME_WIDTH)
@@ -316,19 +349,22 @@ class OpenCVCamera:
             raise OSError(
                 f"Can't set {self.fps=} for OpenCVCamera({self.camera_index}). Actual value is {actual_fps}."
             )
-        if self.width is not None and not math.isclose(self.width, actual_width, rel_tol=1e-3):
+        if self.capture_width is not None and not math.isclose(
+            self.capture_width, actual_width, rel_tol=1e-3
+        ):
             raise OSError(
-                f"Can't set {self.width=} for OpenCVCamera({self.camera_index}). Actual value is {actual_width}."
+                f"Can't set {self.capture_width=} for OpenCVCamera({self.camera_index}). Actual value is {actual_width}."
             )
-        if self.height is not None and not math.isclose(self.height, actual_height, rel_tol=1e-3):
+        if self.capture_height is not None and not math.isclose(
+            self.capture_height, actual_height, rel_tol=1e-3
+        ):
             raise OSError(
-                f"Can't set {self.height=} for OpenCVCamera({self.camera_index}). Actual value is {actual_height}."
+                f"Can't set {self.capture_height=} for OpenCVCamera({self.camera_index}). Actual value is {actual_height}."
             )
 
         self.fps = round(actual_fps)
-        self.width = round(actual_width)
-        self.height = round(actual_height)
-
+        self.capture_width = round(actual_width)
+        self.capture_height = round(actual_height)
         self.is_connected = True
 
     def read(self, temporary_color_mode: str | None = None) -> np.ndarray:
@@ -369,7 +405,7 @@ class OpenCVCamera:
             color_image = cv2.cvtColor(color_image, cv2.COLOR_BGR2RGB)
 
         h, w, _ = color_image.shape
-        if h != self.height or w != self.width:
+        if h != self.capture_height or w != self.capture_width:
             raise OSError(
                 f"Can't capture color image with expected height and width ({self.height} x {self.width}). ({h} x {w}) returned instead."
             )

@@ -1,4 +1,18 @@
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 import abc
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,6 +26,7 @@ from huggingface_hub.errors import HfHubHTTPError
 from lerobot.common.optim.optimizers import OptimizerConfig
 from lerobot.common.optim.schedulers import LRSchedulerConfig
 from lerobot.common.utils.hub import HubMixin
+from lerobot.common.utils.utils import auto_select_torch_device, is_amp_available, is_torch_device_available
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 
 # Generic variable that is either PreTrainedConfig or a subclass thereof
@@ -40,8 +55,24 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     input_features: dict[str, PolicyFeature] = field(default_factory=dict)
     output_features: dict[str, PolicyFeature] = field(default_factory=dict)
 
+    device: str | None = None  # cuda | cpu | mp
+    # `use_amp` determines whether to use Automatic Mixed Precision (AMP) for training and evaluation. With AMP,
+    # automatic gradient scaling is used.
+    use_amp: bool = False
+
     def __post_init__(self):
         self.pretrained_path = None
+        if not self.device or not is_torch_device_available(self.device):
+            auto_device = auto_select_torch_device()
+            logging.warning(f"Device '{self.device}' is not available. Switching to '{auto_device}'.")
+            self.device = auto_device.type
+
+        # Automatically deactivate AMP if necessary
+        if self.use_amp and not is_amp_available(self.device):
+            logging.warning(
+                f"Automatic Mixed Precision (amp) is not available on device '{self.device}'. Deactivating AMP."
+            )
+            self.use_amp = False
 
     @property
     def type(self) -> str:
