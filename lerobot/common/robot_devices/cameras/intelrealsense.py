@@ -231,8 +231,8 @@ class IntelRealSenseCamera:
 
         # If rotated by ±90, swap width and height.
         if config.rotation in [-90, 90]:
-            self.width = config.height  
-            self.height = config.width  
+            self.width = config.height
+            self.height = config.width
         else:
             self.width = config.width
             self.height = config.height
@@ -296,13 +296,17 @@ class IntelRealSenseCamera:
 
         if self.fps and self.capture_width and self.capture_height:
             # TODO(rcadene): can we set rgb8 directly?
-            config.enable_stream(rs.stream.color, self.capture_width, self.capture_height, rs.format.rgb8, self.fps)
+            config.enable_stream(
+                rs.stream.color, self.capture_width, self.capture_height, rs.format.rgb8, self.fps
+            )
         else:
             config.enable_stream(rs.stream.color)
 
         if self.use_depth:
             if self.fps and self.capture_width and self.capture_height:
-                config.enable_stream(rs.stream.depth, self.capture_width, self.capture_height, rs.format.z16, self.fps)
+                config.enable_stream(
+                    rs.stream.depth, self.capture_width, self.capture_height, rs.format.z16, self.fps
+                )
             else:
                 config.enable_stream(rs.stream.depth)
 
