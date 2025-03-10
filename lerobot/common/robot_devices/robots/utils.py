@@ -21,6 +21,7 @@ from lerobot.common.robot_devices.robots.configs import (
     LeKiwiRobotConfig,
     ManipulatorRobotConfig,
     MossRobotConfig,
+    RoarmRobotConfig,
     RobotConfig,
     So100RobotConfig,
     StretchRobotConfig,
@@ -58,6 +59,8 @@ def make_robot_config(robot_type: str, **kwargs) -> RobotConfig:
         return MossRobotConfig(**kwargs)
     elif robot_type == "so100":
         return So100RobotConfig(**kwargs)
+    elif robot_type == "roarm_m3":
+        return RoarmRobotConfig(**kwargs)
     elif robot_type == "stretch":
         return StretchRobotConfig(**kwargs)
     elif robot_type == "lekiwi":
@@ -75,6 +78,10 @@ def make_robot_from_config(config: RobotConfig):
         from lerobot.common.robot_devices.robots.mobile_manipulator import MobileManipulator
 
         return MobileManipulator(config)
+    elif isinstance(config, RoarmRobotConfig):
+        from lerobot.common.robot_devices.robots.roarm_m3 import RoarmRobot
+
+        return RoarmRobot(config)
     else:
         from lerobot.common.robot_devices.robots.stretch import StretchRobot
 
