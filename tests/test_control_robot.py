@@ -43,7 +43,7 @@ import pytest
 
 from lerobot.common.policies.act.configuration_act import ACTConfig
 from lerobot.common.policies.factory import make_policy
-from lerobot.common.robot_devices.control_configs import (
+from lerobot.configs.control import (
     CalibrateControlConfig,
     RecordControlConfig,
     ReplayControlConfig,

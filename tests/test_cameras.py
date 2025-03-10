@@ -37,7 +37,7 @@ pytest -sx 'tests/test_cameras.py::test_camera[intelrealsense-True]'
 import numpy as np
 import pytest
 
-from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
+from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from tests.utils import TEST_CAMERA_TYPES, make_camera, require_camera
 
 # Maximum absolute difference between two consecutive images recorded by a camera.
@@ -70,11 +70,11 @@ def test_camera(request, camera_type, mock):
     camera = make_camera(**camera_kwargs)
 
     # Test reading, async reading, disconnecting before connecting raises an error
-    with pytest.raises(RobotDeviceNotConnectedError):
+    with pytest.raises(DeviceNotConnectedError):
         camera.read()
-    with pytest.raises(RobotDeviceNotConnectedError):
+    with pytest.raises(DeviceNotConnectedError):
         camera.async_read()
-    with pytest.raises(RobotDeviceNotConnectedError):
+    with pytest.raises(DeviceNotConnectedError):
         camera.disconnect()
 
     # Test deleting the object without connecting first
@@ -89,7 +89,7 @@ def test_camera(request, camera_type, mock):
     assert camera.capture_height is not None
 
     # Test connecting twice raises an error
-    with pytest.raises(RobotDeviceAlreadyConnectedError):
+    with pytest.raises(DeviceAlreadyConnectedError):
         camera.connect()
 
     # Test reading from the camera
@@ -198,9 +198,9 @@ def test_camera(request, camera_type, mock):
 def test_save_images_from_cameras(tmp_path, request, camera_type, mock):
     # TODO(rcadene): refactor
     if camera_type == "opencv":
-        from lerobot.common.robot_devices.cameras.opencv import save_images_from_cameras
+        from lerobot.common.cameras.opencv.camera_opencv import save_images_from_cameras
     elif camera_type == "intelrealsense":
-        from lerobot.common.robot_devices.cameras.intelrealsense import save_images_from_cameras
+        from lerobot.common.cameras.intel.camera_realsense import save_images_from_cameras
 
     # Small `record_time_s` to speedup unit tests
     save_images_from_cameras(tmp_path, record_time_s=0.02, mock=mock)
