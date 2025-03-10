@@ -285,10 +285,20 @@ class OpenCVCamera:
             # when other threads are used to save the images.
             cv2.setNumThreads(1)
 
+        backend = (
+            cv2.CAP_V4L2
+            if platform.system() == "Linux"
+            else cv2.CAP_DSHOW
+            if platform.system() == "Windows"
+            else cv2.CAP_AVFOUNDATION
+            if platform.system() == "Darwin"
+            else cv2.CAP_ANY
+        )
+
         camera_idx = f"/dev/video{self.camera_index}" if platform.system() == "Linux" else self.camera_index
         # First create a temporary camera trying to access `camera_index`,
         # and verify it is a valid camera by calling `isOpened`.
-        tmp_camera = cv2.VideoCapture(camera_idx)
+        tmp_camera = cv2.VideoCapture(camera_idx, backend)
         is_camera_open = tmp_camera.isOpened()
         # Release camera to make it accessible for `find_camera_indices`
         tmp_camera.release()
@@ -311,7 +321,7 @@ class OpenCVCamera:
         # Secondly, create the camera that will be used downstream.
         # Note: For some unknown reason, calling `isOpened` blocks the camera which then
         # needs to be re-created.
-        self.camera = cv2.VideoCapture(camera_idx)
+        self.camera = cv2.VideoCapture(camera_idx, backend)
 
         if self.fps is not None:
             self.camera.set(cv2.CAP_PROP_FPS, self.fps)
