@@ -72,14 +72,11 @@ class SumTree:
     def __init__(self, capacity: int):
         """
         Args:
-            capacity: Maximum number of elements. The tree size is the next power of 2 for efficiency.
+            capacity: Maximum number of elements.
         """
         self.capacity = capacity
-        self.size = 1
-        while self.size < capacity:
-            self.size *= 2  # Ensure power-of-two size for efficient updates
-
-        self.tree = [0.0] * (2 * self.size)  # Tree structure
+        self.size = capacity
+        self.tree = [0.0] * (2 * self.size)
 
     def initialize_tree(self, priorities: List[float]):
         """
