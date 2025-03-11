@@ -307,6 +307,9 @@ class ACT(nn.Module):
         # The cls token forms parameters of the latent's distribution (like this [*means, *log_variances]).
         super().__init__()
         self.config = config
+        self.quant_images = torch.quantization.QuantStub()
+        self.quant_state = torch.quantization.QuantStub()
+        self.dequant_actions = torch.quantization.DeQuantStub()
 
         if self.config.use_vae:
             self.vae_encoder = ACTEncoder(config, is_vae_encoder=True)
@@ -408,6 +411,11 @@ class ACT(nn.Module):
             Tuple containing the latent PDF's parameters (mean, log(σ²)) both as (B, L) tensors where L is the
             latent dimension.
         """
+        if "observation.images" in batch:
+            batch["observation.images"] = self.quant_images(batch["observation.images"])
+        if "observation.state" in batch:
+            batch["observation.state"] = self.quant_state(batch["observation.state"])
+
         if self.config.use_vae and self.training:
             assert "action" in batch, (
                 "actions must be provided when using the variational objective in training mode."
@@ -529,6 +537,8 @@ class ACT(nn.Module):
 
         actions = self.action_head(decoder_out)
 
+        # Dequantize outputs
+        actions = self.dequant_actions(actions)
         return actions, (mu, log_sigma_x2)
 
 
