@@ -29,7 +29,7 @@ repos:
       - id: end-of-file-fixer
       - id: trailing-whitespace
   - repo: https://github.com/crate-ci/typos
-    rev: v1.30.0
+    rev: v1
     hooks:
       - id: typos
         args: [--force-exclude]
@@ -38,7 +38,7 @@ repos:
     hooks:
     -   id: pyupgrade
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.9.9
+    rev: v0.9.10
     hooks:
       - id: ruff
         args: [--fix]
