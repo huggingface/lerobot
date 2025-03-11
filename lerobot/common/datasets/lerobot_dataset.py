@@ -749,6 +749,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         task_idx = item["task_index"].item()
         item["task"] = self.meta.tasks[task_idx]
 
+        # Add global index of frame (indices)
+        item["indices"] = torch.tensor(idx)
+
         return item
 
     def __repr__(self):

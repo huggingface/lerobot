@@ -155,11 +155,15 @@ class ACTPolicy(PreTrainedPolicy):
         batch = self.normalize_targets(batch)
         actions_hat, (mu_hat, log_sigma_x2_hat) = self.model(batch)
 
-        l1_loss = (
-            F.l1_loss(batch["action"], actions_hat, reduction="none") * ~batch["action_is_pad"].unsqueeze(-1)
-        ).mean()
+        elementwise_l1 = F.l1_loss(batch["action"], actions_hat, reduction="none") * ~batch[
+            "action_is_pad"
+        ].unsqueeze(-1)
 
-        loss_dict = {"l1_loss": l1_loss.item()}
+        l1_loss = elementwise_l1.mean()
+
+        # mean over time+action_dim => per-sample array of shape (B,)
+        l1_per_sample = elementwise_l1.mean(dim=(1, 2))
+
         if self.config.use_vae:
             # Calculate Dₖₗ(latent_pdf || standard_normal). Note: After computing the KL-divergence for
             # each dimension independently, we sum over the latent dimension to get the total
@@ -168,9 +172,17 @@ class ACTPolicy(PreTrainedPolicy):
             mean_kld = (
                 (-0.5 * (1 + log_sigma_x2_hat - mu_hat.pow(2) - (log_sigma_x2_hat).exp())).sum(-1).mean()
             )
-            loss_dict["kld_loss"] = mean_kld.item()
+            loss_dict = {
+                "l1_loss": l1_loss.item(),
+                "kld_loss": mean_kld.item(),
+                "per_sample_l1": l1_per_sample,  # shape (B,)
+            }
             loss = l1_loss + mean_kld * self.config.kl_weight
         else:
+            loss_dict = {
+                "l1_loss": l1_loss.item(),
+                "per_sample_l1": l1_per_sample,  # shape (B,)
+            }
             loss = l1_loss
 
         return loss, loss_dict
