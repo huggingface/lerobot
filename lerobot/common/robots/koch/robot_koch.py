@@ -54,12 +54,12 @@ class KochRobot(Robot):
         self.arm = DynamixelMotorsBus(
             port=self.config.port,
             motors={
-                "shoulder_pan": config.shoulder_pan,
-                "shoulder_lift": config.shoulder_lift,
-                "elbow_flex": config.elbow_flex,
-                "wrist_flex": config.wrist_flex,
-                "wrist_roll": config.wrist_roll,
-                "gripper": config.gripper,
+                "shoulder_pan": (1, "xl430-w250"),
+                "shoulder_lift": (2, "xl430-w250"),
+                "elbow_flex": (3, "xl330-m288"),
+                "wrist_flex": (4, "xl330-m288"),
+                "wrist_roll": (5, "xl330-m288"),
+                "gripper": (6, "xl330-m288"),
             },
         )
         self.cameras = make_cameras_from_configs(config.cameras)

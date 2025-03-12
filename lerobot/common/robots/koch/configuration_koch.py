@@ -16,15 +16,5 @@ class KochRobotConfig(RobotConfig):
     # the number of motors in your follower arms.
     max_relative_target: int | None = None
 
-    mock: bool = False
-
-    # motors
-    shoulder_pan: tuple = (1, "xl430-w250")
-    shoulder_lift: tuple = (2, "xl430-w250")
-    elbow_flex: tuple = (3, "xl330-m288")
-    wrist_flex: tuple = (4, "xl330-m288")
-    wrist_roll: tuple = (5, "xl330-m288")
-    gripper: tuple = (6, "xl330-m288")
-
     # cameras
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
