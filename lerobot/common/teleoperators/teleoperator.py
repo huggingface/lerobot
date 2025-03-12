@@ -1,6 +1,5 @@
 import abc
-
-import numpy as np
+from typing import Any
 
 from lerobot.common.constants import HF_LEROBOT_CALIBRATION, TELEOPERATORS
 
@@ -41,12 +40,12 @@ class Teleoperator(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def get_action(self) -> np.ndarray:
+    def get_action(self) -> dict[str, Any]:
         """Gets the action to send to a teleoperator."""
         pass
 
     @abc.abstractmethod
-    def send_feedback(self, feedback: np.ndarray) -> None:
+    def send_feedback(self, feedback: dict[str, Any]) -> None:
         """Sends feedback captured from a robot to the teleoperator."""
         pass
 

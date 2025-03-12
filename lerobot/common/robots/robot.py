@@ -1,12 +1,13 @@
 import abc
-
-import numpy as np
+from typing import Any
 
 from lerobot.common.constants import HF_LEROBOT_CALIBRATION, ROBOTS
 
 from .config import RobotConfig
 
 
+# TODO(aliberts): action/obs typing such as Generic[ObsType, ActType] similar to gym.Env ?
+# https://github.com/Farama-Foundation/Gymnasium/blob/3287c869f9a48d99454306b0d4b4ec537f0f35e3/gymnasium/core.py#L23
 class Robot(abc.ABC):
     """The main LeRobot class for implementing robots."""
 
@@ -45,12 +46,12 @@ class Robot(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def get_observation(self) -> dict[str, np.ndarray]:
+    def get_observation(self) -> dict[str, Any]:
         """Gets observation from the robot."""
         pass
 
     @abc.abstractmethod
-    def send_action(self, action: np.ndarray) -> np.ndarray:
+    def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         """Sends actions to the robot."""
         pass
 
