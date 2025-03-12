@@ -231,7 +231,7 @@ class SACPolicy(
         # Load or create config
         if config_file and os.path.exists(config_file):
             # Load config from file
-            with open(config_file, "r") as f:
+            with open(config_file) as f:
                 config_dict = json.load(f)
             config = SACConfig(**config_dict)
         else:
@@ -690,9 +690,9 @@ class Policy(nn.Module):
         # Compute standard deviations
         if self.fixed_std is None:
             log_std = self.std_layer(outputs)
-            assert not torch.isnan(log_std).any(), (
-                "[ERROR] log_std became NaN after std_layer!"
-            )
+            assert not torch.isnan(
+                log_std
+            ).any(), "[ERROR] log_std became NaN after std_layer!"
 
             if self.use_tanh_squash:
                 log_std = torch.tanh(log_std)
