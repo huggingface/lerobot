@@ -1,14 +1,25 @@
-import logging
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from dataclasses import dataclass
 from pathlib import Path
 
 import draccus
 
 from lerobot.common.robot_devices.robots.configs import RobotConfig
-from lerobot.common.utils.utils import auto_select_torch_device, is_amp_available, is_torch_device_available
 from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.train import TrainPipelineConfig
 
 
 @dataclass
@@ -43,11 +54,6 @@ class RecordControlConfig(ControlConfig):
     # Root directory where the dataset will be stored (e.g. 'dataset/path').
     root: str | Path | None = None
     policy: PreTrainedConfig | None = None
-    # TODO(rcadene, aliberts): By default, use device and use_amp values from policy checkpoint.
-    device: str | None = None  # cuda | cpu | mps
-    # `use_amp` determines whether to use Automatic Mixed Precision (AMP) for training and evaluation. With AMP,
-    # automatic gradient scaling is used.
-    use_amp: bool | None = None
     # Limit the frames per second. By default, uses the policy fps.
     fps: int | None = None
     # Number of seconds before starting data collection. It allows the robot devices to warmup and synchronize.
@@ -89,27 +95,6 @@ class RecordControlConfig(ControlConfig):
             cli_overrides = parser.get_cli_overrides("control.policy")
             self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
             self.policy.pretrained_path = policy_path
-
-            # When no device or use_amp are given, use the one from training config.
-            if self.device is None or self.use_amp is None:
-                train_cfg = TrainPipelineConfig.from_pretrained(policy_path)
-                if self.device is None:
-                    self.device = train_cfg.device
-                if self.use_amp is None:
-                    self.use_amp = train_cfg.use_amp
-
-            # Automatically switch to available device if necessary
-            if not is_torch_device_available(self.device):
-                auto_device = auto_select_torch_device()
-                logging.warning(f"Device '{self.device}' is not available. Switching to '{auto_device}'.")
-                self.device = auto_device
-
-            # Automatically deactivate AMP if necessary
-            if self.use_amp and not is_amp_available(self.device):
-                logging.warning(
-                    f"Automatic Mixed Precision (amp) is not available on device '{self.device}'. Deactivating AMP."
-                )
-                self.use_amp = False
 
 
 @ControlConfig.register_subclass("replay")

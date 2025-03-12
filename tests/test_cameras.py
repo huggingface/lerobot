@@ -1,3 +1,16 @@
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 """
 Tests for physical cameras and their mocked versions.
 If the physical camera is not connected to the computer, or not working,
@@ -72,8 +85,8 @@ def test_camera(request, camera_type, mock):
     camera.connect()
     assert camera.is_connected
     assert camera.fps is not None
-    assert camera.width is not None
-    assert camera.height is not None
+    assert camera.capture_width is not None
+    assert camera.capture_height is not None
 
     # Test connecting twice raises an error
     with pytest.raises(RobotDeviceAlreadyConnectedError):
@@ -191,3 +204,49 @@ def test_save_images_from_cameras(tmp_path, request, camera_type, mock):
 
     # Small `record_time_s` to speedup unit tests
     save_images_from_cameras(tmp_path, record_time_s=0.02, mock=mock)
+
+
+@pytest.mark.parametrize("camera_type, mock", TEST_CAMERA_TYPES)
+@require_camera
+def test_camera_rotation(request, camera_type, mock):
+    config_kwargs = {"camera_type": camera_type, "mock": mock, "width": 640, "height": 480, "fps": 30}
+
+    # No rotation.
+    camera = make_camera(**config_kwargs, rotation=None)
+    camera.connect()
+    assert camera.capture_width == 640
+    assert camera.capture_height == 480
+    assert camera.width == 640
+    assert camera.height == 480
+    no_rot_img = camera.read()
+    h, w, c = no_rot_img.shape
+    assert h == 480 and w == 640 and c == 3
+    camera.disconnect()
+
+    # Rotation = 90 (clockwise).
+    camera = make_camera(**config_kwargs, rotation=90)
+    camera.connect()
+    # With a 90° rotation, we expect the metadata dimensions to be swapped.
+    assert camera.capture_width == 640
+    assert camera.capture_height == 480
+    assert camera.width == 480
+    assert camera.height == 640
+    import cv2
+
+    assert camera.rotation == cv2.ROTATE_90_CLOCKWISE
+    rot_img = camera.read()
+    h, w, c = rot_img.shape
+    assert h == 640 and w == 480 and c == 3
+    camera.disconnect()
+
+    # Rotation = 180.
+    camera = make_camera(**config_kwargs, rotation=None)
+    camera.connect()
+    assert camera.capture_width == 640
+    assert camera.capture_height == 480
+    assert camera.width == 640
+    assert camera.height == 480
+    no_rot_img = camera.read()
+    h, w, c = no_rot_img.shape
+    assert h == 480 and w == 640 and c == 3
+    camera.disconnect()
