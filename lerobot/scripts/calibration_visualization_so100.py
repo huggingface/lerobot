@@ -10,18 +10,14 @@ from lerobot.common.robot_devices.motors.feetech import (
     convert_degrees_to_ticks,
     convert_ticks_to_degrees,
 )
-
-# Replace this import with your real config class import
-# (e.g., So100RobotConfig or any other).
 from lerobot.common.robot_devices.robots.configs import So100RobotConfig
 from lerobot.common.robot_devices.robots.utils import make_robot_from_config
 
 
-def apply_feetech_offsets_from_calibration(motors_bus: FeetechMotorsBus, calibration_dict: dict):
+def apply_feetech_offsets_from_calibration(motorsbus: FeetechMotorsBus, calibration_dict: dict):
     """
     Reads 'calibration_dict' containing 'homing_offset' and 'motor_names',
-    then writes each motor's offset to the servo's internal Offset (0x1F) in EPROM,
-    except for any motor whose name contains "gripper" (skipped).
+    then writes each motor's offset to the servo's internal Offset (0x1F) in EPROM.
 
     This version is modified so each homed position (originally 0) will now read
     2047, i.e. 180° away from 0 in the 4096-count circle. Offsets are permanently
@@ -32,24 +28,24 @@ def apply_feetech_offsets_from_calibration(motors_bus: FeetechMotorsBus, calibra
       1) Subtract 2047 from the old offset (so 0 -> 2047).
       2) Clamp to [-2047..+2047].
       3) Encode sign bit and magnitude into a 12-bit number.
-      4) Skip "gripper" motors, as they do not require this shift.
     """
 
     homing_offsets = calibration_dict["homing_offset"]
     motor_names = calibration_dict["motor_names"]
+    start_pos = calibration_dict["start_pos"]
 
-    # 1) Open the write lock => Lock=1 => changes to EEPROM do NOT persist yet
-    motors_bus.write("Lock", 1)
+    # Open the write lock, changes to EEPROM do NOT persist yet
+    motorsbus.write("Lock", 1)
 
-    # 2) For each motor, set the 'Offset' parameter
+    # For each motor, set the 'Offset' parameter
     for m_name, old_offset in zip(motor_names, homing_offsets, strict=False):
         # If bus doesn’t have a motor named m_name, skip
-        if m_name not in motors_bus.motors:
-            print(f"Warning: '{m_name}' not found in motors_bus.motors; skipping offset.")
+        if m_name not in motorsbus.motors:
+            print(f"Warning: '{m_name}' not found in motorsbus.motors; skipping offset.")
             continue
 
         if m_name == "gripper":
-            print("Skipping gripper")
+            old_offset = start_pos  # If gripper set the offset to the start position of the gripper
             continue
 
         # Shift the offset so the homed position reads 2047
@@ -58,10 +54,14 @@ def apply_feetech_offsets_from_calibration(motors_bus: FeetechMotorsBus, calibra
         # Clamp to [-2047..+2047]
         if new_offset > 2047:
             new_offset = 2047
-            print("CLAMPED! -> shouldn't happen")
+            print(
+                f"Warning: '{new_offset}' is getting clamped because its larger then 2047; This should not happen!"
+            )
         elif new_offset < -2047:
             new_offset = -2047
-            print("CLAMPED! -> shouldn't happen")
+            print(
+                f"Warning: '{new_offset}' is getting clamped because its smaller then -2047; This should not happen!"
+            )
 
         # Determine the direction (sign) bit and magnitude
         direction_bit = 1 if new_offset < 0 else 0
@@ -70,40 +70,32 @@ def apply_feetech_offsets_from_calibration(motors_bus: FeetechMotorsBus, calibra
         # Combine sign bit (bit 11) with the magnitude (bits 0..10)
         servo_offset = (direction_bit << 11) | magnitude
 
-        # Write to servo
-        motors_bus.write("Offset", servo_offset, motor_names=m_name)
+        # Write offset to servo
+        motorsbus.write("Offset", servo_offset, motor_names=m_name)
         print(
             f"Set offset for {m_name}: "
             f"old_offset={old_offset}, new_offset={new_offset}, servo_encoded={magnitude} + direction={direction_bit}"
         )
 
-    motors_bus.write("Lock", 0)
+    motorsbus.write("Lock", 0)
     print("Offsets have been saved to EEPROM successfully.")
 
 
 def debug_feetech_positions(cfg, arm_arg: str):
     """
     Reads each joint’s (1) raw ticks, (2) homed ticks, (3) degrees, and (4) invert-adjusted ticks.
-    Optionally writes offsets from the calibration file into servo EEPROM.
-
-    :param cfg: A config object (e.g. So100RobotConfig).
     :param arm_arg: One of "main_leader" or "main_follower".
-    :param apply_offsets: If True, calls apply_feetech_offsets_from_calibration() to save offsets to EEPROM.
     """
-    # 1) Make the Robot from your config
     robot = make_robot_from_config(cfg)
 
-    # 2) Parse which arm we want: 'main_leader' or 'main_follower'
+    # Parse which arm we want: 'main_leader' or 'main_follower'
     if arm_arg not in ("main_leader", "main_follower"):
         raise ValueError("Please specify --arm=main_leader or --arm=main_follower")
 
-    # Grab the relevant bus config from your robot’s arms
     bus_config = robot.leader_arms["main"] if arm_arg == "main_leader" else robot.follower_arms["main"]
-
-    # 3) Create the Feetech bus from that config
     bus = FeetechMotorsBus(bus_config)
 
-    # 4) Load calibration if it exists
+    # Load calibration if it exists
     calib_file = Path(robot.calibration_dir) / f"{arm_arg}.json"
     if calib_file.exists():
         with open(calib_file) as f:
@@ -113,31 +105,29 @@ def debug_feetech_positions(cfg, arm_arg: str):
     else:
         print(f"No calibration file found at {calib_file}, skipping calibration set.")
 
-    # 5) Connect to the bus
     bus.connect()
     print(f"Connected to Feetech bus on port: {bus.port}")
 
-    # 5b) Apply offset to servo EEPROM so the servo’s Present_Position is hardware-shifted
+    # Apply offset to servo EEPROM so the servo’s Present_Position is hardware-shifted
     if calibration_dict is not None:
         print("Applying offsets from calibration object to servo EEPROM. Be careful—this is permanent!")
         apply_feetech_offsets_from_calibration(bus, calibration_dict)
 
-    # 6) Disable torque on all motors so you can move them freely by hand
+    # Disable torque on all motors so you can move them freely by hand
     bus.write("Torque_Enable", 0, motor_names=bus.motor_names)
     print("Torque disabled on all joints.")
 
     try:
         print("\nPress Ctrl+C to quit.\n")
         while True:
-            # (a) Read *raw* positions (no calibration). This bypasses bus.apply_calibration
+            # Read *raw* positions (no calibration).
             raw_positions = bus.read_with_motor_ids(
                 bus.motor_models, bus.motor_indices, data_name="Present_Position"
             )
 
-            # (b) Read *already-homed* positions (calibration is applied automatically inside bus.read())
+            # Read *already-homed* positions
             homed_positions = bus.read("Present_Position")
 
-            # Print them side by side
             for i, name in enumerate(bus.motor_names):
                 motor_idx, model = bus.motors[name]
 
@@ -164,7 +154,7 @@ def debug_feetech_positions(cfg, arm_arg: str):
                     f"INV_TICKS={inv_ticks:4d} "
                 )
             print("----------------------------------------------------")
-            time.sleep(0.25)  # slow down loop
+            time.sleep(0.25)
     except KeyboardInterrupt:
         pass
     finally:
@@ -182,9 +172,5 @@ if __name__ == "__main__":
         help="Which arm to debug: 'main_leader' or 'main_follower'.",
     )
     args = parser.parse_args()
-
-    # 1) Instantiate the config you want (So100RobotConfig, or whichever your project uses).
     cfg = So100RobotConfig()
-
-    # 2) Call the function with (cfg, args.arm, args.apply_offsets)
     debug_feetech_positions(cfg, arm_arg=args.arm)

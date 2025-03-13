@@ -144,14 +144,14 @@ def adjusted_to_homing_ticks(raw_motor_ticks: int, model: str, motorbus, motor_i
     """
     resolutions = MODEL_RESOLUTION[model]
 
-    # 1) Shift raw ticks by half-resolution so 2048 -> 0, then wrap [0..res-1].
+    # Shift raw ticks by half-resolution so 2048 -> 0, then wrap [0..res-1].
     ticks = (raw_motor_ticks - (resolutions // 2)) % resolutions
 
-    # 2) If above halfway, fold it into negative territory => [-2048..+2047].
+    # If above halfway, fold it into negative territory => [-2048..+2047].
     if ticks > (resolutions // 2):
         ticks -= resolutions
 
-    # 3) Optionally flip sign if drive_mode is set.
+    # Flip sign if drive_mode is set.
     drive_mode = 0
     if motorbus.calibration is not None:
         drive_mode = motorbus.calibration["drive_mode"][motor_id - 1]
@@ -167,7 +167,7 @@ def adjusted_to_motor_ticks(adjusted_pos: int, model: str, motorbus, motor_id: i
     Inverse of adjusted_to_homing_ticks(). Takes a 'homed' position in [-2048..+2047]
     and recovers the raw [0..(res-1)] ticks with 2048 as midpoint.
     """
-    # 1) Flip sign if drive_mode was set.
+    # Flip sign if drive_mode was set.
     drive_mode = 0
     if motorbus.calibration is not None:
         drive_mode = motorbus.calibration["drive_mode"][motor_id - 1]
@@ -177,8 +177,8 @@ def adjusted_to_motor_ticks(adjusted_pos: int, model: str, motorbus, motor_id: i
 
     resolutions = MODEL_RESOLUTION[model]
 
-    # 2) Shift by +half-resolution and wrap into [0..res-1].
-    #    This undoes the earlier shift by -half-resolution.
+    # Shift by +half-resolution and wrap into [0..res-1].
+    # This undoes the earlier shift by -half-resolution.
     ticks = (adjusted_pos + (resolutions // 2)) % resolutions
 
     return ticks

@@ -57,8 +57,7 @@ def ensure_safe_goal_position(
 def apply_feetech_offsets_from_calibration(motorsbus, calibration_dict: dict):
     """
     Reads 'calibration_dict' containing 'homing_offset' and 'motor_names',
-    then writes each motor's offset to the servo's internal Offset (0x1F) in EPROM,
-    except for any motor whose name contains "gripper" (skipped).
+    then writes each motor's offset to the servo's internal Offset (0x1F) in EPROM.
 
     This version is modified so each homed position (originally 0) will now read
     2047, i.e. 180° away from 0 in the 4096-count circle. Offsets are permanently
@@ -69,16 +68,16 @@ def apply_feetech_offsets_from_calibration(motorsbus, calibration_dict: dict):
       1) Subtract 2047 from the old offset (so 0 -> 2047).
       2) Clamp to [-2047..+2047].
       3) Encode sign bit and magnitude into a 12-bit number.
-      4) Skip "gripper" motors, as they do not require this shift.
     """
 
     homing_offsets = calibration_dict["homing_offset"]
     motor_names = calibration_dict["motor_names"]
+    start_pos = calibration_dict["start_pos"]
 
-    # 1) Open the write lock => Lock=1 => changes to EEPROM do NOT persist yet
+    # Open the write lock, changes to EEPROM do NOT persist yet
     motorsbus.write("Lock", 1)
 
-    # 2) For each motor, set the 'Offset' parameter
+    # For each motor, set the 'Offset' parameter
     for m_name, old_offset in zip(motor_names, homing_offsets, strict=False):
         # If bus doesn’t have a motor named m_name, skip
         if m_name not in motorsbus.motors:
@@ -86,7 +85,7 @@ def apply_feetech_offsets_from_calibration(motorsbus, calibration_dict: dict):
             continue
 
         if m_name == "gripper":
-            print("Skipping gripper")
+            old_offset = start_pos  # If gripper set the offset to the start position of the gripper
             continue
 
         # Shift the offset so the homed position reads 2047
@@ -111,7 +110,7 @@ def apply_feetech_offsets_from_calibration(motorsbus, calibration_dict: dict):
         # Combine sign bit (bit 11) with the magnitude (bits 0..10)
         servo_offset = (direction_bit << 11) | magnitude
 
-        # Write to servo
+        # Write offset to servo
         motorsbus.write("Offset", servo_offset, motor_names=m_name)
         print(
             f"Set offset for {m_name}: "

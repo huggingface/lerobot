@@ -11,10 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-"""Logic to calibrate a robot arm built with feetech motors"""
-# TODO(rcadene, aliberts): move this logic into the robot code when refactoring
-
 import numpy as np
 
 from lerobot.common.robot_devices.motors.feetech import (
@@ -42,14 +38,14 @@ def get_calibration_modes(arm: MotorsBus):
 
 
 def reset_offset(motor_id, motor_bus):
-    # Open the write lock => Lock=1 => changes to EEPROM do NOT persist yet
+    # Open the write lock, changes to EEPROM do NOT persist yet
     motor_bus.write("Lock", 1)
 
     # Set offset to 0
     motor_name = motor_bus.motor_names[motor_id - 1]
     motor_bus.write("Offset", 0, motor_names=[motor_name])
 
-    # Close the write lock => Lock=0 => changes to EEPROM do persist!
+    # Close the write lock, changes to EEPROM do persist
     motor_bus.write("Lock", 0)
 
     # Confirm that the offset is zero by reading it back
@@ -69,7 +65,7 @@ def calibrate_homing_motor(motor_id, motor_bus):
 
 def calibrate_linear_motor(motor_id, motor_bus):
     motor_names = motor_bus.motor_names
-    motor_name = motor_names[motor_id - 1]  # TODO(pepijn): replace motor_id with motor index when (id-1)
+    motor_name = motor_names[motor_id - 1]
 
     reset_offset(motor_id, motor_bus)
 
@@ -166,7 +162,7 @@ def run_full_arm_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm
 
     print(f"\n calibration of {robot_type} {arm_name} {arm_type} done!")
 
-    # Force drive_mode values: motors 2 and 5 -> drive_mode 1; all others -> 0. 1 = clockwise = positive range (0..180), 0 = clockwise = negative range (0..-180)
+    # Force drive_mode values (can be static)
     drive_modes = [0, 1, 0, 0, 1, 0]
 
     calib_dict = {
