@@ -7,7 +7,7 @@ from ..config import RobotConfig
 
 @RobotConfig.register_subclass("so100")
 @dataclass
-class So100RobotConfig(RobotConfig):
+class SO100RobotConfig(RobotConfig):
     # Port to connect to the robot
     port: str
 

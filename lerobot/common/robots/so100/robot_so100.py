@@ -31,18 +31,18 @@ from lerobot.common.motors.feetech import (
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
-from .configuration_so100 import So100RobotConfig
+from .configuration_so100 import SO100RobotConfig
 
 
-class So100Robot(Robot):
+class SO100Robot(Robot):
     """
-    [SO-100 Arm](https://github.com/TheRobotStudio/SO-ARM100) designed by TheRobotStudio
+    [SO-100 Follower Arm](https://github.com/TheRobotStudio/SO-ARM100) designed by TheRobotStudio
     """
 
-    config_class = So100RobotConfig
-    name = "koch"
+    config_class = SO100RobotConfig
+    name = "so100"
 
-    def __init__(self, config: So100RobotConfig):
+    def __init__(self, config: SO100RobotConfig):
         super().__init__(config)
         self.config = config
         self.robot_type = config.type

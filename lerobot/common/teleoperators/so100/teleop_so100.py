@@ -33,7 +33,7 @@ from .configuration_so100 import SO100TeleopConfig
 
 class SO100Teleop(Teleoperator):
     """
-    [SO-100 Arm](https://github.com/TheRobotStudio/SO-ARM100) designed by TheRobotStudio
+    [SO-100 Leader Arm](https://github.com/TheRobotStudio/SO-ARM100) designed by TheRobotStudio
     """
 
     config_class = SO100TeleopConfig
@@ -85,11 +85,6 @@ class SO100Teleop(Teleoperator):
         # and torque can be safely disabled to run calibration.
         self.arm.write("Torque_Enable", TorqueMode.DISABLED.value)
         self.calibrate()
-
-        # Enable torque on the gripper and move it to 45 degrees so that we can use it as a trigger.
-        logging.info("Activating torque.")
-        self.arm.write("Torque_Enable", TorqueMode.ENABLED.value, "gripper")
-        self.arm.write("Goal_Position", self.config.gripper_open_degree, "gripper")
 
         # Check arm can be read
         self.arm.read("Present_Position")
