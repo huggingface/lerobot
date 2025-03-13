@@ -58,7 +58,7 @@ RUN (type -p wget >/dev/null || (apt update && apt-get install wget -y)) \
 RUN ln -s /usr/bin/python3 /usr/bin/python
 
 # Install poetry
-RUN curl -sSL https://install.python-poetry.org | python - --version 1.8.5
+RUN curl -sSL https://install.python-poetry.org | python -
 ENV PATH="/root/.local/bin:$PATH"
 RUN echo 'if [ "$HOME" != "/root" ]; then ln -sf /root/.local/bin/poetry $HOME/.local/bin/poetry; fi' >> /root/.bashrc
 RUN poetry config virtualenvs.create false
