@@ -29,7 +29,7 @@ repos:
       - id: end-of-file-fixer
       - id: trailing-whitespace
   - repo: https://github.com/crate-ci/typos
-    rev: v1
+    rev: v1.30.2
     hooks:
       - id: typos
         args: [--force-exclude]
