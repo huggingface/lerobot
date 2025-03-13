@@ -139,20 +139,19 @@ def convert_degrees_to_ticks(degrees, model):
 
 def adjusted_to_homing_ticks(raw_motor_ticks: int, model: str, motorbus, motor_id: int) -> int:
     """
-    Shifts raw [0..4095] ticks by an encoder offset, modulo a single turn [0..4095].
+    Takes a raw reading [0..(res-1)] (e.g. 0..4095) and shifts it so that '2048'
+    becomes 0 in the homed coordinate system ([-2048..+2047] for 4096 resolution).
     """
     resolutions = MODEL_RESOLUTION[model]
 
-    # Add offset and wrap within resolution
-    ticks = (raw_motor_ticks) % resolutions
+    # 1) Shift raw ticks by half-resolution so 2048 -> 0, then wrap [0..res-1].
+    ticks = (raw_motor_ticks - (resolutions // 2)) % resolutions
 
-    # # Re-center into a symmetric range (e.g., [-2048, 2047] if resolutions==4096) Thus the middle homing position will be virtual 0.
-    if ticks > resolutions // 2:
+    # 2) If above halfway, fold it into negative territory => [-2048..+2047].
+    if ticks > (resolutions // 2):
         ticks -= resolutions
 
-    # Update direction of rotation of the motor to match between leader and follower.
-    # In fact, the motor of the leader for a given joint can be assembled in an
-    # opposite direction in term of rotation than the motor of the follower on the same joint.
+    # 3) Optionally flip sign if drive_mode is set.
     drive_mode = 0
     if motorbus.calibration is not None:
         drive_mode = motorbus.calibration["drive_mode"][motor_id - 1]
@@ -165,11 +164,10 @@ def adjusted_to_homing_ticks(raw_motor_ticks: int, model: str, motorbus, motor_i
 
 def adjusted_to_motor_ticks(adjusted_pos: int, model: str, motorbus, motor_id: int) -> int:
     """
-    Inverse of adjusted_to_homing_ticks().
+    Inverse of adjusted_to_homing_ticks(). Takes a 'homed' position in [-2048..+2047]
+    and recovers the raw [0..(res-1)] ticks with 2048 as midpoint.
     """
-    # Update direction of rotation of the motor to match between leader and follower.
-    # In fact, the motor of the leader for a given joint can be assembled in an
-    # opposite direction in term of rotation than the motor of the follower on the same joint.
+    # 1) Flip sign if drive_mode was set.
     drive_mode = 0
     if motorbus.calibration is not None:
         drive_mode = motorbus.calibration["drive_mode"][motor_id - 1]
@@ -179,8 +177,9 @@ def adjusted_to_motor_ticks(adjusted_pos: int, model: str, motorbus, motor_id: i
 
     resolutions = MODEL_RESOLUTION[model]
 
-    # Remove offset and wrap within resolution
-    ticks = (adjusted_pos) % resolutions
+    # 2) Shift by +half-resolution and wrap into [0..res-1].
+    #    This undoes the earlier shift by -half-resolution.
+    ticks = (adjusted_pos + (resolutions // 2)) % resolutions
 
     return ticks
 
