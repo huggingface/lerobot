@@ -21,6 +21,8 @@ import threading
 import numpy as np
 import time
 # import torch
+import base64
+import cv2
 
 from lerobot.common.cameras.utils import make_cameras_from_configs
 from lerobot.common.constants import OBS_IMAGES, OBS_STATE
@@ -49,21 +51,17 @@ class LeKiwiRobot(Robot):
     def __init__(self, config: LeKiwiRobotConfig):
         super().__init__(config)
         self.config = config
-        # self.robot_type = config.type
-        # self.id = config.id
-        self.remote_ip = config.ip
-        self.remote_port = config.port
-        self.remote_port_video = config.video_port
-        # self.logs = {}
-        # TODO(Steven): This should go to teleop
-        # self.teleop_keys = self.config.teleop_keys
+        self.id = config.id
+
+        self.port_zmq_cmd = config.port_zmq_cmd
+        self.port_zmq_observations = config.port_zmq_observations
 
         # TODO(Steven): Consider in the future using S100 robot class
         # TODO(Steven): Another option is to use the motorbus factory, but in this case we assume that
         # what we consider 'lekiwi robot' always uses the FeetechMotorsBus
-        # TODO(Steve): We will need to have a key for arm and base for calibration
+        # TODO(Steven): We will need to have a key for arm and base for calibration
         self.actuators = FeetechMotorsBus(
-            port=self.config.port,
+            port=self.config.port_motor_bus,
             motors={
                 "shoulder_pan": config.shoulder_pan,
                 "shoulder_lift": config.shoulder_lift,
@@ -77,24 +75,18 @@ class LeKiwiRobot(Robot):
             },
         )
 
-
-
         #TODO(Steven): Consider removing cameras from configs
-        self.cameras = make_cameras_from_configs(config.cameras)
-
-        self.is_connected = False
-        self.logs = {}
+        self.cameras = make_cameras_from_configs(config.cameras)        
 
         self.observation_lock = threading.Lock()
         self.last_observation = None
-        # self.last_frames = {}
-        # self.last_present_speed = {}
-        # self.last_remote_arm_state = torch.zeros(6, dtype=torch.float32)
 
-        # ZeroMQ context and sockets.
-        self.context = None
-        self.cmd_socket = None
-        self.observation_socket = None
+        self.zmq_context = None
+        self.zmq_cmd_socket = None
+        self.zmq_observation_socket = None
+
+        self.is_connected = False
+        self.logs = {}
 
         
 
@@ -121,15 +113,15 @@ class LeKiwiRobot(Robot):
             }
         return cam_ft
 
-    def setup_zmq_sockets(self, config):
+    def setup_zmq_sockets(self):
         context = zmq.Context()
         cmd_socket = context.socket(zmq.PULL)
         cmd_socket.setsockopt(zmq.CONFLATE, 1)
-        cmd_socket.bind(f"tcp://*:{config.port}")
+        cmd_socket.bind(f"tcp://*:{self.port_zmq_cmd}")
 
         observation_socket = context.socket(zmq.PUSH)
         observation_socket.setsockopt(zmq.CONFLATE, 1)
-        observation_socket.bind(f"tcp://*:{config.video_port}")
+        observation_socket.bind(f"tcp://*:{self.port_zmq_observations}")
 
         return context, cmd_socket, observation_socket
     
@@ -176,9 +168,13 @@ class LeKiwiRobot(Robot):
             cam.connect()
 
         logging.info("Connecting ZMQ sockets.")
-        self.context, self.cmd_socket, self.observation_socket = self.setup_zmq_sockets(self.config)
+        self.zmq_context, self.zmq_cmd_socket, self.zmq_observation_socket = self.setup_zmq_sockets(self.config)
 
         self.is_connected = True
+
+    # TODO(Steven): Consider using this
+    # def get_motor_names(self, arms: dict[str, MotorsBus]) -> list:
+    #     return [f"{arm}_{motor}" for arm, bus in arms.items() for motor in bus.motors]
 
     def calibrate(self) -> None:
         # Copied from S100 robot
@@ -192,7 +188,6 @@ class LeKiwiRobot(Robot):
             with open(actuators_calib_path) as f:
                 calibration = json.load(f)
         else:
-            # TODO(rcadene): display a warning in __init__ if calibration file not available
             logging.info(f"Missing calibration file '{actuators_calib_path}'")
             calibration = run_arm_manual_calibration(self.actuators, self.robot_type, self.name, "follower")
 
@@ -207,7 +202,7 @@ class LeKiwiRobot(Robot):
         """The returned observations do not have a batch dimension."""
         if not self.is_connected:
             raise DeviceNotConnectedError(
-                "ManipulatorRobot is not connected. You need to run `robot.connect()`."
+                "LeKiwiRobot is not connected. You need to run `robot.connect()`."
             )
 
         obs_dict = {}
@@ -221,7 +216,12 @@ class LeKiwiRobot(Robot):
         # Capture images from cameras
         for cam_key, cam in self.cameras.items():
             before_camread_t = time.perf_counter()
-            obs_dict[f"{OBS_IMAGES}.{cam_key}"] = cam.async_read()
+            frame = cam.async_read()
+            ret, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
+            if ret:
+                obs_dict[f"{OBS_IMAGES}.{cam_key}"] = base64.b64encode(buffer).decode("utf-8")
+            else:
+                obs_dict[f"{OBS_IMAGES}.{cam_key}"] = ""
             self.logs[f"read_camera_{cam_key}_dt_s"] = cam.logs["delta_timestamp_s"]
             self.logs[f"async_read_camera_{cam_key}_dt_s"] = time.perf_counter() - before_camread_t
 
@@ -246,7 +246,7 @@ class LeKiwiRobot(Robot):
         """
         if not self.is_connected:
             raise DeviceNotConnectedError(
-                "ManipulatorRobot is not connected. You need to run `robot.connect()`."
+                "LeKiwiRobot is not connected. You need to run `robot.connect()`."
             )
 
         goal_pos = action
@@ -265,15 +265,21 @@ class LeKiwiRobot(Robot):
 
     def update_last_observation(self, stop_event):
         while not stop_event.is_set():
+            obs = self.get_observation()
             with self.observation_lock:
-                self.last_observation = self.get_observation()
+                self.last_observation = obs
             # TODO(Steven): Consider adding a delay to not starve the CPU
 
+    def stop(self):
+        # TODO(Steven): Base motors speed should be set to 0
+        pass
+
     def run(self):
-        # Copied from run_lekiwi in lekiwi_remote.py
-        # TODO(Steven): Csnsider with, finally
+        # Copied logic from run_lekiwi in lekiwi_remote.py
         if not self.is_connected:
-            self.connect()
+            raise DeviceNotConnectedError(
+                "LeKiwiRobot is not connected. You need to run `robot.connect()`."
+            )
         
         stop_event = threading.Event()
         observation_thread = threading.Thread(
@@ -302,12 +308,11 @@ class LeKiwiRobot(Robot):
                 # Watchdog: stop the robot if no command is received for over 0.5 seconds.
                 now = time.time()
                 if now - last_cmd_time > 0.5:
-                    # TODO(Steven): Implement stop()
-                    #self.stop() 
+                    self.stop() 
                     pass
                 
                 with self.observation_lock:
-                    self.observation_socket.send_string(json.dumps(self.last_observation))
+                    self.zmq_observation_socket.send_string(json.dumps(self.last_observation))
                 
                 # Ensure a short sleep to avoid overloading the CPU.
                 elapsed = time.time() - loop_start_time
@@ -317,11 +322,13 @@ class LeKiwiRobot(Robot):
         except KeyboardInterrupt:
             print("Shutting down LeKiwi server.")
         finally:
-            #TODO(Steven): Implement finally
+            stop_event.set()
+            observation_thread.join()
+            self.disconnect()
             pass
     
     def print_logs(self):
-        # TODO(aliberts): move robot-specific logs logic here
+        # TODO(Steven): Refactor logger
         pass
 
     def disconnect(self):
@@ -329,11 +336,16 @@ class LeKiwiRobot(Robot):
             raise DeviceNotConnectedError(
                 "LeKiwi is not connected. You need to run `robot.connect()` before disconnecting."
             )
-        # TODO(Steven): Base motors speed should be set to 0
-        # TODO(Steven): Close ZMQ sockets
-        # TODO(Steven): Stop main loop threads
+        
+        self.stop()
         self.actuators.disconnect()
         for cam in self.cameras.values():
             cam.disconnect()
-
+        self.observation_socket.close()
+        self.cmd_socket.close()
+        self.context.term()
         self.is_connected = False
+    
+    def __del__(self):
+        if getattr(self, "is_connected", False):
+            self.disconnect()
