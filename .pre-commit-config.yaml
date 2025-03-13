@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-exclude: ^(tests/data)
+exclude: "tests/artifacts/.*\\.safetensors$"
 default_language_version:
     python: python3.10
 repos:

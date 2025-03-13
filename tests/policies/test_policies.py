@@ -40,7 +40,7 @@ from lerobot.common.utils.random_utils import seeded_context
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
-from tests.scripts.save_policy_to_safetensors import get_policy_stats
+from tests.artifacts.policies.save_policy_to_safetensors import get_policy_stats
 from tests.utils import DEVICE, require_cpu, require_env, require_x86_64_kernel
 
 
@@ -407,12 +407,10 @@ def test_backward_compatibility(ds_repo_id: str, policy_name: str, policy_kwargs
            should be updated.
         4. Check that this test now passes.
         5. Remember to restore `tests/scripts/save_policy_to_safetensors.py` to its original state.
-        6. Remember to stage and commit the resulting changes to `tests/data`.
+        6. Remember to stage and commit the resulting changes to `tests/artifacts`.
     """
     ds_name = ds_repo_id.split("/")[-1]
-    artifact_dir = (
-        Path("tests/data/save_policy_to_safetensors") / f"{ds_name}_{policy_name}_{file_name_extra}"
-    )
+    artifact_dir = Path("tests/artifacts/policies") / f"{ds_name}_{policy_name}_{file_name_extra}"
     saved_output_dict = load_file(artifact_dir / "output_dict.safetensors")
     saved_grad_stats = load_file(artifact_dir / "grad_stats.safetensors")
     saved_param_stats = load_file(artifact_dir / "param_stats.safetensors")
