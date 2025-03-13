@@ -146,7 +146,7 @@ def test_camera(request, camera_type, mock):
         camera.connect()
 
         if mock:
-            import tests.mock_cv2 as cv2
+            import tests.cameras.mock_cv2 as cv2
         else:
             import cv2
 

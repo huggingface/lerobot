@@ -24,7 +24,7 @@ import lerobot
 from lerobot.common.envs.factory import make_env, make_env_config
 from lerobot.common.envs.utils import preprocess_observation
 
-from .utils import require_env
+from ..utils import require_env
 
 OBS_TYPES = ["state", "pixels", "pixels_agent_pos"]
 
