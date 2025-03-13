@@ -142,6 +142,6 @@ if __name__ == "__main__":
     for ds_repo_id, policy, policy_kwargs, file_name_extra in artifacts_cfg:
         ds_name = ds_repo_id.split("/")[-1]
         output_dir = (
-            Path("tests/artifacts/save_policy_to_safetensors") / f"{ds_name}_{policy}_{file_name_extra}"
+            Path("tests/artifacts/policies") / f"{ds_name}_{policy}_{file_name_extra}"
         )
         save_policy_to_safetensors(output_dir, ds_repo_id, policy, policy_kwargs)
