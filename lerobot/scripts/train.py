@@ -23,7 +23,7 @@ import torch
 from termcolor import colored
 from torch.amp import GradScaler
 from torch.optim import Optimizer
-from pathlib import Path
+
 from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.datasets.sampler import EpisodeAwareSampler
 from lerobot.common.datasets.utils import cycle
@@ -51,58 +51,7 @@ from lerobot.common.utils.wandb_utils import WandBLogger
 from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.scripts.eval import eval_policy
-from lerobot.common.datasets.video_utils import (
-    decode_video_frames_torchvision, decode_video_frames_torchcodec
-)
-# let's define a custom fn
 
-def custom_collate_fn(batch):
-    # always in the cuda, getitem is on cpu, 
-    # then implement mixed 
-    """
-    Custom collate function that decodes videos on GPU/CPU.
-    Converts the batch to a dictionary with keys representing each field.
-    Returns a tensor for video frames instead of a list.
-    """
-    # know when it is called
-    final_batch = {}
-    is_main_process = torch.utils.data.get_worker_info() is None
-
-    # the batch is given as a list, we need to return a dict
-    for item in batch:
-        # process video decoding for each item
-        if "video_paths" in item and "query_timestamps" in item:
-            for vid_key, video_path in item["video_paths"].items():
-                # decode video frames based on timestamps
-                timestamps = item["query_timestamps"][vid_key]
-                
-                # ✅ Use CUDA only in the main process
-                device = "cuda" if is_main_process else "cpu"
-                frames = decode_video_frames_torchcodec(
-                    video_path=Path(video_path),
-                    timestamps=timestamps,
-                    tolerance_s=0.02,
-                    # backend="pyav",
-                    log_loaded_timestamps=False,
-                    device=device,  # ✅ Keeps CUDA safe
-                )
-                # stack frames for this video key and add directly to the item
-                item[vid_key] = frames
-
-        # add item data (both video and non-video) to final_batch
-        for key, value in item.items():
-            if key not in final_batch:
-                final_batch[key] = []
-            final_batch[key].append(value)
-
-    # now, stack tensors for each key in final_batch
-    # this is needed to ensure that video frames (and any other tensor fields) are combined 
-    # into a single tensor per field, rather than a list of tensors!
-    for key in final_batch:
-        if isinstance(final_batch[key][0], torch.Tensor):
-            final_batch[key] = torch.stack(final_batch[key])  # stack tensors if needed
-
-    return final_batch
 
 def update_policy(
     train_metrics: MetricsTracker,
@@ -233,11 +182,12 @@ def train(cfg: TrainPipelineConfig):
         shuffle=shuffle,
         sampler=sampler,
         pin_memory=device.type != "cpu",
-        collate_fn=custom_collate_fn,
         drop_last=False,
     )
     dl_iter = cycle(dataloader)
+
     policy.train()
+
     train_metrics = {
         "loss": AverageMeter("loss", ":.3f"),
         "grad_norm": AverageMeter("grdn", ":.3f"),
@@ -255,6 +205,7 @@ def train(cfg: TrainPipelineConfig):
         start_time = time.perf_counter()
         batch = next(dl_iter)
         train_tracker.dataloading_s = time.perf_counter() - start_time
+
         for key in batch:
             if isinstance(batch[key], torch.Tensor):
                 batch[key] = batch[key].to(device, non_blocking=True)
@@ -280,7 +231,6 @@ def train(cfg: TrainPipelineConfig):
 
         if is_log_step:
             logging.info(train_tracker)
-            breakpoint()
             if wandb_logger:
                 wandb_log_dict = train_tracker.to_dict()
                 if output_dict:

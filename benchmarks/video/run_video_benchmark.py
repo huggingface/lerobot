@@ -39,7 +39,6 @@ from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.datasets.video_utils import (
     decode_video_frames_torchvision,
     encode_video_frames,
-    decode_video_frames_torchcodec,
 )
 from lerobot.common.utils.benchmark import TimeBenchmark
 
@@ -68,6 +67,10 @@ def parse_int_or_none(value) -> int | None:
 def check_datasets_formats(repo_ids: list) -> None:
     for repo_id in repo_ids:
         dataset = LeRobotDataset(repo_id)
+        if dataset.video:
+            raise ValueError(
+                f"Use only image dataset for running this benchmark. Video dataset provided: {repo_id}"
+            )
 
 
 def get_directory_size(directory: Path) -> int:
@@ -152,10 +155,6 @@ def decode_video_frames(
 ) -> torch.Tensor:
     if backend in ["pyav", "video_reader"]:
         return decode_video_frames_torchvision(video_path, timestamps, tolerance_s, backend)
-    elif backend in ["torchcodec-cpu", "torchcodec-gpu"]:
-        # Only pass device once depending on the backend
-        device = "cpu" if backend == "torchcodec-cpu" else "cuda"
-        return decode_video_frames_torchcodec(video_path, timestamps, tolerance_s, device=device)
     else:
         raise NotImplementedError(backend)
 
@@ -189,7 +188,7 @@ def benchmark_decoding(
             original_frames = load_original_frames(imgs_dir, timestamps, fps)
         result["load_time_images_ms"] = time_benchmark.result_ms / num_frames
 
-        frames_np, original_frames_np = frames.cpu().numpy(), original_frames.cpu().numpy()
+        frames_np, original_frames_np = frames.numpy(), original_frames.numpy()
         for i in range(num_frames):
             result["mse_values"].append(mean_squared_error(original_frames_np[i], frames_np[i]))
             result["psnr_values"].append(
