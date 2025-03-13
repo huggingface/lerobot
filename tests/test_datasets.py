@@ -478,7 +478,7 @@ def test_backward_compatibility(repo_id):
     # TODO(rcadene, aliberts): remove dataset download
     dataset = LeRobotDataset(repo_id, episodes=[0])
 
-    test_dir = Path("tests/data/save_dataset_to_safetensors") / repo_id
+    test_dir = Path("tests/artifacts/save_dataset_to_safetensors") / repo_id
 
     def load_and_compare(i):
         new_frame = dataset[i]  # noqa: B023

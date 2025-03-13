@@ -88,4 +88,4 @@ if __name__ == "__main__":
         "lerobot/nyu_franka_play_dataset",
         "lerobot/cmu_stretch",
     ]:
-        save_dataset_to_safetensors("tests/data/save_dataset_to_safetensors", repo_id=dataset)
+        save_dataset_to_safetensors("tests/artifacts/save_dataset_to_safetensors", repo_id=dataset)

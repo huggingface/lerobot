@@ -103,7 +103,7 @@ requires-poetry = ">=2.1"
 line-length = 110
 target-version = "py310"
 exclude = [
-    "tests/data",
+    "tests/artifacts",
     ".bzr",
     ".direnv",
     ".eggs",
