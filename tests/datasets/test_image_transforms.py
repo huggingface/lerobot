@@ -33,7 +33,7 @@ from lerobot.scripts.visualize_image_transforms import (
     save_all_transforms,
     save_each_transform,
 )
-from tests.scripts.save_image_transforms_to_safetensors import ARTIFACT_DIR
+from tests.artifacts.image_transforms.save_image_transforms_to_safetensors import ARTIFACT_DIR
 from tests.utils import require_x86_64_kernel
 
 

@@ -51,7 +51,7 @@ from lerobot.common.robot_devices.control_configs import (
 )
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.scripts.control_robot import calibrate, record, replay, teleoperate
-from tests.test_robots import make_robot
+from tests.robots.test_robots import make_robot
 from tests.utils import TEST_ROBOT_TYPES, mock_calibration_dir, require_robot
 
 
