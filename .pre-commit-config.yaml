@@ -16,6 +16,12 @@ exclude: ^(tests/data)
 default_language_version:
     python: python3.10
 repos:
+  ##### Meta #####
+  - repo: meta
+    hooks:
+      - id: check-useless-excludes
+      - id: check-hooks-apply
+
   ##### Style / Misc. #####
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
