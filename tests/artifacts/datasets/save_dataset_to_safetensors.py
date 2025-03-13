@@ -23,7 +23,7 @@ If you know that your change will break backward compatibility, you should write
 doesnt need to be merged into the `main` branch. Then you need to run this script and update the tests artifacts.
 
 Example usage:
-    `python tests/scripts/save_dataset_to_safetensors.py`
+    `python tests/artifacts/datasets/save_dataset_to_safetensors.py`
 """
 
 import shutil
@@ -88,4 +88,4 @@ if __name__ == "__main__":
         "lerobot/nyu_franka_play_dataset",
         "lerobot/cmu_stretch",
     ]:
-        save_dataset_to_safetensors("tests/data/save_dataset_to_safetensors", repo_id=dataset)
+        save_dataset_to_safetensors("tests/artifacts/datasets", repo_id=dataset)

@@ -81,7 +81,7 @@ def _find_cameras(
     possible_camera_ids: list[int | str], raise_when_empty=False, mock=False
 ) -> list[int | str]:
     if mock:
-        import tests.mock_cv2 as cv2
+        import tests.cameras.mock_cv2 as cv2
     else:
         import cv2
 
@@ -270,7 +270,7 @@ class OpenCVCamera(Camera):
         self.logs = {}
 
         if self.mock:
-            import tests.mock_cv2 as cv2
+            import tests.cameras.mock_cv2 as cv2
         else:
             import cv2
 
@@ -287,7 +287,7 @@ class OpenCVCamera(Camera):
             raise DeviceAlreadyConnectedError(f"OpenCVCamera({self.camera_index}) is already connected.")
 
         if self.mock:
-            import tests.mock_cv2 as cv2
+            import tests.cameras.mock_cv2 as cv2
         else:
             import cv2
 
@@ -399,7 +399,7 @@ class OpenCVCamera(Camera):
         # so we convert the image color from BGR to RGB.
         if requested_color_mode == "rgb":
             if self.mock:
-                import tests.mock_cv2 as cv2
+                import tests.cameras.mock_cv2 as cv2
             else:
                 import cv2
 

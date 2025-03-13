@@ -49,7 +49,7 @@ def find_cameras(raise_when_empty=True, mock=False) -> list[dict]:
     connected to the computer.
     """
     if mock:
-        import tests.mock_pyrealsense2 as rs
+        import tests.cameras.mock_pyrealsense2 as rs
     else:
         import pyrealsense2 as rs
 
@@ -101,7 +101,7 @@ def save_images_from_cameras(
         serial_numbers = [cam["serial_number"] for cam in camera_infos]
 
     if mock:
-        import tests.mock_cv2 as cv2
+        import tests.cameras.mock_cv2 as cv2
     else:
         import cv2
 
@@ -252,7 +252,7 @@ class RealSenseCamera(Camera):
         self.logs = {}
 
         if self.mock:
-            import tests.mock_cv2 as cv2
+            import tests.cameras.mock_cv2 as cv2
         else:
             import cv2
 
@@ -284,7 +284,7 @@ class RealSenseCamera(Camera):
             raise DeviceAlreadyConnectedError(f"RealSenseCamera({self.serial_number}) is already connected.")
 
         if self.mock:
-            import tests.mock_pyrealsense2 as rs
+            import tests.cameras.mock_pyrealsense2 as rs
         else:
             import pyrealsense2 as rs
 
@@ -372,7 +372,7 @@ class RealSenseCamera(Camera):
             )
 
         if self.mock:
-            import tests.mock_cv2 as cv2
+            import tests.cameras.mock_cv2 as cv2
         else:
             import cv2
 

@@ -12,10 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-exclude: ^(tests/data)
+exclude: "tests/artifacts/.*\\.safetensors$"
 default_language_version:
     python: python3.10
 repos:
+  ##### Meta #####
+  - repo: meta
+    hooks:
+      - id: check-useless-excludes
+      - id: check-hooks-apply
+
+
   ##### Style / Misc. #####
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
@@ -28,31 +35,37 @@ repos:
       - id: check-toml
       - id: end-of-file-fixer
       - id: trailing-whitespace
+
   - repo: https://github.com/crate-ci/typos
-    rev: v1.30.0
+    rev: v1.30.2
     hooks:
       - id: typos
         args: [--force-exclude]
+
   - repo: https://github.com/asottile/pyupgrade
     rev: v3.19.1
     hooks:
     -   id: pyupgrade
+
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.9.9
+    rev: v0.9.10
     hooks:
       - id: ruff
         args: [--fix]
       - id: ruff-format
+
 
   ##### Security #####
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.24.0
     hooks:
       - id: gitleaks
+
   - repo: https://github.com/woodruffw/zizmor-pre-commit
     rev: v1.4.1
     hooks:
       - id: zizmor
+
   - repo: https://github.com/PyCQA/bandit
     rev: 1.8.3
     hooks:
