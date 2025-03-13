@@ -30,14 +30,25 @@ def main():
     duration = 0
     while duration < 20:
         
-        arm_action = leader_arm.get_action()
-        base_action = keyboard.get_action()
+        arm_action = leader_arm.get_action() # 6 motors 
+        base_action = keyboard.get_action() # n keys pressed
         action = {
             **arm_action,
             **base_action
         }
-        robot.send_action(action) # Translates to motor space + sends over ZMQ
-        robot.get_observation() # Receives over ZMQ, translate to body-frame vel
+        robot.set_mode(TELEOP)
+        action_sent = robot.send_action(action) # Translates to motor space + sends over ZMQ
+        obs = robot.get_observation() # Receives over ZMQ, translate to body-frame vel
+
+        dataset.save(action_sent, obs)
+
+        # TODO(Steven)
+        robot.set_mode(AUTO)
+        policy_action = policy.get_action() # This might be in body frame or in key space
+        robot.send_action(policy_action) # This has no way to know
+
+        teleop_step() # teleop
+        send_action() #policy
 
         duration = time.perf_counter() - start
 
