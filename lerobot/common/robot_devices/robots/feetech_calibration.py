@@ -41,31 +41,37 @@ def get_calibration_modes(arm: MotorsBus):
     ]
 
 
+def reset_offset(motor_id, motor_bus):
+    # Open the write lock => Lock=1 => changes to EEPROM do NOT persist yet
+    motor_bus.write("Lock", 1)
+
+    # Set offset to 0
+    motor_name = motor_bus.motor_names[motor_id - 1]
+    motor_bus.write("Offset", 0, motor_names=[motor_name])
+
+    # Close the write lock => Lock=0 => changes to EEPROM do persist!
+    motor_bus.write("Lock", 0)
+
+    # Confirm that the offset is zero by reading it back
+    confirmed_offset = motor_bus.read("Offset")[motor_id - 1]
+    print(f"Offset for motor {motor_id} reset to: {confirmed_offset}")
+    return confirmed_offset
+
+
 def calibrate_homing_motor(motor_id, motor_bus):
-    """
-    1) Reads servo ticks.
-    2) Calculates the offset so that 'home_ticks' becomes 0.
-    3) Returns the offset
-    """
+    reset_offset(motor_id, motor_bus)
 
     home_ticks = motor_bus.read("Present_Position")[motor_id - 1]  # Read index starts at 0
+    print(f"Encoder offset (present position in homing position): {home_ticks}")
 
-    # Calculate how many ticks to shift so that 'home_ticks' becomes 0
-    raw_offset = -home_ticks  # negative of home_ticks
-    encoder_offset = raw_offset % 4096  # wrap to [0..4095]
-
-    # Convert to a signed range [-2048..2047]
-    if encoder_offset > 2047:
-        encoder_offset -= 4096
-
-    print(f"Encoder offset: {encoder_offset}")
-
-    return encoder_offset
+    return home_ticks
 
 
 def calibrate_linear_motor(motor_id, motor_bus):
     motor_names = motor_bus.motor_names
     motor_name = motor_names[motor_id - 1]  # TODO(pepijn): replace motor_id with motor index when (id-1)
+
+    reset_offset(motor_id, motor_bus)
 
     input(f"Close the {motor_name}, then press Enter...")
     start_pos = motor_bus.read("Present_Position")[motor_id - 1]  # Read index starts ar 0

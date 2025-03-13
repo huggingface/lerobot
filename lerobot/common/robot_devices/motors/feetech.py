@@ -137,16 +137,14 @@ def convert_degrees_to_ticks(degrees, model):
     return int(degrees * (resolutions / 360.0))
 
 
-def adjusted_to_homing_ticks(
-    raw_motor_ticks: int, encoder_offset: int, model: str, motorbus, motor_id: int
-) -> int:
+def adjusted_to_homing_ticks(raw_motor_ticks: int, model: str, motorbus, motor_id: int) -> int:
     """
     Shifts raw [0..4095] ticks by an encoder offset, modulo a single turn [0..4095].
     """
     resolutions = MODEL_RESOLUTION[model]
 
     # Add offset and wrap within resolution
-    ticks = (raw_motor_ticks + encoder_offset) % resolutions
+    ticks = (raw_motor_ticks) % resolutions
 
     # # Re-center into a symmetric range (e.g., [-2048, 2047] if resolutions==4096) Thus the middle homing position will be virtual 0.
     if ticks > resolutions // 2:
@@ -165,9 +163,7 @@ def adjusted_to_homing_ticks(
     return ticks
 
 
-def adjusted_to_motor_ticks(
-    adjusted_pos: int, encoder_offset: int, model: str, motorbus, motor_id: int
-) -> int:
+def adjusted_to_motor_ticks(adjusted_pos: int, model: str, motorbus, motor_id: int) -> int:
     """
     Inverse of adjusted_to_homing_ticks().
     """
@@ -184,7 +180,7 @@ def adjusted_to_motor_ticks(
     resolutions = MODEL_RESOLUTION[model]
 
     # Remove offset and wrap within resolution
-    ticks = (adjusted_pos - encoder_offset) % resolutions
+    ticks = (adjusted_pos) % resolutions
 
     return ticks
 
@@ -453,11 +449,10 @@ class FeetechMotorsBus:
             calib_mode = self.calibration["calib_mode"][calib_idx]
 
             if CalibrationMode[calib_mode] == CalibrationMode.DEGREE:
-                homing_offset = self.calibration["homing_offset"][calib_idx]
                 motor_idx, model = self.motors[name]
 
                 # Convert raw motor ticks to homed ticks, then convert the homed ticks to degrees
-                values[i] = adjusted_to_homing_ticks(values[i], homing_offset, model, self, motor_idx)
+                values[i] = adjusted_to_homing_ticks(values[i], model, self, motor_idx)
                 values[i] = convert_ticks_to_degrees(values[i], model)
 
             elif CalibrationMode[calib_mode] == CalibrationMode.LINEAR:
@@ -490,12 +485,11 @@ class FeetechMotorsBus:
             calib_mode = self.calibration["calib_mode"][calib_idx]
 
             if CalibrationMode[calib_mode] == CalibrationMode.DEGREE:
-                homing_offset = self.calibration["homing_offset"][calib_idx]
                 motor_idx, model = self.motors[name]
 
                 # Convert degrees to homed ticks, then convert the homed ticks to raw ticks
                 values[i] = convert_degrees_to_ticks(values[i], model)
-                values[i] = adjusted_to_motor_ticks(values[i], homing_offset, model, self, motor_idx)
+                values[i] = adjusted_to_motor_ticks(values[i], model, self, motor_idx)
 
             elif CalibrationMode[calib_mode] == CalibrationMode.LINEAR:
                 start_pos = self.calibration["start_pos"][calib_idx]
