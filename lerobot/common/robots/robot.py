@@ -1,5 +1,6 @@
 import abc
 from pathlib import Path
+import enum
 from typing import Any
 
 import draccus
@@ -9,7 +10,6 @@ from lerobot.common.motors import MotorCalibration
 
 from .config import RobotConfig
 
-import enum
 
 class RobotMode(enum.Enum):
     TELEOP = 0

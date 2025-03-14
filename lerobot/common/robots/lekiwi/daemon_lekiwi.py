@@ -14,32 +14,34 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import base64
 import json
 import logging
-import numpy as np
-import base64
+
 import cv2
+import numpy as np
 import torch
+import zmq
 
 from lerobot.common.constants import OBS_IMAGES, OBS_STATE
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError, InvalidActionError
+
 from ..robot import Robot, RobotMode
 from .configuration_daemon_lekiwi import DaemonLeKiwiRobotConfig
-import zmq
+
 
 # TODO(Steven): This doesn't need to inherit from Robot
 # But we do it for now to offer a familiar API
 # TODO(Steven): This doesn't need to take care of the
 # mapping from teleop to motor commands, but given that
 # we already have a middle-man (this class) we add it here
-# Other options include: 
+# Other options include:
 # 1. Adding it to the Telop implementation for lekiwi
 # (meaning each robot will need a teleop imple) or
-# 2. Adding it into the robot implementation 
-# (meaning the policy might be needed to be train 
+# 2. Adding it into the robot implementation
+# (meaning the policy might be needed to be train
 # over the teleop action space)
 class DaemonLeKiwiRobot(Robot):
-
     config_class = DaemonLeKiwiRobotConfig
     name = "daemonlekiwi"
 
@@ -62,7 +64,6 @@ class DaemonLeKiwiRobot(Robot):
         self.last_frames = {}
         self.last_present_speed = {}
         self.last_remote_arm_state = torch.zeros(6, dtype=torch.float32)
-
 
         # Define three speed levels and a current index
         self.speed_levels = [
@@ -105,7 +106,7 @@ class DaemonLeKiwiRobot(Robot):
         #     }
         # return cam_ft
         pass
-    
+
     def connect(self) -> None:
         if self.is_connected:
             raise DeviceAlreadyConnectedError(
@@ -121,17 +122,17 @@ class DaemonLeKiwiRobot(Robot):
         self.zmq_observation_socket = self.zmq_context.socket(zmq.PULL)
         zmq_observations_locator = f"tcp://{self.remote_ip}:{self.port_zmq_observations}"
         self.zmq_observation_socket.connect(zmq_observations_locator)
-        self.zmq_observation_socket.setsockopt(zmq.CONFLATE,1)
+        self.zmq_observation_socket.setsockopt(zmq.CONFLATE, 1)
 
         self.is_connected = True
 
     def calibrate(self) -> None:
-        # TODO(Steven): Nothing to calibrate. 
+        # TODO(Steven): Nothing to calibrate.
         # Consider triggering calibrate() on the remote mobile robot?
-        # Althought this would require a more complex comms schema
+        # Although this would require a more complex comms schema
         logging.warning("DaemonLeKiwiRobot has nothing to calibrate.")
         return
-    
+
     # Consider moving these static functions out of the class
     # Copied from robot_lekiwi MobileManipulator class
     @staticmethod
@@ -145,7 +146,7 @@ class DaemonLeKiwiRobot(Robot):
             return speed_int | 0x8000
         else:
             return speed_int & 0x7FFF
-    
+
     # Copied from robot_lekiwi MobileManipulator class
     @staticmethod
     def raw_to_degps(raw_speed: int) -> float:
@@ -155,7 +156,7 @@ class DaemonLeKiwiRobot(Robot):
         if raw_speed & 0x8000:
             degps = -degps
         return degps
-    
+
     # Copied from robot_lekiwi MobileManipulator class
     def body_to_wheel_raw(
         self,
@@ -217,7 +218,7 @@ class DaemonLeKiwiRobot(Robot):
         wheel_raw = [DaemonLeKiwiRobot.degps_to_raw(deg) for deg in wheel_degps]
 
         return {"left_wheel": wheel_raw[0], "back_wheel": wheel_raw[1], "right_wheel": wheel_raw[2]}
-    
+
     # Copied from robot_lekiwi MobileManipulator class
     def wheel_raw_to_body(
         self, wheel_raw: dict, wheel_radius: float = 0.05, base_radius: float = 0.125
@@ -260,7 +261,7 @@ class DaemonLeKiwiRobot(Robot):
         x_cmd, y_cmd, theta_rad = velocity_vector
         theta_cmd = theta_rad * (180.0 / np.pi)
         return (x_cmd, y_cmd, theta_cmd)
-    
+
     def get_data(self):
         # Copied from robot_lekiwi.py
         """Polls the video socket for up to 15 ms. If data arrives, decode only
@@ -332,7 +333,7 @@ class DaemonLeKiwiRobot(Robot):
             # If decode fails, fall back to old data
             return (self.last_frames, self.last_present_speed, self.last_remote_arm_state)
         return frames, present_speed, remote_arm_state_tensor
-    
+
     # TODO(Steven): The returned space is different from the get_observation of LeKiwiRobot
     # This returns body-frames velocities instead of wheel pos/speeds
     def get_observation(self) -> dict[str, np.ndarray]:
@@ -353,7 +354,7 @@ class DaemonLeKiwiRobot(Robot):
         body_state_mm = (body_state[0] * 1000.0, body_state[1] * 1000.0, body_state[2])  # Convert x,y to mm/s
         wheel_state_tensor = torch.tensor(body_state_mm, dtype=torch.float32)
         combined_state_tensor = torch.cat((remote_arm_state_tensor, wheel_state_tensor), dim=0)
-        
+
         obs_dict = {OBS_STATE: combined_state_tensor}
 
         # Loop over each configured camera
@@ -361,13 +362,12 @@ class DaemonLeKiwiRobot(Robot):
             if frame is None:
                 # TODO(Steven): Daemon doesn't know camera dimensions
                 logging.warning("Frame is None")
-                #frame = np.zeros((cam.height, cam.width, cam.channels), dtype=np.uint8)
+                # frame = np.zeros((cam.height, cam.width, cam.channels), dtype=np.uint8)
             obs_dict[cam_name] = torch.from_numpy(frame)
 
         return obs_dict
 
     def from_keyboard_to_wheel_action(self, pressed_keys: np.ndarray):
-        
         # Speed control
         if self.teleop_keys["speed_up"] in pressed_keys:
             self.speed_index = min(self.speed_index + 1, 2)
@@ -376,7 +376,7 @@ class DaemonLeKiwiRobot(Robot):
         speed_setting = self.speed_levels[self.speed_index]
         xy_speed = speed_setting["xy"]  # e.g. 0.1, 0.25, or 0.4
         theta_speed = speed_setting["theta"]  # e.g. 30, 60, or 90
-        
+
         x_cmd = 0.0  # m/s forward/backward
         y_cmd = 0.0  # m/s lateral
         theta_cmd = 0.0  # deg/s rotation
@@ -424,27 +424,27 @@ class DaemonLeKiwiRobot(Robot):
             raise DeviceNotConnectedError(
                 "ManipulatorRobot is not connected. You need to run `robot.connect()`."
             )
-        
+
         goal_pos: np.array = np.empty(9)
 
         if self.robot_mode is RobotMode.AUTO:
             # TODO(Steven): Not yet implemented. The policy outputs might need a different conversion
             raise Exception
-        
+
         # TODO(Steven): This assumes teleop mode is always used with keyboard
         if self.robot_mode is RobotMode.TELEOP:
-            if action.size <6:
+            if action.size < 6:
                 logging.error("Action should include at least the 6 states of the leader arm")
                 raise InvalidActionError
-        
+
             # TODO(Steven): Assumes size and order is respected
-            wheel_actions = [v for _,v in self.from_keyboard_to_wheel_action(action[6:])]
-            goal_pos[:6]=action[:6]
-            goal_pos[6:]=wheel_actions
-            self.zmq_cmd_socket.send_string(json.dumps(goal_pos)) #action is in motor space
+            wheel_actions = [v for _, v in self.from_keyboard_to_wheel_action(action[6:])]
+            goal_pos[:6] = action[:6]
+            goal_pos[6:] = wheel_actions
+            self.zmq_cmd_socket.send_string(json.dumps(goal_pos))  # action is in motor space
 
         return goal_pos
-    
+
     def print_logs(self):
         # TODO(Steven): Refactor logger
         pass
@@ -459,7 +459,7 @@ class DaemonLeKiwiRobot(Robot):
         self.zmq_cmd_socket.close()
         self.zmq_context.term()
         self.is_connected = False
-    
+
     def __del__(self):
         if getattr(self, "is_connected", False):
             self.disconnect()
