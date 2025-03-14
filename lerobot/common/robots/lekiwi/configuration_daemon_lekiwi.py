@@ -1,18 +1,10 @@
 from dataclasses import dataclass, field
 
-from lerobot.common.cameras.configs import CameraConfig
-from lerobot.common.cameras.opencv.configuration_opencv import OpenCVCameraConfig
-from lerobot.common.motors.configs import FeetechMotorsBusConfig, MotorsBusConfig
 from lerobot.common.robots.config import RobotConfig
-
 
 @RobotConfig.register_subclass("daemon_lekiwi")
 @dataclass
 class DaemonLeKiwiRobotConfig(RobotConfig):
-    # `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
-    # Set this to a positive scalar to have the same value for all motors, or a list that is the same length as
-    # the number of motors in your follower arms.
-    max_relative_target: int | None = None
 
     # Network Configuration
     remote_ip: str = "192.168.0.193"

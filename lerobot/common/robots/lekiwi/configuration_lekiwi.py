@@ -28,6 +28,8 @@ class LeKiwiRobotConfig(RobotConfig):
     port_motor_bus = "/dev/ttyACM0"
 
     # TODO(Steven): consider split this into arm and base
+    # TODO(Steven): Consider also removing this entirely as we can say that
+    # LeKiwiRobot will always have (and needs) such
     shoulder_pan: tuple = (1, "sts3215")
     shoulder_lift: tuple = (2, "sts3215")
     elbow_flex: tuple=(3, "sts3215")
@@ -37,3 +39,8 @@ class LeKiwiRobotConfig(RobotConfig):
     left_wheel: tuple= (7, "sts3215")
     back_wheel: tuple =  (8, "sts3215")
     right_wheel: tuple = (9, "sts3215")
+
+    # `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
+    # Set this to a positive scalar to have the same value for all motors, or a list that is the same length as
+    # the number of motors in your follower arms.
+    max_relative_target: int | None = None

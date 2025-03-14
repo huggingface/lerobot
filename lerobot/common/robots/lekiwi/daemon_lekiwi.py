@@ -16,20 +16,14 @@
 
 import json
 import logging
-import time
-import threading
 import numpy as np
-import time
-# import torch
 import base64
 import cv2
 import torch
 
-from lerobot.common.cameras.utils import make_cameras_from_configs
 from lerobot.common.constants import OBS_IMAGES, OBS_STATE
-from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from ..robot import Robot
-from ..utils import ensure_safe_goal_position
+from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError, InvalidActionError
+from ..robot import Robot, RobotMode
 from .configuration_daemon_lekiwi import DaemonLeKiwiRobotConfig
 import zmq
 
@@ -38,6 +32,12 @@ import zmq
 # TODO(Steven): This doesn't need to take care of the
 # mapping from teleop to motor commands, but given that
 # we already have a middle-man (this class) we add it here
+# Other options include: 
+# 1. Adding it to the Telop implementation for lekiwi
+# (meaning each robot will need a teleop imple) or
+# 2. Adding it into the robot implementation 
+# (meaning the policy might be needed to be train 
+# over the teleop action space)
 class DaemonLeKiwiRobot(Robot):
 
     config_class = DaemonLeKiwiRobotConfig
@@ -48,8 +48,6 @@ class DaemonLeKiwiRobot(Robot):
         self.config = config
         self.id = config.id
         self.robot_type = config.type
-
-        self.max_relative_target = config.max_relative_target
 
         self.remote_ip = config.remote_ip
         self.port_zmq_cmd = config.port_zmq_cmd
@@ -65,6 +63,7 @@ class DaemonLeKiwiRobot(Robot):
         self.last_present_speed = {}
         self.last_remote_arm_state = torch.zeros(6, dtype=torch.float32)
 
+
         # Define three speed levels and a current index
         self.speed_levels = [
             {"xy": 0.1, "theta": 30},  # slow
@@ -73,23 +72,14 @@ class DaemonLeKiwiRobot(Robot):
         ]
         self.speed_index = 0  # Start at slow
 
-        # Keyboard state for base teleoperation.
-        # self.running = True
-        # self.pressed_keys = {
-        #     "forward": False,
-        #     "backward": False,
-        #     "left": False,
-        #     "right": False,
-        #     "rotate_left": False,
-        #     "rotate_right": False,
-        # }
-
         self.is_connected = False
         self.logs = {}
 
     @property
     def state_feature(self) -> dict:
         # TODO(Steven): Get this from the data fetched?
+        # TODO(Steven): Motor names are unknown for the Daemon
+        # Or assume its size/metadata?
         # return {
         #     "dtype": "float32",
         #     "shape": (len(self.actuators),),
@@ -103,7 +93,9 @@ class DaemonLeKiwiRobot(Robot):
 
     @property
     def camera_features(self) -> dict[str, dict]:
-        # TODO(Steven): Fetch this info or set it static?
+        # TODO(Steven): Get this from the data fetched?
+        # TODO(Steven): Motor names are unknown for the Daemon
+        # Or assume its size/metadata?
         # cam_ft = {}
         # for cam_key, cam in self.cameras.items():
         #     cam_ft[cam_key] = {
@@ -134,8 +126,11 @@ class DaemonLeKiwiRobot(Robot):
         self.is_connected = True
 
     def calibrate(self) -> None:
-        # TODO(Steven): Nothing to calibrate
-        pass
+        # TODO(Steven): Nothing to calibrate. 
+        # Consider triggering calibrate() on the remote mobile robot?
+        # Althought this would require a more complex comms schema
+        logging.warning("DaemonLeKiwiRobot has nothing to calibrate.")
+        return
     
     # Consider moving these static functions out of the class
     # Copied from robot_lekiwi MobileManipulator class
@@ -267,12 +262,15 @@ class DaemonLeKiwiRobot(Robot):
         return (x_cmd, y_cmd, theta_cmd)
     
     def get_data(self):
+        # Copied from robot_lekiwi.py
         """Polls the video socket for up to 15 ms. If data arrives, decode only
         the *latest* message, returning frames, speed, and arm state. If
         nothing arrives for any field, use the last known values."""
 
         frames = {}
         present_speed = {}
+
+        # TODO(Steven): Size is being assumed, is this safe?
         remote_arm_state_tensor = torch.zeros(6, dtype=torch.float32)
 
         # Poll up to 15 ms
@@ -281,10 +279,13 @@ class DaemonLeKiwiRobot(Robot):
         socks = dict(poller.poll(15))
         if self.zmq_observation_socket not in socks or socks[self.zmq_observation_socket] != zmq.POLLIN:
             # No new data arrived → reuse ALL old data
+            # TODO(Steven): This might return empty variables at init
             return (self.last_frames, self.last_present_speed, self.last_remote_arm_state)
 
         # Drain all messages, keep only the last
         last_msg = None
+        # TODO(Steven): There's probably a way to do this without while True
+        # TODO(Steven): Even consider changing to PUB/SUB
         while True:
             try:
                 obs_string = self.zmq_observation_socket.recv_string(zmq.NOBLOCK)
@@ -300,13 +301,11 @@ class DaemonLeKiwiRobot(Robot):
         try:
             observation = json.loads(last_msg)
 
-            #TODO(Steven): Check this
-            images_dict = observation.get("images", {})
-            new_speed = observation.get("present_speed", {})
-            new_arm_state = observation.get("follower_arm_state", None)
+            state_observation = {k: v for k, v in observation.items() if k.startswith(OBS_STATE)}
+            image_observation = {k: v for k, v in observation.items() if k.startswith(OBS_IMAGES)}
 
             # Convert images
-            for cam_name, image_b64 in images_dict.items():
+            for cam_name, image_b64 in image_observation.items():
                 if image_b64:
                     jpg_data = base64.b64decode(image_b64)
                     np_arr = np.frombuffer(jpg_data, dtype=np.uint8)
@@ -315,19 +314,17 @@ class DaemonLeKiwiRobot(Robot):
                         frames[cam_name] = frame_candidate
 
             # If remote_arm_state is None and frames is None there is no message then use the previous message
-            if new_arm_state is not None and frames is not None:
+            if state_observation is not None and frames is not None:
                 self.last_frames = frames
 
-                remote_arm_state_tensor = torch.tensor(new_arm_state, dtype=torch.float32)
+                remote_arm_state_tensor = torch.tensor(state_observation[:6], dtype=torch.float32)
                 self.last_remote_arm_state = remote_arm_state_tensor
 
-                present_speed = new_speed
-                self.last_present_speed = new_speed
+                present_speed = state_observation[6:]
+                self.last_present_speed = present_speed
             else:
                 frames = self.last_frames
-
                 remote_arm_state_tensor = self.last_remote_arm_state
-
                 present_speed = self.last_present_speed
 
         except Exception as e:
@@ -351,7 +348,6 @@ class DaemonLeKiwiRobot(Robot):
 
         obs_dict = {}
 
-        # TODO(Steven): Check this
         frames, present_speed, remote_arm_state_tensor = self.get_data()
         body_state = self.wheel_raw_to_body(present_speed)
         body_state_mm = (body_state[0] * 1000.0, body_state[1] * 1000.0, body_state[2])  # Convert x,y to mm/s
@@ -361,18 +357,18 @@ class DaemonLeKiwiRobot(Robot):
         obs_dict = {OBS_STATE: combined_state_tensor}
 
         # Loop over each configured camera
-        for cam_name, cam in self.cameras.items():
-            frame = frames.get(cam_name, None)
+        for cam_name, frame in frames.items():
             if frame is None:
-                # Create a black image using the camera's configured width, height, and channels
-                frame = np.zeros((cam.height, cam.width, cam.channels), dtype=np.uint8)
-            obs_dict[f"{OBS_IMAGES}.{cam_name}"] = torch.from_numpy(frame)
+                # TODO(Steven): Daemon doesn't know camera dimensions
+                logging.warning("Frame is None")
+                #frame = np.zeros((cam.height, cam.width, cam.channels), dtype=np.uint8)
+            obs_dict[cam_name] = torch.from_numpy(frame)
 
         return obs_dict
 
     def from_keyboard_to_wheel_action(self, pressed_keys: np.ndarray):
+        
         # Speed control
-        # TODO(Steven): Handle the right action
         if self.teleop_keys["speed_up"] in pressed_keys:
             self.speed_index = min(self.speed_index + 1, 2)
         if self.teleop_keys["speed_down"] in pressed_keys:
@@ -381,12 +377,10 @@ class DaemonLeKiwiRobot(Robot):
         xy_speed = speed_setting["xy"]  # e.g. 0.1, 0.25, or 0.4
         theta_speed = speed_setting["theta"]  # e.g. 30, 60, or 90
         
-        # (The rest of your code for generating wheel commands remains unchanged)
         x_cmd = 0.0  # m/s forward/backward
         y_cmd = 0.0  # m/s lateral
         theta_cmd = 0.0  # deg/s rotation
 
-        # TODO(Steven): Handle action properly
         if self.teleop_keys["forward"] in pressed_keys:
             x_cmd += xy_speed
         if self.teleop_keys["backward"] in pressed_keys:
@@ -402,12 +396,20 @@ class DaemonLeKiwiRobot(Robot):
 
         return self.body_to_wheel_raw(x_cmd, y_cmd, theta_cmd)
 
+    # TODO(Steven): This assumes this call is always called from a keyboard teleop command
+    # TODO(Steven): Doing this mapping in here adds latecy between send_action and movement from the user perspective.
+    # t0: get teleop_cmd
+    # t1: send_action(teleop_cmd)
+    # t2: mapping teleop_cmd -> motor_cmd
+    # t3: execute motor_md
+    # This mapping for other robots/teleop devices might be slower. Doing this in the teleop will make this explicit
+    # t0': get teleop_cmd
+    # t1': mapping teleop_cmd -> motor_cmd
+    # t2': send_action(motor_cmd)
+    # t3': execute motor_cmd
+    # t3'-t2' << t3-t1
     def send_action(self, action: np.ndarray) -> np.ndarray:
         """Command lekiwi to move to a target joint configuration.
-
-        The relative action magnitude may be clipped depending on the configuration parameter
-        `max_relative_target`. In this case, the action sent differs from original action.
-        Thus, this function always returns the action actually sent.
 
         Args:
             action (np.ndarray): array containing the goal positions for the motors.
@@ -422,24 +424,24 @@ class DaemonLeKiwiRobot(Robot):
             raise DeviceNotConnectedError(
                 "ManipulatorRobot is not connected. You need to run `robot.connect()`."
             )
-        if self.mode is TELEOP:
-            # do conversion keys to motor
-        else:
-            # convert policy output
         
-        # TODO(Steven): This won't work if this is called by a policy with body vels outputs
         goal_pos: np.array = np.empty(9)
-        if action.size <6:
-            # TODO(Steven): Handle this properly
+
+        if self.robot_mode is RobotMode.AUTO:
+            # TODO(Steven): Not yet implemented. The policy outputs might need a different conversion
             raise Exception
         
-        # TODO(Steven): Assumes size and order is respected
-        # TODO(Steven): This assumes this call is always called from a keyboard teleop command
-        wheel_actions = [v for _,v in self.from_keyboard_to_wheel_action(action[6:])]
-        goal_pos[:6]=action[:6]
-        goal_pos[6:]=wheel_actions
-
-        self.zmq_cmd_socket.send_string(json.dumps(goal_pos))
+        # TODO(Steven): This assumes teleop mode is always used with keyboard
+        if self.robot_mode is RobotMode.TELEOP:
+            if action.size <6:
+                logging.error("Action should include at least the 6 states of the leader arm")
+                raise InvalidActionError
+        
+            # TODO(Steven): Assumes size and order is respected
+            wheel_actions = [v for _,v in self.from_keyboard_to_wheel_action(action[6:])]
+            goal_pos[:6]=action[:6]
+            goal_pos[6:]=wheel_actions
+            self.zmq_cmd_socket.send_string(json.dumps(goal_pos)) #action is in motor space
 
         return goal_pos
     

@@ -9,6 +9,12 @@ from lerobot.common.motors import MotorCalibration
 
 from .config import RobotConfig
 
+import enum
+
+class RobotMode(enum.Enum):
+    TELEOP = 0
+    AUTO = 1
+
 
 # TODO(aliberts): action/obs typing such as Generic[ObsType, ActType] similar to gym.Env ?
 # https://github.com/Farama-Foundation/Gymnasium/blob/3287c869f9a48d99454306b0d4b4ec537f0f35e3/gymnasium/core.py#L23
@@ -21,6 +27,7 @@ class Robot(abc.ABC):
 
     def __init__(self, config: RobotConfig):
         self.robot_type = self.name
+        self.robot_mode: RobotMode | None = None
         self.id = config.id
         self.calibration_dir = (
             config.calibration_dir if config.calibration_dir else HF_LEROBOT_CALIBRATION / ROBOTS / self.name

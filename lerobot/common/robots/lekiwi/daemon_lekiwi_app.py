@@ -1,7 +1,7 @@
 from ...teleoperators.so100 import SO100Teleop, SO100TeleopConfig
 from ...teleoperators.keyboard import KeyboardTeleop, KeyboardTeleopConfig
 from .configuration_daemon_lekiwi import DaemonLeKiwiRobotConfig
-from .daemon_lekiwi import DaemonLeKiwiRobot
+from .daemon_lekiwi import DaemonLeKiwiRobot, RobotMode
 import time
 import logging
 
@@ -24,31 +24,28 @@ def main():
     
     logging.info("Connecting remote LeKiwiRobot")
     robot.connect() # Establishes ZMQ sockets with the remote mobile robot
+    robot.robot_mode = RobotMode.TELEOP
 
     logging.info("Starting LeKiwiRobot teleoperation")
     start = time.perf_counter()
     duration = 0
     while duration < 20:
         
-        arm_action = leader_arm.get_action() # 6 motors 
-        base_action = keyboard.get_action() # n keys pressed
+        arm_action = leader_arm.get_action()
+        base_action = keyboard.get_action()
         action = {
             **arm_action,
             **base_action
         }
-        robot.set_mode(TELEOP)
-        action_sent = robot.send_action(action) # Translates to motor space + sends over ZMQ
-        obs = robot.get_observation() # Receives over ZMQ, translate to body-frame vel
+        _action_sent = robot.send_action(action) # Translates to motor space + sends over ZMQ
+        _observation = robot.get_observation() # Receives over ZMQ, translate to body-frame vel
 
-        dataset.save(action_sent, obs)
+        # dataset.save(action_sent, obs)
 
-        # TODO(Steven)
-        robot.set_mode(AUTO)
-        policy_action = policy.get_action() # This might be in body frame or in key space
-        robot.send_action(policy_action) # This has no way to know
-
-        teleop_step() # teleop
-        send_action() #policy
+        # TODO(Steven): Deal with policy action space
+        # robot.set_mode(RobotMode.AUTO)
+        # policy_action = policy.get_action() # This might be in body frame, key space or smt else
+        # robot.send_action(policy_action)
 
         duration = time.perf_counter() - start
 
