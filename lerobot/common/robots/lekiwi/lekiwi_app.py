@@ -1,7 +1,7 @@
 import logging
 
-from .configuration_lekiwi import LeKiwiRobotConfig
-from .lekiwi_robot import LeKiwiRobot
+from lerobot.common.robots.lekiwi.configuration_lekiwi import LeKiwiRobotConfig
+from lerobot.common.robots.lekiwi.lekiwi_robot import LeKiwiRobot
 
 
 def main():

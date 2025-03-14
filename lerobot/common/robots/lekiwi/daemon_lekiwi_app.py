@@ -3,10 +3,10 @@ import time
 
 import numpy as np
 
-from ...teleoperators.keyboard import KeyboardTeleop, KeyboardTeleopConfig
-from ...teleoperators.so100 import SO100Teleop, SO100TeleopConfig
-from .configuration_daemon_lekiwi import DaemonLeKiwiRobotConfig
-from .daemon_lekiwi import DaemonLeKiwiRobot, RobotMode
+from lerobot.common.robots.lekiwi.configuration_daemon_lekiwi import DaemonLeKiwiRobotConfig
+from lerobot.common.robots.lekiwi.daemon_lekiwi import DaemonLeKiwiRobot, RobotMode
+from lerobot.common.teleoperators.keyboard import KeyboardTeleop, KeyboardTeleopConfig
+from lerobot.common.teleoperators.so100 import SO100Teleop, SO100TeleopConfig
 
 
 def main():
@@ -45,7 +45,6 @@ def main():
         # robot.set_mode(RobotMode.AUTO)
         # policy_action = policy.get_action() # This might be in body frame, key space or smt else
         # robot.send_action(policy_action)
-
         duration = time.perf_counter() - start
 
     logging.info("Disconnecting Teleop Devices and LeKiwiRobot Daemon")
