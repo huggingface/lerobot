@@ -70,6 +70,17 @@ def update_policy(
     with torch.autocast(device_type=device.type) if use_amp else nullcontext():
         loss, output_dict = policy.forward(batch)
         # TODO(rcadene): policy.unnormalize_outputs(out_dict)
+
+        # Apply importance-sampling if available
+        if "is_weights" in batch and "per_sample_l1" in output_dict:
+            per_sample_l1 = output_dict["per_sample_l1"]
+            l1_per_item = per_sample_l1.mean(dim=-1)
+            w = batch["is_weights"].to(device)
+            weighted_loss = (l1_per_item * w).mean()
+            if policy.config.use_vae and "kld_loss" in output_dict:
+                weighted_loss += output_dict["kld_loss"] * policy.config.kl_weight
+            loss = weighted_loss
+
     grad_scaler.scale(loss).backward()
 
     # Unscale the gradient of the optimizer's assigned params in-place **prior to gradient clipping**.
@@ -180,10 +191,11 @@ def train(cfg: TrainPipelineConfig):
     sampler = PrioritizedSampler(
         data_len=data_len,
         alpha=0.6,
-        beta=0.1,
         eps=1e-6,
-        replacement=True,
         num_samples_per_epoch=data_len,
+        beta_start=0.4,
+        beta_end=1.0,
+        total_steps=cfg.steps,
     )
 
     dataloader = torch.utils.data.DataLoader(
@@ -221,6 +233,11 @@ def train(cfg: TrainPipelineConfig):
             if isinstance(batch[key], torch.Tensor):
                 batch[key] = batch[key].to(device, non_blocking=True)
 
+        if "indices" in batch:
+            sampler.update_beta(step)
+            is_weights = sampler.compute_is_weights(batch["indices"].cpu().tolist())
+            batch["is_weights"] = is_weights
+
         train_tracker, output_dict = update_policy(
             train_tracker,
             policy,
@@ -232,11 +249,11 @@ def train(cfg: TrainPipelineConfig):
             use_amp=cfg.policy.use_amp,
         )
 
-        # If we have 'indices' and 'per_sample_l1' then update sampler
+        # Update sampler
         if "indices" in batch and "per_sample_l1" in output_dict:
-            indices = batch["indices"].detach().cpu().tolist()  # shape (B,)
-            difficulties = output_dict["per_sample_l1"].detach().cpu().tolist()  # shape (B,)
-            sampler.update_priorities(indices, difficulties)
+            idxs = batch["indices"].cpu().tolist()
+            diffs = output_dict["per_sample_l1"].detach().cpu().tolist()
+            sampler.update_priorities(idxs, diffs)
 
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
         # increment `step` here.

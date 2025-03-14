@@ -80,7 +80,7 @@ class SumTree:
 
     def initialize_tree(self, priorities: List[float]):
         """
-        Efficiently initializes the sum tree in O(n).
+        Initializes the sum tree
         """
         # Set leaf values
         for i, priority in enumerate(priorities):
@@ -132,32 +132,42 @@ class PrioritizedSampler(Sampler[int]):
         self,
         data_len: int,
         alpha: float = 0.6,
-        beta: float = 0.1,
         eps: float = 1e-6,
-        replacement: bool = True,
         num_samples_per_epoch: Optional[int] = None,
+        beta_start: float = 0.4,
+        beta_end: float = 1.0,
+        total_steps: int = 1,
     ):
         """
         Args:
             data_len: Total number of samples in the dataset.
             alpha: Exponent for priority scaling. Default is 0.6.
-            beta: Smoothing offset to avoid excluding low-priority samples.
             eps: Small constant to avoid zero priorities.
             replacement: Whether to sample with replacement.
             num_samples_per_epoch: Number of samples per epoch (default is data_len).
         """
         self.data_len = data_len
         self.alpha = alpha
-        self.beta = beta
         self.eps = eps
-        self.replacement = replacement
         self.num_samples_per_epoch = num_samples_per_epoch or data_len
+        self.beta_start = beta_start
+        self.beta_end = beta_end
+        self.total_steps = total_steps
+        self._beta = self.beta_start
 
         # Initialize difficulties and sum-tree
-        self.difficulties = [1.0] * data_len  # Default difficulty = 1.0
-        initial_priorities = [(1.0 + eps) ** alpha + beta] * data_len  # Compute initial priorities
+        self.difficulties = [1.0] * data_len
+        self.priorities = [0.0] * data_len
+        initial_priorities = [(1.0 + eps) ** alpha] * data_len
+
         self.sumtree = SumTree(data_len)
-        self.sumtree.initialize_tree(initial_priorities)  # Bulk load in O(n)
+        self.sumtree.initialize_tree(initial_priorities)
+        for i, p in enumerate(initial_priorities):
+            self.priorities[i] = p
+
+    def update_beta(self, current_step: int):
+        frac = min(1.0, current_step / self.total_steps)
+        self._beta = self.beta_start + (self.beta_end - self.beta_start) * frac
 
     def update_priorities(self, indices: List[int], difficulties: List[float]):
         """
@@ -165,7 +175,8 @@ class PrioritizedSampler(Sampler[int]):
         """
         for idx, diff in zip(indices, difficulties, strict=False):
             self.difficulties[idx] = diff
-            new_priority = (diff + self.eps) ** self.alpha + self.beta
+            new_priority = (diff + self.eps) ** self.alpha
+            self.priorities[idx] = new_priority
             self.sumtree.update(idx, new_priority)
 
     def __iter__(self) -> Iterator[int]:
@@ -173,19 +184,21 @@ class PrioritizedSampler(Sampler[int]):
         Samples indices based on their priority weights.
         """
         total_p = self.sumtree.total_priority()
-        sampled_indices = set() if not self.replacement else None
 
         for _ in range(self.num_samples_per_epoch):
             r = random.random() * total_p
             idx = self.sumtree.sample(r)
 
-            if not self.replacement:
-                while idx in sampled_indices:
-                    r = random.random() * total_p
-                    idx = self.sumtree.sample(r)
-                sampled_indices.add(idx)
-
             yield idx
 
     def __len__(self) -> int:
         return self.num_samples_per_epoch
+
+    def compute_is_weights(self, indices: List[int]) -> torch.Tensor:
+        w = []
+        total_p = self.sumtree.total_priority()
+        for idx in indices:
+            p = self.priorities[idx] / total_p
+            w.append((p * self.data_len) ** (-self._beta))
+        w = torch.tensor(w, dtype=torch.float32)
+        return w / w.max()

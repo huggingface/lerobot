@@ -161,7 +161,6 @@ class ACTPolicy(PreTrainedPolicy):
 
         l1_loss = elementwise_l1.mean()
 
-        # mean over time+action_dim => per-sample array of shape (B,)
         l1_per_sample = elementwise_l1.mean(dim=(1, 2))
 
         if self.config.use_vae:
@@ -175,13 +174,13 @@ class ACTPolicy(PreTrainedPolicy):
             loss_dict = {
                 "l1_loss": l1_loss.item(),
                 "kld_loss": mean_kld.item(),
-                "per_sample_l1": l1_per_sample,  # shape (B,)
+                "per_sample_l1": l1_per_sample,
             }
             loss = l1_loss + mean_kld * self.config.kl_weight
         else:
             loss_dict = {
                 "l1_loss": l1_loss.item(),
-                "per_sample_l1": l1_per_sample,  # shape (B,)
+                "per_sample_l1": l1_per_sample,
             }
             loss = l1_loss
 
