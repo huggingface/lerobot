@@ -119,6 +119,11 @@ import logging
 import time
 from dataclasses import asdict
 from pprint import pformat
+import cv2
+
+cv2.namedWindow("i")
+cv2.destroyAllWindows()
+
 
 # from safetensors.torch import load_file, save_file
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
