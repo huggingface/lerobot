@@ -14,27 +14,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import base64
 import json
 import logging
-import time
 import threading
-import numpy as np
 import time
-import base64
+
 import cv2
+import numpy as np
+import zmq
 
 from lerobot.common.cameras.utils import make_cameras_from_configs
 from lerobot.common.constants import OBS_IMAGES, OBS_STATE
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from ..robot import Robot
-from ..utils import ensure_safe_goal_position
-from .configuration_lekiwi import LeKiwiRobotConfig
 from lerobot.common.motors.feetech import (
     FeetechMotorsBus,
     TorqueMode,
-    run_arm_manual_calibration,
+    run_full_arm_calibration,
 )
-import zmq
+
+from ..robot import Robot
+from ..utils import ensure_safe_goal_position
+from .configuration_lekiwi import LeKiwiRobotConfig
+
 
 class LeKiwiRobot(Robot):
     """
@@ -58,7 +60,7 @@ class LeKiwiRobot(Robot):
         # TODO(Steven): Consider in the future using S100 robot class
         # TODO(Steven): Another option is to use the motorbus factory, but in this case we assume that
         # what we consider 'lekiwi robot' always uses the FeetechMotorsBus
-        # TODO(Steven): Order and dimension are generaly assumed to be 6 first for arm, 3 last for base
+        # TODO(Steven): Order and dimension are generally assumed to be 6 first for arm, 3 last for base
         self.actuators_bus = FeetechMotorsBus(
             port=self.config.port_motor_bus,
             motors={
@@ -79,7 +81,7 @@ class LeKiwiRobot(Robot):
 
         self.max_relative_target = config.max_relative_target
 
-        #TODO(Steven): Consider removing cameras from configs
+        # TODO(Steven): Consider removing cameras from configs
         self.cameras = make_cameras_from_configs(config.cameras)
 
         self.observation_lock = threading.Lock()
@@ -91,8 +93,6 @@ class LeKiwiRobot(Robot):
 
         self.is_connected = False
         self.logs = {}
-
-        
 
     @property
     def state_feature(self) -> dict:
@@ -128,41 +128,39 @@ class LeKiwiRobot(Robot):
         observation_socket.bind(f"tcp://*:{self.port_zmq_observations}")
 
         return context, cmd_socket, observation_socket
-    
-    def setup_actuators(self):
 
+    def setup_actuators(self):
         # Set-up arm actuators (position mode)
         # We assume that at connection time, arm is in a rest position,
         # and torque can be safely disabled to run calibration.
-        self.actuators_bus.write("Torque_Enable", TorqueMode.DISABLED.value,self.arm_actuators)
-        self.calibrate() # TODO(Steven): This should be only for the arm
+        self.actuators_bus.write("Torque_Enable", TorqueMode.DISABLED.value, self.arm_actuators)
+        self.calibrate()  # TODO(Steven): This should be only for the arm
 
         # Mode=0 for Position Control
-        self.actuators_bus.write("Mode", 0,self.arm_actuators)
+        self.actuators_bus.write("Mode", 0, self.arm_actuators)
         # Set P_Coefficient to lower value to avoid shakiness (Default is 32)
-        self.actuators_bus.write("P_Coefficient", 16,self.arm_actuators)
+        self.actuators_bus.write("P_Coefficient", 16, self.arm_actuators)
         # Set I_Coefficient and D_Coefficient to default value 0 and 32
         self.actuators_bus.write("I_Coefficient", 0, self.arm_actuators)
-        self.actuators_bus.write("D_Coefficient", 32,self.arm_actuators)
+        self.actuators_bus.write("D_Coefficient", 32, self.arm_actuators)
         # Close the write lock so that Maximum_Acceleration gets written to EPROM address,
         # which is mandatory for Maximum_Acceleration to take effect after rebooting.
-        self.actuators_bus.write("Lock", 0,self.arm_actuators)
+        self.actuators_bus.write("Lock", 0, self.arm_actuators)
         # Set Maximum_Acceleration to 254 to speedup acceleration and deceleration of
         # the motors. Note: this configuration is not in the official STS3215 Memory Table
-        self.actuators_bus.write("Maximum_Acceleration", 254,self.arm_actuators)
+        self.actuators_bus.write("Maximum_Acceleration", 254, self.arm_actuators)
         self.actuators_bus.write("Acceleration", 254, self.arm_actuators)
 
         logging.info("Activating torque.")
-        self.actuators_bus.write("Torque_Enable", TorqueMode.ENABLED.value,self.arm_actuators)
+        self.actuators_bus.write("Torque_Enable", TorqueMode.ENABLED.value, self.arm_actuators)
 
         # Check arm can be read
-        self.actuators_bus.read("Present_Position",self.arm_actuators)
+        self.actuators_bus.read("Present_Position", self.arm_actuators)
 
         # Set-up base actuators (velocity mode)
-        self.actuators_bus.write("Lock",0,self.base_actuators)
-        self.actuators_bus.write("Mode",[1,1,1],self.base_actuators)
-        self.actuators_bus.write("Lock",1,self.base_actuators)
-        
+        self.actuators_bus.write("Lock", 0, self.base_actuators)
+        self.actuators_bus.write("Mode", [1, 1, 1], self.base_actuators)
+        self.actuators_bus.write("Lock", 1, self.base_actuators)
 
     def connect(self) -> None:
         if self.is_connected:
@@ -192,15 +190,17 @@ class LeKiwiRobot(Robot):
         actuators_calib_path = self.calibration_dir / f"{self.config.id}.json"
 
         if actuators_calib_path.exists():
-            with open(actuators_calib_path) as f:
+            with open(actuators_calib_path,encoding="utf-8") as f:
                 calibration = json.load(f)
         else:
-            logging.info(f"Missing calibration file '{actuators_calib_path}'")
-            calibration = run_arm_manual_calibration(self.actuators_bus, self.robot_type, self.name, "follower")
+            logging.info("Missing calibration file '%s'",actuators_calib_path)
+            calibration = run_full_arm_calibration(
+                self.actuators_bus, self.robot_type, self.name, "follower"
+            )
 
-            logging.info(f"Calibration is done! Saving calibration file '{actuators_calib_path}'")
+            logging.info("Calibration is done! Saving calibration file '%s'",actuators_calib_path)
             actuators_calib_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(actuators_calib_path, "w") as f:
+            with open(actuators_calib_path, "w",encoding="utf-8") as f:
                 json.dump(calibration, f)
 
         self.actuators_bus.set_calibration(calibration)
@@ -208,15 +208,15 @@ class LeKiwiRobot(Robot):
     def get_observation(self) -> dict[str, np.ndarray]:
         """The returned observations do not have a batch dimension."""
         if not self.is_connected:
-            raise DeviceNotConnectedError(
-                "LeKiwiRobot is not connected. You need to run `robot.connect()`."
-            )
+            raise DeviceNotConnectedError("LeKiwiRobot is not connected. You need to run `robot.connect()`.")
 
         obs_dict = {}
 
         # Read actuators position for arm and vel for base
         before_read_t = time.perf_counter()
-        obs_dict[OBS_STATE] = self.actuators_bus.read("Present_Position",self.arm_actuators) + self.actuators_bus.read("Present_Speed", self.base_actuators)
+        obs_dict[OBS_STATE] = self.actuators_bus.read(
+            "Present_Position", self.arm_actuators
+        ) + self.actuators_bus.read("Present_Speed", self.base_actuators)
         self.logs["read_pos_dt_s"] = time.perf_counter() - before_read_t
 
         # Capture images from cameras
@@ -251,22 +251,22 @@ class LeKiwiRobot(Robot):
             np.ndarray: the action sent to the motors, potentially clipped.
         """
         if not self.is_connected:
-            raise DeviceNotConnectedError(
-                "LeKiwiRobot is not connected. You need to run `robot.connect()`."
-            )
+            raise DeviceNotConnectedError("LeKiwiRobot is not connected. You need to run `robot.connect()`.")
 
         # Input action is in motor space
-        goal_pos=action
+        goal_pos = action
         # Cap goal position when too far away from present position.
         # /!\ Slower fps expected due to reading from the follower.
         if self.config.max_relative_target is not None:
-            present_pos = self.actuators_bus.read("Present_Position",self.arm_actuators)
-            goal_pos[:6] = ensure_safe_goal_position(goal_pos[:6], present_pos, self.config.max_relative_target)
+            present_pos = self.actuators_bus.read("Present_Position", self.arm_actuators)
+            goal_pos[:6] = ensure_safe_goal_position(
+                goal_pos[:6], present_pos, self.config.max_relative_target
+            )
 
         # Send goal position to the actuators
         # TODO(Steven): This happens synchronously
-        self.actuators_bus.write("Goal_Position", goal_pos[:6].astype(np.int32),self.arm_actuators)
-        self.actuators_bus.write("Goal_Speed",goal_pos[6:].astype(np.int32),self.base_actuators)
+        self.actuators_bus.write("Goal_Position", goal_pos[:6].astype(np.int32), self.arm_actuators)
+        self.actuators_bus.write("Goal_Speed", goal_pos[6:].astype(np.int32), self.base_actuators)
 
         return goal_pos
 
@@ -280,16 +280,14 @@ class LeKiwiRobot(Robot):
     def stop(self):
         # TODO(Steven): Assumes there's only 3 motors for base
         logging.info("Stopping base")
-        self.actuators_bus.write("Goal_Speed",[0,0,0],self.base_actuators)
+        self.actuators_bus.write("Goal_Speed", [0, 0, 0], self.base_actuators)
         logging.info("Base motors stopped")
 
     def run(self):
         # Copied logic from run_lekiwi in lekiwi_remote.py
         if not self.is_connected:
-            raise DeviceNotConnectedError(
-                "LeKiwiRobot is not connected. You need to run `robot.connect()`."
-            )
-        
+            raise DeviceNotConnectedError("LeKiwiRobot is not connected. You need to run `robot.connect()`.")
+
         stop_event = threading.Event()
         observation_thread = threading.Thread(
             target=self.update_last_observation, args=(stop_event), daemon=True
@@ -311,17 +309,16 @@ class LeKiwiRobot(Robot):
                 # except zmq.Again:
                 #     logging.warning("ZMQ again")
                 except Exception as e:
-                    logging.warning(f"[ERROR] Message fetching failed: {e}")
-                
+                    logging.error("Message fetching failed: %s",e)
+
                 # Watchdog: stop the robot if no command is received for over 0.5 seconds.
                 now = time.time()
                 if now - last_cmd_time > 0.5:
-                    self.stop() 
-                    pass
-                
+                    self.stop()
+
                 with self.observation_lock:
                     self.zmq_observation_socket.send_string(json.dumps(self.last_observation))
-                
+
                 # Ensure a short sleep to avoid overloading the CPU.
                 elapsed = time.time() - loop_start_time
                 time.sleep(
@@ -333,8 +330,7 @@ class LeKiwiRobot(Robot):
             stop_event.set()
             observation_thread.join()
             self.disconnect()
-            pass
-    
+
     def print_logs(self):
         # TODO(Steven): Refactor logger
         pass
@@ -344,7 +340,7 @@ class LeKiwiRobot(Robot):
             raise DeviceNotConnectedError(
                 "LeKiwi is not connected. You need to run `robot.connect()` before disconnecting."
             )
-        
+
         self.stop()
         self.actuators_bus.disconnect()
         for cam in self.cameras.values():
@@ -353,7 +349,7 @@ class LeKiwiRobot(Robot):
         self.cmd_socket.close()
         self.context.term()
         self.is_connected = False
-    
+
     def __del__(self):
         if getattr(self, "is_connected", False):
             self.disconnect()
