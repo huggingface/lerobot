@@ -12,21 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import enum
 import logging
 import math
+import time
+import traceback
 from copy import deepcopy
 
-import dynamixel_sdk as dxl
 import numpy as np
+import tqdm
 
-from ..motors_bus import (
-    CalibrationMode,
-    JointOutOfRangeError,
-    MotorsBus,
-    TorqueMode,
-    assert_same_address,
-    get_group_sync_key,
-)
+from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.common.utils.utils import capture_timestamp_utc
 
 PROTOCOL_VERSION = 2.0
 BAUDRATE = 1_000_000
@@ -41,7 +38,6 @@ MAX_ID_RANGE = 252
 # an error is raised.
 LOWER_BOUND_DEGREE = -270
 UPPER_BOUND_DEGREE = 270
-
 # For joints in percentage (i.e. joints that move linearly like the prismatic joint of a gripper),
 # their nominal range is [0, 100] %. For instance, for Aloha gripper, 0% is fully
 # closed, and 100% is fully open. To account for slight calibration issue, we allow up to
@@ -204,7 +200,72 @@ def convert_to_bytes(value, bytes, mock=False):
     return data
 
 
-class DynamixelMotorsBus(MotorsBus):
+def get_group_sync_key(data_name, motor_names):
+    group_key = f"{data_name}_" + "_".join(motor_names)
+    return group_key
+
+
+def get_result_name(fn_name, data_name, motor_names):
+    group_key = get_group_sync_key(data_name, motor_names)
+    rslt_name = f"{fn_name}_{group_key}"
+    return rslt_name
+
+
+def get_queue_name(fn_name, data_name, motor_names):
+    group_key = get_group_sync_key(data_name, motor_names)
+    queue_name = f"{fn_name}_{group_key}"
+    return queue_name
+
+
+def get_log_name(var_name, fn_name, data_name, motor_names):
+    group_key = get_group_sync_key(data_name, motor_names)
+    log_name = f"{var_name}_{fn_name}_{group_key}"
+    return log_name
+
+
+def assert_same_address(model_ctrl_table, motor_models, data_name):
+    all_addr = []
+    all_bytes = []
+    for model in motor_models:
+        addr, bytes = model_ctrl_table[model][data_name]
+        all_addr.append(addr)
+        all_bytes.append(bytes)
+
+    if len(set(all_addr)) != 1:
+        raise NotImplementedError(
+            f"At least two motor models use a different address for `data_name`='{data_name}' ({list(zip(motor_models, all_addr, strict=False))}). Contact a LeRobot maintainer."
+        )
+
+    if len(set(all_bytes)) != 1:
+        raise NotImplementedError(
+            f"At least two motor models use a different bytes representation for `data_name`='{data_name}' ({list(zip(motor_models, all_bytes, strict=False))}). Contact a LeRobot maintainer."
+        )
+
+
+class TorqueMode(enum.Enum):
+    ENABLED = 1
+    DISABLED = 0
+
+
+class DriveMode(enum.Enum):
+    NON_INVERTED = 0
+    INVERTED = 1
+
+
+class CalibrationMode(enum.Enum):
+    # Joints with rotational motions are expressed in degrees in nominal range of [-180, 180]
+    DEGREE = 0
+    # Joints with linear motions (like gripper of Aloha) are expressed in nominal range of [0, 100]
+    LINEAR = 1
+
+
+class JointOutOfRangeError(Exception):
+    def __init__(self, message="Joint is out of range"):
+        self.message = message
+        super().__init__(self.message)
+
+
+class DynamixelMotorsBus:
     """
     The DynamixelMotorsBus class allows to efficiently read and write to the attached motors. It relies on
     the python dynamixel sdk to communicate with the motors. For more info, see the [Dynamixel SDK Documentation](https://emanual.robotis.com/docs/en/software/dynamixel/dynamixel_sdk/sample_code/python_read_write_protocol_2_0/#python-read-write-protocol-20).
@@ -243,24 +304,124 @@ class DynamixelMotorsBus(MotorsBus):
     ```
     """
 
-    model_ctrl_table = deepcopy(MODEL_CONTROL_TABLE)
-    model_resolution = deepcopy(MODEL_RESOLUTION)
-
     def __init__(
         self,
         port: str,
         motors: dict[str, tuple[int, str]],
+        mock: bool = False,
     ):
-        super().__init__(port, motors)
+        self.port = port
+        self.motors = motors
+        self.mock = mock
 
-    def _set_handlers(self):
+        self.model_ctrl_table = deepcopy(MODEL_CONTROL_TABLE)
+        self.model_resolution = deepcopy(MODEL_RESOLUTION)
+
+        self.port_handler = None
+        self.packet_handler = None
+        self.calibration = None
+        self.is_connected = False
+        self.group_readers = {}
+        self.group_writers = {}
+        self.logs = {}
+
+    def connect(self):
+        if self.is_connected:
+            raise DeviceAlreadyConnectedError(
+                f"DynamixelMotorsBus({self.port}) is already connected. Do not call `motors_bus.connect()` twice."
+            )
+
+        if self.mock:
+            import tests.mock_dynamixel_sdk as dxl
+        else:
+            import dynamixel_sdk as dxl
+
         self.port_handler = dxl.PortHandler(self.port)
         self.packet_handler = dxl.PacketHandler(PROTOCOL_VERSION)
 
-    def _set_timeout(self, timeout: int = TIMEOUT_MS):
-        self.port_handler.setPacketTimeoutMillis(timeout)
+        try:
+            if not self.port_handler.openPort():
+                raise OSError(f"Failed to open port '{self.port}'.")
+        except Exception:
+            traceback.print_exc()
+            print(
+                "\nTry running `python lerobot/scripts/find_motors_bus_port.py` to make sure you are using the correct port.\n"
+            )
+            raise
 
-    def _apply_calibration_autocorrect(self, values: np.ndarray | list, motor_names: list[str] | None):
+        # Allow to read and write
+        self.is_connected = True
+
+        self.port_handler.setPacketTimeoutMillis(TIMEOUT_MS)
+
+    def reconnect(self):
+        if self.mock:
+            import tests.mock_dynamixel_sdk as dxl
+        else:
+            import dynamixel_sdk as dxl
+
+        self.port_handler = dxl.PortHandler(self.port)
+        self.packet_handler = dxl.PacketHandler(PROTOCOL_VERSION)
+
+        if not self.port_handler.openPort():
+            raise OSError(f"Failed to open port '{self.port}'.")
+
+        self.is_connected = True
+
+    def are_motors_configured(self):
+        # Only check the motor indices and not baudrate, since if the motor baudrates are incorrect,
+        # a ConnectionError will be raised anyway.
+        try:
+            return (self.motor_indices == self.read("ID")).all()
+        except ConnectionError as e:
+            print(e)
+            return False
+
+    def find_motor_indices(self, possible_ids=None, num_retry=2):
+        if possible_ids is None:
+            possible_ids = range(MAX_ID_RANGE)
+
+        indices = []
+        for idx in tqdm.tqdm(possible_ids):
+            try:
+                present_idx = self.read_with_motor_ids(self.motor_models, [idx], "ID", num_retry=num_retry)[0]
+            except ConnectionError:
+                continue
+
+            if idx != present_idx:
+                # sanity check
+                raise OSError(
+                    "Motor index used to communicate through the bus is not the same as the one present in the motor memory. The motor memory might be damaged."
+                )
+            indices.append(idx)
+
+        return indices
+
+    def set_bus_baudrate(self, baudrate):
+        present_bus_baudrate = self.port_handler.getBaudRate()
+        if present_bus_baudrate != baudrate:
+            print(f"Setting bus baud rate to {baudrate}. Previously {present_bus_baudrate}.")
+            self.port_handler.setBaudRate(baudrate)
+
+            if self.port_handler.getBaudRate() != baudrate:
+                raise OSError("Failed to write bus baud rate.")
+
+    @property
+    def motor_names(self) -> list[str]:
+        return list(self.motors.keys())
+
+    @property
+    def motor_models(self) -> list[str]:
+        return [model for _, model in self.motors.values()]
+
+    @property
+    def motor_indices(self) -> list[int]:
+        return [idx for idx, _ in self.motors.values()]
+
+    def set_calibration(self, calibration: dict[str, list]):
+        self.calibration = calibration
+
+    def apply_calibration_autocorrect(self, values: np.ndarray | list, motor_names: list[str] | None):
         """This function applies the calibration, automatically detects out of range errors for motors values and attempts to correct.
 
         For more info, see docstring of `apply_calibration` and `autocorrect_calibration`.
@@ -269,7 +430,7 @@ class DynamixelMotorsBus(MotorsBus):
             values = self.apply_calibration(values, motor_names)
         except JointOutOfRangeError as e:
             print(e)
-            self._autocorrect_calibration(values, motor_names)
+            self.autocorrect_calibration(values, motor_names)
             values = self.apply_calibration(values, motor_names)
         return values
 
@@ -348,7 +509,7 @@ class DynamixelMotorsBus(MotorsBus):
 
         return values
 
-    def _autocorrect_calibration(self, values: np.ndarray | list, motor_names: list[str] | None):
+    def autocorrect_calibration(self, values: np.ndarray | list, motor_names: list[str] | None):
         """This function automatically detects issues with values of motors after calibration, and correct for these issues.
 
         Some motors might have values outside of expected maximum bounds after calibration.
@@ -445,7 +606,6 @@ class DynamixelMotorsBus(MotorsBus):
                 self.calibration["homing_offset"][calib_idx] += resolution * factor
 
     def revert_calibration(self, values: np.ndarray | list, motor_names: list[str] | None):
-        # TODO(aliberts): remove np
         """Inverse of `apply_calibration`."""
         if motor_names is None:
             motor_names = self.motor_names
@@ -485,6 +645,11 @@ class DynamixelMotorsBus(MotorsBus):
         return values
 
     def read_with_motor_ids(self, motor_models, motor_ids, data_name, num_retry=NUM_READ_RETRY):
+        if self.mock:
+            import tests.mock_dynamixel_sdk as dxl
+        else:
+            import dynamixel_sdk as dxl
+
         return_list = True
         if not isinstance(motor_ids, list):
             return_list = False
@@ -517,7 +682,25 @@ class DynamixelMotorsBus(MotorsBus):
         else:
             return values[0]
 
-    def _read(self, data_name, motor_names: str | list[str] | None = None):
+    def read(self, data_name, motor_names: str | list[str] | None = None):
+        if not self.is_connected:
+            raise DeviceNotConnectedError(
+                f"DynamixelMotorsBus({self.port}) is not connected. You need to run `motors_bus.connect()`."
+            )
+
+        start_time = time.perf_counter()
+
+        if self.mock:
+            import tests.mock_dynamixel_sdk as dxl
+        else:
+            import dynamixel_sdk as dxl
+
+        if motor_names is None:
+            motor_names = self.motor_names
+
+        if isinstance(motor_names, str):
+            motor_names = [motor_names]
+
         motor_ids = []
         models = []
         for name in motor_names:
@@ -560,11 +743,24 @@ class DynamixelMotorsBus(MotorsBus):
             values = values.astype(np.int32)
 
         if data_name in CALIBRATION_REQUIRED and self.calibration is not None:
-            values = self._apply_calibration_autocorrect(values, motor_names)
+            values = self.apply_calibration_autocorrect(values, motor_names)
+
+        # log the number of seconds it took to read the data from the motors
+        delta_ts_name = get_log_name("delta_timestamp_s", "read", data_name, motor_names)
+        self.logs[delta_ts_name] = time.perf_counter() - start_time
+
+        # log the utc time at which the data was received
+        ts_utc_name = get_log_name("timestamp_utc", "read", data_name, motor_names)
+        self.logs[ts_utc_name] = capture_timestamp_utc()
 
         return values
 
     def write_with_motor_ids(self, motor_models, motor_ids, data_name, values, num_retry=NUM_WRITE_RETRY):
+        if self.mock:
+            import tests.mock_dynamixel_sdk as dxl
+        else:
+            import dynamixel_sdk as dxl
+
         if not isinstance(motor_ids, list):
             motor_ids = [motor_ids]
         if not isinstance(values, list):
@@ -588,7 +784,30 @@ class DynamixelMotorsBus(MotorsBus):
                 f"{self.packet_handler.getTxRxResult(comm)}"
             )
 
-    def _write(self, data_name: str, values: list[int], motor_names: list[str]) -> None:
+    def write(self, data_name, values: int | float | np.ndarray, motor_names: str | list[str] | None = None):
+        if not self.is_connected:
+            raise DeviceNotConnectedError(
+                f"DynamixelMotorsBus({self.port}) is not connected. You need to run `motors_bus.connect()`."
+            )
+
+        start_time = time.perf_counter()
+
+        if self.mock:
+            import tests.mock_dynamixel_sdk as dxl
+        else:
+            import dynamixel_sdk as dxl
+
+        if motor_names is None:
+            motor_names = self.motor_names
+
+        if isinstance(motor_names, str):
+            motor_names = [motor_names]
+
+        if isinstance(values, (int, float, np.integer)):
+            values = [int(values)] * len(motor_names)
+
+        values = np.array(values)
+
         motor_ids = []
         models = []
         for name in motor_names:
@@ -598,6 +817,8 @@ class DynamixelMotorsBus(MotorsBus):
 
         if data_name in CALIBRATION_REQUIRED and self.calibration is not None:
             values = self.revert_calibration(values, motor_names)
+
+        values = values.tolist()
 
         assert_same_address(self.model_ctrl_table, models, data_name)
         addr, bytes = self.model_ctrl_table[model][data_name]
@@ -622,6 +843,34 @@ class DynamixelMotorsBus(MotorsBus):
                 f"Write failed due to communication error on port {self.port} for group_key {group_key}: "
                 f"{self.packet_handler.getTxRxResult(comm)}"
             )
+
+        # log the number of seconds it took to write the data to the motors
+        delta_ts_name = get_log_name("delta_timestamp_s", "write", data_name, motor_names)
+        self.logs[delta_ts_name] = time.perf_counter() - start_time
+
+        # TODO(rcadene): should we log the time before sending the write command?
+        # log the utc time when the write has been completed
+        ts_utc_name = get_log_name("timestamp_utc", "write", data_name, motor_names)
+        self.logs[ts_utc_name] = capture_timestamp_utc()
+
+    def disconnect(self):
+        if not self.is_connected:
+            raise DeviceNotConnectedError(
+                f"DynamixelMotorsBus({self.port}) is not connected. Try running `motors_bus.connect()` first."
+            )
+
+        if self.port_handler is not None:
+            self.port_handler.closePort()
+            self.port_handler = None
+
+        self.packet_handler = None
+        self.group_readers = {}
+        self.group_writers = {}
+        self.is_connected = False
+
+    def __del__(self):
+        if getattr(self, "is_connected", False):
+            self.disconnect()
 
 
 def set_operating_mode(arm: DynamixelMotorsBus):

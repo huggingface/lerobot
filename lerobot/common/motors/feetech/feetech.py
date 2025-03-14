@@ -12,16 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import enum
-import time
-import traceback
 from copy import deepcopy
 
 import numpy as np
-import tqdm
+import scservo_sdk as scs
 
-from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from lerobot.common.utils.utils import capture_timestamp_utc
+from ..motors_bus import (
+    CalibrationMode,
+    JointOutOfRangeError,
+    MotorsBus,
+    assert_same_address,
+    get_group_sync_key,
+)
 
 PROTOCOL_VERSION = 0
 BAUDRATE = 1_000_000
@@ -215,72 +217,7 @@ def convert_to_bytes(value, bytes, mock=False):
     return data
 
 
-def get_group_sync_key(data_name, motor_names):
-    group_key = f"{data_name}_" + "_".join(motor_names)
-    return group_key
-
-
-def get_result_name(fn_name, data_name, motor_names):
-    group_key = get_group_sync_key(data_name, motor_names)
-    rslt_name = f"{fn_name}_{group_key}"
-    return rslt_name
-
-
-def get_queue_name(fn_name, data_name, motor_names):
-    group_key = get_group_sync_key(data_name, motor_names)
-    queue_name = f"{fn_name}_{group_key}"
-    return queue_name
-
-
-def get_log_name(var_name, fn_name, data_name, motor_names):
-    group_key = get_group_sync_key(data_name, motor_names)
-    log_name = f"{var_name}_{fn_name}_{group_key}"
-    return log_name
-
-
-def assert_same_address(model_ctrl_table, motor_models, data_name):
-    all_addr = []
-    all_bytes = []
-    for model in motor_models:
-        addr, bytes = model_ctrl_table[model][data_name]
-        all_addr.append(addr)
-        all_bytes.append(bytes)
-
-    if len(set(all_addr)) != 1:
-        raise NotImplementedError(
-            f"At least two motor models use a different address for `data_name`='{data_name}' ({list(zip(motor_models, all_addr, strict=False))}). Contact a LeRobot maintainer."
-        )
-
-    if len(set(all_bytes)) != 1:
-        raise NotImplementedError(
-            f"At least two motor models use a different bytes representation for `data_name`='{data_name}' ({list(zip(motor_models, all_bytes, strict=False))}). Contact a LeRobot maintainer."
-        )
-
-
-class TorqueMode(enum.Enum):
-    ENABLED = 1
-    DISABLED = 0
-
-
-class DriveMode(enum.Enum):
-    NON_INVERTED = 0
-    INVERTED = 1
-
-
-class CalibrationMode(enum.Enum):
-    # Joints with rotational motions are expressed in degrees in nominal range of [-180, 180]
-    DEGREE = 0
-    # Joints with linear motions (like gripper of Aloha) are expressed in nominal range of [0, 100]
-    LINEAR = 1
-
-
-class JointOutOfRangeError(Exception):
-    def __init__(self, message="Joint is out of range"):
-        self.message = message
-        super().__init__(self.message)
-
-
-class FeetechMotorsBus:
+class FeetechMotorsBus(MotorsBus):
     """
     The FeetechMotorsBus class allows to efficiently read and write to the attached motors. It relies on
     the python feetech sdk to communicate with the motors. For more info, see the [feetech SDK Documentation](https://emanual.robotis.com/docs/en/software/feetech/feetech_sdk/sample_code/python_read_write_protocol_2_0/#python-read-write-protocol-20).
@@ -319,122 +256,22 @@ class FeetechMotorsBus:
     ```
     """
 
+    model_ctrl_table = deepcopy(MODEL_CONTROL_TABLE)
+    model_resolution = deepcopy(MODEL_RESOLUTION)
+
     def __init__(
         self,
         port: str,
         motors: dict[str, tuple[int, str]],
-        mock: bool = False,
     ):
-        self.port = port
-        self.motors = motors
-        self.mock = mock
+        super().__init__(port, motors)
 
-        self.model_ctrl_table = deepcopy(MODEL_CONTROL_TABLE)
-        self.model_resolution = deepcopy(MODEL_RESOLUTION)
-
-        self.port_handler = None
-        self.packet_handler = None
-        self.calibration = None
-        self.is_connected = False
-        self.group_readers = {}
-        self.group_writers = {}
-        self.logs = {}
-
-    def connect(self):
-        if self.is_connected:
-            raise DeviceAlreadyConnectedError(
-                f"FeetechMotorsBus({self.port}) is already connected. Do not call `motors_bus.connect()` twice."
-            )
-
-        if self.mock:
-            import tests.motors.mock_scservo_sdk as scs
-        else:
-            import scservo_sdk as scs
-
+    def _set_handlers(self):
         self.port_handler = scs.PortHandler(self.port)
         self.packet_handler = scs.PacketHandler(PROTOCOL_VERSION)
 
-        try:
-            if not self.port_handler.openPort():
-                raise OSError(f"Failed to open port '{self.port}'.")
-        except Exception:
-            traceback.print_exc()
-            print(
-                "\nTry running `python lerobot/scripts/find_motors_bus_port.py` to make sure you are using the correct port.\n"
-            )
-            raise
-
-        # Allow to read and write
-        self.is_connected = True
-
-        self.port_handler.setPacketTimeoutMillis(TIMEOUT_MS)
-
-    def reconnect(self):
-        if self.mock:
-            import tests.motors.mock_scservo_sdk as scs
-        else:
-            import scservo_sdk as scs
-
-        self.port_handler = scs.PortHandler(self.port)
-        self.packet_handler = scs.PacketHandler(PROTOCOL_VERSION)
-
-        if not self.port_handler.openPort():
-            raise OSError(f"Failed to open port '{self.port}'.")
-
-        self.is_connected = True
-
-    def are_motors_configured(self):
-        # Only check the motor indices and not baudrate, since if the motor baudrates are incorrect,
-        # a ConnectionError will be raised anyway.
-        try:
-            return (self.motor_indices == self.read("ID")).all()
-        except ConnectionError as e:
-            print(e)
-            return False
-
-    def find_motor_indices(self, possible_ids=None, num_retry=2):
-        if possible_ids is None:
-            possible_ids = range(MAX_ID_RANGE)
-
-        indices = []
-        for idx in tqdm.tqdm(possible_ids):
-            try:
-                present_idx = self.read_with_motor_ids(self.motor_models, [idx], "ID", num_retry=num_retry)[0]
-            except ConnectionError:
-                continue
-
-            if idx != present_idx:
-                # sanity check
-                raise OSError(
-                    "Motor index used to communicate through the bus is not the same as the one present in the motor memory. The motor memory might be damaged."
-                )
-            indices.append(idx)
-
-        return indices
-
-    def set_bus_baudrate(self, baudrate):
-        present_bus_baudrate = self.port_handler.getBaudRate()
-        if present_bus_baudrate != baudrate:
-            print(f"Setting bus baud rate to {baudrate}. Previously {present_bus_baudrate}.")
-            self.port_handler.setBaudRate(baudrate)
-
-            if self.port_handler.getBaudRate() != baudrate:
-                raise OSError("Failed to write bus baud rate.")
-
-    @property
-    def motor_names(self) -> list[str]:
-        return list(self.motors.keys())
-
-    @property
-    def motor_models(self) -> list[str]:
-        return [model for _, model in self.motors.values()]
-
-    @property
-    def motor_indices(self) -> list[int]:
-        return [idx for idx, _ in self.motors.values()]
-
-    def set_calibration(self, calibration: dict[str, list]):
-        self.calibration = calibration
+    def _set_timeout(self, timeout: int = TIMEOUT_MS):
+        self.port_handler.setPacketTimeoutMillis(timeout)
 
     def apply_calibration(self, values: np.ndarray | list, motor_names: list[str] | None):
         if motor_names is None:
@@ -502,11 +339,6 @@ class FeetechMotorsBus:
         return values
 
     def read_with_motor_ids(self, motor_models, motor_ids, data_name, num_retry=NUM_READ_RETRY):
-        if self.mock:
-            import tests.motors.mock_scservo_sdk as scs
-        else:
-            import scservo_sdk as scs
-
         return_list = True
         if not isinstance(motor_ids, list):
             return_list = False
@@ -539,25 +371,7 @@ class FeetechMotorsBus:
         else:
             return values[0]
 
-    def read(self, data_name, motor_names: str | list[str] | None = None):
-        if self.mock:
-            import tests.motors.mock_scservo_sdk as scs
-        else:
-            import scservo_sdk as scs
-
-        if not self.is_connected:
-            raise DeviceNotConnectedError(
-                f"FeetechMotorsBus({self.port}) is not connected. You need to run `motors_bus.connect()`."
-            )
-
-        start_time = time.perf_counter()
-
-        if motor_names is None:
-            motor_names = self.motor_names
-
-        if isinstance(motor_names, str):
-            motor_names = [motor_names]
-
+    def _read(self, data_name, motor_names: str | list[str] | None = None):
         motor_ids = []
         models = []
         for name in motor_names:
@@ -602,22 +416,9 @@ class FeetechMotorsBus:
         if data_name in CALIBRATION_REQUIRED and self.calibration is not None:
             values = self.apply_calibration(values, motor_names)
 
-        # log the number of seconds it took to read the data from the motors
-        delta_ts_name = get_log_name("delta_timestamp_s", "read", data_name, motor_names)
-        self.logs[delta_ts_name] = time.perf_counter() - start_time
-
-        # log the utc time at which the data was received
-        ts_utc_name = get_log_name("timestamp_utc", "read", data_name, motor_names)
-        self.logs[ts_utc_name] = capture_timestamp_utc()
-
         return values
 
     def write_with_motor_ids(self, motor_models, motor_ids, data_name, values, num_retry=NUM_WRITE_RETRY):
-        if self.mock:
-            import tests.motors.mock_scservo_sdk as scs
-        else:
-            import scservo_sdk as scs
-
         if not isinstance(motor_ids, list):
             motor_ids = [motor_ids]
         if not isinstance(values, list):
@@ -641,30 +442,7 @@ class FeetechMotorsBus:
                 f"{self.packet_handler.getTxRxResult(comm)}"
             )
 
-    def write(self, data_name, values: int | float | np.ndarray, motor_names: str | list[str] | None = None):
-        if not self.is_connected:
-            raise DeviceNotConnectedError(
-                f"FeetechMotorsBus({self.port}) is not connected. You need to run `motors_bus.connect()`."
-            )
-
-        start_time = time.perf_counter()
-
-        if self.mock:
-            import tests.motors.mock_scservo_sdk as scs
-        else:
-            import scservo_sdk as scs
-
-        if motor_names is None:
-            motor_names = self.motor_names
-
-        if isinstance(motor_names, str):
-            motor_names = [motor_names]
-
-        if isinstance(values, (int, float, np.integer)):
-            values = [int(values)] * len(motor_names)
-
-        values = np.array(values)
-
+    def _write(self, data_name: str, values: list[int], motor_names: list[str]) -> None:
         motor_ids = []
         models = []
         for name in motor_names:
@@ -674,8 +452,6 @@ class FeetechMotorsBus:
 
         if data_name in CALIBRATION_REQUIRED and self.calibration is not None:
             values = self.revert_calibration(values, motor_names)
-
-        values = values.tolist()
 
         assert_same_address(self.model_ctrl_table, models, data_name)
         addr, bytes = self.model_ctrl_table[model][data_name]
@@ -700,31 +476,3 @@ class FeetechMotorsBus:
                 f"Write failed due to communication error on port {self.port} for group_key {group_key}: "
                 f"{self.packet_handler.getTxRxResult(comm)}"
             )
-
-        # log the number of seconds it took to write the data to the motors
-        delta_ts_name = get_log_name("delta_timestamp_s", "write", data_name, motor_names)
-        self.logs[delta_ts_name] = time.perf_counter() - start_time
-
-        # TODO(rcadene): should we log the time before sending the write command?
-        # log the utc time when the write has been completed
-        ts_utc_name = get_log_name("timestamp_utc", "write", data_name, motor_names)
-        self.logs[ts_utc_name] = capture_timestamp_utc()
-
-    def disconnect(self):
-        if not self.is_connected:
-            raise DeviceNotConnectedError(
-                f"FeetechMotorsBus({self.port}) is not connected. Try running `motors_bus.connect()` first."
-            )
-
-        if self.port_handler is not None:
-            self.port_handler.closePort()
-            self.port_handler = None
-
-        self.packet_handler = None
-        self.group_readers = {}
-        self.group_writers = {}
-        self.is_connected = False
-
-    def __del__(self):
-        if getattr(self, "is_connected", False):
-            self.disconnect()
