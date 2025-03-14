@@ -134,7 +134,7 @@ class LeKiwiRobot(Robot):
         # We assume that at connection time, arm is in a rest position,
         # and torque can be safely disabled to run calibration.
         self.actuators_bus.write("Torque_Enable", TorqueMode.DISABLED.value, self.arm_actuators)
-        self.calibrate()  # TODO(Steven): This should be only for the arm
+        # self.calibrate()  # TODO(Steven): This should be only for the arm
 
         # Mode=0 for Position Control
         self.actuators_bus.write("Mode", 0, self.arm_actuators)
@@ -190,17 +190,15 @@ class LeKiwiRobot(Robot):
         actuators_calib_path = self.calibration_dir / f"{self.config.id}.json"
 
         if actuators_calib_path.exists():
-            with open(actuators_calib_path,encoding="utf-8") as f:
+            with open(actuators_calib_path, encoding="utf-8") as f:
                 calibration = json.load(f)
         else:
-            logging.info("Missing calibration file '%s'",actuators_calib_path)
-            calibration = run_full_arm_calibration(
-                self.actuators_bus, self.robot_type, self.name, "follower"
-            )
+            logging.info("Missing calibration file '%s'", actuators_calib_path)
+            calibration = run_full_arm_calibration(self.actuators_bus, self.robot_type, self.name, "follower")
 
-            logging.info("Calibration is done! Saving calibration file '%s'",actuators_calib_path)
+            logging.info("Calibration is done! Saving calibration file '%s'", actuators_calib_path)
             actuators_calib_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(actuators_calib_path, "w",encoding="utf-8") as f:
+            with open(actuators_calib_path, "w", encoding="utf-8") as f:
                 json.dump(calibration, f)
 
         self.actuators_bus.set_calibration(calibration)
@@ -214,9 +212,12 @@ class LeKiwiRobot(Robot):
 
         # Read actuators position for arm and vel for base
         before_read_t = time.perf_counter()
-        obs_dict[OBS_STATE] = self.actuators_bus.read(
-            "Present_Position", self.arm_actuators
-        ) + self.actuators_bus.read("Present_Speed", self.base_actuators)
+        obs_dict[OBS_STATE] = np.concatenate(
+            (
+                self.actuators_bus.read("Present_Position", self.arm_actuators),
+                self.actuators_bus.read("Present_Speed", self.base_actuators),
+            )
+        )
         self.logs["read_pos_dt_s"] = time.perf_counter() - before_read_t
 
         # Capture images from cameras
@@ -290,7 +291,7 @@ class LeKiwiRobot(Robot):
 
         stop_event = threading.Event()
         observation_thread = threading.Thread(
-            target=self.update_last_observation, args=(stop_event), daemon=True
+            target=self.update_last_observation, args=[stop_event], daemon=True
         )
         observation_thread.start()
 
@@ -302,14 +303,14 @@ class LeKiwiRobot(Robot):
                 loop_start_time = time.time()
 
                 try:
-                    msg = self.cmd_socket.recv_string(zmq.NOBLOCK)
+                    msg = self.zmq_cmd_socket.recv_string(zmq.NOBLOCK)
                     data = json.loads(msg)
                     self.send_action(data)
                     last_cmd_time = time.time()
-                # except zmq.Again:
-                #     logging.warning("ZMQ again")
+                except zmq.Again:
+                    logging.warning("ZMQ again")
                 except Exception as e:
-                    logging.error("Message fetching failed: %s",e)
+                    logging.error("Message fetching failed: %s", e)
 
                 # Watchdog: stop the robot if no command is received for over 0.5 seconds.
                 now = time.time()
@@ -317,6 +318,7 @@ class LeKiwiRobot(Robot):
                     self.stop()
 
                 with self.observation_lock:
+                    # TODO(Steven): This operation is blocking if no listener is available
                     self.zmq_observation_socket.send_string(json.dumps(self.last_observation))
 
                 # Ensure a short sleep to avoid overloading the CPU.
@@ -346,7 +348,7 @@ class LeKiwiRobot(Robot):
         for cam in self.cameras.values():
             cam.disconnect()
         self.observation_socket.close()
-        self.cmd_socket.close()
+        self.zmq_cmd_socket.close()
         self.context.term()
         self.is_connected = False
 

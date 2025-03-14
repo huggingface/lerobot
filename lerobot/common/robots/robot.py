@@ -1,6 +1,7 @@
 import abc
 from pathlib import Path
 import enum
+from pathlib import Path
 from typing import Any
 
 import draccus
@@ -30,7 +31,9 @@ class Robot(abc.ABC):
         self.robot_mode: RobotMode | None = None
         self.id = config.id
         self.calibration_dir = (
-            config.calibration_dir if config.calibration_dir else HF_LEROBOT_CALIBRATION / ROBOTS / self.name
+            Path(config.calibration_dir)
+            if config.calibration_dir
+            else HF_LEROBOT_CALIBRATION / ROBOTS / self.name
         )
         self.calibration_dir.mkdir(parents=True, exist_ok=True)
         self.calibration_fpath = self.calibration_dir / f"{self.id}.json"
