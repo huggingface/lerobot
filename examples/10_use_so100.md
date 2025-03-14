@@ -583,6 +583,13 @@ Let's explain it:
 
 Training should take several hours. You will find checkpoints in `outputs/train/act_so100_test/checkpoints`.
 
+To resume training from a checkpoint, below is an example command to resume from `last` checkpoint of the `act_so100_test` policy:
+```bash
+python lerobot/scripts/train.py \
+  --config_path=outputs/train/act_so100_test/checkpoints/last/pretrained_model/train_config.json \
+  --resume=true
+```
+
 ## K. Evaluate your policy
 
 You can use the `record` function from [`lerobot/scripts/control_robot.py`](../lerobot/scripts/control_robot.py) but with a policy checkpoint as input. For instance, run this command to record 10 evaluation episodes:
