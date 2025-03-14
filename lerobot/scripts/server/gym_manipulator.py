@@ -581,7 +581,20 @@ class ImageCropResizeWrapper(gym.Wrapper):
         obs, reward, terminated, truncated, info = self.env.step(action)
         for k in self.crop_params_dict:
             device = obs[k].device
+            if obs[k].dim() >= 3:
+                # Reshape to combine height and width dimensions for easier calculation
+                batch_size = obs[k].size(0)
+                channels = obs[k].size(1)
+                flattened_spatial_dims = obs[k].view(batch_size, channels, -1)
 
+                # Calculate standard deviation across spatial dimensions (H, W)
+                std_per_channel = torch.std(flattened_spatial_dims, dim=2)
+
+                # If any channel has std=0, all pixels in that channel have the same value
+                if (std_per_channel <= 0.02).any():
+                    logging.warning(
+                        f"Potential hardware issue detected: All pixels have the same value in observation {k}"
+                    )
             # Check for NaNs before processing
             if torch.isnan(obs[k]).any():
                 logging.error(
@@ -1087,7 +1100,7 @@ class ActionScaleWrapper(gym.ActionWrapper):
         assert (
             ee_action_space_params is not None
         ), "TODO: method implemented for ee action space only so far"
-        self.scale_vector = torch.tensor(
+        self.scale_vector = np.array(
             [
                 [
                     ee_action_space_params.x_step_size,
@@ -1168,10 +1181,13 @@ def make_robot_env(
             env=env, ee_action_space_params=cfg.env.wrapper.ee_action_space_params
         )
     if cfg.env.wrapper.ee_action_space_params.use_gamepad:
-        env = ActionScaleWrapper(
-            env=env, ee_action_space_params=cfg.env.wrapper.ee_action_space_params
+        # env = ActionScaleWrapper(env=env, ee_action_space_params=cfg.env.wrapper.ee_action_space_params)
+        env = GamepadControlWrapper(
+            env=env,
+            x_step_size=cfg.env.wrapper.ee_action_space_params.x_step_size,
+            y_step_size=cfg.env.wrapper.ee_action_space_params.y_step_size,
+            z_step_size=cfg.env.wrapper.ee_action_space_params.z_step_size,
         )
-        env = GamepadControlWrapper(env=env)
     else:
         env = KeyboardInterfaceWrapper(env=env)
 
@@ -1316,6 +1332,7 @@ def replay_episode(env, repo_id, root=None, episode=0):
     )
     env.reset()
 
+    action_scale = torch.tensor([[0.02, 0.02, 0.04]])
     actions = dataset.hf_dataset.select_columns("action")
 
     for idx in range(dataset.num_frames):
@@ -1477,7 +1494,9 @@ if __name__ == "__main__":
     # A value close to 0 makes the trajectory very smooth (slow to change), while a value close to 1 is less smooth.
     alpha = 1.0
 
-    while True:
+    num_episode = 0
+    sucesses = []
+    while num_episode < 20:
         start_loop_s = time.perf_counter()
         # Sample a new random action from the robot's action space.
         new_random_action = action_space_robot.sample()
@@ -1489,7 +1508,12 @@ if __name__ == "__main__":
             (torch.from_numpy(smoothed_action), False)
         )
         if terminated or truncated:
+            sucesses.append(reward)
             env.reset()
+            num_episode += 1
 
         dt_s = time.perf_counter() - start_loop_s
         busy_wait(1 / args.fps - dt_s)
+
+    logging.info(f"Success after 20 steps {sucesses}")
+    logging.info(f"success rate {sum(sucesses)/ len(sucesses)}")

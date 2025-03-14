@@ -8,8 +8,7 @@
 #   env.gym.obs_type=environment_state_agent_pos \
 
 seed: 1
-dataset_repo_id:  aractingi/pushcube_gamepad # aractingi/push_cube_vel # aractingi/push_cube_simp_cropped_resized
-#aractingi/push_cube_square_offline_demo_cropped_resized
+dataset_repo_id:  aractingi/insertcube_simple
 
 training:
   # Offline training dataloader
@@ -78,15 +77,15 @@ policy:
       std: [0.229, 0.224, 0.225]
     observation.state:
       # 6- joint positions, 6- joint velocities, 3- ee position
-      max: [ 52.822266,  136.14258,   142.03125,   72.1582,     22.675781,   -0.5673759, 100., 100., 100., 100., 100., 100., 0.27789699, -0.01418931, 0.0932141]
-      min: [-2.6367188,  86.572266,   89.82422,    12.392578,    -26.015625,   -0.5673759, -100., -100., -100., -100., -100., -100., 0.14965773, -0.21805821, 0.0489645]
+      max: [ 52.822266,  136.14258,   142.03125,   72.1582,     22.675781,   -0.5673759, 100., 100., 100., 100., 100., 100.,0.25295413, 0.07498981, 0.05362044] # 0.27789699, -0.01418931, 0.0932141]
+      min: [-2.6367188,  86.572266,   89.82422,    12.392578,    -26.015625,   -0.5673759, -100., -100., -100., -100., -100., -100., 0.2210096,  0.0, 0.0433196] # 0.14965773, -0.21805821, 0.0489645]
 
   output_normalization_modes:
     action: min_max
   output_normalization_params:
     action:
-      min: [-0.03, -0.03, -0.05]
-      max: [0.03, 0.03, 0.05]
+      min: [-0.03, -0.03, -0.01]
+      max: [0.03, 0.03, 0.01]
       # min: [-43.945313, -39.374996, -37.11914 , -26.10352]
       # max: [43.945313, 39.374996, 37.11914 , 26.10352]
 

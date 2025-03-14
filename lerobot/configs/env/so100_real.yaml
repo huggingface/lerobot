@@ -34,16 +34,16 @@ env:
     #     min: [0.139, -0.143, 0.03]
     
     # Bounds for insertcube_gamepad dataset and experiments
-    fixed_reset_joint_positions: [42.802734,  85.51758,   90.52734,   53.789062,  -0.7910156, -0.5673759]
+    fixed_reset_joint_positions: [-5.0,  90.,   90.,   75.,  -0.7910156, -0.5673759]
     ee_action_space_params:
       bounds:
-        max: [0.27789699, -0.01418931, 0.0932141]
-        min: [0.14965773, -0.21805821, 0.0489645]
+        max: [0.25295413, 0.07498981, 0.05362044]
+        min: [0.2210096,  -0.0, 0.0433196]
 
       use_gamepad: true
       x_step_size: 0.03
       y_step_size: 0.03
-      z_step_size: 0.05
+      z_step_size: 0.01
 
   reward_classifier:
     pretrained_path:  outputs/classifier/13-02-random-sample-resnet10-frozen/checkpoints/best/pretrained_model
