@@ -160,7 +160,7 @@ class ManipulatorRobot:
     ):
         self.config = config
         self.robot_type = self.config.type
-        if not self.robot_type in ["trossen_ai_bimanual", "trosssen_ai_solo"]:
+        if not self.robot_type in ["trossen_ai_bimanual", "trossen_ai_solo"]:
             self.calibration_dir = Path(self.config.calibration_dir)
         self.leader_arms = make_motors_buses_from_configs(self.config.leader_arms)
         self.follower_arms = make_motors_buses_from_configs(self.config.follower_arms)

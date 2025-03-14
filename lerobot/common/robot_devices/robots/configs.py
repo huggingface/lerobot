@@ -733,7 +733,7 @@ class TrossenAISoloRobotConfig(ManipulatorRobotConfig):
                 width=640,
                 height=480,
             ),
-            "cam_left_wrist": IntelRealSenseCameraConfig(
+            "cam_wrist": IntelRealSenseCameraConfig(
                 serial_number=218622274938,
                 fps=30,
                 width=640,

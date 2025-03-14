@@ -98,7 +98,7 @@ class TrossenArmDriver:
         self.TIME_SCALING_FACTOR = 3.0
 
         # Minimum time to move for the arm (This is a tuning parameter)
-        self.MIN_TIME_TO_MOVE = 3.0 / self.fps
+        self.MIN_TIME_TO_MOVE = 6.0 / self.fps
 
     def connect(self):
         print(f"Connecting to {self.model} arm at {self.ip}...")
