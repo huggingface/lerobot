@@ -44,17 +44,16 @@ class SO100Teleop(Teleoperator):
         super().__init__(config)
         self.config = config
         self.robot_type = config.type
-        self.id = config.id
 
         self.arm = FeetechMotorsBus(
             port=self.config.port,
             motors={
-                "shoulder_pan": config.shoulder_pan,
-                "shoulder_lift": config.shoulder_lift,
-                "elbow_flex": config.elbow_flex,
-                "wrist_flex": config.wrist_flex,
-                "wrist_roll": config.wrist_roll,
-                "gripper": config.gripper,
+                "shoulder_pan": (1, "sts3215"),
+                "shoulder_lift": (2, "sts3215"),
+                "elbow_flex": (3, "sts3215"),
+                "wrist_flex": (4, "sts3215"),
+                "wrist_roll": (5, "sts3215"),
+                "gripper": (6, "sts3215"),
             },
         )
 
@@ -97,19 +96,17 @@ class SO100Teleop(Teleoperator):
         Rotations are expressed in degrees in nominal range of [-180, 180],
         and linear motions (like gripper of Aloha) in nominal range of [0, 100].
         """
-        arm_calib_path = self.calibration_dir / f"{self.id}.json"
-
-        if arm_calib_path.exists():
-            with open(arm_calib_path) as f:
+        if self.calibration_fpath.exists():
+            with open(self.calibration_fpath) as f:
                 calibration = json.load(f)
         else:
             # TODO(rcadene): display a warning in __init__ if calibration file not available
-            logging.info(f"Missing calibration file '{arm_calib_path}'")
+            logging.info(f"Missing calibration file '{self.calibration_fpath}'")
             calibration = run_full_arm_calibration(self.arm, self.robot_type, self.name, "leader")
 
-            logging.info(f"Calibration is done! Saving calibration file '{arm_calib_path}'")
-            arm_calib_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(arm_calib_path, "w") as f:
+            logging.info(f"Calibration is done! Saving calibration file '{self.calibration_fpath}'")
+            self.calibration_fpath.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.calibration_fpath, "w") as f:
                 json.dump(calibration, f)
 
         self.arm.set_calibration(calibration)
