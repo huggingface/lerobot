@@ -174,7 +174,7 @@ def decode_video_frames_torchcodec(
     can be adjusted during encoding to take into account decoding time and video size in bytes.
     """
     # initialize video decoder
-    decoder = VideoDecoder(video_path, device=device)
+    decoder = VideoDecoder(video_path, device=device, seek_mode="approximate")
     loaded_frames = []
     loaded_ts = []
     # get metadata for frame information
