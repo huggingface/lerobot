@@ -232,8 +232,8 @@ python lerobot/scripts/eval.py \
     --env.type=pusht \
     --eval.batch_size=10 \
     --eval.n_episodes=10 \
-    --use_amp=false \
-    --device=cuda
+    --policy.use_amp=false \
+    --policy.device=cuda
 ```
 
 Note: After training your own policy, you can re-evaluate the checkpoints with:

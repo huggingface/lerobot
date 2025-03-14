@@ -78,7 +78,7 @@ pip-log.txt
 pip-delete-this-directory.txt
 
 # Unit test / coverage reports
-!tests/data
+!tests/artifacts
 htmlcov/
 .tox/
 .nox/
