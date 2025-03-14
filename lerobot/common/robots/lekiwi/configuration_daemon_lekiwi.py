@@ -7,9 +7,11 @@ from lerobot.common.robots.config import RobotConfig
 @dataclass
 class DaemonLeKiwiRobotConfig(RobotConfig):
     # Network Configuration
-    remote_ip: str = "192.168.0.193"
+    remote_ip: str = "172.18.133.90"
     port_zmq_cmd: int = 5555
     port_zmq_observations: int = 5556
+
+    id = "daemonlekiwi"
 
     teleop_keys: dict[str, str] = field(
         default_factory=lambda: {
