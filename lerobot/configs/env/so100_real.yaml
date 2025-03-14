@@ -32,7 +32,7 @@ env:
     #   bounds:
     #     max: [0.291, 0.147, 0.074]
     #     min: [0.139, -0.143, 0.03]
-    
+
     # Bounds for insertcube_gamepad dataset and experiments
     fixed_reset_joint_positions: [-5.0,  90.,   90.,   75.,  -0.7910156, -0.5673759]
     ee_action_space_params:

@@ -379,7 +379,7 @@ class GamepadControllerHID(InputController):
             logging.info("  Button 2/A/Cross: End episode with SUCCESS")
             logging.info("  Button 3/X/Square: End episode with FAILURE")
 
-        except IOError as e:
+        except OSError as e:
             logging.error(f"Error opening gamepad: {e}")
             logging.error(
                 "You might need to run this with sudo/admin privileges on some systems"
@@ -446,7 +446,7 @@ class GamepadControllerHID(InputController):
                     else:
                         self.episode_end_status = None
 
-        except IOError as e:
+        except OSError as e:
             logging.error(f"Error reading from gamepad: {e}")
 
     def get_deltas(self):
