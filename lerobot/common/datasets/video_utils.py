@@ -173,7 +173,6 @@ def decode_video_frames_torchcodec(
     and all subsequent frames until reaching the requested frame. The number of key frames in a video
     can be adjusted during encoding to take into account decoding time and video size in bytes.
     """
-    video_path = str(video_path)
     # initialize video decoder
     decoder = VideoDecoder(video_path, device=device)
     loaded_frames = []
