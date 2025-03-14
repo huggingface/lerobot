@@ -132,11 +132,9 @@ class PrioritizedSampler(Sampler[int]):
         self,
         data_len: int,
         alpha: float = 0.6,
+        beta: float = 0.4,  # For important sampling
         eps: float = 1e-6,
         num_samples_per_epoch: Optional[int] = None,
-        beta_start: float = 0.4,
-        beta_end: float = 1.0,
-        total_steps: int = 1,
     ):
         """
         Args:
@@ -148,12 +146,9 @@ class PrioritizedSampler(Sampler[int]):
         """
         self.data_len = data_len
         self.alpha = alpha
+        self.beta = beta
         self.eps = eps
         self.num_samples_per_epoch = num_samples_per_epoch or data_len
-        self.beta_start = beta_start
-        self.beta_end = beta_end
-        self.total_steps = total_steps
-        self._beta = self.beta_start
 
         # Initialize difficulties and sum-tree
         self.difficulties = [1.0] * data_len
@@ -164,10 +159,6 @@ class PrioritizedSampler(Sampler[int]):
         self.sumtree.initialize_tree(initial_priorities)
         for i, p in enumerate(initial_priorities):
             self.priorities[i] = p
-
-    def update_beta(self, current_step: int):
-        frac = min(1.0, current_step / self.total_steps)
-        self._beta = self.beta_start + (self.beta_end - self.beta_start) * frac
 
     def update_priorities(self, indices: List[int], difficulties: List[float]):
         """
@@ -199,6 +190,6 @@ class PrioritizedSampler(Sampler[int]):
         total_p = self.sumtree.total_priority()
         for idx in indices:
             p = self.priorities[idx] / total_p
-            w.append((p * self.data_len) ** (-self._beta))
+            w.append((p * self.data_len) ** (-self.beta))
         w = torch.tensor(w, dtype=torch.float32)
         return w / w.max()
