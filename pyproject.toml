@@ -69,6 +69,7 @@ dependencies = [
     "rerun-sdk>=0.21.0",
     "termcolor>=2.4.0",
     "torch>=2.2.1",
+    "torchcodec>=0.2.1",
     "torchvision>=0.21.0",
     "wandb>=0.16.3",
     "zarr>=2.17.0",
