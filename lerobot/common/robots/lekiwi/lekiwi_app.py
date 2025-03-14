@@ -1,9 +1,10 @@
 import logging
+
 from .configuration_lekiwi import LeKiwiRobotConfig
 from .lekiwi_robot import LeKiwiRobot
 
-def main():
 
+def main():
     logging.info("Configuring LeKiwiRobot")
     robot_config = LeKiwiRobotConfig()
     robot = LeKiwiRobot(robot_config)
@@ -14,7 +15,7 @@ def main():
     # Remotely teleoperated
     logging.info("Starting LeKiwiRobot teleoperation")
     robot.run()
-    
+
     logging.info("Finished LeKiwiRobot cleanly")
 
 
