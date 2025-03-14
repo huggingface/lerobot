@@ -92,6 +92,9 @@ import gymnasium as gym
 import numpy as np
 import torch
 
+cv2.namedWindow("i")
+cv2.destroyAllWindows()
+
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.robot_devices.control_utils import (
     init_keyboard_listener,
