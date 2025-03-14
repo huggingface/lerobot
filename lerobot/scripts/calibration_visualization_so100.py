@@ -51,9 +51,9 @@ def debug_feetech_positions(cfg: DebugFeetechConfig):
     device.arm.write("Torque_Enable", 0, motor_names=device.arm.motor_names)
     print("Torque disabled on all joints.")
 
-    print("\nPress Ctrl+C to quit.\n")
-    while True:
-        try:
+    try:
+        print("\nPress Ctrl+C to quit.\n")
+        while True:
             # Read *raw* positions (no calibration).
             raw_positions = device.arm.read_with_motor_ids(
                 device.arm.motor_models, device.arm.motor_indices, data_name="Present_Position"
@@ -89,11 +89,11 @@ def debug_feetech_positions(cfg: DebugFeetechConfig):
                 )
             print("----------------------------------------------------")
             time.sleep(0.25)
-        except KeyboardInterrupt:
-            break
-        finally:
-            print("\nExiting. Disconnecting bus...")
-            device.disconnect()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        print("\nExiting. Disconnecting bus...")
+        device.disconnect()
 
 
 if __name__ == "__main__":
