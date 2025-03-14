@@ -55,7 +55,6 @@ class KeyboardTeleop(Teleoperator):
         super().__init__(config)
         self.config = config
         self.robot_type = config.type
-        self.id = config.id
 
         self.pressed_keys = {}
         self.listener = None

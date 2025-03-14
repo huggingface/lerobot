@@ -145,13 +145,12 @@ def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
             # the motors. Note: this configuration is not in the official STS3215 Memory Table
             motor_bus.write("Lock", 0)
             motor_bus.write("Maximum_Acceleration", 254)
-
-            motor_bus.write("Goal_Position", 2048)
-            time.sleep(4)
-            print("Present Position", motor_bus.read("Present_Position"))
-
+            motor_bus.write("Max_Angle_Limit", 4095)  # default 4095
+            motor_bus.write("Min_Angle_Limit", 0)  # default 0
             motor_bus.write("Offset", 0)
-            time.sleep(4)
+            motor_bus.write("Mode", 0)
+            motor_bus.write("Goal_Position", 2048)
+            motor_bus.write("Lock", 1)
             print("Offset", motor_bus.read("Offset"))
 
     except Exception as e:

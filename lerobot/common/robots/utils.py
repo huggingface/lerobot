@@ -42,9 +42,9 @@ def make_robot_config(robot_type: str, **kwargs) -> RobotConfig:
 
         return MossRobotConfig(**kwargs)
     elif robot_type == "so100":
-        from .so100.configuration_so100 import So100RobotConfig
+        from .so100.configuration_so100 import SO100RobotConfig
 
-        return So100RobotConfig(**kwargs)
+        return SO100RobotConfig(**kwargs)
     elif robot_type == "stretch":
         from .stretch3.configuration_stretch3 import Stretch3RobotConfig
 

@@ -26,7 +26,8 @@ from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnecte
 from lerobot.common.motors.feetech import (
     FeetechMotorsBus,
     TorqueMode,
-    run_arm_manual_calibration,
+    apply_feetech_offsets_from_calibration,
+    run_full_arm_calibration,
 )
 
 from ..robot import Robot
@@ -46,7 +47,6 @@ class MossRobot(Robot):
         super().__init__(config)
         self.config = config
         self.robot_type = config.type
-        self.id = config.id
 
         self.arm = FeetechMotorsBus(
             port=self.config.port,
@@ -133,22 +133,21 @@ class MossRobot(Robot):
         Rotations are expressed in degrees in nominal range of [-180, 180],
         and linear motions (like gripper of Aloha) in nominal range of [0, 100].
         """
-        arm_calib_path = self.calibration_dir / f"{self.config.id}.json"
-
-        if arm_calib_path.exists():
-            with open(arm_calib_path) as f:
+        if self.calibration_fpath.exists():
+            with open(self.calibration_fpath) as f:
                 calibration = json.load(f)
         else:
             # TODO(rcadene): display a warning in __init__ if calibration file not available
-            logging.info(f"Missing calibration file '{arm_calib_path}'")
-            calibration = run_arm_manual_calibration(self.arm, self.robot_type, self.name, "follower")
+            logging.info(f"Missing calibration file '{self.calibration_fpath}'")
+            calibration = run_full_arm_calibration(self.arm, self.robot_type, self.name, "follower")
 
-            logging.info(f"Calibration is done! Saving calibration file '{arm_calib_path}'")
-            arm_calib_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(arm_calib_path, "w") as f:
+            logging.info(f"Calibration is done! Saving calibration file '{self.calibration_fpath}'")
+            self.calibration_fpath.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.calibration_fpath, "w") as f:
                 json.dump(calibration, f)
 
         self.arm.set_calibration(calibration)
+        apply_feetech_offsets_from_calibration(self.arm, calibration)
 
     def get_observation(self) -> dict[str, np.ndarray]:
         """The returned observations do not have a batch dimension."""

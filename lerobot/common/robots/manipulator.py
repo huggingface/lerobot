@@ -81,6 +81,73 @@ class ManipulatorRobotConfig(RobotConfig):
                     )
 
 
+def apply_feetech_offsets_from_calibration(motorsbus, calibration_dict: dict):
+    """
+    Reads 'calibration_dict' containing 'homing_offset' and 'motor_names',
+    then writes each motor's offset to the servo's internal Offset (0x1F) in EPROM.
+
+    This version is modified so each homed position (originally 0) will now read
+    2047, i.e. 180° away from 0 in the 4096-count circle. Offsets are permanently
+    stored in EEPROM, so the servo's Present_Position is hardware-shifted even
+    after power cycling.
+
+    Steps:
+      1) Subtract 2047 from the old offset (so 0 -> 2047).
+      2) Clamp to [-2047..+2047].
+      3) Encode sign bit and magnitude into a 12-bit number.
+    """
+
+    homing_offsets = calibration_dict["homing_offset"]
+    motor_names = calibration_dict["motor_names"]
+    start_pos = calibration_dict["start_pos"]
+
+    # Open the write lock, changes to EEPROM do NOT persist yet
+    motorsbus.write("Lock", 1)
+
+    # For each motor, set the 'Offset' parameter
+    for m_name, old_offset in zip(motor_names, homing_offsets, strict=False):
+        # If bus doesn’t have a motor named m_name, skip
+        if m_name not in motorsbus.motors:
+            print(f"Warning: '{m_name}' not found in motorsbus.motors; skipping offset.")
+            continue
+
+        if m_name == "gripper":
+            old_offset = start_pos  # If gripper set the offset to the start position of the gripper
+            continue
+
+        # Shift the offset so the homed position reads 2047
+        new_offset = old_offset - 2047
+
+        # Clamp to [-2047..+2047]
+        if new_offset > 2047:
+            new_offset = 2047
+            print(
+                f"Warning: '{new_offset}' is getting clamped because its larger then 2047; This should not happen!"
+            )
+        elif new_offset < -2047:
+            new_offset = -2047
+            print(
+                f"Warning: '{new_offset}' is getting clamped because its smaller then -2047; This should not happen!"
+            )
+
+        # Determine the direction (sign) bit and magnitude
+        direction_bit = 1 if new_offset < 0 else 0
+        magnitude = abs(new_offset)
+
+        # Combine sign bit (bit 11) with the magnitude (bits 0..10)
+        servo_offset = (direction_bit << 11) | magnitude
+
+        # Write offset to servo
+        motorsbus.write("Offset", servo_offset, motor_names=m_name)
+        print(
+            f"Set offset for {m_name}: "
+            f"old_offset={old_offset}, new_offset={new_offset}, servo_encoded={magnitude} + direction={direction_bit}"
+        )
+
+    motorsbus.write("Lock", 0)
+    print("Offsets have been saved to EEPROM successfully.")
+
+
 class ManipulatorRobot:
     # TODO(rcadene): Implement force feedback
     """This class allows to control any manipulator robot of various number of motors.
@@ -342,10 +409,10 @@ class ManipulatorRobot:
 
                 elif self.robot_type in ["so100", "moss", "lekiwi"]:
                     from lerobot.common.motors.feetech.feetech_calibration import (
-                        run_arm_manual_calibration,
+                        run_full_arm_calibration,
                     )
 
-                    calibration = run_arm_manual_calibration(arm, self.robot_type, name, arm_type)
+                    calibration = run_full_arm_calibration(arm, self.robot_type, name, arm_type)
 
                 print(f"Calibration is done! Saving calibration file '{arm_calib_path}'")
                 arm_calib_path.parent.mkdir(parents=True, exist_ok=True)
@@ -354,12 +421,24 @@ class ManipulatorRobot:
 
             return calibration
 
-        for name, arm in self.follower_arms.items():
-            calibration = load_or_run_calibration_(name, arm, "follower")
-            arm.set_calibration(calibration)
-        for name, arm in self.leader_arms.items():
-            calibration = load_or_run_calibration_(name, arm, "leader")
-            arm.set_calibration(calibration)
+            # For each follower arm
+
+        for name, arm_bus in self.follower_arms.items():
+            calibration = load_or_run_calibration_(name, arm_bus, "follower")
+            arm_bus.set_calibration(calibration)
+
+            # If this is a Feetech robot, also set the servo offset into EEPROM
+            if self.robot_type in ["so100", "lekiwi"]:
+                apply_feetech_offsets_from_calibration(arm_bus, calibration)
+
+        # For each leader arm
+        for name, arm_bus in self.leader_arms.items():
+            calibration = load_or_run_calibration_(name, arm_bus, "leader")
+            arm_bus.set_calibration(calibration)
+
+            # Optionally also set offset for leader if you want the servo offsets as well
+            if self.robot_type in ["so100", "lekiwi"]:
+                apply_feetech_offsets_from_calibration(arm_bus, calibration)
 
     def set_koch_robot_preset(self):
         def set_operating_mode_(arm):

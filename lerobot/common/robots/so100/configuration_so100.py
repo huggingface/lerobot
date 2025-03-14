@@ -7,7 +7,7 @@ from ..config import RobotConfig
 
 @RobotConfig.register_subclass("so100")
 @dataclass
-class So100RobotConfig(RobotConfig):
+class SO100RobotConfig(RobotConfig):
     # Port to connect to the robot
     port: str
 
@@ -15,16 +15,6 @@ class So100RobotConfig(RobotConfig):
     # Set this to a positive scalar to have the same value for all motors, or a list that is the same length as
     # the number of motors in your follower arms.
     max_relative_target: int | None = None
-
-    mock: bool = False
-
-    # motors
-    shoulder_pan: tuple = (1, "sts3215")
-    shoulder_lift: tuple = (2, "sts3215")
-    elbow_flex: tuple = (3, "sts3215")
-    wrist_flex: tuple = (4, "sts3215")
-    wrist_roll: tuple = (5, "sts3215")
-    gripper: tuple = (6, "sts3215")
 
     # cameras
     cameras: dict[str, CameraConfig] = field(default_factory=dict)

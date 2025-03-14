@@ -61,7 +61,7 @@ def calibrate_follower_arm(motors_bus, calib_dir_str):
     calib_dir.mkdir(parents=True, exist_ok=True)
     calib_file = calib_dir / "main_follower.json"
     try:
-        from lerobot.common.motors.feetech.feetech_calibration import run_arm_manual_calibration
+        from lerobot.common.motors.feetech.feetech_calibration import run_full_arm_calibration
     except ImportError:
         print("[WARNING] Calibration function not available. Skipping calibration.")
         return
@@ -72,7 +72,7 @@ def calibrate_follower_arm(motors_bus, calib_dir_str):
         print(f"[INFO] Loaded calibration from {calib_file}")
     else:
         print("[INFO] Calibration file not found. Running manual calibration...")
-        calibration = run_arm_manual_calibration(motors_bus, "lekiwi", "follower_arm", "follower")
+        calibration = run_full_arm_calibration(motors_bus, "lekiwi", "follower_arm", "follower")
         print(f"[INFO] Calibration complete. Saving to {calib_file}")
         with open(calib_file, "w") as f:
             json.dump(calibration, f)
