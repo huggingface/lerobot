@@ -26,6 +26,7 @@ from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnecte
 from lerobot.common.motors.feetech import (
     FeetechMotorsBus,
     TorqueMode,
+    apply_feetech_offsets_from_calibration,
     run_full_arm_calibration,
 )
 
@@ -149,6 +150,7 @@ class MossRobot(Robot):
                 json.dump(calibration, f)
 
         self.arm.set_calibration(calibration)
+        apply_feetech_offsets_from_calibration(self.arm, calibration)
 
     def get_observation(self) -> dict[str, np.ndarray]:
         """The returned observations do not have a batch dimension."""
