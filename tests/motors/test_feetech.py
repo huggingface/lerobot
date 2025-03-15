@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 import pytest
 
+from lerobot.common.motors.feetech import FeetechMotorsBus
 from tests.mocks import mock_scservo_sdk
 
 
@@ -18,15 +19,11 @@ def test_patch_sdk():
 
 
 def test_abc_implementation():
-    from lerobot.common.motors.feetech import FeetechMotorsBus
-
     # Instantiation should raise an error if the class doesn't implements abstract methods/properties
     FeetechMotorsBus(port="/dev/dummy-port", motors={"dummy": (1, "sts3215")})
 
 
 def test_configure_motors_all_ids_1():
-    from lerobot.common.motors.feetech import FeetechMotorsBus
-
     # see SCS_SERIES_BAUDRATE_TABLE
     smaller_baudrate = 19_200
     smaller_baudrate_value = 7
