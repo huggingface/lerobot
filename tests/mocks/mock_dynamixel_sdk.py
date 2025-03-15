@@ -11,14 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 """Mocked classes and functions from dynamixel_sdk to allow for continuous integration
 and testing code logic that requires hardware and devices (e.g. robot arms, cameras)
 
 Warning: These mocked versions are minimalist. They do not exactly mock every behaviors
 from the original classes and functions (e.g. return types might be None instead of boolean).
 """
-
-# from dynamixel_sdk import COMM_SUCCESS
 
 DEFAULT_BAUDRATE = 9_600
 COMM_SUCCESS = 0  # tx or rx packet communication success

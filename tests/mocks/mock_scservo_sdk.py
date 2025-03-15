@@ -18,8 +18,6 @@ Warning: These mocked versions are minimalist. They do not exactly mock every be
 from the original classes and functions (e.g. return types might be None instead of boolean).
 """
 
-# from dynamixel_sdk import COMM_SUCCESS
-
 DEFAULT_BAUDRATE = 1_000_000
 COMM_SUCCESS = 0  # tx or rx packet communication success
 
