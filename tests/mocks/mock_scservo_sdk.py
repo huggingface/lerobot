@@ -11,8 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Mocked classes and functions from dynamixel_sdk to allow for continuous integration
-and testing code logic that requires hardware and devices (e.g. robot arms, cameras)
+
+# ruff: noqa: N802, E741
+
+"""
+Mocked classes and functions from scservo_sdk to allow for testing FeetechMotorsBus code.
 
 Warning: These mocked versions are minimalist. They do not exactly mock every behaviors
 from the original classes and functions (e.g. return types might be None instead of boolean).
@@ -50,6 +53,31 @@ def get_default_motor_values(motor_index):
         69: 0,  # Present_Current
         85: 150,  # Maximum_Acceleration
     }
+
+
+# Macro for Control Table Value
+def SCS_MAKEWORD(a, b):
+    return (a & 0xFF) | ((b & 0xFF) << 8)
+
+
+def SCS_MAKEDWORD(a, b):
+    return (a & 0xFFFF) | (b & 0xFFFF) << 16
+
+
+def SCS_LOWORD(l):
+    return l & 0xFFFF
+
+
+def SCS_HIWORD(l):
+    return (l >> 16) & 0xFFFF
+
+
+def SCS_LOBYTE(w):
+    return w & 0xFF
+
+
+def SCS_HIBYTE(w):
+    return (w >> 8) & 0xFF
 
 
 class PortHandler:
