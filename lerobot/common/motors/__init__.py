@@ -1,3 +1,3 @@
-from .motors_bus import MotorsBus
+from .motors_bus import CalibrationMode, DriveMode, MotorsBus, TorqueMode
 
-__all__ = ["MotorsBus"]
+__all__ = ["CalibrationMode", "DriveMode", "MotorsBus", "TorqueMode"]

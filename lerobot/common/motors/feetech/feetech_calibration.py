@@ -13,11 +13,10 @@
 # limitations under the License.
 import numpy as np
 
-from ..motors_bus import MotorsBus
+from ..motors_bus import MotorsBus, TorqueMode
 from .feetech import (
     CalibrationMode,
     FeetechMotorsBus,
-    TorqueMode,
 )
 
 URL_TEMPLATE = (
