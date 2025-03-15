@@ -66,7 +66,7 @@ def get_from_raw_to_lerobot_format_fn(raw_format: str):
         from lerobot.common.datasets.push_dataset_to_hub.umi_zarr_format import from_raw_to_lerobot_format
     elif raw_format == "aloha_hdf5":
         from lerobot.common.datasets.push_dataset_to_hub.aloha_hdf5_format import from_raw_to_lerobot_format
-    elif "openx_rlds" in raw_format:
+    elif raw_format in ["rlds", "openx"]:
         from lerobot.common.datasets.push_dataset_to_hub.openx_rlds_format import from_raw_to_lerobot_format
     elif raw_format == "dora_parquet":
         from lerobot.common.datasets.push_dataset_to_hub.dora_parquet_format import from_raw_to_lerobot_format
@@ -117,10 +117,14 @@ def push_meta_data_to_hub(repo_id: str, meta_data_dir: str | Path, revision: str
 
 
 def push_dataset_card_to_hub(
-    repo_id: str, revision: str | None, tags: list | None = None, text: str | None = None
+    repo_id: str,
+    revision: str | None,
+    tags: list | None = None,
+    license: str = "apache-2.0",
+    **card_kwargs,
 ):
     """Creates and pushes a LeRobotDataset Card with appropriate tags to easily find it on the hub."""
-    card = create_lerobot_dataset_card(tags=tags, text=text)
+    card = create_lerobot_dataset_card(tags=tags, license=license, **card_kwargs)
     card.push_to_hub(repo_id=repo_id, repo_type="dataset", revision=revision)
 
 
@@ -171,7 +175,7 @@ def push_dataset_to_hub(
         # Robustify when `local_dir` is str instead of Path
         local_dir = Path(local_dir)
 
-        # Send warning if local_dir isn't well formated
+        # Send warning if local_dir isn't well formatted
         if local_dir.parts[-2] != user_id or local_dir.parts[-1] != dataset_id:
             warnings.warn(
                 f"`local_dir` ({local_dir}) doesn't contain a community or user id `/` the name of the dataset that match the `repo_id` (e.g. 'data/lerobot/pusht'). Following this naming convention is advised, but not mandatory.",
@@ -200,24 +204,14 @@ def push_dataset_to_hub(
     # convert dataset from original raw format to LeRobot format
     from_raw_to_lerobot_format = get_from_raw_to_lerobot_format_fn(raw_format)
 
-    fmt_kwgs = {
-        "raw_dir": raw_dir,
-        "videos_dir": videos_dir,
-        "fps": fps,
-        "video": video,
-        "episodes": episodes,
-        "encoding": encoding,
-    }
-
-    if "openx_rlds." in raw_format:
-        # Support for official OXE dataset name inside `raw_format`.
-        # For instance, `raw_format="oxe_rlds"` uses the default formating (TODO what does that mean?),
-        # and `raw_format="oxe_rlds.bridge_orig"` uses the brdige_orig formating
-        _, openx_dataset_name = raw_format.split(".")
-        print(f"Converting dataset [{openx_dataset_name}] from 'openx_rlds' to LeRobot format.")
-        fmt_kwgs["openx_dataset_name"] = openx_dataset_name
-
-    hf_dataset, episode_data_index, info = from_raw_to_lerobot_format(**fmt_kwgs)
+    hf_dataset, episode_data_index, info = from_raw_to_lerobot_format(
+        raw_dir,
+        videos_dir,
+        fps,
+        video,
+        episodes,
+        encoding,
+    )
 
     lerobot_dataset = LeRobotDataset.from_preloaded(
         repo_id=repo_id,
@@ -260,7 +254,7 @@ def push_dataset_to_hub(
         episode_index = 0
         tests_videos_dir = tests_data_dir / repo_id / "videos"
         tests_videos_dir.mkdir(parents=True, exist_ok=True)
-        for key in lerobot_dataset.video_frame_keys:
+        for key in lerobot_dataset.camera_keys:
             fname = f"{key}_episode_{episode_index:06d}.mp4"
             shutil.copy(videos_dir / fname, tests_videos_dir / fname)
 
@@ -286,7 +280,7 @@ def main():
         "--raw-format",
         type=str,
         required=True,
-        help="Dataset type (e.g. `pusht_zarr`, `umi_zarr`, `aloha_hdf5`, `xarm_pkl`, `dora_parquet`, `openx_rlds`).",
+        help="Dataset type (e.g. `pusht_zarr`, `umi_zarr`, `aloha_hdf5`, `xarm_pkl`, `dora_parquet`, `rlds`, `openx`).",
     )
     parser.add_argument(
         "--repo-id",
