@@ -168,6 +168,7 @@ class MotorsBus(abc.ABC):
 
     model_ctrl_table: dict[str, dict]
     model_resolution_table: dict[str, int]
+    model_baudrate_table: dict[str, dict]
 
     def __init__(
         self,

@@ -244,7 +244,8 @@ class DynamixelMotorsBus(MotorsBus):
     """
 
     model_ctrl_table = deepcopy(MODEL_CONTROL_TABLE)
-    model_resolution = deepcopy(MODEL_RESOLUTION)
+    model_resolution_table = deepcopy(MODEL_RESOLUTION)
+    model_baudrate_table = deepcopy(MODEL_BAUDRATE_TABLE)
 
     def __init__(
         self,
