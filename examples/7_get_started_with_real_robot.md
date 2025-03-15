@@ -87,7 +87,7 @@ python lerobot/scripts/configure_motor.py \
   --brand dynamixel \
   --model xl330-m288 \
   --baudrate 1000000 \
-  --ID 1
+  --id 1
 ```
 
 Then unplug your first motor and plug the second motor and set its ID to 2.
@@ -97,7 +97,7 @@ python lerobot/scripts/configure_motor.py \
   --brand dynamixel \
   --model xl330-m288 \
   --baudrate 1000000 \
-  --ID 2
+  --id 2
 ```
 
 Redo the process for all your motors until ID 6.
