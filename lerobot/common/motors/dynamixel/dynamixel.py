@@ -204,7 +204,7 @@ class DynamixelMotorsBus(MotorsBus):
     """
     The Dynamixel implementation for a MotorsBus. It relies on the python dynamixel sdk to communicate with
     the motors. For more info, see the Dynamixel SDK Documentation:
-    https://emanual.robotis.com/docs/en/software/dynamixel/dynamixel_sdk/sample_code/python_read_write_protocol_2_0/#python-read-write-protocol-20).
+    https://emanual.robotis.com/docs/en/software/dynamixel/dynamixel_sdk/sample_code/python_read_write_protocol_2_0/#python-read-write-protocol-20
     """
 
     model_ctrl_table = deepcopy(MODEL_CONTROL_TABLE)
