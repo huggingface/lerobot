@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Filter data</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+
+<body class="h-screen overflow-hidden font-mono text-white flex items-center justify-center">
+    <div class="fixed inset-0 w-full h-full overflow-hidden">
+        <video class="absolute min-w-full min-h-full w-auto h-auto top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2" autoplay muted loop>
+            <source src="https://huggingface.co/datasets/cadene/koch_bimanual_folding/resolve/v1.6/videos/observation.images.phone_episode_000037.mp4" type="video/mp4">
+            Your browser does not support HTML5 video.
+        </video>
+    </div>
+    <div class="fixed inset-0 bg-black bg-opacity-80"></div>
+     <div class="absolute top-4 right-4 bg-white text-black p-4 rounded shadow-md">
+        <p>Total datasets : {{number_datasets}}</p>
+    </div>
+    <div class="relative bg-white text-gray-700 p-10 rounded shadow-md w-full max-w-md h-3/4 overflow-y-auto z-10">
+        <h1 class="text-2xl font-bold mb-6">Filter data</h1>
+        <form action="/submit" method="post" class="space-y-4">
+            <div>
+                <label for="frames" class="block text-gray-700">Minimum number of frames :</label>
+                <input type="number" id="frames" name="frames" value="{{ min_frames }}" class="mt-1 p-2 w-full border rounded-md">
+            </div>
+            <div>
+                <label for="episodes" class="block text-gray-700">Minimum number of episodes :</label>
+                <input type="number" id="episodes" name="episodes" value="{{ min_eps }}" class="mt-1 p-2 w-full border rounded-md">
+            </div>
+
+            <div>
+                <label class="block text-gray-700">Robot types (multiple choice) :</label>
+                <div class="h-64 overflow-y-auto border rounded-md p-2 mt-2 space-y-2">
+                    {% for type in robot_types %}
+                        <div>
+                            <input type="checkbox" id="robot_type_{{ loop.index }}" name="robot_type" value="{{ type }}">
+                            <label for="robot_type_{{ loop.index }}" class="text-gray-700 ml-2">{{ type }}</label>
+                        </div>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <div>
+                <label class="block text-gray-700">FPS (multiple choice) :</label>
+                <div class="h-32 overflow-y-auto border rounded-md p-2 mt-2 space-y-2">
+                    {% for fps in fps_options %}
+                        <div>
+                            <input type="checkbox" id="fps_{{ loop.index }}" name="fps" value="{{ fps }}">
+                            <label for="fps_{{ loop.index }}" class="text-gray-700 ml-2">{{ fps }}</label>
+                        </div>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <div>
+                <label for="tasks" class="block text-gray-700">Max number of tasks :</label>
+                <input type="number" id="tasks" name="tasks" value="100" class="mt-1 p-2 w-full border rounded-md">
+            </div>
+
+            <div>
+                <input type="number" id="finished" name="finished" value="0" hidden>
+                <input type="submit" value="Filter" class="w-full bg-blue-500 text-white p-2 rounded-md hover:bg-blue-600">
+            </div>
+            <!-- Done Button -->
+        </form>
+        <form action="/submit" method="post" class="space-y-4">
+            <div class="mt-4">
+                <input type="number" id="finished" name="finished" value="1" hidden>
+                <input type="submit" value="Done" class="w-full bg-green-500 text-white p-2 rounded-md hover:bg-green-600">
+            </div>
+        </form>
+    </div>
+</body>
+</html>

@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Load datasets metadata</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+</head>
+<body class="h-screen overflow-hidden font-mono text-white">
+    <div class="fixed inset-0 w-full h-full overflow-hidden">
+        <video class="absolute min-w-full min-h-full w-auto h-auto top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2" autoplay muted loop>
+            <source src="https://huggingface.co/datasets/cadene/koch_bimanual_folding/resolve/v1.6/videos/observation.images.phone_episode_000037.mp4" type="video/mp4">
+            Your browser does not support HTML5 video.
+        </video>
+    </div>
+    <div class="fixed inset-0 bg-black bg-opacity-80"></div>
+
+    <div class="relative max-w-3xl mx-auto bg-gray-800 rounded-xl shadow-lg space-y-4 p-8">
+        <h1 class="text-2xl font-bold">Copy-paste to your Python code</h1>
+        <pre class="language-python"><code id="copyText" class="block text-lg bg-gray-900 rounded-lg border border-gray-700 h-128 w-460">
+from lerobot.common.datasets.lerobot_dataset import MultiLeRobotDataset
+# Load the filtered datasets
+filtered_datasets = MultiLeRobotDataset([
+    {% for dataset in repo_ids %}"{{ dataset }}",
+    {% endfor %}
+])
+        </code></pre>
+        <div class="flex justify-end">
+            <button onclick="copyToClipboard()" class="px-8 py-4 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75">
+                Copy
+            </button>
+        </div>
+    </div>
+
+    <script>
+        function copyToClipboard() {
+            var copyText = document.getElementById("copyText");
+            var range = document.createRange();
+            range.selectNode(copyText);
+            window.getSelection().removeAllRanges();
+            window.getSelection().addRange(range);
+
+            try {
+                document.execCommand('copy');
+                alert("Copied the text: " + copyText.innerText);
+            } catch (err) {
+                console.error('Failed to copy text: ', err);
+            }
+
+            window.getSelection().removeAllRanges();
+        }
+    </script>
+</body>
+</html>

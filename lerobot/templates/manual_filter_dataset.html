@@ -14,6 +14,10 @@
 <!-- Use [Alpin.js](https://alpinejs.dev), a lightweight and easy to learn JS framework -->
 <!-- Use [tailwindcss](https://tailwindcss.com/), CSS classes for styling html -->
 <!-- Use [dygraphs](https://dygraphs.com/), a lightweight JS charting library -->
+<div class="absolute top-4 right-4 bg-white text-black p-4 rounded font-bold shadow-md">
+    <p>Total datasets : {{number_datasets}}</p>
+    <p class="text-orange-300">Remaining datasets : {{number_remain_datasets}}</p>
+</div>
 <body class="flex flex-col md:flex-row h-screen max-h-screen bg-slate-950 text-gray-200" x-data="createAlpineData()">
     <!-- Sidebar -->
     <div x-ref="sidebar" class="bg-slate-900 p-5 break-words overflow-y-auto shrink-0 md:shrink md:w-60 md:max-h-screen">
@@ -26,17 +30,17 @@
 
         <ul>
             <li>
-                Number of samples/frames: {{ dataset_info.num_samples }}
+                <b>Num. frames:</b> {{ dataset_info.num_samples }}
             </li>
             <li>
-                Number of episodes: {{ dataset_info.num_episodes }}
+                <b>Num. episodes:</b> {{ dataset_info.num_episodes }}
             </li>
             <li>
-                Frames per second: {{ dataset_info.fps }}
+                <b>FPS:</b> {{ dataset_info.fps }}
             </li>
         </ul>
 
-        <p>Episodes:</p>
+        <p><b>Episodes:</b></p>
         <!-- episodes menu for medium & large screens -->
         <div class="ml-2 hidden md:block" x-data="episodePagination">
             <ul>
@@ -48,30 +52,10 @@
                     </li>
                 </template>
             </ul>
-
-            <div class="flex items-center mt-3 text-xs" x-show="totalPages > 1">
-                <button @click="prevPage()"
-                        class="px-2 py-1 bg-slate-800 rounded mr-2"
-                        :class="{'opacity-50 cursor-not-allowed': page === 1}"
-                        :disabled="page === 1">
-                    &laquo; Prev
-                </button>
-                <span class="font-mono mr-2" x-text="` ${page} / ${totalPages}`"></span>
-                <button @click="nextPage()"
-                        class="px-2 py-1 bg-slate-800 rounded"
-                        :class="{'opacity-50 cursor-not-allowed': page === totalPages}"
-                        :disabled="page === totalPages">
-                    Next &raquo;
-                </button>
-            </div>
         </div>
 
         <!-- episodes menu for small screens -->
         <div class="flex overflow-x-auto md:hidden" x-data="episodePagination">
-            <button @click="prevPage()"
-                    class="px-2 bg-slate-800 rounded mr-2"
-                    :class="{'opacity-50 cursor-not-allowed': page === 1}"
-                    :disabled="page === 1">&laquo;</button>
             <div class="flex">
                 <template x-for="(episode, index) in paginatedEpisodes" :key="episode">
                     <p class="font-mono text-sm mt-0.5 px-2"
@@ -83,10 +67,6 @@
                     </p>
                 </template>
             </div>
-            <button @click="nextPage()"
-                    class="px-2 bg-slate-800 rounded ml-2"
-                    :class="{'opacity-50 cursor-not-allowed': page === totalPages}"
-                    :disabled="page === totalPages">&raquo; </button>
         </div>
 
     </div>
@@ -175,11 +155,6 @@
         </p>
         {% endif %}
 
-        <!-- Shortcuts info -->
-        <div class="text-sm hidden md:block">
-            Hotkeys: <span class="font-mono">Space</span> to pause/unpause, <span class="font-mono">Arrow Down</span> to go to next episode, <span class="font-mono">Arrow Up</span> to go to previous episode.
-        </div>
-
         <!-- Controllers -->
         <div class="flex gap-1 text-3xl items-center">
             <button x-ref="btnPlay" class="-rotate-90" class="-rotate-90" title="Play. Toggle with Space" @click="() => {
@@ -210,73 +185,19 @@
             </div>
         </div>
 
-        <!-- Graph -->
-        <div class="flex gap-2 mb-4 flex-wrap">
-            <div>
-                <div id="graph" @mouseleave="() => {
-                    dygraph.setSelection(dygraphIndex, undefined, true, true);
-                    dygraphTime = video.currentTime;
-                }">
-                </div>
-                <p x-ref="graphTimer" class="font-mono ml-14 mt-4"
-                    x-init="$watch('dygraphTime', value => ($refs.graphTimer.innerText = `Time: ${dygraphTime.toFixed(2)}s`))">
-                    Time: 0.00s
-                </p>
+        
+        <div class="flex gap-1 items-center">
+            <p>Validate or Remove the datasets :</p>
+            <div class="text-3xl items-center">
+                <form action="/filter" method="post">
+                    <button name="btnValidate" title="Validate. Toggle with V" type="submit" value="true">✅</button>
+                    <button name="btnRemove" title="Remove. Toggle with R"  type="submit" value="true">❌</button>
+                </form>
+                
+                
             </div>
-
-            <div>
-                <table class="text-sm border-collapse border border-slate-700" x-show="currentFrameData">
-                    <thead>
-                        <tr>
-                            <th></th>
-                            <template x-for="(_, colIndex) in Array.from({length: columns.length}, (_, index) => index)">
-                                <th class="border border-slate-700">
-                                    <div class="flex gap-x-2 justify-between px-2">
-                                        <input type="checkbox" :checked="isColumnChecked(colIndex)"
-                                            @change="toggleColumn(colIndex)">
-                                        <p x-text="`${columns[colIndex].key}`"></p>
-                                    </div>
-                                </th>
-                            </template>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <template x-for="(row, rowIndex) in rows">
-                            <tr class="odd:bg-gray-800 even:bg-gray-900">
-                                <td class="border border-slate-700">
-                                    <div class="flex gap-x-2 max-w-64 font-semibold px-1 break-all">
-                                        <input type="checkbox" :checked="isRowChecked(rowIndex)"
-                                            @change="toggleRow(rowIndex)">
-                                    </div>
-                                </td>
-                                <template x-for="(cell, colIndex) in row">
-                                    <td x-show="cell" class="border border-slate-700">
-                                        <div class="flex gap-x-2 justify-between px-2" :class="{ 'hidden': cell.isNull }">
-                                            <div class="flex gap-x-2">
-                                                <input type="checkbox" x-model="cell.checked" @change="updateTableValues()">
-                                                <span x-text="`${!cell.isNull ? cell.label : null}`"></span>
-                                            </div>
-                                            <span class="w-14 text-right" x-text="`${!cell.isNull ? (typeof cell.value === 'number' ? cell.value.toFixed(2) : cell.value) : null}`"
-                                                :style="`color: ${cell.color}`"></span>
-                                        </div>
-                                    </td>
-                                </template>
-                            </tr>
-                        </template>
-                    </tbody>
-                </table>
-
-                <div id="labels" class="hidden">
-                </div>
-
-                {% if ignored_columns|length > 0 %}
-                <div class="m-2 text-orange-700 max-w-96">
-                    Columns {{ ignored_columns }} are NOT shown since the visualizer currently does not support 2D or 3D data.
-                </div>
-                {% endif %}
-            </div>
-
         </div>
+
     </div>
 
     <script>

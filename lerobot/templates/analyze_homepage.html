@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Load datasets metadata</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body class="h-screen overflow-hidden font-mono text-white">
+    <div class="fixed inset-0 w-full h-full overflow-hidden">
+        <video class="absolute min-w-full min-h-full w-auto h-auto top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2" autoplay muted loop>
+            <source src="https://huggingface.co/datasets/cadene/koch_bimanual_folding/resolve/v1.6/videos/observation.images.phone_episode_000037.mp4" type="video/mp4">
+            Your browser does not support HTML5 video.
+        </video>
+    </div>
+    <div class="fixed inset-0 bg-black bg-opacity-80"></div>
+    <div class="relative z-10 flex flex-col items-center justify-center h-screen">
+        <div class="text-center mb-8">
+            <h1 class="text-4xl font-bold mb-4">Use existing CSV file</h1>
+            <p class="text-lg">Last modified date : {{last_modified}} </p>
+            <form action="/upload" method="post" enctype="multipart/form-data" class="space-y-4">
+                <div class="flex justify-center">
+                    <input type="number" id="existing" name="existing" value="1" hidden>
+                    <input type="submit" value="Use existing file" class="bg-blue-500 text-white px-4 py-2 rounded-md hover:bg-blue-600 transition duration-300">
+                </div>
+            </form>
+        </div>
+        <div class="text-center mb-8">
+            <h1 class="text-4xl font-bold mb-4">or update with last changes</h1>    
+            <p class="text-lg">(this might take a while)</p>  
+            <form action="/upload" method="post" enctype="multipart/form-data" class="space-y-4">
+                <div class="flex justify-center">
+                    <input type="number" id="existing" name="existing" value="0" hidden>
+                    <input type="submit" value="Update" class="bg-blue-500 text-white px-4 py-2 rounded-md hover:bg-blue-600 transition duration-300">
+                </div>
+            </form>
+        </div>
+    </div>
+</body>
+</html>
