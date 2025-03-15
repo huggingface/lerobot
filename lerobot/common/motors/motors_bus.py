@@ -39,18 +39,6 @@ def get_group_sync_key(data_name: str, motor_names: list[str]):
     return group_key
 
 
-def get_result_name(fn_name: str, data_name: str, motor_names: list[str]):
-    group_key = get_group_sync_key(data_name, motor_names)
-    rslt_name = f"{fn_name}_{group_key}"
-    return rslt_name
-
-
-def get_queue_name(fn_name: str, data_name: str, motor_names: list[str]):
-    group_key = get_group_sync_key(data_name, motor_names)
-    queue_name = f"{fn_name}_{group_key}"
-    return queue_name
-
-
 def get_log_name(var_name: str, fn_name: str, data_name: str, motor_names: list[str]):
     group_key = get_group_sync_key(data_name, motor_names)
     log_name = f"{var_name}_{fn_name}_{group_key}"
