@@ -191,7 +191,7 @@ python lerobot/scripts/configure_motor.py \
   --brand feetech \
   --model sts3215 \
   --baudrate 1000000 \
-  --ID 1
+  --id 1
 ```
 
 > [!NOTE]
@@ -204,7 +204,7 @@ python lerobot/scripts/configure_motor.py \
   --brand feetech \
   --model sts3215 \
   --baudrate 1000000 \
-  --ID 2
+  --id 2
 ```
 
 Redo the process for all your motors until ID 6. Do the same for the 6 motors of the leader arm.

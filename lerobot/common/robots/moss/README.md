@@ -139,7 +139,7 @@ python lerobot/scripts/configure_motor.py \
   --brand feetech \
   --model sts3215 \
   --baudrate 1000000 \
-  --ID 1
+  --id 1
 ```
 
 Note: These motors are currently limitated. They can take values between 0 and 4096 only, which corresponds to a full turn. They can't turn more than that. 2048 is at the middle of this range, so we can take -2048 steps (180 degrees anticlockwise) and reach the maximum range, or take +2048 steps (180 degrees clockwise) and reach the maximum range. The configuration step also sets the homing offset to 0, so that if you misassembled the arm, you can always update the homing offset to account for a shift up to ± 2048 steps (± 180 degrees).
@@ -151,7 +151,7 @@ python lerobot/scripts/configure_motor.py \
   --brand feetech \
   --model sts3215 \
   --baudrate 1000000 \
-  --ID 2
+  --id 2
 ```
 
 Redo the process for all your motors until ID 6. Do the same for the 6 motors of the leader arm.

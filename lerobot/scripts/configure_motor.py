@@ -21,7 +21,7 @@ python lerobot/scripts/configure_motor.py \
   --brand feetech \
   --model sts3215 \
   --baudrate 1000000 \
-  --ID 1
+  --id 1
 ```
 """
 
@@ -131,10 +131,10 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=str, required=True, help="Motors bus port")
     parser.add_argument("--brand", type=str, required=True, choices=brand_choices, help="Motor brand")
     parser.add_argument("--model", type=str, required=True, choices=model_choices, help="Motor model")
-    parser.add_argument("--ID", type=int, required=True, help="Desired ID of the current motor (e.g. 1,2,3)")
+    parser.add_argument("--id", type=int, required=True, help="Desired ID of the current motor (e.g. 1,2,3)")
     parser.add_argument(
         "--baudrate", type=int, default=1_000_000, help="Desired baudrate for the motor (default: 1_000_000)"
     )
     args = parser.parse_args()
 
-    configure_motor(args.port, args.brand, args.model, args.ID, args.baudrate)
+    configure_motor(args.port, args.brand, args.model, args.id, args.baudrate)
