@@ -202,41 +202,9 @@ def convert_to_bytes(value, n_bytes: int):
 
 class DynamixelMotorsBus(MotorsBus):
     """
-    The DynamixelMotorsBus class allows to efficiently read and write to the attached motors. It relies on
-    the python dynamixel sdk to communicate with the motors. For more info, see the [Dynamixel SDK Documentation](https://emanual.robotis.com/docs/en/software/dynamixel/dynamixel_sdk/sample_code/python_read_write_protocol_2_0/#python-read-write-protocol-20).
-
-    A DynamixelMotorsBus instance requires a port (e.g. `DynamixelMotorsBus(port="/dev/tty.usbmodem575E0031751"`)).
-    To find the port, you can run our utility script:
-    ```bash
-    python lerobot/scripts/find_motors_bus_port.py
-    >>> Finding all available ports for the MotorBus.
-    >>> ['/dev/tty.usbmodem575E0032081', '/dev/tty.usbmodem575E0031751']
-    >>> Remove the usb cable from your DynamixelMotorsBus and press Enter when done.
-    >>> The port of this DynamixelMotorsBus is /dev/tty.usbmodem575E0031751.
-    >>> Reconnect the usb cable.
-    ```
-
-    Example of usage for 1 motor connected to the bus:
-    ```python
-    motor_name = "gripper"
-    motor_index = 6
-    motor_model = "xl330-m288"
-
-    motors_bus = DynamixelMotorsBus(
-        port="/dev/tty.usbmodem575E0031751",
-        motors={motor_name: (motor_index, motor_model)},
-    )
-    motors_bus.connect()
-
-    position = motors_bus.read("Present_Position")
-
-    # move from a few motor steps as an example
-    few_steps = 30
-    motors_bus.write("Goal_Position", position + few_steps)
-
-    # when done, consider disconnecting
-    motors_bus.disconnect()
-    ```
+    The Dynamixel implementation for a MotorsBus. It relies on the python dynamixel sdk to communicate with
+    the motors. For more info, see the Dynamixel SDK Documentation:
+    https://emanual.robotis.com/docs/en/software/dynamixel/dynamixel_sdk/sample_code/python_read_write_protocol_2_0/#python-read-write-protocol-20).
     """
 
     model_ctrl_table = deepcopy(MODEL_CONTROL_TABLE)

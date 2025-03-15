@@ -154,7 +154,46 @@ class PacketHandler(Protocol):
 
 
 class MotorsBus(abc.ABC):
-    """The main LeRobot class for implementing motors buses."""
+    """The main LeRobot class for implementing motors buses.
+
+    There are currently two implementations of this abstract class:
+        - DynamixelMotorsBus
+        - FeetechMotorsBus
+
+    Note: This class may evolve in the future should we add support for other manufacturers SDKs.
+
+    A MotorsBus allows to efficiently read and write to the attached motors.
+    It represents a several motors daisy-chained together and connected through a serial port.
+
+    A MotorsBus subclass instance requires a port (e.g. `FeetechMotorsBus(port="/dev/tty.usbmodem575E0031751"`)).
+    To find the port, you can run our utility script:
+    ```bash
+    python lerobot/scripts/find_motors_bus_port.py
+    >>> Finding all available ports for the MotorsBus.
+    >>> ['/dev/tty.usbmodem575E0032081', '/dev/tty.usbmodem575E0031751']
+    >>> Remove the usb cable from your MotorsBus and press Enter when done.
+    >>> The port of this MotorsBus is /dev/tty.usbmodem575E0031751.
+    >>> Reconnect the usb cable.
+    ```
+
+    Example of usage for 1 Feetech sts3215 motor connected to the bus:
+    ```python
+    motors_bus = FeetechMotorsBus(
+        port="/dev/tty.usbmodem575E0031751",
+        motors={"gripper": (6, "sts3215")},
+    )
+    motors_bus.connect()
+
+    position = motors_bus.read("Present_Position")
+
+    # Move from a few motor steps as an example
+    few_steps = 30
+    motors_bus.write("Goal_Position", position + few_steps)
+
+    # When done, properly disconnect the port using
+    motors_bus.disconnect()
+    ```
+    """
 
     model_ctrl_table: dict[str, dict]
     model_resolution_table: dict[str, int]

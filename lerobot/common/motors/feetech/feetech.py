@@ -215,41 +215,8 @@ def convert_to_bytes(value, n_bytes: int):
 
 class FeetechMotorsBus(MotorsBus):
     """
-    The FeetechMotorsBus class allows to efficiently read and write to the attached motors. It relies on
-    the python feetech sdk to communicate with the motors. For more info, see the [feetech SDK Documentation](https://emanual.robotis.com/docs/en/software/feetech/feetech_sdk/sample_code/python_read_write_protocol_2_0/#python-read-write-protocol-20).
-
-    A FeetechMotorsBus instance requires a port (e.g. `FeetechMotorsBus(port="/dev/tty.usbmodem575E0031751"`)).
-    To find the port, you can run our utility script:
-    ```bash
-    python lerobot/scripts/find_motors_bus_port.py
-    >>> Finding all available ports for the MotorsBus.
-    >>> ['/dev/tty.usbmodem575E0032081', '/dev/tty.usbmodem575E0031751']
-    >>> Remove the usb cable from your FeetechMotorsBus and press Enter when done.
-    >>> The port of this FeetechMotorsBus is /dev/tty.usbmodem575E0031751.
-    >>> Reconnect the usb cable.
-    ```
-
-    Example of usage for 1 motor connected to the bus:
-    ```python
-    motor_name = "gripper"
-    motor_index = 6
-    motor_model = "sts3215"
-
-    motors_bus = FeetechMotorsBus(
-        port="/dev/tty.usbmodem575E0031751",
-        motors={motor_name: (motor_index, motor_model)},
-    )
-    motors_bus.connect()
-
-    position = motors_bus.read("Present_Position")
-
-    # move from a few motor steps as an example
-    few_steps = 30
-    motors_bus.write("Goal_Position", position + few_steps)
-
-    # when done, consider disconnecting
-    motors_bus.disconnect()
-    ```
+    The FeetechMotorsBus class allows to efficiently read and write to the attached motors. It relies on the
+    python feetech sdk to communicate with the motors, which is itself based on the dynamixel sdk.
     """
 
     model_ctrl_table = deepcopy(MODEL_CONTROL_TABLE)
