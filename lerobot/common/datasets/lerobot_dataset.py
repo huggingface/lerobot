@@ -600,7 +600,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.pull_from_repo(allow_patterns=files, ignore_patterns=ignore_patterns)
 
     def get_episodes_file_paths(self) -> list[Path]:
-        episodes = self.episodes if self.episodes is not None else list(range(self.meta.total_episodes))
+        episodes = self.episodes if self.episodes is not None else list(self.meta.episodes)
         fpaths = [str(self.meta.get_data_file_path(ep_idx)) for ep_idx in episodes]
         if len(self.meta.video_keys) > 0:
             video_files = [
