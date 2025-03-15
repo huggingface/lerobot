@@ -518,7 +518,7 @@ class DynamixelMotorsBus(MotorsBus):
         else:
             return values[0]
 
-    def _read(self, data_name, motor_names: str | list[str] | None = None):
+    def _read(self, data_name: str, motor_names: list[str]):
         import dynamixel_sdk as dxl
 
         motor_ids = []
