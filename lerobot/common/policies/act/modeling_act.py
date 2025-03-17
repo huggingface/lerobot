@@ -500,27 +500,24 @@ class ACT(nn.Module):
             all_cam_pos_embeds = []
 
             if isinstance(batch["observation.images"], list):
+                all_tokens = []
+                all_pos_tokens = []
+
                 # For a list of images, the H and W may vary but H*W is constant.
                 for img in batch["observation.images"]:
                     cam_features = self.backbone(img)["feature_map"]
                     cam_pos_embed = self.encoder_cam_feat_pos_embed(cam_features).to(dtype=cam_features.dtype)
                     cam_features = self.encoder_img_feat_input_proj(cam_features)
-                    # Flatten dimensions into a single token dimension: (B, C, H*W)
-                    cam_features = einops.rearrange(cam_features, "b c h w -> b c (h w)")
-                    cam_pos_embed = einops.rearrange(cam_pos_embed, "b c h w -> b c (h w)")
-                    all_cam_features.append(cam_features)
-                    all_cam_pos_embeds.append(cam_pos_embed)
 
-                # Concatenate tokens from all cameras along the token dimension.
-                # Each tensor in the list is (B, C, T) so the concatenated result is (B, C, total_tokens)
-                all_cam_features = torch.cat(all_cam_features, axis=-1)
-                all_cam_pos_embeds = torch.cat(all_cam_pos_embeds, axis=-1)
-                encoder_in_tokens.append(einops.rearrange(all_cam_features, "b c t -> t b c"))
-                encoder_in_pos_embed.append(einops.rearrange(all_cam_pos_embeds, "b c t -> t b c"))
+                    # Rearrange features to (sequence, batch, dim).
+                    tokens = einops.rearrange(cam_features, "b c h w -> (h w) b c")
+                    pos_tokens = einops.rearrange(cam_pos_embed, "b c h w -> (h w) b c")
 
-                # Concatenate all tokens along the sequence dimension.
-                encoder_in_tokens = torch.cat(encoder_in_tokens, axis=0)
-                encoder_in_pos_embed = torch.cat(encoder_in_pos_embed, axis=0)
+                    all_tokens.append(tokens)
+                    all_pos_tokens.append(pos_tokens)
+
+                encoder_in_tokens.extend(torch.cat(all_tokens, axis=0))
+                encoder_in_pos_embed.extend(torch.cat(all_pos_tokens, axis=0))
 
             else:
                 for cam_index in range(batch["observation.images"].shape[-4]):
@@ -539,9 +536,9 @@ class ACT(nn.Module):
                 encoder_in_tokens.extend(einops.rearrange(all_cam_features, "b c h w -> (h w) b c"))
                 encoder_in_pos_embed.extend(einops.rearrange(all_cam_pos_embeds, "b c h w -> (h w) b c"))
 
-                # Stack all tokens along the sequence dimension.
-                encoder_in_tokens = torch.stack(encoder_in_tokens, axis=0)
-                encoder_in_pos_embed = torch.stack(encoder_in_pos_embed, axis=0)
+        # Stack all tokens along the sequence dimension.
+        encoder_in_tokens = torch.stack(encoder_in_tokens, axis=0)
+        encoder_in_pos_embed = torch.stack(encoder_in_pos_embed, axis=0)
 
         # Forward pass through the transformer modules.
         encoder_out = self.encoder(encoder_in_tokens, pos_embed=encoder_in_pos_embed)
