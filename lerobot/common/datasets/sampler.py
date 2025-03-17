@@ -184,12 +184,3 @@ class PrioritizedSampler(Sampler[int]):
 
     def __len__(self) -> int:
         return self.num_samples_per_epoch
-
-    def compute_is_weights(self, indices: List[int]) -> torch.Tensor:
-        w = []
-        total_p = self.sumtree.total_priority()
-        for idx in indices:
-            p = self.priorities[idx] / total_p
-            w.append((p * self.data_len) ** (-self.beta))
-        w = torch.tensor(w, dtype=torch.float32)
-        return w / w.max()
