@@ -34,17 +34,17 @@ env:
     #     min: [0.139, -0.143, 0.03]
 
     # Bounds for insertcube_gamepad dataset and experiments
-    fixed_reset_joint_positions: [-5.0,  90.,   90.,   75.,  -0.7910156, -0.5673759]
+    fixed_reset_joint_positions: [20.0,  90.,   90.,   75.,  -0.7910156, -0.5673759]
     ee_action_space_params:
       bounds:
-        max: [0.25295413, 0.07498981, 0.05362044]
-        min: [0.2210096,  -0.0, 0.0433196]
+        max: [0.25295413, 0.07498981, 0.06862044]
+        min: [0.2010096,  -0.12, 0.0433196]
 
       use_gamepad: true
       x_step_size: 0.03
       y_step_size: 0.03
-      z_step_size: 0.01
+      z_step_size: 0.03
 
   reward_classifier:
-    pretrained_path:  outputs/classifier/13-02-random-sample-resnet10-frozen/checkpoints/best/pretrained_model
-    config_path: lerobot/configs/policy/hilserl_classifier.yaml
+    pretrained_path: null # outputs/classifier/13-02-random-sample-resnet10-frozen/checkpoints/best/pretrained_model
+    config_path: null # lerobot/configs/policy/hilserl_classifier.yaml

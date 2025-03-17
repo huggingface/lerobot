@@ -707,179 +707,6 @@ def teleoperate_gym_env(env, controller, fps: int = 30):
         env.close()
 
 
-def record_dataset_with_input(
-    env,
-    controller,
-    repo_id,
-    root=None,
-    fps=30,
-    num_episodes=1,
-    control_time_s=60,
-    push_to_hub=True,
-    task_description="",
-):
-    """
-    Record a dataset while controlling the robot with any input controller.
-
-    Args:
-        env: Gym environment to control
-        controller: InputController instance (keyboard, gamepad, etc.)
-        repo_id: Repository ID for the dataset
-        root: Optional local root directory for the dataset
-        fps: Control frequency in Hz
-        num_episodes: Number of episodes to record
-        control_time_s: Maximum duration of each episode in seconds
-        push_to_hub: Whether to push the dataset to Hugging Face Hub
-        task_description: Description of the task being performed
-    """
-    from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-
-    logging.info(f"Recording dataset: {repo_id}")
-
-    # Set up the dataset recording infrastructure
-    features = {
-        "observation.state": {
-            "dtype": "float32",
-            "shape": env.observation_space["observation.state"][
-                "observation.state"
-            ].shape,
-            "names": None,
-        },
-        "action": {
-            "dtype": "float32",
-            "shape": env.action_space[0].shape,
-            "names": None,
-        },
-        "next.reward": {
-            "dtype": "float32",
-            "shape": (1,),
-            "names": None,
-        },
-        "next.done": {
-            "dtype": "bool",
-            "shape": (1,),
-            "names": None,
-        },
-    }
-
-    # Add image features if present
-    for key in env.observation_space:
-        if "image" in key:
-            features[key] = {
-                "dtype": "video",
-                "shape": env.observation_space[key].shape,
-                "names": None,
-            }
-
-    dataset = LeRobotDataset.create(
-        repo_id,
-        fps,
-        root=root,
-        use_videos=True,
-        image_writer_threads=4,
-        image_writer_processes=0,
-        features=features,
-    )
-
-    print("=== Recording Dataset ===")
-    print(f"Using {controller.__class__.__name__}")
-
-    episodes_recorded = 0
-    with controller:
-        while episodes_recorded < num_episodes and not controller.should_quit():
-            # Reset the environment at the start of each episode
-            obs, info = env.reset()
-            start_episode_t = time.perf_counter()
-
-            print(f"\nStarting episode {episodes_recorded + 1}/{num_episodes}")
-            print(f"Task: {task_description}")
-
-            # Continue until max time, episode ends, user saves, or user quits
-            while (
-                time.perf_counter() - start_episode_t < control_time_s
-                and not controller.should_quit()
-            ):
-                start_loop_t = time.perf_counter()
-
-                # Process input events
-                controller.update()
-
-                # Get movement deltas from the controller
-                delta_x, delta_y, delta_z = controller.get_deltas()
-
-                # Create the action vector and apply it to the environment
-                action = np.array([delta_x, delta_y, delta_z])
-                action_tensor = torch.from_numpy(action.astype(np.float32))
-
-                # Step the environment
-                next_obs, reward, terminated, truncated, info = env.step(
-                    (action_tensor, False)
-                )
-
-                # Format the action and observation for the dataset
-                action_data = {"action": action_tensor.squeeze().cpu().float()}
-                obs_data = {k: v.squeeze().cpu().float() for k, v in obs.items()}
-
-                # Check if episode should end
-                episode_end_status = controller.get_episode_end_status()
-                should_end_episode = (
-                    terminated or truncated or episode_end_status is not None
-                )
-
-                # Set success flag based on end status
-                if episode_end_status == "success":
-                    episode_success = True
-
-                # Create the frame data for the dataset
-                frame = {**obs_data, **action_data}
-                frame["next.reward"] = float(reward)
-                frame["next.done"] = bool(should_end_episode)
-                frame["success"] = bool(episode_success and should_end_episode)
-
-                # Add the frame to the dataset
-                dataset.add_frame(frame)
-
-                # Update observation for next step
-                obs = next_obs
-
-                # Handle episode ending
-                if should_end_episode:
-                    if episode_end_status == "success":
-                        print("Episode manually ended with SUCCESS")
-                    elif episode_end_status == "failure":
-                        print("Episode manually ended with FAILURE")
-                    elif terminated or truncated:
-                        print("Episode automatically terminated")
-                    break
-
-                # Maintain target frame rate
-                dt_s = time.perf_counter() - start_loop_t
-                busy_wait(1 / fps - dt_s)
-
-            # Save the episode
-            outcome = "SUCCESS" if episode_success else "FAILURE"
-            episode_desc = (
-                f"{task_description} (Episode {episodes_recorded + 1}, {outcome})"
-            )
-            dataset.save_episode(episode_desc)
-            episodes_recorded += 1
-            print(f"Episode {episodes_recorded} saved as {outcome}")
-
-            # Short delay between episodes
-            time.sleep(1)
-
-        # Consolidate the dataset
-        print("Consolidating dataset...")
-        dataset.consolidate(run_compute_stats=True)
-
-        if push_to_hub:
-            print(f"Pushing dataset to hub: {repo_id}")
-            dataset.push_to_hub(repo_id)
-            print("Dataset uploaded successfully!")
-
-    return episodes_recorded
-
-
 def make_robot_from_config(config_path, overrides=None):
     """Helper function to create a robot from a config file."""
     if overrides is None:
@@ -899,24 +726,10 @@ if __name__ == "__main__":
             "gamepad",
             "keyboard_gym",
             "gamepad_gym",
-            "record_keyboard",
-            "record_gamepad",
             "leader",
             "leader_abs",
         ],
         help="Control mode to use",
-    )
-    parser.add_argument(
-        "--repo-id",
-        type=str,
-        default="user/robot-dataset",
-        help="Repository ID for recording dataset",
-    )
-    parser.add_argument(
-        "--num-episodes",
-        type=int,
-        default=1,
-        help="Number of episodes to record",
     )
     parser.add_argument(
         "--task",
@@ -947,15 +760,11 @@ if __name__ == "__main__":
     try:
         # Determine controller type based on mode prefix
         controller = None
-        if any(
-            args.mode.startswith(prefix) for prefix in ["keyboard", "record_keyboard"]
-        ):
+        if args.mode.startswith("keyboard"):
             controller = KeyboardController(
                 x_step_size=0.01, y_step_size=0.01, z_step_size=0.05
             )
-        elif any(
-            args.mode.startswith(prefix) for prefix in ["gamepad", "record_gamepad"]
-        ):
+        elif args.mode.startswith("gamepad"):
             controller = GamepadController(
                 x_step_size=0.02, y_step_size=0.02, z_step_size=0.05
             )
@@ -975,21 +784,6 @@ if __name__ == "__main__":
             cfg.env.wrapper.ee_action_space_params.use_gamepad = False
             env = make_robot_env(robot, None, cfg)
             teleoperate_gym_env(env, controller)
-
-        elif args.mode in ["record_keyboard", "record_gamepad"]:
-            # Recording modes
-            from lerobot.scripts.server.gym_manipulator import make_robot_env
-
-            cfg = init_hydra_config("lerobot/configs/env/so100_real.yaml", [])
-            env = make_robot_env(robot, None, cfg)
-            record_dataset_with_input(
-                env=env,
-                controller=controller,
-                repo_id=args.repo_id,
-                num_episodes=args.num_episodes,
-                push_to_hub=args.push_to_hub,
-                task_description=args.task,
-            )
 
         elif args.mode == "leader":
             # Leader-follower modes don't use controllers

@@ -118,20 +118,17 @@ class HILSerlRobotEnv(gym.Env):
 
         # Define observation spaces for images and other states.
         image_keys = [key for key in example_obs if "image" in key]
-        state_keys = [key for key in example_obs if "image" not in key]
         observation_spaces = {
             key: gym.spaces.Box(
                 low=0, high=255, shape=example_obs[key].shape, dtype=np.uint8
             )
             for key in image_keys
         }
-        observation_spaces["observation.state"] = gym.spaces.Dict(
-            {
-                key: gym.spaces.Box(
-                    low=0, high=10, shape=example_obs[key].shape, dtype=np.float32
-                )
-                for key in state_keys
-            }
+        observation_spaces["observation.state"] = gym.spaces.Box(
+            low=0,
+            high=10,
+            shape=example_obs["observation.state"].shape,
+            dtype=np.float32,
         )
 
         self.observation_space = gym.spaces.Dict(observation_spaces)
@@ -333,11 +330,9 @@ class AddJointVelocityToObservation(gym.ObservationWrapper):
         super().__init__(env)
 
         # Extend observation space to include joint velocities
-        old_low = self.observation_space["observation.state"]["observation.state"].low
-        old_high = self.observation_space["observation.state"]["observation.state"].high
-        old_shape = self.observation_space["observation.state"][
-            "observation.state"
-        ].shape
+        old_low = self.observation_space["observation.state"].low
+        old_high = self.observation_space["observation.state"].high
+        old_shape = self.observation_space["observation.state"].shape
 
         self.last_joint_positions = np.zeros(old_shape)
 
@@ -350,13 +345,11 @@ class AddJointVelocityToObservation(gym.ObservationWrapper):
 
         new_shape = (old_shape[0] * 2,)
 
-        self.observation_space["observation.state"]["observation.state"] = (
-            gym.spaces.Box(
-                low=new_low,
-                high=new_high,
-                shape=new_shape,
-                dtype=np.float32,
-            )
+        self.observation_space["observation.state"] = gym.spaces.Box(
+            low=new_low,
+            high=new_high,
+            shape=new_shape,
+            dtype=np.float32,
         )
 
         self.dt = 1.0 / fps
@@ -538,9 +531,7 @@ class TimeLimitWrapper(gym.Wrapper):
         if 1.0 / time_since_last_step < self.fps:
             logging.debug(f"Current timestep exceeded expected fps {self.fps}")
 
-        # if self.episode_time_in_s > self.control_time_s:
         if self.current_step >= self.max_episode_steps:
-            # Terminated = True
             terminated = True
         return obs, reward, terminated, truncated, info
 
@@ -839,7 +830,10 @@ class EEActionWrapper(gym.ActionWrapper):
         super().__init__(env)
         self.ee_action_space_params = ee_action_space_params
 
-        self.fk_function = RobotKinematics.fk_gripper_tip
+        # Initialize kinematics instance for the appropriate robot type
+        robot_type = getattr(env.unwrapped.robot.config, "robot_type", "so100")
+        self.kinematics = RobotKinematics(robot_type)
+        self.fk_function = self.kinematics.fk_gripper_tip
 
         action_space_bounds = np.array(
             [
@@ -880,7 +874,7 @@ class EEActionWrapper(gym.ActionWrapper):
             self.bounds["min"],
             self.bounds["max"],
         )
-        target_joint_pos = RobotKinematics.ik(
+        target_joint_pos = self.kinematics.ik(
             current_joint_pos,
             desired_ee_pos,
             position_only=True,
@@ -894,18 +888,19 @@ class EEObservationWrapper(gym.ObservationWrapper):
         super().__init__(env)
 
         # Extend observation space to include end effector pose
-        prev_space = self.observation_space["observation.state"]["observation.state"]
+        prev_space = self.observation_space["observation.state"]
 
-        self.observation_space["observation.state"]["observation.state"] = (
-            gym.spaces.Box(
-                low=np.concatenate([prev_space.low, ee_pose_limits["min"]]),
-                high=np.concatenate([prev_space.high, ee_pose_limits["max"]]),
-                shape=(prev_space.shape[0] + 3,),
-                dtype=np.float32,
-            )
+        self.observation_space["observation.state"] = gym.spaces.Box(
+            low=np.concatenate([prev_space.low, ee_pose_limits["min"]]),
+            high=np.concatenate([prev_space.high, ee_pose_limits["max"]]),
+            shape=(prev_space.shape[0] + 3,),
+            dtype=np.float32,
         )
 
-        self.fk_function = RobotKinematics.fk_gripper_tip
+        # Initialize kinematics instance for the appropriate robot type
+        robot_type = getattr(env.unwrapped.robot.config, "robot_type", "so100")
+        self.kinematics = RobotKinematics(robot_type)
+        self.fk_function = self.kinematics.fk_gripper_tip
 
     def observation(self, observation):
         current_joint_pos = self.unwrapped.robot.follower_arms["main"].read(
@@ -1180,7 +1175,10 @@ def make_robot_env(
         env = EEActionWrapper(
             env=env, ee_action_space_params=cfg.env.wrapper.ee_action_space_params
         )
-    if cfg.env.wrapper.ee_action_space_params.use_gamepad:
+    if (
+        cfg.env.wrapper.ee_action_space_params is not None
+        and cfg.env.wrapper.ee_action_space_params.use_gamepad
+    ):
         # env = ActionScaleWrapper(env=env, ee_action_space_params=cfg.env.wrapper.ee_action_space_params)
         env = GamepadControlWrapper(
             env=env,
@@ -1196,15 +1194,16 @@ def make_robot_env(
         reset_pose=cfg.env.wrapper.fixed_reset_joint_positions,
         reset_time_s=cfg.env.wrapper.reset_time_s,
     )
-    if cfg.env.wrapper.ee_action_space_params is None:
+    if (
+        cfg.env.wrapper.ee_action_space_params is None
+        and cfg.env.wrapper.joint_masking_action_space is not None
+    ):
         env = JointMaskingActionSpace(
             env=env, mask=cfg.env.wrapper.joint_masking_action_space
         )
     env = BatchCompitableWrapper(env=env)
 
     return env
-
-    # batched version of the env that returns an observation of shape (b, c)
 
 
 def get_classifier(pretrained_path, config_path, device="mps"):
@@ -1240,18 +1239,34 @@ def record_dataset(
     fps=30,
     push_to_hub=True,
     task_description="",
+    policy=None,
 ):
+    """
+    Record a dataset of robot interactions using either a policy or teleop.
+
+    Args:
+        env: The environment to record from
+        repo_id: Repository ID for dataset storage
+        root: Local root directory for dataset (optional)
+        num_episodes: Number of episodes to record
+        control_time_s: Maximum episode length in seconds
+        fps: Frames per second for recording
+        push_to_hub: Whether to push dataset to Hugging Face Hub
+        task_description: Description of the task being recorded
+        policy: Optional policy to generate actions (if None, uses teleop)
+    """
     from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 
+    # Setup initial action (zero action if using teleop)
     dummy_action = env.action_space.sample()
     dummy_action = (torch.from_numpy(dummy_action[0] * 0.0), False)
+    action = dummy_action
 
+    # Configure dataset features based on environment spaces
     features = {
         "observation.state": {
             "dtype": "float32",
-            "shape": env.observation_space["observation.state"][
-                "observation.state"
-            ].shape,
+            "shape": env.observation_space["observation.state"].shape,
             "names": None,
         },
         "action": {
@@ -1259,17 +1274,11 @@ def record_dataset(
             "shape": env.action_space[0].shape,
             "names": None,
         },
-        "next.reward": {
-            "dtype": "float32",
-            "shape": (1,),
-            "names": None,
-        },
-        "next.done": {
-            "dtype": "bool",
-            "shape": (1,),
-            "names": None,
-        },
+        "next.reward": {"dtype": "float32", "shape": (1,), "names": None},
+        "next.done": {"dtype": "bool", "shape": (1,), "names": None},
     }
+
+    # Add image features
     for key in env.observation_space:
         if "image" in key:
             features[key] = {
@@ -1277,6 +1286,8 @@ def record_dataset(
                 "shape": env.observation_space[key].shape,
                 "names": None,
             }
+
+    # Create dataset
     dataset = LeRobotDataset.create(
         repo_id,
         fps,
@@ -1286,39 +1297,63 @@ def record_dataset(
         image_writer_processes=0,
         features=features,
     )
+
+    # Record episodes
     episode_index = 0
     while episode_index < num_episodes:
-        env.reset()
+        obs, _ = env.reset()
         start_episode_t = time.perf_counter()
         log_say(f"Recording episode {episode_index}", play_sounds=True)
 
+        # Run episode steps
         while time.perf_counter() - start_episode_t < control_time_s:
             start_loop_t = time.perf_counter()
-            obs, reward, terminated, truncated, info = env.step(dummy_action)
-            if info["rerecord_episode"]:
+
+            # Get action from policy if available
+            if policy is not None:
+                action = policy.select_action(obs)
+
+            # Step environment
+            obs, reward, terminated, truncated, info = env.step(action)
+
+            # Check if episode needs to be rerecorded
+            if info.get("rerecord_episode", False):
                 break
-            action = {"action": info["action_intervention"].cpu().squeeze(0).float()}
+
+            # For teleop, get action from intervention
+            if policy is None:
+                action = {
+                    "action": info["action_intervention"].cpu().squeeze(0).float()
+                }
+
+            # Process observation for dataset
             obs = {k: v.cpu().squeeze(0).float() for k, v in obs.items()}
 
+            # Add frame to dataset
             frame = {**obs, **action}
             frame["next.reward"] = reward
             frame["next.done"] = terminated or truncated
             dataset.add_frame(frame)
-            if fps is not None:
+
+            # Maintain consistent timing
+            if fps:
                 dt_s = time.perf_counter() - start_loop_t
                 busy_wait(1 / fps - dt_s)
 
             if terminated or truncated:
                 break
 
-        if info["rerecord_episode"]:
+        # Handle episode recording
+        if info.get("rerecord_episode", False):
             dataset.clear_episode_buffer()
             logging.info(f"Re-recording episode {episode_index}")
             continue
+
         dataset.save_episode(task_description)
         episode_index += 1
-    dataset.consolidate(run_compute_stats=True)
 
+    # Finalize dataset
+    dataset.consolidate(run_compute_stats=True)
     if push_to_hub:
         dataset.push_to_hub(repo_id)
 
@@ -1332,7 +1367,6 @@ def replay_episode(env, repo_id, root=None, episode=0):
     )
     env.reset()
 
-    action_scale = torch.tensor([[0.02, 0.02, 0.04]])
     actions = dataset.hf_dataset.select_columns("action")
 
     for idx in range(dataset.num_frames):
@@ -1367,14 +1401,6 @@ if __name__ == "__main__":
         help=(
             "Either the repo ID of a model hosted on the Hub or a path to a directory containing weights "
             "saved using `Policy.save_pretrained`. If not provided, the policy is initialized from scratch "
-            "(useful for debugging). This argument is mutually exclusive with `--config`."
-        ),
-    )
-    parser.add_argument(
-        "--config",
-        help=(
-            "Path to a yaml config you want to use for initializing a policy from scratch (useful for "
-            "debugging). This argument is mutually exclusive with `--pretrained-policy-name-or-path` (`-p`)."
         ),
     )
     parser.add_argument(
@@ -1463,6 +1489,14 @@ if __name__ == "__main__":
     )
 
     if args.record_repo_id is not None:
+        policy = None
+        if args.pretrained_policy_name_or_path is not None:
+            from lerobot.common.policies.sac.modeling_sac import SACPolicy
+
+            policy = SACPolicy.from_pretrained(args.pretrained_policy_name_or_path)
+            policy.to(cfg.device)
+            policy.eval()
+
         record_dataset(
             env,
             args.record_repo_id,
@@ -1470,6 +1504,7 @@ if __name__ == "__main__":
             num_episodes=args.record_num_episodes,
             fps=args.fps,
             task_description=args.record_episode_task,
+            policy=policy,
         )
         exit()
 
