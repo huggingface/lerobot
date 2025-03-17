@@ -135,6 +135,7 @@ class PixelWrapper(gym.Wrapper):
         return self._get_obs(obs), reward, terminated, truncated, info
 
 
+# TODO: Remove this
 class ConvertToLeRobotEnv(gym.Wrapper):
     def __init__(self, env, num_envs):
         super().__init__(env)
