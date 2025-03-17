@@ -330,7 +330,7 @@ class SACPolicy(
         observation_features: Tensor | None = None,
         next_observation_features: Tensor | None = None,
     ) -> Tensor:
-        temperature = self.log_alpha.exp().item()
+        self.temperature = self.log_alpha.exp().item()
         with torch.no_grad():
             next_action_preds, next_log_probs, _ = self.actor(
                 next_observations, next_observation_features
@@ -358,7 +358,7 @@ class SACPolicy(
             # critics subsample size
             min_q, _ = q_targets.min(dim=0)  # Get values from min operation
             if self.config.use_backup_entropy:
-                min_q = min_q - (temperature * next_log_probs)
+                min_q = min_q - (self.temperature * next_log_probs)
 
             td_target = rewards + (1 - done) * self.config.discount * min_q
 
@@ -398,7 +398,7 @@ class SACPolicy(
     def compute_loss_actor(
         self, observations, observation_features: Tensor | None = None
     ) -> Tensor:
-        temperature = self.log_alpha.exp().item()
+        self.temperature = self.log_alpha.exp().item()
 
         actions_pi, log_probs, _ = self.actor(observations, observation_features)
 
@@ -413,7 +413,7 @@ class SACPolicy(
         )
         min_q_preds = q_preds.min(dim=0)[0]
 
-        actor_loss = ((temperature * log_probs) - min_q_preds).mean()
+        actor_loss = ((self.temperature * log_probs) - min_q_preds).mean()
         return actor_loss
 
 
@@ -425,6 +425,7 @@ class MLP(nn.Module):
         activations: Callable[[torch.Tensor], torch.Tensor] | str = nn.SiLU(),
         activate_final: bool = False,
         dropout_rate: Optional[float] = None,
+        final_activation: Callable[[torch.Tensor], torch.Tensor] | str | None = None,
     ):
         super().__init__()
         self.activate_final = activate_final
@@ -451,11 +452,24 @@ class MLP(nn.Module):
                 if dropout_rate is not None and dropout_rate > 0:
                     layers.append(nn.Dropout(p=dropout_rate))
                 layers.append(nn.LayerNorm(hidden_dims[i]))
-                layers.append(
-                    activations
-                    if isinstance(activations, nn.Module)
-                    else getattr(nn, activations)()
-                )
+
+                # If we're at the final layer and a final activation is specified, use it
+                if (
+                    i + 1 == len(hidden_dims)
+                    and activate_final
+                    and final_activation is not None
+                ):
+                    layers.append(
+                        final_activation
+                        if isinstance(final_activation, nn.Module)
+                        else getattr(nn, final_activation)()
+                    )
+                else:
+                    layers.append(
+                        activations
+                        if isinstance(activations, nn.Module)
+                        else getattr(nn, activations)()
+                    )
 
         self.net = nn.Sequential(*layers)
 
@@ -516,6 +530,7 @@ class CriticHead(nn.Module):
         activate_final: bool = False,
         dropout_rate: Optional[float] = None,
         init_final: Optional[float] = None,
+        final_activation: Callable[[torch.Tensor], torch.Tensor] | str | None = None,
     ):
         super().__init__()
         self.net = MLP(
@@ -524,6 +539,7 @@ class CriticHead(nn.Module):
             activations=activations,
             activate_final=activate_final,
             dropout_rate=dropout_rate,
+            final_activation=final_activation,
         )
         self.output_layer = nn.Linear(in_features=hidden_dims[-1], out_features=1)
         if init_final is not None:
