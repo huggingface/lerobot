@@ -62,7 +62,7 @@ class DaemonLeKiwiRobot(Robot):
         self.zmq_observation_socket = None
 
         self.last_frames = {}
-        self.last_present_speed = {}
+        self.last_present_speed = [0, 0, 0]
         self.last_remote_arm_state = torch.zeros(6, dtype=torch.float32)
 
         # Define three speed levels and a current index
@@ -223,13 +223,13 @@ class DaemonLeKiwiRobot(Robot):
 
     # Copied from robot_lekiwi MobileManipulator class
     def wheel_raw_to_body(
-        self, wheel_raw: dict, wheel_radius: float = 0.05, base_radius: float = 0.125
+        self, wheel_raw: np.array, wheel_radius: float = 0.05, base_radius: float = 0.125
     ) -> tuple:
         """
         Convert wheel raw command feedback back into body-frame velocities.
 
         Parameters:
-          wheel_raw   : Dictionary with raw wheel commands (keys: "left_wheel", "back_wheel", "right_wheel").
+          wheel_raw   : Vector with raw wheel commands ("left_wheel", "back_wheel", "right_wheel").
           wheel_radius: Radius of each wheel (meters).
           base_radius : Distance from the robot center to each wheel (meters).
 
@@ -239,15 +239,9 @@ class DaemonLeKiwiRobot(Robot):
              y_cmd      : Linear velocity in y (m/s).
              theta_cmd  : Rotational velocity in deg/s.
         """
-        # Extract the raw values in order.
-        raw_list = [
-            int(wheel_raw.get("left_wheel", 0)),
-            int(wheel_raw.get("back_wheel", 0)),
-            int(wheel_raw.get("right_wheel", 0)),
-        ]
 
         # Convert each raw command back to an angular speed in deg/s.
-        wheel_degps = np.array([DaemonLeKiwiRobot.raw_to_degps(r) for r in raw_list])
+        wheel_degps = np.array([DaemonLeKiwiRobot.raw_to_degps(int(r)) for r in wheel_raw])
         # Convert from deg/s to rad/s.
         wheel_radps = wheel_degps * (np.pi / 180.0)
         # Compute each wheel’s linear speed (m/s) from its angular speed.
@@ -264,6 +258,7 @@ class DaemonLeKiwiRobot(Robot):
         theta_cmd = theta_rad * (180.0 / np.pi)
         return (x_cmd, y_cmd, theta_cmd)
 
+    # TODO(Steven): This is flaky, for example, if we received a state but failed decoding the image, we will not update any value
     def get_data(self):
         # Copied from robot_lekiwi.py
         """Polls the video socket for up to 15 ms. If data arrives, decode only
@@ -271,10 +266,10 @@ class DaemonLeKiwiRobot(Robot):
         nothing arrives for any field, use the last known values."""
 
         frames = {}
-        present_speed = {}
+        present_speed = []
 
         # TODO(Steven): Size is being assumed, is this safe?
-        remote_arm_state_tensor = torch.zeros(6, dtype=torch.float32)
+        remote_arm_state_tensor = torch.empty(6, dtype=torch.float32)
 
         # Poll up to 15 ms
         poller = zmq.Poller()
@@ -303,7 +298,9 @@ class DaemonLeKiwiRobot(Robot):
         # Decode only the final message
         try:
             observation = json.loads(last_msg)
+            observation[OBS_STATE] = np.array(observation[OBS_STATE])
 
+            # TODO(Steven): Consider getting directly the item with observation[OBS_STATE]
             state_observation = {k: v for k, v in observation.items() if k.startswith(OBS_STATE)}
             image_observation = {k: v for k, v in observation.items() if k.startswith(OBS_IMAGES)}
 
@@ -320,10 +317,10 @@ class DaemonLeKiwiRobot(Robot):
             if state_observation is not None and frames is not None:
                 self.last_frames = frames
 
-                remote_arm_state_tensor = torch.tensor(state_observation[:6], dtype=torch.float32)
+                remote_arm_state_tensor = torch.tensor(state_observation[OBS_STATE][:6], dtype=torch.float32)
                 self.last_remote_arm_state = remote_arm_state_tensor
 
-                present_speed = state_observation[6:]
+                present_speed = state_observation[OBS_STATE][6:]
                 self.last_present_speed = present_speed
             else:
                 frames = self.last_frames
