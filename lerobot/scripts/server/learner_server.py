@@ -353,6 +353,11 @@ def check_nan_in_transition(
     # Check actions
     if torch.isnan(actions).any():
         logging.error("actions contains NaN values")
+        nan_detected = True
+        if raise_error:
+            raise ValueError("NaN detected in actions")
+
+    return nan_detected
 
 
 def push_actor_policy_to_queue(parameters_queue: Queue, policy: nn.Module):
@@ -494,8 +499,8 @@ def add_actor_information_and_train(
                 if cfg.dataset_repo_id is not None and transition.get(
                     "complementary_info", {}
                 ).get("is_intervention"):
-                if transition.get("complementary_info", {}).get("is_intervention"):
                     offline_replay_buffer.add(**transition)
+
         logging.debug("[LEARNER] Received transitions")
         logging.debug("[LEARNER] Waiting for interactions")
         while not interaction_message_queue.empty() and not shutdown_event.is_set():
