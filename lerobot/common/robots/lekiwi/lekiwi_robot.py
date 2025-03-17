@@ -304,7 +304,7 @@ class LeKiwiRobot(Robot):
 
                 try:
                     msg = self.zmq_cmd_socket.recv_string(zmq.NOBLOCK)
-                    data = json.loads(msg)
+                    data = np.array(json.loads(msg))
                     self.send_action(data)
                     last_cmd_time = time.time()
                 except zmq.Again:

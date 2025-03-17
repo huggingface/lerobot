@@ -11,7 +11,7 @@ from lerobot.common.teleoperators.so100 import SO100Teleop, SO100TeleopConfig
 
 def main():
     logging.info("Configuring Teleop Devices")
-    leader_arm_config = SO100TeleopConfig(port="/dev/tty.usbmodem585A0085511")
+    leader_arm_config = SO100TeleopConfig(port="/dev/tty.usbmodem58760429271")
     leader_arm = SO100Teleop(leader_arm_config)
 
     keyboard_config = KeyboardTeleopConfig()
@@ -26,7 +26,7 @@ def main():
     robot = DaemonLeKiwiRobot(robot_config)
 
     logging.info("Connecting remote LeKiwiRobot")
-    robot.connect()  # Establishes ZMQ sockets with the remote mobile robot
+    robot.connect()
     robot.robot_mode = RobotMode.TELEOP
 
     logging.info("Starting LeKiwiRobot teleoperation")
@@ -35,9 +35,9 @@ def main():
     while duration < 20:
         arm_action = leader_arm.get_action()
         base_action = keyboard.get_action()
-        action = np.concatenate((arm_action, base_action))
-        _action_sent = robot.send_action(action)  # Translates to motor space + sends over ZMQ
-        _observation = robot.get_observation()  # Receives over ZMQ, translate to body-frame vel
+        action = np.append(arm_action, base_action) if base_action.size > 0 else arm_action
+        _action_sent = robot.send_action(action)
+        _observation = robot.get_observation()
 
         # dataset.save(action_sent, obs)
 
@@ -48,7 +48,7 @@ def main():
         duration = time.perf_counter() - start
 
     logging.info("Disconnecting Teleop Devices and LeKiwiRobot Daemon")
-    robot.disconnect()  # Cleans ZMQ comms
+    robot.disconnect()
     leader_arm.disconnect()
     keyboard.disconnect()
 
