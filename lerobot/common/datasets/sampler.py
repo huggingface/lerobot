@@ -139,7 +139,6 @@ class PrioritizedSampler(Sampler[int]):
         Args:
             data_len: Total number of samples in the dataset.
             alpha: Exponent for priority scaling. Default is 0.6.
-            beta: Used in important sampling (IS). Default is 0.4,
             eps: Small constant to avoid zero priorities.
             num_samples_per_epoch: Number of samples per epoch (default is data_len).
         """
