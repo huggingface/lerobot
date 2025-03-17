@@ -239,7 +239,6 @@ class HILSerlRobotEnv(gym.Env):
             policy_action = np.clip(
                 policy_action, self.action_space[0].low, self.action_space[0].high
             )
-            logging.info(f"Before clipping policy action: {policy_action}")
 
         if not intervention_bool:
             if self.use_delta_action_space:
@@ -258,11 +257,9 @@ class HILSerlRobotEnv(gym.Env):
 
             # When applying the delta action space, convert teleop absolute values to relative differences.
             if self.use_delta_action_space:
-                logging.info(f"Absolute teleop action: {teleop_action}")
                 teleop_action = (
                     teleop_action - self.current_joint_positions
                 ) / self.delta
-                logging.info(f"Relative teleop action: {teleop_action}")
                 if self.relative_bounds_size is not None and (
                     torch.any(teleop_action < -self.relative_bounds_size)
                     and torch.any(teleop_action > self.relative_bounds_size)
@@ -412,8 +409,6 @@ class RewardWrapper(gym.Wrapper):
                 else 0.0
             )
         info["Reward classifer frequency"] = 1 / (time.perf_counter() - start_time)
-
-        # logging.info(f"Reward: {reward}")
 
         if reward == 1.0:
             terminated = True
