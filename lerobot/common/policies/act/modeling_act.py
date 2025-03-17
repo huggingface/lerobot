@@ -119,9 +119,12 @@ class ACTPolicy(PreTrainedPolicy):
         batch = self.normalize_inputs(batch)
         if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
-            batch["observation.images"] = torch.stack(
-                [batch[key] for key in self.config.image_features], dim=-4
-            )
+            images = [batch[key] for key in self.config.image_features]
+
+            if all(img.shape == images[0].shape for img in images):
+                batch["observation.images"] = torch.stack(images, dim=-4)
+            else:
+                batch["observation.images"] = images
 
         # If we are doing temporal ensembling, do online updates where we keep track of the number of actions
         # we are ensembling over.
@@ -149,9 +152,13 @@ class ACTPolicy(PreTrainedPolicy):
         batch = self.normalize_inputs(batch)
         if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
-            batch["observation.images"] = torch.stack(
-                [batch[key] for key in self.config.image_features], dim=-4
-            )
+            images = [batch[key] for key in self.config.image_features]
+
+            if all(img.shape == images[0].shape for img in images):
+                batch["observation.images"] = torch.stack(images, dim=-4)
+            else:
+                batch["observation.images"] = images
+
         batch = self.normalize_targets(batch)
         actions_hat, (mu_hat, log_sigma_x2_hat) = self.model(batch)
 
@@ -413,11 +420,13 @@ class ACT(nn.Module):
                 "actions must be provided when using the variational objective in training mode."
             )
 
-        batch_size = (
-            batch["observation.images"]
-            if "observation.images" in batch
-            else batch["observation.environment_state"]
-        ).shape[0]
+        if "observation.images" in batch:
+            if isinstance(batch["observation.images"], list):
+                batch_size = batch["observation.images"][0].shape[0]
+            else:
+                batch_size = batch["observation.images"].shape[0]
+        else:
+            batch_size = batch["observation.environment_state"].shape[0]
 
         # Prepare the latent for input to the transformer encoder.
         if self.config.use_vae and "action" in batch:
@@ -490,14 +499,23 @@ class ACT(nn.Module):
             all_cam_features = []
             all_cam_pos_embeds = []
 
-            for cam_index in range(batch["observation.images"].shape[-4]):
-                cam_features = self.backbone(batch["observation.images"][:, cam_index])["feature_map"]
-                # TODO(rcadene, alexander-soare): remove call to `.to` to speedup forward ; precompute and use
-                # buffer
-                cam_pos_embed = self.encoder_cam_feat_pos_embed(cam_features).to(dtype=cam_features.dtype)
-                cam_features = self.encoder_img_feat_input_proj(cam_features)  # (B, C, h, w)
-                all_cam_features.append(cam_features)
-                all_cam_pos_embeds.append(cam_pos_embed)
+            if isinstance(batch["observation.images"], list):
+                for img in batch["observation.images"]:
+                    cam_features = self.backbone(img)["feature_map"]
+                    cam_pos_embed = self.encoder_cam_feat_pos_embed(cam_features).to(dtype=cam_features.dtype)
+                    cam_features = self.encoder_img_feat_input_proj(cam_features)
+                    all_cam_features.append(cam_features)
+                    all_cam_pos_embeds.append(cam_pos_embed)
+            else:
+                for cam_index in range(batch["observation.images"].shape[-4]):
+                    cam_features = self.backbone(batch["observation.images"][:, cam_index])["feature_map"]
+                    # TODO(rcadene, alexander-soare): remove call to `.to` to speedup forward ; precompute and use
+                    # buffer
+                    cam_pos_embed = self.encoder_cam_feat_pos_embed(cam_features).to(dtype=cam_features.dtype)
+                    cam_features = self.encoder_img_feat_input_proj(cam_features)
+                    all_cam_features.append(cam_features)
+                    all_cam_pos_embeds.append(cam_pos_embed)
+
             # Concatenate camera observation feature maps and positional embeddings along the width dimension,
             # and move to (sequence, batch, dim).
             all_cam_features = torch.cat(all_cam_features, axis=-1)
