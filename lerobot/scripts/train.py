@@ -181,7 +181,6 @@ def train(cfg: TrainPipelineConfig):
     sampler = PrioritizedSampler(
         data_len=data_len,
         alpha=0.6,
-        beta=0.4,  # For important sampling
         eps=1e-6,
         num_samples_per_epoch=data_len,
     )

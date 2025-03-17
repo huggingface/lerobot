@@ -132,7 +132,6 @@ class PrioritizedSampler(Sampler[int]):
         self,
         data_len: int,
         alpha: float = 0.6,
-        beta: float = 0.4,  # For important sampling
         eps: float = 1e-6,
         num_samples_per_epoch: Optional[int] = None,
     ):
@@ -146,7 +145,6 @@ class PrioritizedSampler(Sampler[int]):
         """
         self.data_len = data_len
         self.alpha = alpha
-        self.beta = beta
         self.eps = eps
         self.num_samples_per_epoch = num_samples_per_epoch or data_len
 
