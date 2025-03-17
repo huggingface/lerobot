@@ -108,6 +108,8 @@ class DaemonLeKiwiRobot(Robot):
         pass
 
     def connect(self) -> None:
+        """Establishes ZMQ sockets with the remote mobile robot"""
+
         if self.is_connected:
             raise DeviceAlreadyConnectedError(
                 "LeKiwi Daemon is already connected. Do not run `robot.connect()` twice."
@@ -340,7 +342,7 @@ class DaemonLeKiwiRobot(Robot):
         """
         Capture observations from the remote robot: current follower arm positions,
         present wheel speeds (converted to body-frame velocities: x, y, theta),
-        and a camera frame.
+        and a camera frame. Receives over ZMQ, translate to body-frame vel
         """
         if not self.is_connected:
             raise DeviceNotConnectedError(
@@ -409,7 +411,7 @@ class DaemonLeKiwiRobot(Robot):
     # t3': execute motor_cmd
     # t3'-t2' << t3-t1
     def send_action(self, action: np.ndarray) -> np.ndarray:
-        """Command lekiwi to move to a target joint configuration.
+        """Command lekiwi to move to a target joint configuration. Translates to motor space + sends over ZMQ
 
         Args:
             action (np.ndarray): array containing the goal positions for the motors.
@@ -425,7 +427,7 @@ class DaemonLeKiwiRobot(Robot):
                 "ManipulatorRobot is not connected. You need to run `robot.connect()`."
             )
 
-        goal_pos: np.array = np.empty(9)
+        goal_pos: np.array = np.zeros(9)
 
         if self.robot_mode is RobotMode.AUTO:
             # TODO(Steven): Not yet implemented. The policy outputs might need a different conversion
@@ -437,11 +439,13 @@ class DaemonLeKiwiRobot(Robot):
                 logging.error("Action should include at least the 6 states of the leader arm")
                 raise InvalidActionError
 
-            # TODO(Steven): Assumes size and order is respected
-            wheel_actions = [v for _, v in self.from_keyboard_to_wheel_action(action[6:])]
             goal_pos[:6] = action[:6]
-            goal_pos[6:] = wheel_actions
-            self.zmq_cmd_socket.send_string(json.dumps(goal_pos))  # action is in motor space
+            if action.size > 6:
+                # TODO(Steven): Assumes size and order is respected
+                wheel_actions = [v for _, v in self.from_keyboard_to_wheel_action(action[6:]).items()]
+                goal_pos[6:] = wheel_actions
+
+            self.zmq_cmd_socket.send_string(json.dumps(goal_pos.tolist()))  # action is in motor space
 
         return goal_pos
 
@@ -450,6 +454,8 @@ class DaemonLeKiwiRobot(Robot):
         pass
 
     def disconnect(self):
+        """Cleans ZMQ comms"""
+
         if not self.is_connected:
             raise DeviceNotConnectedError(
                 "LeKiwi is not connected. You need to run `robot.connect()` before disconnecting."
