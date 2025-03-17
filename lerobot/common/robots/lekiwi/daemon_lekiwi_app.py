@@ -32,7 +32,7 @@ def main():
     logging.info("Starting LeKiwiRobot teleoperation")
     start = time.perf_counter()
     duration = 0
-    while duration < 20:
+    while duration < 100:
         arm_action = leader_arm.get_action()
         base_action = keyboard.get_action()
         action = np.append(arm_action, base_action) if base_action.size > 0 else arm_action

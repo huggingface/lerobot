@@ -203,6 +203,7 @@ class LeKiwiRobot(Robot):
 
         self.actuators_bus.set_calibration(calibration)
 
+    # TODO(Steven): Should this be dict[str, Any] ?
     def get_observation(self) -> dict[str, np.ndarray]:
         """The returned observations do not have a batch dimension."""
         if not self.is_connected:
@@ -274,13 +275,17 @@ class LeKiwiRobot(Robot):
     def update_last_observation(self, stop_event):
         while not stop_event.is_set():
             obs = self.get_observation()
+            obs[OBS_STATE] = obs[OBS_STATE].tolist()  # Needed for np.array be serializable
             with self.observation_lock:
                 self.last_observation = obs
             # TODO(Steven): Consider adding a delay to not starve the CPU
+            # TODO(Steven): Check this value
+            time.sleep(0.5)
 
     def stop(self):
         # TODO(Steven): Assumes there's only 3 motors for base
         logging.info("Stopping base")
+        # TODO(Steven): Check if these operations are thread safe!
         self.actuators_bus.write("Goal_Speed", [0, 0, 0], self.base_actuators)
         logging.info("Base motors stopped")
 
@@ -299,23 +304,28 @@ class LeKiwiRobot(Robot):
         logging.info("LeKiwi robot server started. Waiting for commands...")
 
         try:
-            while True:
+            start = time.perf_counter()
+            duration = 0
+            while duration < 100:
                 loop_start_time = time.time()
 
                 try:
                     msg = self.zmq_cmd_socket.recv_string(zmq.NOBLOCK)
                     data = np.array(json.loads(msg))
-                    self.send_action(data)
+                    _action_sent = self.send_action(data)
                     last_cmd_time = time.time()
                 except zmq.Again:
                     logging.warning("ZMQ again")
                 except Exception as e:
                     logging.error("Message fetching failed: %s", e)
 
+                # TODO(Steven): Check this value
                 # Watchdog: stop the robot if no command is received for over 0.5 seconds.
                 now = time.time()
                 if now - last_cmd_time > 0.5:
-                    self.stop()
+                    # TODO(Steven): This doesn't seem to be thread safe!
+                    # self.stop()
+                    pass
 
                 with self.observation_lock:
                     # TODO(Steven): This operation is blocking if no listener is available
@@ -323,9 +333,12 @@ class LeKiwiRobot(Robot):
 
                 # Ensure a short sleep to avoid overloading the CPU.
                 elapsed = time.time() - loop_start_time
+
+                # TODO(Steven): Check this value
                 time.sleep(
                     max(0.033 - elapsed, 0)
                 )  # If robot jitters increase the sleep and monitor cpu load with `top` in cmd
+                duration = time.perf_counter() - start
         except KeyboardInterrupt:
             print("Shutting down LeKiwi server.")
         finally:
@@ -349,7 +362,7 @@ class LeKiwiRobot(Robot):
             cam.disconnect()
         self.zmq_observation_socket.close()
         self.zmq_cmd_socket.close()
-        self.context.term()
+        self.zmq_context.term()
         self.is_connected = False
 
     def __del__(self):
