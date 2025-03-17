@@ -134,7 +134,7 @@ class LeKiwiRobot(Robot):
         # We assume that at connection time, arm is in a rest position,
         # and torque can be safely disabled to run calibration.
         self.actuators_bus.write("Torque_Enable", TorqueMode.DISABLED.value, self.arm_actuators)
-        # self.calibrate()  # TODO(Steven): This should be only for the arm
+        self.calibrate()  # TODO(Steven): This should be only for the arm
 
         # Mode=0 for Position Control
         self.actuators_bus.write("Mode", 0, self.arm_actuators)
@@ -347,7 +347,7 @@ class LeKiwiRobot(Robot):
         self.actuators_bus.disconnect()
         for cam in self.cameras.values():
             cam.disconnect()
-        self.observation_socket.close()
+        self.zmq_observation_socket.close()
         self.zmq_cmd_socket.close()
         self.context.term()
         self.is_connected = False
