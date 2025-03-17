@@ -85,7 +85,7 @@ policy:
   output_normalization_params:
     action:
       min: [-0.03, -0.03, -0.01]
-      max: [0.03, 0.03, 0.03]    
+      max: [0.03, 0.03, 0.03]
 
   # Architecture / modeling.
   # Neural networks.
