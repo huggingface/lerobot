@@ -69,6 +69,7 @@ from lerobot.common.datasets.video_utils import (
     VideoFrame,
     decode_video_frames,
     encode_video_frames,
+    get_safe_default_codec,
     get_video_info,
 )
 from lerobot.common.robot_devices.robots.utils import Robot
@@ -462,7 +463,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             download_videos (bool, optional): Flag to download the videos. Note that when set to True but the
                 video files are already present on local disk, they won't be downloaded again. Defaults to
                 True.
-            video_backend (str | None, optional): Video backend to use for decoding videos. Defaults to torchcodec.
+            video_backend (str | None, optional): Video backend to use for decoding videos. Defaults to torchcodec when available int the platform; otherwise, defaults to 'pyav'.
                 You can also use the 'pyav' decoder used by Torchvision, which used to be the default option, or 'video_reader' which is another decoder of Torchvision.
         """
         super().__init__()
@@ -473,7 +474,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.episodes = episodes
         self.tolerance_s = tolerance_s
         self.revision = revision if revision else CODEBASE_VERSION
-        self.video_backend = video_backend if video_backend else "torchcodec"
+        self.video_backend = video_backend if video_backend else get_safe_default_codec()
         self.delta_indices = None
 
         # Unused attributes
@@ -1027,7 +1028,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.delta_timestamps = None
         obj.delta_indices = None
         obj.episode_data_index = None
-        obj.video_backend = video_backend if video_backend is not None else "torchcodec"
+        obj.video_backend = video_backend if video_backend is not None else get_safe_default_codec()
         return obj
 
 
