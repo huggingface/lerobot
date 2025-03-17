@@ -84,10 +84,12 @@ class SACConfig:
     latent_dim: int = 256
     target_entropy: float | None = None
     use_backup_entropy: bool = True
+    grad_clip_norm: float = 40.0
     critic_network_kwargs: dict[str, Any] = field(
         default_factory=lambda: {
             "hidden_dims": [256, 256],
             "activate_final": True,
+            "final_activation": None,
         }
     )
     actor_network_kwargs: dict[str, Any] = field(
