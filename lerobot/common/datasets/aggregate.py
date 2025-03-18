@@ -1,5 +1,5 @@
 import logging
-import subprocess
+import shutil
 
 import pandas as pd
 import tqdm
@@ -16,7 +16,7 @@ def validate_all_metadata(all_metadata: list[LeRobotDatasetMetadata]):
     robot_type = all_metadata[0].robot_type
     features = all_metadata[0].features
 
-    for meta in tqdm.tqdm(all_metadata):
+    for meta in tqdm.tqdm(all_metadata, desc="Validate all meta data"):
         if fps != meta.fps:
             raise ValueError(f"Same fps is expected, but got fps={meta.fps} instead of {fps}.")
         if robot_type != meta.robot_type:
@@ -41,7 +41,7 @@ def get_update_episode_and_task_func(episode_index_to_add, task_index_to_global_
 
 
 def aggregate_datasets(repo_ids: list[str], aggr_repo_id: str, aggr_root=None):
-    logging.info("start aggregate_datasets")
+    logging.info("Start aggregate_datasets")
 
     all_metadata = [LeRobotDatasetMetadata(repo_id) for repo_id in repo_ids]
 
@@ -56,12 +56,12 @@ def aggregate_datasets(repo_ids: list[str], aggr_repo_id: str, aggr_root=None):
         root=aggr_root,
     )
 
-    logging.info("find all tasks")
+    logging.info("Find all tasks")
     # find all tasks, deduplicate them, create new task indices for each dataset
     # indexed by dataset index
     datasets_task_index_to_aggr_task_index = {}
     aggr_task_index = 0
-    for dataset_index, meta in enumerate(tqdm.tqdm(all_metadata)):
+    for dataset_index, meta in enumerate(tqdm.tqdm(all_metadata, desc="Find all tasks")):
         task_index_to_aggr_task_index = {}
 
         for task_index, task in meta.tasks.items():
@@ -76,9 +76,9 @@ def aggregate_datasets(repo_ids: list[str], aggr_repo_id: str, aggr_root=None):
 
         datasets_task_index_to_aggr_task_index[dataset_index] = task_index_to_aggr_task_index
 
-    logging.info("cp data and videos")
+    logging.info("Copy data and videos")
     aggr_episode_index_shift = 0
-    for dataset_index, meta in enumerate(tqdm.tqdm(all_metadata)):
+    for dataset_index, meta in enumerate(tqdm.tqdm(all_metadata, desc="Copy data and videos")):
         # cp data
         for episode_index in range(meta.total_episodes):
             aggr_episode_index = episode_index + aggr_episode_index_shift
@@ -102,10 +102,10 @@ def aggregate_datasets(repo_ids: list[str], aggr_repo_id: str, aggr_root=None):
                 video_path = meta.root / meta.get_video_file_path(episode_index, vid_key)
                 aggr_video_path = aggr_meta.root / aggr_meta.get_video_file_path(aggr_episode_index, vid_key)
                 aggr_video_path.parent.mkdir(parents=True, exist_ok=True)
-                # shutil.copy(video_path, aggr_video_path)
+                shutil.copy(video_path, aggr_video_path)
 
-                copy_command = f"cp {video_path} {aggr_video_path} &"
-                subprocess.Popen(copy_command, shell=True)
+                # copy_command = f"cp {video_path} {aggr_video_path} &"
+                # subprocess.Popen(copy_command, shell=True)
 
         # populate episodes
         for episode_index, episode_dict in meta.episodes.items():
