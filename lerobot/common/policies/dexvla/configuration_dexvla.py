@@ -34,6 +34,7 @@ from .qwe2_vla import register_qwen2_vla
 register_policy_heads()
 register_qwen2_vla()
 
+
 @PreTrainedConfig.register_subclass("dexvla")
 @dataclass
 class DexVLAConfig(PreTrainedConfig):

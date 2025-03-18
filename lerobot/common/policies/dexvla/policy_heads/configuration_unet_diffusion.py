@@ -68,5 +68,3 @@ class UnetDiffusionPolicyConfig(PretrainedConfig):
             )
 
         return cls.from_dict(config_dict, **kwargs)
-
-

@@ -1,17 +1,15 @@
 from collections import deque
 
 import torch
+import torchvision.transforms as transforms
 from torch import Tensor
+from transformers import AutoModelForCausalLM, AutoProcessor, AutoTokenizer
 
 from lerobot.common.policies.dexvla.configuration_dexvla import DexVLAConfig
 from lerobot.common.policies.dexvla.robot_data_processor import Qwen2VLAProcess
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.pretrained import PreTrainedPolicy
 
-
-from collections import deque
-from transformers import AutoProcessor, AutoTokenizer, AutoModelForCausalLM
-import torchvision.transforms as transforms
 
 class DexVLAPolicy(PreTrainedPolicy):
     """Wrapper class around Qwen2VLForConditionalGenerationForVLA model to train and run inference within LeRobot."""
