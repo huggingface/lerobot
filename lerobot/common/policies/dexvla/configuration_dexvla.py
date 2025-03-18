@@ -21,8 +21,8 @@ from transformers.utils import logging
 
 from lerobot.common.optim.optimizers import AdamWConfig
 from lerobot.common.optim.schedulers import (
+    ConstantWithWarmupSchedulerConfig,
     CosineDecayWithWarmupSchedulerConfig,
-    ConstantWithWarmupSchedulerConfig
 )
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import NormalizationMode
@@ -43,12 +43,14 @@ class DexVLAConfig(PreTrainedConfig):
     n_obs_steps: int = 1
 
     hidden_size: int = 1536
-    qwen2_vl_path: str = None # '/media/rl/HDD/data/weights/Qwen2-VL-2B-Instruct', official weights of qwen2vl
+    qwen2_vl_path: str = (
+        None  # '/media/rl/HDD/data/weights/Qwen2-VL-2B-Instruct', official weights of qwen2vl
+    )
 
-    pretrained_path: str = None # for loading pretrained weights of whole dexvla, usually for training stage3
-    pretrained_scaledp_path: str = None # for loading pretrained weights of ScaleDP(Stage1)
+    pretrained_path: str = None  # for loading pretrained weights of whole dexvla, usually for training stage3
+    pretrained_scaledp_path: str = None  # for loading pretrained weights of ScaleDP(Stage1)
 
-    training_stage: int = 2 # specific training stage, [2, 3]
+    training_stage: int = 2  # specific training stage, [2, 3]
     using_film: bool = True
     llm_loss_weight: float = 1.0
     with_llm_head: bool = True
@@ -115,7 +117,7 @@ class DexVLAConfig(PreTrainedConfig):
         else:
             raise ValueError(f"Policy head type {self.policy_head_type} not supported")
 
-        if self.training_stage not in [2,3]:
+        if self.training_stage not in [2, 3]:
             raise ValueError(f"Training stage must be 2 or 3. Got {self.training_stage}.")
 
         self.qwen2_vla_config = AutoConfig.from_pretrained(self.qwen2_vl_path)

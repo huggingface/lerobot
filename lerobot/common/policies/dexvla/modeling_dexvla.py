@@ -3,20 +3,14 @@ from collections import deque
 import torch
 import torchvision.transforms as transforms
 from torch import Tensor
-from transformers import AutoProcessor, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoProcessor, AutoTokenizer
 
 from lerobot.common.policies.dexvla.configuration_dexvla import DexVLAConfig
-from lerobot.common.policies.dexvla.qwe2_vla.modeling_qwen2_vla import Qwen2VLForConditionalGenerationForVLA
 from lerobot.common.policies.dexvla.robot_data_processor import Qwen2VLAProcess
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.pretrained import PreTrainedPolicy
 
 
-from collections import deque
-from transformers import AutoProcessor, AutoTokenizer, AutoModelForCausalLM
-import torchvision.transforms as transforms
-import os
-from safetensors.torch import load_file
 class DexVLAPolicy(PreTrainedPolicy):
     """Wrapper class around Qwen2VLForConditionalGenerationForVLA model to train and run inference within LeRobot."""
 
@@ -59,25 +53,31 @@ class DexVLAPolicy(PreTrainedPolicy):
             trust_remote_code=True,
             _fast_init=False,
             # attn_implementation="flash_attention_2",
-        ).to(device='cuda', dtype=torch.bfloat16)
+        ).to(device="cuda", dtype=torch.bfloat16)
 
         if self.config.pretrained_scaledp_path is not None:
-            print(f'\n>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>Loading pretrained ScaleDP weights...<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<')
-            pretrain_scaledp_weights = torch.load(self.config.pretrained_scaledp_path, map_location='cpu')
+            print(
+                "\n>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>Loading pretrained ScaleDP weights...<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<"
+            )
+            pretrain_scaledp_weights = torch.load(self.config.pretrained_scaledp_path, map_location="cpu")
 
-            pretrain_scaledp_weights = pretrain_scaledp_weights['nets']['nets']
+            pretrain_scaledp_weights = pretrain_scaledp_weights["nets"]["nets"]
 
             keys_to_del_dit = []
-            pretrain_scaledp_weights = {k[7:] if k.startswith('policy.') else k: v for k, v in pretrain_scaledp_weights.items()}
+            pretrain_scaledp_weights = {
+                k[7:] if k.startswith("policy.") else k: v for k, v in pretrain_scaledp_weights.items()
+            }
             for k in pretrain_scaledp_weights.keys():
-                if 'noise_pred' not in k:  # del weights of vision backbones
+                if "noise_pred" not in k:  # del weights of vision backbones
                     keys_to_del_dit.append(k)
-                if 'cond_obs_emb' in k:
+                if "cond_obs_emb" in k:
                     keys_to_del_dit.append(k)
             for k in keys_to_del_dit:
                 del pretrain_scaledp_weights[k]
-            pretrain_scaledp_weights = {k[15:] if k.startswith('noise_pred_net.') else k: v for k, v in
-                                    pretrain_scaledp_weights.items()}
+            pretrain_scaledp_weights = {
+                k[15:] if k.startswith("noise_pred_net.") else k: v
+                for k, v in pretrain_scaledp_weights.items()
+            }
 
             self.model.policy_head.load_state_dict(pretrain_scaledp_weights, strict=False)
 
