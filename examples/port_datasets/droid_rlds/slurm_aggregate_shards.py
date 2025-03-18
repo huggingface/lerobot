@@ -241,7 +241,7 @@ def main():
     parser.add_argument(
         "--job-name",
         type=str,
-        default="port_droid",
+        default="aggr_droid",
         help="Job name used in slurm, and name of the directory created inside the provided logs directory.",
     )
     parser.add_argument(

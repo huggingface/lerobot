@@ -135,7 +135,7 @@ Run this script to start uploading:
 python examples/port_datasets/droid_rlds/slurm_upload.py \
     --repo-id your_id/droid_1.0.1 \
     --logs-dir /your/logs \
-    --job-name aggr_droid \
+    --job-name upload_droid \
     --partition your_partition \
     --workers 50 \
     --cpus-per-task 4 \

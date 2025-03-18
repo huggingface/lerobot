@@ -186,7 +186,7 @@ def main():
     parser.add_argument(
         "--job-name",
         type=str,
-        default="port_droid",
+        default="upload_droid",
         help="Job name used in slurm, and name of the directory created inside the provided logs directory.",
     )
     parser.add_argument(
@@ -198,7 +198,7 @@ def main():
     parser.add_argument(
         "--workers",
         type=int,
-        default=2048,
+        default=50,
         help="Number of slurm workers. It should be less than the maximum number of shards.",
     )
     parser.add_argument(
@@ -209,7 +209,7 @@ def main():
     parser.add_argument(
         "--cpus-per-task",
         type=int,
-        default=8,
+        default=4,
         help="Number of cpus that each slurm worker will use.",
     )
     parser.add_argument(
