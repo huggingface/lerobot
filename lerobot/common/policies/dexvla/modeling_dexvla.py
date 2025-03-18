@@ -12,7 +12,7 @@ from lerobot.common.policies.pretrained import PreTrainedPolicy
 from collections import deque
 from transformers import AutoProcessor, AutoTokenizer, AutoModelForCausalLM
 import torchvision.transforms as transforms
-
+from safetensors.torch import load_file
 class DexVLAPolicy(PreTrainedPolicy):
     """Wrapper class around Qwen2VLForConditionalGenerationForVLA model to train and run inference within LeRobot."""
 
@@ -61,9 +61,7 @@ class DexVLAPolicy(PreTrainedPolicy):
             print(
                 "\n>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>Loading pretrained ScaleDP weights...<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<"
             )
-            pretrain_scaledp_weights = torch.load(self.config.pretrained_scaledp_path, map_location="cpu")
-
-            pretrain_scaledp_weights = pretrain_scaledp_weights["nets"]["nets"]
+            pretrain_scaledp_weights = load_file(self.config.pretrained_scaledp_path)
 
             keys_to_del_dit = []
             pretrain_scaledp_weights = {

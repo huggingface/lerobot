@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Qwen2VL model configuration"""
+from .policy_heads import register_policy_heads
+from .qwe2_vla import register_qwen2_vla
 
 from dataclasses import dataclass, field
 from typing import Tuple
@@ -28,9 +30,6 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import NormalizationMode
 
 logger = logging.get_logger(__name__)
-from .policy_heads import register_policy_heads
-from .qwe2_vla import register_qwen2_vla
-
 register_policy_heads()
 register_qwen2_vla()
 
