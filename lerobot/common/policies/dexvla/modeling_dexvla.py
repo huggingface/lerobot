@@ -11,9 +11,10 @@ from collections import deque
 from lerobot.common.policies.dexvla.policy_heads.modeling_unet_diffusion import ConditionalUnet1D
 from lerobot.common.policies.dexvla.policy_heads.modeling_scaledp import ScaleDP
 from lerobot.common.policies.dexvla.robot_data_processor import Qwen2VLAProcess
-from transformers import AutoProcessor, AutoTokenizer
+from transformers import AutoProcessor, AutoTokenizer, AutoModelForCausalLM
 import torchvision.transforms as transforms
-
+import os
+from safetensors.torch import load_file
 class DexVLAPolicy(PreTrainedPolicy):
     """Wrapper class around Qwen2VLForConditionalGenerationForVLA model to train and run inference within LeRobot."""
 
@@ -47,7 +48,37 @@ class DexVLAPolicy(PreTrainedPolicy):
         for k in ['using_film', 'llm_loss_weight', 'with_llm_head', 'policy_head_config']:
             setattr(config.qwen2_vla_config, k, config.__dict__[k])
 
-        self.model = Qwen2VLForConditionalGenerationForVLA(config.qwen2_vla_config).to(torch.bfloat16)
+        # if self.config.training_stage == 2:
+        # self.model = Qwen2VLForConditionalGenerationForVLA(config.qwen2_vla_config).to(torch.bfloat16)
+        model_base = self.config.qwen2_vl_path
+        self.model = AutoModelForCausalLM.from_pretrained(
+            model_base,
+            config=config.qwen2_vla_config,
+            trust_remote_code=True,
+            _fast_init=False,
+            # attn_implementation="flash_attention_2",
+        ).to(device='cuda', dtype=torch.bfloat16)
+
+        if self.config.pretrained_scaledp_path is not None:
+            print(f'\n>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>Loading pretrained ScaleDP weights...<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<')
+            pretrain_scaledp_weights = torch.load(self.config.pretrained_scaledp_path, map_location='cpu')
+
+            pretrain_scaledp_weights = pretrain_scaledp_weights['nets']['nets']
+
+            keys_to_del_dit = []
+            pretrain_scaledp_weights = {k[7:] if k.startswith('policy.') else k: v for k, v in pretrain_scaledp_weights.items()}
+            for k in pretrain_scaledp_weights.keys():
+                if 'noise_pred' not in k:  # del weights of vision backbones
+                    keys_to_del_dit.append(k)
+                if 'cond_obs_emb' in k:
+                    keys_to_del_dit.append(k)
+            for k in keys_to_del_dit:
+                del pretrain_scaledp_weights[k]
+            pretrain_scaledp_weights = {k[15:] if k.startswith('noise_pred_net.') else k: v for k, v in
+                                    pretrain_scaledp_weights.items()}
+
+            self.model.policy_head.load_state_dict(pretrain_scaledp_weights, strict=False)
+
         self.model.requires_grad_(False)
         self.model.policy_head.requires_grad_(True)
         self.qwen2_vl_processor = AutoProcessor.from_pretrained(config.qwen2_vl_path)
