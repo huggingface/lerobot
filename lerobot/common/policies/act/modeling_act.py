@@ -119,9 +119,7 @@ class ACTPolicy(PreTrainedPolicy):
         batch = self.normalize_inputs(batch)
         if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
-            images = [batch[key] for key in self.config.image_features]
-
-            batch["observation.images"] = images
+            batch["observation.images"] = [batch[key] for key in self.config.image_features]
 
         # If we are doing temporal ensembling, do online updates where we keep track of the number of actions
         # we are ensembling over.
@@ -149,9 +147,7 @@ class ACTPolicy(PreTrainedPolicy):
         batch = self.normalize_inputs(batch)
         if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
-            images = [batch[key] for key in self.config.image_features]
-
-            batch["observation.images"] = images
+            batch["observation.images"] = [batch[key] for key in self.config.image_features]
 
         batch = self.normalize_targets(batch)
         actions_hat, (mu_hat, log_sigma_x2_hat) = self.model(batch)
