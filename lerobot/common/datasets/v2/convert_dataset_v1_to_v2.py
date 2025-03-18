@@ -481,7 +481,7 @@ def convert_dataset(
 
     # Tasks
     if single_task:
-        tasks_by_episodes = {ep_idx: single_task for ep_idx in episode_indices}
+        tasks_by_episodes = dict.fromkeys(episode_indices, single_task)
         dataset, tasks = add_task_index_by_episodes(dataset, tasks_by_episodes)
         tasks_by_episodes = {ep_idx: [task] for ep_idx, task in tasks_by_episodes.items()}
     elif tasks_path:

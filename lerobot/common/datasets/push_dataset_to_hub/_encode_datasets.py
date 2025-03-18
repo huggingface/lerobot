@@ -67,7 +67,7 @@ def encode_datasets(
     else:
         if raw_format is None:
             raise ValueError(raw_format)
-        raw_repo_ids_format = {id_: raw_format for id_ in raw_repo_ids}
+        raw_repo_ids_format = dict.fromkeys(raw_repo_ids, raw_format)
 
     for raw_repo_id, repo_raw_format in raw_repo_ids_format.items():
         check_repo_id(raw_repo_id)
