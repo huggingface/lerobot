@@ -9,10 +9,21 @@
 </head>
 <body class="h-screen overflow-hidden font-mono text-white" x-data="{
     inputValue: '',
+    errorMessage: '',
     navigateToDataset() {
         const trimmedValue = this.inputValue.trim();
         if (trimmedValue) {
-            window.location.href = `/${trimmedValue}`;
+            fetch(`/${trimmedValue}`, { method: 'HEAD' })
+                .then(response => {
+                    if (response.ok) {
+                        window.location.href = `/${trimmedValue}`;
+                    } else {
+                        this.errorMessage = `Error when trying to visualize the dataset. Please make sure you uploaded the dataset ${trimmedValue}`;
+                    }
+                })
+                .catch(error => {
+                    this.errorMessage = `Error when trying to visualize the dataset. Please make sure you uploaded the dataset ${trimmedValue}`;
+                });
         }
     }
 }">
@@ -54,7 +65,8 @@
                 Go
             </button>
         </div>
-
+        <!-- Display error message if dataset not found -->
+        <div x-show="errorMessage" class="text-red-500 mt-2" x-text="errorMessage"></div>
         <details class="mt-4 max-w-full px-4">
             <summary>More example datasets</summary>
             <ul class="list-disc list-inside max-h-28 overflow-y-auto break-all">
