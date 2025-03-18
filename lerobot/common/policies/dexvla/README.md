@@ -62,10 +62,9 @@ python lerobot/scripts/train.py \
 --policy.type dexvla \
 --policy.qwen2_vl_path /path/to/official/Qwen2-VL-2B-Instruct \
 --policy.pretrain_scaledp_path /path/to/pretrained/scale_dp_h/open_scale_dp_l_backbone.ckpt \
---policy.policy_head_size 'ScaleDP_H' \
+--policy.policy_head_size 'scaledp_h' \
 --policy.training_stage 2 \
 --dataset.repo_i folding_blue_tshirt \
---dataset.local_files_only true \
 --batch_size 2 \
 --policy.using_film true \
 --output_dir /path/to/output \
@@ -82,10 +81,9 @@ python lerobot/scripts/train.py \
 --policy.type dexvla \
 --policy.qwen2_vl_path /path/to/official/Qwen2-VL-2B-Instruct \
 --.pretrained_path /path/to/pretrained/stage2/weights \
---policy.policy_head_size 'ScaleDP_H' \
+--policy.policy_head_size 'scaledp_h' \
 --policy.training_stage 3 \
 --dataset.repo_i folding_blue_tshirt \
---dataset.local_files_only true \
 --batch_size 2 \
 --policy.using_film true \
 --output_dir /path/to/output \
