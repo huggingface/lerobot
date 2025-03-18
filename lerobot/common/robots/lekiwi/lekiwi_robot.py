@@ -30,6 +30,7 @@ from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnecte
 from lerobot.common.motors.feetech import (
     FeetechMotorsBus,
     TorqueMode,
+    apply_feetech_offsets_from_calibration,
     run_full_arm_calibration,
 )
 
@@ -202,6 +203,7 @@ class LeKiwiRobot(Robot):
                 json.dump(calibration, f)
 
         self.actuators_bus.set_calibration(calibration)
+        apply_feetech_offsets_from_calibration(self.actuators_bus, calibration)
 
     # TODO(Steven): Should this be dict[str, Any] ?
     def get_observation(self) -> dict[str, np.ndarray]:
