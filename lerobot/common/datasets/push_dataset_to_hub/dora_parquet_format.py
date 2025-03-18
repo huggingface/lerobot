@@ -68,9 +68,9 @@ def load_from_raw(raw_dir: Path, videos_dir: Path, fps: int, video: bool, episod
             modality_df,
             on="timestamp_utc",
             # "nearest" is the best option over "backward", since the latter can desynchronizes camera timestamps by
-            # matching timestamps that are too far appart, in order to fit the backward constraints. It's not the case for "nearest".
+            # matching timestamps that are too far apart, in order to fit the backward constraints. It's not the case for "nearest".
             # However, note that "nearest" might synchronize the reference camera with other cameras on slightly future timestamps.
-            # are too far appart.
+            # are too far apart.
             direction="nearest",
             tolerance=pd.Timedelta(f"{1 / fps} seconds"),
         )
@@ -126,7 +126,7 @@ def load_from_raw(raw_dir: Path, videos_dir: Path, fps: int, video: bool, episod
     videos_dir.parent.mkdir(parents=True, exist_ok=True)
     videos_dir.symlink_to((raw_dir / "videos").absolute())
 
-    # sanity check the video paths are well formated
+    # sanity check the video paths are well formatted
     for key in df:
         if "observation.images." not in key:
             continue
@@ -143,7 +143,7 @@ def load_from_raw(raw_dir: Path, videos_dir: Path, fps: int, video: bool, episod
             # it is the case for video_frame dictionary = [{"path": ..., "timestamp": ...}]
             data_dict[key] = [video_frame[0] for video_frame in df[key].values]
 
-            # sanity check the video path is well formated
+            # sanity check the video path is well formatted
             video_path = videos_dir.parent / data_dict[key][0]["path"]
             if not video_path.exists():
                 raise ValueError(f"Video file not found in {video_path}")

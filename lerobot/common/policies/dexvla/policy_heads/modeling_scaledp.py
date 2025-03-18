@@ -1,27 +1,20 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 # All rights reserved.
-from typing import Tuple
-
-import timm
-import numpy as np
 import logging
-
 import math
 from typing import Tuple
 
-try:
-    from typing import Literal
-except ImportError:
-    from typing_extensions import Literal
-
+import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+import torch.nn.functional as func
 import torch.utils.checkpoint
-from torch.jit import Final
 from timm.models.vision_transformer import Mlp, use_fused_attn
+from torch.jit import Final
+from transformers import AutoModel
 from transformers.modeling_utils import PreTrainedModel
-from transformers import AutoModel, AutoModelForCausalLM
+
+from .configuration_scaledp import ScaleDPPolicyConfig
 
 _logger = logging.getLogger(__name__)
 
@@ -30,20 +23,20 @@ class Attention(nn.Module):
     fused_attn: Final[bool]
 
     def __init__(
-            self,
-            dim: int,
-            num_heads: int = 8,
-            qkv_bias: bool = False,
-            qk_norm: bool = False,
-            attn_drop: float = 0.,
-            proj_drop: float = 0.,
-            norm_layer: nn.Module = nn.LayerNorm,
+        self,
+        dim: int,
+        num_heads: int = 8,
+        qkv_bias: bool = False,
+        qk_norm: bool = False,
+        attn_drop: float = 0.0,
+        proj_drop: float = 0.0,
+        norm_layer: nn.Module = nn.LayerNorm,
     ) -> None:
         super().__init__()
-        assert dim % num_heads == 0, 'dim should be divisible by num_heads'
+        assert dim % num_heads == 0, "dim should be divisible by num_heads"
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
-        self.scale = self.head_dim ** -0.5
+        self.scale = self.head_dim**-0.5
         self.fused_attn = use_fused_attn()
 
         self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
@@ -54,15 +47,18 @@ class Attention(nn.Module):
         self.proj_drop = nn.Dropout(proj_drop)
 
     def forward(self, x: torch.Tensor, attn_mask=None) -> torch.Tensor:
-        B, N, C = x.shape
-        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
+        b, n, c = x.shape
+        qkv = self.qkv(x).reshape(b, n, 3, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
         q, k, v = qkv.unbind(0)
         q, k = self.q_norm(q), self.k_norm(k)
 
         if self.fused_attn:
-            x = F.scaled_dot_product_attention(
-                q, k, v, attn_mask=attn_mask,
-                dropout_p=self.attn_drop.p if self.training else 0.,
+            x = func.scaled_dot_product_attention(
+                q,
+                k,
+                v,
+                attn_mask=attn_mask,
+                dropout_p=self.attn_drop.p if self.training else 0.0,
             )
         else:
             q = q * self.scale
@@ -79,7 +75,7 @@ class Attention(nn.Module):
                 attn_scores += attn_mask
 
             # Apply softmax to get attention weights (softmax is applied along the last dimension)
-            attn_weights = F.softmax(attn_scores, dim=-1)
+            attn_weights = func.softmax(attn_scores, dim=-1)
 
             # Dropout on attention weights (if dropout is used)
             attn_weights = self.attn_drop(attn_weights)
@@ -87,7 +83,7 @@ class Attention(nn.Module):
             # Apply attention weights to value tensor (V)
             x = torch.matmul(attn_weights, v)
 
-        x = x.transpose(1, 2).reshape(B, N, C)
+        x = x.transpose(1, 2).reshape(b, n, c)
         x = self.proj(x)
         x = self.proj_drop(x)
         return x
@@ -103,6 +99,7 @@ def modulate(x, shift, scale):
 #################################################################################
 #               Embedding Layers for Timesteps and Class Labels                 #
 #################################################################################
+
 
 class TimestepEmbedder(nn.Module):
     """
@@ -145,10 +142,10 @@ class TimestepEmbedder(nn.Module):
         return t_emb
 
 
-
 #################################################################################
 #                                 Core ScaleDP Model                                #
 #################################################################################
+
 
 class ScaleDPBlock(nn.Module):
     """
@@ -161,16 +158,20 @@ class ScaleDPBlock(nn.Module):
         self.attn = Attention(hidden_size, num_heads=num_heads, qkv_bias=True, **block_kwargs)
         self.norm2 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         mlp_hidden_dim = int(hidden_size * mlp_ratio)
-        approx_gelu = lambda: nn.GELU(approximate="tanh")
+
+        def approx_gelu():
+            return nn.GELU(approximate="tanh")
+
         self.mlp = Mlp(in_features=hidden_size, hidden_features=mlp_hidden_dim, act_layer=approx_gelu, drop=0)
-        self.adaLN_modulation = nn.Sequential(
-            nn.SiLU(),
-            nn.Linear(hidden_size, 6 * hidden_size, bias=True)
-        )
+        self.adaLN_modulation = nn.Sequential(nn.SiLU(), nn.Linear(hidden_size, 6 * hidden_size, bias=True))
 
     def forward(self, x, c, attn_mask=None):
-        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(c).chunk(6, dim=1)
-        x = x + gate_msa.unsqueeze(1) * self.attn(modulate(self.norm1(x), shift_msa, scale_msa), attn_mask=attn_mask) # norm, scale&shift, attn, scale,
+        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(c).chunk(
+            6, dim=1
+        )
+        x = x + gate_msa.unsqueeze(1) * self.attn(
+            modulate(self.norm1(x), shift_msa, scale_msa), attn_mask=attn_mask
+        )  # norm, scale&shift, attn, scale,
         x = x + gate_mlp.unsqueeze(1) * self.mlp(modulate(self.norm2(x), shift_mlp, scale_mlp))
         return x
 
@@ -184,10 +185,7 @@ class FinalLayer(nn.Module):
         super().__init__()
         self.norm_final = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         self.linear = nn.Linear(hidden_size, output_dim, bias=True)
-        self.adaLN_modulation = nn.Sequential(
-            nn.SiLU(),
-            nn.Linear(hidden_size, 2 * hidden_size, bias=True)
-        )
+        self.adaLN_modulation = nn.Sequential(nn.SiLU(), nn.Linear(hidden_size, 2 * hidden_size, bias=True))
 
     def forward(self, x, c):
         shift, scale = self.adaLN_modulation(c).chunk(2, dim=1)
@@ -195,37 +193,39 @@ class FinalLayer(nn.Module):
         x = self.linear(x)
         return x
 
-from .configuration_scaledp import ScaleDPPolicyConfig
+
 class ScaleDP(PreTrainedModel):
     """
     Diffusion models with a Transformer backbone.
     """
+
     config_class = ScaleDPPolicyConfig
+
     def __init__(
-            self,
-            config: ScaleDPPolicyConfig,
+        self,
+        config: ScaleDPPolicyConfig,
     ):
         super().__init__(config)
         # compute number of tokens for main trunk and conScaleDPion encoder
         if config.n_obs_steps is None:
             config.n_obs_steps = config.prediction_horizon
-        T = config.prediction_horizon
-        T_cond = 1
+        t = config.prediction_horizon
+        t_cond = 1
         if not config.time_as_cond:
-            T += 1
-            T_cond -= 1
+            t += 1
+            t_cond -= 1
         obs_as_cond = config.cond_dim > 0
         if obs_as_cond:
             assert config.time_as_cond
-            T_cond += config.n_obs_steps
+            t_cond += config.n_obs_steps
 
         # self.combine = nn.Linear(cond_dim+state_dim, cond_dim)
         self.combine = nn.Sequential(
-            nn.Linear(config.cond_dim+config.state_dim, 1024),
+            nn.Linear(config.cond_dim + config.state_dim, 1024),
             nn.ReLU(),
             nn.Linear(1024, 1024),
             nn.ReLU(),
-            nn.Linear(1024, config.cond_dim)
+            nn.Linear(1024, config.cond_dim),
         )
         self.learn_sigma = config.learn_sigma
         self.input_dim = config.input_dim
@@ -241,35 +241,37 @@ class ScaleDP(PreTrainedModel):
         # Will use fixed sin-cos embedding:
         self.pos_embed = nn.Parameter(torch.zeros(1, config.prediction_horizon, config.n_emb))
 
-        self.blocks = nn.ModuleList([
-            ScaleDPBlock(config.n_emb, config.num_heads, mlp_ratio=config.mlp_ratio) for _ in range(config.depth)
-        ])
+        self.blocks = nn.ModuleList(
+            [
+                ScaleDPBlock(config.n_emb, config.num_heads, mlp_ratio=config.mlp_ratio)
+                for _ in range(config.depth)
+            ]
+        )
         self.final_layer = FinalLayer(config.n_emb, output_dim=config.output_dim)
         # self.initialize_weights()
         # constants
-        self.T = T
-        self.T_cond = T_cond
+        self.t = t
+        self.t_cond = t_cond
         self.prediction_horizon = config.prediction_horizon
         self.time_as_cond = config.time_as_cond
         self.action_dim = config.output_dim
         self.obs_as_cond = obs_as_cond
-        logger.info(
-            "number of parameters in ScaleDP: %e", sum(p.numel() for p in self.parameters())
-        )
+        logger.info("number of parameters in ScaleDP: %e", sum(p.numel() for p in self.parameters()))
 
         from diffusers.schedulers.scheduling_ddim import DDIMScheduler
+
         self.num_inference_timesteps = config.num_inference_timesteps
         # self.proj_to_action = nn.Identity()
         self.noise_scheduler = DDIMScheduler(
-            num_train_timesteps=config.num_train_timesteps, # 100
-            beta_schedule='squaredcos_cap_v2',
+            num_train_timesteps=config.num_train_timesteps,  # 100
+            beta_schedule="squaredcos_cap_v2",
             clip_sample=True,
             set_alpha_to_one=True,
             steps_offset=0,
-            prediction_type='epsilon'
+            prediction_type="epsilon",
         )
-        self.num_queries = config.num_queries #16
-        self.noise_samples = config.noise_samples # 1
+        self.num_queries = config.num_queries  # 16
+        self.noise_samples = config.noise_samples  # 1
         # self.num_inference_timesteps = config.num_inference_timesteps # 100
 
     def initialize_weights(self):
@@ -308,7 +310,6 @@ class ScaleDP(PreTrainedModel):
         nn.init.constant_(self.final_layer.linear.weight, 0)
         nn.init.constant_(self.final_layer.linear.bias, 0)
 
-
     def get_optim_groups(self, weight_decay: float = 1e-3):
         """
         This long function is unfortunately doing something very simple and is being very defensive:
@@ -323,8 +324,8 @@ class ScaleDP(PreTrainedModel):
         whitelist_weight_modules = (torch.nn.Linear, Attention)
         blacklist_weight_modules = (torch.nn.LayerNorm, torch.nn.Embedding)
         for mn, m in self.named_modules():
-            for pn, p in m.named_parameters():
-                fpn = "%s.%s" % (mn, pn) if mn else pn  # full param name
+            for pn, _p in m.named_parameters():
+                fpn = "{}.{}".format(mn, pn) if mn else pn  # full param name
 
                 if pn.endswith("bias"):
                     # all biases will not be decayed
@@ -340,70 +341,71 @@ class ScaleDP(PreTrainedModel):
                     no_decay.add(fpn)
 
         # validate that we considered every parameter
-        param_dict = {pn: p for pn, p in self.named_parameters()}
+        param_dict = dict(self.named_parameters())
         inter_params = decay & no_decay
         union_params = decay | no_decay
-        assert (
-                len(inter_params) == 0
-        ), "parameters %s made it into both decay/no_decay sets!" % (str(inter_params),)
-        assert (
-                len(param_dict.keys() - union_params) == 0
-        ), "parameters %s were not separated into either decay/no_decay set!" % (
-            str(param_dict.keys() - union_params),
+        assert len(inter_params) == 0, "parameters {} made it into both decay/no_decay sets!".format(
+            str(inter_params)
+        )
+        assert len(param_dict.keys() - union_params) == 0, (
+            "parameters {} were not separated into either decay/no_decay set!".format(
+                str(param_dict.keys() - union_params),
+            )
         )
 
         # create the pytorch optimizer object
         optim_groups = [
             {
-                "params": [param_dict[pn] for pn in sorted(list(decay))],
+                "params": [param_dict[pn] for pn in sorted(decay)],
                 "weight_decay": weight_decay,
             },
             {
-                "params": [param_dict[pn] for pn in sorted(list(no_decay))],
+                "params": [param_dict[pn] for pn in sorted(no_decay)],
                 "weight_decay": 0.0,
             },
         ]
         return optim_groups
 
-    def configure_optimizers(self,
-                             learning_rate: float = 1e-4,
-                             weight_decay: float = 1e-3,
-                             betas: Tuple[float, float] = (0.9, 0.95)):
+    def configure_optimizers(
+        self,
+        learning_rate: float = 1e-4,
+        weight_decay: float = 1e-3,
+        betas: Tuple[float, float] = (0.9, 0.95),
+    ):
         optim_groups = self.get_optim_groups(weight_decay=weight_decay)
-        optimizer = torch.optim.AdamW(
-            optim_groups, lr=learning_rate, betas=betas
-        )
+        optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=betas)
         return optimizer
 
     def forward(self, actions, hidden_states, states, is_pad):
         """
         Forward pass for the diffusion head.
-        :param actions: target actions, shape [B, Ta, D] D:10 = 3+6+1
-        :param hidden_states: hidden states from the llava_pythia, as the conScaleDPion for the diffusion, shape [B,Tokens, D] 8 1200 1024
-        :param states: robot states, shape [B, D]
+        :param actions: target actions, shape [b, Ta, D] D:10 = 3+6+1
+        :param hidden_states: hidden states from the llava_pythia, as the conScaleDPion for the diffusion, shape [b,Tokens, D] 8 1200 1024
+        :param states: robot states, shape [b, D]
         :return: loss
         """
         if actions is not None:  # training time
-            B = actions.size(0)
-            actions = actions[:, :self.num_queries]
-            is_pad = is_pad[:, :self.num_queries]
+            b = actions.size(0)
+            actions = actions[:, : self.num_queries]
+            is_pad = is_pad[:, : self.num_queries]
             num_noise_samples = self.noise_samples
             # sample noise to add to actions
-            noise = torch.randn([num_noise_samples] + list(actions.shape), device=actions.device,
-                                dtype=actions.dtype)  # num_noise, B, Ta, D(1, 2, 16, 14)
+            noise = torch.randn(
+                [num_noise_samples] + list(actions.shape), device=actions.device, dtype=actions.dtype
+            )  # num_noise, b, Ta, D(1, 2, 16, 14)
             # sample a diffusion iteration for each data point
             timesteps = torch.randint(
-                0, self.noise_scheduler.config.num_train_timesteps,
-                (B,), device=actions.device
+                0, self.noise_scheduler.config.num_train_timesteps, (b,), device=actions.device
             ).long()
 
             timesteps, noise = timesteps.to(actions.device), noise.to(actions.device)
 
             # add noise to the clean actions according to the noise magnitude at each diffusion iteration
             # (this is the forward diffusion process)
-            noisy_actions = torch.cat([self.noise_scheduler.add_noise(
-                actions, noise[i], timesteps)
-                for i in range(len(noise))], dim=0)  # [num_noise_samples * B, Ta, action_dim]
+            noisy_actions = torch.cat(
+                [self.noise_scheduler.add_noise(actions, noise[i], timesteps) for i in range(len(noise))],
+                dim=0,
+            )  # [num_noise_samples * b, Ta, action_dim]
 
             noisy_actions = noisy_actions.to(dtype=actions.dtype)
             assert hidden_states.ndim == 3
@@ -411,22 +413,24 @@ class ScaleDP(PreTrainedModel):
             hidden_states = hidden_states.repeat(num_noise_samples, 1, 1)
             timesteps = timesteps.repeat(num_noise_samples)
             is_pad = is_pad.repeat(num_noise_samples, 1)
-            states = states.repeat(num_noise_samples,  1)
+            states = states.repeat(num_noise_samples, 1)
 
-            noise_pred = self.model_forward(noisy_actions, timesteps, global_cond=hidden_states, states=states)
+            noise_pred = self.model_forward(
+                noisy_actions, timesteps, global_cond=hidden_states, states=states
+            )
             noise = noise.view(noise.size(0) * noise.size(1), *noise.size()[2:])
-            loss = torch.nn.functional.mse_loss(noise_pred, noise, reduction='none')
+            loss = torch.nn.functional.mse_loss(noise_pred, noise, reduction="none")
             loss = (loss * ~is_pad.unsqueeze(-1)).mean()
             # loss_dict['loss'] = loss
-            return {'loss': loss}
+            return {"loss": loss}
             # return loss
         else:  # inference time
-            B = 1
-            Tp = self.num_queries
+            b = 1
+            tp = self.num_queries
             action_dim = self.action_dim
 
-            # initialize action from Guassian noise
-            noisy_action = torch.randn((B, Tp, action_dim)).cuda()
+            # initialize action from Gaussian noise
+            noisy_action = torch.randn((b, tp, action_dim)).cuda()
 
             naction = noisy_action.to(dtype=hidden_states.dtype)
             # init scheduler
@@ -438,9 +442,7 @@ class ScaleDP(PreTrainedModel):
 
                 # inverse diffusion step (remove noise)
                 naction = self.noise_scheduler.step(
-                    model_output=noise_pred,
-                    timestep=k,
-                    sample=naction
+                    model_output=noise_pred, timestep=k, sample=naction
                 ).prev_sample
 
             return naction
@@ -462,7 +464,9 @@ class ScaleDP(PreTrainedModel):
             t = t[None].to(x.device)
         t = t.expand(t.shape[0])
 
-        x = self.x_embedder(x) + self.pos_embed.to(device=x.device, dtype=x.dtype)  # (N, T, D), where T = prediction_horizon
+        x = self.x_embedder(x) + self.pos_embed.to(
+            device=x.device, dtype=x.dtype
+        )  # (N, T, D), where T = prediction_horizon
         t = self.t_embedder(t)  # (N, D)
         if self.obs_as_cond:
             global_cond = self.cond_obs_emb(global_cond)  # (N, D)
@@ -474,10 +478,12 @@ class ScaleDP(PreTrainedModel):
         x = self.final_layer(x, c)  # (N, T, output_dim)
         return x
 
+
 #################################################################################
 #                   Sine/Cosine Positional Embedding Functions                  #
 #################################################################################
 # https://github.com/facebookresearch/mae/blob/main/util/pos_embed.py
+
 
 def get_2d_sincos_pos_embed(embed_dim, grid_size, cls_token=False, extra_tokens=0):
     """
@@ -516,11 +522,11 @@ def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
     """
     assert embed_dim % 2 == 0
     omega = np.arange(embed_dim // 2, dtype=np.float64)
-    omega /= embed_dim / 2.
-    omega = 1. / 10000 ** omega  # (D/2,)
+    omega /= embed_dim / 2.0
+    omega = 1.0 / 10000**omega  # (D/2,)
 
     pos = pos.reshape(-1)  # (M,)
-    out = np.einsum('m,d->md', pos, omega)  # (M, D/2), outer product
+    out = np.einsum("m,d->md", pos, omega)  # (M, D/2), outer product
 
     emb_sin = np.sin(out)  # (M, D/2)
     emb_cos = np.cos(out)  # (M, D/2)
@@ -533,12 +539,13 @@ def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
 #                                   ScaleDP Configs                                  #
 #################################################################################
 
-def ScaleDP_H(**kwargs):
+
+def scaledp_h(**kwargs):
     return ScaleDP(depth=32, n_emb=1280, num_heads=16, **kwargs)
 
-def ScaleDP_L(**kwargs):
-    return ScaleDP(depth=24, n_emb=1024, num_heads=16, **kwargs)
 
+def scaledp_l(**kwargs):
+    return ScaleDP(depth=24, n_emb=1024, num_heads=16, **kwargs)
 
 
 AutoModel.register(ScaleDPPolicyConfig, ScaleDP)

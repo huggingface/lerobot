@@ -1,16 +1,18 @@
-import torch
-from torch import Tensor
-
-from lerobot.common.policies.normalize import Normalize, Unnormalize
-from lerobot.common.policies.dexvla.configuration_dexvla import DexVLAConfig
-from lerobot.common.policies.dexvla.qwe2_vla.modeling_qwen2_vla import (
-    Qwen2VLForConditionalGenerationForVLA
-)
-from lerobot.common.policies.pretrained import PreTrainedPolicy
 from collections import deque
-from lerobot.common.policies.dexvla.policy_heads.modeling_unet_diffusion import ConditionalUnet1D
-from lerobot.common.policies.dexvla.policy_heads.modeling_scaledp import ScaleDP
+
+import torch
+import torchvision.transforms as transforms
+from torch import Tensor
+from transformers import AutoProcessor, AutoTokenizer
+
+from lerobot.common.policies.dexvla.configuration_dexvla import DexVLAConfig
+from lerobot.common.policies.dexvla.qwe2_vla.modeling_qwen2_vla import Qwen2VLForConditionalGenerationForVLA
 from lerobot.common.policies.dexvla.robot_data_processor import Qwen2VLAProcess
+from lerobot.common.policies.normalize import Normalize, Unnormalize
+from lerobot.common.policies.pretrained import PreTrainedPolicy
+
+
+from collections import deque
 from transformers import AutoProcessor, AutoTokenizer, AutoModelForCausalLM
 import torchvision.transforms as transforms
 import os
@@ -45,7 +47,7 @@ class DexVLAPolicy(PreTrainedPolicy):
             config.output_features, config.normalization_mapping, dataset_stats
         )
 
-        for k in ['using_film', 'llm_loss_weight', 'with_llm_head', 'policy_head_config']:
+        for k in ["using_film", "llm_loss_weight", "with_llm_head", "policy_head_config"]:
             setattr(config.qwen2_vla_config, k, config.__dict__[k])
 
         # if self.config.training_stage == 2:
@@ -82,10 +84,10 @@ class DexVLAPolicy(PreTrainedPolicy):
         self.model.requires_grad_(False)
         self.model.policy_head.requires_grad_(True)
         self.qwen2_vl_processor = AutoProcessor.from_pretrained(config.qwen2_vl_path)
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            config.qwen2_vl_path
-        )
-        self.vla_processor = Qwen2VLAProcess(tokenizer=self.tokenizer, multimodal_processor=self.qwen2_vl_processor) # process the input data into VLM format
+        self.tokenizer = AutoTokenizer.from_pretrained(config.qwen2_vl_path)
+        self.vla_processor = Qwen2VLAProcess(
+            tokenizer=self.tokenizer, multimodal_processor=self.qwen2_vl_processor
+        )  # process the input data into VLM format
 
         self.resize_size = self.config.resize_size
         ratio = 0.95
@@ -104,14 +106,14 @@ class DexVLAPolicy(PreTrainedPolicy):
         batch = self.normalize_inputs(batch)
         batch = self.normalize_targets(batch)
         present_img_keys = [key for key in self.config.image_features if key in batch]
-        task_descs = batch['task']
+        task_descs = batch["task"]
         try:
-            reasonings = batch['reasoning']
+            reasonings = batch["reasoning"]
         except KeyError:
-            reasonings = ['no reasoning'] * len(task_descs)
+            reasonings = ["no reasoning"] * len(task_descs)
 
         pass
-        is_pad = batch['action_is_pad']
+        is_pad = batch["action_is_pad"]
         all_cam_images = []
         for k in present_img_keys:
             all_cam_images.append(batch[k])
@@ -120,8 +122,8 @@ class DexVLAPolicy(PreTrainedPolicy):
         image_data = torch.stack(all_cam_images) * 255
         image_data = image_data.to(dtype=torch.uint8)
         # construct observations
-        qpos_data = batch['observation.state'].float()
-        action_data = batch['action'].float()
+        qpos_data = batch["observation.state"].float()
+        action_data = batch["action"].float()
 
         orig_shape = image_data.shape
         image_data = image_data.view(-1, *orig_shape[2:])
@@ -131,46 +133,41 @@ class DexVLAPolicy(PreTrainedPolicy):
 
         image_data = image_data.view(*orig_shape[:3], *self.resize_size)
 
-        vl_data = {
-            'images': image_data,
-            'raw_langs': task_descs,
-            'reasonings': reasonings
-        }
+        vl_data = {"images": image_data, "raw_langs": task_descs, "reasonings": reasonings}
         # processing vl_data into qwen2_vl format
         vla_inputs = self.vla_processor.forward(vl_data, use_reasoning=self.config.using_reasoning)
-        vla_inputs['states'] = qpos_data
-        vla_inputs['is_pad'] = is_pad
-        vla_inputs['actions'] = action_data
+        vla_inputs["states"] = qpos_data
+        vla_inputs["is_pad"] = is_pad
+        vla_inputs["actions"] = action_data
         return vla_inputs
 
-
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict[str, Tensor]]:
-
         processed_batch = self.process_batch(batch)
 
         ret = self.model.forward(**processed_batch)
-        loss_dict = ret['loss']
-        loss = loss_dict['loss'].mean()
+        loss_dict = ret["loss"]
+        loss = loss_dict["loss"].mean()
         return loss, loss_dict
 
-    def dexvla_predict_action(self,
-          input_ids: torch.LongTensor = None,
-          actions=None,
-          states=None,
-          is_pad=None,
-          tokenizer=None,
-          is_eval=True,
-          pixel_values=None,
-          attention_mask=None,
-          image_grid_thw=None,
-          ):
-        input_ids = input_ids.to('cuda')
+    def dexvla_predict_action(
+        self,
+        input_ids: torch.LongTensor = None,
+        actions=None,
+        states=None,
+        is_pad=None,
+        tokenizer=None,
+        is_eval=True,
+        pixel_values=None,
+        attention_mask=None,
+        image_grid_spatiotemporal=None,
+    ):
+        input_ids = input_ids.to("cuda")
         with torch.inference_mode():
             outputs = self.model.generate(
                 input_ids,
                 pixel_values=pixel_values,
                 attention_mask=attention_mask,
-                image_grid_thw=image_grid_thw,
+                image_grid_spatiotemporal=image_grid_spatiotemporal,
                 is_eval=is_eval,
                 num_beams=1,
                 do_sample=False,
@@ -188,7 +185,7 @@ class DexVLAPolicy(PreTrainedPolicy):
         input_token_len = input_ids.shape[1]
         n_diff_input_output = (input_ids != output_ids[:, :input_token_len]).sum().item()
         if n_diff_input_output > 0:
-            print(f'[Warning] {n_diff_input_output} output_ids are not the same as the input_ids')
+            print(f"[Warning] {n_diff_input_output} output_ids are not the same as the input_ids")
         outputs_text = tokenizer.batch_decode(output_ids[:, input_token_len:], skip_special_tokens=False)[0]
 
         outputs_text = outputs_text.strip()
@@ -198,35 +195,44 @@ class DexVLAPolicy(PreTrainedPolicy):
         action_hidden_states = None
 
         if self.model.using_film:
-            action_hidden_states = self.model.film_forward(labels=torch.ones_like(output_ids),
-                                                     input_ids=output_ids,
-                                                     hidden_states=torch.cat(last_hidden_states, dim=1))
+            action_hidden_states = self.model.film_forward(
+                labels=torch.ones_like(output_ids),
+                input_ids=output_ids,
+                hidden_states=torch.cat(last_hidden_states, dim=1),
+            )
 
-        action = self.model.policy_head(actions, action_hidden_states, states.to(all_hidden_states.dtype), is_pad)
+        action = self.model.policy_head(
+            actions, action_hidden_states, states.to(all_hidden_states.dtype), is_pad
+        )
         return action, outputs_text
 
-    def tinyvla_predict_action(self,
-                         input_ids: torch.LongTensor = None,
-                         actions=None,
-                         states=None,
-                         is_pad=None,
-                         is_eval=True,
-                         pixel_values=None,
-                         attention_mask=None,
-                         image_grid_thw=None,
-                         ):
-        input_ids = input_ids.to('cuda')
+    def tinyvla_predict_action(
+        self,
+        input_ids: torch.LongTensor = None,
+        actions=None,
+        states=None,
+        is_pad=None,
+        is_eval=True,
+        pixel_values=None,
+        attention_mask=None,
+        image_grid_spatiotemporal=None,
+    ):
+        input_ids = input_ids.to("cuda")
         with torch.inference_mode():
-            all_hidden_states = self.model.forward(input_ids,
-                                             pixel_values=pixel_values,
-                                             attention_mask=attention_mask,
-                                             image_grid_thw=image_grid_thw,
-                                             is_eval=is_eval,
-                                             tinyvla=True)
+            all_hidden_states = self.model.forward(
+                input_ids,
+                pixel_values=pixel_values,
+                attention_mask=attention_mask,
+                image_grid_spatiotemporal=image_grid_spatiotemporal,
+                is_eval=is_eval,
+                tinyvla=True,
+            )
 
         all_hidden_states = torch.mean(all_hidden_states, dim=1).unsqueeze(1)
 
-        action = self.model.policy_head(actions, all_hidden_states, states.to(all_hidden_states.dtype), is_pad)
+        action = self.model.policy_head(
+            actions, all_hidden_states, states.to(all_hidden_states.dtype), is_pad
+        )
         return action, "tinyvla generates no reasoning"
 
     def reset(self):
@@ -250,7 +256,7 @@ class DexVLAPolicy(PreTrainedPolicy):
         if len(self._action_queue) == 0:
             present_img_keys = [key for key in self.config.image_features if key in batch]
             try:
-                task_descs = batch['task']
+                task_descs = batch["task"]
             except KeyError:
                 task_descs = " "
                 print("No task descriptions found for this task")
@@ -263,7 +269,7 @@ class DexVLAPolicy(PreTrainedPolicy):
             image_data = torch.stack(all_cam_images) * 255
             image_data = image_data.to(dtype=torch.uint8)
             # construct observations
-            qpos_data = batch['observation.state'].float()
+            qpos_data = batch["observation.state"].float()
 
             image_data = image_data.squeeze(0)
 
@@ -271,20 +277,19 @@ class DexVLAPolicy(PreTrainedPolicy):
                 image_data = transform(image_data)
 
             # processing vl_data into qwen2_vl format
-            vla_inputs = self.vla_processor.single_forward_process(images=image_data, raw_lang=task_descs, reasoning=None, eval=True)
-            vla_inputs['states'] = qpos_data
+            vla_inputs = self.vla_processor.single_forward_process(
+                images=image_data, raw_lang=task_descs, reasoning=None, eval=True
+            )
+            vla_inputs["states"] = qpos_data
 
-            if self.config.using_film and self.config.with_llm_head: # dexvla
-                all_actions, outputs = self.dexvla_predict_action(**vla_inputs, is_eval=True, tokenizer=self.tokenizer)
-            else: # tinyvla
+            if self.config.using_film and self.config.with_llm_head:  # dexvla
+                all_actions, outputs = self.dexvla_predict_action(
+                    **vla_inputs, is_eval=True, tokenizer=self.tokenizer
+                )
+            else:  # tinyvla
                 all_actions, outputs = self.tinyvla_predict_action(**vla_inputs, is_eval=True)
 
             actions = self.unnormalize_outputs({"action": all_actions})["action"]
             self._action_queue.extend(actions.transpose(0, 1))
 
         return self._action_queue.popleft()
-
-
-
-
-

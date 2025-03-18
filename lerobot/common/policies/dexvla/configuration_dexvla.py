@@ -1,4 +1,3 @@
-# coding=utf-8
 # Copyright 2024 The Qwen team, Alibaba Group and the HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,31 +13,29 @@
 # limitations under the License.
 """Qwen2VL model configuration"""
 
+from dataclasses import dataclass, field
 from typing import Tuple
 
-from dataclasses import dataclass, field
-
 from transformers import AutoConfig
+from transformers.utils import logging
 
 from lerobot.common.optim.optimizers import AdamWConfig
 from lerobot.common.optim.schedulers import (
     CosineDecayWithWarmupSchedulerConfig,
     ConstantWithWarmupSchedulerConfig
 )
-from transformers.utils import logging
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.common.policies.dexvla.policy_heads.configuration_scaledp import ScaleDPPolicyConfig
-from lerobot.common.policies.dexvla.policy_heads.configuration_unet_diffusion import UnetDiffusionPolicyConfig
-from lerobot.common.policies.dexvla.qwe2_vla.configuration_qwen2_vla import Qwen2VLAConfig
 from lerobot.configs.types import NormalizationMode
 
 logger = logging.get_logger(__name__)
+
+
 @PreTrainedConfig.register_subclass("dexvla")
 @dataclass
 class DexVLAConfig(PreTrainedConfig):
     # For loading policy head
-    policy_head_type: str = 'scale_dp_policy'
-    policy_head_size: str = 'ScaleDP_L'
+    policy_head_type: str = "scale_dp_policy"
+    policy_head_size: str = "ScaleDP_L"
     action_dim: int = 14
     state_dim: int = 14
     chunk_size: int = 50
@@ -86,33 +83,37 @@ class DexVLAConfig(PreTrainedConfig):
                 f"Multiple observation steps not handled yet. Got `nobs_steps={self.n_obs_steps}`"
             )
         if self.using_reasoning:
-            assert self.using_film, f"using_reasoning requires `using_film=True`"
-            assert self.with_llm_head, f"using_reasoning requires `with_llm_head=True`"
+            assert self.using_film, "using_reasoning requires `using_film=True`"
+            assert self.with_llm_head, "using_reasoning requires `with_llm_head=True`"
             print("You have set using_reasoning=True, please make sure your data has key 'reasoning'.")
         else:
-            print(f"Warning:DexVLA recommends to use reasoning data which can better handle long-horizon and dexterous tasks. You can set 'using_reaasoning=True'.")
+            print(
+                "Warning:DexVLA recommends to use reasoning data which can better handle long-horizon and dexterous tasks. You can set 'using_reaasoning=True'."
+            )
 
         if self.qwen2_vl_path is None:
-            raise ValueError("DexVLA is built on official qwen2_vl-2B. You have to download the official weights of qwen2_vl-2B first and set 'qwen2_vl_path'.")
+            raise ValueError(
+                "DexVLA is built on official qwen2_vl-2B. You have to download the official weights of qwen2_vl-2B first and set 'qwen2_vl_path'."
+            )
 
-        if self.policy_head_type == 'scale_dp_policy':
+        if self.policy_head_type == "scale_dp_policy":
             self.policy_head_config = AutoConfig.for_model(
                 model_type=self.policy_head_type,
                 model_size=self.policy_head_size,
                 cond_dim=self.hidden_size,
                 action_dim=self.action_dim,
                 prediction_horizon=self.chunk_size,
-                state_dim=self.state_dim
+                state_dim=self.state_dim,
             )
-        elif self.policy_head_type == 'unet_diffusion':
+        elif self.policy_head_type == "unet_diffusion":
             self.policy_head_config = AutoConfig.for_model(
                 model_type=self.policy_head_type,
                 global_cond_dim=self.hidden_size,
                 action_dim=self.action_dim,
-                state_dim=self.state_dim
+                state_dim=self.state_dim,
             )
         else:
-            raise ValueError(f'Policy head type {self.policy_head_type} not supported')
+            raise ValueError(f"Policy head type {self.policy_head_type} not supported")
 
         if self.training_stage not in [2,3]:
             raise ValueError(f"Training stage must be 2 or 3. Got {self.training_stage}.")
@@ -164,6 +165,3 @@ class DexVLAConfig(PreTrainedConfig):
     @property
     def reward_delta_indices(self) -> None:
         return None
-
-
-

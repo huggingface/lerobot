@@ -1,3 +1,16 @@
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 """
 Utilities to control a robot in simulation.
 
@@ -59,8 +72,8 @@ python lerobot/scripts/control_sim_robot.py record \
 ```
 
 **NOTE**: You can use your keyboard to control data recording flow.
-- Tap right arrow key '->' to early exit while recording an episode and go to reseting the environment.
-- Tap right arrow key '->' to early exit while reseting the environment and got to recording the next episode.
+- Tap right arrow key '->' to early exit while recording an episode and go to resetting the environment.
+- Tap right arrow key '->' to early exit while resetting the environment and got to recording the next episode.
 - Tap left arrow key '<-' to early exit and re-record the current episode.
 - Tap escape key 'esc' to stop the data recording.
 This might require a sudo permission to allow your terminal to monitor keyboard events.
@@ -131,7 +144,7 @@ def none_or_int(value):
 
 def init_sim_calibration(robot, cfg):
     # Constants necessary for transforming the joint pos of the real robot to the sim
-    # depending on the robot discription used in that sim.
+    # depending on the robot description used in that sim.
     start_pos = np.array(robot.leader_arms.main.calibration["start_pos"])
     axis_directions = np.array(cfg.get("axis_directions", [1]))
     offsets = np.array(cfg.get("offsets", [0])) * np.pi
@@ -445,7 +458,7 @@ if __name__ == "__main__":
         type=int,
         default=0,
         help=(
-            "Number of subprocesses handling the saving of frames as PNGs. Set to 0 to use threads only; "
+            "Number of subprocesses handling the saving of frames as PNG. Set to 0 to use threads only; "
             "set to ≥1 to use subprocesses, each using threads to write images. The best number of processes "
             "and threads depends on your system. We recommend 4 threads per camera with 0 processes. "
             "If fps is unstable, adjust the thread count. If still unstable, try using 1 or more subprocesses."

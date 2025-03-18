@@ -31,6 +31,7 @@ from lerobot.common.robot_devices.robots.configs import AlohaRobotConfig
 
 LOCAL_DIR = Path("data/")
 
+# spellchecker:off
 ALOHA_MOBILE_INFO = {
     "robot_config": AlohaRobotConfig(),
     "license": "mit",
@@ -856,6 +857,7 @@ DATASETS = {
             }""").lstrip(),
     },
 }
+# spellchecker:on
 
 
 def batch_convert():

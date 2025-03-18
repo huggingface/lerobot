@@ -38,7 +38,7 @@ from lerobot.common.policies.vqbet.configuration_vqbet import VQBeTConfig
 This file is part of a VQ-BeT that utilizes code from the following repositories:
 
     - Vector Quantize PyTorch code is licensed under the MIT License:
-        Origianl source: https://github.com/lucidrains/vector-quantize-pytorch
+        Original source: https://github.com/lucidrains/vector-quantize-pytorch
 
     - nanoGPT part is an adaptation of Andrej Karpathy's nanoGPT implementation in PyTorch.
         Original source: https://github.com/karpathy/nanoGPT
@@ -289,7 +289,7 @@ class GPT(nn.Module):
 This file is a part for Residual Vector Quantization that utilizes code from the following repository:
 
     - Phil Wang's vector-quantize-pytorch implementation in PyTorch.
-        Origianl source: https://github.com/lucidrains/vector-quantize-pytorch
+        Original source: https://github.com/lucidrains/vector-quantize-pytorch
 
     - The vector-quantize-pytorch code is licensed under the MIT License:
 
@@ -1349,9 +1349,9 @@ class EuclideanCodebook(nn.Module):
 
         # calculate distributed variance
 
-        variance_numer = reduce((data - batch_mean) ** 2, "h n d -> h 1 d", "sum")
-        distributed.all_reduce(variance_numer)
-        batch_variance = variance_numer / num_vectors
+        variance_number = reduce((data - batch_mean) ** 2, "h n d -> h 1 d", "sum")
+        distributed.all_reduce(variance_number)
+        batch_variance = variance_number / num_vectors
 
         self.update_with_decay("batch_variance", batch_variance, self.affine_param_batch_decay)
 

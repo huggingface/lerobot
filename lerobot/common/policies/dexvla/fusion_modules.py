@@ -1,16 +1,18 @@
 import torch.nn as nn
 
+
 class ActionProjector(nn.Module):
     def __init__(self, in_dim, out_dim=1024):
-        super(ActionProjector, self).__init__()
+        super().__init__()
         self.global_1d_pool = nn.AdaptiveAvgPool1d(1)
-        self.mlps = nn.ModuleList([
-            # nn.LayerNorm(in_dim),
-            nn.Linear(in_dim, in_dim),
-            nn.GELU(),
-            nn.Linear(in_dim, out_dim),
-            nn.Dropout(0.0),
-        ]
+        self.mlps = nn.ModuleList(
+            [
+                # nn.LayerNorm(in_dim),
+                nn.Linear(in_dim, in_dim),
+                nn.GELU(),
+                nn.Linear(in_dim, out_dim),
+                nn.Dropout(0.0),
+            ]
         )
 
     def forward(self, x):
@@ -22,7 +24,7 @@ class ActionProjector(nn.Module):
 
 class FiLM(nn.Module):
     def __init__(self, feature_dim, condition_dim):
-        super(FiLM, self).__init__()
+        super().__init__()
         self.scale_fc = nn.Linear(condition_dim, feature_dim)
         self.shift_fc = nn.Linear(condition_dim, feature_dim)
 

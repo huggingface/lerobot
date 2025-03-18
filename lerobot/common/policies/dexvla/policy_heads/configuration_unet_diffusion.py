@@ -1,32 +1,36 @@
 import os
-from typing import Union, List
-from transformers import PretrainedConfig
+from typing import Union
 
+from transformers import AutoConfig, PretrainedConfig
 from transformers.utils import logging
-from transformers import AutoConfig, AutoModelForCausalLM
+
 logger = logging.get_logger(__name__)
 
+
 class UnetDiffusionPolicyConfig(PretrainedConfig):
-    '''
+    """
     Configuration for dit diffusion policy head
-    '''
+    """
+
     model_type = "unet_diffusion_policy"
 
     def __init__(
-            self,
-            action_dim=10,
-            global_cond_dim=2048,
-            diffusion_step_embed_dim=256,
-            down_dims=[256, 512, 1024],
-            kernel_size=5,
-            n_groups=8,
-            state_dim=7,
-            prediction_horizon=16,
-            noise_samples=1,
-            num_inference_timesteps=10,
-            num_train_timesteps=100,
-            **kwargs
+        self,
+        action_dim=10,
+        global_cond_dim=2048,
+        diffusion_step_embed_dim=256,
+        down_dims=None,
+        kernel_size=5,
+        n_groups=8,
+        state_dim=7,
+        prediction_horizon=16,
+        noise_samples=1,
+        num_inference_timesteps=10,
+        num_train_timesteps=100,
+        **kwargs,
     ):
+        if down_dims is None:
+            down_dims = [256, 512, 1024]
         self.input_dim = action_dim
         self.noise_samples = noise_samples
         self.prediction_horizon = prediction_horizon
@@ -42,7 +46,9 @@ class UnetDiffusionPolicyConfig(PretrainedConfig):
         super().__init__(**kwargs)
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path: Union[str, os.PathLike], **kwargs) -> "PretrainedConfig":
+    def from_pretrained(
+        cls, pretrained_model_name_or_path: Union[str, os.PathLike], **kwargs
+    ) -> "PretrainedConfig":
         cls._set_token_in_kwargs(kwargs)
 
         config_dict, kwargs = cls.get_config_dict(pretrained_model_name_or_path, **kwargs)
@@ -51,12 +57,17 @@ class UnetDiffusionPolicyConfig(PretrainedConfig):
         if config_dict.get("model_type") == "llava_pythia":
             config_dict = config_dict["action_head"]
 
-        if "model_type" in config_dict and hasattr(cls, "model_type") and config_dict["model_type"] != cls.model_type:
+        if (
+            "model_type" in config_dict
+            and hasattr(cls, "model_type")
+            and config_dict["model_type"] != cls.model_type
+        ):
             logger.warning(
                 f"You are using a model of type {config_dict['model_type']} to instantiate a model of type "
                 f"{cls.model_type}. This is not supported for all configurations of models and can yield errors."
             )
 
         return cls.from_dict(config_dict, **kwargs)
+
 
 AutoConfig.register("unet_diffusion_policy", UnetDiffusionPolicyConfig)

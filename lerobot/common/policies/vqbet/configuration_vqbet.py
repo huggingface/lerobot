@@ -66,7 +66,7 @@ class VQBeTConfig(PreTrainedConfig):
             within the image size. If None, no cropping is done.
         crop_is_random: Whether the crop should be random at training time (it's always a center crop in eval
             mode).
-        pretrained_backbone_weights: Pretrained weights from torchvision to initalize the backbone.
+        pretrained_backbone_weights: Pretrained weights from torchvision to initialize the backbone.
             `None` means no pretrained weights.
         use_group_norm: Whether to replace batch normalization with group normalization in the backbone.
             The group sizes are set to be about 16 (to be precise, feature_dim // 16).

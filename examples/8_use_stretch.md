@@ -98,7 +98,7 @@ python lerobot/scripts/control_robot.py \
 ```
 This is equivalent to running `stretch_robot_home.py`
 
-> **Note:** If you run any of the LeRobot scripts below and Stretch is not poperly homed, it will automatically home/calibrate first.
+> **Note:** If you run any of the LeRobot scripts below and Stretch is not properly homed, it will automatically home/calibrate first.
 
 **Teleoperate**
 Before trying teleoperation, you need activate the gamepad controller by pressing the middle button. For more info, see Stretch's [doc](https://docs.hello-robot.com/0.3/getting_started/hello_robot/#gamepad-teleoperation).

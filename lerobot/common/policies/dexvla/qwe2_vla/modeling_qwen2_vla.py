@@ -1,4 +1,3 @@
-# coding=utf-8
 # Copyright 2024 The Qwen team, Alibaba Group and the HuggingFace Inc. team. All rights reserved.
 #
 # This code is based on EleutherAI's GPT-NeoX library and the GPT-NeoX
@@ -19,16 +18,17 @@
 # limitations under the License.
 """PyTorch Qwen2-VL model."""
 
+import gc
 import math
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+import torch.nn.functional as func
 import torch.utils.checkpoint
 from torch.nn import CrossEntropyLoss, LayerNorm
-
+from transformers import AutoConfig, AutoModel, AutoModelForCausalLM
 from transformers.activations import ACT2FN
 from transformers.cache_utils import Cache, SlidingWindowCache, StaticCache
 from transformers.generation import GenerationMixin
@@ -37,8 +37,6 @@ from transformers.modeling_outputs import (
     BaseModelOutputWithPast,
     ModelOutput,
 )
-from lerobot.common.policies.dexvla.fusion_modules import *
-
 from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
 from transformers.modeling_utils import PreTrainedModel
 from transformers.utils import (
@@ -49,14 +47,13 @@ from transformers.utils import (
     logging,
     replace_return_docstrings,
 )
-from .configuration_qwen2_vla import Qwen2VLAConfig, Qwen2VLVisionConfig
-from transformers import AutoConfig, AutoModel
-import gc
 
+from lerobot.common.policies.dexvla.fusion_modules import ActionProjector, FiLM
+
+from .configuration_qwen2_vla import Qwen2VLAConfig, Qwen2VLVisionConfig
 
 if is_flash_attn_2_available():
     from flash_attn import flash_attn_varlen_func
-
     from transformers.modeling_flash_attention_utils import _flash_attention_forward
 else:
     flash_attn_varlen_func = None
@@ -161,10 +158,12 @@ class Qwen2VLRotaryEmbedding(nn.Module):
             inv_freq, self.attention_scaling = self.rope_init_fn(
                 self.config, device, seq_len=seq_len, **self.rope_kwargs
             )
-            self.register_buffer("inv_freq", inv_freq, persistent=False)  
+            self.register_buffer("inv_freq", inv_freq, persistent=False)
             self.max_seq_len_cached = seq_len
 
-        if seq_len < self.original_max_seq_len and self.max_seq_len_cached > self.original_max_seq_len:  # reset
+        if (
+            seq_len < self.original_max_seq_len and self.max_seq_len_cached > self.original_max_seq_len
+        ):  # reset
             self.register_buffer("inv_freq", self.original_inv_freq, persistent=False)
             self.max_seq_len_cached = self.original_max_seq_len
 
@@ -173,7 +172,7 @@ class Qwen2VLRotaryEmbedding(nn.Module):
         if "dynamic" in self.rope_type:
             self._dynamic_frequency_update(position_ids, device=x.device)
 
-        # Core RoPE block. In contrast to other models, Qwen2_VL has different position ids for thw grids
+        # Core RoPE block. In contrast to other models, Qwen2_VL has different position ids for spatiotemporal grids
         # So we expand the inv_freq to shape (3, ...)
         inv_freq_expanded = self.inv_freq[None, None, :, None].float().expand(3, position_ids.shape[1], -1, 1)
         position_ids_expanded = position_ids[:, :, None, :].float()  # shape (3, bs, 1, positions)
@@ -207,7 +206,7 @@ def apply_multimodal_rotary_pos_emb(q, k, cos, sin, mrope_section, unsqueeze_dim
     Explanation:
         Multimodal 3D rotary position embedding is an extension to 1D rotary position embedding. The input embedding
         sequence contains vision (images / videos) embedding and text embedding or just contains text embedding. For
-        vision embedding part, we apply rotary position embedding on temporal, height and width dimension seperately.
+        vision embedding part, we apply rotary position embedding on temporal, height and width dimension separately.
         Here we split the channel dimension to 3 chunks for the temporal, height and width rotary position embedding.
         For text embedding part, we just apply 1D rotary position embedding. The three rotary position index (temporal,
         height and width) of text embedding is always the same, so the text embedding rotary position embedding has no
@@ -335,7 +334,9 @@ class VisionAttention(nn.Module):
         self, hidden_states: torch.Tensor, cu_seqlens: torch.Tensor, rotary_pos_emb: torch.Tensor = None
     ) -> torch.Tensor:
         seq_length = hidden_states.shape[0]
-        q, k, v = self.qkv(hidden_states).reshape(seq_length, 3, self.num_heads, -1).permute(1, 0, 2, 3).unbind(0)
+        q, k, v = (
+            self.qkv(hidden_states).reshape(seq_length, 3, self.num_heads, -1).permute(1, 0, 2, 3).unbind(0)
+        )
         q = apply_rotary_pos_emb_vision(q.unsqueeze(0), rotary_pos_emb).squeeze(0)
         k = apply_rotary_pos_emb_vision(k.unsqueeze(0), rotary_pos_emb).squeeze(0)
 
@@ -369,7 +370,9 @@ class VisionFlashAttention2(nn.Module):
         self, hidden_states: torch.Tensor, cu_seqlens: torch.Tensor, rotary_pos_emb: torch.Tensor = None
     ) -> torch.Tensor:
         seq_length = hidden_states.shape[0]
-        q, k, v = self.qkv(hidden_states).reshape(seq_length, 3, self.num_heads, -1).permute(1, 0, 2, 3).unbind(0)
+        q, k, v = (
+            self.qkv(hidden_states).reshape(seq_length, 3, self.num_heads, -1).permute(1, 0, 2, 3).unbind(0)
+        )
         q = apply_rotary_pos_emb_vision(q.unsqueeze(0), rotary_pos_emb).squeeze(0)
         k = apply_rotary_pos_emb_vision(k.unsqueeze(0), rotary_pos_emb).squeeze(0)
 
@@ -392,7 +395,9 @@ class VisionSdpaAttention(nn.Module):
         self, hidden_states: torch.Tensor, cu_seqlens: torch.Tensor, rotary_pos_emb: torch.Tensor = None
     ) -> torch.Tensor:
         seq_length = hidden_states.shape[0]
-        q, k, v = self.qkv(hidden_states).reshape(seq_length, 3, self.num_heads, -1).permute(1, 0, 2, 3).unbind(0)
+        q, k, v = (
+            self.qkv(hidden_states).reshape(seq_length, 3, self.num_heads, -1).permute(1, 0, 2, 3).unbind(0)
+        )
         q = apply_rotary_pos_emb_vision(q.unsqueeze(0), rotary_pos_emb).squeeze(0)
         k = apply_rotary_pos_emb_vision(k.unsqueeze(0), rotary_pos_emb).squeeze(0)
 
@@ -402,7 +407,7 @@ class VisionSdpaAttention(nn.Module):
         q = q.transpose(0, 1)
         k = k.transpose(0, 1)
         v = v.transpose(0, 1)
-        attn_output = F.scaled_dot_product_attention(q, k, v, attention_mask, dropout_p=0.0)
+        attn_output = func.scaled_dot_product_attention(q, k, v, attention_mask, dropout_p=0.0)
         attn_output = attn_output.transpose(0, 1)
         attn_output = attn_output.reshape(seq_length, -1)
         attn_output = self.proj(attn_output)
@@ -538,7 +543,9 @@ class Qwen2VLAttention(nn.Module):
         output_attentions: bool = False,
         use_cache: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
-        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # will become mandatory in v4.46
+        position_embeddings: Optional[
+            Tuple[torch.Tensor, torch.Tensor]
+        ] = None,  # will become mandatory in v4.46
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
 
@@ -569,8 +576,14 @@ class Qwen2VLAttention(nn.Module):
         )
 
         if past_key_value is not None:
-            cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}  # Specific to RoPE models
-            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+            cache_kwargs = {
+                "sin": sin,
+                "cos": cos,
+                "cache_position": cache_position,
+            }  # Specific to RoPE models
+            key_states, value_states = past_key_value.update(
+                key_states, value_states, self.layer_idx, cache_kwargs
+            )
 
         # repeat k/v heads if n_kv_heads < n_heads
         key_states = repeat_kv(key_states, self.num_key_value_groups)
@@ -585,7 +598,9 @@ class Qwen2VLAttention(nn.Module):
         # Fix precision issues in Qwen2-VL float16 inference
         # Replace inf values with zeros in attention weights to prevent NaN propagation
         if query_states.dtype == torch.float16:
-            attn_weights = torch.where(torch.isinf(attn_weights), torch.zeros_like(attn_weights), attn_weights)
+            attn_weights = torch.where(
+                torch.isinf(attn_weights), torch.zeros_like(attn_weights), attn_weights
+            )
 
         # upcast attention to fp32
         attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
@@ -621,7 +636,7 @@ class Qwen2VLFlashAttention2(Qwen2VLAttention):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        # flash_attn<2.1 generates top-left aligned causal mask, while what is needed here is bottom-right alignement, that was made default for flash_attn>=2.1. This attribute is used to handle this difference. Reference: https://github.com/Dao-AILab/flash-attention/releases/tag/v2.1.0.
+        # flash_attn<2.1 generates top-left aligned causal mask, while what is needed here is bottom-right alignment, that was made default for flash_attn>=2.1. This attribute is used to handle this difference. Reference: https://github.com/Dao-AILab/flash-attention/releases/tag/v2.1.0.
         # Beware that with flash_attn<2.1, using q_seqlen != k_seqlen (except for the case q_seqlen == 1) produces a wrong mask (top-left).
         self._flash_attn_uses_top_left_mask = not is_flash_attn_greater_or_equal_2_10()
 
@@ -634,7 +649,9 @@ class Qwen2VLFlashAttention2(Qwen2VLAttention):
         output_attentions: bool = False,
         use_cache: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
-        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # will become mandatory in v4.46
+        position_embeddings: Optional[
+            Tuple[torch.Tensor, torch.Tensor]
+        ] = None,  # will become mandatory in v4.46
     ):
         bsz, q_len, _ = hidden_states.size()
 
@@ -696,10 +713,18 @@ class Qwen2VLFlashAttention2(Qwen2VLAttention):
 
                 if attention_mask is not None:
                     attention_mask = attention_mask[:, slicing_tokens:]
-                    attention_mask = torch.cat([attention_mask, torch.ones_like(attention_mask[:, -1:])], dim=-1)
+                    attention_mask = torch.cat(
+                        [attention_mask, torch.ones_like(attention_mask[:, -1:])], dim=-1
+                    )
 
-            cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}  # Specific to RoPE models
-            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+            cache_kwargs = {
+                "sin": sin,
+                "cos": cos,
+                "cache_position": cache_position,
+            }  # Specific to RoPE models
+            key_states, value_states = past_key_value.update(
+                key_states, value_states, self.layer_idx, cache_kwargs
+            )
 
         # repeat k/v heads if n_kv_heads < n_heads
         key_states = repeat_kv(key_states, self.num_key_value_groups)
@@ -781,7 +806,9 @@ class Qwen2VLSdpaAttention(Qwen2VLAttention):
         output_attentions: bool = False,
         use_cache: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
-        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # will become mandatory in v4.46
+        position_embeddings: Optional[
+            Tuple[torch.Tensor, torch.Tensor]
+        ] = None,  # will become mandatory in v4.46
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         if output_attentions:
             logger.warning_once(
@@ -826,8 +853,14 @@ class Qwen2VLSdpaAttention(Qwen2VLAttention):
         )
 
         if past_key_value is not None:
-            cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}  # Specific to RoPE models
-            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+            cache_kwargs = {
+                "sin": sin,
+                "cos": cos,
+                "cache_position": cache_position,
+            }  # Specific to RoPE models
+            key_states, value_states = past_key_value.update(
+                key_states, value_states, self.layer_idx, cache_kwargs
+            )
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
@@ -846,7 +879,7 @@ class Qwen2VLSdpaAttention(Qwen2VLAttention):
         # We dispatch to SDPA's Flash Attention or Efficient kernels via this `is_causal` if statement instead of an inline conditional assignment
         # in SDPA to support both torch.compile's dynamic shapes and full graph options. An inline conditional prevents dynamic shapes from compiling.
         # The q_len > 1 is necessary to match with AttentionMaskConverter.to_causal_4d that does not create a causal mask in case q_len == 1.
-        is_causal = True if causal_mask is None and q_len > 1 else False
+        is_causal = bool(causal_mask is None and q_len > 1)
 
         attn_output = torch.nn.functional.scaled_dot_product_attention(
             query_states,
@@ -897,7 +930,9 @@ class Qwen2VLDecoderLayer(nn.Module):
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
-        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # will become mandatory in v4.46
+        position_embeddings: Optional[
+            Tuple[torch.Tensor, torch.Tensor]
+        ] = None,  # will become mandatory in v4.46
         **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         """
@@ -1031,9 +1066,9 @@ class Qwen2VisionTransformerPretrainedModel(Qwen2VLPreTrainedModel):
     def get_device(self) -> torch.device:
         return self.blocks[0].mlp.fc2.weight.device
 
-    def rot_pos_emb(self, grid_thw):
+    def rot_pos_emb(self, grid_spatiotemporal):
         pos_ids = []
-        for t, h, w in grid_thw:
+        for t, h, w in grid_spatiotemporal:
             hpos_ids = torch.arange(h).unsqueeze(1).expand(-1, w)
             hpos_ids = hpos_ids.reshape(
                 h // self.spatial_merge_size,
@@ -1055,19 +1090,19 @@ class Qwen2VisionTransformerPretrainedModel(Qwen2VLPreTrainedModel):
             wpos_ids = wpos_ids.flatten()
             pos_ids.append(torch.stack([hpos_ids, wpos_ids], dim=-1).repeat(t, 1))
         pos_ids = torch.cat(pos_ids, dim=0)
-        max_grid_size = grid_thw[:, 1:].max()
+        max_grid_size = grid_spatiotemporal[:, 1:].max()
         rotary_pos_emb_full = self.rotary_pos_emb(max_grid_size)
         rotary_pos_emb = rotary_pos_emb_full[pos_ids].flatten(1)
         return rotary_pos_emb
 
-    def forward(self, hidden_states: torch.Tensor, grid_thw: torch.Tensor) -> torch.Tensor:
+    def forward(self, hidden_states: torch.Tensor, grid_spatiotemporal: torch.Tensor) -> torch.Tensor:
         hidden_states = self.patch_embed(hidden_states)
-        rotary_pos_emb = self.rot_pos_emb(grid_thw)
+        rotary_pos_emb = self.rot_pos_emb(grid_spatiotemporal)
 
-        cu_seqlens = torch.repeat_interleave(grid_thw[:, 1] * grid_thw[:, 2], grid_thw[:, 0]).cumsum(
-            dim=0, dtype=torch.int32
-        )
-        cu_seqlens = F.pad(cu_seqlens, (1, 0), value=0)
+        cu_seqlens = torch.repeat_interleave(
+            grid_spatiotemporal[:, 1] * grid_spatiotemporal[:, 2], grid_spatiotemporal[:, 0]
+        ).cumsum(dim=0, dtype=torch.int32)
+        cu_seqlens = func.pad(cu_seqlens, (1, 0), value=0)
 
         for blk in self.blocks:
             hidden_states = blk(hidden_states, cu_seqlens=cu_seqlens, rotary_pos_emb=rotary_pos_emb)
@@ -1116,7 +1151,9 @@ class Qwen2VLModel(Qwen2VLPreTrainedModel):
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
-        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
+        output_attentions = (
+            output_attentions if output_attentions is not None else self.config.output_attentions
+        )
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
@@ -1127,12 +1164,11 @@ class Qwen2VLModel(Qwen2VLPreTrainedModel):
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
 
-        if self.gradient_checkpointing and self.training:
-            if use_cache:
-                logger.warning_once(
-                    "`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`..."
-                )
-                use_cache = False
+        if self.gradient_checkpointing and self.training and use_cache:
+            logger.warning_once(
+                "`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`..."
+            )
+            use_cache = False
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
@@ -1208,7 +1244,9 @@ class Qwen2VLModel(Qwen2VLPreTrainedModel):
         next_cache = next_decoder_cache if use_cache else None
 
         if not return_dict:
-            return tuple(v for v in [hidden_states, next_cache, all_hidden_states, all_self_attns] if v is not None)
+            return tuple(
+                v for v in [hidden_states, next_cache, all_hidden_states, all_self_attns] if v is not None
+            )
         return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
             past_key_values=next_cache,
@@ -1242,15 +1280,15 @@ class Qwen2VLModel(Qwen2VLPreTrainedModel):
             self.config._attn_implementation == "sdpa"
             and not (using_static_cache or using_sliding_window_cache)
             and not output_attentions
-        ):
-            if AttentionMaskConverter._ignore_causal_mask_sdpa(
+            and AttentionMaskConverter._ignore_causal_mask_sdpa(
                 attention_mask,
                 inputs_embeds=input_tensor,
                 past_key_values_length=past_seen_tokens,
                 sliding_window=self.config.sliding_window,
                 is_training=self.training,
-            ):
-                return None
+            )
+        ):
+            return None
 
         dtype, device = input_tensor.dtype, input_tensor.device
         min_dtype = torch.finfo(dtype).min
@@ -1319,7 +1357,7 @@ class Qwen2VLModel(Qwen2VLPreTrainedModel):
             dtype (`torch.dtype`):
                 The dtype to use for the 4D attention mask.
             device (`torch.device`):
-                The device to plcae the 4D attention mask on.
+                The device to place the 4D attention mask on.
             cache_position (`torch.Tensor`):
                 Indices depicting the position of the input sequence tokens in the sequence.
             batch_size (`torch.Tensor`):
@@ -1338,14 +1376,15 @@ class Qwen2VLModel(Qwen2VLPreTrainedModel):
                 (sequence_length, target_length), fill_value=min_dtype, dtype=dtype, device=device
             )
             diagonal_attend_mask = torch.arange(target_length, device=device) > cache_position.reshape(-1, 1)
-            if config.sliding_window is not None:
+            if config.sliding_window is not None and (
+                not isinstance(past_key_values, SlidingWindowCache) or sequence_length > target_length
+            ):
                 # if we have sliding window, we should not attend to tokens beyond sliding window length, so we mask them out also
                 # the check is needed to verify is current checkpoint was trained with sliding window or not
-                if not isinstance(past_key_values, SlidingWindowCache) or sequence_length > target_length:
-                    sliding_attend_mask = torch.arange(target_length, device=device) <= (
-                        cache_position.reshape(-1, 1) - config.sliding_window
-                    )
-                    diagonal_attend_mask |= sliding_attend_mask
+                sliding_attend_mask = torch.arange(target_length, device=device) <= (
+                    cache_position.reshape(-1, 1) - config.sliding_window
+                )
+                diagonal_attend_mask |= sliding_attend_mask
             causal_mask *= diagonal_attend_mask
             causal_mask = causal_mask[None, None, :, :].expand(batch_size, 1, -1, -1)
             if attention_mask is not None:
@@ -1428,13 +1467,14 @@ QWEN2_VL_INPUTS_DOCSTRING = r"""
             The tensors corresponding to the input videos. Pixel values can be obtained using
             [`AutoImageProcessor`]. See [`Qwen2VLImageProcessor.__call__`] for details. [`Qwen2VLProcessor`] uses
             [`Qwen2VLImageProcessor`] for processing videos.
-        image_grid_thw (`torch.LongTensor` of shape `(num_images, 3)`, *optional*):
+        image_grid_spatiotemporal (`torch.LongTensor` of shape `(num_images, 3)`, *optional*):
             The temporal, height and width of feature shape of each image in LLM.
-        video_grid_thw (`torch.LongTensor` of shape `(num_videos, 3)`, *optional*):
+        video_grid_spatiotemporal (`torch.LongTensor` of shape `(num_videos, 3)`, *optional*):
             The temporal, height and width of feature shape of each video in LLM.
         rope_deltas (`torch.LongTensor` of shape `(batch_size, )`, *optional*):
             The rope index difference between sequence length and multimodal rope.
 """
+
 
 class Qwen2VLForConditionalGenerationForVLA(Qwen2VLPreTrainedModel, GenerationMixin):
     _tied_weights_keys = ["lm_head.weight"]
@@ -1491,8 +1531,8 @@ class Qwen2VLForConditionalGenerationForVLA(Qwen2VLPreTrainedModel, GenerationMi
     def get_rope_index(
         self,
         input_ids: torch.LongTensor,
-        image_grid_thw: Optional[torch.LongTensor] = None,
-        video_grid_thw: Optional[torch.LongTensor] = None,
+        image_grid_spatiotemporal: Optional[torch.LongTensor] = None,
+        video_grid_spatiotemporal: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -1501,7 +1541,7 @@ class Qwen2VLForConditionalGenerationForVLA(Qwen2VLPreTrainedModel, GenerationMi
         Explanation:
             Each embedding sequence contains vision embedding and text embedding or just contains text embedding.
 
-            For pure text embedding sequence, the rotary position embedding has no difference with mordern LLMs.
+            For pure text embedding sequence, the rotary position embedding has no difference with modern LLMs.
             Examples:
                 input_ids: [T T T T T], here T is for text.
                 temporal position_ids: [0, 1, 2, 3, 4]
@@ -1525,9 +1565,9 @@ class Qwen2VLForConditionalGenerationForVLA(Qwen2VLPreTrainedModel, GenerationMi
             input_ids (`torch.LongTensor` of shape `(batch_size, sequence_length)`):
                 Indices of input sequence tokens in the vocabulary. Padding will be ignored by default should you provide
                 it.
-            image_grid_thw (`torch.LongTensor` of shape `(num_images, 3)`, *optional*):
+            image_grid_spatiotemporal (`torch.LongTensor` of shape `(num_images, 3)`, *optional*):
                 The temporal, height and width of feature shape of each image in LLM.
-            video_grid_thw (`torch.LongTensor` of shape `(num_videos, 3)`, *optional*):
+            video_grid_spatiotemporal (`torch.LongTensor` of shape `(num_videos, 3)`, *optional*):
                 The temporal, height and width of feature shape of each video in LLM.
             attention_mask (`torch.Tensor` of shape `(batch_size, sequence_length)`, *optional*):
                 Mask to avoid performing attention on padding token indices. Mask values selected in `[0, 1]`:
@@ -1544,7 +1584,7 @@ class Qwen2VLForConditionalGenerationForVLA(Qwen2VLPreTrainedModel, GenerationMi
         video_token_id = self.config.video_token_id
         vision_start_token_id = self.config.vision_start_token_id
         mrope_position_deltas = []
-        if image_grid_thw is not None or video_grid_thw is not None:
+        if image_grid_spatiotemporal is not None or video_grid_spatiotemporal is not None:
             total_input_ids = input_ids
             position_ids = torch.ones(
                 3, input_ids.shape[0], input_ids.shape[1], dtype=input_ids.dtype, device=input_ids.device
@@ -1573,18 +1613,18 @@ class Qwen2VLForConditionalGenerationForVLA(Qwen2VLPreTrainedModel, GenerationMi
                         ed_video = len(input_tokens) + 1
                     if ed_image < ed_video:
                         t, h, w = (
-                            image_grid_thw[image_index][0],
-                            image_grid_thw[image_index][1],
-                            image_grid_thw[image_index][2],
+                            image_grid_spatiotemporal[image_index][0],
+                            image_grid_spatiotemporal[image_index][1],
+                            image_grid_spatiotemporal[image_index][2],
                         )
                         image_index += 1
                         remain_images -= 1
                         ed = ed_image
                     else:
                         t, h, w = (
-                            video_grid_thw[video_index][0],
-                            video_grid_thw[video_index][1],
-                            video_grid_thw[video_index][2],
+                            video_grid_spatiotemporal[video_index][0],
+                            video_grid_spatiotemporal[video_index][1],
+                            video_grid_spatiotemporal[video_index][2],
                         )
                         video_index += 1
                         remain_videos -= 1
@@ -1599,9 +1639,15 @@ class Qwen2VLForConditionalGenerationForVLA(Qwen2VLPreTrainedModel, GenerationMi
                     st_idx = llm_pos_ids_list[-1].max() + 1 if len(llm_pos_ids_list) > 0 else 0
                     llm_pos_ids_list.append(torch.arange(text_len).view(1, -1).expand(3, -1) + st_idx)
 
-                    t_index = torch.arange(llm_grid_t).view(-1, 1).expand(-1, llm_grid_h * llm_grid_w).flatten()
-                    h_index = torch.arange(llm_grid_h).view(1, -1, 1).expand(llm_grid_t, -1, llm_grid_w).flatten()
-                    w_index = torch.arange(llm_grid_w).view(1, 1, -1).expand(llm_grid_t, llm_grid_h, -1).flatten()
+                    t_index = (
+                        torch.arange(llm_grid_t).view(-1, 1).expand(-1, llm_grid_h * llm_grid_w).flatten()
+                    )
+                    h_index = (
+                        torch.arange(llm_grid_h).view(1, -1, 1).expand(llm_grid_t, -1, llm_grid_w).flatten()
+                    )
+                    w_index = (
+                        torch.arange(llm_grid_w).view(1, 1, -1).expand(llm_grid_t, llm_grid_h, -1).flatten()
+                    )
                     llm_pos_ids_list.append(torch.stack([t_index, h_index, w_index]) + text_len + st_idx)
                     st = ed + llm_grid_t * llm_grid_h * llm_grid_w
 
@@ -1671,8 +1717,8 @@ class Qwen2VLForConditionalGenerationForVLA(Qwen2VLPreTrainedModel, GenerationMi
         return_dict: Optional[bool] = None,
         pixel_values: Optional[torch.Tensor] = None,
         pixel_values_videos: Optional[torch.FloatTensor] = None,
-        image_grid_thw: Optional[torch.LongTensor] = None,
-        video_grid_thw: Optional[torch.LongTensor] = None,
+        image_grid_spatiotemporal: Optional[torch.LongTensor] = None,
+        video_grid_spatiotemporal: Optional[torch.LongTensor] = None,
         rope_deltas: Optional[torch.LongTensor] = None,
         actions: Optional[torch.LongTensor] = None,
         states: Optional[torch.FloatTensor] = None,
@@ -1721,18 +1767,20 @@ class Qwen2VLForConditionalGenerationForVLA(Qwen2VLPreTrainedModel, GenerationMi
         ```"""
 
         self.computed_type = torch.bfloat16
-        input_ids=input_ids.to("cuda")
-        attention_mask=attention_mask.to("cuda")
+        input_ids = input_ids.to("cuda")
+        attention_mask = attention_mask.to("cuda")
         if not is_eval:
             labels = labels.to("cuda")
-            actions = actions.to(dtype=self.computed_type, device='cuda')
-            states = states.to(dtype=self.computed_type, device='cuda')
+            actions = actions.to(dtype=self.computed_type, device="cuda")
+            states = states.to(dtype=self.computed_type, device="cuda")
             position_ids, rope_deltas = self.get_rope_index(
-                input_ids, image_grid_thw, video_grid_thw, attention_mask
+                input_ids, image_grid_spatiotemporal, video_grid_spatiotemporal, attention_mask
             )
         if pixel_values is not None:
-            pixel_values = pixel_values.to(dtype=self.computed_type, device='cuda')
-        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
+            pixel_values = pixel_values.to(dtype=self.computed_type, device="cuda")
+        output_attentions = (
+            output_attentions if output_attentions is not None else self.config.output_attentions
+        )
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
@@ -1742,7 +1790,7 @@ class Qwen2VLForConditionalGenerationForVLA(Qwen2VLPreTrainedModel, GenerationMi
             inputs_embeds = self.model.embed_tokens(input_ids)
             if pixel_values is not None:
                 pixel_values = pixel_values.type(self.visual.get_dtype())
-                image_embeds = self.visual(pixel_values, grid_thw=image_grid_thw)
+                image_embeds = self.visual(pixel_values, grid_spatiotemporal=image_grid_spatiotemporal)
                 n_image_tokens = (input_ids == self.config.image_token_id).sum().item()
                 n_image_features = image_embeds.shape[0]
                 if n_image_tokens != n_image_features:
@@ -1760,7 +1808,7 @@ class Qwen2VLForConditionalGenerationForVLA(Qwen2VLPreTrainedModel, GenerationMi
 
             if pixel_values_videos is not None:
                 pixel_values_videos = pixel_values_videos.type(self.visual.get_dtype())
-                video_embeds = self.visual(pixel_values_videos, grid_thw=video_grid_thw)
+                video_embeds = self.visual(pixel_values_videos, grid_spatiotemporal=video_grid_spatiotemporal)
                 n_video_tokens = (input_ids == self.config.video_token_id).sum().item()
                 n_video_features = video_embeds.shape[0]
                 if n_video_tokens != n_video_features:
@@ -1792,7 +1840,7 @@ class Qwen2VLForConditionalGenerationForVLA(Qwen2VLPreTrainedModel, GenerationMi
         )
 
         hidden_states = outputs[0]
-        if tinyvla: # dex-vla supports tinyvla-style VLA
+        if tinyvla:  # dex-vla supports tinyvla-style VLA
             return hidden_states
 
         if self.with_llm_head:
@@ -1831,23 +1879,30 @@ class Qwen2VLForConditionalGenerationForVLA(Qwen2VLPreTrainedModel, GenerationMi
                 attentions=outputs.attentions,
                 rope_deltas=rope_deltas,
             )
-        
+
         if self.using_film:
-            action_hidden_states = self.film_forward(labels=labels, input_ids=input_ids,
-                                                     hidden_states=hidden_states)
-        else: # tinyvla
+            action_hidden_states = self.film_forward(
+                labels=labels, input_ids=input_ids, hidden_states=hidden_states
+            )
+        else:  # tinyvla
             action_hidden_states = hidden_states
 
-        ret = self.policy_head(actions=actions, hidden_states=action_hidden_states, states=states, is_pad=is_pad)
+        ret = self.policy_head(
+            actions=actions, hidden_states=action_hidden_states, states=states, is_pad=is_pad
+        )
 
         if self.with_llm_head:
-            loss = {'loss': ret['loss'] + self.llm_loss_weight * llm_loss,
-                         'llm_loss': llm_loss,
-                         'action_loss': ret['loss']}
+            loss = {
+                "loss": ret["loss"] + self.llm_loss_weight * llm_loss,
+                "llm_loss": llm_loss,
+                "action_loss": ret["loss"],
+            }
         else:
-            loss = {'loss': ret['loss'],
-                         'llm_loss': (torch.ones(1)*(-100)).to(ret['loss'].dtype).squeeze(0),
-                         'action_loss': ret['loss']}
+            loss = {
+                "loss": ret["loss"],
+                "llm_loss": (torch.ones(1) * (-100)).to(ret["loss"].dtype).squeeze(0),
+                "action_loss": ret["loss"],
+            }
 
         if not return_dict:
             output = (logits,) + outputs[1:]
@@ -1862,7 +1917,7 @@ class Qwen2VLForConditionalGenerationForVLA(Qwen2VLPreTrainedModel, GenerationMi
         del inputs_embeds
         del labels
         del pixel_values
-        del image_grid_thw
+        del image_grid_spatiotemporal
         del actions
         del states
         return Qwen2VLCausalLMOutputWithPast(
@@ -1882,12 +1937,12 @@ class Qwen2VLForConditionalGenerationForVLA(Qwen2VLPreTrainedModel, GenerationMi
         inputs_index = inputs_index.int()
 
         xor_array = torch.bitwise_xor(inputs_index[:, :-1], inputs_index[:, 1:])
-        indexs = torch.argmax((xor_array != 0).float(), dim=1)
+        indexes = torch.argmax((xor_array != 0).float(), dim=1)
         input_embeddings = []
         reasoning_embeddings = []
         identity = []
-        for i in range(indexs.shape[0]):
-            end = indexs[i] + 1
+        for i in range(indexes.shape[0]):
+            end = indexes[i] + 1
             temp = input_ids[i] == 151643  # pad token id for qwen2_vl
             start = sum(temp.int())
             input_embeddings.append(self.input_action_proj(hidden_states[i, start:end, :]))
@@ -1904,39 +1959,43 @@ class Qwen2VLForConditionalGenerationForVLA(Qwen2VLPreTrainedModel, GenerationMi
         return action_hidden_states
 
     def prepare_inputs_for_generation(
-            self,
-            input_ids,
-            past_key_values=None,
-            attention_mask=None,
-            inputs_embeds=None,
-            cache_position=None,
-            position_ids=None,
-            use_cache=True,
-            pixel_values=None,
-            pixel_values_videos=None,
-            image_grid_thw=None,
-            video_grid_thw=None,
-            **kwargs,
+        self,
+        input_ids,
+        past_key_values=None,
+        attention_mask=None,
+        inputs_embeds=None,
+        cache_position=None,
+        position_ids=None,
+        use_cache=True,
+        pixel_values=None,
+        pixel_values_videos=None,
+        image_grid_spatiotemporal=None,
+        video_grid_spatiotemporal=None,
+        **kwargs,
     ):
         # If we have cache: let's slice `input_ids` through `cache_position`, to keep only the unprocessed tokens
         # Exception 1: when passing input_embeds, input_ids may be missing entries
         # Exception 2: some generation methods do special slicing of input_ids, so we don't need to do it here
         if past_key_values is not None:
             if inputs_embeds is not None:  # Exception 1
-                input_ids = input_ids[:, -cache_position.shape[0]:]
-            elif input_ids.shape[1] != cache_position.shape[0]:  # Default case (the "else", a no op, is Exception 2)
+                input_ids = input_ids[:, -cache_position.shape[0] :]
+            elif (
+                input_ids.shape[1] != cache_position.shape[0]
+            ):  # Default case (the "else", a no op, is Exception 2)
                 input_ids = input_ids[:, cache_position]
 
-        rope_deltas = kwargs.get("rope_deltas", None)
+        rope_deltas = kwargs.get("rope_deltas")
         if attention_mask is not None and position_ids is None:
             if cache_position is None or (cache_position is not None and cache_position[0] == 0):
                 position_ids, rope_deltas = self.get_rope_index(
-                    input_ids, image_grid_thw, video_grid_thw, attention_mask
+                    input_ids, image_grid_spatiotemporal, video_grid_spatiotemporal, attention_mask
                 )
             else:
                 batch_size, seq_length = input_ids.shape
                 delta = (
-                    cache_position[0] + rope_deltas if cache_position is not None and rope_deltas is not None else 0
+                    cache_position[0] + rope_deltas
+                    if cache_position is not None and rope_deltas is not None
+                    else 0
                 )
                 position_ids = torch.arange(seq_length, device=input_ids.device)
                 position_ids = position_ids.view(1, -1).expand(batch_size, -1)
@@ -1981,8 +2040,8 @@ class Qwen2VLForConditionalGenerationForVLA(Qwen2VLPreTrainedModel, GenerationMi
                 "attention_mask": attention_mask,
                 "pixel_values": pixel_values,
                 "pixel_values_videos": pixel_values_videos,
-                "image_grid_thw": image_grid_thw,
-                "video_grid_thw": video_grid_thw,
+                "image_grid_spatiotemporal": image_grid_spatiotemporal,
+                "video_grid_spatiotemporal": video_grid_spatiotemporal,
                 "rope_deltas": rope_deltas,
             }
         )
@@ -1990,6 +2049,4 @@ class Qwen2VLForConditionalGenerationForVLA(Qwen2VLPreTrainedModel, GenerationMi
         return model_inputs
 
 
-
-from transformers import AutoModelForCausalLM
 AutoModelForCausalLM.register(Qwen2VLAConfig, Qwen2VLForConditionalGenerationForVLA)

@@ -1,4 +1,3 @@
-# coding=utf-8
 # Copyright 2024 The Qwen team, Alibaba Group and the HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,10 +16,10 @@
 import os
 from typing import Union
 
+from transformers import AutoConfig
 from transformers.configuration_utils import PretrainedConfig
 from transformers.modeling_rope_utils import rope_config_validation
 from transformers.utils import logging
-from transformers import AutoModel, AutoConfig
 
 logger = logging.get_logger(__name__)
 
@@ -56,7 +55,9 @@ class Qwen2VLVisionConfig(PretrainedConfig):
         self.temporal_patch_size = temporal_patch_size
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path: Union[str, os.PathLike], **kwargs) -> "PretrainedConfig":
+    def from_pretrained(
+        cls, pretrained_model_name_or_path: Union[str, os.PathLike], **kwargs
+    ) -> "PretrainedConfig":
         cls._set_token_in_kwargs(kwargs)
 
         config_dict, kwargs = cls.get_config_dict(pretrained_model_name_or_path, **kwargs)
@@ -64,7 +65,11 @@ class Qwen2VLVisionConfig(PretrainedConfig):
         if config_dict.get("model_type") == "qwen2_vl":
             config_dict = config_dict["vision_config"]
 
-        if "model_type" in config_dict and hasattr(cls, "model_type") and config_dict["model_type"] != cls.model_type:
+        if (
+            "model_type" in config_dict
+            and hasattr(cls, "model_type")
+            and config_dict["model_type"] != cls.model_type
+        ):
             logger.warning(
                 f"You are using a model of type {config_dict['model_type']} to instantiate a model of type "
                 f"{cls.model_type}. This is not supported for all configurations of models and can yield errors."
@@ -204,7 +209,7 @@ class Qwen2VLAConfig(PretrainedConfig):
         vision_config=None,
         rope_scaling=None,
         # For loading policy head
-        policy_head_type='scale_dp_policy',  # unet_diffusion_policy
+        policy_head_type="scale_dp_policy",  # unet_diffusion_policy
         **kwargs,
     ):
         if isinstance(vision_config, dict):
@@ -221,7 +226,7 @@ class Qwen2VLAConfig(PretrainedConfig):
         self.use_sliding_window = use_sliding_window
         self.sliding_window = sliding_window
         self.max_window_layers = max_window_layers
-        self.policy_head_type = policy_head_type # for loading policy head
+        self.policy_head_type = policy_head_type  # for loading policy head
 
         # for backward compatibility
         if num_key_value_heads is None:
@@ -238,7 +243,7 @@ class Qwen2VLAConfig(PretrainedConfig):
 
         # Validate the correctness of rotary position embeddings parameters
         # BC: if there is a 'type' field, move it to 'rope_type'.
-        # and change type from 'mrope' to 'default' because `mrope` does defeault RoPE calculations
+        # and change type from 'mrope' to 'default' because `mrope` does default RoPE calculations
         # one can set it to "linear"/"dynamic" etc. to have scaled RoPE
         if self.rope_scaling is not None and "type" in self.rope_scaling:
             if self.rope_scaling["type"] == "mrope":
@@ -248,5 +253,5 @@ class Qwen2VLAConfig(PretrainedConfig):
 
         super().__init__(tie_word_embeddings=tie_word_embeddings, **kwargs)
 
-from transformers import AutoConfig
+
 AutoConfig.register("qwen2_vla", Qwen2VLAConfig)

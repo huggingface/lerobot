@@ -108,7 +108,7 @@ class StretchRobot(StretchAPI):
             self.logs[f"read_camera_{name}_dt_s"] = self.cameras[name].logs["delta_timestamp_s"]
             self.logs[f"async_read_camera_{name}_dt_s"] = time.perf_counter() - before_camread_t
 
-        # Populate output dictionnaries
+        # Populate output dictionaries
         obs_dict, action_dict = {}, {}
         obs_dict["observation.state"] = state
         action_dict["action"] = action
@@ -153,7 +153,7 @@ class StretchRobot(StretchAPI):
             self.logs[f"read_camera_{name}_dt_s"] = self.cameras[name].logs["delta_timestamp_s"]
             self.logs[f"async_read_camera_{name}_dt_s"] = time.perf_counter() - before_camread_t
 
-        # Populate output dictionnaries
+        # Populate output dictionaries
         obs_dict = {}
         obs_dict["observation.state"] = state
         for name in self.cameras:

@@ -114,7 +114,7 @@ We tried to measure the most impactful parameters for both encoding and decoding
 
 Additional encoding parameters exist that are not included in this benchmark. In particular:
 - `-preset` which allows for selecting encoding presets. This represents a collection of options that will provide a certain encoding speed to compression ratio. By leaving this parameter unspecified, it is considered to be `medium` for libx264 and libx265 and `8` for libsvtav1.
-- `-tune` which allows to optimize the encoding for certains aspects (e.g. film quality, fast decoding, etc.).
+- `-tune` which allows to optimize the encoding for certain aspects (e.g. film quality, fast decoding, etc.).
 
 See the documentation mentioned above for more detailed info on these settings and for a more comprehensive list of other parameters.
 

@@ -76,7 +76,7 @@ class TDMPCConfig(PreTrainedConfig):
         n_pi_samples: Number of samples to draw from the policy / world model rollout every CEM iteration. Can
             be zero.
         uncertainty_regularizer_coeff: Coefficient for the uncertainty regularization used when estimating
-            trajectory values (this is the λ coeffiecient in eqn 4 of FOWM).
+            trajectory values (this is the λ coefficient in eqn 4 of FOWM).
         n_elites: The number of elite samples to use for updating the gaussian parameters every CEM iteration.
         elite_weighting_temperature: The temperature to use for softmax weighting (by trajectory value) of the
             elites, when updating the gaussian parameters for CEM.
@@ -165,7 +165,7 @@ class TDMPCConfig(PreTrainedConfig):
         """Input validation (not exhaustive)."""
         if self.n_gaussian_samples <= 0:
             raise ValueError(
-                f"The number of guassian samples for CEM should be non-zero. Got `{self.n_gaussian_samples=}`"
+                f"The number of gaussian samples for CEM should be non-zero. Got `{self.n_gaussian_samples=}`"
             )
         if self.normalization_mapping["ACTION"] is not NormalizationMode.MIN_MAX:
             raise ValueError(
