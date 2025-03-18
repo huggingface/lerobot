@@ -545,5 +545,3 @@ def scaledp_h(**kwargs):
 
 def scaledp_l(**kwargs):
     return ScaleDP(depth=24, n_emb=1024, num_heads=16, **kwargs)
-
-

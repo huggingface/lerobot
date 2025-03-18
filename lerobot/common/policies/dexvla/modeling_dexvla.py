@@ -1,7 +1,9 @@
 from collections import deque
 
 import torch
+import torchvision.transforms as transforms
 from torch import Tensor
+from transformers import AutoModelForCausalLM, AutoProcessor, AutoTokenizer
 
 from lerobot.common.policies.dexvla.configuration_dexvla import DexVLAConfig
 from lerobot.common.policies.dexvla.robot_data_processor import Qwen2VLAProcess

@@ -373,5 +373,3 @@ class ConditionalUnet1D(PreTrainedModel):
         x = x.moveaxis(-1, -2)
         # (b,t,c)
         return x
-
-

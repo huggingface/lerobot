@@ -33,6 +33,7 @@ logger = logging.get_logger(__name__)
 register_policy_heads()
 register_qwen2_vla()
 
+
 @PreTrainedConfig.register_subclass("dexvla")
 @dataclass
 class DexVLAConfig(PreTrainedConfig):

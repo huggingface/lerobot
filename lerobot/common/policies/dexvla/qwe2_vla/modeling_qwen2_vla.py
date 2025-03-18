@@ -2047,5 +2047,3 @@ class Qwen2VLForConditionalGenerationForVLA(Qwen2VLPreTrainedModel, GenerationMi
         )
         model_inputs.update(kwargs)
         return model_inputs
-
-
