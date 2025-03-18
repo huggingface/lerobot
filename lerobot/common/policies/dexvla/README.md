@@ -4,9 +4,9 @@ DexVLA: Vision-Language Model with Plug-In Diffusion Expert for Visuomotor Polic
 ### This is the lerobot version of DexVLA. For more information, you can refer to [this](https://github.com/juruobenruo/DexVLA).
 
 ## Data Input
-DexVLA takes into RGB images, language instructions and states. For our setting, we use three camera views: a top camera, two wrist cameras. 
+DexVLA takes RGB images, language instructions and states. For our setting, we use three camera views, namely a top camera and two wrist cameras.
 
-⭐A major difference between DexVLA with other VLAs is: DexVLA takes raw language in, and outputs sub-step reasoning based on current observations and robot states.
+⭐A major difference between DexVLA and other VLAs is: DexVLA takes in raw language, and outputs sub-step reasoning based on current observations.
 So you have to <font color='red'>add sub-step reasoning in your data for training</font>.
 
 Specifically, your data should include a key ``reasoning`` which is a list of sub-step reasoning corresponding to each observation.
@@ -22,8 +22,8 @@ reasoning = [
 ]
 ~~~
 
-Besides, your data should include another key ``action_is_pad`` which is a bool mask indicated whether this action chunk is padded.
-For example, suppose action chunk is 5, and the length of episode is 10. So the action chunk for last 4 actions must be padded to make sure the length of action chunk is 5.
+Besides, your data should include another key ``action_is_pad`` which is a bool mask indicating whether this action chunk is padded.
+Suppose the size of the action chunk is 5, and the length of the episode is 10. So the action chunk for the last 4 actions must be padded to make sure the length of action chunk is 5.
 And the mask looks like:
 ~~~python
 The 6th chunk: [false, false, false, false, true] 
