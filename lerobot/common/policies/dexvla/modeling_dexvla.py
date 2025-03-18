@@ -1,12 +1,9 @@
 from collections import deque
 
 import torch
-import torchvision.transforms as transforms
 from torch import Tensor
-from transformers import AutoProcessor, AutoTokenizer
 
 from lerobot.common.policies.dexvla.configuration_dexvla import DexVLAConfig
-from lerobot.common.policies.dexvla.qwe2_vla.modeling_qwen2_vla import Qwen2VLForConditionalGenerationForVLA
 from lerobot.common.policies.dexvla.robot_data_processor import Qwen2VLAProcess
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.pretrained import PreTrainedPolicy
@@ -15,8 +12,7 @@ from lerobot.common.policies.pretrained import PreTrainedPolicy
 from collections import deque
 from transformers import AutoProcessor, AutoTokenizer, AutoModelForCausalLM
 import torchvision.transforms as transforms
-import os
-from safetensors.torch import load_file
+
 class DexVLAPolicy(PreTrainedPolicy):
     """Wrapper class around Qwen2VLForConditionalGenerationForVLA model to train and run inference within LeRobot."""
 
@@ -69,7 +65,7 @@ class DexVLAPolicy(PreTrainedPolicy):
 
             keys_to_del_dit = []
             pretrain_scaledp_weights = {k[7:] if k.startswith('policy.') else k: v for k, v in pretrain_scaledp_weights.items()}
-            for k in pretrain_scaledp_weights.keys():
+            for k in pretrain_scaledp_weights:
                 if 'noise_pred' not in k:  # del weights of vision backbones
                     keys_to_del_dit.append(k)
                 if 'cond_obs_emb' in k:
