@@ -11,7 +11,6 @@ import torch.nn.functional as func
 import torch.utils.checkpoint
 from timm.models.vision_transformer import Mlp, use_fused_attn
 from torch.jit import Final
-from transformers import AutoModel
 from transformers.modeling_utils import PreTrainedModel
 
 from .configuration_scaledp import ScaleDPPolicyConfig
@@ -548,4 +547,3 @@ def scaledp_l(**kwargs):
     return ScaleDP(depth=24, n_emb=1024, num_heads=16, **kwargs)
 
 
-AutoModel.register(ScaleDPPolicyConfig, ScaleDP)

@@ -11,7 +11,6 @@ import torch.nn as nn
 
 # requires diffusers==0.11.1
 from diffusers.schedulers.scheduling_ddim import DDIMScheduler
-from transformers import AutoModel
 from transformers.modeling_utils import PreTrainedModel
 
 from .configuration_unet_diffusion import UnetDiffusionPolicyConfig
@@ -376,4 +375,3 @@ class ConditionalUnet1D(PreTrainedModel):
         return x
 
 
-AutoModel.register(UnetDiffusionPolicyConfig, ConditionalUnet1D)

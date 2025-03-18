@@ -28,7 +28,7 @@ import torch.nn as nn
 import torch.nn.functional as func
 import torch.utils.checkpoint
 from torch.nn import CrossEntropyLoss, LayerNorm
-from transformers import AutoConfig, AutoModel, AutoModelForCausalLM
+from transformers import AutoConfig, AutoModel
 from transformers.activations import ACT2FN
 from transformers.cache_utils import Cache, SlidingWindowCache, StaticCache
 from transformers.generation import GenerationMixin
@@ -2049,4 +2049,3 @@ class Qwen2VLForConditionalGenerationForVLA(Qwen2VLPreTrainedModel, GenerationMi
         return model_inputs
 
 
-AutoModelForCausalLM.register(Qwen2VLAConfig, Qwen2VLForConditionalGenerationForVLA)

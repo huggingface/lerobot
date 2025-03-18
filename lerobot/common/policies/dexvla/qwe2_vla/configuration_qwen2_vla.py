@@ -16,7 +16,6 @@
 import os
 from typing import Union
 
-from transformers import AutoConfig
 from transformers.configuration_utils import PretrainedConfig
 from transformers.modeling_rope_utils import rope_config_validation
 from transformers.utils import logging
@@ -254,4 +253,3 @@ class Qwen2VLAConfig(PretrainedConfig):
         super().__init__(tie_word_embeddings=tie_word_embeddings, **kwargs)
 
 
-AutoConfig.register("qwen2_vla", Qwen2VLAConfig)

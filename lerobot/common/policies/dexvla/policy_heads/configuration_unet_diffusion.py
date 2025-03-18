@@ -1,7 +1,7 @@
 import os
 from typing import Union
 
-from transformers import AutoConfig, PretrainedConfig
+from transformers import PretrainedConfig
 from transformers.utils import logging
 
 logger = logging.get_logger(__name__)
@@ -70,4 +70,3 @@ class UnetDiffusionPolicyConfig(PretrainedConfig):
         return cls.from_dict(config_dict, **kwargs)
 
 
-AutoConfig.register("unet_diffusion_policy", UnetDiffusionPolicyConfig)

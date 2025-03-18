@@ -1,7 +1,7 @@
 import os
 from typing import Union
 
-from transformers import AutoConfig, PretrainedConfig
+from transformers import PretrainedConfig
 from transformers.utils import logging
 
 logger = logging.get_logger(__name__)
@@ -106,4 +106,3 @@ class ScaleDPPolicyConfig(PretrainedConfig):
         return cls.from_dict(config_dict, **kwargs)
 
 
-AutoConfig.register("scale_dp_policy", ScaleDPPolicyConfig)
