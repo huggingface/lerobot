@@ -317,16 +317,16 @@ class PI0Policy(PreTrainedPolicy):
 
         loss_dict = {}
         losses = self.model.forward(images, img_masks, lang_tokens, lang_masks, state, actions, noise, time)
-        loss_dict["losses_after_forward"] = losses.clone()
+        loss_dict["losses_after_forward"] = losses.mean().item()
 
         if actions_is_pad is not None:
             in_episode_bound = ~actions_is_pad
             losses = losses * in_episode_bound.unsqueeze(-1)
-            loss_dict["losses_after_in_ep_bound"] = losses.clone()
+            loss_dict["losses_after_in_ep_bound"] = losses.mean().item()
 
         # Remove padding
         losses = losses[:, :, : self.config.max_action_dim]
-        loss_dict["losses_after_rm_padding"] = losses.clone()
+        loss_dict["losses_after_rm_padding"] = losses.mean().item()
 
         # For backward pass
         loss = losses.mean()
