@@ -53,6 +53,21 @@ We released our pretrained weights of ScaleDP-H which is trained after Stage1. N
 | ScaleDP-H (~1B)   | [huggingface](https://huggingface.co/lesjie/scale_dp_h)  |
 | ScaleDP-L (~400M) | [huggingface](https://huggingface.co/lesjie/scale_dp_l)  |
 
+**❗❗**After downloading the weights, you have to transform it into ``safetensors`` format, you can simply run this code:
+~~~python
+import torch
+from safetensors.torch import save_file
+path = "/path/to/open_scale_dp_l_backbone.ckpt"
+checkpoint = torch.load(path, map_location=torch.device('cpu'))['nets']['nets']
+
+# Save the weights in safetensors format
+safetensors_path = "/path/to/open_scale_dp_l_backbone.safetensors"
+save_file(checkpoint, safetensors_path)
+print(f"Converted {path} to {safetensors_path}")
+pass
+
+~~~
+
 ## 🦾Train
 We have already provided pretrained weights of ScaleDP which is stage 1. Belows are mainly about training process of Stage2 and Stage3.
 
@@ -61,7 +76,7 @@ We have already provided pretrained weights of ScaleDP which is stage 1. Belows 
 python lerobot/scripts/train.py \
 --policy.type dexvla \
 --policy.qwen2_vl_path /path/to/official/Qwen2-VL-2B-Instruct \
---policy.pretrain_scaledp_path /path/to/pretrained/scale_dp_h/open_scale_dp_l_backbone.ckpt \
+--policy.pretrain_scaledp_path /path/to/pretrained/scale_dp_h/open_scale_dp_l_backbone.safetensors \
 --policy.policy_head_size 'scaledp_h' \
 --policy.training_stage 2 \
 --dataset.repo_i folding_blue_tshirt \
