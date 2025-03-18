@@ -26,7 +26,7 @@ Besides, your data should include another key ``action_is_pad`` which is a bool 
 Suppose the size of the action chunk is 5, and the length of the episode is 10. So the action chunk for the last 4 actions must be padded to make sure the length of action chunk is 5.
 And the mask looks like:
 ~~~python
-The 6th chunk: [false, false, false, false, true] 
+The 6th chunk: [false, false, false, false, true]
 The 7th chunk: [false, false, false, true,  true]
 The 8th chunk: [false, false, true,  true,  true]
 The 9th chunk: [false, true,  true,  true,  true]
@@ -34,9 +34,9 @@ The 9th chunk: [false, true,  true,  true,  true]
 
 ## 🤗Download Pretrained Weights
 ### Download official Qwen2_VL weights
-We construct the VLM backbone by integrating Qwen2-VL-2B, a powerful and efficient model, into our framework. 
-The Qwen2-VL 2B serves as the core of our architecture, providing robust capabilities 
-for vision-language tasks. We use off-the-shelf Qwen2-VL model proposed 
+We construct the VLM backbone by integrating Qwen2-VL-2B, a powerful and efficient model, into our framework.
+The Qwen2-VL 2B serves as the core of our architecture, providing robust capabilities
+for vision-language tasks. We use off-the-shelf Qwen2-VL model proposed
 in [Qwen2-VL](https://arxiv.org/pdf/2409.12191) without any post training on VLM itself. You can download the official weights from this link:
 
 | Model               | Link                                                           |
@@ -104,7 +104,5 @@ python lerobot/scripts/eval.py \
 --env.task AlohaInsertion-v0 \
 --eval.n_episodes 1 \
 --eval.batch_size 1 \
---device cuda 
+--device cuda
 ~~~
-
-
