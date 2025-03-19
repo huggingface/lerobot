@@ -138,7 +138,7 @@ class DaemonLeKiwiRobot(Robot):
     # Consider moving these static functions out of the class
     # Copied from robot_lekiwi MobileManipulator class
     @staticmethod
-    def degps_to_raw(degps: float) -> int:
+    def _degps_to_raw(degps: float) -> int:
         steps_per_deg = 4096.0 / 360.0
         speed_in_steps = abs(degps) * steps_per_deg
         speed_int = int(round(speed_in_steps))
@@ -151,7 +151,7 @@ class DaemonLeKiwiRobot(Robot):
 
     # Copied from robot_lekiwi MobileManipulator class
     @staticmethod
-    def raw_to_degps(raw_speed: int) -> float:
+    def _raw_to_degps(raw_speed: int) -> float:
         steps_per_deg = 4096.0 / 360.0
         magnitude = raw_speed & 0x7FFF
         degps = magnitude / steps_per_deg
@@ -160,7 +160,7 @@ class DaemonLeKiwiRobot(Robot):
         return degps
 
     # Copied from robot_lekiwi MobileManipulator class
-    def body_to_wheel_raw(
+    def _body_to_wheel_raw(
         self,
         x_cmd: float,
         y_cmd: float,
@@ -187,7 +187,7 @@ class DaemonLeKiwiRobot(Robot):
         Notes:
           - Internally, the method converts theta_cmd to rad/s for the kinematics.
           - The raw command is computed from the wheels angular speed in deg/s
-            using degps_to_raw(). If any command exceeds max_raw, all commands
+            using _degps_to_raw(). If any command exceeds max_raw, all commands
             are scaled down proportionally.
         """
         # Convert rotational velocity from deg/s to rad/s.
@@ -217,12 +217,12 @@ class DaemonLeKiwiRobot(Robot):
             wheel_degps = wheel_degps * scale
 
         # Convert each wheel’s angular speed (deg/s) to a raw integer.
-        wheel_raw = [DaemonLeKiwiRobot.degps_to_raw(deg) for deg in wheel_degps]
+        wheel_raw = [DaemonLeKiwiRobot._degps_to_raw(deg) for deg in wheel_degps]
 
         return {"left_wheel": wheel_raw[0], "back_wheel": wheel_raw[1], "right_wheel": wheel_raw[2]}
 
     # Copied from robot_lekiwi MobileManipulator class
-    def wheel_raw_to_body(
+    def _wheel_raw_to_body(
         self, wheel_raw: np.array, wheel_radius: float = 0.05, base_radius: float = 0.125
     ) -> tuple:
         """
@@ -241,7 +241,7 @@ class DaemonLeKiwiRobot(Robot):
         """
 
         # Convert each raw command back to an angular speed in deg/s.
-        wheel_degps = np.array([DaemonLeKiwiRobot.raw_to_degps(int(r)) for r in wheel_raw])
+        wheel_degps = np.array([DaemonLeKiwiRobot._raw_to_degps(int(r)) for r in wheel_raw])
         # Convert from deg/s to rad/s.
         wheel_radps = wheel_degps * (np.pi / 180.0)
         # Compute each wheel’s linear speed (m/s) from its angular speed.
@@ -259,7 +259,7 @@ class DaemonLeKiwiRobot(Robot):
         return (x_cmd, y_cmd, theta_cmd)
 
     # TODO(Steven): This is flaky, for example, if we received a state but failed decoding the image, we will not update any value
-    def get_data(self):
+    def _get_data(self):
         # Copied from robot_lekiwi.py
         """Polls the video socket for up to 15 ms. If data arrives, decode only
         the *latest* message, returning frames, speed, and arm state. If
@@ -348,8 +348,8 @@ class DaemonLeKiwiRobot(Robot):
 
         obs_dict = {}
 
-        frames, present_speed, remote_arm_state_tensor = self.get_data()
-        body_state = self.wheel_raw_to_body(present_speed)
+        frames, present_speed, remote_arm_state_tensor = self._get_data()
+        body_state = self._wheel_raw_to_body(present_speed)
         body_state_mm = (body_state[0] * 1000.0, body_state[1] * 1000.0, body_state[2])  # Convert x,y to mm/s
         wheel_state_tensor = torch.tensor(body_state_mm, dtype=torch.float32)
         combined_state_tensor = torch.cat((remote_arm_state_tensor, wheel_state_tensor), dim=0)
@@ -366,7 +366,7 @@ class DaemonLeKiwiRobot(Robot):
 
         return obs_dict
 
-    def from_keyboard_to_wheel_action(self, pressed_keys: np.ndarray):
+    def _from_keyboard_to_wheel_action(self, pressed_keys: np.ndarray):
         # Speed control
         if self.teleop_keys["speed_up"] in pressed_keys:
             self.speed_index = min(self.speed_index + 1, 2)
@@ -393,7 +393,7 @@ class DaemonLeKiwiRobot(Robot):
         if self.teleop_keys["rotate_right"] in pressed_keys:
             theta_cmd -= theta_speed
 
-        return self.body_to_wheel_raw(x_cmd, y_cmd, theta_cmd)
+        return self._body_to_wheel_raw(x_cmd, y_cmd, theta_cmd)
 
     # TODO(Steven): This assumes this call is always called from a keyboard teleop command
     # TODO(Steven): Doing this mapping in here adds latecy between send_action and movement from the user perspective.
@@ -439,7 +439,7 @@ class DaemonLeKiwiRobot(Robot):
             goal_pos[:6] = action[:6]
             if action.size > 6:
                 # TODO(Steven): Assumes size and order is respected
-                wheel_actions = [v for _, v in self.from_keyboard_to_wheel_action(action[6:]).items()]
+                wheel_actions = [v for _, v in self._from_keyboard_to_wheel_action(action[6:]).items()]
                 goal_pos[6:] = wheel_actions
 
             self.zmq_cmd_socket.send_string(json.dumps(goal_pos.tolist()))  # action is in motor space
