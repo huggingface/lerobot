@@ -1,9 +1,11 @@
 <h1 align="center">
 DexVLA: Vision-Language Model with Plug-In Diffusion Expert for Visuomotor Policy Learning</h1>
 
-### This is the lerobot version of DexVLA. For more information, you can refer to [this](https://github.com/juruobenruo/DexVLA).
+This policy is Community Contributed. For more information about DexVLA, you can also refer to [this](https://github.com/juruobenruo/DexVLA).
+This is [project website](https://dex-vla.github.io/). 
 
-## Data Input
+## Dataset
+### Data format
 DexVLA takes RGB images, language instructions and states. For our setting, we use three camera views, namely a top camera and two wrist cameras.
 
 ⭐A major difference between DexVLA and other VLAs is: DexVLA takes in raw language, and outputs sub-step reasoning based on current observations.
@@ -31,6 +33,10 @@ The 7th chunk: [false, false, false, true,  true]
 The 8th chunk: [false, false, true,  true,  true]
 The 9th chunk: [false, true,  true,  true,  true]
 ~~~
+
+### Training Data for DexVLA
+The pretraining dataset comprises approximately 100 hours of collected data by ourselves. The dataset mainly including four embodiments which are: moblie Agilex Aloha, single Franka Emika and single UR5e.
+We haven't use any public dataset such as Open-X or DROID.
 
 ## 🤗Download Pretrained Weights
 ### Download official Qwen2_VL weights
@@ -108,7 +114,19 @@ python lerobot/scripts/train.py \
 --policy.device=cuda
 ~~~
 
+### Training Time
+Original DexVLA is trained on 8 x H100 GPUs. And the training time for each stage is listed as follows:
+
+| Stage  | Batch Size(each gpu) | Steps  | Time(hour) |
+|--------|----------------------|--------|------------|
+| Stage1 | 32                   | 60000  | 30         |
+| Stage2 | 12                   | 100000 | 30         |
+| Stage3 | 12                   | 60000  | 18         |
+
+
 ## Evaluation
+### Evaluation Script
+You can evaluate dexvla by following scripts.
 ~~~shell
 python lerobot/scripts/eval.py \
 --policy.type dexvla \
@@ -121,3 +139,6 @@ python lerobot/scripts/eval.py \
 --eval.batch_size 1 \
 --device cuda
 ~~~
+
+### Inference Speed
+Tested on a single A6000 GPU, the DexVLA could infer 3.4 action chunks in one second. For each action chunk, if we execute 25 actions, the real control frequency can be 85 (3.4*25)Hz.
