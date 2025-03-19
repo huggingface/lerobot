@@ -91,7 +91,7 @@ dynamixel = ["dynamixel-sdk", "pynput"]
 feetech = ["feetech-servo-sdk", "pynput"]
 intelrealsense = ["pyrealsense2"]
 stretch = ["hello-robot-stretch-body", "pyrender", "pyrealsense2", "pynput"]
-hilserl = ["transformers", "torchmetrics", "grpcio", "protobuf", "tensordict"]
+hilserl = ["transformers", "torchmetrics", "grpcio", "protobuf"]
 mani_skill = ["mani-skill"]
 
 [tool.ruff]
