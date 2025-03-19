@@ -8,9 +8,6 @@ from lerobot.common.robots.config import RobotConfig
 @RobotConfig.register_subclass("lekiwi")
 @dataclass
 class LeKiwiRobotConfig(RobotConfig):
-    port_zmq_cmd: int = 5555
-    port_zmq_observations: int = 5556
-
     id = "lekiwi"
 
     cameras: dict[str, CameraConfig] = field(

@@ -17,12 +17,10 @@
 import base64
 import json
 import logging
-import threading
 import time
 
 import cv2
 import numpy as np
-import zmq
 
 from lerobot.common.cameras.utils import make_cameras_from_configs
 from lerobot.common.constants import OBS_IMAGES, OBS_STATE
@@ -55,9 +53,6 @@ class LeKiwiRobot(Robot):
         self.config = config
         self.id = config.id
 
-        self.port_zmq_cmd = config.port_zmq_cmd
-        self.port_zmq_observations = config.port_zmq_observations
-
         # TODO(Steven): Consider in the future using S100 robot class
         # TODO(Steven): Another option is to use the motorbus factory, but in this case we assume that
         # what we consider 'lekiwi robot' always uses the FeetechMotorsBus
@@ -85,13 +80,6 @@ class LeKiwiRobot(Robot):
         # TODO(Steven): Consider removing cameras from configs
         self.cameras = make_cameras_from_configs(config.cameras)
 
-        self.observation_lock = threading.Lock()
-        self.last_observation = None
-
-        self.zmq_context = None
-        self.zmq_cmd_socket = None
-        self.zmq_observation_socket = None
-
         self.is_connected = False
         self.logs = {}
 
@@ -117,18 +105,6 @@ class LeKiwiRobot(Robot):
                 "info": None,
             }
         return cam_ft
-
-    def setup_zmq_sockets(self):
-        context = zmq.Context()
-        cmd_socket = context.socket(zmq.PULL)
-        cmd_socket.setsockopt(zmq.CONFLATE, 1)
-        cmd_socket.bind(f"tcp://*:{self.port_zmq_cmd}")
-
-        observation_socket = context.socket(zmq.PUSH)
-        observation_socket.setsockopt(zmq.CONFLATE, 1)
-        observation_socket.bind(f"tcp://*:{self.port_zmq_observations}")
-
-        return context, cmd_socket, observation_socket
 
     def setup_actuators(self):
         # Set-up arm actuators (position mode)
@@ -176,9 +152,6 @@ class LeKiwiRobot(Robot):
         logging.info("Connecting cameras.")
         for cam in self.cameras.values():
             cam.connect()
-
-        logging.info("Connecting ZMQ sockets.")
-        self.zmq_context, self.zmq_cmd_socket, self.zmq_observation_socket = self.setup_zmq_sockets()
 
         self.is_connected = True
 
@@ -274,79 +247,12 @@ class LeKiwiRobot(Robot):
 
         return goal_pos
 
-    def update_last_observation(self, stop_event):
-        while not stop_event.is_set():
-            obs = self.get_observation()
-            obs[OBS_STATE] = obs[OBS_STATE].tolist()  # Needed for np.array be serializable
-            with self.observation_lock:
-                self.last_observation = obs
-            # TODO(Steven): Consider adding a delay to not starve the CPU
-            # TODO(Steven): Check this value
-            time.sleep(0.5)
-
-    def stop(self):
+    def stop_base(self):
         # TODO(Steven): Assumes there's only 3 motors for base
         logging.info("Stopping base")
         # TODO(Steven): Check if these operations are thread safe!
         self.actuators_bus.write("Goal_Speed", [0, 0, 0], self.base_actuators)
         logging.info("Base motors stopped")
-
-    def run(self):
-        # Copied logic from run_lekiwi in lekiwi_remote.py
-        if not self.is_connected:
-            raise DeviceNotConnectedError("LeKiwiRobot is not connected. You need to run `robot.connect()`.")
-
-        stop_event = threading.Event()
-        observation_thread = threading.Thread(
-            target=self.update_last_observation, args=[stop_event], daemon=True
-        )
-        observation_thread.start()
-
-        last_cmd_time = time.time()
-        logging.info("LeKiwi robot server started. Waiting for commands...")
-
-        try:
-            start = time.perf_counter()
-            duration = 0
-            while duration < 100:
-                loop_start_time = time.time()
-
-                try:
-                    msg = self.zmq_cmd_socket.recv_string(zmq.NOBLOCK)
-                    data = np.array(json.loads(msg))
-                    _action_sent = self.send_action(data)
-                    last_cmd_time = time.time()
-                except zmq.Again:
-                    logging.warning("ZMQ again")
-                except Exception as e:
-                    logging.error("Message fetching failed: %s", e)
-
-                # TODO(Steven): Check this value
-                # Watchdog: stop the robot if no command is received for over 0.5 seconds.
-                now = time.time()
-                if now - last_cmd_time > 0.5:
-                    # TODO(Steven): This doesn't seem to be thread safe!
-                    # self.stop()
-                    pass
-
-                with self.observation_lock:
-                    # TODO(Steven): This operation is blocking if no listener is available
-                    self.zmq_observation_socket.send_string(json.dumps(self.last_observation))
-
-                # Ensure a short sleep to avoid overloading the CPU.
-                elapsed = time.time() - loop_start_time
-
-                # TODO(Steven): Check this value
-                time.sleep(
-                    max(0.033 - elapsed, 0)
-                )  # If robot jitters increase the sleep and monitor cpu load with `top` in cmd
-                duration = time.perf_counter() - start
-        except KeyboardInterrupt:
-            print("Shutting down LeKiwi server.")
-        finally:
-            stop_event.set()
-            observation_thread.join()
-            self.disconnect()
 
     def print_logs(self):
         # TODO(Steven): Refactor logger
@@ -358,13 +264,10 @@ class LeKiwiRobot(Robot):
                 "LeKiwi is not connected. You need to run `robot.connect()` before disconnecting."
             )
 
-        self.stop()
+        self.stop_base()
         self.actuators_bus.disconnect()
         for cam in self.cameras.values():
             cam.disconnect()
-        self.zmq_observation_socket.close()
-        self.zmq_cmd_socket.close()
-        self.zmq_context.term()
         self.is_connected = False
 
     def __del__(self):
