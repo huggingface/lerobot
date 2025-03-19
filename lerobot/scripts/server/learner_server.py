@@ -121,7 +121,7 @@ def load_training_state(
         return None, None
 
     training_state = torch.load(
-        logger.last_checkpoint_dir / logger.training_state_file_name
+        logger.last_checkpoint_dir / logger.training_state_file_name, weights_only=False
     )
 
     if isinstance(training_state["optimizer"], dict):
@@ -160,6 +160,7 @@ def initialize_replay_buffer(
             optimize_memory=True,
         )
 
+    logging.info("Resume training load the online dataset")
     dataset = LeRobotDataset(
         repo_id=cfg.dataset_repo_id,
         local_files_only=True,
@@ -172,6 +173,38 @@ def initialize_replay_buffer(
         state_keys=cfg.policy.input_shapes.keys(),
         optimize_memory=True,
     )
+
+
+def initialize_offline_replay_buffer(
+    cfg: DictConfig,
+    logger: Logger,
+    device: str,
+    storage_device: str,
+    active_action_dims: list[int] | None = None,
+) -> ReplayBuffer:
+    if not cfg.resume:
+        logging.info("make_dataset offline buffer")
+        offline_dataset = make_dataset(cfg)
+    if cfg.resume:
+        logging.info("load offline dataset")
+        offline_dataset = LeRobotDataset(
+            repo_id=cfg.dataset_repo_id,
+            local_files_only=True,
+            root=logger.log_dir / "dataset_offline",
+        )
+
+    logging.info("Convert to a offline replay buffer")
+    offline_replay_buffer = ReplayBuffer.from_lerobot_dataset(
+        offline_dataset,
+        device=device,
+        state_keys=cfg.policy.input_shapes.keys(),
+        action_mask=active_action_dims,
+        action_delta=cfg.env.wrapper.delta_action,
+        storage_device=storage_device,
+        optimize_memory=True,
+        capacity=cfg.training.offline_buffer_capacity,
+    )
+    return offline_replay_buffer
 
 
 def get_observation_features(
@@ -315,16 +348,49 @@ def start_learner_server(
 
 
 def check_nan_in_transition(
-    observations: torch.Tensor, actions: torch.Tensor, next_state: torch.Tensor
-):
-    for k in observations:
-        if torch.isnan(observations[k]).any():
-            logging.error(f"observations[{k}] contains NaN values")
-    for k in next_state:
-        if torch.isnan(next_state[k]).any():
-            logging.error(f"next_state[{k}] contains NaN values")
+    observations: torch.Tensor,
+    actions: torch.Tensor,
+    next_state: torch.Tensor,
+    raise_error: bool = False,
+) -> bool:
+    """
+    Check for NaN values in transition data.
+
+    Args:
+        observations: Dictionary of observation tensors
+        actions: Action tensor
+        next_state: Dictionary of next state tensors
+        raise_error: If True, raises ValueError when NaN is detected
+
+    Returns:
+        bool: True if NaN values were detected, False otherwise
+    """
+    nan_detected = False
+
+    # Check observations
+    for key, tensor in observations.items():
+        if torch.isnan(tensor).any():
+            logging.error(f"observations[{key}] contains NaN values")
+            nan_detected = True
+            if raise_error:
+                raise ValueError(f"NaN detected in observations[{key}]")
+
+    # Check next state
+    for key, tensor in next_state.items():
+        if torch.isnan(tensor).any():
+            logging.error(f"next_state[{key}] contains NaN values")
+            nan_detected = True
+            if raise_error:
+                raise ValueError(f"NaN detected in next_state[{key}]")
+
+    # Check actions
     if torch.isnan(actions).any():
         logging.error("actions contains NaN values")
+        nan_detected = True
+        if raise_error:
+            raise ValueError("NaN detected in actions")
+
+    return nan_detected
 
 
 def push_actor_policy_to_queue(parameters_queue: Queue, policy: nn.Module):
@@ -390,6 +456,10 @@ def add_actor_information_and_train(
         if cfg.resume
         else None,
     )
+
+    # Update the policy config with the grad_clip_norm value from training config if it exists
+    clip_grad_norm_value = cfg.training.grad_clip_norm
+
     # compile policy
     policy = torch.compile(policy)
     assert isinstance(policy, nn.Module)
@@ -410,9 +480,6 @@ def add_actor_information_and_train(
     offline_replay_buffer = None
 
     if cfg.dataset_repo_id is not None:
-        logging.info("make_dataset offline buffer")
-        offline_dataset = make_dataset(cfg)
-        logging.info("Convertion to a offline replay buffer")
         active_action_dims = None
         if cfg.env.wrapper.joint_masking_action_space is not None:
             active_action_dims = [
@@ -420,14 +487,12 @@ def add_actor_information_and_train(
                 for i, mask in enumerate(cfg.env.wrapper.joint_masking_action_space)
                 if mask
             ]
-        offline_replay_buffer = ReplayBuffer.from_lerobot_dataset(
-            offline_dataset,
+        offline_replay_buffer = initialize_offline_replay_buffer(
+            cfg=cfg,
+            logger=logger,
             device=device,
-            state_keys=cfg.policy.input_shapes.keys(),
-            action_mask=active_action_dims,
-            action_delta=cfg.env.wrapper.delta_action,
             storage_device=storage_device,
-            optimize_memory=True,
+            active_action_dims=active_action_dims,
         )
         batch_size: int = batch_size // 2  # We will sample from both replay buffer
 
@@ -472,9 +537,18 @@ def add_actor_information_and_train(
 
             for transition in transition_list:
                 transition = move_transition_to_device(transition, device=device)
+                if check_nan_in_transition(
+                    transition["state"], transition["action"], transition["next_state"]
+                ):
+                    logging.warning("NaN detected in transition, skipping")
+                    continue
                 replay_buffer.add(**transition)
-                if transition.get("complementary_info", {}).get("is_intervention"):
+
+                if cfg.dataset_repo_id is not None and transition.get(
+                    "complementary_info", {}
+                ).get("is_intervention"):
                     offline_replay_buffer.add(**transition)
+
         logging.debug("[LEARNER] Received transitions")
         logging.debug("[LEARNER] Waiting for interactions")
         while not interaction_message_queue.empty() and not shutdown_event.is_set():
@@ -523,6 +597,12 @@ def add_actor_information_and_train(
             )
             optimizers["critic"].zero_grad()
             loss_critic.backward()
+
+            # clip gradients
+            critic_grad_norm = torch.nn.utils.clip_grad_norm_(
+                policy.critic_ensemble.parameters(), clip_grad_norm_value
+            )
+
             optimizers["critic"].step()
 
         batch = replay_buffer.sample(batch_size)
@@ -557,10 +637,17 @@ def add_actor_information_and_train(
         )
         optimizers["critic"].zero_grad()
         loss_critic.backward()
+
+        # clip gradients
+        critic_grad_norm = torch.nn.utils.clip_grad_norm_(
+            policy.critic_ensemble.parameters(), clip_grad_norm_value
+        ).item()
+
         optimizers["critic"].step()
 
         training_infos = {}
         training_infos["loss_critic"] = loss_critic.item()
+        training_infos["critic_grad_norm"] = critic_grad_norm
 
         if optimization_step % policy_update_freq == 0:
             for _ in range(policy_update_freq):
@@ -571,26 +658,48 @@ def add_actor_information_and_train(
 
                 optimizers["actor"].zero_grad()
                 loss_actor.backward()
+
+                # clip gradients
+                actor_grad_norm = torch.nn.utils.clip_grad_norm_(
+                    policy.actor.parameters_to_optimize, clip_grad_norm_value
+                ).item()
+
                 optimizers["actor"].step()
 
                 training_infos["loss_actor"] = loss_actor.item()
+                training_infos["actor_grad_norm"] = actor_grad_norm
 
+                # Temperature optimization
                 loss_temperature = policy.compute_loss_temperature(
                     observations=observations,
                     observation_features=observation_features,
                 )
                 optimizers["temperature"].zero_grad()
                 loss_temperature.backward()
+
+                #  clip gradients
+                temp_grad_norm = torch.nn.utils.clip_grad_norm_(
+                    [policy.log_alpha], clip_grad_norm_value
+                ).item()
+
                 optimizers["temperature"].step()
 
                 training_infos["loss_temperature"] = loss_temperature.item()
+                training_infos["temperature_grad_norm"] = temp_grad_norm
+                training_infos["temperature"] = policy.temperature
 
         if time.time() - last_time_policy_pushed > policy_parameters_push_frequency:
             push_actor_policy_to_queue(parameters_queue, policy)
             last_time_policy_pushed = time.time()
 
         policy.update_target_networks()
-        if optimization_step % log_freq == 0:
+
+        if optimization_step % cfg.training.log_freq == 0:
+            training_infos["replay_buffer_size"] = len(replay_buffer)
+            if offline_replay_buffer is not None:
+                training_infos["offline_replay_buffer_size"] = len(
+                    offline_replay_buffer
+                )
             training_infos["Optimization step"] = optimization_step
             logger.log_dict(
                 d=training_infos, mode="train", custom_step_key="Optimization step"
@@ -649,6 +758,19 @@ def add_actor_information_and_train(
             replay_buffer.to_lerobot_dataset(
                 dataset_repo_id, fps=fps, root=logger.log_dir / "dataset"
             )
+            if offline_replay_buffer is not None:
+                dataset_dir = logger.log_dir / "dataset_offline"
+
+                if dataset_dir.exists() and dataset_dir.is_dir():
+                    shutil.rmtree(
+                        dataset_dir,
+                    )
+
+                offline_replay_buffer.to_lerobot_dataset(
+                    cfg.dataset_repo_id,
+                    fps=cfg.fps,
+                    root=logger.log_dir / "dataset_offline",
+                )
 
             logging.info("Resume training")
 

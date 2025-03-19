@@ -159,7 +159,7 @@ def make_maniskill(
     env.unwrapped.metadata["render_fps"] = 20
     env = ManiSkillCompat(env)
     env = ManiSkillActionWrapper(env)
-    env = ManiSkillMultiplyActionWrapper(env, multiply_factor=1)
+    env = ManiSkillMultiplyActionWrapper(env, multiply_factor=0.03)
 
     return env
 
