@@ -202,6 +202,7 @@ def initialize_offline_replay_buffer(
         action_delta=cfg.env.wrapper.delta_action,
         storage_device=storage_device,
         optimize_memory=True,
+        capacity=cfg.training.offline_buffer_capacity,
     )
     return offline_replay_buffer
 
