@@ -292,6 +292,11 @@ Steps:
    - Scan for devices. All 12 motors should appear.
    - Select the motors one by one and move the arm. Check that the graphical indicator near the top right shows the movement.
 
+** There is a common issue with the Dynamixel XL430-W250 motors where the motors become undiscoverable after upgrading their firmware from Mac and Windows Dynamixel Wizard2 applications.  When this occurs, it is required to do a firmware recovery (Select `DYNAMIXEL Firmware Recovery` and follow the prompts).   There are two known workarounds to conduct this firmware reset:
+  1) Install the Dynamixel Wizard on a linux machine and complete the firmware recovery
+  2) Use the Dynamixel U2D2 in order to perform the reset with Windows or Mac.  This U2D2 can be purchased [here](https://www.robotis.us/u2d2/).
+  For either solution, open DYNAMIXEL Wizard 2.0 and select the appropriate port. You will likely be unable to see the motor in the GUI at this time. Select `Firmware Recovery`, carefully choose the correct model, and wait for the process to complete. Finally, re-scan to confirm the firmware recovery was successful.
+
 **Read and Write with DynamixelMotorsBus**
 
 To get familiar with how `DynamixelMotorsBus` communicates with the motors, you can start by reading data from them. Copy past this code in the same interactive python session:
