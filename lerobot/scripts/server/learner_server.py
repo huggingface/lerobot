@@ -694,7 +694,7 @@ def add_actor_information_and_train(
 
         policy.update_target_networks()
 
-        if optimization_step % cfg.training.log_freq == 0:
+        if optimization_step % log_freq == 0:
             training_infos["replay_buffer_size"] = len(replay_buffer)
             if offline_replay_buffer is not None:
                 training_infos["offline_replay_buffer_size"] = len(
