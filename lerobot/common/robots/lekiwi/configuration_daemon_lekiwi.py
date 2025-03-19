@@ -11,10 +11,6 @@ class DaemonLeKiwiRobotConfig(RobotConfig):
     port_zmq_cmd: int = 5555
     port_zmq_observations: int = 5556
 
-    id = "daemonlekiwi"
-
-    calibration_dir: str = ".cache/calibration/lekiwi"
-
     teleop_keys: dict[str, str] = field(
         default_factory=lambda: {
             # Movement
