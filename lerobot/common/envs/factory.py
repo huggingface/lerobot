@@ -37,12 +37,12 @@ def make_env(cfg: EnvConfig, n_envs: int = 1, use_async_envs: bool = False) -> g
     Args:
         cfg (EnvConfig): the config of the environment to instantiate.
         n_envs (int, optional): The number of parallelized env to return. Defaults to 1.
-        use_async_envs (bool, optional): Wether to return an AsyncVectorEnv or a SyncVectorEnv. Defaults to
+        use_async_envs (bool, optional): Whether to return an AsyncVectorEnv or a SyncVectorEnv. Defaults to
             False.
 
     Raises:
         ValueError: if n_envs < 1
-        ModuleNotFoundError: If the requested env package is not intalled
+        ModuleNotFoundError: If the requested env package is not installed
 
     Returns:
         gym.vector.VectorEnv: The parallelized gym.env instance.
