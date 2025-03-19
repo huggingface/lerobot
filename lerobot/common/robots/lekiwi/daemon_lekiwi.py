@@ -25,8 +25,9 @@ import zmq
 
 from lerobot.common.constants import OBS_IMAGES, OBS_STATE
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError, InvalidActionError
+from lerobot.common.robots.config import RobotMode
 
-from ..robot import Robot, RobotMode
+from ..robot import Robot
 from .configuration_daemon_lekiwi import DaemonLeKiwiRobotConfig
 
 
@@ -50,6 +51,7 @@ class DaemonLeKiwiRobot(Robot):
         self.config = config
         self.id = config.id
         self.robot_type = config.type
+        self.robot_mode = config.robot_mode
 
         self.remote_ip = config.remote_ip
         self.port_zmq_cmd = config.port_zmq_cmd
@@ -63,7 +65,9 @@ class DaemonLeKiwiRobot(Robot):
 
         self.last_frames = {}
         self.last_present_speed = [0, 0, 0]
-        self.last_remote_arm_state = torch.zeros(6, dtype=torch.float32)
+
+        # TODO(Steven): Consider 32 instead
+        self.last_remote_arm_state = torch.zeros(6, dtype=torch.float64)
 
         # Define three speed levels and a current index
         self.speed_levels = [
@@ -81,12 +85,23 @@ class DaemonLeKiwiRobot(Robot):
         # TODO(Steven): Get this from the data fetched?
         # TODO(Steven): Motor names are unknown for the Daemon
         # Or assume its size/metadata?
-        # return {
-        #     "dtype": "float32",
-        #     "shape": (len(self.actuators),),
-        #     "names": {"motors": list(self.actuators.motors)},
-        # }
-        pass
+        return {
+            "dtype": "float64",
+            "shape": (9,),
+            "names": {
+                "motors": [
+                    "arm_shoulder_pan",
+                    "arm_shoulder_lift",
+                    "arm_elbow_flex",
+                    "arm_wrist_flex",
+                    "arm_wrist_roll",
+                    "arm_gripper",
+                    "base_left_wheel",
+                    "base_right_wheel",
+                    "base_back_wheel",
+                ]
+            },
+        }
 
     @property
     def action_feature(self) -> dict:
@@ -97,15 +112,19 @@ class DaemonLeKiwiRobot(Robot):
         # TODO(Steven): Get this from the data fetched?
         # TODO(Steven): Motor names are unknown for the Daemon
         # Or assume its size/metadata?
-        # cam_ft = {}
-        # for cam_key, cam in self.cameras.items():
-        #     cam_ft[cam_key] = {
-        #         "shape": (cam.height, cam.width, cam.channels),
-        #         "names": ["height", "width", "channels"],
-        #         "info": None,
-        #     }
-        # return cam_ft
-        pass
+        cam_ft = {
+            "front": {
+                "shape": (480, 640, 3),
+                "names": ["height", "width", "channels"],
+                "info": None,
+            },
+            "wrist": {
+                "shape": (480, 640, 3),
+                "names": ["height", "width", "channels"],
+                "info": None,
+            },
+        }
+        return cam_ft
 
     def connect(self) -> None:
         """Establishes ZMQ sockets with the remote mobile robot"""
@@ -259,6 +278,7 @@ class DaemonLeKiwiRobot(Robot):
         return (x_cmd, y_cmd, theta_cmd)
 
     # TODO(Steven): This is flaky, for example, if we received a state but failed decoding the image, we will not update any value
+    # TODO(Steven): All this function needs to be refactored
     def _get_data(self):
         # Copied from robot_lekiwi.py
         """Polls the video socket for up to 15 ms. If data arrives, decode only
@@ -269,7 +289,7 @@ class DaemonLeKiwiRobot(Robot):
         present_speed = []
 
         # TODO(Steven): Size is being assumed, is this safe?
-        remote_arm_state_tensor = torch.empty(6, dtype=torch.float32)
+        remote_arm_state_tensor = torch.empty(6, dtype=torch.float64)
 
         # Poll up to 15 ms
         poller = zmq.Poller()
@@ -317,7 +337,7 @@ class DaemonLeKiwiRobot(Robot):
             if state_observation is not None and frames is not None:
                 self.last_frames = frames
 
-                remote_arm_state_tensor = torch.tensor(state_observation[OBS_STATE][:6], dtype=torch.float32)
+                remote_arm_state_tensor = torch.tensor(state_observation[OBS_STATE][:6], dtype=torch.float64)
                 self.last_remote_arm_state = remote_arm_state_tensor
 
                 present_speed = state_observation[OBS_STATE][6:]
@@ -351,7 +371,7 @@ class DaemonLeKiwiRobot(Robot):
         frames, present_speed, remote_arm_state_tensor = self._get_data()
         body_state = self._wheel_raw_to_body(present_speed)
         body_state_mm = (body_state[0] * 1000.0, body_state[1] * 1000.0, body_state[2])  # Convert x,y to mm/s
-        wheel_state_tensor = torch.tensor(body_state_mm, dtype=torch.float32)
+        wheel_state_tensor = torch.tensor(body_state_mm, dtype=torch.float64)
         combined_state_tensor = torch.cat((remote_arm_state_tensor, wheel_state_tensor), dim=0)
 
         obs_dict = {OBS_STATE: combined_state_tensor}
@@ -361,8 +381,14 @@ class DaemonLeKiwiRobot(Robot):
             if frame is None:
                 # TODO(Steven): Daemon doesn't know camera dimensions
                 logging.warning("Frame is None")
-                # frame = np.zeros((cam.height, cam.width, cam.channels), dtype=np.uint8)
+                frame = np.zeros((480, 640, 3), dtype=np.uint8)
             obs_dict[cam_name] = torch.from_numpy(frame)
+
+        # TODO(Steven): Refactor this ugly thing
+        if OBS_IMAGES + ".wrist" not in obs_dict:
+            obs_dict[OBS_IMAGES + ".wrist"] = np.zeros(shape=(480, 640, 3))
+        if OBS_IMAGES + ".front" not in obs_dict:
+            obs_dict[OBS_IMAGES + ".front"] = np.zeros(shape=(640, 480, 3))
 
         return obs_dict
 
@@ -425,7 +451,6 @@ class DaemonLeKiwiRobot(Robot):
             )
 
         goal_pos: np.array = np.zeros(9)
-
         if self.robot_mode is RobotMode.AUTO:
             # TODO(Steven): Not yet implemented. The policy outputs might need a different conversion
             raise Exception
@@ -441,7 +466,6 @@ class DaemonLeKiwiRobot(Robot):
                 # TODO(Steven): Assumes size and order is respected
                 wheel_actions = [v for _, v in self._from_keyboard_to_wheel_action(action[6:]).items()]
                 goal_pos[6:] = wheel_actions
-
             self.zmq_cmd_socket.send_string(json.dumps(goal_pos.tolist()))  # action is in motor space
 
         return goal_pos
