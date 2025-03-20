@@ -139,8 +139,8 @@ class FeetechMotorsBus(MotorsBus):
 
         self.port_handler = scs.PortHandler(self.port)
         self.packet_handler = scs.PacketHandler(PROTOCOL_VERSION)
-        self.reader = scs.GroupSyncRead(self.packet_handler, self.packet_handler, 0, 0)
-        self.writer = scs.GroupSyncWrite(self.packet_handler, self.packet_handler, 0, 0)
+        self.reader = scs.GroupSyncRead(self.port_handler, self.packet_handler, 0, 0)
+        self.writer = scs.GroupSyncWrite(self.port_handler, self.packet_handler, 0, 0)
 
     def broadcast_ping(self, num_retry: int | None = None):
         raise NotImplementedError  # TODO
