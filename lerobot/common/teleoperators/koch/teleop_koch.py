@@ -25,7 +25,6 @@ from lerobot.common.motors import TorqueMode
 from lerobot.common.motors.dynamixel import (
     DynamixelMotorsBus,
     run_arm_calibration,
-    set_operating_mode,
 )
 
 from ..teleoperator import Teleoperator
@@ -88,7 +87,22 @@ class KochTeleop(Teleoperator):
         self.arm.write("Torque_Enable", TorqueMode.DISABLED.value)
         self.calibrate()
 
-        set_operating_mode(self.arm)
+        # Use 'extended position mode' for all motors except gripper, because in joint mode the servos can't
+        # rotate more than 360 degrees (from 0 to 4095) And some mistake can happen while assembling the arm,
+        # you could end up with a servo with a position 0 or 4095 at a crucial point See [
+        # https://emanual.robotis.com/docs/en/dxl/x/x_series/#operating-mode11]
+        all_motors_except_gripper = [name for name in self.arm.motor_names if name != "gripper"]
+        if len(all_motors_except_gripper) > 0:
+            # 4 corresponds to Extended Position on Koch motors
+            self.arm.write("Operating_Mode", 4, all_motors_except_gripper)
+
+        # Use 'position control current based' for gripper to be limited by the limit of the current.
+        # For the follower gripper, it means it can grasp an object without forcing too much even tho,
+        # it's goal position is a complete grasp (both gripper fingers are ordered to join and reach a touch).
+        # For the leader gripper, it means we can use it as a physical trigger, since we can force with our finger
+        # to make it move, and it will move back to its original target position when we release the force.
+        # 5 corresponds to Current Controlled Position on Koch gripper motors "xl330-m077, xl330-m288"
+        self.arm.write("Operating_Mode", 5, "gripper")
 
         # Enable torque on the gripper and move it to 45 degrees so that we can use it as a trigger.
         logging.info("Activating torque.")
