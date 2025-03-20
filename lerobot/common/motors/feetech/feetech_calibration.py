@@ -266,7 +266,7 @@ def convert_degrees_to_ticks(degrees, model):
     return int(degrees * (resolutions / 360.0))
 
 
-def adjusted_to_homing_ticks(raw_motor_ticks: int, model: str, motorbus, motor_id: int) -> int:
+def adjusted_to_homing_ticks(raw_motor_ticks: int, model: str, motor_bus: MotorsBus, motor_id: int) -> int:
     """
     Takes a raw reading [0..(res-1)] (e.g. 0..4095) and shifts it so that '2048'
     becomes 0 in the homed coordinate system ([-2048..+2047] for 4096 resolution).
@@ -282,8 +282,8 @@ def adjusted_to_homing_ticks(raw_motor_ticks: int, model: str, motorbus, motor_i
 
     # Flip sign if drive_mode is set.
     drive_mode = 0
-    if motorbus.calibration is not None:
-        drive_mode = motorbus.calibration["drive_mode"][motor_id - 1]
+    if motor_bus.calibration is not None:
+        drive_mode = motor_bus.calibration["drive_mode"][motor_id - 1]
 
     if drive_mode:
         ticks *= -1
@@ -291,15 +291,15 @@ def adjusted_to_homing_ticks(raw_motor_ticks: int, model: str, motorbus, motor_i
     return ticks
 
 
-def adjusted_to_motor_ticks(adjusted_pos: int, model: str, motorbus, motor_id: int) -> int:
+def adjusted_to_motor_ticks(adjusted_pos: int, model: str, motor_bus: MotorsBus, motor_id: int) -> int:
     """
     Inverse of adjusted_to_homing_ticks(). Takes a 'homed' position in [-2048..+2047]
     and recovers the raw [0..(res-1)] ticks with 2048 as midpoint.
     """
     # Flip sign if drive_mode was set.
     drive_mode = 0
-    if motorbus.calibration is not None:
-        drive_mode = motorbus.calibration["drive_mode"][motor_id - 1]
+    if motor_bus.calibration is not None:
+        drive_mode = motor_bus.calibration["drive_mode"][motor_id - 1]
 
     if drive_mode:
         adjusted_pos *= -1
