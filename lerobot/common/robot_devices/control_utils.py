@@ -288,13 +288,16 @@ def reset_environment(robot, events, reset_time_s, fps):
     if has_method(robot, "teleop_safety_stop"):
         robot.teleop_safety_stop()
 
-    control_loop(
-        robot=robot,
-        control_time_s=reset_time_s,
-        events=events,
-        fps=fps,
-        teleoperate=True,
-    )
+    if robot.robot_type in ["trossen_ai_stationary", "trossen_ai_solo"]:
+        time.sleep(reset_time_s)
+    else:
+        control_loop(
+            robot=robot,
+            control_time_s=reset_time_s,
+            events=events,
+            fps=fps,
+            teleoperate=True,
+        )
 
 
 def stop_recording(robot, listener, display_cameras):

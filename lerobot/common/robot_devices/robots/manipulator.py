@@ -160,7 +160,7 @@ class ManipulatorRobot:
     ):
         self.config = config
         self.robot_type = self.config.type
-        if not self.robot_type in ["trossen_ai_bimanual", "trossen_ai_solo"]:
+        if not self.robot_type in ["trossen_ai_stationary", "trossen_ai_solo"]:
             self.calibration_dir = Path(self.config.calibration_dir)
         self.leader_arms = make_motors_buses_from_configs(self.config.leader_arms)
         self.follower_arms = make_motors_buses_from_configs(self.config.follower_arms)
@@ -224,13 +224,17 @@ class ManipulatorRobot:
         return available_arms
 
     def teleop_safety_stop(self):
-        if self.robot_type in ["trossen_ai_bimanual", "trossen_ai_solo"]:
-            for arms in self.follower_arms:
-                self.follower_arms[arms].write("Reset", 1)
-                self.follower_arms[arms].write("Torque_Enable", 1)
+        if self.robot_type in ["trossen_ai_stationary", "trossen_ai_solo"]:
             for arms in self.leader_arms:
                 self.leader_arms[arms].write("Reset", 1)
+            for arms in self.follower_arms:
+                self.follower_arms[arms].write("Reset", 1)
+            time.sleep(2)
+            for arms in self.leader_arms:
                 self.leader_arms[arms].write("Torque_Enable", 0)
+            for arms in self.follower_arms:
+                self.follower_arms[arms].write("Torque_Enable", 1)
+            
 
     def connect(self):
         if self.is_connected:
@@ -250,8 +254,10 @@ class ManipulatorRobot:
         for name in self.leader_arms:
             print(f"Connecting {name} leader arm.")
             self.leader_arms[name].connect()
+        
+        time.sleep(2)
 
-        if self.robot_type in ["koch", "koch_bimanual", "aloha", "trossen_ai_bimanual", "trossen_ai_solo"]:
+        if self.robot_type in ["koch", "koch_bimanual", "aloha", "trossen_ai_stationary", "trossen_ai_solo"]:
             from lerobot.common.robot_devices.motors.dynamixel import TorqueMode
         elif self.robot_type in ["so100", "moss", "lekiwi"]:
             from lerobot.common.robot_devices.motors.feetech import TorqueMode
@@ -263,7 +269,7 @@ class ManipulatorRobot:
         for name in self.leader_arms:
             self.leader_arms[name].write("Torque_Enable", TorqueMode.DISABLED.value)
 
-        if not self.robot_type in ["trossen_ai_bimanual", "trossen_ai_solo"]:
+        if not self.robot_type in ["trossen_ai_stationary", "trossen_ai_solo"]:
             print("Checking if calibration is needed.")
             self.activate_calibration()
 
@@ -628,6 +634,8 @@ class ManipulatorRobot:
 
         for name in self.leader_arms:
             self.leader_arms[name].disconnect()
+        
+        time.sleep(2)
 
         for name in self.cameras:
             self.cameras[name].disconnect()

@@ -24,7 +24,7 @@ from lerobot.common.robot_devices.robots.configs import (
     RobotConfig,
     So100RobotConfig,
     StretchRobotConfig,
-    TrossenAIBimanualRobotConfig,
+    TrossenAIStationaryRobotConfig,
     TrossenAISoloRobotConfig,
 )
 
@@ -64,8 +64,8 @@ def make_robot_config(robot_type: str, **kwargs) -> RobotConfig:
         return StretchRobotConfig(**kwargs)
     elif robot_type == "lekiwi":
         return LeKiwiRobotConfig(**kwargs)
-    elif robot_type == "trossen_ai_bimanual":
-        return TrossenAIBimanualRobotConfig(**kwargs)
+    elif robot_type == "trossen_ai_stationary":
+        return TrossenAIStationaryRobotConfig(**kwargs)
     elif robot_type == "trossen_ai_solo":
         return TrossenAISoloRobotConfig(**kwargs)
     else:
