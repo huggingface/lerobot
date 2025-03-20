@@ -37,6 +37,9 @@ from ..utils import ensure_safe_goal_position
 from .configuration_lekiwi import LeKiwiRobotConfig
 
 
+# TODO(Steven): Everything in here is pretty much single-threaded and synchronous. The assumption is that we can run the loop at a
+# high enough frequency to not need to worry about threading. This is a good assumption for now, but we should consider
+# making this more robust in the future.
 class LeKiwiRobot(Robot):
     """
     The robot includes a three omniwheel mobile base and a remote follower arm.
@@ -111,7 +114,7 @@ class LeKiwiRobot(Robot):
         # We assume that at connection time, arm is in a rest position,
         # and torque can be safely disabled to run calibration.
         self.actuators_bus.write("Torque_Enable", TorqueMode.DISABLED.value, self.arm_actuators)
-        self.calibrate()  # TODO(Steven): This should be only for the arm
+        self.calibrate()  # TODO(Steven): This should be only for the arm, but apparently it doesn't harm the base
 
         # Mode=0 for Position Control
         self.actuators_bus.write("Mode", 0, self.arm_actuators)
