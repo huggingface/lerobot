@@ -26,15 +26,26 @@ def test_autouse_patch():
 @pytest.mark.parametrize(
     "value, n_bytes, expected",
     [
-        (0x12,       1, [0x12]),                    # Single byte
-        (0x1234,     2, [0x34, 0x12]),              # Two bytes
-        (0x12345678, 4, [0x78, 0x56, 0x34, 0x12]),  # Four bytes
-        (0,          1, [0x00]),                    # Zero with 1 byte
-        (0,          2, [0x00, 0x00]),              # Zero with 2 bytes
-        (0,          4, [0x00, 0x00, 0x00, 0x00]),  # Zero with 4 bytes
-        (255,        1, [0xFF]),                    # Max single byte
-        (65535,      2, [0xFF, 0xFF]),              # Max two bytes
-        (4294967295, 4, [0xFF, 0xFF, 0xFF, 0xFF]),  # Max four bytes
+        (0x12,       1, [0x12]),
+        (0x1234,     2, [0x34, 0x12]),
+        (0x12345678, 4, [0x78, 0x56, 0x34, 0x12]),
+        (0,          1, [0x00]),
+        (0,          2, [0x00, 0x00]),
+        (0,          4, [0x00, 0x00, 0x00, 0x00]),
+        (255,        1, [0xFF]),
+        (65535,      2, [0xFF, 0xFF]),
+        (4294967295, 4, [0xFF, 0xFF, 0xFF, 0xFF]),
+    ],
+    ids=[
+        "1 byte",
+        "2 bytes",
+        "4 bytes",
+        "0 with 1 byte",
+        "0 with 2 bytes",
+        "0 with 4 bytes",
+        "max single byte",
+        "max two bytes",
+        "max four bytes",
     ],
 )  # fmt: skip
 def test_split_int_bytes(value, n_bytes, expected):
@@ -58,7 +69,7 @@ def test_split_int_bytes_large_number():
 
 
 def test_abc_implementation():
-    # Instantiation should raise an error if the class doesn't implements abstract methods/properties
+    """Instantiation should raise an error if the class doesn't implement abstract methods/properties."""
     DynamixelMotorsBus(port="/dev/dummy-port", motors={"dummy": (1, "xl330-m077")})
 
 
@@ -70,6 +81,7 @@ def test_abc_implementation():
         ["dummy_1", "dummy_2", "dummy_3"],
         [1, "dummy_2", 3],
     ],
+    ids=["None", "by ids", "by names", "mixed"],
 )
 def test_read_all_motors(motors):
     mock_motors = MockMotors([1, 2, 3])
