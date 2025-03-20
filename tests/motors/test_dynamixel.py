@@ -4,7 +4,7 @@ from unittest.mock import patch
 import dynamixel_sdk as dxl
 import pytest
 
-from lerobot.common.motors.dynamixel.dynamixel import DynamixelMotorsBus
+from lerobot.common.motors.dynamixel import DynamixelMotorsBus
 from tests.mocks.mock_dynamixel import MockMotors, MockPortHandler
 
 
