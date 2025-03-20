@@ -39,14 +39,15 @@ python examples/port_datasets/droid_rlds/port.py \
 
 ## Port over SLURM
 
-### 1. Port one shard per job
-
-First, install slurm utilities from Hugging Face:
+Install slurm utilities from Hugging Face:
 ```bash
 pip install datatrove
 ```
 
-Then run this script to start porting shards of the dataset:
+
+### 1. Port one shard per job
+
+Run this script to start porting shards of the dataset:
 ```bash
 python examples/port_datasets/droid_rlds/slurm_port_shards.py \
     --raw-dir /your/data/droid/1.0.1 \
@@ -83,7 +84,7 @@ Check if your jobs are running:
 squeue -u $USER`
 ```
 
-You should see a list with job indices like `15125385_155` where `15125385` is the job index and `155` is the worker index. The output/print of this worker is written in real time in `/your/logs/job_name/slurm_jobs/15125385_155.out`. For instance, you can inspect the content of this file by running `less /your/logs/job_name/slurm_jobs/15125385_155.out`.
+You should see a list with job indices like `15125385_155` where `15125385` is the index of the run and `155` is the worker index. The output/print of this worker is written in real time in `/your/logs/job_name/slurm_jobs/15125385_155.out`. For instance, you can inspect the content of this file by running `less /your/logs/job_name/slurm_jobs/15125385_155.out`.
 
 Check the progression of your jobs by running:
 ```bash

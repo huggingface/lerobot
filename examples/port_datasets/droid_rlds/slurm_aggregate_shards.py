@@ -16,6 +16,7 @@
 
 import argparse
 import logging
+from pathlib import Path
 
 import tqdm
 from datatrove.executor import LocalPipelineExecutor
@@ -197,7 +198,7 @@ def make_aggregate_executor(
         "pipeline": [
             AggregateDatasets(repo_ids, repo_id),
         ],
-        "logging_dir": str(logs_dir),
+        "logging_dir": str(logs_dir / job_name),
     }
 
     if slurm:
@@ -235,7 +236,7 @@ def main():
     )
     parser.add_argument(
         "--logs-dir",
-        type=str,
+        type=Path,
         help="Path to logs directory for `datatrove`.",
     )
     parser.add_argument(

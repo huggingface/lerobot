@@ -12,6 +12,7 @@ from huggingface_hub.constants import REPOCARD_NAME
 from examples.port_datasets.droid_rlds.port_droid import DROID_SHARDS
 from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDatasetMetadata
 from lerobot.common.datasets.utils import create_lerobot_dataset_card
+from lerobot.common.utils.utils import init_logging
 
 
 class UploadDataset(PipelineStep):
@@ -23,10 +24,12 @@ class UploadDataset(PipelineStep):
         tags: list | None = None,
         license: str | None = "apache-2.0",
         private: bool = False,
+        distant_repo_id: str | None = None,
         **card_kwargs,
     ):
         super().__init__()
         self.repo_id = repo_id
+        self.distant_repo_id = self.repo_id if distant_repo_id is None else distant_repo_id
         self.branch = branch
         self.tags = tags
         self.license = license
@@ -43,96 +46,123 @@ class UploadDataset(PipelineStep):
         self.create_repo()
 
     def create_repo(self):
-        hub_api = HfApi()
-
+        logging.info(f"Loading meta data from {self.repo_id}...")
         meta = LeRobotDatasetMetadata(self.repo_id)
+
+        logging.info(f"Creating repo {self.distant_repo_id}...")
+        hub_api = HfApi()
         hub_api.create_repo(
-            repo_id=self.repo_id,
+            repo_id=self.distant_repo_id,
             private=self.private,
             repo_type="dataset",
             exist_ok=True,
         )
         if self.branch:
             hub_api.create_branch(
-                repo_id=self.repo_id,
+                repo_id=self.distant_repo_id,
                 branch=self.branch,
                 revision=self.revision,
                 repo_type="dataset",
                 exist_ok=True,
             )
 
-        if not hub_api.file_exists(self.repo_id, REPOCARD_NAME, repo_type="dataset", revision=self.branch):
+        if not hub_api.file_exists(
+            self.distant_repo_id, REPOCARD_NAME, repo_type="dataset", revision=self.branch
+        ):
             card = create_lerobot_dataset_card(
                 tags=self.tags, dataset_info=meta.info, license=self.license, **self.card_kwargs
             )
-            card.push_to_hub(repo_id=self.repo_id, repo_type="dataset", revision=self.branch)
+            card.push_to_hub(repo_id=self.distant_repo_id, repo_type="dataset", revision=self.branch)
 
         def list_files_recursively(directory):
             base_path = Path(directory)
             return [str(file.relative_to(base_path)) for file in base_path.rglob("*") if file.is_file()]
 
-        meta = LeRobotDatasetMetadata(self.repo_id)
+        logging.info(f"Listing all local files from {self.repo_id}...")
         self.file_paths = list_files_recursively(meta.root)
         self.file_paths = sorted(self.file_paths)
 
-    def run(self, data=None, rank: int = 0, world_size: int = 1):
-        import logging
-        import random
-        import time
+    def create_chunks(self, lst, n):
         from itertools import islice
 
-        from huggingface_hub import CommitOperationAdd, create_commit, preupload_lfs_files
+        it = iter(lst)
+        return [list(islice(it, size)) for size in [len(lst) // n + (i < len(lst) % n) for i in range(n)]]
+
+    def create_commits(self, additions):
+        import logging
+        import math
+        import random
+        import time
+
+        from huggingface_hub import create_commit
         from huggingface_hub.utils import HfHubHTTPError
+
+        FILES_BETWEEN_COMMITS = 10  # noqa: N806
+        BASE_DELAY = 0.1  # noqa: N806
+        MAX_RETRIES = 12  # noqa: N806
+
+        # Split the files into smaller chunks for faster commit
+        # and avoiding "A commit has happened since" error
+        num_chunks = math.ceil(len(additions) / FILES_BETWEEN_COMMITS)
+        chunks = self.create_chunks(additions, num_chunks)
+
+        for chunk in chunks:
+            retries = 0
+            while True:
+                try:
+                    create_commit(
+                        self.distant_repo_id,
+                        repo_type="dataset",
+                        operations=chunk,
+                        commit_message=f"DataTrove upload ({len(chunk)} files)",
+                        revision=self.branch,
+                    )
+                    logging.info("create_commit completed!")
+                    break
+                except HfHubHTTPError as e:
+                    if "A commit has happened since" in e.server_message:
+                        if retries >= MAX_RETRIES:
+                            logging.error(f"Failed to create commit after {MAX_RETRIES=}. Giving up.")
+                            raise e
+                        logging.info("Commit creation race condition issue. Waiting...")
+                        time.sleep(BASE_DELAY * 2**retries + random.uniform(0, 2))
+                        retries += 1
+                    else:
+                        raise e
+
+    def run(self, data=None, rank: int = 0, world_size: int = 1):
+        import logging
+
+        from datasets.utils.tqdm import disable_progress_bars
+        from huggingface_hub import CommitOperationAdd, preupload_lfs_files
 
         from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
         from lerobot.common.utils.utils import init_logging
 
-        BASE_DELAY = 1.0  # noqa: N806
-        MAX_RETRIES = 24  # noqa: N806
-
         init_logging()
+        disable_progress_bars()
 
-        def chunked(lst, n):
-            it = iter(lst)
-            return [list(islice(it, size)) for size in [len(lst) // n + (i < len(lst) % n) for i in range(n)]]
-
-        chunks = chunked(self.file_paths, world_size)
+        chunks = self.create_chunks(self.file_paths, world_size)
         file_paths = chunks[rank]
 
         if len(file_paths) == 0:
             raise ValueError(file_paths)
 
+        logging.info("Pre-uploading LFS files...")
+        for i, path in enumerate(file_paths):
+            logging.info(f"{i}: {path}")
+
         meta = LeRobotDatasetMetadata(self.repo_id)
         additions = [
             CommitOperationAdd(path_in_repo=path, path_or_fileobj=meta.root / path) for path in file_paths
         ]
-        logging.info(f"Uploading {','.join(file_paths)} to the hub...")
         preupload_lfs_files(
-            repo_id=self.repo_id, repo_type="dataset", additions=additions, revision=self.branch
+            repo_id=self.distant_repo_id, repo_type="dataset", additions=additions, revision=self.branch
         )
-        logging.info(f"Upload of {','.join(file_paths)} to the hub complete!")
 
-        retries = 0
-        while True:
-            try:
-                create_commit(
-                    self.repo_id,
-                    repo_type="dataset",
-                    operations=additions,
-                    commit_message=f"DataTrove upload ({len(additions)} files)",
-                    revision=self.branch,
-                )
-                break
-            except HfHubHTTPError as e:
-                if "A commit has happened since" in e.server_message:
-                    if retries >= MAX_RETRIES:
-                        logging.error(f"Failed to create commit after {MAX_RETRIES=}. Giving up.")
-                        raise e
-                    logging.info("Commit creation race condition issue. Waiting...")
-                    time.sleep(BASE_DELAY * 2**retries + random.uniform(0, 2))
-                    retries += 1
-                else:
-                    raise e
+        logging.info("Creating commits...")
+        self.create_commits(additions)
+        logging.info("Done!")
 
 
 def make_upload_executor(
@@ -142,7 +172,7 @@ def make_upload_executor(
         "pipeline": [
             UploadDataset(repo_id),
         ],
-        "logging_dir": str(logs_dir),
+        "logging_dir": str(logs_dir / job_name),
     }
 
     if slurm:
@@ -180,7 +210,7 @@ def main():
     )
     parser.add_argument(
         "--logs-dir",
-        type=str,
+        type=Path,
         help="Path to logs directory for `datatrove`.",
     )
     parser.add_argument(
@@ -209,7 +239,7 @@ def main():
     parser.add_argument(
         "--cpus-per-task",
         type=int,
-        default=4,
+        default=8,
         help="Number of cpus that each slurm worker will use.",
     )
     parser.add_argument(
@@ -218,6 +248,8 @@ def main():
         default="1950M",
         help="Memory per cpu that each worker will use.",
     )
+
+    init_logging()
 
     args = parser.parse_args()
     kwargs = vars(args)

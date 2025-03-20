@@ -307,7 +307,7 @@ def generate_lerobot_frames(tf_episode):
 
 def port_droid(
     raw_dir: Path,
-    repo_id: str = None,
+    repo_id: str,
     push_to_hub: bool = False,
     num_shards: int | None = None,
     shard_index: int | None = None,
@@ -349,11 +349,12 @@ def port_droid(
     logging.info(f"Number of episodes {num_episodes}")
 
     for episode_index, episode in enumerate(raw_dataset):
-        logging.info(f"{episode_index} / {num_episodes} episodes processed")
-
         elapsed_time = time.time() - start_time
         d, h, m, s = get_elapsed_time_in_days_hours_minutes_seconds(elapsed_time)
-        logging.info(f"It has been {d} days, {h} hours, {m} minutes, {s:.3f} seconds")
+
+        logging.info(
+            f"{episode_index} / {num_episodes} episodes processed (after {d} days, {h} hours, {m} minutes, {s:.3f} seconds)"
+        )
 
         for frame in generate_lerobot_frames(episode):
             lerobot_dataset.add_frame(frame)
