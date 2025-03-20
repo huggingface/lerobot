@@ -17,10 +17,8 @@
 
 import numpy as np
 
-from ..motors_bus import MotorsBus
+from ..motors_bus import CalibrationMode, MotorsBus, TorqueMode
 from .dynamixel import (
-    CalibrationMode,
-    TorqueMode,
     convert_degrees_to_steps,
 )
 
