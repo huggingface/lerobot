@@ -14,7 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
 import logging
 import time
 
@@ -24,11 +23,7 @@ from lerobot.common.cameras.utils import make_cameras_from_configs
 from lerobot.common.constants import OBS_IMAGES, OBS_STATE
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.common.motors import TorqueMode
-from lerobot.common.motors.feetech import (
-    FeetechMotorsBus,
-    apply_feetech_offsets_from_calibration,
-    run_full_arm_calibration,
-)
+from lerobot.common.motors.feetech import FeetechMotorsBus
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
@@ -129,25 +124,15 @@ class SO100Robot(Robot):
         self.is_connected = True
 
     def calibrate(self) -> None:
-        """After calibration all motors function in human interpretable ranges.
-        Rotations are expressed in degrees in nominal range of [-180, 180],
-        and linear motions (like gripper of Aloha) in nominal range of [0, 100].
         """
-        if self.calibration_fpath.exists():
-            with open(self.calibration_fpath) as f:
-                calibration = json.load(f)
-        else:
-            # TODO(rcadene): display a warning in __init__ if calibration file not available
-            logging.info(f"Missing calibration file '{self.calibration_fpath}'")
-            calibration = run_full_arm_calibration(self.arm, self.robot_type, self.name, "follower")
-
-            logging.info(f"Calibration is done! Saving calibration file '{self.calibration_fpath}'")
-            self.calibration_fpath.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.calibration_fpath, "w") as f:
-                json.dump(calibration, f)
-
-        self.arm.set_calibration(calibration)
-        apply_feetech_offsets_from_calibration(self.arm, calibration)
+        TODO: Write description
+        """
+        print(
+            f"\nRunning calibration of {self.robot_type} {self.name} ..."
+        )  # TODO: Add arm type here 'follower' or 'leader'
+        self.arm.write("Torque_Enable", TorqueMode.DISABLED.value)
+        for motor_name in self.arm.motor_names:
+            self.arm.calibrate_motor(motor_name)
 
     def get_observation(self) -> dict[str, np.ndarray]:
         """The returned observations do not have a batch dimension."""

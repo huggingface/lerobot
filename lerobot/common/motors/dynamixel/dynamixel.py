@@ -227,6 +227,7 @@ class DynamixelMotorsBus(MotorsBus):
     def _set_timeout(self, timeout: int = TIMEOUT_MS):
         self.port_handler.setPacketTimeoutMillis(timeout)
 
+    # TODO(pepijn): start here and simplify the apply and remove calibration here (start with one motor) -> same process as I have done with
     def _apply_calibration_autocorrect(self, values: np.ndarray | list, motor_names: list[str] | None):
         """This function applies the calibration, automatically detects out of range errors for motors values and attempts to correct.
 
@@ -239,6 +240,9 @@ class DynamixelMotorsBus(MotorsBus):
             self._autocorrect_calibration(values, motor_names)
             values = self.apply_calibration(values, motor_names)
         return values
+
+    def set_calibration(self, motor: str, min_max_range: tuple[int, int], zero_offset: int):
+        pass
 
     def apply_calibration(self, values: np.ndarray | list, motor_names: list[str] | None):
         """Convert from unsigned int32 joint position range [0, 2**32[ to the universal float32 nominal degree range ]-180.0, 180.0[ with

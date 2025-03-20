@@ -226,7 +226,7 @@ class FeetechMotorsBus(MotorsBus):
     def __init__(
         self,
         port: str,
-        motors: dict[str, tuple[int, str]],
+        motors: dict[str, tuple[int, str, str]],
     ):
         super().__init__(port, motors)
 
@@ -238,6 +238,58 @@ class FeetechMotorsBus(MotorsBus):
 
     def _set_timeout(self, timeout: int = TIMEOUT_MS):
         self.port_handler.setPacketTimeoutMillis(timeout)
+
+    def reset_offset(self, motor_name: str) -> int:
+        """
+        Reset the offset for a given motor.
+        Args: motor_name (str)
+        Returns: int: The confirmed offset value (should be zero).
+        """
+        self.write("Lock", 1)  # Open the write lock; changes to EEPROM do NOT persist yet.
+        self.write("Offset", 0, motor_names=[motor_name])
+        self.write("Lock", 0)  # Close the write lock; changes to EEPROM now persist.
+
+        # Confirm that the offset is zero by reading it back.
+        confirmed_offset = self.read("Offset", motor_names=[motor_name])
+        print(f"Offset for motor {motor_name} reset to: {confirmed_offset}")
+        return confirmed_offset
+
+    def set_calibration(self, motor: str, min_max_range: tuple[int, int], zero_offset: int):
+        """
+        # TODO: write this
+        """
+        self.write("Lock", 1)  # Open the write lock, changes to EEPROM do NOT persist yet
+
+        zero_offset = int(zero_offset)
+
+        # Clamp to [-2047..+2047]
+        if zero_offset > 2047:
+            zero_offset = 2047
+            print(
+                f"Warning: '{zero_offset}' is getting clamped because its larger then 2047; This should not happen!"
+            )
+        elif zero_offset < -2047:
+            zero_offset = -2047
+            print(
+                f"Warning: '{zero_offset}' is getting clamped because its smaller then -2047; This should not happen!"
+            )
+
+        # Determine the direction (sign) bit and magnitude
+        direction_bit = 1 if zero_offset < 0 else 0
+        magnitude = abs(zero_offset)
+
+        # Combine sign bit (bit 11) with the magnitude (bits 0..10)
+        servo_offset = (direction_bit << 11) | magnitude
+
+        # TODO: Set min and max range
+
+        self.write("Offset", servo_offset, motor_names=motor)
+        print(
+            f"Set offset for {motor}: zero_offset={zero_offset}, servo_encoded={magnitude} + direction={direction_bit}"
+        )
+
+        self.write("Lock", 0)
+        print("Offsets have been saved to EEPROM successfully.")
 
     def apply_calibration(self, values: np.ndarray | list, motor_names: list[str] | None):
         if motor_names is None:

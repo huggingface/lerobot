@@ -303,8 +303,69 @@ class MotorsBus(abc.ABC):
             if self.port_handler.getBaudRate() != baudrate:
                 raise OSError("Failed to write bus baud rate.")
 
-    def set_calibration(self, calibration_dict: dict[str, list]):
-        self.calibration = calibration_dict
+    @abc.abstractmethod
+    def set_calibration(self):
+        pass
+
+    @abc.abstractmethod
+    def reset_offset(self):
+        pass
+
+    def calibrate_motor(self, motor_name: str):
+        self.reset_offset(motor_name)
+
+        print(f"Move {motor_name} through its entire range of motion (hitting its limits on both sides).")
+
+        recorded_positions = []
+        try:
+            while True:
+                pos = self.read("Present_Position", motor_names=[motor_name])
+                recorded_positions.append(pos)
+                time.sleep(0.01)
+        except KeyboardInterrupt:
+            pass
+
+        print("Done recording. Computing min, max, and middle...")
+
+        # We make a new list of positions that accounts for any wrap-around jumps
+        unwrapped = [recorded_positions[0]]
+        for i in range(1, len(recorded_positions)):
+            prev = recorded_positions[i - 1]
+            curr = recorded_positions[i]
+            diff = curr - prev
+
+            # If we see a huge positive jump >2048, treat it as having wrapped backwards 4096
+            if diff > 2048:
+                unwrapped.append(unwrapped[-1] + (diff - 4096))
+            # If we see a huge negative jump < -2048, treat it as having wrapped forwards 4096
+            elif diff < -2048:
+                unwrapped.append(unwrapped[-1] + (diff + 4096))
+            else:
+                unwrapped.append(unwrapped[-1] + diff)
+
+        # Find unwrapped min & max and their indices
+        unwrapped_min = min(unwrapped)
+        unwrapped_max = max(unwrapped)
+        idx_min = unwrapped.index(unwrapped_min)
+        idx_max = unwrapped.index(unwrapped_max)
+
+        # Corresponding (wrapped) recorded min & max
+        recorded_min = recorded_positions[idx_min]
+        recorded_max = recorded_positions[idx_max]
+
+        # Determine travel direction
+        direction = idx_min < idx_max
+
+        # Compute midpoint in unwrapped space, then wrap it to [0..4095]
+        unwrapped_mid = (unwrapped_min + unwrapped_max) / 2.0
+        recorded_mid = unwrapped_mid % 4096
+
+        # Swap recorded min/max if direction is True
+        if direction:
+            recorded_min, recorded_max = recorded_max, recorded_min
+
+        zero_offset = recorded_mid - 2047
+        self.set_calibration(motor_name, (recorded_min, recorded_max), zero_offset)  # TODO: Add direction
 
     @abc.abstractmethod
     def apply_calibration(self):
