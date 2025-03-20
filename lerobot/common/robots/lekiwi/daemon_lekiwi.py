@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # Copyright 2024 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -66,7 +64,7 @@ class DaemonLeKiwiRobot(Robot):
         self.last_frames = {}
         self.last_present_speed = [0, 0, 0]
 
-        # TODO(Steven): Consider 32 instead
+        # TODO(Steven): Move everything to 32 instead
         self.last_remote_arm_state = torch.zeros(6, dtype=torch.float64)
 
         # Define three speed levels and a current index
@@ -112,6 +110,7 @@ class DaemonLeKiwiRobot(Robot):
         # TODO(Steven): Get this from the data fetched?
         # TODO(Steven): Motor names are unknown for the Daemon
         # Or assume its size/metadata?
+        # TODO(Steven): Check consistency of image sizes
         cam_ft = {
             "front": {
                 "shape": (480, 640, 3),
@@ -384,7 +383,7 @@ class DaemonLeKiwiRobot(Robot):
                 frame = np.zeros((480, 640, 3), dtype=np.uint8)
             obs_dict[cam_name] = torch.from_numpy(frame)
 
-        # TODO(Steven): Refactor this ugly thing
+        # TODO(Steven): Refactor this ugly thing (needed for when there are not comms at init)
         if OBS_IMAGES + ".wrist" not in obs_dict:
             obs_dict[OBS_IMAGES + ".wrist"] = np.zeros(shape=(480, 640, 3))
         if OBS_IMAGES + ".front" not in obs_dict:
@@ -455,7 +454,7 @@ class DaemonLeKiwiRobot(Robot):
             # TODO(Steven): Not yet implemented. The policy outputs might need a different conversion
             raise Exception
 
-        # TODO(Steven): This assumes teleop mode is always used with keyboard
+        # TODO(Steven): This assumes teleop mode is always used with keyboard. Tomorrow we could teleop with another device ... ?
         if self.robot_mode is RobotMode.TELEOP:
             if action.size < 6:
                 logging.error("Action should include at least the 6 states of the leader arm")
@@ -481,7 +480,7 @@ class DaemonLeKiwiRobot(Robot):
             raise DeviceNotConnectedError(
                 "LeKiwi is not connected. You need to run `robot.connect()` before disconnecting."
             )
-        # TODO(Steven): Consider sending a stop to the remote mobile robot
+        # TODO(Steven): Consider sending a stop to the remote mobile robot. Although this would need a moore complex comms schema
         self.zmq_observation_socket.close()
         self.zmq_cmd_socket.close()
         self.zmq_context.term()
