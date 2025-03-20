@@ -5,7 +5,7 @@ import dynamixel_sdk as dxl
 import pytest
 
 from lerobot.common.motors.dynamixel.dynamixel import DynamixelMotorsBus
-from tests.mocks.mock_dynamixel import MockInstructionPacket, MockMotors, MockPortHandler
+from tests.mocks.mock_dynamixel import MockMotors, MockPortHandler
 
 
 @pytest.fixture(autouse=True)
@@ -68,11 +68,13 @@ def test_abc_implementation():
         None,
         [1, 2, 3],
         ["dummy_1", "dummy_2", "dummy_3"],
-        [1, "dummy_2", 3],  # Mixed
+        [1, "dummy_2", 3],
     ],
 )
 def test_read_all_motors(motors):
     mock_motors = MockMotors([1, 2, 3])
+    positions = [1337, 42, 4016]
+    mock_motors.build_all_motors_stub("Present_Position", return_values=positions)
     motors_bus = DynamixelMotorsBus(
         port=mock_motors.port,
         motors={
@@ -86,13 +88,22 @@ def test_read_all_motors(motors):
     pos_dict = motors_bus.read("Present_Position", motors=motors)
 
     assert mock_motors.stubs["SyncRead_Present_Position_all"].called
-    assert len(pos_dict) == 3
+    assert all(returned_pos == pos for returned_pos, pos in zip(pos_dict.values(), positions, strict=True))
+    assert set(pos_dict) == {"dummy_1", "dummy_2", "dummy_3"}
     assert all(pos >= 0 and pos <= 4095 for pos in pos_dict.values())
 
 
-@pytest.mark.parametrize("idx", [1, 2, 3])
-def test_read_single_motor_name(idx):
+@pytest.mark.parametrize(
+    "idx, pos",
+    [
+        [1, 1337],
+        [2, 42],
+        [3, 4016],
+    ],
+)
+def test_read_single_motor_by_name(idx, pos):
     mock_motors = MockMotors([1, 2, 3])
+    mock_motors.build_single_motor_stubs("Present_Position", return_value=pos)
     motors_bus = DynamixelMotorsBus(
         port=mock_motors.port,
         motors={
@@ -106,13 +117,21 @@ def test_read_single_motor_name(idx):
     pos_dict = motors_bus.read("Present_Position", f"dummy_{idx}")
 
     assert mock_motors.stubs[f"SyncRead_Present_Position_{idx}"].called
-    assert len(pos_dict) == 1
+    assert pos_dict == {f"dummy_{idx}": pos}
     assert all(pos >= 0 and pos <= 4095 for pos in pos_dict.values())
 
 
-@pytest.mark.parametrize("idx", [1, 2, 3])
-def test_read_single_motor_id(idx):
+@pytest.mark.parametrize(
+    "idx, pos",
+    [
+        [1, 1337],
+        [2, 42],
+        [3, 4016],
+    ],
+)
+def test_read_single_motor_by_id(idx, pos):
     mock_motors = MockMotors([1, 2, 3])
+    mock_motors.build_single_motor_stubs("Present_Position", return_value=pos)
     motors_bus = DynamixelMotorsBus(
         port=mock_motors.port,
         motors={
@@ -126,28 +145,24 @@ def test_read_single_motor_id(idx):
     pos_dict = motors_bus.read("Present_Position", idx)
 
     assert mock_motors.stubs[f"SyncRead_Present_Position_{idx}"].called
-    assert len(pos_dict) == 1
+    assert pos_dict == {f"dummy_{idx}": pos}
     assert all(pos >= 0 and pos <= 4095 for pos in pos_dict.values())
 
 
 @pytest.mark.parametrize(
-    "num_retry, num_invalid_try",
+    "num_retry, num_invalid_try, pos",
     [
-        [1, 2],
-        [2, 3],
-        [3, 2],
-        [2, 1],
+        [1, 2, 1337],
+        [2, 3, 42],
+        [3, 2, 4016],
+        [2, 1, 999],
     ],
 )
-def test_read_num_retry(num_retry, num_invalid_try):
-    mock_motors = MockMotors([1, 2, 3], default_stubs=None)
-    address, length = mock_motors.ctrl_table["Present_Position"]
-    receive_bytes = MockInstructionPacket.sync_read([1], address, length)
-    send_fn = mock_motors._create_present_pos_send_fn(
-        [1], "Present_Position", num_invalid_try=num_invalid_try
+def test_read_num_retry(num_retry, num_invalid_try, pos):
+    mock_motors = MockMotors([1, 2, 3])
+    mock_motors.build_single_motor_stubs(
+        "Present_Position", return_value=pos, num_invalid_try=num_invalid_try
     )
-    mock_motors.stub(name="num_retry", receive_bytes=receive_bytes, send_fn=send_fn)
-
     motors_bus = DynamixelMotorsBus(
         port=mock_motors.port,
         motors={
@@ -160,10 +175,10 @@ def test_read_num_retry(num_retry, num_invalid_try):
 
     if num_retry >= num_invalid_try:
         pos_dict = motors_bus.read("Present_Position", 1, num_retry=num_retry)
-        assert len(pos_dict) == 1
+        assert pos_dict == {"dummy_1": pos}
         assert all(pos >= 0 and pos <= 4095 for pos in pos_dict.values())
     else:
         with pytest.raises(ConnectionError):
             _ = motors_bus.read("Present_Position", 1, num_retry=num_retry)
 
-    assert mock_motors.stubs["num_retry"].calls == num_retry
+    assert mock_motors.stubs["SyncRead_Present_Position_1"].calls == num_retry
