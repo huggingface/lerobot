@@ -325,8 +325,6 @@ class MotorsBus(abc.ABC):
         except KeyboardInterrupt:
             pass
 
-        print("Done recording. Computing min, max, and middle...")
-
         # We make a new list of positions that accounts for any wrap-around jumps
         unwrapped = [recorded_positions[0]]
         for i in range(1, len(recorded_positions)):
@@ -353,19 +351,12 @@ class MotorsBus(abc.ABC):
         recorded_min = recorded_positions[idx_min]
         recorded_max = recorded_positions[idx_max]
 
-        # Determine travel direction
-        direction = idx_min < idx_max
-
         # Compute midpoint in unwrapped space, then wrap it to [0..4095]
         unwrapped_mid = (unwrapped_min + unwrapped_max) / 2.0
         recorded_mid = unwrapped_mid % 4096
 
-        # Swap recorded min/max if direction is True
-        if direction:
-            recorded_min, recorded_max = recorded_max, recorded_min
-
         zero_offset = recorded_mid - 2047
-        self.set_calibration(motor_name, (recorded_min, recorded_max), zero_offset)  # TODO: Add direction
+        self.set_calibration(motor_name, (recorded_min, recorded_max), zero_offset)
 
     @abc.abstractmethod
     def apply_calibration(self):
