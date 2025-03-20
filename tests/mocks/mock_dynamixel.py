@@ -263,13 +263,18 @@ class MockStatusPacket(MockDynamixelPacketv2):
 
 
 class MockPortHandler(dxl.PortHandler):
-    def setupPort(self, baud):  # noqa: N802
+    """
+    This class overwrite the 'setupPort' method of the dynamixel PortHandler because it can specify
+    baudrates that are not supported with a serial port on MacOS.
+    """
+
+    def setupPort(self, cflag_baud):  # noqa: N802
         if self.is_open:
             self.closePort()
 
         self.ser = serial.Serial(
             port=self.port_name,
-            # baudrate=self.baudrate,  <- This is forbidden for ttys ports (on macos at least)
+            # baudrate=self.baudrate,  <- This will fail on MacOS
             # parity = serial.PARITY_ODD,
             # stopbits = serial.STOPBITS_TWO,
             bytesize=serial.EIGHTBITS,

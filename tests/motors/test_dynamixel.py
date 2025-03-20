@@ -1,3 +1,4 @@
+import sys
 from unittest.mock import patch
 
 import dynamixel_sdk as dxl
@@ -9,12 +10,16 @@ from tests.mocks.mock_dynamixel import MockInstructionPacket, MockMotors, MockPo
 
 @pytest.fixture(autouse=True)
 def patch_port_handler():
-    with patch.object(dxl, "PortHandler", MockPortHandler):
-        yield  # Patch is applied for the duration of each test
+    if sys.platform == "darwin":
+        with patch.object(dxl, "PortHandler", MockPortHandler):
+            yield
+    else:
+        yield
 
 
+@pytest.mark.skipif(sys.platform != "darwin", reason=f"No patching needed on {sys.platform=}")
 def test_autouse_patch():
-    """Ensure that the autouse fixture correctly patches dxl.PortHandler with MockPortHandler."""
+    """Ensures that the autouse fixture correctly patches dxl.PortHandler with MockPortHandler."""
     assert dxl.PortHandler is MockPortHandler
 
 
