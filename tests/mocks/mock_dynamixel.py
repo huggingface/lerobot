@@ -51,34 +51,34 @@ DXL_CRC_TABLE = [
 
 # https://emanual.robotis.com/docs/en/dxl/protocol2/#instruction
 INSTRUCTION_TYPES = {
-    "Ping": 0x01,	                # Checks whether the Packet has arrived at a device with the same ID as the specified packet ID
-    "Read": 0x02,	                # Read data from the Device
-    "Write": 0x03,	                # Write data to the Device
-    "Reg_Write": 0x04,	            # Register the Instruction Packet in standby status; Packet can later be executed using the Action command
-    "Action": 0x05,	                # Executes a Packet that was registered beforehand using Reg Write
-    "Factory_Reset": 0x06,	        # Resets the Control Table to its initial factory default settings
-    "Reboot": 0x08,	                # Reboot the Device
-    "Clear": 0x10,	                # Reset certain information stored in memory
-    "Control_Table_Backup": 0x20,	# Store current Control Table status data to a Backup or to restore backup EEPROM data.
-    "Status": 0x55,	                # Return packet sent following the execution of an Instruction Packet
-    "Sync_Read": 0x82,	            # Read data from multiple devices with the same Address with the same length at once
-    "Sync_Write": 0x83,	            # Write data to multiple devices with the same Address with the same length at once
-    "Fast_Sync_Read": 0x8A,	        # Read data from multiple devices with the same Address with the same length at once
-    "Bulk_Read": 0x92,	            # Read data from multiple devices with different Addresses with different lengths at once
-    "Bulk_Write": 0x93,	            # Write data to multiple devices with different Addresses with different lengths at once
-    "Fast_Bulk_Read": 0x9A,	        # Read data from multiple devices with different Addresses with different lengths at once
+    "Ping": 0x01,	               # Checks whether the Packet has arrived at a device with the same ID as the specified packet ID
+    "Read": 0x02,	               # Read data from the Device
+    "Write": 0x03,	               # Write data to the Device
+    "Reg_Write": 0x04,	           # Register the Instruction Packet in standby status; Packet can later be executed using the Action command
+    "Action": 0x05,	               # Executes a Packet that was registered beforehand using Reg Write
+    "Factory_Reset": 0x06,	       # Resets the Control Table to its initial factory default settings
+    "Reboot": 0x08,	               # Reboot the Device
+    "Clear": 0x10,	               # Reset certain information stored in memory
+    "Control_Table_Backup": 0x20,  # Store current Control Table status data to a Backup or to restore backup EEPROM data.
+    "Status": 0x55,	               # Return packet sent following the execution of an Instruction Packet
+    "Sync_Read": 0x82,	           # Read data from multiple devices with the same Address with the same length at once
+    "Sync_Write": 0x83,	           # Write data to multiple devices with the same Address with the same length at once
+    "Fast_Sync_Read": 0x8A,	       # Read data from multiple devices with the same Address with the same length at once
+    "Bulk_Read": 0x92,	           # Read data from multiple devices with different Addresses with different lengths at once
+    "Bulk_Write": 0x93,	           # Write data to multiple devices with different Addresses with different lengths at once
+    "Fast_Bulk_Read": 0x9A,	       # Read data from multiple devices with different Addresses with different lengths at once
 }  # fmt: skip
 
 # https://emanual.robotis.com/docs/en/dxl/protocol2/#error
-STATUS_TYPE = {
+ERROR_TYPE = {
     "Success": 0x00, 	        # No error
     "Result_Fail": 0x01, 	    # Failed to process the sent Instruction Packet
-    "Instruction_Error": 0x02, 	# An undefined Instruction has been usedAction has been used without Reg Write
+    "Instruction_Error": 0x02,  # An undefined Instruction has been usedAction has been used without Reg Write
     "CRC_Error": 0x03, 	        # The CRC of the sent Packet does not match the expected value
-    "Data_Range_Error": 0x04, 	# Data to be written to the specified Address is outside the range of the minimum/maximum value
-    "Data_Length_Error": 0x05, 	# Attempted to write Data that is shorter than the required data length of the specified Address
+    "Data_Range_Error": 0x04,   # Data to be written to the specified Address is outside the range of the minimum/maximum value
+    "Data_Length_Error": 0x05,  # Attempted to write Data that is shorter than the required data length of the specified Address
                                 #     (ex: when you attempt to only use 2 bytes of a register that has been defined as 4 bytes)
-    "Data_Limit_Error": 0x06,	# Data to be written to the specified Address is outside of the configured Limit value
+    "Data_Limit_Error": 0x06,   # Data to be written to the specified Address is outside of the configured Limit value
     "Access_Error": 0x07,	    # Attempted to write a value to an Address that is Read Only or has not been defined
                                 # Attempted to read a value from an Address that is Write Only or has not been defined
                                 # Attempted to write a value to an EEPROM register while Torque was Enabled.
@@ -153,17 +153,15 @@ class MockDynamixelPacketv2(abc.ABC):
 
 class MockInstructionPacket(MockDynamixelPacketv2):
     """
-    Helper class to build valid Dynamixel Protocol 2.0 Instruction Packets with correct CRC.
+    Helper class to build valid Dynamixel Protocol 2.0 Instruction Packets.
 
     Protocol 2.0 Instruction Packet structure
     (from https://emanual.robotis.com/docs/en/dxl/protocol2/#instruction-packet)
 
-        0xFF 0xFF 0xFD 0x00    # 4-byte header
-        <servo_id>             # typically 0x01
-        <length L> <length H>  # 2-byte length of (instruction+error+params+CRC)
-        <instruction>          # instruction type
-        <parameters...>        # for a 4-byte read, we have 4 param bytes
-        <crc_low> <crc_high>   # 16-bit CRC
+    | Header              | Packet ID | Length      | Instruction | Params            | CRC         |
+    | ------------------- | --------- | ----------- | ----------- | ----------------- | ----------- |
+    | 0xFF 0xFF 0xFD 0x00 | ID        | Len_L Len_H | Instr       | Param 1 … Param N | CRC_L CRC_H |
+
     """
 
     @classmethod
@@ -182,8 +180,8 @@ class MockInstructionPacket(MockDynamixelPacketv2):
             [
                 0xFF, 0xFF, 0xFD, 0x00,         # header
                 dxl_id,                         # servo id
-                packet_length & 0xFF,           # length_l
-                (packet_length >> 8) & 0xFF,    # length_h
+                dxl.DXL_LOBYTE(packet_length),  # length_l
+                dxl.DXL_HIBYTE(packet_length),  # length_h
                 instruct_value,                 # instruction type
                 *params,                        # data bytes
                 0x00, 0x00                      # placeholder for CRC
@@ -198,10 +196,8 @@ class MockInstructionPacket(MockDynamixelPacketv2):
         data_length: int,
     ) -> bytes:
         """
-        Helper method to build a "Sync Read" broadcast instruction.
-
-        The official SDK might add some “stuffing” or check param_length,
-        but this is enough for basic compliance if you want a raw packet.
+        Helper method to build a Sync Read broadcast instruction.
+        (from https://emanual.robotis.com/docs/en/dxl/protocol2/#sync-read-0x82)
 
         The parameters for Sync Read (Protocol 2.0) are:
             param[0]   = start_address L
@@ -210,46 +206,40 @@ class MockInstructionPacket(MockDynamixelPacketv2):
             param[3]   = data_length H
             param[4+]  = motor IDs to read from
         """
-        # Example param: [LowAddr, HighAddr, LowLen, HighLen, ID1, ID2, ...]
         params = [
-            (start_address & 0xFF),
-            ((start_address >> 8) & 0xFF),
-            (data_length & 0xFF),
-            ((data_length >> 8) & 0xFF),
+            dxl.DXL_LOBYTE(start_address),
+            dxl.DXL_HIBYTE(start_address),
+            dxl.DXL_LOBYTE(data_length),
+            dxl.DXL_HIBYTE(data_length),
         ] + dxl_ids
 
-        # broadcast ID: 0xFE
-        return cls.build(dxl_id=0xFE, instruct_type="Sync_Read", params=params)
+        return cls.build(dxl_id=dxl.BROADCAST_ID, instruct_type="Sync_Read", params=params)
 
 
 class MockStatusPacket(MockDynamixelPacketv2):
     """
-    Helper class to build valid Dynamixel Protocol 2.0 Status Packets with correct CRC.
+    Helper class to build valid Dynamixel Protocol 2.0 Status Packets.
 
     Protocol 2.0 Status Packet structure
     (from https://emanual.robotis.com/docs/en/dxl/protocol2/#status-packet)
 
-        0xFF 0xFF 0xFD 0x00   # 4-byte header
-        <servo_id>            # typically 0x01
-        <length L> <length H> # 2-byte length of (instruction+error+params+CRC)
-        0x55                  # instruction = 0x55 means "status packet"
-        <error>               # 0 if no error
-        <parameters...>       # for a 4-byte read, we have 4 param bytes
-        <crc_low> <crc_high>  # 16-bit CRC
+    | Header              | Packet ID | Length      | Instruction | Error | Params            | CRC         |
+    | ------------------- | --------- | ----------- | ----------- | ----- | ----------------- | ----------- |
+    | 0xFF 0xFF 0xFD 0x00 | ID        | Len_L Len_H | 0x55        | Err   | Param 1 … Param N | CRC_L CRC_H |
     """
 
     @classmethod
-    def _build(cls, dxl_id: int, params: list[int], status: str = "Success") -> bytearray:
-        status_byte = STATUS_TYPE[status]
+    def _build(cls, dxl_id: int, params: list[int], error: str = "Success") -> bytearray:
+        err_byte = ERROR_TYPE[error]
         return bytearray(
             [
-                0xFF, 0xFF, 0xFD, 0x00,     # header
-                dxl_id,                     # servo id
-                0x08, 0x00,                 # length_l, length_h = 8
-                0x55,                       # instruction = status
-                status_byte,                # status
-                *params,                    # data bytes
-                0x00, 0x00                  # placeholder for CRC
+                0xFF, 0xFF, 0xFD, 0x00,  # header
+                dxl_id,                  # servo id
+                0x08, 0x00,              # length_l, length_h = 8
+                0x55,                    # instruction = 'status'
+                err_byte,                # error
+                *params,                 # data bytes
+                0x00, 0x00               # placeholder for CRC
             ]
         )  # fmt: skip
 
