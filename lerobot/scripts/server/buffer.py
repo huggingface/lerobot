@@ -463,9 +463,9 @@ class ReplayBuffer:
             for k, v in data.items():
                 if isinstance(v, dict):
                     for key, tensor in v.items():
-                        v[key] = tensor.to(device)
+                        v[key] = tensor.to(storage_device)
                 elif isinstance(v, torch.Tensor):
-                    data[k] = v.to(device)
+                    data[k] = v.to(storage_device)
 
             action = data["action"]
             if action_mask is not None:
