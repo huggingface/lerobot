@@ -551,7 +551,7 @@ class MotorsBus(abc.ABC):
     #     for idx in motor_ids:
     #         value = self.reader.getData(idx, address, n_bytes)
 
-    def write(self, data_name: str, values_dict: dict[MotorLike, int], num_retry: int = 1) -> None:
+    def write(self, data_name: str, values: int | dict[MotorLike, int], num_retry: int = 1) -> None:
         if not self.is_connected:
             raise DeviceNotConnectedError(
                 f"{self.__class__.__name__}('{self.port}') is not connected. You need to run `{self.__class__.__name__}.connect()`."
@@ -559,7 +559,12 @@ class MotorsBus(abc.ABC):
 
         start_time = time.perf_counter()
 
-        ids_values = {self.get_motor_id(motor): val for motor, val in values_dict.items()}
+        if isinstance(values, int):
+            ids_values = {id_: values for id_ in self.ids}
+        elif isinstance(values, dict):
+            ids_values = {self.get_motor_id(motor): val for motor, val in values.items()}
+        else:
+            raise ValueError(f"'values' is expected to be a single value or a dict. Got {values}")
 
         if self._has_different_ctrl_tables:
             models = [self.id_to_model(idx) for idx in ids_values]
