@@ -149,6 +149,17 @@ class MockDynamixelPacketv2(abc.ABC):
 
     @staticmethod
     def _add_crc(packet: list[int]) -> list[int]:
+        """Computes and add CRC to the packet.
+
+        https://emanual.robotis.com/docs/en/dxl/crc/
+        https://en.wikipedia.org/wiki/Cyclic_redundancy_check
+
+        Args:
+            packet (list[int]): The raw packet without CRC (but with placeholders for it).
+
+        Returns:
+            list[int]: The raw packet with a valid CRC.
+        """
         crc = 0
         for j in range(len(packet) - 2):
             i = ((crc >> 8) ^ packet[j]) & 0xFF
