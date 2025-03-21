@@ -6,7 +6,7 @@ import dynamixel_sdk as dxl
 import serial
 from mock_serial import MockSerial
 
-from lerobot.common.motors.dynamixel.dynamixel import X_SERIES_CONTROL_TABLE
+from lerobot.common.motors.dynamixel import X_SERIES_CONTROL_TABLE
 
 # https://emanual.robotis.com/docs/en/dxl/crc/
 DXL_CRC_TABLE = [
