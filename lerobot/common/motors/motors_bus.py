@@ -313,10 +313,15 @@ class MotorsBus(abc.ABC):
 
     def calibrate_motor(self, motor_name: str):
         self.reset_offset(motor_name)
+        time.sleep(0.1)
+
+        input(f"Move {motor_name} to the middle of its range of motion and press ENTER....")
+        # The first read is the middle position.
+        middle = self.read("Present_Position", motor_names=[motor_name])
+        recorded_positions = []
 
         print(f"Move {motor_name} through its entire range of motion (hitting its limits on both sides).")
 
-        recorded_positions = []
         try:
             while True:
                 pos = self.read("Present_Position", motor_names=[motor_name])
@@ -325,38 +330,29 @@ class MotorsBus(abc.ABC):
         except KeyboardInterrupt:
             pass
 
-        # We make a new list of positions that accounts for any wrap-around jumps
-        unwrapped = [recorded_positions[0]]
-        for i in range(1, len(recorded_positions)):
-            prev = recorded_positions[i - 1]
-            curr = recorded_positions[i]
-            diff = curr - prev
+        # Unwrap the recorded positions if the range is too big.
+        if max(recorded_positions) - min(recorded_positions) > 2048:
+            adjusted = [p if p >= 2048 else p + 4096 for p in recorded_positions]
+        else:
+            adjusted = recorded_positions
 
-            # If we see a huge positive jump >2048, treat it as having wrapped backwards 4096
-            if diff > 2048:
-                unwrapped.append(unwrapped[-1] + (diff - 4096))
-            # If we see a huge negative jump < -2048, treat it as having wrapped forwards 4096
-            elif diff < -2048:
-                unwrapped.append(unwrapped[-1] + (diff + 4096))
-            else:
-                unwrapped.append(unwrapped[-1] + diff)
+        physical_min = min(adjusted)
+        physical_max = max(adjusted)
 
-        # Find unwrapped min & max and their indices
-        unwrapped_min = min(unwrapped)
-        unwrapped_max = max(unwrapped)
-        idx_min = unwrapped.index(unwrapped_min)
-        idx_max = unwrapped.index(unwrapped_max)
+        # Wrap the calibration limits back if needed.
+        cal_min = physical_min if physical_min < 4096 else physical_min - 4096
+        cal_max = physical_max if physical_max < 4096 else physical_max - 4096
 
-        # Corresponding (wrapped) recorded min & max
-        recorded_min = recorded_positions[idx_min]
-        recorded_max = recorded_positions[idx_max]
+        # The zero_offset is set so that the original middle reading is centered at 2047.
+        zero_offset = middle - 2047
 
-        # Compute midpoint in unwrapped space, then wrap it to [0..4095]
-        unwrapped_mid = (unwrapped_min + unwrapped_max) / 2.0
-        recorded_mid = unwrapped_mid % 4096
+        # Adjust calibration limits by the zero_offset.
+        cal_min_offset = (cal_min - zero_offset) % 4096
+        cal_max_offset = (cal_max - zero_offset) % 4096
 
-        zero_offset = recorded_mid - 2047
-        self.set_calibration(motor_name, (recorded_min, recorded_max), zero_offset)
+        print("Done recording. Computing min, max...")
+
+        self.set_calibration(motor_name, (cal_min_offset, cal_max_offset), zero_offset)
 
     @abc.abstractmethod
     def apply_calibration(self):

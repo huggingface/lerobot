@@ -14,7 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
 import logging
 import time
 
@@ -24,8 +23,6 @@ from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnecte
 from lerobot.common.motors import TorqueMode
 from lerobot.common.motors.feetech import (
     FeetechMotorsBus,
-    apply_feetech_offsets_from_calibration,
-    run_full_arm_calibration,
 )
 
 from ..teleoperator import Teleoperator
@@ -96,21 +93,7 @@ class SO100Teleop(Teleoperator):
         Rotations are expressed in degrees in nominal range of [-180, 180],
         and linear motions (like gripper of Aloha) in nominal range of [0, 100].
         """
-        if self.calibration_fpath.exists():
-            with open(self.calibration_fpath) as f:
-                calibration = json.load(f)
-        else:
-            # TODO(rcadene): display a warning in __init__ if calibration file not available
-            logging.info(f"Missing calibration file '{self.calibration_fpath}'")
-            calibration = run_full_arm_calibration(self.arm, self.robot_type, self.name, "leader")
-
-            logging.info(f"Calibration is done! Saving calibration file '{self.calibration_fpath}'")
-            self.calibration_fpath.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.calibration_fpath, "w") as f:
-                json.dump(calibration, f)
-
-        self.arm.set_calibration(calibration)
-        apply_feetech_offsets_from_calibration(self.arm, calibration)
+        pass
 
     def get_action(self) -> np.ndarray:
         """The returned action does not have a batch dimension."""

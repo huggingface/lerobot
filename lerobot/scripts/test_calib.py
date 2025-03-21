@@ -2,16 +2,14 @@
 
 import time
 
-import numpy as np
-
-from lerobot.common.constants import OBS_STATE
+from lerobot.common.motors.motors_bus import TorqueMode
 from lerobot.common.robots.so100.configuration_so100 import SO100RobotConfig
 from lerobot.common.robots.so100.robot_so100 import SO100Robot
 
 
 def main():
     config_follower = SO100RobotConfig(
-        port="/dev/tty.usbmodem58760431101",
+        port="/dev/tty.usbmodem58760431201",
     )
 
     robot_follower = SO100Robot(config_follower)
@@ -20,7 +18,7 @@ def main():
     robot_follower.connect()
 
     config_leader = SO100RobotConfig(
-        port="/dev/tty.usbmodem58760429511",
+        port="/dev/tty.usbmodem58760430821",
     )
 
     robot_leader = SO100Robot(config_leader)
@@ -29,12 +27,15 @@ def main():
     robot_leader.connect()
 
     print("Starting Teleop!")
+    robot_leader.arm.write("Torque_Enable", TorqueMode.DISABLED.value)
 
     try:
         while True:
-            obs = robot_leader.get_observation()
-            positions = obs[OBS_STATE]
-            robot_follower.send_action(np.array(positions))
+            motor_names = [
+                "shoulder_pan"
+            ]  # "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"
+            leader_pos = robot_leader.arm.read("Present_Position", motor_names)
+            robot_follower.arm.write("Goal_Position", leader_pos, motor_names)
 
             time.sleep(0.02)
     except KeyboardInterrupt:

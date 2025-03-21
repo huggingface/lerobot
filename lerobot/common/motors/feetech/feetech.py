@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import time
 from copy import deepcopy
 
 import numpy as np
@@ -281,14 +282,16 @@ class FeetechMotorsBus(MotorsBus):
         # Combine sign bit (bit 11) with the magnitude (bits 0..10)
         servo_offset = (direction_bit << 11) | magnitude
 
-        # TODO: Set min and max range
-
+        min_angle, max_angle = min_max_range
+        self.write("Min_Angle_Limit", min_angle, motor_names=motor)
+        self.write("Max_Angle_Limit", max_angle, motor_names=motor)
         self.write("Offset", servo_offset, motor_names=motor)
         print(
             f"Set offset for {motor}: zero_offset={zero_offset}, servo_encoded={magnitude} + direction={direction_bit}"
         )
 
         self.write("Lock", 0)
+        time.sleep(0.1)
         print("Offsets have been saved to EEPROM successfully.")
 
     def apply_calibration(self, values: np.ndarray | list, motor_names: list[str] | None):
