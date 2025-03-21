@@ -33,7 +33,7 @@ def disable_torque(arm: MotorsBus):
 def get_calibration_modes(arm: MotorsBus):
     """Returns calibration modes for each motor (DEGREE for rotational, LINEAR for gripper)."""
     return [
-        CalibrationMode.LINEAR.name if name == "gripper" else CalibrationMode.DEGREE.name
+        CalibrationMode.LINEAR.name if "gripper" in name else CalibrationMode.DEGREE.name
         for name in arm.motor_names
     ]
 
@@ -217,7 +217,7 @@ def apply_feetech_offsets_from_calibration(motorsbus: FeetechMotorsBus, calibrat
             print(f"Warning: '{m_name}' not found in motorsbus.motors; skipping offset.")
             continue
 
-        if m_name == "gripper":
+        if "gripper" in m_name:
             old_offset = start_pos  # If gripper set the offset to the start position of the gripper
             continue
 

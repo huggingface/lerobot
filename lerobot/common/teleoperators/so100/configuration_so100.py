@@ -24,3 +24,4 @@ from ..config import TeleoperatorConfig
 class SO100TeleopConfig(TeleoperatorConfig):
     # Port to connect to the teloperator
     port: str
+    id = "so100"
