@@ -4,6 +4,7 @@ from unittest.mock import patch
 import dynamixel_sdk as dxl
 import pytest
 
+from lerobot.common.motors import Motor
 from lerobot.common.motors.dynamixel import DynamixelMotorsBus
 from tests.mocks.mock_dynamixel import MockMotors, MockPortHandler
 
@@ -15,6 +16,15 @@ def patch_port_handler():
             yield
     else:
         yield
+
+
+@pytest.fixture
+def dummy_motors() -> dict[str, Motor]:
+    return {
+        "dummy_1": Motor(id=1, model="xl430-w250"),
+        "dummy_2": Motor(id=2, model="xm540-w270"),
+        "dummy_3": Motor(id=3, model="xl330-m077"),
+    }
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason=f"No patching needed on {sys.platform=}")
@@ -68,8 +78,9 @@ def test_split_int_bytes_large_number():
         DynamixelMotorsBus.split_int_bytes(2**32, 4)  # 4-byte max is 0xFFFFFFFF
 
 
-def test_abc_implementation():
+def test_abc_implementation(dummy_motors):
     """Instantiation should raise an error if the class doesn't implement abstract methods/properties."""
+    DynamixelMotorsBus(port="/dev/dummy-port", motors=dummy_motors)
     DynamixelMotorsBus(port="/dev/dummy-port", motors={"dummy": (1, "xl330-m077")})
 
 
@@ -83,17 +94,13 @@ def test_abc_implementation():
     ],
     ids=["None", "by ids", "by names", "mixed"],
 )
-def test_read_all_motors(motors):
+def test_read_all_motors(motors, dummy_motors):
     mock_motors = MockMotors([1, 2, 3])
     positions = [1337, 42, 4016]
-    mock_motors.build_all_motors_stub("Present_Position", return_values=positions)
+    mock_motors.build_sync_read_all_motors_stub("Present_Position", return_values=positions)
     motors_bus = DynamixelMotorsBus(
         port=mock_motors.port,
-        motors={
-            "dummy_1": (1, "xl330-m077"),
-            "dummy_2": (2, "xl330-m077"),
-            "dummy_3": (3, "xl330-m077"),
-        },
+        motors=dummy_motors,
     )
     motors_bus.connect()
 
@@ -113,16 +120,12 @@ def test_read_all_motors(motors):
         [3, 4016],
     ],
 )
-def test_read_single_motor_by_name(idx, pos):
+def test_read_single_motor_by_name(idx, pos, dummy_motors):
     mock_motors = MockMotors([1, 2, 3])
-    mock_motors.build_single_motor_stubs("Present_Position", return_value=pos)
+    mock_motors.build_sync_read_single_motor_stubs("Present_Position", return_value=pos)
     motors_bus = DynamixelMotorsBus(
         port=mock_motors.port,
-        motors={
-            "dummy_1": (1, "xl330-m077"),
-            "dummy_2": (2, "xl330-m077"),
-            "dummy_3": (3, "xl330-m077"),
-        },
+        motors=dummy_motors,
     )
     motors_bus.connect()
 
@@ -141,16 +144,12 @@ def test_read_single_motor_by_name(idx, pos):
         [3, 4016],
     ],
 )
-def test_read_single_motor_by_id(idx, pos):
+def test_read_single_motor_by_id(idx, pos, dummy_motors):
     mock_motors = MockMotors([1, 2, 3])
-    mock_motors.build_single_motor_stubs("Present_Position", return_value=pos)
+    mock_motors.build_sync_read_single_motor_stubs("Present_Position", return_value=pos)
     motors_bus = DynamixelMotorsBus(
         port=mock_motors.port,
-        motors={
-            "dummy_1": (1, "xl330-m077"),
-            "dummy_2": (2, "xl330-m077"),
-            "dummy_3": (3, "xl330-m077"),
-        },
+        motors=dummy_motors,
     )
     motors_bus.connect()
 
@@ -170,18 +169,14 @@ def test_read_single_motor_by_id(idx, pos):
         [2, 1, 999],
     ],
 )
-def test_read_num_retry(num_retry, num_invalid_try, pos):
+def test_read_num_retry(num_retry, num_invalid_try, pos, dummy_motors):
     mock_motors = MockMotors([1, 2, 3])
-    mock_motors.build_single_motor_stubs(
+    mock_motors.build_sync_read_single_motor_stubs(
         "Present_Position", return_value=pos, num_invalid_try=num_invalid_try
     )
     motors_bus = DynamixelMotorsBus(
         port=mock_motors.port,
-        motors={
-            "dummy_1": (1, "xl330-m077"),
-            "dummy_2": (2, "xl330-m077"),
-            "dummy_3": (3, "xl330-m077"),
-        },
+        motors=dummy_motors,
     )
     motors_bus.connect()
 
