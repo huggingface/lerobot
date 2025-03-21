@@ -174,7 +174,10 @@ def run_server(
                 dataset.meta.get_video_file_path(episode_id, key) for key in dataset.meta.video_keys
             ]
             videos_info = [
-                {"url": url_for("static", filename=str(video_path).replace("\\","/")), "filename": video_path.parent.name}
+                {
+                    "url": url_for("static", filename=str(video_path).replace("\\", "/")),
+                    "filename": video_path.parent.name,
+                }
                 for video_path in video_paths
             ]
             tasks = dataset.meta.episodes[episode_id]["tasks"]
