@@ -58,10 +58,16 @@ class DynamixelMotorsBus(MotorsBus):
         self.reader = dxl.GroupSyncRead(self.port_handler, self.packet_handler, 0, 0)
         self.writer = dxl.GroupSyncWrite(self.port_handler, self.packet_handler, 0, 0)
 
-    def broadcast_ping(self) -> tuple[list, int]:
-        data_list, comm = self.packet_handler.broadcastPing(self.port_handler)
-        # TODO(aliberts): translate data_list into {id: model}
-        return data_list, comm
+    def broadcast_ping(
+        self, num_retry: int = 0, raise_on_error: bool = False
+    ) -> dict[int, list[int, int]] | None:
+        for _ in range(1 + num_retry):
+            data_list, comm = self.packet_handler.broadcastPing(self.port_handler)
+            if self._is_comm_success(comm):
+                return data_list
+
+        if raise_on_error:
+            raise ConnectionError(f"Broadcast ping returned a {comm} comm error.")
 
     def calibrate_values(self, ids_values: dict[int, int]) -> dict[int, float]:
         # TODO

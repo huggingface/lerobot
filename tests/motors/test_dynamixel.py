@@ -82,7 +82,46 @@ def test_abc_implementation(dummy_motors):
     """Instantiation should raise an error if the class doesn't implement abstract methods/properties."""
     DynamixelMotorsBus(port="/dev/dummy-port", motors=dummy_motors)
 
-    DynamixelMotorsBus(port="/dev/dummy-port", motors={"dummy": (1, "xl330-m077")})
+
+@pytest.mark.parametrize(
+    "idx, model_nb",
+    [
+        [1, 1190],
+        [2, 1200],
+        [3, 1120],
+    ],
+)
+def test_ping(idx, model_nb, dummy_motors):
+    mock_motors = MockMotors()
+    mock_motors.build_ping_stub(idx, model_nb)
+    motors_bus = DynamixelMotorsBus(
+        port=mock_motors.port,
+        motors=dummy_motors,
+    )
+    motors_bus.connect()
+
+    ping_model_nb = motors_bus.ping(idx)
+
+    assert ping_model_nb == model_nb
+
+
+def test_broadcast_ping(dummy_motors):
+    expected_pings = {
+        1: [1060, 50],
+        2: [1120, 30],
+        3: [1190, 10],
+    }
+    mock_motors = MockMotors()
+    mock_motors.build_broadcast_ping_stub(expected_pings)
+    motors_bus = DynamixelMotorsBus(
+        port=mock_motors.port,
+        motors=dummy_motors,
+    )
+    motors_bus.connect()
+
+    ping_list = motors_bus.broadcast_ping()
+
+    assert ping_list == expected_pings
 
 
 @pytest.mark.parametrize(
