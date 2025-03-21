@@ -25,9 +25,9 @@ import numpy as np
 from lerobot.common.cameras.utils import make_cameras_from_configs
 from lerobot.common.constants import OBS_IMAGES, OBS_STATE
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.common.motors import TorqueMode
 from lerobot.common.motors.feetech import (
     FeetechMotorsBus,
-    TorqueMode,
     apply_feetech_offsets_from_calibration,
     run_full_arm_calibration,
 )
