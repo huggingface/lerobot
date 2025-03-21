@@ -1,0 +1,87 @@
+# https://taskfile.dev
+
+version: '3'
+
+vars:
+  PROJECT_DIR: "{{.ROOT_DIR}}"
+  SRC_DIR: "{{.PROJECT_DIR}/lerobot"
+  TESTS_DIR: "{{.PROJECT_DIR}}/tests"
+  EXAMPLES_DIR: "{{.PROJECT_DIR}}/examples"
+  DATA_DIR: "{{.PROJECT_DIR}}/media"
+
+tasks:
+  default:
+    desc: Liste toutes les tâches disponibles
+    cmds:
+    - task --list
+    silent: true
+
+  get-prerequisites-mac:
+    desc: Installe les prérequis sur mac
+    cmds:
+    - brew install python@3.10 task
+    - pip install uv pipenv --break-system-packages
+
+  shell:
+    desc: Ouvre un shell python avec les dépendances du projet
+    cmds:
+    - pipenv shell "cd lerobot"
+
+  prepare-instance:
+    desc: Prépare une instance pour le projet
+    cmds:
+    - uv pip install -e ".[aloha, pusht]"
+
+  install:
+    desc: Installe les dépendances du projet robot follow
+    cmds:
+    - uv pip install -e ".[feetech]"
+
+  wandb-login:
+    desc: Connecte à wandb
+    cmds:
+    - wandb login
+
+  run-example:
+    desc: Exécute un exemple
+    cmds:
+    - python lerobot/scripts/visualize_dataset.py  --repo-id lerobot/pusht  --episode-index 0
+
+  evaluate-policy:
+  test-unit:
+    desc: Evalue une policy pretrainer
+    cmds:
+    - python lerobot/scripts/eval.py  --policy.path=lerobot/diffusion_pusht  --env.type=pusht  --eval.batch_size=10  --eval.n_episodes=10  --policy.use_amp=false  --policy.device=cuda
+
+  set-usb-motor-id:
+    desc: Définit l'ID des moteurs
+    args:
+      ID:
+        shorthand: i
+        desc: ID du moteur
+      PORT:
+        shorthand: p
+        desc: Port USB
+        default: /dev/tty.usbmodem58760432961
+    cmds:
+    - python lerobot/scripts/configure_motor.py --port {{.PORT}} --brand feetech --model sts3215 --baudrate 1000000 --ID {{.ID}}
+
+  test-motor:
+    desc: Exécute les tests du moteur
+    cmds:
+    - python -m unittest {{.TESTS_DIR}}/test_motor_model.py
+
+  calibration:
+    desc: Exécute la calibration
+    cmds:
+    - python -m unittest {{.TESTS_DIR}}/test_display.py
+
+  find-usb-port:
+    desc: Trouve le port USB
+    cmds:
+    - python lerobot/scripts/find_motors_bus_port.py
+
+  teleoperate:
+    desc: Téléopère le robot
+    cmds:
+    - python lerobot/scripts/control_robot.py  --robot.type=so100  --robot.cameras='{}'  --control.type=teleoperate
