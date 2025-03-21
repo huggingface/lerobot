@@ -22,13 +22,17 @@ def synced_hf_dataset_factory(hf_dataset_factory):
 
 @pytest.fixture(scope="module")
 def unsynced_hf_dataset_factory(synced_hf_dataset_factory):
-    def _create_unsynced_hf_dataset(fps: int = 30, tolerance_s: float = 1e-4) -> Dataset:
+    def _create_unsynced_hf_dataset(
+        fps: int = 30, tolerance_s: float = 1e-4
+    ) -> Dataset:
         hf_dataset = synced_hf_dataset_factory(fps=fps)
         features = hf_dataset.features
         df = hf_dataset.to_pandas()
         dtype = df["timestamp"].dtype  # This is to avoid pandas type warning
         # Modify a single timestamp just outside tolerance
-        df.at[30, "timestamp"] = dtype.type(df.at[30, "timestamp"] + (tolerance_s * 1.1))
+        df.at[30, "timestamp"] = dtype.type(
+            df.at[30, "timestamp"] + (tolerance_s * 1.1)
+        )
         unsynced_hf_dataset = Dataset.from_pandas(df, features=features)
         unsynced_hf_dataset.set_transform(hf_transform_to_torch)
         return unsynced_hf_dataset
@@ -38,13 +42,17 @@ def unsynced_hf_dataset_factory(synced_hf_dataset_factory):
 
 @pytest.fixture(scope="module")
 def slightly_off_hf_dataset_factory(synced_hf_dataset_factory):
-    def _create_slightly_off_hf_dataset(fps: int = 30, tolerance_s: float = 1e-4) -> Dataset:
+    def _create_slightly_off_hf_dataset(
+        fps: int = 30, tolerance_s: float = 1e-4
+    ) -> Dataset:
         hf_dataset = synced_hf_dataset_factory(fps=fps)
         features = hf_dataset.features
         df = hf_dataset.to_pandas()
         dtype = df["timestamp"].dtype  # This is to avoid pandas type warning
         # Modify a single timestamp just inside tolerance
-        df.at[30, "timestamp"] = dtype.type(df.at[30, "timestamp"] + (tolerance_s * 0.9))
+        df.at[30, "timestamp"] = dtype.type(
+            df.at[30, "timestamp"] + (tolerance_s * 0.9)
+        )
         unsynced_hf_dataset = Dataset.from_pandas(df, features=features)
         unsynced_hf_dataset.set_transform(hf_transform_to_torch)
         return unsynced_hf_dataset
@@ -54,8 +62,12 @@ def slightly_off_hf_dataset_factory(synced_hf_dataset_factory):
 
 @pytest.fixture(scope="module")
 def valid_delta_timestamps_factory():
-    def _create_valid_delta_timestamps(fps: int = 30, keys: list = DUMMY_MOTOR_FEATURES) -> dict:
-        delta_timestamps = {key: [i * (1 / fps) for i in range(-10, 10)] for key in keys}
+    def _create_valid_delta_timestamps(
+        fps: int = 30, keys: list = DUMMY_MOTOR_FEATURES
+    ) -> dict:
+        delta_timestamps = {
+            key: [i * (1 / fps) for i in range(-10, 10)] for key in keys
+        }
         return delta_timestamps
 
     return _create_valid_delta_timestamps
@@ -153,7 +165,9 @@ def test_check_timestamps_sync_slightly_off(slightly_off_hf_dataset_factory):
 
 
 def test_check_timestamps_sync_single_timestamp():
-    single_timestamp_hf_dataset = Dataset.from_dict({"timestamp": [0.0], "episode_index": [0]})
+    single_timestamp_hf_dataset = Dataset.from_dict(
+        {"timestamp": [0.0], "episode_index": [0]}
+    )
     single_timestamp_hf_dataset.set_transform(hf_transform_to_torch)
     episode_data_index = {"to": torch.tensor([1]), "from": torch.tensor([0])}
     fps = 30
@@ -202,7 +216,9 @@ def test_check_delta_timestamps_valid(valid_delta_timestamps_factory):
 def test_check_delta_timestamps_slightly_off(slightly_off_delta_timestamps_factory):
     fps = 30
     tolerance_s = 1e-4
-    slightly_off_delta_timestamps = slightly_off_delta_timestamps_factory(fps, tolerance_s)
+    slightly_off_delta_timestamps = slightly_off_delta_timestamps_factory(
+        fps, tolerance_s
+    )
     result = check_delta_timestamps(
         delta_timestamps=slightly_off_delta_timestamps,
         fps=fps,

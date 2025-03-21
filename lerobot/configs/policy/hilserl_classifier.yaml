@@ -3,8 +3,19 @@
 defaults:
   - _self_
 
+hydra:
+  run:
+    # Set `dir` to where you would like to save all of the run outputs. If you run another training session
+    # with the same value for `dir` its contents will be overwritten unless you set `resume` to true.
+    dir: outputs/train_hilserl_classifier/${now:%Y-%m-%d}/${now:%H-%M-%S}_${env.name}_${hydra.job.name}
+  job:
+    name: default
+
 seed: 13
-dataset_repo_id: aractingi/pick_place_lego_cube_1
+dataset_repo_id: aractingi/push_cube_square_light_reward_cropped_resized
+# aractingi/push_cube_square_reward_1_cropped_resized
+dataset_root: data/aractingi/push_cube_square_light_reward_cropped_resized
+local_files_only: true
 train_split_proportion: 0.8
 
 # Required by logger
@@ -14,7 +25,7 @@ env:
 
 
 training:
-  num_epochs: 5
+  num_epochs: 6
   batch_size: 16
   learning_rate: 1e-4
   num_workers: 4
@@ -24,16 +35,18 @@ training:
   eval_freq: 1  # How often to run validation (in epochs)
   save_freq: 1  # How often to save checkpoints (in epochs)
   save_checkpoint: true
-  image_keys: ["observation.images.top", "observation.images.wrist"]
+  image_keys: ["observation.images.front", "observation.images.side"]
   label_key: "next.reward"
+  profile_inference_time: false
+  profile_inference_time_iters: 20
 
 eval:
   batch_size: 16
   num_samples_to_log: 30  # Number of validation samples to log in the table
 
 policy:
-  name: "hilserl/classifier/pick_place_lego_cube_1"
-  model_name: "facebook/convnext-base-224"
+  name: "hilserl/classifier"
+  model_name: "helper2424/resnet10" # "facebook/convnext-base-224
   model_type: "cnn"
   num_cameras: 2 # Has to be len(training.image_keys)
 
@@ -45,4 +58,4 @@ wandb:
 
 device: "mps"
 resume: false
-output_dir: "outputs/classifier"
+output_dir: "outputs/classifier/old_trainer_resnet10_frozen"

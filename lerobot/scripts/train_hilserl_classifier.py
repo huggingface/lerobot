@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # Copyright 2024 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,10 +14,10 @@
 import logging
 import time
 from contextlib import nullcontext
-from pathlib import Path
 from pprint import pformat
 
 import hydra
+import numpy as np
 import torch
 import torch.nn as nn
 import wandb
@@ -27,41 +25,67 @@ from deepdiff import DeepDiff
 from omegaconf import DictConfig, OmegaConf
 from termcolor import colored
 from torch import optim
+from torch.autograd import profiler
 from torch.cuda.amp import GradScaler
-from torch.utils.data import DataLoader, WeightedRandomSampler, random_split
+from torch.utils.data import DataLoader, RandomSampler, WeightedRandomSampler
 from tqdm import tqdm
 
 from lerobot.common.datasets.factory import resolve_delta_timestamps
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.logger import Logger
 from lerobot.common.policies.factory import _policy_cfg_from_hydra_cfg
-from lerobot.common.policies.hilserl.classifier.configuration_classifier import ClassifierConfig
+from lerobot.common.policies.hilserl.classifier.configuration_classifier import (
+    ClassifierConfig,
+)
 from lerobot.common.policies.hilserl.classifier.modeling_classifier import Classifier
 from lerobot.common.utils.utils import (
     format_big_number,
     get_safe_torch_device,
     init_hydra_config,
+    init_logging,
     set_global_seed,
 )
+from lerobot.scripts.server.buffer import random_shift
 
 
 def get_model(cfg, logger):  # noqa I001
     classifier_config = _policy_cfg_from_hydra_cfg(ClassifierConfig, cfg)
     model = Classifier(classifier_config)
     if cfg.resume:
-        model.load_state_dict(Classifier.from_pretrained(str(logger.last_pretrained_model_dir)).state_dict())
+        model.load_state_dict(
+            Classifier.from_pretrained(
+                str(logger.last_pretrained_model_dir)
+            ).state_dict()
+        )
     return model
 
 
 def create_balanced_sampler(dataset, cfg):
-    # Creates a weighted sampler to handle class imbalance
+    # Get underlying dataset if using Subset
+    original_dataset = (
+        dataset.dataset if isinstance(dataset, torch.utils.data.Subset) else dataset
+    )
 
-    labels = torch.tensor([item[cfg.training.label_key] for item in dataset])
+    # Get indices if using Subset (for slicing)
+    indices = dataset.indices if isinstance(dataset, torch.utils.data.Subset) else None
+
+    # Get labels from Hugging Face dataset
+    if indices is not None:
+        # Get subset of labels using Hugging Face's select()
+        hf_subset = original_dataset.hf_dataset.select(indices)
+        labels = hf_subset[cfg.training.label_key]
+    else:
+        # Get all labels directly
+        labels = original_dataset.hf_dataset[cfg.training.label_key]
+
+    labels = torch.stack(labels)
     _, counts = torch.unique(labels, return_counts=True)
     class_weights = 1.0 / counts.float()
     sample_weights = class_weights[labels]
 
-    return WeightedRandomSampler(weights=sample_weights, num_samples=len(sample_weights), replacement=True)
+    return WeightedRandomSampler(
+        weights=sample_weights, num_samples=len(sample_weights), replacement=True
+    )
 
 
 def support_amp(device: torch.device, cfg: DictConfig) -> bool:
@@ -70,7 +94,9 @@ def support_amp(device: torch.device, cfg: DictConfig) -> bool:
     return cfg.training.use_amp and device.type in ("cuda", "cpu")
 
 
-def train_epoch(model, train_loader, criterion, optimizer, grad_scaler, device, logger, step, cfg):
+def train_epoch(
+    model, train_loader, criterion, optimizer, grad_scaler, device, logger, step, cfg
+):
     # Single epoch training loop with AMP support and progress tracking
     model.train()
     correct = 0
@@ -80,10 +106,15 @@ def train_epoch(model, train_loader, criterion, optimizer, grad_scaler, device, 
     for batch_idx, batch in enumerate(pbar):
         start_time = time.perf_counter()
         images = [batch[img_key].to(device) for img_key in cfg.training.image_keys]
+        images = [random_shift(img, 4) for img in images]
         labels = batch[cfg.training.label_key].float().to(device)
 
         # Forward pass with optional AMP
-        with torch.autocast(device_type=device.type) if support_amp(device, cfg) else nullcontext():
+        with (
+            torch.autocast(device_type=device.type)
+            if support_amp(device, cfg)
+            else nullcontext()
+        ):
             outputs = model(images)
             loss = criterion(outputs.logits, labels)
 
@@ -116,7 +147,7 @@ def train_epoch(model, train_loader, criterion, optimizer, grad_scaler, device, 
         pbar.set_postfix({"loss": f"{loss.item():.4f}", "acc": f"{current_acc:.2f}%"})
 
 
-def validate(model, val_loader, criterion, device, logger, cfg, num_samples_to_log=8):
+def validate(model, val_loader, criterion, device, logger, cfg):
     # Validation loop with metric tracking and sample logging
     model.eval()
     correct = 0
@@ -124,16 +155,32 @@ def validate(model, val_loader, criterion, device, logger, cfg, num_samples_to_l
     batch_start_time = time.perf_counter()
     samples = []
     running_loss = 0
+    inference_times = []
 
     with (
         torch.no_grad(),
-        torch.autocast(device_type=device.type) if support_amp(device, cfg) else nullcontext(),
+        torch.autocast(device_type=device.type)
+        if support_amp(device, cfg)
+        else nullcontext(),
     ):
         for batch in tqdm(val_loader, desc="Validation"):
             images = [batch[img_key].to(device) for img_key in cfg.training.image_keys]
             labels = batch[cfg.training.label_key].float().to(device)
 
-            outputs = model(images)
+            if cfg.training.profile_inference_time and logger._cfg.wandb.enable:
+                with (
+                    profiler.profile(record_shapes=True) as prof,
+                    profiler.record_function("model_inference"),
+                ):
+                    outputs = model(images)
+                inference_times.append(
+                    next(
+                        x for x in prof.key_averages() if x.key == "model_inference"
+                    ).cpu_time
+                )
+            else:
+                outputs = model(images)
+
             loss = criterion(outputs.logits, labels)
 
             # Track metrics
@@ -146,15 +193,26 @@ def validate(model, val_loader, criterion, device, logger, cfg, num_samples_to_l
             running_loss += loss.item()
 
             # Log sample predictions for visualization
-            if len(samples) < num_samples_to_log:
-                for i in range(min(num_samples_to_log - len(samples), len(images))):
+            if len(samples) < cfg.eval.num_samples_to_log:
+                for i in range(
+                    min(cfg.eval.num_samples_to_log - len(samples), len(images))
+                ):
                     if model.config.num_classes == 2:
                         confidence = round(outputs.probabilities[i].item(), 3)
                     else:
-                        confidence = [round(prob, 3) for prob in outputs.probabilities[i].tolist()]
+                        confidence = [
+                            round(prob, 3) for prob in outputs.probabilities[i].tolist()
+                        ]
                     samples.append(
                         {
-                            "image": wandb.Image(images[i].cpu()),
+                            **{
+                                f"image_{img_key}": wandb.Image(
+                                    images[img_idx][i].cpu()
+                                )
+                                for img_idx, img_key in enumerate(
+                                    cfg.training.image_keys
+                                )
+                            },
                             "true_label": labels[i].item(),
                             "predicted": predictions[i].item(),
                             "confidence": confidence,
@@ -170,36 +228,122 @@ def validate(model, val_loader, criterion, device, logger, cfg, num_samples_to_l
         "accuracy": accuracy,
         "eval_s": time.perf_counter() - batch_start_time,
         "eval/prediction_samples": wandb.Table(
-            data=[[s["image"], s["true_label"], s["predicted"], f"{s['confidence']}"] for s in samples],
-            columns=["Image", "True Label", "Predicted", "Confidence"],
+            data=[list(s.values()) for s in samples],
+            columns=list(samples[0].keys()),
         )
         if logger._cfg.wandb.enable
         else None,
     }
 
+    if len(inference_times) > 0:
+        eval_info["inference_time_avg"] = np.mean(inference_times)
+        eval_info["inference_time_median"] = np.median(inference_times)
+        eval_info["inference_time_std"] = np.std(inference_times)
+        eval_info["inference_time_batch_size"] = val_loader.batch_size
+
+        print(
+            f"Inference mean time: {eval_info['inference_time_avg']:.2f} us, median: {eval_info['inference_time_median']:.2f} us, std: {eval_info['inference_time_std']:.2f} us, with {len(inference_times)} iterations on {device.type} device, batch size: {eval_info['inference_time_batch_size']}"
+        )
+
     return accuracy, eval_info
 
 
-@hydra.main(version_base="1.2", config_path="../configs/policy", config_name="hilserl_classifier")
-def train(cfg: DictConfig) -> None:
+def benchmark_inference_time(model, dataset, logger, cfg, device, step):
+    if not cfg.training.profile_inference_time:
+        return
+
+    iters = cfg.training.profile_inference_time_iters
+    inference_times = []
+
+    loader = DataLoader(
+        dataset,
+        batch_size=1,
+        num_workers=cfg.training.num_workers,
+        sampler=RandomSampler(dataset),
+        pin_memory=True,
+    )
+
+    model.eval()
+    with torch.no_grad():
+        for _ in tqdm(range(iters), desc="Benchmarking inference time"):
+            x = next(iter(loader))
+            x = [x[img_key].to(device) for img_key in cfg.training.image_keys]
+
+            # Warm up
+            for _ in range(10):
+                _ = model(x)
+
+            # sync the device
+            if device.type == "cuda":
+                torch.cuda.synchronize()
+            elif device.type == "mps":
+                torch.mps.synchronize()
+
+            with (
+                profiler.profile(record_shapes=True) as prof,
+                profiler.record_function("model_inference"),
+            ):
+                _ = model(x)
+
+            inference_times.append(
+                next(
+                    x for x in prof.key_averages() if x.key == "model_inference"
+                ).cpu_time
+            )
+
+    inference_times = np.array(inference_times)
+    avg, median, std = (
+        inference_times.mean(),
+        np.median(inference_times),
+        inference_times.std(),
+    )
+    print(
+        f"Inference time mean: {avg:.2f} us, median: {median:.2f} us, std: {std:.2f} us, with {iters} iterations on {device.type} device"
+    )
+    if logger._cfg.wandb.enable:
+        logger.log_dict(
+            {
+                "inference_time_benchmark_avg": avg,
+                "inference_time_benchmark_median": median,
+                "inference_time_benchmark_std": std,
+            },
+            step + 1,
+            mode="eval",
+        )
+
+    return avg, median, std
+
+
+def train(
+    cfg: DictConfig, out_dir: str | None = None, job_name: str | None = None
+) -> None:
+    if out_dir is None:
+        raise NotImplementedError()
+    if job_name is None:
+        raise NotImplementedError()
+
     # Main training pipeline with support for resuming training
+    init_logging()
     logging.info(OmegaConf.to_yaml(cfg))
+
+    logger = Logger(cfg, out_dir, wandb_job_name=job_name)
 
     # Initialize training environment
     device = get_safe_torch_device(cfg.device, log=True)
     set_global_seed(cfg.seed)
 
-    out_dir = Path(cfg.output_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    logger = Logger(cfg, out_dir, cfg.wandb.job_name if cfg.wandb.enable else None)
-
     # Setup dataset and dataloaders
-    dataset = LeRobotDataset(cfg.dataset_repo_id)
+    dataset = LeRobotDataset(
+        cfg.dataset_repo_id,
+        root=cfg.dataset_root,
+        local_files_only=cfg.local_files_only,
+    )
     logging.info(f"Dataset size: {len(dataset)}")
 
-    train_size = int(cfg.train_split_proportion * len(dataset))
-    val_size = len(dataset) - train_size
-    train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
+    n_total = len(dataset)
+    n_train = int(cfg.train_split_proportion * len(dataset))
+    train_dataset = torch.utils.data.Subset(dataset, range(0, n_train))
+    val_dataset = torch.utils.data.Subset(dataset, range(n_train, n_total))
 
     sampler = create_balanced_sampler(train_dataset, cfg)
     train_loader = DataLoader(
@@ -207,7 +351,7 @@ def train(cfg: DictConfig) -> None:
         batch_size=cfg.training.batch_size,
         num_workers=cfg.training.num_workers,
         sampler=sampler,
-        pin_memory=True,
+        pin_memory=device.type == "cuda",
     )
 
     val_loader = DataLoader(
@@ -215,7 +359,7 @@ def train(cfg: DictConfig) -> None:
         batch_size=cfg.eval.batch_size,
         shuffle=False,
         num_workers=cfg.training.num_workers,
-        pin_memory=True,
+        pin_memory=device.type == "cuda",
     )
 
     # Resume training if requested
@@ -228,7 +372,9 @@ def train(cfg: DictConfig) -> None:
                 "You have set resume=True, but there is no model checkpoint in "
                 f"{Logger.get_last_checkpoint_dir(out_dir)}"
             )
-        checkpoint_cfg_path = str(Logger.get_last_pretrained_model_dir(out_dir) / "config.yaml")
+        checkpoint_cfg_path = str(
+            Logger.get_last_pretrained_model_dir(out_dir) / "config.yaml"
+        )
         logging.info(
             colored(
                 "You have set resume=True, indicating that you wish to resume a run",
@@ -241,7 +387,9 @@ def train(cfg: DictConfig) -> None:
         # Check for differences between the checkpoint configuration and provided configuration.
         # Hack to resolve the delta_timestamps ahead of time in order to properly diff.
         resolve_delta_timestamps(cfg)
-        diff = DeepDiff(OmegaConf.to_container(checkpoint_cfg), OmegaConf.to_container(cfg))
+        diff = DeepDiff(
+            OmegaConf.to_container(checkpoint_cfg), OmegaConf.to_container(cfg)
+        )
         # Ignore the `resume` and parameters.
         if "values_changed" in diff and "root['resume']" in diff["values_changed"]:
             del diff["values_changed"]["root['resume']"]
@@ -260,7 +408,11 @@ def train(cfg: DictConfig) -> None:
 
     optimizer = optim.AdamW(model.parameters(), lr=cfg.training.learning_rate)
     # Use BCEWithLogitsLoss for binary classification and CrossEntropyLoss for multi-class
-    criterion = nn.BCEWithLogitsLoss() if model.config.num_classes == 2 else nn.CrossEntropyLoss()
+    criterion = (
+        nn.BCEWithLogitsLoss()
+        if model.config.num_classes == 2
+        else nn.CrossEntropyLoss()
+    )
     grad_scaler = GradScaler(enabled=cfg.training.use_amp)
 
     # Log model parameters
@@ -276,7 +428,17 @@ def train(cfg: DictConfig) -> None:
     for epoch in range(cfg.training.num_epochs):
         logging.info(f"\nEpoch {epoch+1}/{cfg.training.num_epochs}")
 
-        train_epoch(model, train_loader, criterion, optimizer, grad_scaler, device, logger, step, cfg)
+        train_epoch(
+            model,
+            train_loader,
+            criterion,
+            optimizer,
+            grad_scaler,
+            device,
+            logger,
+            step,
+            cfg,
+        )
 
         # Periodic validation
         if cfg.training.eval_freq > 0 and (epoch + 1) % cfg.training.eval_freq == 0:
@@ -313,8 +475,37 @@ def train(cfg: DictConfig) -> None:
 
         step += len(train_loader)
 
+    benchmark_inference_time(model, dataset, logger, cfg, device, step)
+
     logging.info("Training completed")
 
 
+@hydra.main(
+    version_base="1.2",
+    config_name="hilserl_classifier",
+    config_path="../configs/policy",
+)
+def train_cli(cfg: dict):
+    train(
+        cfg,
+        out_dir=hydra.core.hydra_config.HydraConfig.get().run.dir,
+        job_name=hydra.core.hydra_config.HydraConfig.get().job.name,
+    )
+
+
+def train_notebook(
+    out_dir=None,
+    job_name=None,
+    config_name="hilserl_classifier",
+    config_path="../configs/policy",
+):
+    from hydra import compose, initialize
+
+    hydra.core.global_hydra.GlobalHydra.instance().clear()
+    initialize(config_path=config_path)
+    cfg = compose(config_name=config_name)
+    train(cfg, out_dir=out_dir, job_name=job_name)
+
+
 if __name__ == "__main__":
-    train()
+    train_cli()

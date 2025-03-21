@@ -32,9 +32,13 @@ def find_port():
         print(f"The port of this MotorsBus is '{port}'")
         print("Reconnect the USB cable.")
     elif len(ports_diff) == 0:
-        raise OSError(f"Could not detect the port. No difference was found ({ports_diff}).")
+        raise OSError(
+            f"Could not detect the port. No difference was found ({ports_diff})."
+        )
     else:
-        raise OSError(f"Could not detect the port. More than one port was found ({ports_diff}).")
+        raise OSError(
+            f"Could not detect the port. More than one port was found ({ports_diff})."
+        )
 
 
 if __name__ == "__main__":

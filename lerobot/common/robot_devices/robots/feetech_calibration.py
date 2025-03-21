@@ -12,9 +12,7 @@ from lerobot.common.robot_devices.motors.feetech import (
 )
 from lerobot.common.robot_devices.motors.utils import MotorsBus
 
-URL_TEMPLATE = (
-    "https://raw.githubusercontent.com/huggingface/lerobot/main/media/{robot}/{arm}_{position}.webp"
-)
+URL_TEMPLATE = "https://raw.githubusercontent.com/huggingface/lerobot/main/media/{robot}/{arm}_{position}.webp"
 
 # The following positions are provided in nominal degree range ]-180, +180[
 # For more info on these constants, see comments in the code where they get used.
@@ -25,7 +23,9 @@ ROTATED_POSITION_DEGREE = 90
 def assert_drive_mode(drive_mode):
     # `drive_mode` is in [0,1] with 0 means original rotation direction for the motor, and 1 means inverted.
     if not np.all(np.isin(drive_mode, [0, 1])):
-        raise ValueError(f"`drive_mode` contains values other than 0 or 1: ({drive_mode})")
+        raise ValueError(
+            f"`drive_mode` contains values other than 0 or 1: ({drive_mode})"
+        )
 
 
 def apply_drive_mode(position, drive_mode):
@@ -126,7 +126,9 @@ def apply_offset(calib, offset):
     return calib
 
 
-def run_arm_auto_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm_type: str):
+def run_arm_auto_calibration(
+    arm: MotorsBus, robot_type: str, arm_name: str, arm_type: str
+):
     if robot_type == "so100":
         return run_arm_auto_calibration_so100(arm, robot_type, arm_name, arm_type)
     elif robot_type == "moss":
@@ -135,18 +137,27 @@ def run_arm_auto_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm
         raise ValueError(robot_type)
 
 
-def run_arm_auto_calibration_so100(arm: MotorsBus, robot_type: str, arm_name: str, arm_type: str):
+def run_arm_auto_calibration_so100(
+    arm: MotorsBus, robot_type: str, arm_name: str, arm_type: str
+):
     """All the offsets and magic numbers are hand tuned, and are unique to SO-100 follower arms"""
     if (arm.read("Torque_Enable") != TorqueMode.DISABLED.value).any():
-        raise ValueError("To run calibration, the torque must be disabled on all motors.")
+        raise ValueError(
+            "To run calibration, the torque must be disabled on all motors."
+        )
 
     if not (robot_type == "so100" and arm_type == "follower"):
-        raise NotImplementedError("Auto calibration only supports the follower of so100 arms for now.")
+        raise NotImplementedError(
+            "Auto calibration only supports the follower of so100 arms for now."
+        )
 
     print(f"\nRunning calibration of {robot_type} {arm_name} {arm_type}...")
 
     print("\nMove arm to initial position")
-    print("See: " + URL_TEMPLATE.format(robot=robot_type, arm=arm_type, position="initial"))
+    print(
+        "See: "
+        + URL_TEMPLATE.format(robot=robot_type, arm=arm_type, position="initial")
+    )
     input("Press Enter to continue...")
 
     # Lower the acceleration of the motors (in [0,254])
@@ -193,11 +204,16 @@ def run_arm_auto_calibration_so100(arm: MotorsBus, robot_type: str, arm_name: st
 
     print("Calibrate elbow_flex")
     calib["elbow_flex"] = move_to_calibrate(
-        arm, "elbow_flex", positive_first=False, in_between_move_hook=in_between_move_hook
+        arm,
+        "elbow_flex",
+        positive_first=False,
+        in_between_move_hook=in_between_move_hook,
     )
     calib["elbow_flex"] = apply_offset(calib["elbow_flex"], offset=80 - 1024)
 
-    arm.write("Goal_Position", calib["elbow_flex"]["zero_pos"] + 1024 + 512, "elbow_flex")
+    arm.write(
+        "Goal_Position", calib["elbow_flex"]["zero_pos"] + 1024 + 512, "elbow_flex"
+    )
     time.sleep(1)
 
     def in_between_move_hook():
@@ -225,18 +241,30 @@ def run_arm_auto_calibration_so100(arm: MotorsBus, robot_type: str, arm_name: st
         }
         arm.write("Goal_Position", list(positions.values()), list(positions.keys()))
 
-    arm.write("Goal_Position", round(calib["shoulder_lift"]["zero_pos"] - 1600), "shoulder_lift")
+    arm.write(
+        "Goal_Position",
+        round(calib["shoulder_lift"]["zero_pos"] - 1600),
+        "shoulder_lift",
+    )
     time.sleep(2)
-    arm.write("Goal_Position", round(calib["elbow_flex"]["zero_pos"] + 1700), "elbow_flex")
+    arm.write(
+        "Goal_Position", round(calib["elbow_flex"]["zero_pos"] + 1700), "elbow_flex"
+    )
     time.sleep(2)
-    arm.write("Goal_Position", round(calib["wrist_flex"]["zero_pos"] + 800), "wrist_flex")
+    arm.write(
+        "Goal_Position", round(calib["wrist_flex"]["zero_pos"] + 800), "wrist_flex"
+    )
     time.sleep(2)
     arm.write("Goal_Position", round(calib["gripper"]["end_pos"]), "gripper")
     time.sleep(2)
 
     print("Calibrate wrist_roll")
     calib["wrist_roll"] = move_to_calibrate(
-        arm, "wrist_roll", invert_drive_mode=True, positive_first=False, while_move_hook=while_move_hook
+        arm,
+        "wrist_roll",
+        invert_drive_mode=True,
+        positive_first=False,
+        while_move_hook=while_move_hook,
     )
 
     arm.write("Goal_Position", calib["wrist_roll"]["zero_pos"], "wrist_roll")
@@ -246,7 +274,9 @@ def run_arm_auto_calibration_so100(arm: MotorsBus, robot_type: str, arm_name: st
     arm.write("Goal_Position", calib["wrist_flex"]["zero_pos"], "wrist_flex")
     time.sleep(1)
     arm.write("Goal_Position", calib["elbow_flex"]["zero_pos"] + 2048, "elbow_flex")
-    arm.write("Goal_Position", calib["shoulder_lift"]["zero_pos"] - 2048, "shoulder_lift")
+    arm.write(
+        "Goal_Position", calib["shoulder_lift"]["zero_pos"] - 2048, "shoulder_lift"
+    )
     time.sleep(1)
     arm.write("Goal_Position", calib["shoulder_pan"]["zero_pos"], "shoulder_pan")
     time.sleep(1)
@@ -275,18 +305,27 @@ def run_arm_auto_calibration_so100(arm: MotorsBus, robot_type: str, arm_name: st
     return calib_dict
 
 
-def run_arm_auto_calibration_moss(arm: MotorsBus, robot_type: str, arm_name: str, arm_type: str):
+def run_arm_auto_calibration_moss(
+    arm: MotorsBus, robot_type: str, arm_name: str, arm_type: str
+):
     """All the offsets and magic numbers are hand tuned, and are unique to SO-100 follower arms"""
     if (arm.read("Torque_Enable") != TorqueMode.DISABLED.value).any():
-        raise ValueError("To run calibration, the torque must be disabled on all motors.")
+        raise ValueError(
+            "To run calibration, the torque must be disabled on all motors."
+        )
 
     if not (robot_type == "moss" and arm_type == "follower"):
-        raise NotImplementedError("Auto calibration only supports the follower of moss arms for now.")
+        raise NotImplementedError(
+            "Auto calibration only supports the follower of moss arms for now."
+        )
 
     print(f"\nRunning calibration of {robot_type} {arm_name} {arm_type}...")
 
     print("\nMove arm to initial position")
-    print("See: " + URL_TEMPLATE.format(robot=robot_type, arm=arm_type, position="initial"))
+    print(
+        "See: "
+        + URL_TEMPLATE.format(robot=robot_type, arm=arm_type, position="initial")
+    )
     input("Press Enter to continue...")
 
     # Lower the acceleration of the motors (in [0,254])
@@ -370,8 +409,12 @@ def run_arm_auto_calibration_moss(arm: MotorsBus, robot_type: str, arm_name: str
 
     arm.write("Goal_Position", calib["wrist_flex"]["zero_pos"] - 1024, "wrist_flex")
     time.sleep(1)
-    arm.write("Goal_Position", calib["shoulder_lift"]["zero_pos"] + 2048, "shoulder_lift")
-    arm.write("Goal_Position", calib["elbow_flex"]["zero_pos"] - 1024 - 400, "elbow_flex")
+    arm.write(
+        "Goal_Position", calib["shoulder_lift"]["zero_pos"] + 2048, "shoulder_lift"
+    )
+    arm.write(
+        "Goal_Position", calib["elbow_flex"]["zero_pos"] - 1024 - 400, "elbow_flex"
+    )
     time.sleep(2)
 
     calib_modes = []
@@ -398,7 +441,9 @@ def run_arm_auto_calibration_moss(arm: MotorsBus, robot_type: str, arm_name: str
     return calib_dict
 
 
-def run_arm_manual_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm_type: str):
+def run_arm_manual_calibration(
+    arm: MotorsBus, robot_type: str, arm_name: str, arm_type: str
+):
     """This function ensures that a neural network trained on data collected on a given robot
     can work on another robot. For instance before calibration, setting a same goal position
     for each motor of two different robots will get two very different positions. But after calibration,
@@ -421,12 +466,16 @@ def run_arm_manual_calibration(arm: MotorsBus, robot_type: str, arm_name: str, a
     ```
     """
     if (arm.read("Torque_Enable") != TorqueMode.DISABLED.value).any():
-        raise ValueError("To run calibration, the torque must be disabled on all motors.")
+        raise ValueError(
+            "To run calibration, the torque must be disabled on all motors."
+        )
 
     print(f"\nRunning calibration of {robot_type} {arm_name} {arm_type}...")
 
     print("\nMove arm to zero position")
-    print("See: " + URL_TEMPLATE.format(robot=robot_type, arm=arm_type, position="zero"))
+    print(
+        "See: " + URL_TEMPLATE.format(robot=robot_type, arm=arm_type, position="zero")
+    )
     input("Press Enter to continue...")
 
     # We arbitrarily chose our zero target position to be a straight horizontal position with gripper upwards and closed.
@@ -446,10 +495,15 @@ def run_arm_manual_calibration(arm: MotorsBus, robot_type: str, arm_name: str, a
     # corresponds to opening the gripper. When the rotation direction is ambiguous, we arbitrarely rotate clockwise from the point of view
     # of the previous motor in the kinetic chain.
     print("\nMove arm to rotated target position")
-    print("See: " + URL_TEMPLATE.format(robot=robot_type, arm=arm_type, position="rotated"))
+    print(
+        "See: "
+        + URL_TEMPLATE.format(robot=robot_type, arm=arm_type, position="rotated")
+    )
     input("Press Enter to continue...")
 
-    rotated_target_pos = convert_degrees_to_steps(ROTATED_POSITION_DEGREE, arm.motor_models)
+    rotated_target_pos = convert_degrees_to_steps(
+        ROTATED_POSITION_DEGREE, arm.motor_models
+    )
 
     # Find drive mode by rotating each motor by a quarter of a turn.
     # Drive mode indicates if the motor rotation direction should be inverted (=1) or not (=0).
@@ -461,7 +515,9 @@ def run_arm_manual_calibration(arm: MotorsBus, robot_type: str, arm_name: str, a
     homing_offset = rotated_target_pos - rotated_drived_pos
 
     print("\nMove arm to rest position")
-    print("See: " + URL_TEMPLATE.format(robot=robot_type, arm=arm_type, position="rest"))
+    print(
+        "See: " + URL_TEMPLATE.format(robot=robot_type, arm=arm_type, position="rest")
+    )
     input("Press Enter to continue...")
     print()
 

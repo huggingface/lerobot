@@ -130,7 +130,7 @@ class Normalize(nn.Module):
             setattr(self, "buffer_" + key.replace(".", "_"), buffer)
 
     # TODO(rcadene): should we remove torch.no_grad?
-    @torch.no_grad
+    # @torch.no_grad
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         batch = dict(batch)  # shallow copy avoids mutating the input batch
         for key, mode in self.modes.items():
@@ -196,7 +196,7 @@ class Unnormalize(nn.Module):
             setattr(self, "buffer_" + key.replace(".", "_"), buffer)
 
     # TODO(rcadene): should we remove torch.no_grad?
-    @torch.no_grad
+    # @torch.no_grad
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         batch = dict(batch)  # shallow copy avoids mutating the input batch
         for key, mode in self.modes.items():

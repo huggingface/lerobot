@@ -67,7 +67,9 @@ class GroupSyncRead:
     def addParam(self, motor_index):  # noqa: N802
         # Initialize motor default values
         if motor_index not in self.packet_handler.data:
-            self.packet_handler.data[motor_index] = get_default_motor_values(motor_index)
+            self.packet_handler.data[motor_index] = get_default_motor_values(
+                motor_index
+            )
 
     def txRxPacket(self):  # noqa: N802
         return COMM_SUCCESS

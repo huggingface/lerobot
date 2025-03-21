@@ -34,7 +34,8 @@ class RobotDeviceNotConnectedError(Exception):
     """Exception raised when the robot device is not connected."""
 
     def __init__(
-        self, message="This robot device is not connected. Try calling `robot_device.connect()` first."
+        self,
+        message="This robot device is not connected. Try calling `robot_device.connect()` first.",
     ):
         self.message = message
         super().__init__(self.message)

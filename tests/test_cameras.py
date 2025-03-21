@@ -24,7 +24,10 @@ pytest -sx 'tests/test_cameras.py::test_camera[intelrealsense-True]'
 import numpy as np
 import pytest
 
-from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
+from lerobot.common.robot_devices.utils import (
+    RobotDeviceAlreadyConnectedError,
+    RobotDeviceNotConnectedError,
+)
 from tests.utils import TEST_CAMERA_TYPES, make_camera, require_camera
 
 # Maximum absolute difference between two consecutive images recored by a camera.
@@ -97,7 +100,11 @@ def test_camera(request, camera_type, mock):
     )
     # TODO(rcadene): properly set `rtol`
     np.testing.assert_allclose(
-        color_image, async_color_image, rtol=1e-5, atol=MAX_PIXEL_DIFFERENCE, err_msg=error_msg
+        color_image,
+        async_color_image,
+        rtol=1e-5,
+        atol=MAX_PIXEL_DIFFERENCE,
+        err_msg=error_msg,
     )
 
     # Test disconnecting
@@ -116,7 +123,11 @@ def test_camera(request, camera_type, mock):
     assert camera.color_mode == "bgr"
     bgr_color_image = camera.read()
     np.testing.assert_allclose(
-        color_image, bgr_color_image[:, :, [2, 1, 0]], rtol=1e-5, atol=MAX_PIXEL_DIFFERENCE, err_msg=error_msg
+        color_image,
+        bgr_color_image[:, :, [2, 1, 0]],
+        rtol=1e-5,
+        atol=MAX_PIXEL_DIFFERENCE,
+        err_msg=error_msg,
     )
     del camera
 
@@ -151,7 +162,11 @@ def test_camera(request, camera_type, mock):
         rot_color_image = camera.read()
 
         np.testing.assert_allclose(
-            rot_color_image, manual_rot_img, rtol=1e-5, atol=MAX_PIXEL_DIFFERENCE, err_msg=error_msg
+            rot_color_image,
+            manual_rot_img,
+            rtol=1e-5,
+            atol=MAX_PIXEL_DIFFERENCE,
+            err_msg=error_msg,
         )
         del camera
 
@@ -185,7 +200,9 @@ def test_save_images_from_cameras(tmpdir, request, camera_type, mock):
     if camera_type == "opencv":
         from lerobot.common.robot_devices.cameras.opencv import save_images_from_cameras
     elif camera_type == "intelrealsense":
-        from lerobot.common.robot_devices.cameras.intelrealsense import save_images_from_cameras
+        from lerobot.common.robot_devices.cameras.intelrealsense import (
+            save_images_from_cameras,
+        )
 
     # Small `record_time_s` to speedup unit tests
     save_images_from_cameras(tmpdir, record_time_s=0.02, mock=mock)
