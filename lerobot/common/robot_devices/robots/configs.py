@@ -14,7 +14,7 @@
 
 import abc
 from dataclasses import dataclass, field
-from typing import Sequence
+from typing import Any, Dict, List, Optional, Sequence, Union
 
 import draccus
 
@@ -69,9 +69,13 @@ class ManipulatorRobotConfig(RobotConfig):
                 if not cam.mock:
                     cam.mock = True
 
-        if self.max_relative_target is not None and isinstance(self.max_relative_target, Sequence):
+        if self.max_relative_target is not None and isinstance(
+            self.max_relative_target, Sequence
+        ):
             for name in self.follower_arms:
-                if len(self.follower_arms[name].motors) != len(self.max_relative_target):
+                if len(self.follower_arms[name].motors) != len(
+                    self.max_relative_target
+                ):
                     raise ValueError(
                         f"len(max_relative_target)={len(self.max_relative_target)} but the follower arm with name {name} has "
                         f"{len(self.follower_arms[name].motors)} motors. Please make sure that the "
@@ -611,3 +615,101 @@ class LeKiwiRobotConfig(RobotConfig):
     )
 
     mock: bool = False
+
+
+@RobotConfig.register_subclass("aloha_solo")
+@dataclass
+class AlohaSoloRobotConfig(ManipulatorRobotConfig):
+    """Configuration for Aloha Solo robot.
+
+    [Aloha: A Low-Cost Hardware for Bimanual Teleoperation](https://www.trossenrobotics.com/aloha-stationary)
+    https://aloha-2.github.io
+
+    Requires installing extras packages:
+    - With pip: `pip install -e ".[dynamixel intelrealsense]"`
+    - With poetry: `poetry install --sync --extras "dynamixel intelrealsense"`
+
+    See [tutorial](https://github.com/huggingface/lerobot/blob/main/examples/9_use_aloha.md)
+    """
+
+    # Specific to Aloha, LeRobot comes with default calibration files. Assuming the motors have been
+    # properly assembled, no manual calibration step is expected. If you need to run manual calibration,
+    # simply update this path to ".cache/calibration/aloha"
+    calibration_dir: str = ".cache/calibration/aloha_default"
+
+    # /!\ FOR SAFETY, READ THIS /!\
+    # `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
+    # Set this to a positive scalar to have the same value for all motors, or a list that is the same length as
+    # the number of motors in your follower arms.
+    # For Aloha, for every goal position request, motor rotations are capped at 5 degrees by default.
+    # When you feel more confident with teleoperation or running the policy, you can extend
+    # this safety limit and even removing it by setting it to `null`.
+    # Also, everything is expected to work safely out-of-the-box, but we highly advise to
+    # first try to teleoperate the grippers only (by commenting out the rest of the motors in this yaml),
+    # then to gradually add more motors (by uncommenting), until you can teleoperate both arms fully
+    max_relative_target: Optional[Union[float, List[float]]] = None
+
+    # Using field with default_factory to create default dictionaries
+    leader_arms: Dict[str, Any] = field(
+        default_factory=lambda: {
+            "right": {
+                "_target_": "lerobot.common.robot_devices.motors.dynamixel.DynamixelMotorsBus",
+                "port": "/dev/ttyDXL_leader_right",
+                "motors": {  # window_x
+                    # name: (index, model)
+                    "waist": [1, "xm430-w350"],
+                    "shoulder": [2, "xm430-w350"],
+                    "shoulder_shadow": [3, "xm430-w350"],
+                    "elbow": [4, "xm430-w350"],
+                    "elbow_shadow": [5, "xm430-w350"],
+                    "forearm_roll": [6, "xm430-w350"],
+                    "wrist_angle": [7, "xm430-w350"],
+                    "wrist_rotate": [8, "xl430-w250"],
+                    "gripper": [9, "xc430-w150"],
+                },
+            }
+        }
+    )
+
+    follower_arms: Dict[str, Any] = field(
+        default_factory=lambda: {
+            "right": {
+                "_target_": "lerobot.common.robot_devices.motors.dynamixel.DynamixelMotorsBus",
+                "port": "/dev/ttyDXL_follower_right",
+                "motors": {
+                    # name: [index, model]
+                    "waist": [1, "xm540-w270"],
+                    "shoulder": [2, "xm540-w270"],
+                    "shoulder_shadow": [3, "xm540-w270"],
+                    "elbow": [4, "xm540-w270"],
+                    "elbow_shadow": [5, "xm540-w270"],
+                    "forearm_roll": [6, "xm540-w270"],
+                    "wrist_angle": [7, "xm540-w270"],
+                    "wrist_rotate": [8, "xm430-w350"],
+                    "gripper": [9, "xm430-w350"],
+                },
+            }
+        }
+    )
+
+    # Troubleshooting: If one of your IntelRealSense cameras freeze during
+    # data recording due to bandwidth limit, you might need to plug the camera
+    # on another USB hub or PCIe card.
+    cameras: Dict[str, Any] = field(
+        default_factory=lambda: {
+            "cam_high": {
+                "_target_": "lerobot.common.robot_devices.cameras.intelrealsense.IntelRealSenseCamera",
+                "serial_number": "1234567890",
+                "fps": 30,
+                "width": 640,
+                "height": 480,
+            },
+            "cam_right_wrist": {
+                "_target_": "lerobot.common.robot_devices.cameras.intelrealsense.IntelRealSenseCamera",
+                "serial_number": "1234567890",
+                "fps": 30,
+                "width": 640,
+                "height": 480,
+            },
+        }
+    )

@@ -89,17 +89,9 @@ class LeRobotDatasetMetadata:
         self.revision = revision if revision else CODEBASE_VERSION
         self.root = Path(root) if root is not None else HF_LEROBOT_HOME / repo_id
 
-        try:
-            if force_cache_sync:
-                raise FileNotFoundError
-            self.load_metadata()
-        except (FileNotFoundError, NotADirectoryError):
-            if is_valid_version(self.revision):
-                self.revision = get_safe_version(self.repo_id, self.revision)
-
-            (self.root / "meta").mkdir(exist_ok=True, parents=True)
-            self.pull_from_repo(allow_patterns="meta/")
-            self.load_metadata()
+        if force_cache_sync:
+            raise FileNotFoundError
+        self.load_metadata()
 
     def load_metadata(self):
         self.info = load_info(self.root)
@@ -492,15 +484,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
             self.stats = aggregate_stats(episodes_stats)
 
         # Load actual data
-        try:
-            if force_cache_sync:
-                raise FileNotFoundError
-            assert all((self.root / fpath).is_file() for fpath in self.get_episodes_file_paths())
-            self.hf_dataset = self.load_hf_dataset()
-        except (AssertionError, FileNotFoundError, NotADirectoryError):
-            self.revision = get_safe_version(self.repo_id, self.revision)
-            self.download_episodes(download_videos)
-            self.hf_dataset = self.load_hf_dataset()
+        if force_cache_sync:
+            raise FileNotFoundError
+        assert all((self.root / fpath).is_file() for fpath in self.get_episodes_file_paths())
+        self.hf_dataset = self.load_hf_dataset()
 
         self.episode_data_index = get_episode_data_index(self.meta.episodes, self.episodes)
 
