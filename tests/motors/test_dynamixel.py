@@ -101,7 +101,7 @@ def test_abc_implementation(dummy_motors):
     ],
 )
 def test_ping(idx, model_nb, mock_motors, dummy_motors):
-    mock_motors.build_ping_stub(idx, model_nb)
+    stub_name = mock_motors.build_ping_stub(idx, model_nb)
     motors_bus = DynamixelMotorsBus(
         port=mock_motors.port,
         motors=dummy_motors,
@@ -111,6 +111,7 @@ def test_ping(idx, model_nb, mock_motors, dummy_motors):
     ping_model_nb = motors_bus.ping(idx)
 
     assert ping_model_nb == model_nb
+    assert mock_motors.stubs[stub_name].called
 
 
 def test_broadcast_ping(mock_motors, dummy_motors):
@@ -119,7 +120,7 @@ def test_broadcast_ping(mock_motors, dummy_motors):
         2: [1120, 30],
         3: [1190, 10],
     }
-    mock_motors.build_broadcast_ping_stub(expected_pings)
+    stub_name = mock_motors.build_broadcast_ping_stub(expected_pings)
     motors_bus = DynamixelMotorsBus(
         port=mock_motors.port,
         motors=dummy_motors,
@@ -129,6 +130,7 @@ def test_broadcast_ping(mock_motors, dummy_motors):
     ping_list = motors_bus.broadcast_ping()
 
     assert ping_list == expected_pings
+    assert mock_motors.stubs[stub_name].called
 
 
 @pytest.mark.parametrize(
