@@ -18,9 +18,7 @@
 import numpy as np
 
 from ..motors_bus import CalibrationMode, MotorsBus, TorqueMode
-from .dynamixel import (
-    convert_degrees_to_steps,
-)
+from .tables import MODEL_RESOLUTION
 
 URL_TEMPLATE = (
     "https://raw.githubusercontent.com/huggingface/lerobot/main/media/{robot}/{arm}_{position}.webp"
@@ -45,6 +43,17 @@ def apply_drive_mode(position, drive_mode):
     signed_drive_mode = -(drive_mode * 2 - 1)
     position *= signed_drive_mode
     return position
+
+
+def convert_degrees_to_steps(degrees: float | np.ndarray, models: str | list[str]) -> np.ndarray:
+    """This function converts the degree range to the step range for indicating motors rotation.
+    It assumes a motor achieves a full rotation by going from -180 degree position to +180.
+    The motor resolution (e.g. 4096) corresponds to the number of steps needed to achieve a full rotation.
+    """
+    resolutions = [MODEL_RESOLUTION[model] for model in models]
+    steps = degrees / 180 * np.array(resolutions) / 2
+    steps = steps.astype(int)
+    return steps
 
 
 def compute_nearest_rounded_position(position, models):
@@ -87,11 +96,11 @@ def run_arm_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm_type
     # We arbitrarily chose our zero target position to be a straight horizontal position with gripper upwards and closed.
     # It is easy to identify and all motors are in a "quarter turn" position. Once calibration is done, this position will
     # correspond to every motor angle being 0. If you set all 0 as Goal Position, the arm will move in this position.
-    zero_target_pos = convert_degrees_to_steps(ZERO_POSITION_DEGREE, arm.motor_models)
+    zero_target_pos = convert_degrees_to_steps(ZERO_POSITION_DEGREE, arm.models)
 
     # Compute homing offset so that `present_position + homing_offset ~= target_position`.
     zero_pos = arm.read("Present_Position")
-    zero_nearest_pos = compute_nearest_rounded_position(zero_pos, arm.motor_models)
+    zero_nearest_pos = compute_nearest_rounded_position(zero_pos, arm.models)
     homing_offset = zero_target_pos - zero_nearest_pos
 
     # The rotated target position corresponds to a rotation of a quarter turn from the zero position.
@@ -105,7 +114,7 @@ def run_arm_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm_type
     print("See: " + URL_TEMPLATE.format(robot=robot_type, arm=arm_type, position="rotated"))
     input("Press Enter to continue...")
 
-    rotated_target_pos = convert_degrees_to_steps(ROTATED_POSITION_DEGREE, arm.motor_models)
+    rotated_target_pos = convert_degrees_to_steps(ROTATED_POSITION_DEGREE, arm.models)
 
     # Find drive mode by rotating each motor by a quarter of a turn.
     # Drive mode indicates if the motor rotation direction should be inverted (=1) or not (=0).
@@ -114,7 +123,7 @@ def run_arm_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm_type
 
     # Re-compute homing offset to take into account drive mode
     rotated_drived_pos = apply_drive_mode(rotated_pos, drive_mode)
-    rotated_nearest_pos = compute_nearest_rounded_position(rotated_drived_pos, arm.motor_models)
+    rotated_nearest_pos = compute_nearest_rounded_position(rotated_drived_pos, arm.models)
     homing_offset = rotated_target_pos - rotated_nearest_pos
 
     print("\nMove arm to rest position")
@@ -123,12 +132,12 @@ def run_arm_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm_type
     print()
 
     # Joints with rotational motions are expressed in degrees in nominal range of [-180, 180]
-    calib_mode = [CalibrationMode.DEGREE.name] * len(arm.motor_names)
+    calib_mode = [CalibrationMode.DEGREE.name] * len(arm.names)
 
     # TODO(rcadene): make type of joints (DEGREE or LINEAR) configurable from yaml?
-    if robot_type in ["aloha"] and "gripper" in arm.motor_names:
+    if robot_type in ["aloha"] and "gripper" in arm.names:
         # Joints with linear motions (like gripper of Aloha) are expressed in nominal range of [0, 100]
-        calib_idx = arm.motor_names.index("gripper")
+        calib_idx = arm.names.index("gripper")
         calib_mode[calib_idx] = CalibrationMode.LINEAR.name
 
     calib_data = {
@@ -137,6 +146,6 @@ def run_arm_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm_type
         "start_pos": zero_pos.tolist(),
         "end_pos": rotated_pos.tolist(),
         "calib_mode": calib_mode,
-        "motor_names": arm.motor_names,
+        "motor_names": arm.names,
     }
     return calib_data

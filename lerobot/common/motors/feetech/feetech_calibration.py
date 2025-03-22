@@ -18,7 +18,8 @@ from ..motors_bus import (
     MotorsBus,
     TorqueMode,
 )
-from .feetech import MODEL_RESOLUTION, FeetechMotorsBus
+from .feetech import FeetechMotorsBus
+from .tables import MODEL_RESOLUTION
 
 URL_TEMPLATE = (
     "https://raw.githubusercontent.com/huggingface/lerobot/main/media/{robot}/{arm}_{position}.webp"
@@ -34,7 +35,7 @@ def get_calibration_modes(arm: MotorsBus):
     """Returns calibration modes for each motor (DEGREE for rotational, LINEAR for gripper)."""
     return [
         CalibrationMode.LINEAR.name if name == "gripper" else CalibrationMode.DEGREE.name
-        for name in arm.motor_names
+        for name in arm.names
     ]
 
 
@@ -106,7 +107,7 @@ def single_motor_calibration(arm: MotorsBus, motor_id: int):
         "start_pos": int(start_pos),
         "end_pos": int(end_pos),
         "calib_mode": get_calibration_modes(arm)[motor_id - 1],
-        "motor_name": arm.motor_names[motor_id - 1],
+        "motor_name": arm.names[motor_id - 1],
     }
 
     return calib_dict
@@ -141,19 +142,19 @@ def run_full_arm_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm
     )  # TODO(pepijn): replace with new instruction homing pos (all motors in middle) in tutorial
     input("Press Enter to continue...")
 
-    start_positions = np.zeros(len(arm.motor_ids))
-    end_positions = np.zeros(len(arm.motor_ids))
-    encoder_offsets = np.zeros(len(arm.motor_ids))
+    start_positions = np.zeros(len(arm.ids))
+    end_positions = np.zeros(len(arm.ids))
+    encoder_offsets = np.zeros(len(arm.ids))
 
     modes = get_calibration_modes(arm)
 
-    for i, motor_id in enumerate(arm.motor_ids):
+    for i, motor_id in enumerate(arm.ids):
         if modes[i] == CalibrationMode.DEGREE.name:
             encoder_offsets[i] = calibrate_homing_motor(motor_id, arm)
             start_positions[i] = 0
             end_positions[i] = 0
 
-    for i, motor_id in enumerate(arm.motor_ids):
+    for i, motor_id in enumerate(arm.ids):
         if modes[i] == CalibrationMode.LINEAR.name:
             start_positions[i], end_positions[i] = calibrate_linear_motor(motor_id, arm)
             encoder_offsets[i] = 0
@@ -172,7 +173,7 @@ def run_full_arm_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm
         "start_pos": start_positions.astype(int).tolist(),
         "end_pos": end_positions.astype(int).tolist(),
         "calib_mode": get_calibration_modes(arm),
-        "motor_names": arm.motor_names,
+        "motor_names": arm.names,
     }
     return calib_dict
 
