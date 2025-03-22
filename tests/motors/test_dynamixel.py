@@ -233,3 +233,54 @@ def test_read_num_retry(num_retry, num_invalid_try, pos, dummy_motors):
 
     expected_calls = min(1 + num_retry, 1 + num_invalid_try)
     assert mock_motors.stubs[stub_name].calls == expected_calls
+
+
+@pytest.mark.parametrize(
+    "motors",
+    [
+        [1, 2, 3],
+        ["dummy_1", "dummy_2", "dummy_3"],
+        [1, "dummy_2", 3],
+    ],
+    ids=["by ids", "by names", "mixed"],
+)
+def test_write_all_motors(motors, dummy_motors):
+    mock_motors = MockMotors()
+    goal_positions = {
+        1: 1337,
+        2: 42,
+        3: 4016,
+    }
+    stub_name = mock_motors.build_sync_write_stub("Goal_Position", goal_positions)
+    motors_bus = DynamixelMotorsBus(
+        port=mock_motors.port,
+        motors=dummy_motors,
+    )
+    motors_bus.connect()
+
+    values = dict(zip(motors, goal_positions.values(), strict=True))
+    motors_bus.write("Goal_Position", values)
+
+    assert mock_motors.stubs[stub_name].wait_called()
+
+
+@pytest.mark.parametrize(
+    "data_name, value",
+    [
+        ["Torque_Enable", 0],
+        ["Torque_Enable", 1],
+    ],
+)
+def test_write_all_motors_single_value(data_name, value, dummy_motors):
+    mock_motors = MockMotors()
+    values = {m.id: value for m in dummy_motors.values()}
+    stub_name = mock_motors.build_sync_write_stub(data_name, values)
+    motors_bus = DynamixelMotorsBus(
+        port=mock_motors.port,
+        motors=dummy_motors,
+    )
+    motors_bus.connect()
+
+    motors_bus.write(data_name, value)
+
+    assert mock_motors.stubs[stub_name].wait_called()
