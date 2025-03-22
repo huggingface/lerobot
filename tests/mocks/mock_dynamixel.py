@@ -498,9 +498,6 @@ class MockMotors(MockSerial):
     ) -> str:
         address, length = self.ctrl_table[data_name]
         sync_read_request = MockInstructionPacket.sync_write(ids_values, address, length)
-        # if data_name != "Goal_Position":
-        #     raise NotImplementedError
-
         stub_name = f"Sync_Write_{data_name}_" + "_".join([str(idx) for idx in ids_values])
         self.stub(
             name=stub_name,
