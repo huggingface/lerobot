@@ -283,7 +283,6 @@ class MockMotors(MockSerial):
 
     def __init__(self):
         super().__init__()
-        self.open()
 
     @property
     def stubs(self) -> dict[str, WaitableStub]:
