@@ -14,10 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# TODO(aliberts): This noqa is for the PortHandler / PacketHandler Protocols
-# Add block noqa when feature below is available
-# https://github.com/astral-sh/ruff/issues/3711
 # ruff: noqa: N802
+# This noqa is for the Protocols classes: PortHandler, PacketHandler GroupSyncRead/Write
+# TODO(aliberts): Add block noqa when feature below is available
+# https://github.com/astral-sh/ruff/issues/3711
 
 import abc
 import json
@@ -325,13 +325,14 @@ class MotorsBus(abc.ABC):
             if not self.port_handler.openPort():
                 raise OSError(f"Failed to open port '{self.port}'.")
         except (FileNotFoundError, OSError, serial.SerialException) as e:
-            print(
+            logger.error(
                 f"\nCould not connect on port '{self.port}'. Make sure you are using the correct port."
                 "\nTry running `python lerobot/scripts/find_motors_bus_port.py`\n"
             )
             raise e
 
         self.set_timeout()
+        logger.debug(f"{self.__class__.__name__} connected.")
 
     def set_timeout(self, timeout_ms: int | None = None):
         timeout_ms = timeout_ms if timeout_ms is not None else self.default_timeout
@@ -347,7 +348,7 @@ class MotorsBus(abc.ABC):
             # TODO(aliberts): use ping instead
             return (self.ids == self.read("ID")).all()
         except ConnectionError as e:
-            print(e)
+            logger.error(e)
             return False
 
     def ping(self, motor: NameOrID, num_retry: int = 0, raise_on_error: bool = False) -> int | None:
@@ -369,7 +370,7 @@ class MotorsBus(abc.ABC):
     def set_baudrate(self, baudrate) -> None:
         present_bus_baudrate = self.port_handler.getBaudRate()
         if present_bus_baudrate != baudrate:
-            print(f"Setting bus baud rate to {baudrate}. Previously {present_bus_baudrate}.")
+            logger.info(f"Setting bus baud rate to {baudrate}. Previously {present_bus_baudrate}.")
             self.port_handler.setBaudRate(baudrate)
 
             if self.port_handler.getBaudRate() != baudrate:
@@ -440,11 +441,11 @@ class MotorsBus(abc.ABC):
             raise TypeError(f"'{motor}' should be int, str.")
 
     @overload
-    def read(self, data_name: str, motors: None = ...) -> dict[str, Value]: ...
+    def read(self, data_name: str, motors: None = ..., num_retry: int = ...) -> dict[str, Value]: ...
     @overload
-    def read(self, data_name: str, motors: NameOrID) -> dict[NameOrID, Value]: ...
-    @overload
-    def read(self, data_name: str, motors: list[NameOrID]) -> dict[NameOrID, Value]: ...
+    def read(
+        self, data_name: str, motors: NameOrID | list[NameOrID], num_retry: int = ...
+    ) -> dict[NameOrID, Value]: ...
     def read(
         self, data_name: str, motors: NameOrID | list[NameOrID] | None = None, num_retry: int = 0
     ) -> dict[NameOrID, Value]:
@@ -516,7 +517,7 @@ class MotorsBus(abc.ABC):
     #     for idx in motor_ids:
     #         value = self.reader.getData(idx, address, n_bytes)
 
-    def write(self, data_name: str, values: int | dict[NameOrID, int], num_retry: int = 0) -> None:
+    def write(self, data_name: str, values: Value | dict[NameOrID, Value], num_retry: int = 0) -> None:
         if not self.is_connected:
             raise DeviceNotConnectedError(
                 f"{self.__class__.__name__}('{self.port}') is not connected. You need to run `{self.__class__.__name__}.connect()`."
@@ -570,6 +571,7 @@ class MotorsBus(abc.ABC):
             )
 
         self.port_handler.closePort()
+        logger.debug(f"{self.__class__.__name__} disconnected.")
 
     def __del__(self):
         if self.is_connected:
