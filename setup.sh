@@ -1,0 +1,1 @@
+pip install -e ".[aloha, dynamixel, intelrealsense]"

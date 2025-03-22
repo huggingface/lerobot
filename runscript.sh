@@ -1,4 +1,4 @@
-rm -r /root/.cache/huggingface/lerobot/shalin/aloha_bear
+rm -r $(dirname "$0")/aloha_bear
 python lerobot/scripts/control_robot.py \
     --robot.type=aloha \
     --control.type=record \
@@ -12,3 +12,4 @@ python lerobot/scripts/control_robot.py \
     --control.push_to_hub=false \
     --control.play_sounds=false \
     --control.display_cameras=false
+mv ~/.cache/huggingface/lerobot/shalin/aloha_bear $(dirname "$0")/
