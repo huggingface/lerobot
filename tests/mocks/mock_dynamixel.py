@@ -346,7 +346,7 @@ class MockStatusPacket(MockDynamixelPacketv2):
         """Builds a 'Present_Position' status packet.
 
         Args:
-            dxl_id (int): Servo id
+            dxl_id (int): ID of the servo responding.
             pos (int | None, optional): Desired 'Present_Position' to be returned in the packet. If None, it
                 will use a random value in the min_max_range. Defaults to None.
             min_max_range (tuple, optional): Min/max range to generate the position values used for when 'pos'
