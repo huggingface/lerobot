@@ -40,7 +40,7 @@ from lerobot.common.datasets.backward_compatibility import (
     BackwardCompatibilityError,
     ForwardCompatibilityError,
 )
-from lerobot.common.robot_devices.robots.utils import Robot
+from lerobot.common.robots.utils import Robot
 from lerobot.common.utils.utils import is_valid_numpy_dtype_string
 from lerobot.configs.types import DictLike, FeatureType, PolicyFeature
 
