@@ -1,0 +1,2 @@
+SUBSYSTEM=="tty", ATTRS{serial}=="FT9BTH4X", ENV{ID_MM_DEVICE_IGNORE}="1", ATTR{device/latency_timer}="1", SYMLINK+="ttyDXL_leader_right"
+SUBSYSTEM=="tty", ATTRS{serial}=="FT891LIH", ENV{ID_MM_DEVICE_IGNORE}="1", ATTR{device/latency_timer}="1", SYMLINK+="ttyDXL_follower_right"
