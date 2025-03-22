@@ -18,6 +18,7 @@ import logging
 import os
 import sys
 import time
+from threading import Lock
 
 import numpy as np
 
@@ -56,6 +57,7 @@ class KeyboardTeleop(Teleoperator):
         self.config = config
         self.robot_type = config.type
 
+        self.pressed_keys_lock = Lock()
         self.pressed_keys = {}
         self.listener = None
         self.is_connected = False
@@ -63,6 +65,7 @@ class KeyboardTeleop(Teleoperator):
 
     @property
     def action_feature(self) -> dict:
+        # TODO(Steven): Set this from config? (when deciding the keys we want to capture)
         return {
             "dtype": "float32",
             "shape": (len(self.arm),),
@@ -97,23 +100,32 @@ class KeyboardTeleop(Teleoperator):
 
     def on_press(self, key):
         if hasattr(key, "char"):
-            self.pressed_keys[key.char] = True
+            with self.pressed_keys_lock:
+                self.pressed_keys[key.char] = True
 
     def on_release(self, key):
         if hasattr(key, "char"):
-            self.pressed_keys[key.char] = False
+            with self.pressed_keys_lock:
+                self.pressed_keys[key.char] = False
         if key == keyboard.Key.esc:
             logging.info("ESC pressed, disconnecting.")
             self.disconnect()
 
     def get_action(self) -> np.ndarray:
         before_read_t = time.perf_counter()
-        # pressed_keys.items is wrapped in a list to avoid any RuntimeError due to dictionary changing size
-        # during iteration
-        action = {key for key, val in list(self.pressed_keys.items()) if val}
+
+        if not self.is_connected:
+            raise DeviceNotConnectedError(
+                "KeyboardTeleop is not connected. You need to run `connect()` before `get_action()`."
+            )
+
+        with self.pressed_keys_lock:
+            pressed_keys_snapshot = self.pressed_keys
+
+        action = {key for key, val in pressed_keys_snapshot.items() if val}
         self.logs["read_pos_dt_s"] = time.perf_counter() - before_read_t
 
-        return action
+        return np.array(list(action))
 
     def send_feedback(self, feedback: np.ndarray) -> None:
         pass
@@ -121,7 +133,9 @@ class KeyboardTeleop(Teleoperator):
     def disconnect(self) -> None:
         if not self.is_connected:
             raise DeviceNotConnectedError(
-                "ManipulatorRobot is not connected. You need to run `robot.connect()` before disconnecting."
+                "KeyboardTeleop is not connected. You need to run `robot.connect()` before `disconnect()`."
             )
-        self.listener.stop()
+        if self.listener is not None:
+            self.listener.stop()
+
         self.is_connected = False
