@@ -6,7 +6,7 @@ import scservo_sdk as scs
 import serial
 from mock_serial import MockSerial
 
-from lerobot.common.motors.feetech.feetech import SCS_SERIES_CONTROL_TABLE
+from lerobot.common.motors.feetech.tables import SCS_SERIES_CONTROL_TABLE
 
 # https://files.waveshare.com/upload/2/27/Communication_Protocol_User_Manual-EN%28191218-0923%29.pdf
 INSTRUCTION_TYPES = {
