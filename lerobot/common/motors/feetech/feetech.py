@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from copy import deepcopy
+from enum import Enum
 
 from ..motors_bus import Motor, MotorsBus
 from .tables import (
@@ -27,6 +28,20 @@ BAUDRATE = 1_000_000
 DEFAULT_TIMEOUT_MS = 1000
 
 MAX_ID_RANGE = 252
+
+
+class OperatingMode(Enum):
+    # position servo mode
+    POSITION = 0
+    # The motor is in constant speed mode, which is controlled by parameter 0x2e, and the highest bit 15 is
+    # the direction bit
+    VELOCITY = 1
+    # PWM open-loop speed regulation mode, with parameter 0x2c running time parameter control, bit11 as
+    # direction bit
+    PWM = 2
+    # In step servo mode, the number of step progress is represented by parameter 0x2a, and the highest bit 15
+    # is the direction bit
+    STEP = 3
 
 
 class FeetechMotorsBus(MotorsBus):
