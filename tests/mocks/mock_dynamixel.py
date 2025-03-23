@@ -294,6 +294,40 @@ class MockInstructionPacket(MockDynamixelPacketv2):
         length = len(ids_values) * (1 + data_length) + 7
         return cls.build(dxl_id=dxl.BROADCAST_ID, params=params, length=length, instruct_type="Sync_Write")
 
+    @classmethod
+    def write(
+        cls,
+        dxl_id: int,
+        value: int,
+        start_address: int,
+        data_length: int,
+    ) -> bytes:
+        """
+        Builds a "Write" instruction.
+        (from https://emanual.robotis.com/docs/en/dxl/protocol2/#write-0x03)
+
+        The parameters for Write (Protocol 2.0) are:
+            param[0]   = start_address L
+            param[1]   = start_address H
+            param[2]   = 1st Byte
+            param[3]   = 2nd Byte
+            ...
+            param[1+X] = X-th Byte
+
+        And 'length' = data_length + 5, where:
+            +1 is for instruction byte,
+            +2 is for the length bytes,
+            +2 is for the CRC at the end.
+        """
+        data = DynamixelMotorsBus.split_int_bytes(value, data_length)
+        params = [
+            dxl.DXL_LOBYTE(start_address),
+            dxl.DXL_HIBYTE(start_address),
+            *data,
+        ]
+        length = data_length + 5
+        return cls.build(dxl_id=dxl_id, params=params, length=length, instruct_type="Write")
+
 
 class MockStatusPacket(MockDynamixelPacketv2):
     """
@@ -458,7 +492,6 @@ class MockMotors(MockSerial):
         ping_request = MockInstructionPacket.ping(dxl_id)
         return_packet = MockStatusPacket.ping(dxl_id, model_nb, firm_ver)
         ping_response = self._build_send_fn(return_packet, num_invalid_try)
-
         stub_name = f"Ping_{dxl_id}"
         self.stub(
             name=stub_name,
@@ -474,16 +507,15 @@ class MockMotors(MockSerial):
         'data_name' supported:
             - Present_Position
         """
-        address, length = self.ctrl_table[data_name]
-        sync_read_request = MockInstructionPacket.sync_read(list(ids_values), address, length)
         if data_name != "Present_Position":
             raise NotImplementedError
 
+        address, length = self.ctrl_table[data_name]
+        sync_read_request = MockInstructionPacket.sync_read(list(ids_values), address, length)
         return_packets = b"".join(
             MockStatusPacket.present_position(idx, pos) for idx, pos in ids_values.items()
         )
         sync_read_response = self._build_send_fn(return_packets, num_invalid_try)
-
         stub_name = f"Sync_Read_{data_name}_" + "_".join([str(idx) for idx in ids_values])
         self.stub(
             name=stub_name,
@@ -502,6 +534,20 @@ class MockMotors(MockSerial):
             name=stub_name,
             receive_bytes=sync_read_request,
             send_fn=self._build_send_fn(b"", num_invalid_try),
+        )
+        return stub_name
+
+    def build_write_stub(
+        self, data_name: str, dxl_id: int, value: int, error: str = "Success", num_invalid_try: int = 0
+    ) -> str:
+        address, length = self.ctrl_table[data_name]
+        sync_read_request = MockInstructionPacket.write(dxl_id, value, address, length)
+        return_packet = MockStatusPacket.build(dxl_id, params=[], length=4, error=error)
+        stub_name = f"Write_{data_name}_{dxl_id}"
+        self.stub(
+            name=stub_name,
+            receive_bytes=sync_read_request,
+            send_fn=self._build_send_fn(return_packet, num_invalid_try),
         )
         return stub_name
 
