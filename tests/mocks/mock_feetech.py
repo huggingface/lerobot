@@ -166,7 +166,7 @@ class MockInstructionPacket(MockFeetechPacket):
         """
         Builds a "Write" instruction.
 
-        The parameters for Write (Protocol 2.0) are:
+        The parameters for Write are:
             param[0]   = start_address L
             param[1]   = start_address H
             param[2]   = 1st Byte
@@ -174,10 +174,10 @@ class MockInstructionPacket(MockFeetechPacket):
             ...
             param[1+X] = X-th Byte
 
-        And 'length' = data_length + 5, where:
+        And 'length' = data_length + 3, where:
             +1 is for instruction byte,
-            +2 is for the length bytes,
-            +2 is for the CRC at the end.
+            +1 is for the length bytes,
+            +1 is for the checksum at the end.
         """
         data = FeetechMotorsBus.split_int_bytes(value, data_length)
         params = [start_address, *data]
@@ -234,7 +234,7 @@ class MockStatusPacket(MockFeetechPacket):
         """Builds a 'Present_Position' status packet.
 
         Args:
-            scs_id (int): List of the servos ids
+            scs_id (int): List of the servos ids.
             pos (int | None, optional): Desired 'Present_Position' to be returned in the packet. If None, it
                 will use a random value in the min_max_range. Defaults to None.
             min_max_range (tuple, optional): Min/max range to generate the position values used for when 'pos'

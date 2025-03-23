@@ -401,7 +401,6 @@ def test_sync_write_by_names(ids, positions, mock_motors, dummy_motors):
     assert mock_motors.stubs[stub_name].wait_called()
 
 
-@pytest.mark.skip("TODO")
 @pytest.mark.parametrize(
     "data_name, dxl_id, value",
     [
@@ -424,7 +423,6 @@ def test_write_by_id(data_name, dxl_id, value, mock_motors, dummy_motors):
     assert mock_motors.stubs[stub_name].called
 
 
-@pytest.mark.skip("TODO")
 @pytest.mark.parametrize(
     "data_name, dxl_id, value",
     [
