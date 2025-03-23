@@ -19,6 +19,7 @@
 # -> Need to check compatibility across models
 
 from copy import deepcopy
+from enum import Enum
 
 from ..motors_bus import Motor, MotorsBus
 from .tables import MODEL_BAUDRATE_TABLE, MODEL_CONTROL_TABLE, MODEL_RESOLUTION
@@ -30,6 +31,36 @@ MAX_ID_RANGE = 252
 
 CALIBRATION_REQUIRED = ["Goal_Position", "Present_Position"]
 CONVERT_UINT32_TO_INT32_REQUIRED = ["Goal_Position", "Present_Position"]
+
+
+class OperatingMode(Enum):
+    # DYNAMIXEL only controls current(torque) regardless of speed and position. This mode is ideal for a
+    # gripper or a system that only uses current(torque) control or a system that has additional
+    # velocity/position controllers.
+    Current = 0
+
+    # This mode controls velocity. This mode is identical to the Wheel Mode(endless) from existing DYNAMIXEL.
+    # This mode is ideal for wheel-type robots.
+    Velocity = 1
+
+    # This mode controls position. This mode is identical to the Joint Mode from existing DYNAMIXEL. Operating
+    # position range is limited by the Max Position Limit(48) and the Min Position Limit(52). This mode is
+    # ideal for articulated robots that each joint rotates less than 360 degrees.
+    Position = 3
+
+    # This mode controls position. This mode is identical to the Multi-turn Position Control from existing
+    # DYNAMIXEL. 512 turns are supported(-256[rev] ~ 256[rev]). This mode is ideal for multi-turn wrists or
+    # conveyer systems or a system that requires an additional reduction gear. Note that Max Position
+    # Limit(48), Min Position Limit(52) are not used on Extended Position Control Mode.
+    Extended_Position = 4
+
+    # This mode controls both position and current(torque). Up to 512 turns are supported (-256[rev] ~
+    # 256[rev]). This mode is ideal for a system that requires both position and current control such as
+    # articulated robots or grippers.
+    Current_Position = 5
+
+    # This mode directly controls PWM output. (Voltage Control Mode)
+    PWM = 16
 
 
 class DynamixelMotorsBus(MotorsBus):
