@@ -13,11 +13,13 @@
 # limitations under the License.
 import numpy as np
 
-from ..motors_bus import MotorsBus, TorqueMode
-from .feetech import (
+from ..motors_bus import (
     CalibrationMode,
-    FeetechMotorsBus,
+    MotorsBus,
+    TorqueMode,
 )
+from .feetech import FeetechMotorsBus
+from .tables import MODEL_RESOLUTION
 
 URL_TEMPLATE = (
     "https://raw.githubusercontent.com/huggingface/lerobot/main/media/{robot}/{arm}_{position}.webp"
@@ -33,7 +35,7 @@ def get_calibration_modes(arm: MotorsBus):
     """Returns calibration modes for each motor (DEGREE for rotational, LINEAR for gripper)."""
     return [
         CalibrationMode.LINEAR.name if name == "gripper" else CalibrationMode.DEGREE.name
-        for name in arm.motor_names
+        for name in arm.names
     ]
 
 
@@ -105,7 +107,7 @@ def single_motor_calibration(arm: MotorsBus, motor_id: int):
         "start_pos": int(start_pos),
         "end_pos": int(end_pos),
         "calib_mode": get_calibration_modes(arm)[motor_id - 1],
-        "motor_name": arm.motor_names[motor_id - 1],
+        "motor_name": arm.names[motor_id - 1],
     }
 
     return calib_dict
@@ -140,19 +142,19 @@ def run_full_arm_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm
     )  # TODO(pepijn): replace with new instruction homing pos (all motors in middle) in tutorial
     input("Press Enter to continue...")
 
-    start_positions = np.zeros(len(arm.motor_indices))
-    end_positions = np.zeros(len(arm.motor_indices))
-    encoder_offsets = np.zeros(len(arm.motor_indices))
+    start_positions = np.zeros(len(arm.ids))
+    end_positions = np.zeros(len(arm.ids))
+    encoder_offsets = np.zeros(len(arm.ids))
 
     modes = get_calibration_modes(arm)
 
-    for i, motor_id in enumerate(arm.motor_indices):
+    for i, motor_id in enumerate(arm.ids):
         if modes[i] == CalibrationMode.DEGREE.name:
             encoder_offsets[i] = calibrate_homing_motor(motor_id, arm)
             start_positions[i] = 0
             end_positions[i] = 0
 
-    for i, motor_id in enumerate(arm.motor_indices):
+    for i, motor_id in enumerate(arm.ids):
         if modes[i] == CalibrationMode.LINEAR.name:
             start_positions[i], end_positions[i] = calibrate_linear_motor(motor_id, arm)
             encoder_offsets[i] = 0
@@ -171,7 +173,7 @@ def run_full_arm_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm
         "start_pos": start_positions.astype(int).tolist(),
         "end_pos": end_positions.astype(int).tolist(),
         "calib_mode": get_calibration_modes(arm),
-        "motor_names": arm.motor_names,
+        "motor_names": arm.names,
     }
     return calib_dict
 
@@ -251,3 +253,62 @@ def apply_feetech_offsets_from_calibration(motorsbus: FeetechMotorsBus, calibrat
 
     motorsbus.write("Lock", 0)
     print("Offsets have been saved to EEPROM successfully.")
+
+
+def convert_ticks_to_degrees(ticks, model):
+    resolutions = MODEL_RESOLUTION[model]
+    # Convert the ticks to degrees
+    return ticks * (360.0 / resolutions)
+
+
+def convert_degrees_to_ticks(degrees, model):
+    resolutions = MODEL_RESOLUTION[model]
+    # Convert degrees to motor ticks
+    return int(degrees * (resolutions / 360.0))
+
+
+def adjusted_to_homing_ticks(raw_motor_ticks: int, model: str, motor_bus: MotorsBus, motor_id: int) -> int:
+    """
+    Takes a raw reading [0..(res-1)] (e.g. 0..4095) and shifts it so that '2048'
+    becomes 0 in the homed coordinate system ([-2048..+2047] for 4096 resolution).
+    """
+    resolutions = MODEL_RESOLUTION[model]
+
+    # Shift raw ticks by half-resolution so 2048 -> 0, then wrap [0..res-1].
+    ticks = (raw_motor_ticks - (resolutions // 2)) % resolutions
+
+    # If above halfway, fold it into negative territory => [-2048..+2047].
+    if ticks > (resolutions // 2):
+        ticks -= resolutions
+
+    # Flip sign if drive_mode is set.
+    drive_mode = 0
+    if motor_bus.calibration is not None:
+        drive_mode = motor_bus.calibration["drive_mode"][motor_id - 1]
+
+    if drive_mode:
+        ticks *= -1
+
+    return ticks
+
+
+def adjusted_to_motor_ticks(adjusted_pos: int, model: str, motor_bus: MotorsBus, motor_id: int) -> int:
+    """
+    Inverse of adjusted_to_homing_ticks(). Takes a 'homed' position in [-2048..+2047]
+    and recovers the raw [0..(res-1)] ticks with 2048 as midpoint.
+    """
+    # Flip sign if drive_mode was set.
+    drive_mode = 0
+    if motor_bus.calibration is not None:
+        drive_mode = motor_bus.calibration["drive_mode"][motor_id - 1]
+
+    if drive_mode:
+        adjusted_pos *= -1
+
+    resolutions = MODEL_RESOLUTION[model]
+
+    # Shift by +half-resolution and wrap into [0..res-1].
+    # This undoes the earlier shift by -half-resolution.
+    ticks = (adjusted_pos + (resolutions // 2)) % resolutions
+
+    return ticks
