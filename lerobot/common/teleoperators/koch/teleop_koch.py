@@ -24,6 +24,7 @@ from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnecte
 from lerobot.common.motors import CalibrationMode, Motor, TorqueMode
 from lerobot.common.motors.dynamixel import (
     DynamixelMotorsBus,
+    OperatingMode,
     run_arm_calibration,
 )
 
@@ -58,7 +59,6 @@ class KochTeleop(Teleoperator):
             },
         )
 
-        self.is_connected = False
         self.logs = {}
 
     @property
@@ -73,6 +73,38 @@ class KochTeleop(Teleoperator):
     def feedback_feature(self) -> dict:
         return {}
 
+    def configure(self) -> None:
+        for name in self.arm.names:
+            # Torque must be deactivated to change values in the motors' EEPROM area
+            # We assume that at configuration time, arm is in a rest position,
+            # and torque can be safely disabled to run calibration.
+            self.arm.write("Torque_Enable", name, TorqueMode.DISABLED.value)
+            if name != "gripper":
+                # Use 'extended position mode' for all motors except gripper, because in joint mode the servos
+                # can't rotate more than 360 degrees (from 0 to 4095) And some mistake can happen while
+                # assembling the arm, you could end up with a servo with a position 0 or 4095 at a crucial
+                # point
+                self.arm.write("Operating_Mode", name, OperatingMode.Extended_Position.value)
+
+        # Use 'position control current based' for gripper to be limited by the limit of the current.
+        # For the follower gripper, it means it can grasp an object without forcing too much even tho,
+        # its goal position is a complete grasp (both gripper fingers are ordered to join and reach a touch).
+        # For the leader gripper, it means we can use it as a physical trigger, since we can force with our finger
+        # to make it move, and it will move back to its original target position when we release the force.
+        self.arm.write("Operating_Mode", "gripper", OperatingMode.Current_Position.value)
+
+        for name in self.arm.names:
+            self.arm.write("Torque_Enable", name, TorqueMode.ENABLED.value)
+
+        logging.info("Torque enabled.")
+
+        # Move gripper to 45 degrees so that we can use it as a trigger.
+        self.arm.write("Goal_Position", "gripper", self.config.gripper_open_degree)
+
+    @property
+    def is_connected(self) -> bool:
+        return self.arm.is_connected
+
     def connect(self) -> None:
         if self.is_connected:
             raise DeviceAlreadyConnectedError(
@@ -81,38 +113,11 @@ class KochTeleop(Teleoperator):
 
         logging.info("Connecting arm.")
         self.arm.connect()
-
-        # We assume that at connection time, arm is in a rest position,
-        # and torque can be safely disabled to run calibration.
-        self.arm.write("Torque_Enable", TorqueMode.DISABLED.value)
-        self.calibrate()
-
-        # Use 'extended position mode' for all motors except gripper, because in joint mode the servos can't
-        # rotate more than 360 degrees (from 0 to 4095) And some mistake can happen while assembling the arm,
-        # you could end up with a servo with a position 0 or 4095 at a crucial point See [
-        # https://emanual.robotis.com/docs/en/dxl/x/x_series/#operating-mode11]
-        all_motors_except_gripper = [name for name in self.arm.motor_names if name != "gripper"]
-        if len(all_motors_except_gripper) > 0:
-            # 4 corresponds to Extended Position on Koch motors
-            self.arm.write("Operating_Mode", 4, all_motors_except_gripper)
-
-        # Use 'position control current based' for gripper to be limited by the limit of the current.
-        # For the follower gripper, it means it can grasp an object without forcing too much even tho,
-        # it's goal position is a complete grasp (both gripper fingers are ordered to join and reach a touch).
-        # For the leader gripper, it means we can use it as a physical trigger, since we can force with our finger
-        # to make it move, and it will move back to its original target position when we release the force.
-        # 5 corresponds to Current Controlled Position on Koch gripper motors "xl330-m077, xl330-m288"
-        self.arm.write("Operating_Mode", 5, "gripper")
-
-        # Enable torque on the gripper and move it to 45 degrees so that we can use it as a trigger.
-        logging.info("Activating torque.")
-        self.arm.write("Torque_Enable", TorqueMode.ENABLED.value, "gripper")
-        self.arm.write("Goal_Position", self.config.gripper_open_degree, "gripper")
+        self.configure()
+        # self.calibrate()  # TODO
 
         # Check arm can be read
-        self.arm.read("Present_Position")
-
-        self.is_connected = True
+        self.arm.sync_read("Present_Position")
 
     def calibrate(self) -> None:
         """After calibration all motors function in human interpretable ranges.
@@ -134,18 +139,18 @@ class KochTeleop(Teleoperator):
 
         self.arm.set_calibration(calibration)
 
-    def get_action(self) -> np.ndarray:
+    def get_action(self) -> dict[str, float]:
         """The returned action does not have a batch dimension."""
         # Read arm position
-        before_read_t = time.perf_counter()
-        action = self.arm.read("Present_Position")
-        self.logs["read_pos_dt_s"] = time.perf_counter() - before_read_t
+        start_time = time.perf_counter()
+        action = self.arm.sync_read("Present_Position")
+        self.logs["read_pos_dt_s"] = time.perf_counter() - start_time
 
         return action
 
     def send_feedback(self, feedback: np.ndarray) -> None:
         # TODO(rcadene, aliberts): Implement force feedback
-        pass
+        raise NotImplementedError
 
     def disconnect(self) -> None:
         if not self.is_connected:
@@ -154,4 +159,3 @@ class KochTeleop(Teleoperator):
             )
 
         self.arm.disconnect()
-        self.is_connected = False

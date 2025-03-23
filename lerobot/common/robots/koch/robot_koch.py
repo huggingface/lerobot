@@ -17,8 +17,7 @@
 import json
 import logging
 import time
-
-import numpy as np
+from typing import Any
 
 from lerobot.common.cameras.utils import make_cameras_from_configs
 from lerobot.common.constants import OBS_IMAGES, OBS_STATE
@@ -26,6 +25,7 @@ from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnecte
 from lerobot.common.motors import CalibrationMode, Motor, TorqueMode
 from lerobot.common.motors.dynamixel import (
     DynamixelMotorsBus,
+    OperatingMode,
     run_arm_calibration,
 )
 
@@ -88,6 +88,44 @@ class KochRobot(Robot):
             }
         return cam_ft
 
+    def configure(self) -> None:
+        for name in self.arm.names:
+            # Torque must be deactivated to change values in the motors' EEPROM area
+            # We assume that at configuration time, arm is in a rest position,
+            # and torque can be safely disabled to run calibration.
+            self.arm.write("Torque_Enable", name, TorqueMode.DISABLED.value)
+            if name != "gripper":
+                # Use 'extended position mode' for all motors except gripper, because in joint mode the servos
+                # can't rotate more than 360 degrees (from 0 to 4095) And some mistake can happen while
+                # assembling the arm, you could end up with a servo with a position 0 or 4095 at a crucial
+                # point
+                self.arm.write("Operating_Mode", name, OperatingMode.Extended_Position.value)
+
+        # Use 'position control current based' for gripper to be limited by the limit of the current.
+        # For the follower gripper, it means it can grasp an object without forcing too much even tho,
+        # its goal position is a complete grasp (both gripper fingers are ordered to join and reach a touch).
+        # For the leader gripper, it means we can use it as a physical trigger, since we can force with our finger
+        # to make it move, and it will move back to its original target position when we release the force.
+        self.arm.write("Operating_Mode", "gripper", OperatingMode.Current_Position.value)
+
+        # Set better PID values to close the gap between recorded states and actions
+        # TODO(rcadene): Implement an automatic procedure to set optimal PID values for each motor
+        self.arm.write("Position_P_Gain", "elbow_flex", 1500)
+        self.arm.write("Position_I_Gain", "elbow_flex", 0)
+        self.arm.write("Position_D_Gain", "elbow_flex", 600)
+
+        for name in self.arm.names:
+            self.arm.write("Torque_Enable", name, TorqueMode.ENABLED.value)
+
+        logging.info("Torque enabled.")
+
+        # Move gripper to 45 degrees so that we can use it as a trigger.
+        self.arm.write("Goal_Position", "gripper", self.config.gripper_open_degree)
+
+    @property
+    def is_connected(self) -> bool:
+        return self.arm.is_connected  # TODO(aliberts): add cam.is_connected for cam in self.cameras
+
     def connect(self) -> None:
         if self.is_connected:
             raise DeviceAlreadyConnectedError(
@@ -96,40 +134,11 @@ class KochRobot(Robot):
 
         logging.info("Connecting arm.")
         self.arm.connect()
-
-        # We assume that at connection time, arm is in a rest position,
-        # and torque can be safely disabled to run calibration.
-        self.arm.write("Torque_Enable", TorqueMode.DISABLED.value)
-        self.calibrate()
-
-        # Use 'extended position mode' for all motors except gripper, because in joint mode the servos can't
-        # rotate more than 360 degrees (from 0 to 4095) And some mistake can happen while assembling the arm,
-        # you could end up with a servo with a position 0 or 4095 at a crucial point See [
-        # https://emanual.robotis.com/docs/en/dxl/x/x_series/#operating-mode11]
-        all_motors_except_gripper = [name for name in self.arm.motor_names if name != "gripper"]
-        if len(all_motors_except_gripper) > 0:
-            # 4 corresponds to Extended Position on Koch motors
-            self.arm.write("Operating_Mode", 4, all_motors_except_gripper)
-
-        # Use 'position control current based' for gripper to be limited by the limit of the current.
-        # For the follower gripper, it means it can grasp an object without forcing too much even tho,
-        # it's goal position is a complete grasp (both gripper fingers are ordered to join and reach a touch).
-        # For the leader gripper, it means we can use it as a physical trigger, since we can force with our finger
-        # to make it move, and it will move back to its original target position when we release the force.
-        # 5 corresponds to Current Controlled Position on Koch gripper motors "xl330-m077, xl330-m288"
-        self.arm.write("Operating_Mode", 5, "gripper")
-
-        # Set better PID values to close the gap between recorded states and actions
-        # TODO(rcadene): Implement an automatic procedure to set optimal PID values for each motor
-        self.arm.write("Position_P_Gain", 1500, "elbow_flex")
-        self.arm.write("Position_I_Gain", 0, "elbow_flex")
-        self.arm.write("Position_D_Gain", 600, "elbow_flex")
-
-        logging.info("Activating torque.")
-        self.arm.write("Torque_Enable", TorqueMode.ENABLED.value)
+        self.configure()
+        # self.calibrate()  # TODO
 
         # Check arm can be read
-        self.arm.read("Present_Position")
+        self.arm.sync_read("Present_Position")
 
         # Connect the cameras
         for cam in self.cameras.values():
@@ -157,18 +166,12 @@ class KochRobot(Robot):
 
         self.arm.set_calibration(calibration)
 
-    def get_observation(self) -> dict[str, np.ndarray]:
-        """The returned observations do not have a batch dimension."""
-        if not self.is_connected:
-            raise DeviceNotConnectedError(
-                "ManipulatorRobot is not connected. You need to run `robot.connect()`."
-            )
-
+    def get_observation(self) -> dict[str, Any]:
         obs_dict = {}
 
         # Read arm position
         before_read_t = time.perf_counter()
-        obs_dict[OBS_STATE] = self.arm.read("Present_Position")
+        obs_dict[OBS_STATE] = self.arm.sync_read("Present_Position")
         self.logs["read_pos_dt_s"] = time.perf_counter() - before_read_t
 
         # Capture images from cameras
@@ -180,7 +183,7 @@ class KochRobot(Robot):
 
         return obs_dict
 
-    def send_action(self, action: np.ndarray) -> np.ndarray:
+    def send_action(self, action: dict[str, float]) -> dict[str, float]:
         """Command arm to move to a target joint configuration.
 
         The relative action magnitude may be clipped depending on the configuration parameter
@@ -188,29 +191,22 @@ class KochRobot(Robot):
         Thus, this function always returns the action actually sent.
 
         Args:
-            action (np.ndarray): array containing the goal positions for the motors.
-
-        Raises:
-            RobotDeviceNotConnectedError: if robot is not connected.
+            action (dict[str, float]): The goal positions for the motors.
 
         Returns:
-            np.ndarray: the action sent to the motors, potentially clipped.
+            dict[str, float]: The action sent to the motors, potentially clipped.
         """
-        if not self.is_connected:
-            raise DeviceNotConnectedError(
-                "ManipulatorRobot is not connected. You need to run `robot.connect()`."
-            )
-
         goal_pos = action
 
         # Cap goal position when too far away from present position.
         # /!\ Slower fps expected due to reading from the follower.
         if self.config.max_relative_target is not None:
-            present_pos = self.arm.read("Present_Position")
-            goal_pos = ensure_safe_goal_position(goal_pos, present_pos, self.config.max_relative_target)
+            present_pos = self.arm.sync_read("Present_Position")
+            goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in goal_pos.items()}
+            goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
 
         # Send goal position to the arm
-        self.arm.write("Goal_Position", goal_pos.astype(np.int32))
+        self.arm.sync_write("Goal_Position", goal_pos)
 
         return goal_pos
 
