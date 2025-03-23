@@ -143,7 +143,7 @@ def test_broadcast_ping(mock_motors, dummy_motors):
     ],
     ids=["None", "by ids", "by names", "mixed"],
 )
-def test_read_all_motors(motors, mock_motors, dummy_motors):
+def test_sync_read_all_motors(motors, mock_motors, dummy_motors):
     expected_positions = {
         1: 1337,
         2: 42,
@@ -171,7 +171,7 @@ def test_read_all_motors(motors, mock_motors, dummy_motors):
         [3, 4016],
     ],
 )
-def test_read_single_motor_by_name(idx, pos, mock_motors, dummy_motors):
+def test_sync_read_single_motor_by_name(idx, pos, mock_motors, dummy_motors):
     expected_position = {idx: pos}
     stub_name = mock_motors.build_sync_read_stub("Present_Position", expected_position)
     motors_bus = DynamixelMotorsBus(
@@ -194,7 +194,7 @@ def test_read_single_motor_by_name(idx, pos, mock_motors, dummy_motors):
         [3, 4016],
     ],
 )
-def test_read_single_motor_by_id(idx, pos, mock_motors, dummy_motors):
+def test_sync_read_single_motor_by_id(idx, pos, mock_motors, dummy_motors):
     expected_position = {idx: pos}
     stub_name = mock_motors.build_sync_read_stub("Present_Position", expected_position)
     motors_bus = DynamixelMotorsBus(
@@ -218,7 +218,7 @@ def test_read_single_motor_by_id(idx, pos, mock_motors, dummy_motors):
         [2, 1, 999],
     ],
 )
-def test_read_num_retry(num_retry, num_invalid_try, pos, mock_motors, dummy_motors):
+def test_sync_read_num_retry(num_retry, num_invalid_try, pos, mock_motors, dummy_motors):
     expected_position = {1: pos}
     stub_name = mock_motors.build_sync_read_stub(
         "Present_Position", expected_position, num_invalid_try=num_invalid_try
@@ -249,7 +249,7 @@ def test_read_num_retry(num_retry, num_invalid_try, pos, mock_motors, dummy_moto
     ],
     ids=["by ids", "by names", "mixed"],
 )
-def test_write_all_motors(motors, mock_motors, dummy_motors):
+def test_sync_write_all_motors(motors, mock_motors, dummy_motors):
     goal_positions = {
         1: 1337,
         2: 42,
@@ -275,7 +275,7 @@ def test_write_all_motors(motors, mock_motors, dummy_motors):
         ["Torque_Enable", 1],
     ],
 )
-def test_write_all_motors_single_value(data_name, value, mock_motors, dummy_motors):
+def test_sync_write_all_motors_single_value(data_name, value, mock_motors, dummy_motors):
     values = {m.id: value for m in dummy_motors.values()}
     stub_name = mock_motors.build_sync_write_stub(data_name, values)
     motors_bus = DynamixelMotorsBus(
