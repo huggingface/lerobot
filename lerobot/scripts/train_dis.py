@@ -1,16 +1,16 @@
 import logging
-import time
 import os
+import time
 from contextlib import nullcontext
 from pprint import pformat
-from typing import Any, Optional
+from typing import Any
 
 import torch
 import torch.distributed as dist
-from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.utils.data.distributed import DistributedSampler
 from torch.amp import GradScaler
+from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import Optimizer
+from torch.utils.data.distributed import DistributedSampler
 
 from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.datasets.sampler import EpisodeAwareSampler
@@ -25,7 +25,6 @@ from lerobot.common.utils.random_utils import set_seed
 from lerobot.common.utils.train_utils import (
     get_step_checkpoint_dir,
     get_step_identifier,
-    load_training_state,
     save_checkpoint,
     update_last_checkpoint,
 )
@@ -101,24 +100,24 @@ def setup_distributed():
     if "RANK" not in os.environ or "WORLD_SIZE" not in os.environ:
         logging.info("RANK or WORLD_SIZE not found in environment variables")
         return False, 0, 1, None
-    
+
     rank = int(os.environ["RANK"])
     world_size = int(os.environ["WORLD_SIZE"])
     local_rank = int(os.environ["LOCAL_RANK"])
-    
+
     logging.info(f"Initializing process group: rank={rank}, world_size={world_size}, local_rank={local_rank}")
-    
+
     # Set device
     if torch.cuda.is_available():
         torch.cuda.set_device(local_rank)
         device = torch.device(f"cuda:{local_rank}")
     else:
         device = torch.device("cpu")
-        
+
     # Initialize process group
     if not dist.is_initialized():
         dist.init_process_group(backend="nccl" if torch.cuda.is_available() else "gloo")
-    
+
     logging.info(f"Process group initialized: rank={dist.get_rank()}, world_size={dist.get_world_size()}")
     return True, rank, world_size, device
 
@@ -152,23 +151,23 @@ def gather_rewards(rewards, device):
     local_size = torch.tensor([rewards.shape[0]], device=device)
     size_list = [torch.zeros_like(local_size) for _ in range(dist.get_world_size())]
     dist.all_gather(size_list, local_size)
-    
+
     max_size = max(size.item() for size in size_list)
-    
+
     # Pad rewards tensor to max_size
     if rewards.shape[0] < max_size:
         padding = torch.zeros(max_size - rewards.shape[0], *rewards.shape[1:], device=device)
         rewards = torch.cat([rewards, padding], dim=0)
-    
+
     # Gather all rewards
     tensor_list = [torch.zeros_like(rewards) for _ in range(dist.get_world_size())]
     dist.all_gather(tensor_list, rewards)
-    
+
     # Remove padding and concatenate
     all_rewards = []
     for i, tensor in enumerate(tensor_list):
-        all_rewards.append(tensor[:size_list[i].item()])
-    
+        all_rewards.append(tensor[: size_list[i].item()])
+
     return torch.cat(all_rewards, dim=0)
 
 
@@ -178,15 +177,15 @@ def create_distributed_envs(env_cfg, world_size, rank):
     Each process gets its own set of environments
     """
     # Set different seeds for each process's environments
-    env_seed = (env_cfg.seed if hasattr(env_cfg, 'seed') and env_cfg.seed is not None else 0) + rank * 1000
-    
+    env_seed = (env_cfg.seed if hasattr(env_cfg, "seed") and env_cfg.seed is not None else 0) + rank * 1000
+
     # Create environments for this process
     env = make_env(
-        env_cfg, 
-        n_envs=env_cfg.n_envs_per_process if hasattr(env_cfg, 'n_envs_per_process') else 1,
-        start_seed=env_seed
+        env_cfg,
+        n_envs=env_cfg.n_envs_per_process if hasattr(env_cfg, "n_envs_per_process") else 1,
+        start_seed=env_seed,
     )
-    
+
     return env
 
 
@@ -202,12 +201,12 @@ def train(cfg: TrainPipelineConfig):
         rank = 0
         world_size = 1
         device = get_safe_torch_device(cfg.policy.device, log=True)
-    
+
     # Configure logging for each process
     if rank != 0:
         # Disable verbose logging for non-master processes
         logging.getLogger().setLevel(logging.WARNING)
-    
+
     try:
         cfg.validate()
         if rank == 0:
@@ -246,58 +245,58 @@ def train(cfg: TrainPipelineConfig):
             ds_meta=dataset.meta,
         )
         policy = policy.to(device)
-        
+
         # Important: Create optimizer BEFORE wrapping model in DDP
         # This ensures get_optim_params() works correctly
         if rank == 0:
             logging.info("Creating optimizer and scheduler")
         optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
-        
+
         # Now wrap the policy with DDP and enable unused parameter detection
         if is_distributed:
             # Enable find_unused_parameters to handle parameters not used in forward pass
             policy = DDP(policy, device_ids=[rank], output_device=rank, find_unused_parameters=True)
             if rank == 0:
                 logging.info("DDP enabled with unused parameter detection")
-        
+
         grad_scaler = GradScaler(device.type, enabled=cfg.policy.use_amp)
 
         step = 0  # number of policy updates (forward + backward + optim)
 
         if cfg.resume:
             # Only the main process loads the checkpoint, then broadcast to all
-            map_location = {'cuda:0': f'cuda:{rank}'}
+            map_location = {"cuda:0": f"cuda:{rank}"}
             if rank == 0:
                 state_dict = torch.load(cfg.checkpoint_path, map_location=map_location)
-                step = state_dict['step']
+                step = state_dict["step"]
             else:
                 state_dict = None
-            
+
             if is_distributed:
                 # Broadcast step from rank 0 to all other processes
                 step_tensor = torch.tensor([step], device=device)
                 dist.broadcast(step_tensor, src=0)
                 step = step_tensor.item()
-                
+
                 # Broadcast model parameters
                 if rank == 0:
-                    model_state_dict = state_dict['model']
+                    model_state_dict = state_dict["model"]
                 else:
                     model_state_dict = policy.module.state_dict()
-                
+
                 for param_name, param in model_state_dict.items():
                     dist.broadcast(param, src=0)
-                
+
                 policy.module.load_state_dict(model_state_dict)
             else:
                 # Non-distributed mode
-                policy.load_state_dict(state_dict['model'])
-            
+                policy.load_state_dict(state_dict["model"])
+
             # Optimizer and scheduler are initialized per process
             if rank == 0:
-                optimizer.load_state_dict(state_dict['optimizer'])
-                if lr_scheduler is not None and 'lr_scheduler' in state_dict:
-                    lr_scheduler.load_state_dict(state_dict['lr_scheduler'])
+                optimizer.load_state_dict(state_dict["optimizer"])
+                if lr_scheduler is not None and "lr_scheduler" in state_dict:
+                    lr_scheduler.load_state_dict(state_dict["lr_scheduler"])
 
         if rank == 0:
             num_learnable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
@@ -353,7 +352,7 @@ def train(cfg: TrainPipelineConfig):
 
         # Calculate per-GPU batch size
         batch_size = cfg.batch_size // world_size if is_distributed else cfg.batch_size
-        
+
         dataloader = torch.utils.data.DataLoader(
             dataset,
             num_workers=cfg.num_workers,
@@ -384,20 +383,20 @@ def train(cfg: TrainPipelineConfig):
 
         if rank == 0:
             logging.info("Start distributed offline training on a fixed dataset")
-        
+
         # Track the start time for interval timing
         interval_start_time = time.time()
         last_log_step = step
-        
+
         for _ in range(step, cfg.steps):
             # Add barrier to synchronize processes before each step
             if is_distributed:
                 dist.barrier()
-                
+
             # Set epoch for the sampler to ensure proper shuffling
             if is_distributed:
                 sampler.set_epoch(step)
-            
+
             start_time = time.perf_counter()
             batch = next(dl_iter)
             train_tracker.dataloading_s = time.perf_counter() - start_time
@@ -405,7 +404,7 @@ def train(cfg: TrainPipelineConfig):
             for key in batch:
                 if isinstance(batch[key], torch.Tensor):
                     batch[key] = batch[key].to(device, non_blocking=True)
-            
+
             train_tracker, output_dict = update_policy(
                 train_tracker,
                 policy,
@@ -431,15 +430,15 @@ def train(cfg: TrainPipelineConfig):
                 # Calculate interval time
                 interval_time = time.time() - interval_start_time
                 local_steps = step - last_log_step
-                
+
                 # Calculate global steps across all GPUs - for DDP, each GPU does the same steps
                 # but processes different data, so total steps = local steps
                 global_steps = local_steps
-                
+
                 # Calculate total batches processed - each GPU processes its own batches
                 # so total batches = local steps * world_size
                 total_batches = local_steps * world_size
-                
+
                 # Calculate total samples - each batch has batch_size samples per GPU
                 total_samples = total_batches * batch_size
 
@@ -447,14 +446,14 @@ def train(cfg: TrainPipelineConfig):
                 samples_per_second = total_samples / interval_time
                 batches_per_second = total_batches / interval_time
                 steps_per_second = global_steps / interval_time
-                
+
                 # Gather metrics from all processes
                 metrics_dict = train_tracker.to_dict()
                 if is_distributed:
                     global_metrics = all_gather_metrics(metrics_dict, device)
                 else:
                     global_metrics = metrics_dict
-                
+
                 if rank == 0:
                     # Manually update the metrics for reporting
                     # Create a new tracker to hold the aggregated metrics
@@ -463,19 +462,19 @@ def train(cfg: TrainPipelineConfig):
                         agg_metrics[key] = AverageMeter(train_metrics[key].name, train_metrics[key].fmt)
                         if key in global_metrics:
                             agg_metrics[key].avg = global_metrics[key]
-                    
+
                     agg_tracker = MetricsTracker(
                         batch_size, dataset.num_frames, dataset.num_episodes, agg_metrics, initial_step=step
                     )
-                    
+
                     # Log comprehensive throughput information
                     gpu_info = f"{world_size} GPU{'s' if world_size > 1 else ''}"
                     throughput = f"Throughput: {samples_per_second:.1f} samples/sec ({batches_per_second:.1f} batches/sec)"
                     time_info = f"Time: {interval_time:.2f}s for {global_steps} steps"
                     batch_info = f"Batch size: {batch_size}/GPU, {batch_size * world_size} total"
-                    
+
                     logging.info(f"[{gpu_info} | {throughput} | {time_info} | {batch_info}] {agg_tracker}")
-                    
+
                     if wandb_logger:
                         wandb_log_dict = global_metrics
                         # Add timing information to wandb log
@@ -488,9 +487,9 @@ def train(cfg: TrainPipelineConfig):
                         if output_dict:
                             wandb_log_dict.update(output_dict)
                         wandb_logger.log_dict(wandb_log_dict, step)
-                
+
                 train_tracker.reset_averages()
-                
+
                 # Reset interval timer and counters
                 interval_start_time = time.time()
                 last_log_step = step
@@ -548,13 +547,13 @@ def train(cfg: TrainPipelineConfig):
         # Cleanup
         if eval_env:
             eval_env.close()
-        
+
         if is_distributed:
             cleanup_distributed()
-            
+
         if rank == 0:
             logging.info("End of distributed training")
-            
+
     except Exception as e:
         logging.error(f"Error during training: {e}")
         if is_distributed:
