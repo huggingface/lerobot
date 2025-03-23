@@ -1,5 +1,17 @@
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 import datetime as dt
-import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -13,74 +25,11 @@ from lerobot.common import envs
 from lerobot.common.optim import OptimizerConfig
 from lerobot.common.optim.schedulers import LRSchedulerConfig
 from lerobot.common.utils.hub import HubMixin
-from lerobot.common.utils.utils import auto_select_torch_device, is_amp_available
 from lerobot.configs import parser
 from lerobot.configs.default import DatasetConfig, EvalConfig, WandBConfig
 from lerobot.configs.policies import PreTrainedConfig
 
 TRAIN_CONFIG_NAME = "train_config.json"
-
-
-@dataclass
-class OfflineConfig:
-    steps: int = 100_000
-
-
-@dataclass
-class OnlineConfig:
-    """
-    The online training loop looks something like:
-
-    ```python
-    for i in range(steps):
-        do_online_rollout_and_update_online_buffer()
-        for j in range(steps_between_rollouts):
-            batch = next(dataloader_with_offline_and_online_data)
-            loss = policy(batch)
-            loss.backward()
-            optimizer.step()
-    ```
-
-    Note that the online training loop adopts most of the options from the offline loop unless specified
-    otherwise.
-    """
-
-    steps: int = 0
-    # How many episodes to collect at once when we reach the online rollout part of the training loop.
-    rollout_n_episodes: int = 1
-    # The number of environments to use in the gym.vector.VectorEnv. This ends up also being the batch size for
-    # the policy. Ideally you should set this to by an even divisor of rollout_n_episodes.
-    rollout_batch_size: int = 1
-    # How many optimization steps (forward, backward, optimizer step) to do between running rollouts.
-    steps_between_rollouts: int | None = None
-    # The proportion of online samples (vs offline samples) to include in the online training batches.
-    sampling_ratio: float = 0.5
-    # First seed to use for the online rollout environment. Seeds for subsequent rollouts are incremented by 1.
-    env_seed: int | None = None
-    # Sets the maximum number of frames that are stored in the online buffer for online training. The buffer is
-    # FIFO.
-    buffer_capacity: int | None = None
-    # The minimum number of frames to have in the online buffer before commencing online training.
-    # If buffer_seed_size > rollout_n_episodes, the rollout will be run multiple times until the
-    # seed size condition is satisfied.
-    buffer_seed_size: int = 0
-    # Whether to run the online rollouts asynchronously. This means we can run the online training steps in
-    # parallel with the rollouts. This might be advised if your GPU has the bandwidth to handle training
-    # + eval + environment rendering simultaneously.
-    do_rollout_async: bool = False
-
-    def __post_init__(self):
-        if self.steps == 0:
-            return
-
-        if self.steps_between_rollouts is None:
-            raise ValueError(
-                "'steps_between_rollouts' must be set to a positive integer, but it is currently None."
-            )
-        if self.env_seed is None:
-            raise ValueError("'env_seed' must be set to a positive integer, but it is currently None.")
-        if self.buffer_capacity is None:
-            raise ValueError("'buffer_capacity' must be set to a positive integer, but it is currently None.")
 
 
 @dataclass
@@ -97,23 +46,18 @@ class TrainPipelineConfig(HubMixin):
     # Note that when resuming a run, the default behavior is to use the configuration from the checkpoint,
     # regardless of what's provided with the training command at the time of resumption.
     resume: bool = False
-    device: str | None = None  # cuda | cpu | mp
-    # `use_amp` determines whether to use Automatic Mixed Precision (AMP) for training and evaluation. With AMP,
-    # automatic gradient scaling is used.
-    use_amp: bool = False
     # `seed` is used for training (eg: model initialization, dataset shuffling)
     # AND for the evaluation environments.
     seed: int | None = 1000
     # Number of workers for the dataloader.
     num_workers: int = 4
     batch_size: int = 8
+    steps: int = 100_000
     eval_freq: int = 20_000
     log_freq: int = 200
     save_checkpoint: bool = True
     # Checkpoint is saved every `save_freq` training iterations and after the last training step.
     save_freq: int = 20_000
-    offline: OfflineConfig = field(default_factory=OfflineConfig)
-    online: OnlineConfig = field(default_factory=OnlineConfig)
     use_policy_training_preset: bool = True
     optimizer: OptimizerConfig | None = None
     scheduler: LRSchedulerConfig | None = None
@@ -124,18 +68,6 @@ class TrainPipelineConfig(HubMixin):
         self.checkpoint_path = None
 
     def validate(self):
-        if not self.device:
-            logging.warning("No device specified, trying to infer device automatically")
-            device = auto_select_torch_device()
-            self.device = device.type
-
-        # Automatically deactivate AMP if necessary
-        if self.use_amp and not is_amp_available(self.device):
-            logging.warning(
-                f"Automatic Mixed Precision (amp) is not available on device '{self.device}'. Deactivating AMP."
-            )
-            self.use_amp = False
-
         # HACK: We parse again the cli args here to get the pretrained paths if there was some.
         policy_path = parser.get_path_arg("policy")
         if policy_path:
@@ -147,7 +79,14 @@ class TrainPipelineConfig(HubMixin):
             # The entire train config is already loaded, we just need to get the checkpoint dir
             config_path = parser.parse_arg("config_path")
             if not config_path:
-                raise ValueError("A config_path is expected when resuming a run.")
+                raise ValueError(
+                    f"A config_path is expected when resuming a run. Please specify path to {TRAIN_CONFIG_NAME}"
+                )
+            if not Path(config_path).resolve().exists():
+                raise NotADirectoryError(
+                    f"{config_path=} is expected to be a local path. "
+                    "Resuming from the hub is not supported for now."
+                )
             policy_path = Path(config_path).parent
             self.policy.pretrained_path = policy_path
             self.checkpoint_path = policy_path.parent
@@ -160,7 +99,7 @@ class TrainPipelineConfig(HubMixin):
 
         if not self.resume and isinstance(self.output_dir, Path) and self.output_dir.is_dir():
             raise FileExistsError(
-                f"Output directory {self.output_dir} alreay exists and resume is {self.resume}. "
+                f"Output directory {self.output_dir} already exists and resume is {self.resume}. "
                 f"Please change your output directory so that {self.output_dir} is not overwritten."
             )
         elif not self.output_dir:
@@ -168,11 +107,8 @@ class TrainPipelineConfig(HubMixin):
             train_dir = f"{now:%Y-%m-%d}/{now:%H-%M-%S}_{self.job_name}"
             self.output_dir = Path("outputs/train") / train_dir
 
-        if self.online.steps > 0:
-            if isinstance(self.dataset.repo_id, list):
-                raise NotImplementedError("Online training with LeRobotMultiDataset is not implemented.")
-            if self.env is None:
-                raise ValueError("An environment is required for online training")
+        if isinstance(self.dataset.repo_id, list):
+            raise NotImplementedError("LeRobotMultiDataset is not currently implemented.")
 
         if not self.use_policy_training_preset and (self.optimizer is None or self.scheduler is None):
             raise ValueError("Optimizer and Scheduler must be set when the policy presets are not used.")
@@ -184,6 +120,9 @@ class TrainPipelineConfig(HubMixin):
     def __get_path_fields__(cls) -> list[str]:
         """This enables the parser to load config from the policy using `--policy.path=local/dir`"""
         return ["policy"]
+
+    def to_dict(self) -> dict:
+        return draccus.encode(self)
 
     def _save_pretrained(self, save_directory: Path) -> None:
         with open(save_directory / TRAIN_CONFIG_NAME, "w") as f, draccus.config_type("json"):
