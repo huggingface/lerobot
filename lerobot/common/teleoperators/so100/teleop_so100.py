@@ -14,18 +14,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
 import logging
 import time
 
 import numpy as np
 
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from lerobot.common.motors import TorqueMode
+from lerobot.common.motors import CalibrationMode, Motor, TorqueMode
 from lerobot.common.motors.feetech import (
     FeetechMotorsBus,
     apply_feetech_offsets_from_calibration,
-    run_full_arm_calibration,
 )
 
 from ..teleoperator import Teleoperator
@@ -48,16 +46,15 @@ class SO100Teleop(Teleoperator):
         self.arm = FeetechMotorsBus(
             port=self.config.port,
             motors={
-                "shoulder_pan": (1, "sts3215"),
-                "shoulder_lift": (2, "sts3215"),
-                "elbow_flex": (3, "sts3215"),
-                "wrist_flex": (4, "sts3215"),
-                "wrist_roll": (5, "sts3215"),
-                "gripper": (6, "sts3215"),
+                "shoulder_pan": Motor(1, "sts3215", CalibrationMode.RANGE_M100_100),
+                "shoulder_lift": Motor(2, "sts3215", CalibrationMode.RANGE_M100_100),
+                "elbow_flex": Motor(3, "sts3215", CalibrationMode.RANGE_M100_100),
+                "wrist_flex": Motor(4, "sts3215", CalibrationMode.RANGE_M100_100),
+                "wrist_roll": Motor(5, "sts3215", CalibrationMode.RANGE_M100_100),
+                "gripper": Motor(6, "sts3215", CalibrationMode.RANGE_0_100),
             },
         )
 
-        self.is_connected = False
         self.logs = {}
 
     @property
@@ -72,6 +69,16 @@ class SO100Teleop(Teleoperator):
     def feedback_feature(self) -> dict:
         return {}
 
+    def configure(self) -> None:
+        # We assume that at connection time, arm is in a rest position,
+        # and torque can be safely disabled to run calibration.
+        for name in self.arm.names:
+            self.arm.write("Torque_Enable", name, TorqueMode.DISABLED.value)
+
+    @property
+    def is_connected(self) -> bool:
+        return self.arm.is_connected
+
     def connect(self) -> None:
         if self.is_connected:
             raise DeviceAlreadyConnectedError(
@@ -80,43 +87,32 @@ class SO100Teleop(Teleoperator):
 
         logging.info("Connecting arm.")
         self.arm.connect()
-
-        # We assume that at connection time, arm is in a rest position,
-        # and torque can be safely disabled to run calibration.
-        self.arm.write("Torque_Enable", TorqueMode.DISABLED.value)
+        self.configure()
         self.calibrate()
 
         # Check arm can be read
-        self.arm.read("Present_Position")
-
-        self.is_connected = True
+        self.arm.sync_read("Present_Position")
 
     def calibrate(self) -> None:
+        raise NotImplementedError
+
+    def set_calibration(self) -> None:
         """After calibration all motors function in human interpretable ranges.
         Rotations are expressed in degrees in nominal range of [-180, 180],
         and linear motions (like gripper of Aloha) in nominal range of [0, 100].
         """
-        if self.calibration_fpath.exists():
-            with open(self.calibration_fpath) as f:
-                calibration = json.load(f)
-        else:
-            # TODO(rcadene): display a warning in __init__ if calibration file not available
-            logging.info(f"Missing calibration file '{self.calibration_fpath}'")
-            calibration = run_full_arm_calibration(self.arm, self.robot_type, self.name, "leader")
+        if not self.calibration_fpath.exists():
+            logging.error("Calibration file not found. Please run calibration first")
+            raise FileNotFoundError(self.calibration_fpath)
 
-            logging.info(f"Calibration is done! Saving calibration file '{self.calibration_fpath}'")
-            self.calibration_fpath.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.calibration_fpath, "w") as f:
-                json.dump(calibration, f)
-
-        self.arm.set_calibration(calibration)
-        apply_feetech_offsets_from_calibration(self.arm, calibration)
+        self.arm.set_calibration(self.calibration_fpath)
+        apply_feetech_offsets_from_calibration(self.arm, self.arm.calibration)
 
     def get_action(self) -> np.ndarray:
         """The returned action does not have a batch dimension."""
         # Read arm position
         before_read_t = time.perf_counter()
-        action = self.arm.read("Present_Position")
+        action = self.arm.sync_read("Present_Position")
         self.logs["read_pos_dt_s"] = time.perf_counter() - before_read_t
 
         return action
@@ -132,4 +128,3 @@ class SO100Teleop(Teleoperator):
             )
 
         self.arm.disconnect()
-        self.is_connected = False
