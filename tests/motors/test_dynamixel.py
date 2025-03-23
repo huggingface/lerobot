@@ -147,22 +147,22 @@ def test_sync_read_none(mock_motors, dummy_motors):
     )
     motors_bus.connect()
 
-    positions_read = motors_bus.sync_read("Present_Position")
+    read_positions = motors_bus.sync_read("Present_Position")
 
     assert mock_motors.stubs[stub_name].called
-    assert positions_read == expected_positions
+    assert read_positions == expected_positions
 
 
 @pytest.mark.parametrize(
-    "dxl_id, position",
+    "id_, position",
     [
         (1, 1337),
         (2, 42),
         (3, 4016),
     ],
 )
-def test_sync_read_by_id(dxl_id, position, mock_motors, dummy_motors):
-    expected_position = {dxl_id: position}
+def test_sync_read_by_id(id_, position, mock_motors, dummy_motors):
+    expected_position = {id_: position}
     stub_name = mock_motors.build_sync_read_stub("Present_Position", expected_position)
     motors_bus = DynamixelMotorsBus(
         port=mock_motors.port,
@@ -170,10 +170,10 @@ def test_sync_read_by_id(dxl_id, position, mock_motors, dummy_motors):
     )
     motors_bus.connect()
 
-    positions_read = motors_bus.sync_read("Present_Position", dxl_id)
+    read_position = motors_bus.sync_read("Present_Position", id_)
 
     assert mock_motors.stubs[stub_name].called
-    assert positions_read == expected_position
+    assert read_position == expected_position
 
 
 @pytest.mark.parametrize(
@@ -195,10 +195,10 @@ def test_sync_read_by_ids(ids, positions, mock_motors, dummy_motors):
     )
     motors_bus.connect()
 
-    positions_read = motors_bus.sync_read("Present_Position", ids)
+    read_positions = motors_bus.sync_read("Present_Position", ids)
 
     assert mock_motors.stubs[stub_name].called
-    assert positions_read == expected_positions
+    assert read_positions == expected_positions
 
 
 @pytest.mark.parametrize(
@@ -218,10 +218,10 @@ def test_sync_read_by_name(id_, position, mock_motors, dummy_motors):
     )
     motors_bus.connect()
 
-    positions_read = motors_bus.sync_read("Present_Position", f"dummy_{id_}")
+    read_position = motors_bus.sync_read("Present_Position", f"dummy_{id_}")
 
     assert mock_motors.stubs[stub_name].called
-    assert positions_read == expected_position
+    assert read_position == expected_position
 
 
 @pytest.mark.parametrize(
@@ -245,10 +245,10 @@ def test_sync_read_by_names(ids, positions, mock_motors, dummy_motors):
     )
     motors_bus.connect()
 
-    positions_read = motors_bus.sync_read("Present_Position", names)
+    read_positions = motors_bus.sync_read("Present_Position", names)
 
     assert mock_motors.stubs[stub_name].called
-    assert positions_read == expected_positions
+    assert read_positions == expected_positions
 
 
 @pytest.mark.parametrize(
