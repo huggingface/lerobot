@@ -99,14 +99,14 @@ class KochRobot(Robot):
                 # can't rotate more than 360 degrees (from 0 to 4095) And some mistake can happen while
                 # assembling the arm, you could end up with a servo with a position 0 or 4095 at a crucial
                 # point
-                self.arm.write("Operating_Mode", name, OperatingMode.Extended_Position.value)
+                self.arm.write("Operating_Mode", name, OperatingMode.EXTENDED_POSITION.value)
 
         # Use 'position control current based' for gripper to be limited by the limit of the current.
         # For the follower gripper, it means it can grasp an object without forcing too much even tho,
         # its goal position is a complete grasp (both gripper fingers are ordered to join and reach a touch).
         # For the leader gripper, it means we can use it as a physical trigger, since we can force with our finger
         # to make it move, and it will move back to its original target position when we release the force.
-        self.arm.write("Operating_Mode", "gripper", OperatingMode.Current_Position.value)
+        self.arm.write("Operating_Mode", "gripper", OperatingMode.CURRENT_POSITION.value)
 
         # Set better PID values to close the gap between recorded states and actions
         # TODO(rcadene): Implement an automatic procedure to set optimal PID values for each motor
