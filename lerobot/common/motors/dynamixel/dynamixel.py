@@ -55,8 +55,8 @@ class DynamixelMotorsBus(MotorsBus):
 
         self.port_handler = dxl.PortHandler(self.port)
         self.packet_handler = dxl.PacketHandler(PROTOCOL_VERSION)
-        self.reader = dxl.GroupSyncRead(self.port_handler, self.packet_handler, 0, 0)
-        self.writer = dxl.GroupSyncWrite(self.port_handler, self.packet_handler, 0, 0)
+        self.sync_reader = dxl.GroupSyncRead(self.port_handler, self.packet_handler, 0, 0)
+        self.sync_writer = dxl.GroupSyncWrite(self.port_handler, self.packet_handler, 0, 0)
 
     def broadcast_ping(
         self, num_retry: int = 0, raise_on_error: bool = False
@@ -81,6 +81,9 @@ class DynamixelMotorsBus(MotorsBus):
         import dynamixel_sdk as dxl
 
         return comm == dxl.COMM_SUCCESS
+
+    def _is_error(self, error: int) -> bool:
+        return error != 0x00
 
     @staticmethod
     def split_int_bytes(value: int, n_bytes: int) -> list[int]:

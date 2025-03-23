@@ -156,7 +156,7 @@ def test_read_all_motors(motors, mock_motors, dummy_motors):
     )
     motors_bus.connect()
 
-    positions_read = motors_bus.read("Present_Position", motors=motors)
+    positions_read = motors_bus.sync_read("Present_Position", motors=motors)
 
     motors = ["dummy_1", "dummy_2", "dummy_3"] if motors is None else motors
     assert mock_motors.stubs[stub_name].called
@@ -180,7 +180,7 @@ def test_read_single_motor_by_name(idx, pos, mock_motors, dummy_motors):
     )
     motors_bus.connect()
 
-    pos_dict = motors_bus.read("Present_Position", f"dummy_{idx}")
+    pos_dict = motors_bus.sync_read("Present_Position", f"dummy_{idx}")
 
     assert mock_motors.stubs[stub_name].called
     assert pos_dict == {f"dummy_{idx}": pos}
@@ -203,7 +203,7 @@ def test_read_single_motor_by_id(idx, pos, mock_motors, dummy_motors):
     )
     motors_bus.connect()
 
-    pos_dict = motors_bus.read("Present_Position", idx)
+    pos_dict = motors_bus.sync_read("Present_Position", idx)
 
     assert mock_motors.stubs[stub_name].called
     assert pos_dict == {idx: pos}
@@ -230,11 +230,11 @@ def test_read_num_retry(num_retry, num_invalid_try, pos, mock_motors, dummy_moto
     motors_bus.connect()
 
     if num_retry >= num_invalid_try:
-        pos_dict = motors_bus.read("Present_Position", 1, num_retry=num_retry)
+        pos_dict = motors_bus.sync_read("Present_Position", 1, num_retry=num_retry)
         assert pos_dict == {1: pos}
     else:
         with pytest.raises(ConnectionError):
-            _ = motors_bus.read("Present_Position", 1, num_retry=num_retry)
+            _ = motors_bus.sync_read("Present_Position", 1, num_retry=num_retry)
 
     expected_calls = min(1 + num_retry, 1 + num_invalid_try)
     assert mock_motors.stubs[stub_name].calls == expected_calls
@@ -263,7 +263,7 @@ def test_write_all_motors(motors, mock_motors, dummy_motors):
     motors_bus.connect()
 
     values = dict(zip(motors, goal_positions.values(), strict=True))
-    motors_bus.write("Goal_Position", values)
+    motors_bus.sync_write("Goal_Position", values)
 
     assert mock_motors.stubs[stub_name].wait_called()
 
@@ -284,6 +284,6 @@ def test_write_all_motors_single_value(data_name, value, mock_motors, dummy_moto
     )
     motors_bus.connect()
 
-    motors_bus.write(data_name, value)
+    motors_bus.sync_write(data_name, value)
 
     assert mock_motors.stubs[stub_name].wait_called()

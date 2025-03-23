@@ -51,8 +51,8 @@ class FeetechMotorsBus(MotorsBus):
 
         self.port_handler = scs.PortHandler(self.port)
         self.packet_handler = scs.PacketHandler(PROTOCOL_VERSION)
-        self.reader = scs.GroupSyncRead(self.port_handler, self.packet_handler, 0, 0)
-        self.writer = scs.GroupSyncWrite(self.port_handler, self.packet_handler, 0, 0)
+        self.sync_reader = scs.GroupSyncRead(self.port_handler, self.packet_handler, 0, 0)
+        self.sync_writer = scs.GroupSyncWrite(self.port_handler, self.packet_handler, 0, 0)
 
     def broadcast_ping(self, num_retry: int | None = None):
         raise NotImplementedError  # TODO
@@ -69,6 +69,9 @@ class FeetechMotorsBus(MotorsBus):
         import scservo_sdk as scs
 
         return comm == scs.COMM_SUCCESS
+
+    def _is_error(self, error: int) -> bool:
+        return error != 0x00
 
     @staticmethod
     def split_int_bytes(value: int, n_bytes: int) -> list[int]:
