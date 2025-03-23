@@ -100,14 +100,9 @@ class DynamixelMotorsBus(MotorsBus):
         # Note: No need to convert back into unsigned int, since this byte preprocessing
         # already handles it for us.
         if n_bytes == 1:
-            data = [
-                dxl.DXL_LOBYTE(dxl.DXL_LOWORD(value)),
-            ]
+            data = [value]
         elif n_bytes == 2:
-            data = [
-                dxl.DXL_LOBYTE(dxl.DXL_LOWORD(value)),
-                dxl.DXL_HIBYTE(dxl.DXL_LOWORD(value)),
-            ]
+            data = [dxl.DXL_LOBYTE(value), dxl.DXL_HIBYTE(value)]
         elif n_bytes == 4:
             data = [
                 dxl.DXL_LOBYTE(dxl.DXL_LOWORD(value)),

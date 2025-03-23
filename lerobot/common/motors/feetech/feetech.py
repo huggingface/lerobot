@@ -88,14 +88,9 @@ class FeetechMotorsBus(MotorsBus):
         # Note: No need to convert back into unsigned int, since this byte preprocessing
         # already handles it for us.
         if n_bytes == 1:
-            data = [
-                scs.SCS_LOBYTE(scs.SCS_LOWORD(value)),
-            ]
+            data = [value]
         elif n_bytes == 2:
-            data = [
-                scs.SCS_LOBYTE(scs.SCS_LOWORD(value)),
-                scs.SCS_HIBYTE(scs.SCS_LOWORD(value)),
-            ]
+            data = [scs.SCS_LOBYTE(value), scs.SCS_HIBYTE(value)]
         elif n_bytes == 4:
             data = [
                 scs.SCS_LOBYTE(scs.SCS_LOWORD(value)),
