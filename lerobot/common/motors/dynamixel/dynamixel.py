@@ -20,7 +20,7 @@
 
 from copy import deepcopy
 
-from ..motors_bus import MotorsBus
+from ..motors_bus import Motor, MotorsBus
 from .tables import MODEL_BAUDRATE_TABLE, MODEL_CONTROL_TABLE, MODEL_RESOLUTION
 
 PROTOCOL_VERSION = 2.0
@@ -48,7 +48,7 @@ class DynamixelMotorsBus(MotorsBus):
     def __init__(
         self,
         port: str,
-        motors: dict[str, tuple[int, str]],
+        motors: dict[str, Motor],
     ):
         super().__init__(port, motors)
         import dynamixel_sdk as dxl

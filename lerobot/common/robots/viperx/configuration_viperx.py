@@ -20,20 +20,8 @@ class ViperXRobotConfig(RobotConfig):
     # then to gradually add more motors (by uncommenting), until you can teleoperate both arms fully
     max_relative_target: int | None = 5
 
-    waist: tuple = (1, "xm540-w270")
-    shoulder: tuple = (2, "xm540-w270")
-    shoulder_shadow: tuple = (3, "xm540-w270")
-    elbow: tuple = (4, "xm540-w270")
-    elbow_shadow: tuple = (5, "xm540-w270")
-    forearm_roll: tuple = (6, "xm540-w270")
-    wrist_angle: tuple = (7, "xm540-w270")
-    wrist_rotate: tuple = (8, "xm430-w350")
-    gripper: tuple = (9, "xm430-w350")
-
     # cameras
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
     # Troubleshooting: If one of your IntelRealSense cameras freeze during
     # data recording due to bandwidth limit, you might need to plug the camera
     # on another USB hub or PCIe card.
-
-    mock: bool = False

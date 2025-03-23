@@ -14,7 +14,7 @@
 
 from copy import deepcopy
 
-from ..motors_bus import MotorsBus
+from ..motors_bus import Motor, MotorsBus
 from .tables import (
     CALIBRATION_REQUIRED,
     MODEL_BAUDRATE_TABLE,
@@ -44,7 +44,7 @@ class FeetechMotorsBus(MotorsBus):
     def __init__(
         self,
         port: str,
-        motors: dict[str, tuple[int, str]],
+        motors: dict[str, Motor],
     ):
         super().__init__(port, motors)
         import scservo_sdk as scs

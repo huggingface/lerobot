@@ -36,14 +36,3 @@ class WidowXTeleopConfig(TeleoperatorConfig):
     # first try to teleoperate the grippers only (by commenting out the rest of the motors in this yaml),
     # then to gradually add more motors (by uncommenting), until you can teleoperate both arms fully
     max_relative_target: int | None = 5
-
-    # motors
-    waist: tuple = (1, "xm430-w350")
-    shoulder: tuple = (2, "xm430-w350")
-    shoulder_shadow: tuple = (3, "xm430-w350")
-    elbow: tuple = (4, "xm430-w350")
-    elbow_shadow: tuple = (5, "xm430-w350")
-    forearm_roll: tuple = (6, "xm430-w350")
-    wrist_angle: tuple = (7, "xm430-w350")
-    wrist_rotate: tuple = (8, "xl430-w250")
-    gripper: tuple = (9, "xc430-w150")
