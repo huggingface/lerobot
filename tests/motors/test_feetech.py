@@ -399,3 +399,49 @@ def test_sync_write_by_names(ids, positions, mock_motors, dummy_motors):
     motors_bus.sync_write("Goal_Position", write_values)
 
     assert mock_motors.stubs[stub_name].wait_called()
+
+
+@pytest.mark.skip("TODO")
+@pytest.mark.parametrize(
+    "data_name, dxl_id, value",
+    [
+        ("Torque_Enable", 1, 0),
+        ("Torque_Enable", 1, 1),
+        ("Goal_Position", 2, 1337),
+        ("Goal_Position", 3, 42),
+    ],
+)
+def test_write_by_id(data_name, dxl_id, value, mock_motors, dummy_motors):
+    stub_name = mock_motors.build_write_stub(data_name, dxl_id, value)
+    motors_bus = FeetechMotorsBus(
+        port=mock_motors.port,
+        motors=dummy_motors,
+    )
+    motors_bus.connect()
+
+    motors_bus.write(data_name, dxl_id, value)
+
+    assert mock_motors.stubs[stub_name].called
+
+
+@pytest.mark.skip("TODO")
+@pytest.mark.parametrize(
+    "data_name, dxl_id, value",
+    [
+        ("Torque_Enable", 1, 0),
+        ("Torque_Enable", 1, 1),
+        ("Goal_Position", 2, 1337),
+        ("Goal_Position", 3, 42),
+    ],
+)
+def test_write_by_name(data_name, dxl_id, value, mock_motors, dummy_motors):
+    stub_name = mock_motors.build_write_stub(data_name, dxl_id, value)
+    motors_bus = FeetechMotorsBus(
+        port=mock_motors.port,
+        motors=dummy_motors,
+    )
+    motors_bus.connect()
+
+    motors_bus.write(data_name, f"dummy_{dxl_id}", value)
+
+    assert mock_motors.stubs[stub_name].called
