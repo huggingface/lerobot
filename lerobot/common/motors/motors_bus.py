@@ -74,10 +74,17 @@ class DriveMode(Enum):
 
 
 class CalibrationMode(Enum):
-    # Joints with rotational motions are expressed in degrees in nominal range of [-180, 180]
     DEGREE = 0
-    # Joints with liner motions (like gripper of Aloha) are expressed in nominal range of [0, 100]
-    LINEAR = 1
+    RANGE_0_100 = 1
+    RANGE_M100_100 = 2
+    VELOCITY = 3
+
+
+@dataclass
+class Motor:
+    id: int
+    model: str
+    calibration: CalibrationMode
 
 
 class JointOutOfRangeError(Exception):
@@ -188,12 +195,6 @@ class GroupSyncWrite(Protocol):
     def changeParam(self, id, data): ...
     def clearParam(self): ...
     def txPacket(self): ...
-
-
-@dataclass
-class Motor:
-    id: int
-    model: str
 
 
 class MotorsBus(abc.ABC):
