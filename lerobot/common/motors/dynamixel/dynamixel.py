@@ -57,7 +57,8 @@ class DynamixelMotorsBus(MotorsBus):
         self.packet_handler = dxl.PacketHandler(PROTOCOL_VERSION)
         self.sync_reader = dxl.GroupSyncRead(self.port_handler, self.packet_handler, 0, 0)
         self.sync_writer = dxl.GroupSyncWrite(self.port_handler, self.packet_handler, 0, 0)
-        self.__comm_success = dxl.COMM_SUCCESS
+        self._comm_success = dxl.COMM_SUCCESS
+        self._error = 0x00
 
     def broadcast_ping(
         self, num_retry: int = 0, raise_on_error: bool = False
@@ -77,12 +78,6 @@ class DynamixelMotorsBus(MotorsBus):
     def uncalibrate_values(self, ids_values: dict[int, float]) -> dict[int, int]:
         # TODO
         return ids_values
-
-    def _is_comm_success(self, comm: int) -> bool:
-        return comm == self.__comm_success
-
-    def _is_error(self, error: int) -> bool:
-        return error != 0x00
 
     @staticmethod
     def split_int_bytes(value: int, n_bytes: int) -> list[int]:

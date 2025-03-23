@@ -258,6 +258,8 @@ class MotorsBus(abc.ABC):
         self.packet_handler: PacketHandler
         self.sync_reader: GroupSyncRead
         self.sync_writer: GroupSyncWrite
+        self._comm_success: int
+        self._error: int
 
         self.calibration = None
 
@@ -391,13 +393,11 @@ class MotorsBus(abc.ABC):
     def uncalibrate_values(self, ids_values: dict[int, float]) -> dict[int, int]:
         pass
 
-    @abc.abstractmethod
     def _is_comm_success(self, comm: int) -> bool:
-        pass
+        return comm == self._comm_success
 
-    @abc.abstractmethod
     def _is_error(self, error: int) -> bool:
-        pass
+        return error != self._error
 
     @staticmethod
     @abc.abstractmethod

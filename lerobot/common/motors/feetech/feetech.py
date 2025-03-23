@@ -53,7 +53,8 @@ class FeetechMotorsBus(MotorsBus):
         self.packet_handler = scs.PacketHandler(PROTOCOL_VERSION)
         self.sync_reader = scs.GroupSyncRead(self.port_handler, self.packet_handler, 0, 0)
         self.sync_writer = scs.GroupSyncWrite(self.port_handler, self.packet_handler, 0, 0)
-        self.__comm_success = scs.COMM_SUCCESS
+        self._comm_success = scs.COMM_SUCCESS
+        self._error = 0x00
 
     def broadcast_ping(self, num_retry: int | None = None):
         raise NotImplementedError  # TODO
@@ -65,12 +66,6 @@ class FeetechMotorsBus(MotorsBus):
     def uncalibrate_values(self, ids_values: dict[int, float]) -> dict[int, int]:
         # TODO
         return ids_values
-
-    def _is_comm_success(self, comm: int) -> bool:
-        return comm == self.__comm_success
-
-    def _is_error(self, error: int) -> bool:
-        return error != 0x00
 
     @staticmethod
     def split_int_bytes(value: int, n_bytes: int) -> list[int]:
