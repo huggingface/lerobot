@@ -60,10 +60,9 @@ def get_policy_class(name: str) -> PreTrainedPolicy:
 
         return PI0FASTPolicy
     elif name == "sac":
-        from lerobot.common.policies.sac.configuration_sac import SACConfig
         from lerobot.common.policies.sac.modeling_sac import SACPolicy
 
-        return SACPolicy, SACConfig
+        return SACPolicy
     else:
         raise NotImplementedError(f"Policy with name {name} is not implemented.")
 
