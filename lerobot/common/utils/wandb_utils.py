@@ -73,7 +73,12 @@ class WandBLogger:
         os.environ["WANDB_SILENT"] = "True"
         import wandb
 
-        wandb_run_id = get_wandb_run_id_from_filesystem(self.log_dir) if cfg.resume else None
+        resume = "must" if cfg.resume else None
+        try:
+            wandb_run_id = get_wandb_run_id_from_filesystem(self.log_dir) if cfg.resume else None
+        except RuntimeError:
+            wandb_run_id = None
+            resume = None
         wandb.init(
             id=wandb_run_id,
             project=self.cfg.project,
@@ -87,7 +92,7 @@ class WandBLogger:
             save_code=False,
             # TODO(rcadene): split train and eval, and run async eval with job_type="eval"
             job_type="train_eval",
-            resume="must" if cfg.resume else None,
+            resume=resume,
         )
         print(colored("Logs will be synced with wandb.", "blue", attrs=["bold"]))
         logging.info(f"Track this run --> {colored(wandb.run.get_url(), 'yellow', attrs=['bold'])}")

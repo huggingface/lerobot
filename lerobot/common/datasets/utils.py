@@ -256,12 +256,10 @@ def load_image_as_numpy(
 
 
 def hf_transform_to_torch(items_dict: dict[torch.Tensor | None]):
-    """Get a transform function that convert items from Hugging Face dataset (pyarrow)
-    to torch tensors. Importantly, images are converted from PIL, which corresponds to
-    a channel last representation (h w c) of uint8 type, to a torch image representation
-    with channel first (c h w) of float32 type in range [0,1].
-    """
     for key in items_dict:
+        if not items_dict[key]:
+            continue
+            
         first_item = items_dict[key][0]
         if isinstance(first_item, PILImage.Image):
             to_tensor = transforms.ToTensor()
@@ -269,7 +267,14 @@ def hf_transform_to_torch(items_dict: dict[torch.Tensor | None]):
         elif first_item is None:
             pass
         else:
-            items_dict[key] = [x if (isinstance(x, str) or isinstance(x, list)) else torch.tensor(x) for x in items_dict[key]]
+            # Leave strings and lists of strings as is, convert other types to tensors
+            items_dict[key] = [
+                x if (isinstance(x, str) or 
+                      (isinstance(x, list) and any(isinstance(i, str) for i in x)) or
+                      isinstance(x, torch.Tensor))
+                else torch.tensor(x) 
+                for x in items_dict[key]
+            ]
     return items_dict
 
 
@@ -575,6 +580,51 @@ def get_delta_indices(delta_timestamps: dict[str, list[float]], fps: int) -> dic
         delta_indices[key] = [round(d * fps) for d in delta_ts]
 
     return delta_indices
+
+def dataloader_collate_fn(batch):
+    # Filter out None values if needed
+    batch = [item for item in batch if item is not None]
+    
+    if len(batch) == 0:
+        return {}
+    
+    # Get all unique keys across all items in the batch
+    all_keys = set()
+    for item in batch:
+        all_keys.update(item.keys())
+    
+    # Special keys that can have variable lengths
+    variable_length_keys = ["expanded_subtasks"]  # Add other variable length keys as needed
+    
+    result = {}
+    for key in all_keys:
+        # Check which items have this key
+        items_with_key = [item for item in batch if key in item]
+        
+        # Skip if no items have this key
+        if not items_with_key:
+            continue
+        
+        if key in variable_length_keys:
+            # For variable length keys, store as a list
+            result[key] = [item.get(key, None) for item in batch]
+        else:
+            try:
+                # Only collect values from items that have this key
+                values = [item[key] for item in batch if key in item]
+                
+                # If all items have this key, use default collate
+                if len(values) == len(batch):
+                    result[key] = torch.utils.data._utils.collate.default_collate(values)
+                else:
+                    # If some items are missing this key, keep as list with None for missing values
+                    result[key] = [item.get(key, None) for item in batch]
+            except Exception as e:
+                print(f"Error collating key {key}: {e}")
+                # Fallback to list
+                result[key] = [item.get(key, None) for item in batch]
+    
+    return result
 
 
 def cycle(iterable):

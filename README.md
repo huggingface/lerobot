@@ -387,3 +387,50 @@ Additionally, if you are using any of the particular policy architecture, pretra
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=huggingface/lerobot&type=Timeline)](https://star-history.com/#huggingface/lerobot&Timeline)
+
+
+## Cloud installation
+
+# Update system packages
+sudo apt-get update && sudo apt-get upgrade -y
+
+# Install git and other essential tools
+sudo apt install -y git wget htop tmux
+
+# Install Mamba (Mambaforge)
+wget https://github.com/conda-forge/miniforge/releases/download/25.1.1-0/Miniforge3-25.1.1-0-Linux-x86_64.sh
+bash Miniforge3-25.1.1-0-Linux-x86_64.sh
+# now exit and re-enter the VM
+
+~/miniforge3/bin/mamba create -n lerobot python=3.10 -y
+mamba activate lerobot
+git clone https://github.com/villekuosmanen/lerobot.git
+cd lerobot
+git checkout feat/pi0-bfloats
+
+pip install -e .
+pip install pytest
+pip install -e ".[pi0]"
+
+
+# login wandb and huggingface-cli
+
+
+#!/bin/bash 
+
+sudo apt update && 
+
+# Install Nvidia Cuda Toolkit 12.5 
+
+wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-ubuntu2204.pin && 
+sudo mv cuda-ubuntu2204.pin /etc/apt/preferences.d/cuda-repository-pin-600 && 
+wget https://developer.download.nvidia.com/compute/cuda/12.5.1/local_installers/cuda-repo-ubuntu2204-12-5-local_12.5.1-555.42.06-1_amd64.deb && 
+sudo dpkg -i cuda-repo-ubuntu2204-12-5-local_12.5.1-555.42.06-1_amd64.deb && 
+sudo cp /var/cuda-repo-ubuntu2204-12-5-local/cuda-*-keyring.gpg /usr/share/keyrings/ && 
+sudo apt-get update && sudo apt-get -y install cuda-toolkit-12-5 && 
+sudo add-apt-repository ppa:graphics-drivers/ppa --yes && sudo apt update && sudo apt install -y nvidia-driver-555 && 
+
+# Install PyTorch 
+
+sudo apt install -y python3-pip && pip3 install torch torchvision torchaudio && export PATH="/home/ubuntu/.local/bin:$PATH" && 
+sudo reboot 

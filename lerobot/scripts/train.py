@@ -28,7 +28,7 @@ from torch.optim import Optimizer
 from lerobot.common.datasets.lerobot_dataset import MultiLeRobotDataset, LeRobotDatasetMetadata
 from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.datasets.sampler import EpisodeAwareSampler
-from lerobot.common.datasets.utils import cycle
+from lerobot.common.datasets.utils import cycle, dataloader_collate_fn
 from lerobot.common.envs.factory import make_env
 from lerobot.common.optim.factory import make_optimizer_and_scheduler
 from lerobot.common.policies.factory import make_policy
@@ -227,6 +227,8 @@ def update_policy(
 def train(cfg: TrainPipelineConfig):
     cfg.validate()
     logging.info(pformat(cfg.to_dict()))
+    # cfg.checkpoint_path = cfg.policy.pretrained_path
+    # cfg.policy.pretrained_path = cfg.policy.pretrained_path / "pretrained_model"
 
     if cfg.wandb.enable and cfg.wandb.project:
         wandb_logger = WandBLogger(cfg)
@@ -309,6 +311,7 @@ def train(cfg: TrainPipelineConfig):
         batch_size=cfg.batch_size,
         shuffle=shuffle,
         sampler=sampler,
+        collate_fn=dataloader_collate_fn,
         pin_memory=device.type != "cpu",
         drop_last=False,
     )

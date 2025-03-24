@@ -473,7 +473,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """
         super().__init__()
         self.repo_id = repo_id
-        self.root = Path(root) / repo_id if root else HF_LEROBOT_HOME / repo_id
+        self.root = Path(root) if root else HF_LEROBOT_HOME / repo_id
         self.image_transforms = image_transforms
         self.delta_timestamps = delta_timestamps
         self.episodes = episodes
@@ -701,7 +701,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return {
             key: torch.stack(self.hf_dataset.select(q_idx)[key])
             for key, q_idx in query_indices.items()
-            if key not in self.meta.video_keys
+            if key not in self.meta.video_keys + ["subtask", "expanded_subtasks"]
         }
 
     def _query_videos(self, query_timestamps: dict[str, list[float]], ep_idx: int) -> dict[str, torch.Tensor]:
@@ -1169,6 +1169,9 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         # TODO(rcadene, aliberts): We should not perform this aggregation for datasets
         # with multiple robots of different ranges. Instead we should have one normalization
         # per robot.
+        for dataset in self._datasets:
+            if "count" not in dataset.meta.stats['action'].keys():
+                print(f'{dataset.repo_id}: NO COUNT')
         self.stats = aggregate_stats([dataset.meta.stats for dataset in self._datasets])
 
     @property

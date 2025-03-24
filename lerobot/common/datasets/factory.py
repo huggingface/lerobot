@@ -26,6 +26,7 @@ from lerobot.common.datasets.lerobot_dataset import (
 from lerobot.common.datasets.transforms import ImageTransforms
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.train import TrainPipelineConfig
+from lerobot.common.constants import HF_LEROBOT_HOME
 
 IMAGENET_STATS = {
     "mean": [[[0.485]], [[0.456]], [[0.406]]],  # (c,1,1)
@@ -86,7 +87,10 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
         datasets = [x.strip() for x in datasets]
         delta_timestamps = {}
         for ds in datasets:
-            ds_meta = LeRobotDatasetMetadata(ds)
+            ds_meta = LeRobotDatasetMetadata(
+                ds,
+                root=HF_LEROBOT_HOME / ds,
+            )
             d_ts = resolve_delta_timestamps(cfg.policy, ds_meta)
             delta_timestamps[ds] = d_ts
         dataset = MultiLeRobotDataset(
