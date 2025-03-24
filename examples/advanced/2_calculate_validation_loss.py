@@ -90,9 +90,7 @@ def main():
     train_dataset = LeRobotDataset(
         "lerobot/pusht", episodes=train_episodes, delta_timestamps=delta_timestamps
     )
-    val_dataset = LeRobotDataset(
-        "lerobot/pusht", episodes=val_episodes, delta_timestamps=delta_timestamps
-    )
+    val_dataset = LeRobotDataset("lerobot/pusht", episodes=val_episodes, delta_timestamps=delta_timestamps)
     print(f"Number of frames in training dataset (90% subset): {len(train_dataset)}")
     print(f"Number of frames in validation dataset (10% subset): {len(val_dataset)}")
 

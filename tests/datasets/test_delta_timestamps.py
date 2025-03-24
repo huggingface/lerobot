@@ -71,12 +71,8 @@ def unsynced_timestamps_factory(synced_timestamps_factory):
     def _create_unsynced_timestamps(
         fps: int = 30, tolerance_s: float = 1e-4
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        timestamps, episode_indices, episode_data_index = synced_timestamps_factory(
-            fps=fps
-        )
-        timestamps[30] += (
-            tolerance_s * 1.1
-        )  # Modify a single timestamp just outside tolerance
+        timestamps, episode_indices, episode_data_index = synced_timestamps_factory(fps=fps)
+        timestamps[30] += tolerance_s * 1.1  # Modify a single timestamp just outside tolerance
         return timestamps, episode_indices, episode_data_index
 
     return _create_unsynced_timestamps
@@ -87,12 +83,8 @@ def slightly_off_timestamps_factory(synced_timestamps_factory):
     def _create_slightly_off_timestamps(
         fps: int = 30, tolerance_s: float = 1e-4
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        timestamps, episode_indices, episode_data_index = synced_timestamps_factory(
-            fps=fps
-        )
-        timestamps[30] += (
-            tolerance_s * 0.9
-        )  # Modify a single timestamp just inside tolerance
+        timestamps, episode_indices, episode_data_index = synced_timestamps_factory(fps=fps)
+        timestamps[30] += tolerance_s * 0.9  # Modify a single timestamp just inside tolerance
         return timestamps, episode_indices, episode_data_index
 
     return _create_slightly_off_timestamps
@@ -105,9 +97,7 @@ def valid_delta_timestamps_factory():
         keys: list = DUMMY_MOTOR_FEATURES,
         min_max_range: tuple[int, int] = (-10, 10),
     ) -> dict:
-        delta_timestamps = {
-            key: [i * (1 / fps) for i in range(*min_max_range)] for key in keys
-        }
+        delta_timestamps = {key: [i * (1 / fps) for i in range(*min_max_range)] for key in keys}
         return delta_timestamps
 
     return _create_valid_delta_timestamps
@@ -144,9 +134,7 @@ def slightly_off_delta_timestamps_factory(valid_delta_timestamps_factory):
 
 @pytest.fixture(scope="module")
 def delta_indices_factory():
-    def _delta_indices(
-        keys: list = DUMMY_MOTOR_FEATURES, min_max_range: tuple[int, int] = (-10, 10)
-    ) -> dict:
+    def _delta_indices(keys: list = DUMMY_MOTOR_FEATURES, min_max_range: tuple[int, int] = (-10, 10)) -> dict:
         return {key: list(range(*min_max_range)) for key in keys}
 
     return _delta_indices
@@ -198,9 +186,7 @@ def test_check_timestamps_sync_unsynced_no_exception(unsynced_timestamps_factory
 def test_check_timestamps_sync_slightly_off(slightly_off_timestamps_factory):
     fps = 30
     tolerance_s = 1e-4
-    timestamps, ep_idx, ep_data_index = slightly_off_timestamps_factory(
-        fps, tolerance_s
-    )
+    timestamps, ep_idx, ep_data_index = slightly_off_timestamps_factory(fps, tolerance_s)
     result = check_timestamps_sync(
         timestamps=timestamps,
         episode_indices=ep_idx,
@@ -241,9 +227,7 @@ def test_check_delta_timestamps_valid(valid_delta_timestamps_factory):
 def test_check_delta_timestamps_slightly_off(slightly_off_delta_timestamps_factory):
     fps = 30
     tolerance_s = 1e-4
-    slightly_off_delta_timestamps = slightly_off_delta_timestamps_factory(
-        fps, tolerance_s
-    )
+    slightly_off_delta_timestamps = slightly_off_delta_timestamps_factory(fps, tolerance_s)
     result = check_delta_timestamps(
         delta_timestamps=slightly_off_delta_timestamps,
         fps=fps,

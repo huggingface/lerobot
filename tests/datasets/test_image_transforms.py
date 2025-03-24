@@ -82,11 +82,7 @@ def test_get_image_transforms_brightness(img_tensor_factory, min_max):
     img_tensor = img_tensor_factory()
     tf_cfg = ImageTransformsConfig(
         enable=True,
-        tfs={
-            "brightness": ImageTransformConfig(
-                type="ColorJitter", kwargs={"brightness": min_max}
-            )
-        },
+        tfs={"brightness": ImageTransformConfig(type="ColorJitter", kwargs={"brightness": min_max})},
     )
     tf_actual = ImageTransforms(tf_cfg)
     tf_expected = v2.ColorJitter(brightness=min_max)
@@ -98,11 +94,7 @@ def test_get_image_transforms_contrast(img_tensor_factory, min_max):
     img_tensor = img_tensor_factory()
     tf_cfg = ImageTransformsConfig(
         enable=True,
-        tfs={
-            "contrast": ImageTransformConfig(
-                type="ColorJitter", kwargs={"contrast": min_max}
-            )
-        },
+        tfs={"contrast": ImageTransformConfig(type="ColorJitter", kwargs={"contrast": min_max})},
     )
     tf_actual = ImageTransforms(tf_cfg)
     tf_expected = v2.ColorJitter(contrast=min_max)
@@ -114,11 +106,7 @@ def test_get_image_transforms_saturation(img_tensor_factory, min_max):
     img_tensor = img_tensor_factory()
     tf_cfg = ImageTransformsConfig(
         enable=True,
-        tfs={
-            "saturation": ImageTransformConfig(
-                type="ColorJitter", kwargs={"saturation": min_max}
-            )
-        },
+        tfs={"saturation": ImageTransformConfig(type="ColorJitter", kwargs={"saturation": min_max})},
     )
     tf_actual = ImageTransforms(tf_cfg)
     tf_expected = v2.ColorJitter(saturation=min_max)
@@ -142,11 +130,7 @@ def test_get_image_transforms_sharpness(img_tensor_factory, min_max):
     img_tensor = img_tensor_factory()
     tf_cfg = ImageTransformsConfig(
         enable=True,
-        tfs={
-            "sharpness": ImageTransformConfig(
-                type="SharpnessJitter", kwargs={"sharpness": min_max}
-            )
-        },
+        tfs={"sharpness": ImageTransformConfig(type="SharpnessJitter", kwargs={"sharpness": min_max})},
     )
     tf_actual = ImageTransforms(tf_cfg)
     tf_expected = SharpnessJitter(sharpness=min_max)
@@ -362,9 +346,7 @@ def test_save_all_transforms(img_tensor_factory, tmp_path):
 
     # Check if the combined transforms directory exists and contains the right files
     combined_transforms_dir = tmp_path / "all"
-    assert combined_transforms_dir.exists(), (
-        "Combined transforms directory was not created."
-    )
+    assert combined_transforms_dir.exists(), "Combined transforms directory was not created."
     assert any(combined_transforms_dir.iterdir()), (
         "No transformed images found in combined transforms directory."
     )
@@ -386,9 +368,7 @@ def test_save_each_transform(img_tensor_factory, tmp_path):
     for transform in transforms:
         transform_dir = tmp_path / transform
         assert transform_dir.exists(), f"{transform} directory was not created."
-        assert any(transform_dir.iterdir()), (
-            f"No transformed images found in {transform} directory."
-        )
+        assert any(transform_dir.iterdir()), f"No transformed images found in {transform} directory."
 
         # Check for specific files within each transform directory
         expected_files = [f"{i}.png" for i in range(1, n_examples + 1)] + [

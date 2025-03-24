@@ -32,9 +32,7 @@ def make_env_config(env_type: str, **kwargs) -> EnvConfig:
         raise ValueError(f"Policy type '{env_type}' is not available.")
 
 
-def make_env(
-    cfg: EnvConfig, n_envs: int = 1, use_async_envs: bool = False
-) -> gym.vector.VectorEnv | None:
+def make_env(cfg: EnvConfig, n_envs: int = 1, use_async_envs: bool = False) -> gym.vector.VectorEnv | None:
     """Makes a gym vector environment according to the config.
 
     Args:
@@ -58,9 +56,7 @@ def make_env(
     try:
         importlib.import_module(package_name)
     except ModuleNotFoundError as e:
-        print(
-            f"{package_name} is not installed. Please install it with `pip install 'lerobot[{cfg.type}]'`"
-        )
+        print(f"{package_name} is not installed. Please install it with `pip install 'lerobot[{cfg.type}]'`")
         raise e
 
     gym_handle = f"{package_name}/{cfg.task}"
@@ -68,18 +64,13 @@ def make_env(
     # batched version of the env that returns an observation of shape (b, c)
     env_cls = gym.vector.AsyncVectorEnv if use_async_envs else gym.vector.SyncVectorEnv
     env = env_cls(
-        [
-            lambda: gym.make(gym_handle, disable_env_checker=True, **cfg.gym_kwargs)
-            for _ in range(n_envs)
-        ]
+        [lambda: gym.make(gym_handle, disable_env_checker=True, **cfg.gym_kwargs) for _ in range(n_envs)]
     )
 
     return env
 
 
-def make_maniskill_env(
-    cfg: DictConfig, n_envs: int | None = None
-) -> gym.vector.VectorEnv | None:
+def make_maniskill_env(cfg: DictConfig, n_envs: int | None = None) -> gym.vector.VectorEnv | None:
     """Make ManiSkill3 gym environment"""
     from mani_skill.vector.wrappers.gymnasium import ManiSkillVectorEnv
 
@@ -96,9 +87,7 @@ def make_maniskill_env(
     # state should have the size of 25
     # env = ConvertToLeRobotEnv(env, n_envs)
     # env = PixelWrapper(cfg, env, n_envs)
-    env._max_episode_steps = env.max_episode_steps = (
-        50  # gym_utils.find_max_episode_steps_value(env)
-    )
+    env._max_episode_steps = env.max_episode_steps = 50  # gym_utils.find_max_episode_steps_value(env)
     env.unwrapped.metadata["render_fps"] = 20
 
     return env
@@ -125,11 +114,7 @@ class PixelWrapper(gym.Wrapper):
     def _get_obs(self, obs):
         frame = obs["sensor_data"]["base_camera"]["rgb"].cpu().permute(0, 3, 1, 2)
         self._frames.append(frame)
-        return {
-            "pixels": torch.from_numpy(np.concatenate(self._frames, axis=1)).to(
-                self.env.device
-            )
-        }
+        return {"pixels": torch.from_numpy(np.concatenate(self._frames, axis=1)).to(self.env.device)}
 
     def reset(self, seed):
         obs, info = self.env.reset()  # (seed=seed)
@@ -164,9 +149,7 @@ class ConvertToLeRobotEnv(gym.Wrapper):
 
         images = torch.concat(images, axis=-1)
         # flatten the rest of the data which should just be state data
-        observation = common.flatten_state_dict(
-            observation, use_torch=True, device=self.base_env.device
-        )
+        observation = common.flatten_state_dict(observation, use_torch=True, device=self.base_env.device)
         ret = dict()
         ret["state"] = observation
         ret["pixels"] = images

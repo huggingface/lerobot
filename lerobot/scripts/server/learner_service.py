@@ -1,10 +1,10 @@
-import hilserl_pb2  # type: ignore
-import hilserl_pb2_grpc  # type: ignore
 import logging
 from multiprocessing import Event, Queue
 
-from lerobot.scripts.server.network_utils import receive_bytes_in_chunks
-from lerobot.scripts.server.network_utils import send_bytes_in_chunks
+import hilserl_pb2  # type: ignore
+import hilserl_pb2_grpc  # type: ignore
+
+from lerobot.scripts.server.network_utils import receive_bytes_in_chunks, send_bytes_in_chunks
 
 MAX_MESSAGE_SIZE = 4 * 1024 * 1024  # 4 MB
 MAX_WORKERS = 3  # Stream parameters, send transitions and interactions
@@ -64,9 +64,7 @@ class LearnerService(hilserl_pb2_grpc.LearnerServiceServicer):
 
     def SendInteractions(self, request_iterator, _context):
         # TODO: authorize the request
-        logging.info(
-            "[LEARNER] Received request to receive interactions from the Actor"
-        )
+        logging.info("[LEARNER] Received request to receive interactions from the Actor")
 
         receive_bytes_in_chunks(
             request_iterator,

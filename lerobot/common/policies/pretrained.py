@@ -71,9 +71,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
     def _save_pretrained(self, save_directory: Path) -> None:
         self.config._save_pretrained(save_directory)
         model_to_save = self.module if hasattr(self, "module") else self
-        save_model_as_safetensor(
-            model_to_save, str(save_directory / SAFETENSORS_SINGLE_FILE)
-        )
+        save_model_as_safetensor(model_to_save, str(save_directory / SAFETENSORS_SINGLE_FILE))
 
     @classmethod
     def from_pretrained(
@@ -112,9 +110,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         if os.path.isdir(model_id):
             print("Loading weights from local directory")
             model_file = os.path.join(model_id, SAFETENSORS_SINGLE_FILE)
-            policy = cls._load_as_safetensor(
-                instance, model_file, config.device, strict
-            )
+            policy = cls._load_as_safetensor(instance, model_file, config.device, strict)
         else:
             try:
                 model_file = hf_hub_download(
@@ -128,9 +124,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                     token=token,
                     local_files_only=local_files_only,
                 )
-                policy = cls._load_as_safetensor(
-                    instance, model_file, config.device, strict
-                )
+                policy = cls._load_as_safetensor(instance, model_file, config.device, strict)
             except HfHubHTTPError as e:
                 raise FileNotFoundError(
                     f"{SAFETENSORS_SINGLE_FILE} not found on the HuggingFace Hub in {model_id}"
@@ -141,12 +135,8 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         return policy
 
     @classmethod
-    def _load_as_safetensor(
-        cls, model: T, model_file: str, map_location: str, strict: bool
-    ) -> T:
-        if packaging.version.parse(safetensors.__version__) < packaging.version.parse(
-            "0.4.3"
-        ):
+    def _load_as_safetensor(cls, model: T, model_file: str, map_location: str, strict: bool) -> T:
+        if packaging.version.parse(safetensors.__version__) < packaging.version.parse("0.4.3"):
             load_model_as_safetensor(model, model_file, strict=strict)
             if map_location != "cpu":
                 logging.warning(
@@ -157,9 +147,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                 )
                 model.to(map_location)
         else:
-            safetensors.torch.load_model(
-                model, model_file, strict=strict, device=map_location
-            )
+            safetensors.torch.load_model(model, model_file, strict=strict, device=map_location)
         return model
 
     # def generate_model_card(self, *args, **kwargs) -> ModelCard:

@@ -83,9 +83,7 @@ class TDMPCPolicy(PreTrainedPolicy):
         config.validate_features()
         self.config = config
 
-        self.normalize_inputs = Normalize(
-            config.input_features, config.normalization_mapping, dataset_stats
-        )
+        self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
         self.normalize_targets = Normalize(
             config.output_features, config.normalization_mapping, dataset_stats
         )
@@ -110,9 +108,7 @@ class TDMPCPolicy(PreTrainedPolicy):
         """
         self._queues = {
             "observation.state": deque(maxlen=1),
-            "action": deque(
-                maxlen=max(self.config.n_action_steps, self.config.n_action_repeats)
-            ),
+            "action": deque(maxlen=max(self.config.n_action_steps, self.config.n_action_repeats)),
         }
         if self.config.image_features:
             self._queues["observation.image"] = deque(maxlen=1)
@@ -127,9 +123,7 @@ class TDMPCPolicy(PreTrainedPolicy):
         """Select a single action given environment observations."""
         batch = self.normalize_inputs(batch)
         if self.config.image_features:
-            batch = dict(
-                batch
-            )  # shallow copy so that adding a key doesn't modify the original
+            batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
             batch["observation.image"] = batch[next(iter(self.config.image_features))]
 
         self._queues = populate_queues(self._queues, batch)
@@ -232,47 +226,35 @@ class TDMPCPolicy(PreTrainedPolicy):
                 self.config.action_feature.shape[0],
                 device=std.device,
             )
-            gaussian_actions = torch.clamp(
-                mean.unsqueeze(1) + std.unsqueeze(1) * std_normal_noise, -1, 1
-            )
+            gaussian_actions = torch.clamp(mean.unsqueeze(1) + std.unsqueeze(1) * std_normal_noise, -1, 1)
 
             # Compute elite actions.
             actions = torch.cat([gaussian_actions, pi_actions], dim=1)
             value = self.estimate_value(z, actions).nan_to_num_(0)
-            elite_idxs = torch.topk(
-                value, self.config.n_elites, dim=0
-            ).indices  # (n_elites, batch)
+            elite_idxs = torch.topk(value, self.config.n_elites, dim=0).indices  # (n_elites, batch)
             elite_value = value.take_along_dim(elite_idxs, dim=0)  # (n_elites, batch)
             # (horizon, n_elites, batch, action_dim)
-            elite_actions = actions.take_along_dim(
-                einops.rearrange(elite_idxs, "n b -> 1 n b 1"), dim=1
-            )
+            elite_actions = actions.take_along_dim(einops.rearrange(elite_idxs, "n b -> 1 n b 1"), dim=1)
 
             # Update gaussian PDF parameters to be the (weighted) mean and standard deviation of the elites.
             max_value = elite_value.max(0, keepdim=True)[0]  # (1, batch)
             # The weighting is a softmax over trajectory values. Note that this is not the same as the usage
             # of Ω in eqn 4 of the TD-MPC paper. Instead it is the normalized version of it: s = Ω/ΣΩ. This
             # makes the equations: μ = Σ(s⋅Γ), σ = Σ(s⋅(Γ-μ)²).
-            score = torch.exp(
-                self.config.elite_weighting_temperature * (elite_value - max_value)
-            )
+            score = torch.exp(self.config.elite_weighting_temperature * (elite_value - max_value))
             score /= score.sum(axis=0, keepdim=True)
             # (horizon, batch, action_dim)
-            _mean = torch.sum(
-                einops.rearrange(score, "n b -> n b 1") * elite_actions, dim=1
-            )
+            _mean = torch.sum(einops.rearrange(score, "n b -> n b 1") * elite_actions, dim=1)
             _std = torch.sqrt(
                 torch.sum(
                     einops.rearrange(score, "n b -> n b 1")
-                    * (elite_actions - einops.rearrange(_mean, "h b d -> h 1 b d"))
-                    ** 2,
+                    * (elite_actions - einops.rearrange(_mean, "h b d -> h 1 b d")) ** 2,
                     dim=1,
                 )
             )
             # Update mean with an exponential moving average, and std with a direct replacement.
             mean = (
-                self.config.gaussian_mean_momentum * mean
-                + (1 - self.config.gaussian_mean_momentum) * _mean
+                self.config.gaussian_mean_momentum * mean + (1 - self.config.gaussian_mean_momentum) * _mean
             )
             std = _std.clamp_(self.config.min_std, self.config.max_std)
 
@@ -281,9 +263,7 @@ class TDMPCPolicy(PreTrainedPolicy):
 
         # Randomly select one of the elite actions from the last iteration of MPPI/CEM using the softmax
         # scores from the last iteration.
-        actions = elite_actions[
-            :, torch.multinomial(score.T, 1).squeeze(), torch.arange(batch_size)
-        ]
+        actions = elite_actions[:, torch.multinomial(score.T, 1).squeeze(), torch.arange(batch_size)]
 
         return actions
 
@@ -306,8 +286,7 @@ class TDMPCPolicy(PreTrainedPolicy):
             # of the FOWM paper.
             if self.config.uncertainty_regularizer_coeff > 0:
                 regularization = -(
-                    self.config.uncertainty_regularizer_coeff
-                    * self.model.Qs(z, actions[t]).std(0)
+                    self.config.uncertainty_regularizer_coeff * self.model.Qs(z, actions[t]).std(0)
                 )
             else:
                 regularization = 0
@@ -328,9 +307,7 @@ class TDMPCPolicy(PreTrainedPolicy):
             G += (
                 running_discount
                 * torch.min(
-                    terminal_values[
-                        torch.randint(0, self.config.q_ensemble_size, size=(2,))
-                    ],
+                    terminal_values[torch.randint(0, self.config.q_ensemble_size, size=(2,))],
                     dim=0,
                 )[0]
             )
@@ -338,11 +315,7 @@ class TDMPCPolicy(PreTrainedPolicy):
             G += running_discount * torch.min(terminal_values, dim=0)[0]
         # Finally, also regularize the terminal value.
         if self.config.uncertainty_regularizer_coeff > 0:
-            G -= (
-                running_discount
-                * self.config.uncertainty_regularizer_coeff
-                * terminal_values.std(0)
-            )
+            G -= running_discount * self.config.uncertainty_regularizer_coeff * terminal_values.std(0)
         return G
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
@@ -354,9 +327,7 @@ class TDMPCPolicy(PreTrainedPolicy):
 
         batch = self.normalize_inputs(batch)
         if self.config.image_features:
-            batch = dict(
-                batch
-            )  # shallow copy so that adding a key doesn't modify the original
+            batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
             batch["observation.image"] = batch[next(iter(self.config.image_features))]
         batch = self.normalize_targets(batch)
 
@@ -388,29 +359,21 @@ class TDMPCPolicy(PreTrainedPolicy):
             current_observation[k] = observations[k][0]
             next_observations[k] = observations[k][1:]
         horizon, batch_size = next_observations[
-            "observation.image"
-            if self.config.image_features
-            else "observation.environment_state"
+            "observation.image" if self.config.image_features else "observation.environment_state"
         ].shape[:2]
 
         # Run latent rollout using the latent dynamics model and policy model.
         # Note this has shape `horizon+1` because there are `horizon` actions and a current `z`. Each action
         # gives us a next `z`.
         batch_size = batch["index"].shape[0]
-        z_preds = torch.empty(
-            horizon + 1, batch_size, self.config.latent_dim, device=device
-        )
+        z_preds = torch.empty(horizon + 1, batch_size, self.config.latent_dim, device=device)
         z_preds[0] = self.model.encode(current_observation)
         reward_preds = torch.empty_like(reward, device=device)
         for t in range(horizon):
-            z_preds[t + 1], reward_preds[t] = self.model.latent_dynamics_and_reward(
-                z_preds[t], action[t]
-            )
+            z_preds[t + 1], reward_preds[t] = self.model.latent_dynamics_and_reward(z_preds[t], action[t])
 
         # Compute Q and V value predictions based on the latent rollout.
-        q_preds_ensemble = self.model.Qs(
-            z_preds[:-1], action
-        )  # (ensemble, horizon, batch)
+        q_preds_ensemble = self.model.Qs(z_preds[:-1], action)  # (ensemble, horizon, batch)
         v_preds = self.model.V(z_preds[:-1])
         info.update({"Q": q_preds_ensemble.mean().item(), "V": v_preds.mean().item()})
 
@@ -424,14 +387,10 @@ class TDMPCPolicy(PreTrainedPolicy):
             # actions (not actions estimated by π).
             # Note: Here we do not use self.model_target, but self.model. This is to follow the original code
             # and the FOWM paper.
-            q_targets = reward + self.config.discount * self.model.V(
-                self.model.encode(next_observations)
-            )
+            q_targets = reward + self.config.discount * self.model.V(self.model.encode(next_observations))
             # From eqn 3 of FOWM. These appear as Q(z, a). Here we call them v_targets to emphasize that we
             # are using them to compute loss for V.
-            v_targets = self.model_target.Qs(
-                z_preds[:-1].detach(), action, return_min=True
-            )
+            v_targets = self.model_target.Qs(z_preds[:-1].detach(), action, return_min=True)
 
         # Compute losses.
         # Exponentially decay the loss weight with respect to the timestep. Steps that are more distant in the
@@ -474,9 +433,7 @@ class TDMPCPolicy(PreTrainedPolicy):
                 temporal_loss_coeffs
                 * F.mse_loss(
                     q_preds_ensemble,
-                    einops.repeat(
-                        q_targets, "t b -> e t b", e=q_preds_ensemble.shape[0]
-                    ),
+                    einops.repeat(q_targets, "t b -> e t b", e=q_preds_ensemble.shape[0]),
                     reduction="none",
                 ).sum(0)  # sum over ensemble
                 # `q_preds_ensemble` depends on the first observation and the actions.
@@ -514,14 +471,12 @@ class TDMPCPolicy(PreTrainedPolicy):
         z_preds = z_preds.detach()
         # Use stopgrad for the advantage calculation.
         with torch.no_grad():
-            advantage = self.model_target.Qs(
-                z_preds[:-1], action, return_min=True
-            ) - self.model.V(z_preds[:-1])
+            advantage = self.model_target.Qs(z_preds[:-1], action, return_min=True) - self.model.V(
+                z_preds[:-1]
+            )
             info["advantage"] = advantage[0]
             # (t, b)
-            exp_advantage = torch.clamp(
-                torch.exp(advantage * self.config.advantage_scaling), max=100.0
-            )
+            exp_advantage = torch.clamp(torch.exp(advantage * self.config.advantage_scaling), max=100.0)
         action_preds = self.model.pi(z_preds[:-1])  # (t, b, a)
         # Calculate the MSE between the actions and the action predictions.
         # Note: FOWM's original code calculates the log probability (wrt to a unit standard deviation
@@ -575,9 +530,7 @@ class TDMPCPolicy(PreTrainedPolicy):
         # Note a minor variation with respect to the original FOWM code. Here they do this based on an EMA
         # update frequency parameter which is set to 2 (every 2 steps an update is done). To simplify the code
         # we update every step and adjust the decay parameter `alpha` accordingly (0.99 -> 0.995)
-        update_ema_parameters(
-            self.model_target, self.model, self.config.target_model_momentum
-        )
+        update_ema_parameters(self.model_target, self.model, self.config.target_model_momentum)
 
 
 class TDMPCTOLD(nn.Module):
@@ -588,9 +541,7 @@ class TDMPCTOLD(nn.Module):
         self.config = config
         self._encoder = TDMPCObservationEncoder(config)
         self._dynamics = nn.Sequential(
-            nn.Linear(
-                config.latent_dim + config.action_feature.shape[0], config.mlp_dim
-            ),
+            nn.Linear(config.latent_dim + config.action_feature.shape[0], config.mlp_dim),
             nn.LayerNorm(config.mlp_dim),
             nn.Mish(),
             nn.Linear(config.mlp_dim, config.mlp_dim),
@@ -601,9 +552,7 @@ class TDMPCTOLD(nn.Module):
             nn.Sigmoid(),
         )
         self._reward = nn.Sequential(
-            nn.Linear(
-                config.latent_dim + config.action_feature.shape[0], config.mlp_dim
-            ),
+            nn.Linear(config.latent_dim + config.action_feature.shape[0], config.mlp_dim),
             nn.LayerNorm(config.mlp_dim),
             nn.Mish(),
             nn.Linear(config.mlp_dim, config.mlp_dim),
@@ -671,9 +620,7 @@ class TDMPCTOLD(nn.Module):
                 "Sanity check. The last linear layer needs 0 initialization on weights."
             )
             nn.init.zeros_(m[-1].weight)
-            nn.init.zeros_(
-                m[-1].bias
-            )  # this has already been done, but keep this line here for good measure
+            nn.init.zeros_(m[-1].bias)  # this has already been done, but keep this line here for good measure
 
     def encode(self, obs: dict[str, Tensor]) -> Tensor:
         """Encodes an observation into its latent representation."""
@@ -812,9 +759,7 @@ class TDMPCObservationEncoder(nn.Module):
 
         if config.robot_state_feature:
             self.state_enc_layers = nn.Sequential(
-                nn.Linear(
-                    config.robot_state_feature.shape[0], config.state_encoder_hidden_dim
-                ),
+                nn.Linear(config.robot_state_feature.shape[0], config.state_encoder_hidden_dim),
                 nn.ELU(),
                 nn.Linear(config.state_encoder_hidden_dim, config.latent_dim),
                 nn.LayerNorm(config.latent_dim),
@@ -823,9 +768,7 @@ class TDMPCObservationEncoder(nn.Module):
 
         if config.env_state_feature:
             self.env_state_enc_layers = nn.Sequential(
-                nn.Linear(
-                    config.env_state_feature.shape[0], config.state_encoder_hidden_dim
-                ),
+                nn.Linear(config.env_state_feature.shape[0], config.state_encoder_hidden_dim),
                 nn.ELU(),
                 nn.Linear(config.state_encoder_hidden_dim, config.latent_dim),
                 nn.LayerNorm(config.latent_dim),
@@ -898,10 +841,7 @@ def update_ema_parameters(ema_net: nn.Module, net: nn.Module, alpha: float):
             assert n_p_ema == n_p, "Parameter names don't match for EMA model update"
             if isinstance(p, dict):
                 raise RuntimeError("Dict parameter not supported")
-            if (
-                isinstance(module, nn.modules.batchnorm._BatchNorm)
-                or not p.requires_grad
-            ):
+            if isinstance(module, nn.modules.batchnorm._BatchNorm) or not p.requires_grad:
                 # Copy BatchNorm parameters, and non-trainable parameters directly.
                 p_ema.copy_(p.to(dtype=p_ema.dtype).data)
             with torch.no_grad():
@@ -909,9 +849,7 @@ def update_ema_parameters(ema_net: nn.Module, net: nn.Module, alpha: float):
                 p_ema.add_(p.to(dtype=p_ema.dtype).data, alpha=1 - alpha)
 
 
-def flatten_forward_unflatten(
-    fn: Callable[[Tensor], Tensor], image_tensor: Tensor
-) -> Tensor:
+def flatten_forward_unflatten(fn: Callable[[Tensor], Tensor], image_tensor: Tensor) -> Tensor:
     """Helper to temporarily flatten extra dims at the start of the image tensor.
 
     Args:

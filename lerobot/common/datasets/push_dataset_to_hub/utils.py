@@ -45,9 +45,7 @@ def concatenate_episodes(ep_dicts):
     return data_dict
 
 
-def save_images_concurrently(
-    imgs_array: numpy.array, out_dir: Path, max_workers: int = 4
-):
+def save_images_concurrently(imgs_array: numpy.array, out_dir: Path, max_workers: int = 4):
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -57,10 +55,7 @@ def save_images_concurrently(
 
     num_images = len(imgs_array)
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        [
-            executor.submit(save_image, imgs_array[i], i, out_dir)
-            for i in range(num_images)
-        ]
+        [executor.submit(save_image, imgs_array[i], i, out_dir) for i in range(num_images)]
 
 
 def get_default_encoding() -> dict:
@@ -69,8 +64,7 @@ def get_default_encoding() -> dict:
     return {
         k: v.default
         for k, v in signature.parameters.items()
-        if v.default is not inspect.Parameter.empty
-        and k in ["vcodec", "pix_fmt", "g", "crf"]
+        if v.default is not inspect.Parameter.empty and k in ["vcodec", "pix_fmt", "g", "crf"]
     }
 
 

@@ -69,9 +69,7 @@ def test_create_balanced_sampler():
     labels = [item["label"] for item in data]
     class_counts = torch.tensor([labels.count(0), labels.count(1)], dtype=torch.float32)
     class_weights = 1.0 / class_counts
-    expected_weights = torch.tensor(
-        [class_weights[label] for label in labels], dtype=torch.float32
-    )
+    expected_weights = torch.tensor([class_weights[label] for label in labels], dtype=torch.float32)
 
     # Test that the weights are correct
     assert torch.allclose(weights, expected_weights)
@@ -224,16 +222,10 @@ def test_resume_function(
 ):
     # Initialize Hydra
     test_file_dir = os.path.dirname(os.path.abspath(__file__))
-    config_dir = os.path.abspath(
-        os.path.join(test_file_dir, "..", "lerobot", "configs", "policy")
-    )
-    assert os.path.exists(config_dir), (
-        f"Config directory does not exist at {config_dir}"
-    )
+    config_dir = os.path.abspath(os.path.join(test_file_dir, "..", "lerobot", "configs", "policy"))
+    assert os.path.exists(config_dir), f"Config directory does not exist at {config_dir}"
 
-    with initialize_config_dir(
-        config_dir=config_dir, job_name="test_app", version_base="1.2"
-    ):
+    with initialize_config_dir(config_dir=config_dir, job_name="test_app", version_base="1.2"):
         cfg = compose(
             config_name="hilserl_classifier",
             overrides=[
@@ -258,9 +250,7 @@ def test_resume_function(
     mock_init_hydra_config.return_value = cfg
 
     # Mock dataset
-    dataset = MockDataset(
-        [{"image": torch.rand(3, 224, 224), "label": i % 2} for i in range(10)]
-    )
+    dataset = MockDataset([{"image": torch.rand(3, 224, 224), "label": i % 2} for i in range(10)])
     mock_dataset.return_value = dataset
 
     # Mock checkpoint handling

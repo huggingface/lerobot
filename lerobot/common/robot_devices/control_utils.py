@@ -39,9 +39,7 @@ from lerobot.common.robot_devices.utils import busy_wait
 from lerobot.common.utils.utils import get_safe_torch_device, has_method
 
 
-def log_control_info(
-    robot: Robot, dt_s, episode_index=None, frame_index=None, fps=None
-):
+def log_control_info(robot: Robot, dt_s, episode_index=None, frame_index=None, fps=None):
     log_items = []
     if episode_index is not None:
         log_items.append(f"ep:{episode_index}")
@@ -108,9 +106,7 @@ def predict_action(observation, policy, device, use_amp):
     observation = copy(observation)
     with (
         torch.inference_mode(),
-        torch.autocast(device_type=device.type)
-        if device.type == "cuda" and use_amp
-        else nullcontext(),
+        torch.autocast(device_type=device.type) if device.type == "cuda" and use_amp else nullcontext(),
     ):
         # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
         for name in observation:
@@ -166,9 +162,7 @@ def init_keyboard_listener(assign_rewards=False):
                 print("Right arrow key pressed. Exiting loop...")
                 events["exit_early"] = True
             elif key == keyboard.Key.left:
-                print(
-                    "Left arrow key pressed. Exiting loop and rerecord the last episode..."
-                )
+                print("Left arrow key pressed. Exiting loop and rerecord the last episode...")
                 events["rerecord_episode"] = True
                 events["exit_early"] = True
             elif key == keyboard.Key.esc:
@@ -262,9 +256,7 @@ def control_loop(
         raise ValueError("You need to provide a task as argument in `single_task`.")
 
     if dataset is not None and fps is not None and dataset.fps != fps:
-        raise ValueError(
-            f"The dataset fps should be equal to requested fps ({dataset['fps']} != {fps})."
-        )
+        raise ValueError(f"The dataset fps should be equal to requested fps ({dataset['fps']} != {fps}).")
 
     timestamp = 0
     start_episode_t = time.perf_counter()
@@ -302,9 +294,7 @@ def control_loop(
         if display_cameras and not is_headless():
             image_keys = [key for key in observation if "image" in key]
             for key in image_keys:
-                cv2.imshow(
-                    key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR)
-                )
+                cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
             cv2.waitKey(1)
 
         if fps is not None:
@@ -392,14 +382,11 @@ def sanity_check_dataset_robot_compatibility(
 
     mismatches = []
     for field, dataset_value, present_value in fields:
-        diff = DeepDiff(
-            dataset_value, present_value, exclude_regex_paths=[r".*\['info'\]$"]
-        )
+        diff = DeepDiff(dataset_value, present_value, exclude_regex_paths=[r".*\['info'\]$"])
         if diff:
             mismatches.append(f"{field}: expected {present_value}, got {dataset_value}")
 
     if mismatches:
         raise ValueError(
-            "Dataset metadata compatibility check failed with mismatches:\n"
-            + "\n".join(mismatches)
+            "Dataset metadata compatibility check failed with mismatches:\n" + "\n".join(mismatches)
         )

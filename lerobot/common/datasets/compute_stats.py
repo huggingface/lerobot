@@ -46,18 +46,14 @@ def sample_indices(data_len: int) -> list[int]:
     return np.round(np.linspace(0, data_len - 1, num_samples)).astype(int).tolist()
 
 
-def auto_downsample_height_width(
-    img: np.ndarray, target_size: int = 150, max_size_threshold: int = 300
-):
+def auto_downsample_height_width(img: np.ndarray, target_size: int = 150, max_size_threshold: int = 300):
     _, height, width = img.shape
 
     if max(width, height) < max_size_threshold:
         # no downsampling needed
         return img
 
-    downsample_factor = (
-        int(width / target_size) if width > height else int(height / target_size)
-    )
+    downsample_factor = int(width / target_size) if width > height else int(height / target_size)
     return img[:, ::downsample_factor, ::downsample_factor]
 
 
@@ -79,9 +75,7 @@ def sample_images(image_paths: list[str]) -> np.ndarray:
     return images
 
 
-def get_feature_stats(
-    array: np.ndarray, axis: tuple, keepdims: bool
-) -> dict[str, np.ndarray]:
+def get_feature_stats(array: np.ndarray, axis: tuple, keepdims: bool) -> dict[str, np.ndarray]:
     return {
         "min": np.min(array, axis=axis, keepdims=keepdims),
         "max": np.max(array, axis=axis, keepdims=keepdims),
@@ -91,9 +85,7 @@ def get_feature_stats(
     }
 
 
-def compute_episode_stats(
-    episode_data: dict[str, list[str] | np.ndarray], features: dict
-) -> dict:
+def compute_episode_stats(episode_data: dict[str, list[str] | np.ndarray], features: dict) -> dict:
     ep_stats = {}
     for key, data in episode_data.items():
         if features[key]["dtype"] == "string":
@@ -107,15 +99,12 @@ def compute_episode_stats(
             axes_to_reduce = 0  # compute stats over the first axis
             keepdims = data.ndim == 1  # keep as np.array
 
-        ep_stats[key] = get_feature_stats(
-            ep_ft_array, axis=axes_to_reduce, keepdims=keepdims
-        )
+        ep_stats[key] = get_feature_stats(ep_ft_array, axis=axes_to_reduce, keepdims=keepdims)
 
         # finally, we normalize and remove batch dim for images
         if features[key]["dtype"] in ["image", "video"]:
             ep_stats[key] = {
-                k: v if k == "count" else np.squeeze(v / 255.0, axis=0)
-                for k, v in ep_stats[key].items()
+                k: v if k == "count" else np.squeeze(v / 255.0, axis=0) for k, v in ep_stats[key].items()
             }
 
     return ep_stats
@@ -130,17 +119,11 @@ def _assert_type_and_shape(stats_list: list[dict[str, dict]]):
                         f"Stats must be composed of numpy array, but key '{k}' of feature '{fkey}' is of type '{type(v)}' instead."
                     )
                 if v.ndim == 0:
-                    raise ValueError(
-                        "Number of dimensions must be at least 1, and is 0 instead."
-                    )
+                    raise ValueError("Number of dimensions must be at least 1, and is 0 instead.")
                 if k == "count" and v.shape != (1,):
-                    raise ValueError(
-                        f"Shape of 'count' must be (1), but is {v.shape} instead."
-                    )
+                    raise ValueError(f"Shape of 'count' must be (1), but is {v.shape} instead.")
                 if "image" in fkey and k != "count" and v.shape != (3, 1, 1):
-                    raise ValueError(
-                        f"Shape of '{k}' must be (3,1,1), but is {v.shape} instead."
-                    )
+                    raise ValueError(f"Shape of '{k}' must be (3,1,1), but is {v.shape} instead.")
 
 
 def aggregate_feature_stats(

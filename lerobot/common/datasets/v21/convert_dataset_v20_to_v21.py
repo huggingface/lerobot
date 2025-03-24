@@ -99,9 +99,7 @@ def convert_dataset(
             repo_type="dataset",
         )
 
-    hub_api.create_tag(
-        repo_id, tag=CODEBASE_VERSION, revision=branch, repo_type="dataset"
-    )
+    hub_api.create_tag(repo_id, tag=CODEBASE_VERSION, revision=branch, repo_type="dataset")
 
 
 if __name__ == "__main__":

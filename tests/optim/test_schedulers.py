@@ -43,9 +43,7 @@ def test_diffuser_scheduler(optimizer):
 
 
 def test_vqbet_scheduler(optimizer):
-    config = VQBeTSchedulerConfig(
-        num_warmup_steps=10, num_vqvae_training_steps=20, num_cycles=0.5
-    )
+    config = VQBeTSchedulerConfig(num_warmup_steps=10, num_vqvae_training_steps=20, num_cycles=0.5)
     scheduler = config.build(optimizer, num_training_steps=100)
     assert isinstance(scheduler, LambdaLR)
 

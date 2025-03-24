@@ -15,11 +15,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from lerobot.scripts.server import hilserl_pb2
-import logging
 import io
-from multiprocessing import Queue, Event
+import logging
+from multiprocessing import Event, Queue
 from typing import Any
+
+from lerobot.scripts.server import hilserl_pb2
 
 CHUNK_SIZE = 2 * 1024 * 1024  # 2 MB
 
@@ -31,9 +32,7 @@ def bytes_buffer_size(buffer: io.BytesIO) -> int:
     return result
 
 
-def send_bytes_in_chunks(
-    buffer: bytes, message_class: Any, log_prefix: str = "", silent: bool = True
-):
+def send_bytes_in_chunks(buffer: bytes, message_class: Any, log_prefix: str = "", silent: bool = True):
     buffer = io.BytesIO(buffer)
     size_in_bytes = bytes_buffer_size(buffer)
 
@@ -56,16 +55,12 @@ def send_bytes_in_chunks(
 
         yield message_class(transfer_state=transfer_state, data=chunk)
         sent_bytes += size_to_read
-        logging_method(
-            f"{log_prefix} Sent {sent_bytes}/{size_in_bytes} bytes with state {transfer_state}"
-        )
+        logging_method(f"{log_prefix} Sent {sent_bytes}/{size_in_bytes} bytes with state {transfer_state}")
 
     logging_method(f"{log_prefix} Published {sent_bytes / 1024 / 1024} MB")
 
 
-def receive_bytes_in_chunks(
-    iterator, queue: Queue, shutdown_event: Event, log_prefix: str = ""
-):
+def receive_bytes_in_chunks(iterator, queue: Queue, shutdown_event: Event, log_prefix: str = ""):
     bytes_buffer = io.BytesIO()
     step = 0
 
@@ -89,9 +84,7 @@ def receive_bytes_in_chunks(
             logging.debug(f"{log_prefix} Received data at step {step}")
         elif item.transfer_state == hilserl_pb2.TransferState.TRANSFER_END:
             bytes_buffer.write(item.data)
-            logging.debug(
-                f"{log_prefix} Received data at step end size {bytes_buffer_size(bytes_buffer)}"
-            )
+            logging.debug(f"{log_prefix} Received data at step end size {bytes_buffer_size(bytes_buffer)}")
 
             queue.put(bytes_buffer.getvalue())
 

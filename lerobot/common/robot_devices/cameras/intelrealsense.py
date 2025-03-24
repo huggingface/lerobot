@@ -79,9 +79,7 @@ def save_image(img_array, serial_number, frame_index, images_dir):
         img.save(str(path), quality=100)
         logging.info(f"Saved image: {path}")
     except Exception as e:
-        logging.error(
-            f"Failed to save image for camera {serial_number} frame {frame_index}: {e}"
-        )
+        logging.error(f"Failed to save image for camera {serial_number} frame {frame_index}: {e}")
 
 
 def save_images_from_cameras(
@@ -159,9 +157,7 @@ def save_images_from_cameras(
                 if time.perf_counter() - start_time > record_time_s:
                     break
 
-                print(
-                    f"Frame: {frame_index:04d}\tLatency (ms): {(time.perf_counter() - now) * 1000:.2f}"
-                )
+                print(f"Frame: {frame_index:04d}\tLatency (ms): {(time.perf_counter() - now) * 1000:.2f}")
 
                 frame_index += 1
     finally:
@@ -279,9 +275,7 @@ class IntelRealSenseCamera:
                 f"Multiple {name} cameras have been detected. Please use their serial number to instantiate them."
             )
 
-        name_to_serial_dict = {
-            cam["name"]: cam["serial_number"] for cam in camera_infos
-        }
+        name_to_serial_dict = {cam["name"]: cam["serial_number"] for cam in camera_infos}
         cam_sn = name_to_serial_dict[name]
 
         return cam_sn
@@ -353,9 +347,7 @@ class IntelRealSenseCamera:
         actual_height = color_profile.height()
 
         # Using `math.isclose` since actual fps can be a float (e.g. 29.9 instead of 30)
-        if self.fps is not None and not math.isclose(
-            self.fps, actual_fps, rel_tol=1e-3
-        ):
+        if self.fps is not None and not math.isclose(self.fps, actual_fps, rel_tol=1e-3):
             # Using `OSError` since it's a broad that encompasses issues related to device communication
             raise OSError(
                 f"Can't set {self.fps=} for IntelRealSenseCamera({self.serial_number}). Actual value is {actual_fps}."
@@ -375,9 +367,7 @@ class IntelRealSenseCamera:
 
         self.is_connected = True
 
-    def read(
-        self, temporary_color: str | None = None
-    ) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
+    def read(self, temporary_color: str | None = None) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
         """Read a frame from the camera returned in the format height x width x channels (e.g. 480 x 640 x 3)
         of type `np.uint8`, contrarily to the pytorch format which is float channel first.
 
@@ -404,15 +394,11 @@ class IntelRealSenseCamera:
         color_frame = frame.get_color_frame()
 
         if not color_frame:
-            raise OSError(
-                f"Can't capture color image from IntelRealSenseCamera({self.serial_number})."
-            )
+            raise OSError(f"Can't capture color image from IntelRealSenseCamera({self.serial_number}).")
 
         color_image = np.asanyarray(color_frame.get_data())
 
-        requested_color_mode = (
-            self.color_mode if temporary_color is None else temporary_color
-        )
+        requested_color_mode = self.color_mode if temporary_color is None else temporary_color
         if requested_color_mode not in ["rgb", "bgr"]:
             raise ValueError(
                 f"Expected color values are 'rgb' or 'bgr', but {requested_color_mode} is provided."
@@ -440,9 +426,7 @@ class IntelRealSenseCamera:
         if self.use_depth:
             depth_frame = frame.get_depth_frame()
             if not depth_frame:
-                raise OSError(
-                    f"Can't capture depth image from IntelRealSenseCamera({self.serial_number})."
-                )
+                raise OSError(f"Can't capture depth image from IntelRealSenseCamera({self.serial_number}).")
 
             depth_map = np.asanyarray(depth_frame.get_data())
 
@@ -484,9 +468,7 @@ class IntelRealSenseCamera:
             # TODO(rcadene, aliberts): intelrealsense has diverged compared to opencv over here
             num_tries += 1
             time.sleep(1 / self.fps)
-            if num_tries > self.fps and (
-                self.thread.ident is None or not self.thread.is_alive()
-            ):
+            if num_tries > self.fps and (self.thread.ident is None or not self.thread.is_alive()):
                 raise Exception(
                     "The thread responsible for `self.async_read()` took too much time to start. There might be an issue. Verify that `self.thread.start()` has been called."
                 )

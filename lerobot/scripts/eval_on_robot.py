@@ -74,9 +74,7 @@ def get_classifier(pretrained_path, config_path):
     cfg = init_hydra_config(config_path)
 
     classifier_config = _policy_cfg_from_hydra_cfg(ClassifierConfig, cfg)
-    classifier_config.num_cameras = len(
-        cfg.training.image_keys
-    )  # TODO automate these paths
+    classifier_config.num_cameras = len(cfg.training.image_keys)  # TODO automate these paths
     model = Classifier(classifier_config)
     model.load_state_dict(Classifier.from_pretrained(pretrained_path).state_dict())
     model = model.to("mps")
@@ -161,17 +159,11 @@ def rollout(
         images = []
         for key in image_keys:
             if display_cameras:
-                cv2.imshow(
-                    key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR)
-                )
+                cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
                 cv2.waitKey(1)
             images.append(observation[key].to("mps"))
 
-        reward = (
-            reward_classifier.predict_reward(images)
-            if reward_classifier is not None
-            else 0.0
-        )
+        reward = reward_classifier.predict_reward(images) if reward_classifier is not None else 0.0
         all_rewards.append(reward)
 
         # print("REWARD : ", reward)
@@ -235,9 +227,7 @@ def eval_policy(
 
     start_eval = time.perf_counter()
     progbar = trange(n_episodes, desc="Evaluating policy on real robot")
-    reward_classifier = get_classifier(
-        reward_classifier_pretrained_path, reward_classifier_config_file
-    )
+    reward_classifier = get_classifier(reward_classifier_pretrained_path, reward_classifier_config_file)
 
     for _ in progbar:
         rollout_data = rollout(
@@ -313,9 +303,7 @@ def init_keyboard_listener():
                 print("Right arrow key pressed. Exiting loop...")
                 events["exit_early"] = True
             elif key == keyboard.Key.left:
-                print(
-                    "Left arrow key pressed. Exiting loop and rerecord the last episode..."
-                )
+                print("Left arrow key pressed. Exiting loop and rerecord the last episode...")
                 events["rerecord_episode"] = True
                 events["exit_early"] = True
             elif key == keyboard.Key.space:
@@ -380,9 +368,7 @@ if __name__ == "__main__":
             "debugging). This argument is mutually exclusive with `--pretrained-policy-name-or-path` (`-p`)."
         ),
     )
-    parser.add_argument(
-        "--revision", help="Optionally provide the Hugging Face Hub revision ID."
-    )
+    parser.add_argument("--revision", help="Optionally provide the Hugging Face Hub revision ID.")
     parser.add_argument(
         "--out-dir",
         help=(

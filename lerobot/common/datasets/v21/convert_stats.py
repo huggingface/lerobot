@@ -26,9 +26,7 @@ from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.datasets.utils import write_episode_stats
 
 
-def sample_episode_video_frames(
-    dataset: LeRobotDataset, episode_index: int, ft_key: str
-) -> np.ndarray:
+def sample_episode_video_frames(dataset: LeRobotDataset, episode_index: int, ft_key: str) -> np.ndarray:
     ep_len = dataset.meta.episodes[episode_index]["length"]
     sampled_indices = sample_indices(ep_len)
     query_timestamps = dataset._get_query_timestamps(0.0, {ft_key: sampled_indices})
@@ -51,14 +49,11 @@ def convert_episode_stats(dataset: LeRobotDataset, ep_idx: int):
 
         axes_to_reduce = (0, 2, 3) if ft["dtype"] in ["image", "video"] else 0
         keepdims = True if ft["dtype"] in ["image", "video"] else ep_ft_data.ndim == 1
-        ep_stats[key] = get_feature_stats(
-            ep_ft_data, axis=axes_to_reduce, keepdims=keepdims
-        )
+        ep_stats[key] = get_feature_stats(ep_ft_data, axis=axes_to_reduce, keepdims=keepdims)
 
         if ft["dtype"] in ["image", "video"]:  # remove batch dim
             ep_stats[key] = {
-                k: v if k == "count" else np.squeeze(v, axis=0)
-                for k, v in ep_stats[key].items()
+                k: v if k == "count" else np.squeeze(v, axis=0) for k, v in ep_stats[key].items()
             }
 
     dataset.meta.episodes_stats[ep_idx] = ep_stats

@@ -23,11 +23,7 @@ def screw_axis_to_transform(S, theta):
     elif np.linalg.norm(S_w) == 1:  # Rotation and translation
         w_hat = skew_symmetric(S_w)
         R = np.eye(3) + np.sin(theta) * w_hat + (1 - np.cos(theta)) * w_hat @ w_hat
-        t = (
-            np.eye(3) * theta
-            + (1 - np.cos(theta)) * w_hat
-            + (theta - np.sin(theta)) * w_hat @ w_hat
-        ) @ S_v
+        t = (np.eye(3) * theta + (1 - np.cos(theta)) * w_hat + (theta - np.sin(theta)) * w_hat @ w_hat) @ S_v
         T = np.eye(4)
         T[:3, :3] = R
         T[:3, 3] = t
@@ -189,9 +185,7 @@ class RobotKinematics:
 
         # Wrist
         # Screw axis of wrist frame wrt base frame
-        self.S_BR = np.array(
-            [0, 1, 0, -self.measurements["wrist"][2], 0, self.measurements["wrist"][0]]
-        )
+        self.S_BR = np.array([0, 1, 0, -self.measurements["wrist"][2], 0, self.measurements["wrist"][0]])
 
         # 0-position origin to centroid transform
         self.X_RoRc = self._create_translation_matrix(x=0.0035, y=-0.002)
@@ -284,12 +278,7 @@ class RobotKinematics:
     def fk_shoulder(self, robot_pos_deg):
         """Forward kinematics for the shoulder frame."""
         robot_pos_rad = robot_pos_deg / 180 * np.pi
-        return (
-            self.X_WoBo
-            @ screw_axis_to_transform(self.S_BS, robot_pos_rad[0])
-            @ self.X_SoSc
-            @ self.X_BS
-        )
+        return self.X_WoBo @ screw_axis_to_transform(self.S_BS, robot_pos_rad[0]) @ self.X_SoSc @ self.X_BS
 
     def fk_humerus(self, robot_pos_deg):
         """Forward kinematics for the humerus frame."""
@@ -403,15 +392,12 @@ class RobotKinematics:
             delta *= 0
             delta[el_ix] = eps / 2
             Sdot = (
-                fk_func(robot_pos_deg[:-1] + delta)[:3, 3]
-                - fk_func(robot_pos_deg[:-1] - delta)[:3, 3]
+                fk_func(robot_pos_deg[:-1] + delta)[:3, 3] - fk_func(robot_pos_deg[:-1] - delta)[:3, 3]
             ) / eps
             jac[:, el_ix] = Sdot
         return jac
 
-    def ik(
-        self, current_joint_state, desired_ee_pose, position_only=True, fk_func=None
-    ):
+    def ik(self, current_joint_state, desired_ee_pose, position_only=True, fk_func=None):
         """Inverse kinematics using gradient descent.
 
         Args:
@@ -457,9 +443,7 @@ if __name__ == "__main__":
 
         # Test 1: Forward kinematics consistency
         print("Test 1: Forward kinematics consistency")
-        test_angles = np.array(
-            [30, 45, -30, 20, 10, 0]
-        )  # Example joint angles in degrees
+        test_angles = np.array([30, 45, -30, 20, 10, 0])  # Example joint angles in degrees
 
         # Calculate FK for different joints
         shoulder_pose = robot.fk_shoulder(test_angles)
@@ -480,13 +464,9 @@ if __name__ == "__main__":
         ]
 
         # Check if distances generally increase along the chain
-        is_consistent = all(
-            distances[i] <= distances[i + 1] for i in range(len(distances) - 1)
-        )
+        is_consistent = all(distances[i] <= distances[i + 1] for i in range(len(distances) - 1))
         print(f"  Pose distances from origin: {[round(d, 3) for d in distances]}")
-        print(
-            f"  Kinematic chain consistency: {'PASSED' if is_consistent else 'FAILED'}"
-        )
+        print(f"  Kinematic chain consistency: {'PASSED' if is_consistent else 'FAILED'}")
 
         # Test 2: Jacobian computation
         print("Test 2: Jacobian computation")
@@ -498,9 +478,7 @@ if __name__ == "__main__":
         pos_jacobian_shape_ok = positional_jacobian.shape == (3, 5)
 
         print(f"  Jacobian shape: {'PASSED' if jacobian_shape_ok else 'FAILED'}")
-        print(
-            f"  Positional Jacobian shape: {'PASSED' if pos_jacobian_shape_ok else 'FAILED'}"
-        )
+        print(f"  Positional Jacobian shape: {'PASSED' if pos_jacobian_shape_ok else 'FAILED'}")
 
         # Test 3: Inverse kinematics
         print("Test 3: Inverse kinematics (position only)")

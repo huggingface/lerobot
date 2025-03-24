@@ -38,14 +38,10 @@ def safe_stop_image_writer(func):
     return wrapper
 
 
-def image_array_to_pil_image(
-    image_array: np.ndarray, range_check: bool = True
-) -> PIL.Image.Image:
+def image_array_to_pil_image(image_array: np.ndarray, range_check: bool = True) -> PIL.Image.Image:
     # TODO(aliberts): handle 1 channel and 4 for depth images
     if image_array.ndim != 3:
-        raise ValueError(
-            f"The array has {image_array.ndim} dimensions, but 3 is expected for an image."
-        )
+        raise ValueError(f"The array has {image_array.ndim} dimensions, but 3 is expected for an image.")
 
     if image_array.shape[0] == 3:
         # Transpose from pytorch convention (C, H, W) to (H, W, C)
@@ -131,9 +127,7 @@ class AsyncImageWriter:
         self._stopped = False
 
         if num_threads <= 0 and num_processes <= 0:
-            raise ValueError(
-                "Number of threads and processes must be greater than zero."
-            )
+            raise ValueError("Number of threads and processes must be greater than zero.")
 
         if self.num_processes == 0:
             # Use threading
@@ -147,16 +141,12 @@ class AsyncImageWriter:
             # Use multiprocessing
             self.queue = multiprocessing.JoinableQueue()
             for _ in range(self.num_processes):
-                p = multiprocessing.Process(
-                    target=worker_process, args=(self.queue, self.num_threads)
-                )
+                p = multiprocessing.Process(target=worker_process, args=(self.queue, self.num_threads))
                 p.daemon = True
                 p.start()
                 self.processes.append(p)
 
-    def save_image(
-        self, image: torch.Tensor | np.ndarray | PIL.Image.Image, fpath: Path
-    ):
+    def save_image(self, image: torch.Tensor | np.ndarray | PIL.Image.Image, fpath: Path):
         if isinstance(image, torch.Tensor):
             # Convert tensor to numpy array to minimize main process time
             image = image.cpu().numpy()

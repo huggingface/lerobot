@@ -46,9 +46,7 @@ def train_evaluate_multiclass_classifier():
     logging.info(
         f"Start multiclass classifier train eval with {DEVICE} device, batch size {BATCH_SIZE}, learning rate {LR}"
     )
-    multiclass_config = ClassifierConfig(
-        model_name="microsoft/resnet-18", device=DEVICE, num_classes=10
-    )
+    multiclass_config = ClassifierConfig(model_name="microsoft/resnet-18", device=DEVICE, num_classes=10)
     multiclass_classifier = Classifier(multiclass_config)
 
     trainset = CIFAR10(root="data", train=True, download=True, transform=ToTensor())
@@ -119,18 +117,10 @@ def train_evaluate_multiclass_classifier():
     test_probs = torch.stack(test_probs)
 
     accuracy = Accuracy(task="multiclass", num_classes=multiclass_num_classes)
-    precision = Precision(
-        task="multiclass", average="weighted", num_classes=multiclass_num_classes
-    )
-    recall = Recall(
-        task="multiclass", average="weighted", num_classes=multiclass_num_classes
-    )
-    f1 = F1Score(
-        task="multiclass", average="weighted", num_classes=multiclass_num_classes
-    )
-    auroc = AUROC(
-        task="multiclass", num_classes=multiclass_num_classes, average="weighted"
-    )
+    precision = Precision(task="multiclass", average="weighted", num_classes=multiclass_num_classes)
+    recall = Recall(task="multiclass", average="weighted", num_classes=multiclass_num_classes)
+    f1 = F1Score(task="multiclass", average="weighted", num_classes=multiclass_num_classes)
+    auroc = AUROC(task="multiclass", num_classes=multiclass_num_classes, average="weighted")
 
     # Calculate metrics
     acc = accuracy(test_predictions, test_labels)
@@ -159,28 +149,18 @@ def train_evaluate_binary_classifier():
             new_label = float(1.0) if label == target_class else float(0.0)
             new_targets.append(new_label)
 
-        dataset.targets = (
-            new_targets  # Replace the original labels with the binary ones
-        )
+        dataset.targets = new_targets  # Replace the original labels with the binary ones
         return dataset
 
-    binary_train_dataset = CIFAR10(
-        root="data", train=True, download=True, transform=ToTensor()
-    )
-    binary_test_dataset = CIFAR10(
-        root="data", train=False, download=True, transform=ToTensor()
-    )
+    binary_train_dataset = CIFAR10(root="data", train=True, download=True, transform=ToTensor())
+    binary_test_dataset = CIFAR10(root="data", train=False, download=True, transform=ToTensor())
 
     # Apply one-vs-rest labeling
     binary_train_dataset = one_vs_rest(binary_train_dataset, target_binary_class)
     binary_test_dataset = one_vs_rest(binary_test_dataset, target_binary_class)
 
-    binary_trainloader = DataLoader(
-        binary_train_dataset, batch_size=BATCH_SIZE, shuffle=True
-    )
-    binary_testloader = DataLoader(
-        binary_test_dataset, batch_size=BATCH_SIZE, shuffle=False
-    )
+    binary_trainloader = DataLoader(binary_train_dataset, batch_size=BATCH_SIZE, shuffle=True)
+    binary_testloader = DataLoader(binary_test_dataset, batch_size=BATCH_SIZE, shuffle=False)
 
     binary_epoch = 1
 

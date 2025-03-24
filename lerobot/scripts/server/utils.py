@@ -18,8 +18,9 @@
 import logging
 import signal
 import sys
-from torch.multiprocessing import Queue
 from queue import Empty
+
+from torch.multiprocessing import Queue
 
 shutdown_event_counter = 0
 

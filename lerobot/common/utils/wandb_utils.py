@@ -26,9 +26,7 @@ from lerobot.common.constants import PRETRAINED_MODEL_DIR
 from lerobot.configs.train import TrainPipelineConfig
 
 
-def cfg_to_group(
-    cfg: TrainPipelineConfig, return_list: bool = False
-) -> list[str] | str:
+def cfg_to_group(cfg: TrainPipelineConfig, return_list: bool = False) -> list[str] | str:
     """Return a group name for logging. Optionally returns group name as list."""
     lst = [
         f"policy:{cfg.policy.type}",
@@ -95,9 +93,7 @@ class WandBLogger:
             mode=self.cfg.mode if self.cfg.mode in ["online", "offline", "disabled"] else "online",
         )
         print(colored("Logs will be synced with wandb.", "blue", attrs=["bold"]))
-        logging.info(
-            f"Track this run --> {colored(wandb.run.get_url(), 'yellow', attrs=['bold'])}"
-        )
+        logging.info(f"Track this run --> {colored(wandb.run.get_url(), 'yellow', attrs=['bold'])}")
         self._wandb = wandb
 
     def log_policy(self, checkpoint_dir: Path):
@@ -109,9 +105,7 @@ class WandBLogger:
         artifact_name = f"{self._group}-{step_id}"
         artifact_name = get_safe_wandb_artifact_name(artifact_name)
         artifact = self._wandb.Artifact(artifact_name, type="model")
-        artifact.add_file(
-            checkpoint_dir / PRETRAINED_MODEL_DIR / SAFETENSORS_SINGLE_FILE
-        )
+        artifact.add_file(checkpoint_dir / PRETRAINED_MODEL_DIR / SAFETENSORS_SINGLE_FILE)
         self._wandb.log_artifact(artifact)
 
     def log_dict(self, d: dict, step: int, mode: str = "train"):

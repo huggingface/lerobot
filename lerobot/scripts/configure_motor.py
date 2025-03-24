@@ -67,8 +67,8 @@ def get_motor_bus_cls(brand: str) -> tuple:
 
 
 def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
-    motor_bus_config_cls, motor_bus_cls, model_baudrate_table, series_baudrate_table = (
-        get_motor_bus_cls(brand)
+    motor_bus_config_cls, motor_bus_cls, model_baudrate_table, series_baudrate_table = get_motor_bus_cls(
+        brand
     )
 
     # Check if the provided model exists in the model_baud_rate_table
@@ -82,9 +82,7 @@ def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
     motor_index_arbitrary = motor_idx_des  # Use the motor ID passed via argument
     motor_model = model  # Use the motor model passed via argument
 
-    config = motor_bus_config_cls(
-        port=port, motors={motor_name: (motor_index_arbitrary, motor_model)}
-    )
+    config = motor_bus_config_cls(port=port, motors={motor_name: (motor_index_arbitrary, motor_model)})
 
     # Initialize the MotorBus with the correct port and motor configurations
     motor_bus = motor_bus_cls(config=config)
@@ -120,26 +118,20 @@ def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
                 break
 
         if motor_index == -1:
-            raise ValueError(
-                "No motors detected. Please ensure you have one motor connected."
-            )
+            raise ValueError("No motors detected. Please ensure you have one motor connected.")
 
         print(f"Motor index found at: {motor_index}")
 
         if brand == "feetech":
             # Allows ID and BAUDRATE to be written in memory
-            motor_bus.write_with_motor_ids(
-                motor_bus.motor_models, motor_index, "Lock", 0
-            )
+            motor_bus.write_with_motor_ids(motor_bus.motor_models, motor_index, "Lock", 0)
 
         if baudrate != baudrate_des:
             print(f"Setting its baudrate to {baudrate_des}")
             baudrate_idx = list(series_baudrate_table.values()).index(baudrate_des)
 
             # The write can fail, so we allow retries
-            motor_bus.write_with_motor_ids(
-                motor_bus.motor_models, motor_index, "Baud_Rate", baudrate_idx
-            )
+            motor_bus.write_with_motor_ids(motor_bus.motor_models, motor_index, "Baud_Rate", baudrate_idx)
             time.sleep(0.5)
             motor_bus.set_bus_baudrate(baudrate_des)
             present_baudrate_idx = motor_bus.read_with_motor_ids(
@@ -151,16 +143,10 @@ def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
 
         print(f"Setting its index to desired index {motor_idx_des}")
         if brand == "feetech":
-            motor_bus.write_with_motor_ids(
-                motor_bus.motor_models, motor_index, "Lock", 0
-            )
-        motor_bus.write_with_motor_ids(
-            motor_bus.motor_models, motor_index, "ID", motor_idx_des
-        )
+            motor_bus.write_with_motor_ids(motor_bus.motor_models, motor_index, "Lock", 0)
+        motor_bus.write_with_motor_ids(motor_bus.motor_models, motor_index, "ID", motor_idx_des)
 
-        present_idx = motor_bus.read_with_motor_ids(
-            motor_bus.motor_models, motor_idx_des, "ID", num_retry=2
-        )
+        present_idx = motor_bus.read_with_motor_ids(motor_bus.motor_models, motor_idx_des, "ID", num_retry=2)
         if present_idx != motor_idx_des:
             raise OSError("Failed to write index.")
 
@@ -194,12 +180,8 @@ if __name__ == "__main__":
         required=True,
         help="Motors bus port (e.g. dynamixel,feetech)",
     )
-    parser.add_argument(
-        "--brand", type=str, required=True, help="Motor brand (e.g. dynamixel,feetech)"
-    )
-    parser.add_argument(
-        "--model", type=str, required=True, help="Motor model (e.g. xl330-m077,sts3215)"
-    )
+    parser.add_argument("--brand", type=str, required=True, help="Motor brand (e.g. dynamixel,feetech)")
+    parser.add_argument("--model", type=str, required=True, help="Motor model (e.g. xl330-m077,sts3215)")
     parser.add_argument(
         "--ID",
         type=int,
