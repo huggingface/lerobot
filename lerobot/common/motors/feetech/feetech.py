@@ -71,11 +71,11 @@ class FeetechMotorsBus(MotorsBus):
         self._comm_success = scs.COMM_SUCCESS
         self._no_error = 0x00
 
-    def broadcast_ping(
-        self, num_retry: int = 0, raise_on_error: bool = False
-    ) -> dict[int, list[int, int]] | None:
-        # TODO
-        raise NotImplementedError
+    def _configure_motors(self) -> None:
+        # By default, Feetech motors have a 500µs delay response time (corresponding to a value of 250 on the
+        # 'Return_Delay' address). We ensure this is reduced to the minimum of 2µs (value of 0).
+        for id_ in self.ids:
+            self.write("Return_Delay", id_, 0)
 
     def _calibrate_values(self, ids_values: dict[int, int]) -> dict[int, float]:
         # TODO
@@ -114,3 +114,9 @@ class FeetechMotorsBus(MotorsBus):
                 scs.SCS_HIBYTE(scs.SCS_HIWORD(value)),
             ]
         return data
+
+    def broadcast_ping(
+        self, num_retry: int = 0, raise_on_error: bool = False
+    ) -> dict[int, list[int, int]] | None:
+        # TODO
+        raise NotImplementedError

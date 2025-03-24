@@ -351,6 +351,10 @@ class MotorsBus(abc.ABC):
         self.set_timeout()
         logger.debug(f"{self.__class__.__name__} connected.")
 
+    @abc.abstractmethod
+    def _configure_motors(self) -> None:
+        pass
+
     def set_timeout(self, timeout_ms: int | None = None):
         timeout_ms = timeout_ms if timeout_ms is not None else self.default_timeout
         self.port_handler.setPacketTimeoutMillis(timeout_ms)
@@ -379,23 +383,6 @@ class MotorsBus(abc.ABC):
         except ConnectionError as e:
             logger.error(e)
             return False
-
-    def ping(self, motor: NameOrID, num_retry: int = 0, raise_on_error: bool = False) -> int | None:
-        idx = self._get_motor_id(motor)
-        for n_try in range(1 + num_retry):
-            model_number, comm, error = self.packet_handler.ping(self.port_handler, idx)
-            if self._is_comm_success(comm):
-                return model_number
-            logger.debug(f"ping failed for {idx=}: {n_try=} got {comm=} {error=}")
-
-        if raise_on_error:
-            raise ConnectionError(f"Ping motor {motor} returned a {error} error code.")
-
-    @abc.abstractmethod
-    def broadcast_ping(
-        self, num_retry: int = 0, raise_on_error: bool = False
-    ) -> dict[int, list[int, int]] | None:
-        pass
 
     def set_calibration(self, calibration_fpath: Path) -> None:
         with open(calibration_fpath) as f:
@@ -447,6 +434,23 @@ class MotorsBus(abc.ABC):
             >>> split_int_bytes(0x12345678, 4)
             [120, 86, 52, 18]  # 0x12345678 → 0x78 0x56 0x34 0x12
         """
+        pass
+
+    def ping(self, motor: NameOrID, num_retry: int = 0, raise_on_error: bool = False) -> int | None:
+        idx = self._get_motor_id(motor)
+        for n_try in range(1 + num_retry):
+            model_number, comm, error = self.packet_handler.ping(self.port_handler, idx)
+            if self._is_comm_success(comm):
+                return model_number
+            logger.debug(f"ping failed for {idx=}: {n_try=} got {comm=} {error=}")
+
+        if raise_on_error:
+            raise ConnectionError(f"Ping motor {motor} returned a {error} error code.")
+
+    @abc.abstractmethod
+    def broadcast_ping(
+        self, num_retry: int = 0, raise_on_error: bool = False
+    ) -> dict[int, list[int, int]] | None:
         pass
 
     @overload

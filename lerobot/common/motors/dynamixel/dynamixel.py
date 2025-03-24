@@ -91,16 +91,11 @@ class DynamixelMotorsBus(MotorsBus):
         self._comm_success = dxl.COMM_SUCCESS
         self._no_error = 0x00
 
-    def broadcast_ping(
-        self, num_retry: int = 0, raise_on_error: bool = False
-    ) -> dict[int, list[int, int]] | None:
-        for _ in range(1 + num_retry):
-            data_list, comm = self.packet_handler.broadcastPing(self.port_handler)
-            if self._is_comm_success(comm):
-                return data_list
-
-        if raise_on_error:
-            raise ConnectionError(f"Broadcast ping returned a {comm} comm error.")
+    def _configure_motors(self) -> None:
+        # By default, Dynamixel motors have a 500µs delay response time (corresponding to a value of 250 on
+        # the 'Return_Delay_Time' address). We ensure this is reduced to the minimum of 2µs (value of 0).
+        for id_ in self.ids:
+            self.write("Return_Delay_Time", id_, 0)
 
     def _calibrate_values(self, ids_values: dict[int, int]) -> dict[int, float]:
         # TODO
@@ -139,3 +134,14 @@ class DynamixelMotorsBus(MotorsBus):
                 dxl.DXL_HIBYTE(dxl.DXL_HIWORD(value)),
             ]
         return data
+
+    def broadcast_ping(
+        self, num_retry: int = 0, raise_on_error: bool = False
+    ) -> dict[int, list[int, int]] | None:
+        for _ in range(1 + num_retry):
+            data_list, comm = self.packet_handler.broadcastPing(self.port_handler)
+            if self._is_comm_success(comm):
+                return data_list
+
+        if raise_on_error:
+            raise ConnectionError(f"Broadcast ping returned a {comm} comm error.")
