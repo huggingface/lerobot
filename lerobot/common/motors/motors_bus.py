@@ -595,8 +595,8 @@ class MotorsBus(abc.ABC):
                 f"{self.packet_handler.getTxRxResult(comm)}"
             )
 
-        # if data_name in self.calibration_required and self.calibration is not None:
-        #     ids_values = self._calibrate_values(ids_values)
+        if data_name in self.calibration_required and self.calibration is not None:
+            ids_values = self._calibrate_values(ids_values)
 
         return {id_key_map[idx]: val for idx, val in ids_values.items()}
 
