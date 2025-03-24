@@ -102,7 +102,9 @@ def save_optimizer_state(optimizer: torch.optim.Optimizer, save_dir: Path) -> No
     write_json(param_groups, save_dir / OPTIMIZER_PARAM_GROUPS)
 
 
-def load_optimizer_state(optimizer: torch.optim.Optimizer, save_dir: Path) -> torch.optim.Optimizer:
+def load_optimizer_state(
+    optimizer: torch.optim.Optimizer, save_dir: Path
+) -> torch.optim.Optimizer:
     current_state_dict = optimizer.state_dict()
     flat_state = load_file(save_dir / OPTIMIZER_STATE)
     state = unflatten_dict(flat_state)

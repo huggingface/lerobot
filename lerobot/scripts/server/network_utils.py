@@ -41,7 +41,7 @@ def send_bytes_in_chunks(
 
     logging_method = logging.info if not silent else logging.debug
 
-    logging_method(f"{log_prefix} Buffer size {size_in_bytes/1024/1024} MB with")
+    logging_method(f"{log_prefix} Buffer size {size_in_bytes / 1024 / 1024} MB with")
 
     while sent_bytes < size_in_bytes:
         transfer_state = hilserl_pb2.TransferState.TRANSFER_MIDDLE
@@ -60,7 +60,7 @@ def send_bytes_in_chunks(
             f"{log_prefix} Sent {sent_bytes}/{size_in_bytes} bytes with state {transfer_state}"
         )
 
-    logging_method(f"{log_prefix} Published {sent_bytes/1024/1024} MB")
+    logging_method(f"{log_prefix} Published {sent_bytes / 1024 / 1024} MB")
 
 
 def receive_bytes_in_chunks(

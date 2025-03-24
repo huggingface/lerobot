@@ -172,7 +172,10 @@ class VQBeTConfig(PreTrainedConfig):
 
         if self.crop_shape is not None:
             for key, image_ft in self.image_features.items():
-                if self.crop_shape[0] > image_ft.shape[1] or self.crop_shape[1] > image_ft.shape[2]:
+                if (
+                    self.crop_shape[0] > image_ft.shape[1]
+                    or self.crop_shape[1] > image_ft.shape[2]
+                ):
                     raise ValueError(
                         f"`crop_shape` should fit within the images shapes. Got {self.crop_shape} "
                         f"for `crop_shape` and {image_ft.shape} for "
@@ -193,7 +196,12 @@ class VQBeTConfig(PreTrainedConfig):
 
     @property
     def action_delta_indices(self) -> list:
-        return list(range(1 - self.n_obs_steps, self.n_action_pred_token + self.action_chunk_size - 1))
+        return list(
+            range(
+                1 - self.n_obs_steps,
+                self.n_action_pred_token + self.action_chunk_size - 1,
+            )
+        )
 
     @property
     def reward_delta_indices(self) -> None:

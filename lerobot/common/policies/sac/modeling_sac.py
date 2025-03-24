@@ -639,9 +639,9 @@ class Policy(nn.Module):
         # Compute standard deviations
         if self.fixed_std is None:
             log_std = self.std_layer(outputs)
-            assert not torch.isnan(
-                log_std
-            ).any(), "[ERROR] log_std became NaN after std_layer!"
+            assert not torch.isnan(log_std).any(), (
+                "[ERROR] log_std became NaN after std_layer!"
+            )
 
             if self.use_tanh_squash:
                 log_std = torch.tanh(log_std)

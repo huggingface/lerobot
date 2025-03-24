@@ -35,5 +35,7 @@ def optimizer(model_params):
 
 @pytest.fixture
 def scheduler(optimizer):
-    config = VQBeTSchedulerConfig(num_warmup_steps=10, num_vqvae_training_steps=20, num_cycles=0.5)
+    config = VQBeTSchedulerConfig(
+        num_warmup_steps=10, num_vqvae_training_steps=20, num_cycles=0.5
+    )
     return config.build(optimizer, num_training_steps=100)

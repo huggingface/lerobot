@@ -210,7 +210,10 @@ def tasks_factory():
     def _create_tasks(total_tasks: int = 3) -> int:
         tasks = {}
         for task_index in range(total_tasks):
-            task_dict = {"task_index": task_index, "task": f"Perform action {task_index}."}
+            task_dict = {
+                "task_index": task_index,
+                "task": f"Perform action {task_index}.",
+            }
             tasks[task_index] = task_dict
         return tasks
 
@@ -297,8 +300,12 @@ def hf_dataset_factory(
         episode_index_col = np.array([], dtype=np.int64)
         task_index = np.array([], dtype=np.int64)
         for ep_dict in episodes.values():
-            timestamp_col = np.concatenate((timestamp_col, np.arange(ep_dict["length"]) / fps))
-            frame_index_col = np.concatenate((frame_index_col, np.arange(ep_dict["length"], dtype=int)))
+            timestamp_col = np.concatenate(
+                (timestamp_col, np.arange(ep_dict["length"]) / fps)
+            )
+            frame_index_col = np.concatenate(
+                (frame_index_col, np.arange(ep_dict["length"], dtype=int))
+            )
             episode_index_col = np.concatenate(
                 (
                     episode_index_col,
@@ -385,7 +392,9 @@ def lerobot_dataset_metadata_factory(
             episodes=episodes,
         )
         with (
-            patch("lerobot.common.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version_patch,
+            patch(
+                "lerobot.common.datasets.lerobot_dataset.get_safe_version"
+            ) as mock_get_safe_version_patch,
             patch(
                 "lerobot.common.datasets.lerobot_dataset.snapshot_download"
             ) as mock_snapshot_download_patch,
@@ -433,7 +442,9 @@ def lerobot_dataset_factory(
         if not stats:
             stats = stats_factory(features=info["features"])
         if not episodes_stats:
-            episodes_stats = episodes_stats_factory(features=info["features"], total_episodes=total_episodes)
+            episodes_stats = episodes_stats_factory(
+                features=info["features"], total_episodes=total_episodes
+            )
         if not tasks:
             tasks = tasks_factory(total_tasks=info["total_tasks"])
         if not episode_dicts:
@@ -466,8 +477,12 @@ def lerobot_dataset_factory(
             episodes=episode_dicts,
         )
         with (
-            patch("lerobot.common.datasets.lerobot_dataset.LeRobotDatasetMetadata") as mock_metadata_patch,
-            patch("lerobot.common.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version_patch,
+            patch(
+                "lerobot.common.datasets.lerobot_dataset.LeRobotDatasetMetadata"
+            ) as mock_metadata_patch,
+            patch(
+                "lerobot.common.datasets.lerobot_dataset.get_safe_version"
+            ) as mock_get_safe_version_patch,
             patch(
                 "lerobot.common.datasets.lerobot_dataset.snapshot_download"
             ) as mock_snapshot_download_patch,

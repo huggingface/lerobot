@@ -141,12 +141,16 @@ class SharpnessJitter(Transform):
         return float(sharpness[0]), float(sharpness[1])
 
     def make_params(self, flat_inputs: list[Any]) -> dict[str, Any]:
-        sharpness_factor = torch.empty(1).uniform_(self.sharpness[0], self.sharpness[1]).item()
+        sharpness_factor = (
+            torch.empty(1).uniform_(self.sharpness[0], self.sharpness[1]).item()
+        )
         return {"sharpness_factor": sharpness_factor}
 
     def transform(self, inpt: Any, params: dict[str, Any]) -> Any:
         sharpness_factor = params["sharpness_factor"]
-        return self._call_kernel(F.adjust_sharpness, inpt, sharpness_factor=sharpness_factor)
+        return self._call_kernel(
+            F.adjust_sharpness, inpt, sharpness_factor=sharpness_factor
+        )
 
 
 @dataclass

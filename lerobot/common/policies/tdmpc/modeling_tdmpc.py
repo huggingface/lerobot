@@ -39,7 +39,11 @@ from lerobot.common.constants import OBS_ENV, OBS_ROBOT
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.policies.tdmpc.configuration_tdmpc import TDMPCConfig
-from lerobot.common.policies.utils import get_device_from_parameters, get_output_shape, populate_queues
+from lerobot.common.policies.utils import (
+    get_device_from_parameters,
+    get_output_shape,
+    populate_queues,
+)
 
 
 class TDMPCPolicy(PreTrainedPolicy):
@@ -63,7 +67,11 @@ class TDMPCPolicy(PreTrainedPolicy):
     config_class = TDMPCConfig
     name = "tdmpc"
 
-    def __init__(self, config: TDMPCConfig, dataset_stats: dict[str, dict[str, Tensor]] | None = None):
+    def __init__(
+        self,
+        config: TDMPCConfig,
+        dataset_stats: dict[str, dict[str, Tensor]] | None = None,
+    ):
         """
         Args:
             config: Policy configuration class instance or None, in which case the default instantiation of
@@ -75,7 +83,9 @@ class TDMPCPolicy(PreTrainedPolicy):
         config.validate_features()
         self.config = config
 
-        self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
+        self.normalize_inputs = Normalize(
+            config.input_features, config.normalization_mapping, dataset_stats
+        )
         self.normalize_targets = Normalize(
             config.output_features, config.normalization_mapping, dataset_stats
         )
@@ -117,7 +127,9 @@ class TDMPCPolicy(PreTrainedPolicy):
         """Select a single action given environment observations."""
         batch = self.normalize_inputs(batch)
         if self.config.image_features:
-            batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
+            batch = dict(
+                batch
+            )  # shallow copy so that adding a key doesn't modify the original
             batch["observation.image"] = batch[next(iter(self.config.image_features))]
 
         self._queues = populate_queues(self._queues, batch)
@@ -201,7 +213,10 @@ class TDMPCPolicy(PreTrainedPolicy):
         # algorithm.
         # The initial mean and standard deviation for the cross-entropy method (CEM).
         mean = torch.zeros(
-            self.config.horizon, batch_size, self.config.action_feature.shape[0], device=device
+            self.config.horizon,
+            batch_size,
+            self.config.action_feature.shape[0],
+            device=device,
         )
         # Maybe warm start CEM with the mean from the previous step.
         if self._prev_mean is not None:
@@ -339,7 +354,9 @@ class TDMPCPolicy(PreTrainedPolicy):
 
         batch = self.normalize_inputs(batch)
         if self.config.image_features:
-            batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
+            batch = dict(
+                batch
+            )  # shallow copy so that adding a key doesn't modify the original
             batch["observation.image"] = batch[next(iter(self.config.image_features))]
         batch = self.normalize_targets(batch)
 
@@ -371,7 +388,9 @@ class TDMPCPolicy(PreTrainedPolicy):
             current_observation[k] = observations[k][0]
             next_observations[k] = observations[k][1:]
         horizon, batch_size = next_observations[
-            "observation.image" if self.config.image_features else "observation.environment_state"
+            "observation.image"
+            if self.config.image_features
+            else "observation.environment_state"
         ].shape[:2]
 
         # Run latent rollout using the latent dynamics model and policy model.
@@ -569,7 +588,9 @@ class TDMPCTOLD(nn.Module):
         self.config = config
         self._encoder = TDMPCObservationEncoder(config)
         self._dynamics = nn.Sequential(
-            nn.Linear(config.latent_dim + config.action_feature.shape[0], config.mlp_dim),
+            nn.Linear(
+                config.latent_dim + config.action_feature.shape[0], config.mlp_dim
+            ),
             nn.LayerNorm(config.mlp_dim),
             nn.Mish(),
             nn.Linear(config.mlp_dim, config.mlp_dim),
@@ -580,7 +601,9 @@ class TDMPCTOLD(nn.Module):
             nn.Sigmoid(),
         )
         self._reward = nn.Sequential(
-            nn.Linear(config.latent_dim + config.action_feature.shape[0], config.mlp_dim),
+            nn.Linear(
+                config.latent_dim + config.action_feature.shape[0], config.mlp_dim
+            ),
             nn.LayerNorm(config.mlp_dim),
             nn.Mish(),
             nn.Linear(config.mlp_dim, config.mlp_dim),
@@ -600,7 +623,10 @@ class TDMPCTOLD(nn.Module):
         self._Qs = nn.ModuleList(
             [
                 nn.Sequential(
-                    nn.Linear(config.latent_dim + config.action_feature.shape[0], config.mlp_dim),
+                    nn.Linear(
+                        config.latent_dim + config.action_feature.shape[0],
+                        config.mlp_dim,
+                    ),
                     nn.LayerNorm(config.mlp_dim),
                     nn.Tanh(),
                     nn.Linear(config.mlp_dim, config.mlp_dim),
@@ -786,7 +812,9 @@ class TDMPCObservationEncoder(nn.Module):
 
         if config.robot_state_feature:
             self.state_enc_layers = nn.Sequential(
-                nn.Linear(config.robot_state_feature.shape[0], config.state_encoder_hidden_dim),
+                nn.Linear(
+                    config.robot_state_feature.shape[0], config.state_encoder_hidden_dim
+                ),
                 nn.ELU(),
                 nn.Linear(config.state_encoder_hidden_dim, config.latent_dim),
                 nn.LayerNorm(config.latent_dim),
@@ -795,7 +823,9 @@ class TDMPCObservationEncoder(nn.Module):
 
         if config.env_state_feature:
             self.env_state_enc_layers = nn.Sequential(
-                nn.Linear(config.env_state_feature.shape[0], config.state_encoder_hidden_dim),
+                nn.Linear(
+                    config.env_state_feature.shape[0], config.state_encoder_hidden_dim
+                ),
                 nn.ELU(),
                 nn.Linear(config.state_encoder_hidden_dim, config.latent_dim),
                 nn.LayerNorm(config.latent_dim),
@@ -813,7 +843,8 @@ class TDMPCObservationEncoder(nn.Module):
         if self.config.image_features:
             feat.append(
                 flatten_forward_unflatten(
-                    self.image_enc_layers, obs_dict[next(iter(self.config.image_features))]
+                    self.image_enc_layers,
+                    obs_dict[next(iter(self.config.image_features))],
                 )
             )
         if self.config.env_state_feature:

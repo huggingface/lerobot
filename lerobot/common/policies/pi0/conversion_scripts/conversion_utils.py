@@ -54,7 +54,9 @@ def get_paligemma_config(precision: str):
         "projector_hidden_act": "gelu_fast",
         "vision_use_head": False,
     }
-    final_config = PaliGemmaConfig(text_config=text_config, vision_config=vision_config, **config)
+    final_config = PaliGemmaConfig(
+        text_config=text_config, vision_config=vision_config, **config
+    )
     return final_config
 
 

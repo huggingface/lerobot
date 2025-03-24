@@ -262,7 +262,11 @@ def record(
             shape = env.observation_space[key].shape
             if not key.startswith("observation.image."):
                 key = "observation.image." + key
-            features[key] = {"dtype": "video", "names": ["channels", "height", "width"], "shape": shape}
+            features[key] = {
+                "dtype": "video",
+                "names": ["channels", "height", "width"],
+                "shape": shape,
+            }
 
         for key, obs_key in state_keys_dict.items():
             features[key] = {

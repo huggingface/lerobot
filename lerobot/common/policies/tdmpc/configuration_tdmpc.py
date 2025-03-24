@@ -187,7 +187,9 @@ class TDMPCConfig(PreTrainedConfig):
                     "If `n_action_steps > 1`, `use_mpc` must be set to `True`."
                 )
             if self.n_action_steps > self.horizon:
-                raise ValueError("`n_action_steps` must be less than or equal to `horizon`.")
+                raise ValueError(
+                    "`n_action_steps` must be less than or equal to `horizon`."
+                )
 
     def get_optimizer_preset(self) -> AdamConfig:
         return AdamConfig(lr=self.optimizer_lr)
@@ -207,7 +209,9 @@ class TDMPCConfig(PreTrainedConfig):
             if image_ft.shape[-2] != image_ft.shape[-1]:
                 # TODO(alexander-soare): This limitation is solely because of code in the random shift
                 # augmentation. It should be able to be removed.
-                raise ValueError(f"Only square images are handled now. Got image shape {image_ft.shape}.")
+                raise ValueError(
+                    f"Only square images are handled now. Got image shape {image_ft.shape}."
+                )
 
     @property
     def observation_delta_indices(self) -> list:

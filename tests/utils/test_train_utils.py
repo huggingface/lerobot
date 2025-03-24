@@ -91,7 +91,9 @@ def test_save_training_state(tmp_path, optimizer, scheduler):
 
 def test_save_load_training_state(tmp_path, optimizer, scheduler):
     save_training_state(tmp_path, 10, optimizer, scheduler)
-    loaded_step, loaded_optimizer, loaded_scheduler = load_training_state(tmp_path, optimizer, scheduler)
+    loaded_step, loaded_optimizer, loaded_scheduler = load_training_state(
+        tmp_path, optimizer, scheduler
+    )
     assert loaded_step == 10
     assert loaded_optimizer is optimizer
     assert loaded_scheduler is scheduler

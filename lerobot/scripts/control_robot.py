@@ -156,7 +156,6 @@ from lerobot.common.robot_devices.control_utils import (
     log_control_info,
     record_episode,
     reset_environment,
-    reset_follower_position,
     sanity_check_dataset_name,
     sanity_check_dataset_robot_compatibility,
     stop_recording,
@@ -251,7 +250,8 @@ def record(
         if len(robot.cameras) > 0:
             dataset.start_image_writer(
                 num_processes=cfg.num_image_writer_processes,
-                num_threads=cfg.num_image_writer_threads_per_camera * len(robot.cameras),
+                num_threads=cfg.num_image_writer_threads_per_camera
+                * len(robot.cameras),
             )
         sanity_check_dataset_robot_compatibility(dataset, robot, cfg.fps, cfg.video)
     else:
@@ -264,14 +264,19 @@ def record(
             robot=robot,
             use_videos=cfg.video,
             image_writer_processes=cfg.num_image_writer_processes,
-            image_writer_threads=cfg.num_image_writer_threads_per_camera * len(robot.cameras),
+            image_writer_threads=cfg.num_image_writer_threads_per_camera
+            * len(robot.cameras),
         )
 
     # Load pretrained policy
-    policy = None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
+    policy = (
+        None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
+    )
 
     # Load pretrained policy
-    policy = None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
+    policy = (
+        None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
+    )
 
     if not robot.is_connected:
         robot.connect()
@@ -286,7 +291,14 @@ def record(
     # 3. place the cameras windows on screen
     enable_teleoperation = policy is None
     log_say("Warmup record", cfg.play_sounds)
-    warmup_record(robot, events, enable_teleoperation, cfg.warmup_time_s, cfg.display_cameras, cfg.fps)
+    warmup_record(
+        robot,
+        events,
+        enable_teleoperation,
+        cfg.warmup_time_s,
+        cfg.display_cameras,
+        cfg.fps,
+    )
 
     if has_method(robot, "teleop_safety_stop"):
         robot.teleop_safety_stop()

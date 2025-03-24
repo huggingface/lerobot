@@ -38,7 +38,12 @@ def get_motor_bus_cls(brand: str) -> tuple:
             FeetechMotorsBus,
         )
 
-        return FeetechMotorsBusConfig, FeetechMotorsBus, MODEL_BAUDRATE_TABLE, SCS_SERIES_BAUDRATE_TABLE
+        return (
+            FeetechMotorsBusConfig,
+            FeetechMotorsBus,
+            MODEL_BAUDRATE_TABLE,
+            SCS_SERIES_BAUDRATE_TABLE,
+        )
 
     elif brand == "dynamixel":
         from lerobot.common.robot_devices.motors.configs import DynamixelMotorsBusConfig
@@ -48,7 +53,12 @@ def get_motor_bus_cls(brand: str) -> tuple:
             DynamixelMotorsBus,
         )
 
-        return DynamixelMotorsBusConfig, DynamixelMotorsBus, MODEL_BAUDRATE_TABLE, X_SERIES_BAUDRATE_TABLE
+        return (
+            DynamixelMotorsBusConfig,
+            DynamixelMotorsBus,
+            MODEL_BAUDRATE_TABLE,
+            X_SERIES_BAUDRATE_TABLE,
+        )
 
     else:
         raise ValueError(
@@ -57,8 +67,8 @@ def get_motor_bus_cls(brand: str) -> tuple:
 
 
 def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
-    motor_bus_config_cls, motor_bus_cls, model_baudrate_table, series_baudrate_table = get_motor_bus_cls(
-        brand
+    motor_bus_config_cls, motor_bus_cls, model_baudrate_table, series_baudrate_table = (
+        get_motor_bus_cls(brand)
     )
 
     # Check if the provided model exists in the model_baud_rate_table
@@ -72,7 +82,9 @@ def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
     motor_index_arbitrary = motor_idx_des  # Use the motor ID passed via argument
     motor_model = model  # Use the motor model passed via argument
 
-    config = motor_bus_config_cls(port=port, motors={motor_name: (motor_index_arbitrary, motor_model)})
+    config = motor_bus_config_cls(
+        port=port, motors={motor_name: (motor_index_arbitrary, motor_model)}
+    )
 
     # Initialize the MotorBus with the correct port and motor configurations
     motor_bus = motor_bus_cls(config=config)
@@ -139,8 +151,12 @@ def configure_motor(port, brand, model, motor_idx_des, baudrate_des):
 
         print(f"Setting its index to desired index {motor_idx_des}")
         if brand == "feetech":
-            motor_bus.write_with_motor_ids(motor_bus.motor_models, motor_index, "Lock", 0)
-        motor_bus.write_with_motor_ids(motor_bus.motor_models, motor_index, "ID", motor_idx_des)
+            motor_bus.write_with_motor_ids(
+                motor_bus.motor_models, motor_index, "Lock", 0
+            )
+        motor_bus.write_with_motor_ids(
+            motor_bus.motor_models, motor_index, "ID", motor_idx_des
+        )
 
         present_idx = motor_bus.read_with_motor_ids(
             motor_bus.motor_models, motor_idx_des, "ID", num_retry=2

@@ -250,9 +250,9 @@ class Logger:
         )
         # For the case where the optimizer is a dictionary of optimizers (e.g., sac)
         if type(training_state["optimizer"]) is dict:
-            assert set(training_state["optimizer"].keys()) == set(
-                optimizer.keys()
-            ), "Optimizer dictionaries do not have the same keys during resume!"
+            assert set(training_state["optimizer"].keys()) == set(optimizer.keys()), (
+                "Optimizer dictionaries do not have the same keys during resume!"
+            )
             for k, v in training_state["optimizer"].items():
                 optimizer[k].load_state_dict(v)
         else:

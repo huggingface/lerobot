@@ -48,7 +48,9 @@ def auto_select_torch_device() -> torch.device:
         logging.info("Metal backend detected, using cuda.")
         return torch.device("mps")
     else:
-        logging.warning("No accelerated backend detected. Using default cpu, this will be slow.")
+        logging.warning(
+            "No accelerated backend detected. Using default cpu, this will be slow."
+        )
         return torch.device("cpu")
 
 
@@ -96,7 +98,9 @@ def is_torch_device_available(try_device: str) -> bool:
     elif try_device == "cpu":
         return True
     else:
-        raise ValueError(f"Unknown device {try_device}. Supported devices are: cuda, mps or cpu.")
+        raise ValueError(
+            f"Unknown device {try_device}. Supported devices are: cuda, mps or cpu."
+        )
 
 
 def is_amp_available(device: str):
@@ -219,7 +223,9 @@ def say(text, blocking=False):
     if blocking:
         subprocess.run(cmd, check=True)
     else:
-        subprocess.Popen(cmd, creationflags=subprocess.CREATE_NO_WINDOW if system == "Windows" else 0)
+        subprocess.Popen(
+            cmd, creationflags=subprocess.CREATE_NO_WINDOW if system == "Windows" else 0
+        )
 
 
 def log_say(text, play_sounds, blocking=False):

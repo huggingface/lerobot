@@ -144,7 +144,9 @@ def save_images_from_cameras(
     print("Connecting cameras")
     cameras = []
     for cam_idx in camera_ids:
-        config = OpenCVCameraConfig(camera_index=cam_idx, fps=fps, width=width, height=height, mock=mock)
+        config = OpenCVCameraConfig(
+            camera_index=cam_idx, fps=fps, width=width, height=height, mock=mock
+        )
         camera = OpenCVCamera(config)
         camera.connect()
         print(
@@ -250,7 +252,9 @@ class OpenCVCamera:
                 # Retrieve the camera index from a potentially symlinked path
                 self.camera_index = get_camera_index_from_unix_port(self.port)
             else:
-                raise ValueError(f"Please check the provided camera_index: {self.camera_index}")
+                raise ValueError(
+                    f"Please check the provided camera_index: {self.camera_index}"
+                )
 
         # Store the raw (capture) resolution from the config.
         self.capture_width = config.width
@@ -314,7 +318,11 @@ class OpenCVCamera:
             else cv2.CAP_ANY
         )
 
-        camera_idx = f"/dev/video{self.camera_index}" if platform.system() == "Linux" else self.camera_index
+        camera_idx = (
+            f"/dev/video{self.camera_index}"
+            if platform.system() == "Linux"
+            else self.camera_index
+        )
         # First create a temporary camera trying to access `camera_index`,
         # and verify it is a valid camera by calling `isOpened`.
         tmp_camera = cv2.VideoCapture(camera_idx, backend)

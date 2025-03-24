@@ -25,9 +25,14 @@ import zmq
 
 from lerobot.common.robot_devices.cameras.utils import make_cameras_from_configs
 from lerobot.common.robot_devices.motors.feetech import TorqueMode
-from lerobot.common.robot_devices.motors.utils import MotorsBus, make_motors_buses_from_configs
+from lerobot.common.robot_devices.motors.utils import (
+    MotorsBus,
+    make_motors_buses_from_configs,
+)
 from lerobot.common.robot_devices.robots.configs import LeKiwiRobotConfig
-from lerobot.common.robot_devices.robots.feetech_calibration import run_arm_manual_calibration
+from lerobot.common.robot_devices.robots.feetech_calibration import (
+    run_arm_manual_calibration,
+)
 from lerobot.common.robot_devices.robots.utils import get_arm_id
 from lerobot.common.robot_devices.utils import RobotDeviceNotConnectedError
 
@@ -266,7 +271,9 @@ class MobileManipulator:
                 calibration = json.load(f)
         else:
             print(f"Missing calibration file '{arm_calib_path}'")
-            calibration = run_arm_manual_calibration(arm, self.robot_type, name, arm_type)
+            calibration = run_arm_manual_calibration(
+                arm, self.robot_type, name, arm_type
+            )
             print(f"Calibration is done! Saving calibration file '{arm_calib_path}'")
             arm_calib_path.parent.mkdir(parents=True, exist_ok=True)
             with open(arm_calib_path, "w") as f:
@@ -296,7 +303,9 @@ class MobileManipulator:
                 bus.write("Torque_Enable", 0, motor_id)
 
             # Then filter out wheels
-            arm_only_dict = {k: v for k, v in bus.motors.items() if not k.startswith("wheel_")}
+            arm_only_dict = {
+                k: v for k, v in bus.motors.items() if not k.startswith("wheel_")
+            }
             if not arm_only_dict:
                 continue
 
@@ -324,7 +333,11 @@ class MobileManipulator:
         socks = dict(poller.poll(15))
         if self.video_socket not in socks or socks[self.video_socket] != zmq.POLLIN:
             # No new data arrived → reuse ALL old data
-            return (self.last_frames, self.last_present_speed, self.last_remote_arm_state)
+            return (
+                self.last_frames,
+                self.last_present_speed,
+                self.last_remote_arm_state,
+            )
 
         # Drain all messages, keep only the last
         last_msg = None
@@ -337,7 +350,11 @@ class MobileManipulator:
 
         if not last_msg:
             # No new message → also reuse old
-            return (self.last_frames, self.last_present_speed, self.last_remote_arm_state)
+            return (
+                self.last_frames,
+                self.last_present_speed,
+                self.last_remote_arm_state,
+            )
 
         # Decode only the final message
         try:
@@ -360,7 +377,9 @@ class MobileManipulator:
             if new_arm_state is not None and frames is not None:
                 self.last_frames = frames
 
-                remote_arm_state_tensor = torch.tensor(new_arm_state, dtype=torch.float32)
+                remote_arm_state_tensor = torch.tensor(
+                    new_arm_state, dtype=torch.float32
+                )
                 self.last_remote_arm_state = remote_arm_state_tensor
 
                 present_speed = new_speed
@@ -375,14 +394,21 @@ class MobileManipulator:
         except Exception as e:
             print(f"[DEBUG] Error decoding video message: {e}")
             # If decode fails, fall back to old data
-            return (self.last_frames, self.last_present_speed, self.last_remote_arm_state)
+            return (
+                self.last_frames,
+                self.last_present_speed,
+                self.last_remote_arm_state,
+            )
 
         return frames, present_speed, remote_arm_state_tensor
 
     def _process_present_speed(self, present_speed: dict) -> torch.Tensor:
         state_tensor = torch.zeros(3, dtype=torch.int32)
         if present_speed:
-            decoded = {key: MobileManipulator.raw_to_degps(value) for key, value in present_speed.items()}
+            decoded = {
+                key: MobileManipulator.raw_to_degps(value)
+                for key, value in present_speed.items()
+            }
             if "1" in decoded:
                 state_tensor[0] = decoded["1"]
             if "2" in decoded:
@@ -395,7 +421,9 @@ class MobileManipulator:
         self, record_data: bool = False
     ) -> None | tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
         if not self.is_connected:
-            raise RobotDeviceNotConnectedError("MobileManipulator is not connected. Run `connect()` first.")
+            raise RobotDeviceNotConnectedError(
+                "MobileManipulator is not connected. Run `connect()` first."
+            )
 
         speed_setting = self.speed_levels[self.speed_index]
         xy_speed = speed_setting["xy"]  # e.g. 0.1, 0.25, or 0.4
@@ -461,9 +489,15 @@ class MobileManipulator:
 
         body_state = self.wheel_raw_to_body(present_speed)
 
-        body_state_mm = (body_state[0] * 1000.0, body_state[1] * 1000.0, body_state[2])  # Convert x,y to mm/s
+        body_state_mm = (
+            body_state[0] * 1000.0,
+            body_state[1] * 1000.0,
+            body_state[2],
+        )  # Convert x,y to mm/s
         wheel_state_tensor = torch.tensor(body_state_mm, dtype=torch.float32)
-        combined_state_tensor = torch.cat((remote_arm_state_tensor, wheel_state_tensor), dim=0)
+        combined_state_tensor = torch.cat(
+            (remote_arm_state_tensor, wheel_state_tensor), dim=0
+        )
 
         obs_dict = {"observation.state": combined_state_tensor}
 
@@ -620,7 +654,11 @@ class MobileManipulator:
         # Convert each wheel’s angular speed (deg/s) to a raw integer.
         wheel_raw = [MobileManipulator.degps_to_raw(deg) for deg in wheel_degps]
 
-        return {"left_wheel": wheel_raw[0], "back_wheel": wheel_raw[1], "right_wheel": wheel_raw[2]}
+        return {
+            "left_wheel": wheel_raw[0],
+            "back_wheel": wheel_raw[1],
+            "right_wheel": wheel_raw[2],
+        }
 
     def wheel_raw_to_body(
         self, wheel_raw: dict, wheel_radius: float = 0.05, base_radius: float = 0.125

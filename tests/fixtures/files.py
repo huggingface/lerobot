@@ -59,7 +59,9 @@ def stats_path(stats_factory):
 
 @pytest.fixture(scope="session")
 def episodes_stats_path(episodes_stats_factory):
-    def _create_episodes_stats_jsonl_file(dir: Path, episodes_stats: list[dict] | None = None) -> Path:
+    def _create_episodes_stats_jsonl_file(
+        dir: Path, episodes_stats: list[dict] | None = None
+    ) -> Path:
         if not episodes_stats:
             episodes_stats = episodes_stats_factory()
         fpath = dir / EPISODES_STATS_PATH

@@ -158,7 +158,9 @@ def run_server(
                 400,
             )
         dataset_version = (
-            str(dataset.meta._version) if isinstance(dataset, LeRobotDataset) else dataset.codebase_version
+            str(dataset.meta._version)
+            if isinstance(dataset, LeRobotDataset)
+            else dataset.codebase_version
         )
         match = re.search(r"v(\d+)\.", dataset_version)
         if match:
@@ -166,7 +168,9 @@ def run_server(
             if major_version < 2:
                 return "Make sure to convert your LeRobotDataset to v2 & above."
 
-        episode_data_csv_str, columns, ignored_columns = get_episode_data(dataset, episode_id)
+        episode_data_csv_str, columns, ignored_columns = get_episode_data(
+            dataset, episode_id
+        )
         dataset_info = {
             "repo_id": f"{dataset_namespace}/{dataset_name}",
             "num_samples": dataset.num_frames
@@ -208,7 +212,8 @@ def run_server(
             ]
 
             response = requests.get(
-                f"https://huggingface.co/datasets/{repo_id}/resolve/main/meta/episodes.jsonl", timeout=5
+                f"https://huggingface.co/datasets/{repo_id}/resolve/main/meta/episodes.jsonl",
+                timeout=5,
             )
             response.raise_for_status()
             # Split into lines and parse each line as JSON
@@ -256,7 +261,11 @@ def get_episode_data(dataset: LeRobotDataset | IterableNamespace, episode_index)
     This file will be loaded by Dygraph javascript to plot data in real time."""
     columns = []
 
-    selected_columns = [col for col, ft in dataset.features.items() if ft["dtype"] in ["float32", "int32"]]
+    selected_columns = [
+        col
+        for col, ft in dataset.features.items()
+        if ft["dtype"] in ["float32", "int32"]
+    ]
     selected_columns.remove("timestamp")
 
     ignored_columns = []
@@ -361,7 +370,8 @@ def get_episode_language_instruction(
 
 def get_dataset_info(repo_id: str) -> IterableNamespace:
     response = requests.get(
-        f"https://huggingface.co/datasets/{repo_id}/resolve/main/meta/info.json", timeout=5
+        f"https://huggingface.co/datasets/{repo_id}/resolve/main/meta/info.json",
+        timeout=5,
     )
     response.raise_for_status()  # Raises an HTTPError for bad responses
     dataset_info = response.json()
