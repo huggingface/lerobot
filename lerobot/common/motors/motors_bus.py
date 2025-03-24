@@ -451,14 +451,12 @@ class MotorsBus(abc.ABC):
 
         if not self._is_comm_success(comm):
             if raise_on_error:
-                logger.error(self.packet_handler.getRxPacketError(comm))
-                raise ConnectionError
+                raise ConnectionError(self.packet_handler.getRxPacketError(comm))
             else:
                 return
         if self._is_error(error):
             if raise_on_error:
-                logger.error(self.packet_handler.getTxRxResult(comm))
-                raise ConnectionError
+                raise RuntimeError(self.packet_handler.getTxRxResult(comm))
             else:
                 return
 

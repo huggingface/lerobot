@@ -203,7 +203,7 @@ class FeetechMotorsBus(MotorsBus):
 
         if not self._is_comm_success(comm):
             if raise_on_error:
-                raise ConnectionError
+                raise ConnectionError(self.packet_handler.getRxPacketError(comm))
 
             return ids_status if ids_status else None
 

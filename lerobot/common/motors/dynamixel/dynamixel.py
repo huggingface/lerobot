@@ -148,8 +148,7 @@ class DynamixelMotorsBus(MotorsBus):
 
         if not self._is_comm_success(comm):
             if raise_on_error:
-                logger.error(self.packet_handler.getRxPacketError(comm))
-                raise ConnectionError
+                raise ConnectionError(self.packet_handler.getRxPacketError(comm))
 
             return data_list if data_list else None
 
