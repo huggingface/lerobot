@@ -147,8 +147,7 @@ class KochRobot(Robot):
         self.is_connected = True
 
     def calibrate(self) -> None:
-        # TODO(pepijn): Do calibration here by iterating over each motor in self.arm.motors and doing something like motorbus.calibrate() that gets calibration offset for that motor
-        # Then here modify the json to store calibration values etc per motor in dict{} and modify set calibration -> then also change it for all other robots, moss etc..
+        # TODO(pepijn): Do calibration in same way as so100
         """After calibration all motors function in human interpretable ranges.
         Rotations are expressed in degrees in nominal range of [-180, 180],
         and linear motions (like gripper of Aloha) in nominal range of [0, 100].

@@ -375,6 +375,25 @@ class MotorsBus(abc.ABC):
             if self.port_handler.getBaudRate() != baudrate:
                 raise OSError("Failed to write bus baud rate.")
 
+    def find_offset(self):
+        input("Move robot to the middle of its range of motion and press ENTER....")
+
+        for _, name in enumerate(self.motor_names):
+            self.write("Lock", 0)
+            self.write("Offset", 0, motor_names=[name])
+            self.write("Min_Angle_Limit", 0, motor_names=[name])
+            self.write("Max_Angle_Limit", 4095, motor_names=[name])
+            self.write("Lock", 1)
+
+            middle = self.read("Present_Position", motor_names=[name])
+            zero_offset = (
+                middle - 2047
+            )  # The zero_offset is set so that the original middle reading is centered at 2047.
+
+            self.set_offset(zero_offset, name)
+
+        # TODO(pepijn): return offsets for storing in calib file
+
     def find_min_max(self):
         print("Move all joints sequentially through their entire ranges of motion.")
         print("Recording positions. Press ENTER to stop...")
@@ -396,7 +415,7 @@ class MotorsBus(abc.ABC):
         # Convert recorded_positions (list of arrays) to a 2D numpy array: shape (num_timesteps, num_motors)
         all_positions = np.array(recorded_positions, dtype=np.float32)
 
-        # For each motor, find min, maxz
+        # For each motor, find min, max
         for i, name in enumerate(self.motor_names):
             motor_column = all_positions[:, i]
             raw_range = motor_column.max() - motor_column.min()
@@ -412,25 +431,6 @@ class MotorsBus(abc.ABC):
             self.set_min_max(physical_min, physical_max, name)
 
         # TODO(pepijn): return min, max for storing in calib file
-
-    def find_offset(self):
-        input("Move robot to the middle of its range of motion and press ENTER....")
-
-        for _, name in enumerate(self.motor_names):
-            self.write("Lock", 0)
-            self.write("Offset", 0, motor_names=[name])
-            self.write("Min_Angle_Limit", 0, motor_names=[name])
-            self.write("Max_Angle_Limit", 4095, motor_names=[name])
-            self.write("Lock", 1)
-
-            middle = self.read("Present_Position", motor_names=[name])
-            zero_offset = (
-                middle - 2047
-            )  # The zero_offset is set so that the original middle reading is centered at 2047.
-
-            self.set_offset(zero_offset, name)
-
-        # TODO(pepijn): return offsets for storing in calib file
 
     @property
     def are_motors_configured(self) -> bool:
