@@ -379,7 +379,6 @@ class MotorsBus(abc.ABC):
         print("Move all joints sequentially through their entire ranges of motion.")
         print("Recording positions. Press ENTER to stop...")
 
-        # This will be a list of length N, each an array of motor positions [pos1, pos2, ...]
         recorded_positions = []
 
         while True:
@@ -410,10 +409,9 @@ class MotorsBus(abc.ABC):
                 physical_min = int(motor_column.min())
                 physical_max = int(motor_column.max())
 
-            self.write("Lock", 0)
-            self.write("Min_Angle_Limit", physical_min, motor_names=[name])
-            self.write("Max_Angle_Limit", physical_max, motor_names=[name])
-            self.write("Lock", 1)
+            self.set_min_max(physical_min, physical_max, name)
+
+        # TODO(pepijn): return min, max for storing in calib file
 
     def find_offset(self):
         input("Move robot to the middle of its range of motion and press ENTER....")
@@ -430,30 +428,9 @@ class MotorsBus(abc.ABC):
                 middle - 2047
             )  # The zero_offset is set so that the original middle reading is centered at 2047.
 
-            self.write("Lock", 0)
+            self.set_offset(zero_offset, name)
 
-            zero_offset = int(zero_offset)
-
-            # Clamp to [-2047..+2047]
-            if zero_offset > 2047:
-                zero_offset = 2047
-                print(
-                    f"Warning: '{zero_offset}' is getting clamped because its larger then 2047; This should not happen!"
-                )
-            elif zero_offset < -2047:
-                zero_offset = -2047
-                print(
-                    f"Warning: '{zero_offset}' is getting clamped because its smaller then -2047; This should not happen!"
-                )
-
-            direction_bit = 1 if zero_offset < 0 else 0  # Determine the direction (sign) bit and magnitude
-            magnitude = abs(zero_offset)
-            servo_offset = (
-                direction_bit << 11
-            ) | magnitude  # Combine sign bit (bit 11) with the magnitude (bits 0..10)
-
-            self.write("Offset", servo_offset, motor_names=[name])
-            self.write("Lock", 1)
+        # TODO(pepijn): return offsets for storing in calib file
 
     @property
     def are_motors_configured(self) -> bool:
@@ -473,6 +450,43 @@ class MotorsBus(abc.ABC):
             calibration = json.load(f)
 
         self.calibration = {int(idx): val for idx, val in calibration.items()}
+
+        # TODO(pepijn): For every motor set calibration offset from file
+        # for _, name in enumerate(self.motor_names):
+        # self.set_offset()
+        # self.set_min_max()
+
+    def set_offset(self, zero_offset: int, name: str):
+        self.write("Lock", 0)
+
+        zero_offset = int(zero_offset)
+
+        # Clamp to [-2047..+2047]
+        if zero_offset > 2047:
+            zero_offset = 2047
+            print(
+                f"Warning: '{zero_offset}' is getting clamped because its larger then 2047; This should not happen!"
+            )
+        elif zero_offset < -2047:
+            zero_offset = -2047
+            print(
+                f"Warning: '{zero_offset}' is getting clamped because its smaller then -2047; This should not happen!"
+            )
+
+        direction_bit = 1 if zero_offset < 0 else 0  # Determine the direction (sign) bit and magnitude
+        magnitude = abs(zero_offset)
+        servo_offset = (
+            direction_bit << 11
+        ) | magnitude  # Combine sign bit (bit 11) with the magnitude (bits 0..10)
+
+        self.write("Offset", servo_offset, motor_names=[name])
+        self.write("Lock", 1)
+
+    def set_min_max(self, min: int, max: int, name: str):
+        self.write("Lock", 0)
+        self.write("Min_Angle_Limit", min, motor_names=[name])
+        self.write("Max_Angle_Limit", max, motor_names=[name])
+        self.write("Lock", 1)
 
     @abc.abstractmethod
     def _calibrate_values(self, ids_values: dict[int, int]) -> dict[int, float]:

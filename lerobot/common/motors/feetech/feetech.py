@@ -15,8 +15,6 @@
 from copy import deepcopy
 from enum import Enum
 
-import numpy as np
-
 from ..motors_bus import Motor, MotorsBus
 from .tables import (
     CALIBRATION_REQUIRED,
@@ -78,10 +76,6 @@ class FeetechMotorsBus(MotorsBus):
         # 'Return_Delay' address). We ensure this is reduced to the minimum of 2µs (value of 0).
         for id_ in self.ids:
             self.write("Return_Delay", id_, 0)
-
-    def apply_calibration(self, values: np.ndarray | list, motor_names: list[str] | None):
-        if motor_names is None:
-            motor_names = self.motor_names
 
     def _calibrate_values(self, ids_values: dict[int, int]) -> dict[int, float]:
         # TODO

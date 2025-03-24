@@ -141,6 +141,14 @@ class SO100Robot(Robot):
         self.arm.write("Torque_Enable", TorqueMode.DISABLED.value)
         self.arm.find_offset()
         self.arm.find_min_max()
+        # TODO(pepijn): store calibration in json (returned values from find_offset and find_min_max
+
+    def set_calibration(self) -> None:
+        if not self.calibration_fpath.exists():
+            logging.error("Calibration file not found. Please run calibration first")
+            raise FileNotFoundError(self.calibration_fpath)
+
+        self.arm.set_calibration(self.calibration_fpath)
 
     def get_observation(self) -> dict[str, np.ndarray]:
         """The returned observations do not have a batch dimension."""
