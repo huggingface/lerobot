@@ -480,7 +480,7 @@ def test_forward_kinematics(robot, fps=10):
         obs = robot.capture_observation()
         joint_positions = obs["observation.state"].cpu().numpy()
         ee_pos = RobotKinematics.fk_gripper_tip(joint_positions)
-        logging.info(f"EE Position: {ee_pos[:3,3]}")
+        logging.info(f"EE Position: {ee_pos[:3, 3]}")
         busy_wait(1 / fps - (time.perf_counter() - loop_start_time))
 
 
@@ -519,7 +519,7 @@ def teleoperate_inverse_kinematics_with_leader(robot, fps=10):
             joint_positions, desired_ee_pos, position_only=True, fk_func=fk_func
         )
         robot.send_action(torch.from_numpy(target_joint_state))
-        logging.info(f"Leader EE: {leader_ee[:3,3]}, Follower EE: {ee_pos[:3,3]}")
+        logging.info(f"Leader EE: {leader_ee[:3, 3]}, Follower EE: {ee_pos[:3, 3]}")
         busy_wait(1 / fps - (time.perf_counter() - loop_start_time))
 
 
@@ -574,9 +574,9 @@ def teleoperate_delta_inverse_kinematics_with_leader(robot, fps=10):
 
             # Logging
             logging.info(
-                f"Current EE: {current_ee_pos[:3,3]}, Desired EE: {desired_ee_pos[:3,3]}"
+                f"Current EE: {current_ee_pos[:3, 3]}, Desired EE: {desired_ee_pos[:3, 3]}"
             )
-            logging.info(f"Delta EE: {ee_delta[:3,3]}")
+            logging.info(f"Delta EE: {ee_delta[:3, 3]}")
 
         busy_wait(1 / fps - (time.perf_counter() - loop_start_time))
 

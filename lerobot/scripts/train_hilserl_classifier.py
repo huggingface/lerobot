@@ -426,7 +426,7 @@ def train(
 
     # Training loop with validation and checkpointing
     for epoch in range(cfg.training.num_epochs):
-        logging.info(f"\nEpoch {epoch+1}/{cfg.training.num_epochs}")
+        logging.info(f"\nEpoch {epoch + 1}/{cfg.training.num_epochs}")
 
         train_epoch(
             model,
@@ -470,7 +470,7 @@ def train(
                 policy=model,
                 optimizer=optimizer,
                 scheduler=None,
-                identifier=f"{epoch+1:06d}",
+                identifier=f"{epoch + 1:06d}",
             )
 
         step += len(train_loader)

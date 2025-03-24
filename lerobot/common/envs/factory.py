@@ -32,7 +32,9 @@ def make_env_config(env_type: str, **kwargs) -> EnvConfig:
         raise ValueError(f"Policy type '{env_type}' is not available.")
 
 
-def make_env(cfg: EnvConfig, n_envs: int = 1, use_async_envs: bool = False) -> gym.vector.VectorEnv | None:
+def make_env(
+    cfg: EnvConfig, n_envs: int = 1, use_async_envs: bool = False
+) -> gym.vector.VectorEnv | None:
     """Makes a gym vector environment according to the config.
 
     Args:
@@ -56,7 +58,9 @@ def make_env(cfg: EnvConfig, n_envs: int = 1, use_async_envs: bool = False) -> g
     try:
         importlib.import_module(package_name)
     except ModuleNotFoundError as e:
-        print(f"{package_name} is not installed. Please install it with `pip install 'lerobot[{cfg.type}]'`")
+        print(
+            f"{package_name} is not installed. Please install it with `pip install 'lerobot[{cfg.type}]'`"
+        )
         raise e
 
     gym_handle = f"{package_name}/{cfg.task}"
@@ -64,7 +68,10 @@ def make_env(cfg: EnvConfig, n_envs: int = 1, use_async_envs: bool = False) -> g
     # batched version of the env that returns an observation of shape (b, c)
     env_cls = gym.vector.AsyncVectorEnv if use_async_envs else gym.vector.SyncVectorEnv
     env = env_cls(
-        [lambda: gym.make(gym_handle, disable_env_checker=True, **cfg.gym_kwargs) for _ in range(n_envs)]
+        [
+            lambda: gym.make(gym_handle, disable_env_checker=True, **cfg.gym_kwargs)
+            for _ in range(n_envs)
+        ]
     )
 
     return env

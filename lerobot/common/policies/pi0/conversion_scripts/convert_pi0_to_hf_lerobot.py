@@ -61,7 +61,11 @@ from lerobot.common.policies.pi0.conversion_scripts.conversion_utils import (
 )
 from lerobot.common.policies.pi0.modeling_pi0 import PI0Policy
 
-PRECISIONS = {"bfloat16": torch.bfloat16, "float32": torch.float32, "float16": torch.float16}
+PRECISIONS = {
+    "bfloat16": torch.bfloat16,
+    "float32": torch.float32,
+    "float16": torch.float16,
+}
 
 
 def slice_paligemma_state_dict(state_dict, config):
@@ -318,7 +322,9 @@ def update_keys_with_prefix(d: dict, prefix: str) -> dict:
     return {f"{prefix}{key}": value for key, value in d.items()}
 
 
-def convert_pi0_checkpoint(checkpoint_dir: str, precision: str, tokenizer_id: str, output_path: str):
+def convert_pi0_checkpoint(
+    checkpoint_dir: str, precision: str, tokenizer_id: str, output_path: str
+):
     # Break down orbax ckpts - they are in OCDBT
     initial_params = slice_initial_orbax_checkpoint(checkpoint_dir=checkpoint_dir)
     # process projection params
@@ -378,7 +384,9 @@ def convert_pi0_checkpoint(checkpoint_dir: str, precision: str, tokenizer_id: st
     # gemma_config=gemma_config, paligemma_config=paligemma_config)
     pi0_model = PI0Policy(pi0_config)
 
-    paligemma_params = update_keys_with_prefix(paligemma_params, "model.paligemma_with_expert.")
+    paligemma_params = update_keys_with_prefix(
+        paligemma_params, "model.paligemma_with_expert."
+    )
     gemma_params = update_keys_with_prefix(gemma_params, "model.paligemma_with_expert.")
     projection_params = update_keys_with_prefix(projection_params, "model.")
 

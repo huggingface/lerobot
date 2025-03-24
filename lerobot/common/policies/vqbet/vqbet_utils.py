@@ -290,10 +290,10 @@ class GPT(nn.Module):
         param_dict = dict(self.named_parameters())
         inter_params = decay & no_decay
         union_params = decay | no_decay
-        assert (
-            len(inter_params) == 0
-        ), "parameters {} made it into both decay/no_decay sets!".format(
-            str(inter_params)
+        assert len(inter_params) == 0, (
+            "parameters {} made it into both decay/no_decay sets!".format(
+                str(inter_params)
+            )
         )
         assert len(param_dict.keys() - union_params) == 0, (
             "parameters {} were not separated into either decay/no_decay set!".format(
@@ -664,14 +664,14 @@ class VectorQuantize(nn.Module):
         self.orthogonal_reg_active_codes_only = orthogonal_reg_active_codes_only
         self.orthogonal_reg_max_codes = orthogonal_reg_max_codes
 
-        assert not (
-            ema_update and learnable_codebook
-        ), "learnable codebook not compatible with EMA update"
+        assert not (ema_update and learnable_codebook), (
+            "learnable codebook not compatible with EMA update"
+        )
 
         assert 0 <= sync_update_v <= 1.0
-        assert not (
-            sync_update_v > 0.0 and not learnable_codebook
-        ), "learnable codebook must be turned on"
+        assert not (sync_update_v > 0.0 and not learnable_codebook), (
+            "learnable codebook must be turned on"
+        )
 
         self.sync_update_v = sync_update_v
 

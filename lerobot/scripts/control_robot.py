@@ -161,7 +161,6 @@ from lerobot.common.robot_devices.control_utils import (
     log_control_info,
     record_episode,
     reset_environment,
-    reset_follower_position,
     sanity_check_dataset_name,
     sanity_check_dataset_robot_compatibility,
     stop_recording,
@@ -256,7 +255,8 @@ def record(
         if len(robot.cameras) > 0:
             dataset.start_image_writer(
                 num_processes=cfg.num_image_writer_processes,
-                num_threads=cfg.num_image_writer_threads_per_camera * len(robot.cameras),
+                num_threads=cfg.num_image_writer_threads_per_camera
+                * len(robot.cameras),
             )
         sanity_check_dataset_robot_compatibility(dataset, robot, cfg.fps, cfg.video)
     else:
@@ -269,14 +269,19 @@ def record(
             robot=robot,
             use_videos=cfg.video,
             image_writer_processes=cfg.num_image_writer_processes,
-            image_writer_threads=cfg.num_image_writer_threads_per_camera * len(robot.cameras),
+            image_writer_threads=cfg.num_image_writer_threads_per_camera
+            * len(robot.cameras),
         )
 
     # Load pretrained policy
-    policy = None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
+    policy = (
+        None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
+    )
 
     # Load pretrained policy
-    policy = None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
+    policy = (
+        None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
+    )
 
     if not robot.is_connected:
         robot.connect()
@@ -291,7 +296,14 @@ def record(
     # 3. place the cameras windows on screen
     enable_teleoperation = policy is None
     log_say("Warmup record", cfg.play_sounds)
-    warmup_record(robot, events, enable_teleoperation, cfg.warmup_time_s, cfg.display_data, cfg.fps)
+    warmup_record(
+        robot,
+        events,
+        enable_teleoperation,
+        cfg.warmup_time_s,
+        cfg.display_data,
+        cfg.fps,
+    )
 
     if has_method(robot, "teleop_safety_stop"):
         robot.teleop_safety_stop()
@@ -376,7 +388,9 @@ def replay(
         log_control_info(robot, dt_s, fps=cfg.fps)
 
 
-def _init_rerun(control_config: ControlConfig, session_name: str = "lerobot_control_loop") -> None:
+def _init_rerun(
+    control_config: ControlConfig, session_name: str = "lerobot_control_loop"
+) -> None:
     """Initializes the Rerun SDK for visualizing the control loop.
 
     Args:
@@ -422,17 +436,23 @@ def control_robot(cfg: ControlPipelineConfig):
     if isinstance(cfg.control, CalibrateControlConfig):
         calibrate(robot, cfg.control)
     elif isinstance(cfg.control, TeleoperateControlConfig):
-        _init_rerun(control_config=cfg.control, session_name="lerobot_control_loop_teleop")
+        _init_rerun(
+            control_config=cfg.control, session_name="lerobot_control_loop_teleop"
+        )
         teleoperate(robot, cfg.control)
     elif isinstance(cfg.control, RecordControlConfig):
-        _init_rerun(control_config=cfg.control, session_name="lerobot_control_loop_record")
+        _init_rerun(
+            control_config=cfg.control, session_name="lerobot_control_loop_record"
+        )
         record(robot, cfg.control)
     elif isinstance(cfg.control, ReplayControlConfig):
         replay(robot, cfg.control)
     elif isinstance(cfg.control, RemoteRobotConfig):
         from lerobot.common.robot_devices.robots.lekiwi_remote import run_lekiwi
 
-        _init_rerun(control_config=cfg.control, session_name="lerobot_control_loop_remote")
+        _init_rerun(
+            control_config=cfg.control, session_name="lerobot_control_loop_remote"
+        )
         run_lekiwi(cfg.robot)
 
     if robot.is_connected:

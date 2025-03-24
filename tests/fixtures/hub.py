@@ -99,7 +99,13 @@ def mock_snapshot_download_factory(
 
             # List all possible files
             all_files = []
-            meta_files = [INFO_PATH, STATS_PATH, EPISODES_STATS_PATH, TASKS_PATH, EPISODES_PATH]
+            meta_files = [
+                INFO_PATH,
+                STATS_PATH,
+                EPISODES_STATS_PATH,
+                TASKS_PATH,
+                EPISODES_PATH,
+            ]
             all_files.extend(meta_files)
 
             data_files = []

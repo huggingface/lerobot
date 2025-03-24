@@ -69,7 +69,11 @@ from lerobot.common.utils.utils import get_safe_dtype
 
 
 def create_sinusoidal_pos_embedding(
-    time: torch.tensor, dimension: int, min_period: float, max_period: float, device="cpu"
+    time: torch.tensor,
+    dimension: int,
+    min_period: float,
+    max_period: float,
+    device="cpu",
 ) -> Tensor:
     """Computes sine-cosine positional embedding vectors for scalar positions."""
     if dimension % 2 != 0:
@@ -189,7 +193,9 @@ def aloha_gripper_to_angular(value):
 
     # This is the inverse of the angular to linear transformation inside the Interbotix code.
     def linear_to_radian(linear_position, arm_length, horn_radius):
-        value = (horn_radius**2 + linear_position**2 - arm_length**2) / (2 * horn_radius * linear_position)
+        value = (horn_radius**2 + linear_position**2 - arm_length**2) / (
+            2 * horn_radius * linear_position
+        )
         return safe_arcsin(value)
 
     # The constants are taken from the Interbotix code.
@@ -240,7 +246,9 @@ class PI0Policy(PreTrainedPolicy):
         super().__init__(config)
         config.validate_features()
         self.config = config
-        self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
+        self.normalize_inputs = Normalize(
+            config.input_features, config.normalization_mapping, dataset_stats
+        )
         self.normalize_targets = Normalize(
             config.output_features, config.normalization_mapping, dataset_stats
         )
@@ -248,7 +256,9 @@ class PI0Policy(PreTrainedPolicy):
             config.output_features, config.normalization_mapping, dataset_stats
         )
 
-        self.language_tokenizer = AutoTokenizer.from_pretrained("google/paligemma-3b-pt-224")
+        self.language_tokenizer = AutoTokenizer.from_pretrained(
+            "google/paligemma-3b-pt-224"
+        )
         self.model = PI0FlowMatching(config)
 
         self.reset()
@@ -261,7 +271,9 @@ class PI0Policy(PreTrainedPolicy):
         return self.parameters()
 
     @torch.no_grad
-    def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
+    def select_action(
+        self, batch: dict[str, Tensor], noise: Tensor | None = None
+    ) -> Tensor:
         """Select a single action given environment observations.
 
         This method wraps `select_actions` in order to return one action at a time for execution in the
@@ -300,7 +312,9 @@ class PI0Policy(PreTrainedPolicy):
             self._action_queue.extend(actions.transpose(0, 1))
         return self._action_queue.popleft()
 
-    def forward(self, batch: dict[str, Tensor], noise=None, time=None) -> tuple[Tensor, dict[str, Tensor]]:
+    def forward(
+        self, batch: dict[str, Tensor], noise=None, time=None
+    ) -> tuple[Tensor, dict[str, Tensor]]:
         """Do a full training forward pass to compute the loss"""
         if self.config.adapt_to_pi_aloha:
             batch[OBS_ROBOT] = self._pi_aloha_decode_state(batch[OBS_ROBOT])
@@ -316,7 +330,9 @@ class PI0Policy(PreTrainedPolicy):
         actions_is_pad = batch.get("action_is_pad")
 
         loss_dict = {}
-        losses = self.model.forward(images, img_masks, lang_tokens, lang_masks, state, actions, noise, time)
+        losses = self.model.forward(
+            images, img_masks, lang_tokens, lang_masks, state, actions, noise, time
+        )
         loss_dict["losses_after_forward"] = losses.clone()
 
         if actions_is_pad is not None:
@@ -343,7 +359,9 @@ class PI0Policy(PreTrainedPolicy):
         img_masks = []
 
         present_img_keys = [key for key in self.config.image_features if key in batch]
-        missing_img_keys = [key for key in self.config.image_features if key not in batch]
+        missing_img_keys = [
+            key for key in self.config.image_features if key not in batch
+        ]
 
         if len(present_img_keys) == 0:
             raise ValueError(
@@ -355,7 +373,9 @@ class PI0Policy(PreTrainedPolicy):
             img = batch[key]
 
             if self.config.resize_imgs_with_padding is not None:
-                img = resize_with_pad(img, *self.config.resize_imgs_with_padding, pad_value=0)
+                img = resize_with_pad(
+                    img, *self.config.resize_imgs_with_padding, pad_value=0
+                )
 
             # Normalize from range [0,1] to [-1,1] as expacted by siglip
             img = img * 2.0 - 1.0
@@ -394,7 +414,9 @@ class PI0Policy(PreTrainedPolicy):
             return_tensors="pt",
         )
         lang_tokens = tokenized_prompt["input_ids"].to(device=device)
-        lang_masks = tokenized_prompt["attention_mask"].to(device=device, dtype=torch.bool)
+        lang_masks = tokenized_prompt["attention_mask"].to(
+            device=device, dtype=torch.bool
+        )
 
         return lang_tokens, lang_masks
 
@@ -413,7 +435,9 @@ class PI0Policy(PreTrainedPolicy):
             actions[:, :, motor_idx] *= -1
         # Reverse the gripper transformation that is being applied by the Aloha runtime.
         for motor_idx in [6, 13]:
-            actions[:, :, motor_idx] = aloha_gripper_from_angular(actions[:, :, motor_idx])
+            actions[:, :, motor_idx] = aloha_gripper_from_angular(
+                actions[:, :, motor_idx]
+            )
         return actions
 
     def _pi_aloha_encode_actions_inv(self, actions):
@@ -422,7 +446,9 @@ class PI0Policy(PreTrainedPolicy):
             actions[:, :, motor_idx] *= -1
         # Reverse the gripper transformation that is being applied by the Aloha runtime.
         for motor_idx in [6, 13]:
-            actions[:, :, motor_idx] = aloha_gripper_from_angular_inv(actions[:, :, motor_idx])
+            actions[:, :, motor_idx] = aloha_gripper_from_angular_inv(
+                actions[:, :, motor_idx]
+            )
         return actions
 
     def prepare_state(self, batch):
@@ -472,15 +498,25 @@ class PI0FlowMatching(nn.Module):
             train_expert_only=self.config.train_expert_only,
             attention_implementation=self.config.attention_implementation,
         )
-        self.paligemma_with_expert = PaliGemmaWithExpertModel(paligemma_with_export_config)
+        self.paligemma_with_expert = PaliGemmaWithExpertModel(
+            paligemma_with_export_config
+        )
 
         # Projections are float32
         self.state_proj = nn.Linear(self.config.max_state_dim, self.config.proj_width)
-        self.action_in_proj = nn.Linear(self.config.max_action_dim, self.config.proj_width)
-        self.action_out_proj = nn.Linear(self.config.proj_width, self.config.max_action_dim)
+        self.action_in_proj = nn.Linear(
+            self.config.max_action_dim, self.config.proj_width
+        )
+        self.action_out_proj = nn.Linear(
+            self.config.proj_width, self.config.max_action_dim
+        )
 
-        self.action_time_mlp_in = nn.Linear(self.config.proj_width * 2, self.config.proj_width)
-        self.action_time_mlp_out = nn.Linear(self.config.proj_width, self.config.proj_width)
+        self.action_time_mlp_in = nn.Linear(
+            self.config.proj_width * 2, self.config.proj_width
+        )
+        self.action_time_mlp_out = nn.Linear(
+            self.config.proj_width, self.config.proj_width
+        )
 
         self.set_requires_grad()
 
@@ -524,7 +560,9 @@ class PI0FlowMatching(nn.Module):
 
             # Normalize image embeddings
             img_emb_dim = img_emb.shape[-1]
-            img_emb = img_emb * torch.tensor(img_emb_dim**0.5, dtype=img_emb.dtype, device=img_emb.device)
+            img_emb = img_emb * torch.tensor(
+                img_emb_dim**0.5, dtype=img_emb.dtype, device=img_emb.device
+            )
 
             bsize, num_img_embs = img_emb.shape[:2]
             img_mask = img_mask[:, None].expand(bsize, num_img_embs)
@@ -577,7 +615,11 @@ class PI0FlowMatching(nn.Module):
 
         # Embed timestep using sine-cosine positional encoding with sensitivity in the range [0, 1]
         time_emb = create_sinusoidal_pos_embedding(
-            timestep, self.config.proj_width, min_period=4e-3, max_period=4.0, device=device
+            timestep,
+            self.config.proj_width,
+            min_period=4e-3,
+            max_period=4.0,
+            device=device,
         )
         time_emb = time_emb.type(dtype=dtype)
 
@@ -595,7 +637,9 @@ class PI0FlowMatching(nn.Module):
         embs.append(action_time_emb)
 
         bsize, action_time_dim = action_time_emb.shape[:2]
-        action_time_mask = torch.ones(bsize, action_time_dim, dtype=torch.bool, device=device)
+        action_time_mask = torch.ones(
+            bsize, action_time_dim, dtype=torch.bool, device=device
+        )
         pad_masks.append(action_time_mask)
 
         # Set attention masks so that image, language and state inputs do not attend to action tokens
@@ -609,7 +653,15 @@ class PI0FlowMatching(nn.Module):
         return embs, pad_masks, att_masks
 
     def forward(
-        self, images, img_masks, lang_tokens, lang_masks, state, actions, noise=None, time=None
+        self,
+        images,
+        img_masks,
+        lang_tokens,
+        lang_masks,
+        state,
+        actions,
+        noise=None,
+        time=None,
     ) -> Tensor:
         """Do a full training forward pass and compute the loss (batch_size x num_steps x num_motors)"""
         if noise is None:
@@ -625,7 +677,9 @@ class PI0FlowMatching(nn.Module):
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
             images, img_masks, lang_tokens, lang_masks
         )
-        suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(state, x_t, time)
+        suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(
+            state, x_t, time
+        )
 
         pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
         att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
@@ -649,13 +703,19 @@ class PI0FlowMatching(nn.Module):
         losses = F.mse_loss(u_t, v_t, reduction="none")
         return losses
 
-    def sample_actions(self, images, img_masks, lang_tokens, lang_masks, state, noise=None) -> Tensor:
+    def sample_actions(
+        self, images, img_masks, lang_tokens, lang_masks, state, noise=None
+    ) -> Tensor:
         """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
         bsize = state.shape[0]
         device = state.device
 
         if noise is None:
-            actions_shape = (bsize, self.config.n_action_steps, self.config.max_action_dim)
+            actions_shape = (
+                bsize,
+                self.config.n_action_steps,
+                self.config.max_action_dim,
+            )
             noise = self.sample_noise(actions_shape, device)
 
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
@@ -703,12 +763,16 @@ class PI0FlowMatching(nn.Module):
         timestep,
     ):
         """Apply one denoising step of the noise `x_t` at a given timestep."""
-        suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(state, x_t, timestep)
+        suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(
+            state, x_t, timestep
+        )
 
         suffix_len = suffix_pad_masks.shape[1]
         batch_size = prefix_pad_masks.shape[0]
         prefix_len = prefix_pad_masks.shape[1]
-        prefix_pad_2d_masks = prefix_pad_masks[:, None, :].expand(batch_size, suffix_len, prefix_len)
+        prefix_pad_2d_masks = prefix_pad_masks[:, None, :].expand(
+            batch_size, suffix_len, prefix_len
+        )
 
         suffix_att_2d_masks = make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
 

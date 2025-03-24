@@ -179,7 +179,9 @@ def test_record_and_replay_and_policy(tmp_path, request, robot_type, mock):
     assert dataset.meta.total_episodes == 2
     assert len(dataset) == 2
 
-    replay_cfg = ReplayControlConfig(episode=0, fps=1, root=root, repo_id=repo_id, play_sounds=False)
+    replay_cfg = ReplayControlConfig(
+        episode=0, fps=1, root=root, repo_id=repo_id, play_sounds=False
+    )
     replay(robot, replay_cfg)
 
     policy_cfg = ACTConfig()
@@ -334,12 +336,12 @@ def test_record_with_event_rerecord_episode(tmp_path, request, robot_type, mock)
         )
         dataset = record(robot, rec_cfg)
 
-        assert not mock_events[
-            "rerecord_episode"
-        ], "`rerecord_episode` wasn't properly reset to False"
-        assert not mock_events[
-            "exit_early"
-        ], "`exit_early` wasn't properly reset to False"
+        assert not mock_events["rerecord_episode"], (
+            "`rerecord_episode` wasn't properly reset to False"
+        )
+        assert not mock_events["exit_early"], (
+            "`exit_early` wasn't properly reset to False"
+        )
         assert len(dataset) == 1, "`dataset` should contain only 1 frame"
 
 
@@ -389,7 +391,9 @@ def test_record_with_event_exit_early(tmp_path, request, robot_type, mock):
 
         dataset = record(robot, rec_cfg)
 
-        assert not mock_events["exit_early"], "`exit_early` wasn't properly reset to False"
+        assert not mock_events["exit_early"], (
+            "`exit_early` wasn't properly reset to False"
+        )
         assert len(dataset) == 1, "`dataset` should contain only 1 frame"
 
 
@@ -398,7 +402,9 @@ def test_record_with_event_exit_early(tmp_path, request, robot_type, mock):
     [("koch", True, 0), ("koch", True, 1)],
 )
 @require_robot
-def test_record_with_event_stop_recording(tmp_path, request, robot_type, mock, num_image_writer_processes):
+def test_record_with_event_stop_recording(
+    tmp_path, request, robot_type, mock, num_image_writer_processes
+):
     robot_kwargs = {"robot_type": robot_type, "mock": mock}
 
     if mock:
@@ -444,5 +450,7 @@ def test_record_with_event_stop_recording(tmp_path, request, robot_type, mock, n
 
         dataset = record(robot, rec_cfg)
 
-        assert not mock_events["exit_early"], "`exit_early` wasn't properly reset to False"
+        assert not mock_events["exit_early"], (
+            "`exit_early` wasn't properly reset to False"
+        )
         assert len(dataset) == 1, "`dataset` should contain only 1 frame"

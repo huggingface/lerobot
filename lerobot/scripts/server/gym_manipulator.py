@@ -1087,9 +1087,9 @@ class GamepadControlWrapper(gym.Wrapper):
 class ActionScaleWrapper(gym.ActionWrapper):
     def __init__(self, env, ee_action_space_params=None):
         super().__init__(env)
-        assert (
-            ee_action_space_params is not None
-        ), "TODO: method implemented for ee action space only so far"
+        assert ee_action_space_params is not None, (
+            "TODO: method implemented for ee action space only so far"
+        )
         self.scale_vector = np.array(
             [
                 [
@@ -1546,4 +1546,4 @@ if __name__ == "__main__":
         busy_wait(1 / args.fps - dt_s)
 
     logging.info(f"Success after 20 steps {sucesses}")
-    logging.info(f"success rate {sum(sucesses)/ len(sucesses)}")
+    logging.info(f"success rate {sum(sucesses) / len(sucesses)}")

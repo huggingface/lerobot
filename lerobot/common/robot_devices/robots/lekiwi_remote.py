@@ -42,7 +42,9 @@ def run_camera_capture(cameras, images_lock, latest_images_dict, stop_event):
         local_dict = {}
         for name, cam in cameras.items():
             frame = cam.async_read()
-            ret, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
+            ret, buffer = cv2.imencode(
+                ".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 90]
+            )
             if ret:
                 local_dict[name] = base64.b64encode(buffer).decode("utf-8")
             else:
@@ -61,7 +63,9 @@ def calibrate_follower_arm(motors_bus, calib_dir_str):
     calib_dir.mkdir(parents=True, exist_ok=True)
     calib_file = calib_dir / "main_follower.json"
     try:
-        from lerobot.common.robot_devices.robots.feetech_calibration import run_arm_manual_calibration
+        from lerobot.common.robot_devices.robots.feetech_calibration import (
+            run_arm_manual_calibration,
+        )
     except ImportError:
         print("[WARNING] Calibration function not available. Skipping calibration.")
         return
@@ -72,7 +76,9 @@ def calibrate_follower_arm(motors_bus, calib_dir_str):
         print(f"[INFO] Loaded calibration from {calib_file}")
     else:
         print("[INFO] Calibration file not found. Running manual calibration...")
-        calibration = run_arm_manual_calibration(motors_bus, "lekiwi", "follower_arm", "follower")
+        calibration = run_arm_manual_calibration(
+            motors_bus, "lekiwi", "follower_arm", "follower"
+        )
         print(f"[INFO] Calibration complete. Saving to {calib_file}")
         with open(calib_file, "w") as f:
             json.dump(calibration, f)
@@ -116,7 +122,14 @@ def run_lekiwi(robot_config):
     robot = LeKiwi(motors_bus)
 
     # Define the expected arm motor IDs.
-    arm_motor_ids = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"]
+    arm_motor_ids = [
+        "shoulder_pan",
+        "shoulder_lift",
+        "elbow_flex",
+        "wrist_flex",
+        "wrist_roll",
+        "gripper",
+    ]
 
     # Disable torque for each arm motor.
     for motor in arm_motor_ids:
@@ -130,7 +143,9 @@ def run_lekiwi(robot_config):
     images_lock = threading.Lock()
     stop_event = threading.Event()
     cam_thread = threading.Thread(
-        target=run_camera_capture, args=(cameras, images_lock, latest_images_dict, stop_event), daemon=True
+        target=run_camera_capture,
+        args=(cameras, images_lock, latest_images_dict, stop_event),
+        daemon=True,
     )
     cam_thread.start()
 
@@ -159,7 +174,9 @@ def run_lekiwi(robot_config):
                                 f"[WARNING] Received {len(arm_positions)} arm positions, expected {len(arm_motor_ids)}"
                             )
                         else:
-                            for motor, pos in zip(arm_motor_ids, arm_positions, strict=False):
+                            for motor, pos in zip(
+                                arm_motor_ids, arm_positions, strict=False
+                            ):
                                 motors_bus.write("Goal_Position", pos, motor)
                     # Process wheel (base) commands.
                     if "raw_velocity" in data:
@@ -190,7 +207,9 @@ def run_lekiwi(robot_config):
                 try:
                     pos = motors_bus.read("Present_Position", motor)
                     # Convert the position to a float (or use as is if already numeric).
-                    follower_arm_state.append(float(pos) if not isinstance(pos, (int, float)) else pos)
+                    follower_arm_state.append(
+                        float(pos) if not isinstance(pos, (int, float)) else pos
+                    )
                 except Exception as e:
                     print(f"[ERROR] Reading motor {motor} failed: {e}")
 

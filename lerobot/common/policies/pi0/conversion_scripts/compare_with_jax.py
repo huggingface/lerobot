@@ -44,7 +44,9 @@ def main():
     else:
         dataset_repo_id = "lerobot/aloha_sim_transfer_cube_human"
 
-    ckpt_torch_dir = Path.home() / f".cache/openpi/openpi-assets/checkpoints/{model_name}_pytorch"
+    ckpt_torch_dir = (
+        Path.home() / f".cache/openpi/openpi-assets/checkpoints/{model_name}_pytorch"
+    )
     ckpt_jax_dir = Path.home() / f".cache/openpi/openpi-assets/checkpoints/{model_name}"
     save_dir = Path(f"../openpi/data/{model_name}/save")
 
@@ -70,7 +72,9 @@ def main():
     # Create LeRobot batch from Jax
     batch = {}
     for cam_key, uint_chw_array in example["images"].items():
-        batch[f"observation.images.{cam_key}"] = torch.from_numpy(uint_chw_array) / 255.0
+        batch[f"observation.images.{cam_key}"] = (
+            torch.from_numpy(uint_chw_array) / 255.0
+        )
     batch["observation.state"] = torch.from_numpy(example["state"])
     batch["action"] = torch.from_numpy(outputs["actions"])
     batch["task"] = example["prompt"]

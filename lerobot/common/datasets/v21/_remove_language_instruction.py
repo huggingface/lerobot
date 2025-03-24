@@ -35,22 +35,30 @@ def fix_dataset(repo_id: str) -> str:
 
     dataset_info = get_dataset_config_info(repo_id, "default")
     with SuppressWarnings():
-        lerobot_metadata = LeRobotDatasetMetadata(repo_id, revision=V20, force_cache_sync=True)
+        lerobot_metadata = LeRobotDatasetMetadata(
+            repo_id, revision=V20, force_cache_sync=True
+        )
 
-    meta_features = {key for key, ft in lerobot_metadata.features.items() if ft["dtype"] != "video"}
+    meta_features = {
+        key for key, ft in lerobot_metadata.features.items() if ft["dtype"] != "video"
+    }
     parquet_features = set(dataset_info.features)
 
     diff_parquet_meta = parquet_features - meta_features
     diff_meta_parquet = meta_features - parquet_features
 
     if diff_parquet_meta:
-        raise ValueError(f"In parquet not in info.json: {parquet_features - meta_features}")
+        raise ValueError(
+            f"In parquet not in info.json: {parquet_features - meta_features}"
+        )
 
     if not diff_meta_parquet:
         return f"{repo_id}: skipped (no diff)"
 
     if diff_meta_parquet:
-        logging.warning(f"In info.json not in parquet: {meta_features - parquet_features}")
+        logging.warning(
+            f"In info.json not in parquet: {meta_features - parquet_features}"
+        )
         assert diff_meta_parquet == {"language_instruction"}
         lerobot_metadata.features.pop("language_instruction")
         write_info(lerobot_metadata.info, lerobot_metadata.root)

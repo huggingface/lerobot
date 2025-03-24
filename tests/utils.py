@@ -26,10 +26,16 @@ from lerobot import available_cameras, available_motors, available_robots
 from lerobot.common.robot_devices.cameras.utils import Camera
 from lerobot.common.robot_devices.cameras.utils import make_camera as make_camera_device
 from lerobot.common.robot_devices.motors.utils import MotorsBus
-from lerobot.common.robot_devices.motors.utils import make_motors_bus as make_motors_bus_device
+from lerobot.common.robot_devices.motors.utils import (
+    make_motors_bus as make_motors_bus_device,
+)
 from lerobot.common.utils.import_utils import is_package_available
 
-DEVICE = os.environ.get("LEROBOT_TEST_DEVICE", "cuda") if torch.cuda.is_available() else "cpu"
+DEVICE = (
+    os.environ.get("LEROBOT_TEST_DEVICE", "cuda")
+    if torch.cuda.is_available()
+    else "cpu"
+)
 
 TEST_ROBOT_TYPES = []
 for robot_type in available_robots:
@@ -45,7 +51,9 @@ for motor_type in available_motors:
 
 # Camera indices used for connecting physical cameras
 OPENCV_CAMERA_INDEX = int(os.environ.get("LEROBOT_TEST_OPENCV_CAMERA_INDEX", 0))
-INTELREALSENSE_SERIAL_NUMBER = int(os.environ.get("LEROBOT_TEST_INTELREALSENSE_SERIAL_NUMBER", 128422271614))
+INTELREALSENSE_SERIAL_NUMBER = int(
+    os.environ.get("LEROBOT_TEST_INTELREALSENSE_SERIAL_NUMBER", 128422271614)
+)
 
 DYNAMIXEL_PORT = os.environ.get(
     "LEROBOT_TEST_DYNAMIXEL_PORT", "/dev/tty.usbmodem575E0032081"

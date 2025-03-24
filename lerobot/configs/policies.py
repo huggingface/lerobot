@@ -26,7 +26,11 @@ from huggingface_hub.errors import HfHubHTTPError
 from lerobot.common.optim.optimizers import OptimizerConfig
 from lerobot.common.optim.schedulers import LRSchedulerConfig
 from lerobot.common.utils.hub import HubMixin
-from lerobot.common.utils.utils import auto_select_torch_device, is_amp_available, is_torch_device_available
+from lerobot.common.utils.utils import (
+    auto_select_torch_device,
+    is_amp_available,
+    is_torch_device_available,
+)
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 
 # Generic variable that is either PreTrainedConfig or a subclass thereof
@@ -64,7 +68,9 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
         self.pretrained_path = None
         if not self.device or not is_torch_device_available(self.device):
             auto_device = auto_select_torch_device()
-            logging.warning(f"Device '{self.device}' is not available. Switching to '{auto_device}'.")
+            logging.warning(
+                f"Device '{self.device}' is not available. Switching to '{auto_device}'."
+            )
             self.device = auto_device.type
 
         # Automatically deactivate AMP if necessary
@@ -118,7 +124,11 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
 
     @property
     def image_features(self) -> dict[str, PolicyFeature]:
-        return {key: ft for key, ft in self.input_features.items() if ft.type is FeatureType.VISUAL}
+        return {
+            key: ft
+            for key, ft in self.input_features.items()
+            if ft.type is FeatureType.VISUAL
+        }
 
     @property
     def action_feature(self) -> PolicyFeature | None:

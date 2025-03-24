@@ -29,7 +29,11 @@ from torch import Tensor, nn
 
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.pretrained import PreTrainedPolicy
-from lerobot.common.policies.utils import get_device_from_parameters, get_output_shape, populate_queues
+from lerobot.common.policies.utils import (
+    get_device_from_parameters,
+    get_output_shape,
+    populate_queues,
+)
 from lerobot.common.policies.vqbet.configuration_vqbet import VQBeTConfig
 from lerobot.common.policies.vqbet.vqbet_utils import GPT, ResidualVQ
 
@@ -60,7 +64,9 @@ class VQBeTPolicy(PreTrainedPolicy):
         config.validate_features()
         self.config = config
 
-        self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
+        self.normalize_inputs = Normalize(
+            config.input_features, config.normalization_mapping, dataset_stats
+        )
         self.normalize_targets = Normalize(
             config.output_features, config.normalization_mapping, dataset_stats
         )
@@ -91,11 +97,17 @@ class VQBeTPolicy(PreTrainedPolicy):
         if self.config.sequentially_select:
             decay_params = (
                 decay_params
-                + list(self.vqbet.action_head.map_to_cbet_preds_primary_bin.parameters())
-                + list(self.vqbet.action_head.map_to_cbet_preds_secondary_bin.parameters())
+                + list(
+                    self.vqbet.action_head.map_to_cbet_preds_primary_bin.parameters()
+                )
+                + list(
+                    self.vqbet.action_head.map_to_cbet_preds_secondary_bin.parameters()
+                )
             )
         else:
-            decay_params = decay_params + list(self.vqbet.action_head.map_to_cbet_preds_bin.parameters())
+            decay_params = decay_params + list(
+                self.vqbet.action_head.map_to_cbet_preds_bin.parameters()
+            )
 
         return [
             {
@@ -133,8 +145,12 @@ class VQBeTPolicy(PreTrainedPolicy):
         """
 
         batch = self.normalize_inputs(batch)
-        batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
-        batch["observation.images"] = torch.stack([batch[key] for key in self.config.image_features], dim=-4)
+        batch = dict(
+            batch
+        )  # shallow copy so that adding a key doesn't modify the original
+        batch["observation.images"] = torch.stack(
+            [batch[key] for key in self.config.image_features], dim=-4
+        )
         # Note: It's important that this happens after stacking the images into a single key.
         self._queues = populate_queues(self._queues, batch)
 
@@ -165,8 +181,12 @@ class VQBeTPolicy(PreTrainedPolicy):
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
         """Run the batch through the model and compute the loss for training or validation."""
         batch = self.normalize_inputs(batch)
-        batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
-        batch["observation.images"] = torch.stack([batch[key] for key in self.config.image_features], dim=-4)
+        batch = dict(
+            batch
+        )  # shallow copy so that adding a key doesn't modify the original
+        batch["observation.images"] = torch.stack(
+            [batch[key] for key in self.config.image_features], dim=-4
+        )
         batch = self.normalize_targets(batch)
         # VQ-BeT discretizes action using VQ-VAE before training BeT (please refer to section 3.2 in the VQ-BeT paper https://arxiv.org/pdf/2403.03181)
         if not self.vqbet.action_head.vqvae_model.discretized.item():
@@ -334,7 +354,8 @@ class VQBeTModel(nn.Module):
 
         # To input state and observation features into GPT layers, we first project the features to fit the shape of input size of GPT.
         self.state_projector = MLP(
-            config.robot_state_feature.shape[0], hidden_channels=[self.config.gpt_input_dim]
+            config.robot_state_feature.shape[0],
+            hidden_channels=[self.config.gpt_input_dim],
         )
         self.rgb_feature_projector = MLP(
             self.rgb_encoder.feature_dim, hidden_channels=[self.config.gpt_input_dim]
@@ -406,9 +427,9 @@ class VQBeTModel(nn.Module):
         features = self.policy(input_tokens)
         # len(self.config.input_features) is the number of different observation modes.
         # this line gets the index of action prompt tokens.
-        historical_act_pred_index = np.arange(0, n_obs_steps) * (len(self.config.input_features) + 1) + len(
-            self.config.input_features
-        )
+        historical_act_pred_index = np.arange(0, n_obs_steps) * (
+            len(self.config.input_features) + 1
+        ) + len(self.config.input_features)
 
         # only extract the output tokens at the position of action query:
         # Behavior Transformer (BeT), and VQ-BeT are both sequence-to-sequence prediction models,
@@ -771,11 +792,15 @@ class VQBeTRgbEncoder(nn.Module):
         # height and width from `config.image_features`.
 
         images_shape = next(iter(config.image_features.values())).shape
-        dummy_shape_h_w = config.crop_shape if config.crop_shape is not None else images_shape[1:]
+        dummy_shape_h_w = (
+            config.crop_shape if config.crop_shape is not None else images_shape[1:]
+        )
         dummy_shape = (1, images_shape[0], *dummy_shape_h_w)
         feature_map_shape = get_output_shape(self.backbone, dummy_shape)[1:]
 
-        self.pool = SpatialSoftmax(feature_map_shape, num_kp=config.spatial_softmax_num_keypoints)
+        self.pool = SpatialSoftmax(
+            feature_map_shape, num_kp=config.spatial_softmax_num_keypoints
+        )
         self.feature_dim = config.spatial_softmax_num_keypoints * 2
         self.out = nn.Linear(config.spatial_softmax_num_keypoints * 2, self.feature_dim)
         self.relu = nn.ReLU()
@@ -871,7 +896,8 @@ class VqVae(nn.Module):
         )
 
         self.encoder = MLP(
-            in_channels=self.config.action_feature.shape[0] * self.config.action_chunk_size,
+            in_channels=self.config.action_feature.shape[0]
+            * self.config.action_chunk_size,
             hidden_channels=[
                 config.vqvae_enc_hidden_dim,
                 config.vqvae_enc_hidden_dim,
@@ -899,9 +925,13 @@ class VqVae(nn.Module):
         # given latent vector, this function outputs the decoded action.
         output = self.decoder(latent)
         if self.config.action_chunk_size == 1:
-            return einops.rearrange(output, "N (T A) -> N T A", A=self.config.action_feature.shape[0])
+            return einops.rearrange(
+                output, "N (T A) -> N T A", A=self.config.action_feature.shape[0]
+            )
         else:
-            return einops.rearrange(output, "N (T A) -> N T A", A=self.config.action_feature.shape[0])
+            return einops.rearrange(
+                output, "N (T A) -> N T A", A=self.config.action_feature.shape[0]
+            )
 
     def get_code(self, state):
         # in phase 2 of VQ-BeT training, we need a `ground truth labels of action data` to calculate the Focal loss for code prediction head. (please refer to section 3.3 in the paper https://arxiv.org/pdf/2403.03181)

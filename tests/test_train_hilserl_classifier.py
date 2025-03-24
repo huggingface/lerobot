@@ -227,9 +227,9 @@ def test_resume_function(
     config_dir = os.path.abspath(
         os.path.join(test_file_dir, "..", "lerobot", "configs", "policy")
     )
-    assert os.path.exists(
-        config_dir
-    ), f"Config directory does not exist at {config_dir}"
+    assert os.path.exists(config_dir), (
+        f"Config directory does not exist at {config_dir}"
+    )
 
     with initialize_config_dir(
         config_dir=config_dir, job_name="test_app", version_base="1.2"

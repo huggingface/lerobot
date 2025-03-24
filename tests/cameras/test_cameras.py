@@ -226,7 +226,13 @@ def test_save_images_from_cameras(tmp_path, request, camera_type, mock):
 @pytest.mark.parametrize("camera_type, mock", TEST_CAMERA_TYPES)
 @require_camera
 def test_camera_rotation(request, camera_type, mock):
-    config_kwargs = {"camera_type": camera_type, "mock": mock, "width": 640, "height": 480, "fps": 30}
+    config_kwargs = {
+        "camera_type": camera_type,
+        "mock": mock,
+        "width": 640,
+        "height": 480,
+        "fps": 30,
+    }
 
     # No rotation.
     camera = make_camera(**config_kwargs, rotation=None)

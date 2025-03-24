@@ -47,7 +47,9 @@ OUTPUT_DIR = Path("outputs/image_transforms")
 to_pil = ToPILImage()
 
 
-def save_all_transforms(cfg: ImageTransformsConfig, original_frame, output_dir, n_examples):
+def save_all_transforms(
+    cfg: ImageTransformsConfig, original_frame, output_dir, n_examples
+):
     output_dir_all = output_dir / "all"
     output_dir_all.mkdir(parents=True, exist_ok=True)
 
@@ -60,7 +62,9 @@ def save_all_transforms(cfg: ImageTransformsConfig, original_frame, output_dir, 
     print(f"    {output_dir_all}")
 
 
-def save_each_transform(cfg: ImageTransformsConfig, original_frame, output_dir, n_examples):
+def save_each_transform(
+    cfg: ImageTransformsConfig, original_frame, output_dir, n_examples
+):
     if not cfg.enable:
         logging.warning(
             "No single transforms will be saved, because `image_transforms.enable=False`. To enable, set `enable` to True in `ImageTransformsConfig` or in the command line with `--image_transforms.enable=True`."
@@ -89,9 +93,15 @@ def save_each_transform(cfg: ImageTransformsConfig, original_frame, output_dir, 
             tf_cfg_kwgs_max[key] = [max_, max_]
             tf_cfg_kwgs_avg[key] = [avg, avg]
 
-        tf_min = make_transform_from_config(replace(tf_cfg, **{"kwargs": tf_cfg_kwgs_min}))
-        tf_max = make_transform_from_config(replace(tf_cfg, **{"kwargs": tf_cfg_kwgs_max}))
-        tf_avg = make_transform_from_config(replace(tf_cfg, **{"kwargs": tf_cfg_kwgs_avg}))
+        tf_min = make_transform_from_config(
+            replace(tf_cfg, **{"kwargs": tf_cfg_kwgs_min})
+        )
+        tf_max = make_transform_from_config(
+            replace(tf_cfg, **{"kwargs": tf_cfg_kwgs_max})
+        )
+        tf_avg = make_transform_from_config(
+            replace(tf_cfg, **{"kwargs": tf_cfg_kwgs_avg})
+        )
 
         tf_frame_min = tf_min(original_frame)
         tf_frame_max = tf_max(original_frame)
@@ -105,7 +115,9 @@ def save_each_transform(cfg: ImageTransformsConfig, original_frame, output_dir, 
 
 
 @draccus.wrap()
-def visualize_image_transforms(cfg: DatasetConfig, output_dir: Path = OUTPUT_DIR, n_examples: int = 5):
+def visualize_image_transforms(
+    cfg: DatasetConfig, output_dir: Path = OUTPUT_DIR, n_examples: int = 5
+):
     dataset = LeRobotDataset(
         repo_id=cfg.repo_id,
         episodes=cfg.episodes,

@@ -40,7 +40,10 @@ import pytest
 import torch
 
 from lerobot.common.robot_devices.robots.utils import make_robot
-from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
+from lerobot.common.robot_devices.utils import (
+    RobotDeviceAlreadyConnectedError,
+    RobotDeviceNotConnectedError,
+)
 from tests.utils import TEST_ROBOT_TYPES, mock_calibration_dir, require_robot
 
 
@@ -131,7 +134,9 @@ def test_robot(tmp_path, request, robot_type, mock):
         if "image" in name:
             # TODO(rcadene): skipping image for now as it's challenging to assess equality between two consecutive frames
             continue
-        torch.testing.assert_close(captured_observation[name], observation[name], rtol=1e-4, atol=1)
+        torch.testing.assert_close(
+            captured_observation[name], observation[name], rtol=1e-4, atol=1
+        )
         assert captured_observation[name].shape == observation[name].shape
 
     # Test send_action can run

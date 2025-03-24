@@ -39,9 +39,13 @@ def apply_rope(x, positions, max_wavelength=10_000):
     dtype = x.dtype
     x = x.to(torch.float32)
 
-    freq_exponents = (2.0 / x.shape[-1]) * torch.arange(d_half, dtype=torch.float32, device=device)
+    freq_exponents = (2.0 / x.shape[-1]) * torch.arange(
+        d_half, dtype=torch.float32, device=device
+    )
     timescale = max_wavelength**freq_exponents
-    radians = positions[..., None].to(torch.float32) / timescale[None, None, :].to(torch.float32)
+    radians = positions[..., None].to(torch.float32) / timescale[None, None, :].to(
+        torch.float32
+    )
 
     radians = radians[..., None, :]
 
@@ -174,7 +178,9 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
     def __init__(self, config: PaliGemmaWithExpertConfig):
         super().__init__(config=config)
         self.config = config
-        self.paligemma = PaliGemmaForConditionalGeneration(config=config.paligemma_config)
+        self.paligemma = PaliGemmaForConditionalGeneration(
+            config=config.paligemma_config
+        )
         self.gemma_expert = GemmaForCausalLM(config=config.gemma_expert_config)
         # Remove unused embed_tokens
         self.gemma_expert.model.embed_tokens = None
@@ -291,14 +297,22 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
                     # so we create an empty cache, with just one cuda malloc, and if (in autoregressive case) we reach
                     # the max len, then we (for instance) double the cache size. This implementation already exists
                     # in `transformers`. (molbap)
-                    key_states = torch.cat([past_key_values[layer_idx]["key_states"], key_states], dim=1)
+                    key_states = torch.cat(
+                        [past_key_values[layer_idx]["key_states"], key_states], dim=1
+                    )
                     value_states = torch.cat(
-                        [past_key_values[layer_idx]["value_states"], value_states], dim=1
+                        [past_key_values[layer_idx]["value_states"], value_states],
+                        dim=1,
                     )
 
             attention_interface = self.get_attention_interface()
             att_output = attention_interface(
-                attention_mask, batch_size, head_dim, query_states, key_states, value_states
+                attention_mask,
+                batch_size,
+                head_dim,
+                query_states,
+                key_states,
+                value_states,
             )
             att_output = att_output.to(dtype=torch.bfloat16)
 
@@ -358,15 +372,29 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         return attention_interface
 
     def flash_attention_forward(
-        self, attention_mask, batch_size, head_dim, query_states, key_states, value_states
+        self,
+        attention_mask,
+        batch_size,
+        head_dim,
+        query_states,
+        key_states,
+        value_states,
     ):
         raise NotImplementedError("FA2 is not implemented (yet)")
 
     def eager_attention_forward(
-        self, attention_mask, batch_size, head_dim, query_states, key_states, value_states
+        self,
+        attention_mask,
+        batch_size,
+        head_dim,
+        query_states,
+        key_states,
+        value_states,
     ):
         num_att_heads = self.config.paligemma_config.text_config.num_attention_heads
-        num_key_value_heads = self.config.paligemma_config.text_config.num_key_value_heads
+        num_key_value_heads = (
+            self.config.paligemma_config.text_config.num_key_value_heads
+        )
         num_key_value_groups = num_att_heads // num_key_value_heads
 
         # query_states: batch_size, sequence_length, num_att_head, head_dim
@@ -375,17 +403,31 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         sequence_length = key_states.shape[1]
 
         key_states = key_states[:, :, :, None, :].expand(
-            batch_size, sequence_length, num_key_value_heads, num_key_value_groups, head_dim
+            batch_size,
+            sequence_length,
+            num_key_value_heads,
+            num_key_value_groups,
+            head_dim,
         )
         key_states = key_states.reshape(
-            batch_size, sequence_length, num_key_value_heads * num_key_value_groups, head_dim
+            batch_size,
+            sequence_length,
+            num_key_value_heads * num_key_value_groups,
+            head_dim,
         )
 
         value_states = value_states[:, :, :, None, :].expand(
-            batch_size, sequence_length, num_key_value_heads, num_key_value_groups, head_dim
+            batch_size,
+            sequence_length,
+            num_key_value_heads,
+            num_key_value_groups,
+            head_dim,
         )
         value_states = value_states.reshape(
-            batch_size, sequence_length, num_key_value_heads * num_key_value_groups, head_dim
+            batch_size,
+            sequence_length,
+            num_key_value_heads * num_key_value_groups,
+            head_dim,
         )
 
         # Attention here is upcasted to float32 to match the original eager implementation.
@@ -400,7 +442,9 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         att_weights *= head_dim**-0.5
         big_neg = -2.3819763e38  # See gemma/modules.py
 
-        masked_att_weights = torch.where(attention_mask[:, None, :, :], att_weights, big_neg)
+        masked_att_weights = torch.where(
+            attention_mask[:, None, :, :], att_weights, big_neg
+        )
 
         probs = nn.functional.softmax(masked_att_weights, dim=-1)
         probs = probs.to(dtype=value_states.dtype)
@@ -412,6 +456,8 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
 
         att_output = att_output.permute(0, 2, 1, 3)
         # we use -1 because sequence length can change
-        att_output = att_output.reshape(batch_size, -1, num_key_value_heads * num_key_value_groups * head_dim)
+        att_output = att_output.reshape(
+            batch_size, -1, num_key_value_heads * num_key_value_groups * head_dim
+        )
 
         return att_output
