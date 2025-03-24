@@ -97,6 +97,7 @@ test = ["pytest>=8.1.0", "pytest-cov>=5.0.0", "pyserial>=3.5"]
 umi = ["imagecodecs>=2024.1.1"]
 video_benchmark = ["scikit-image>=0.23.2", "pandas>=2.2.2"]
 xarm = ["gym-xarm>=0.1.1 ; python_version < '4.0'"]
+audio = ["sounddevice>=0.5.1", "soundfile>=0.13.1", "librosa>=0.11.0", "torchaudio>=2.6.0"]
 
 [tool.poetry]
 requires-poetry = ">=2.1"
