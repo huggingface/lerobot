@@ -135,7 +135,8 @@ class SO100Robot(Robot):
         print(
             f"\nRunning calibration of {self.robot_type} {self.name}"
         )  # TODO(pepijn): Add arm type here 'follower' or 'leader'
-        self.arm.write("Torque_Enable", TorqueMode.DISABLED.value)
+        for name in self.arm.names:
+            self.arm.write("Torque_Enable", name, TorqueMode.DISABLED.value)
         self.arm.find_offset()
         self.arm.find_min_max()
         # TODO(pepijn): store calibration in json (returned values from find_offset and find_min_max

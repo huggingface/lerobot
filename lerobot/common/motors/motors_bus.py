@@ -378,7 +378,7 @@ class MotorsBus(abc.ABC):
     def find_offset(self):
         input("Move robot to the middle of its range of motion and press ENTER....")
 
-        for _, name in enumerate(self.motor_names):
+        for name in self.names:
             self.write("Lock", name, 0)
             self.write("Offset", name, 0)
             self.write("Min_Angle_Limit", name, 0)
@@ -420,7 +420,7 @@ class MotorsBus(abc.ABC):
         )
 
         # For each motor, find min, max
-        for i, name in enumerate(self.motor_names):
+        for i, name in enumerate(self.names):
             motor_column = all_positions[:, i]
             raw_range = motor_column.max() - motor_column.min()
 
@@ -687,7 +687,7 @@ class MotorsBus(abc.ABC):
             data = self._split_int_to_bytes(value, n_bytes)
             self.sync_writer.addParam(idx, data)
 
-    def write(self, data_name: str, motor: NameOrID, value: Value, num_retry: int = 0) -> None:
+    def write(self, data_name: str, motor: NameOrID, value: Value, num_retry: int = 2) -> None:
         if not self.is_connected:
             raise DeviceNotConnectedError(
                 f"{self.__class__.__name__}('{self.port}') is not connected. You need to run `{self.__class__.__name__}.connect()`."
