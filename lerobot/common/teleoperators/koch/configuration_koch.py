@@ -28,13 +28,3 @@ class KochTeleopConfig(TeleoperatorConfig):
     # Sets the arm in torque mode with the gripper motor set to this angle. This makes it possible
     # to squeeze the gripper and have it spring back to an open position on its own.
     gripper_open_degree: float = 35.156
-
-    mock: bool = False
-
-    # motors
-    shoulder_pan: tuple = (1, "xl330-m077")
-    shoulder_lift: tuple = (2, "xl330-m077")
-    elbow_flex: tuple = (3, "xl330-m077")
-    wrist_flex: tuple = (4, "xl330-m077")
-    wrist_roll: tuple = (5, "xl330-m077")
-    gripper: tuple = (6, "xl330-m077")

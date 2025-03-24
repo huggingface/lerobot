@@ -37,6 +37,10 @@ class Robot(abc.ABC):
     def camera_features(self) -> dict[str, dict]:
         pass
 
+    @abc.abstractproperty
+    def is_connected(self) -> bool:
+        pass
+
     @abc.abstractmethod
     def connect(self) -> None:
         """Connects to the robot."""

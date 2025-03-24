@@ -13,7 +13,7 @@ import numpy as np
 from lerobot.common.cameras.utils import make_cameras_from_configs
 from lerobot.common.constants import OBS_IMAGES, OBS_STATE
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from lerobot.common.motors import TorqueMode
+from lerobot.common.motors import CalibrationMode, Motor, TorqueMode
 from lerobot.common.motors.dynamixel import (
     DynamixelMotorsBus,
     run_arm_calibration,
@@ -43,15 +43,15 @@ class ViperXRobot(Robot):
         self.arm = DynamixelMotorsBus(
             port=self.config.port,
             motors={
-                "waist": config.waist,
-                "shoulder": config.shoulder,
-                "shoulder_shadow": config.shoulder_shadow,
-                "elbow": config.elbow,
-                "elbow_shadow": config.elbow_shadow,
-                "forearm_roll": config.forearm_roll,
-                "wrist_angle": config.wrist_angle,
-                "wrist_rotate": config.wrist_rotate,
-                "gripper": config.gripper,
+                "waist": Motor(1, "xm540-w270", CalibrationMode.RANGE_M100_100),
+                "shoulder": Motor(2, "xm540-w270", CalibrationMode.RANGE_M100_100),
+                "shoulder_shadow": Motor(3, "xm540-w270", CalibrationMode.RANGE_M100_100),
+                "elbow": Motor(4, "xm540-w270", CalibrationMode.RANGE_M100_100),
+                "elbow_shadow": Motor(5, "xm540-w270", CalibrationMode.RANGE_M100_100),
+                "forearm_roll": Motor(6, "xm540-w270", CalibrationMode.RANGE_M100_100),
+                "wrist_angle": Motor(7, "xm540-w270", CalibrationMode.RANGE_M100_100),
+                "wrist_rotate": Motor(8, "xm430-w350", CalibrationMode.RANGE_M100_100),
+                "gripper": Motor(9, "xm430-w350", CalibrationMode.RANGE_0_100),
             },
         )
         self.cameras = make_cameras_from_configs(config.cameras)

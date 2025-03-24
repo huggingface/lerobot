@@ -31,6 +31,10 @@ class Teleoperator(abc.ABC):
     def feedback_feature(self) -> dict:
         pass
 
+    @abc.abstractproperty
+    def is_connected(self) -> bool:
+        pass
+
     @abc.abstractmethod
     def connect(self) -> None:
         """Connects to the teleoperator."""

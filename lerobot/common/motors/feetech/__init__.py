@@ -1,3 +1,2 @@
-from .feetech import FeetechMotorsBus
-
-__all__ = ["FeetechMotorsBus"]
+from .feetech import FeetechMotorsBus, OperatingMode
+from .tables import *
