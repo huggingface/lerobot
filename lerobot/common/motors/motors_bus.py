@@ -375,18 +375,6 @@ class MotorsBus(abc.ABC):
             if self.port_handler.getBaudRate() != baudrate:
                 raise OSError("Failed to write bus baud rate.")
 
-    @abc.abstractmethod
-    def set_offset(self):
-        pass
-
-    @abc.abstractmethod
-    def set_min_max(self):
-        pass
-
-    @abc.abstractmethod
-    def reset_offsets(self):
-        pass
-
     def find_min_max(self):
         print("Move all joints sequentially through their entire ranges of motion.")
         print("Recording positions. Press ENTER to stop...")
@@ -410,7 +398,7 @@ class MotorsBus(abc.ABC):
         all_positions = np.array(recorded_positions, dtype=np.float32)
 
         # For each motor, find min, maxz
-        for i, mname in enumerate(self.motor_names):
+        for i, name in enumerate(self.motor_names):
             motor_column = all_positions[:, i]
             raw_range = motor_column.max() - motor_column.min()
 
@@ -422,20 +410,50 @@ class MotorsBus(abc.ABC):
                 physical_min = int(motor_column.min())
                 physical_max = int(motor_column.max())
 
-            print(f"Setting '{mname}' min={physical_min}, max={physical_max}")
-            self.set_min_max(mname, (physical_min, physical_max))
+            self.write("Lock", 0)
+            self.write("Min_Angle_Limit", physical_min, motor_names=[name])
+            self.write("Max_Angle_Limit", physical_max, motor_names=[name])
+            self.write("Lock", 1)
 
     def find_offset(self):
-        self.reset_offsets()
-
         input("Move robot to the middle of its range of motion and press ENTER....")
 
         for _, name in enumerate(self.motor_names):
+            self.write("Lock", 0)
+            self.write("Offset", 0, motor_names=[name])
+            self.write("Min_Angle_Limit", 0, motor_names=[name])
+            self.write("Max_Angle_Limit", 4095, motor_names=[name])
+            self.write("Lock", 1)
+
             middle = self.read("Present_Position", motor_names=[name])
             zero_offset = (
                 middle - 2047
             )  # The zero_offset is set so that the original middle reading is centered at 2047.
-            self.set_offset(name, zero_offset)
+
+            self.write("Lock", 0)
+
+            zero_offset = int(zero_offset)
+
+            # Clamp to [-2047..+2047]
+            if zero_offset > 2047:
+                zero_offset = 2047
+                print(
+                    f"Warning: '{zero_offset}' is getting clamped because its larger then 2047; This should not happen!"
+                )
+            elif zero_offset < -2047:
+                zero_offset = -2047
+                print(
+                    f"Warning: '{zero_offset}' is getting clamped because its smaller then -2047; This should not happen!"
+                )
+
+            direction_bit = 1 if zero_offset < 0 else 0  # Determine the direction (sign) bit and magnitude
+            magnitude = abs(zero_offset)
+            servo_offset = (
+                direction_bit << 11
+            ) | magnitude  # Combine sign bit (bit 11) with the magnitude (bits 0..10)
+
+            self.write("Offset", servo_offset, motor_names=[name])
+            self.write("Lock", 1)
 
     @property
     def are_motors_configured(self) -> bool:

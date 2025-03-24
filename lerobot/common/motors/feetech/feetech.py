@@ -79,62 +79,6 @@ class FeetechMotorsBus(MotorsBus):
         for id_ in self.ids:
             self.write("Return_Delay", id_, 0)
 
-    def reset_offsets(self) -> int:
-        """
-        Reset the offsets
-        """
-        for _, name in enumerate(self.motor_names):
-            self.write("Lock", 0)  # Open the write lock; changes to EEPROM do NOT persist yet.
-            self.write("Offset", 0, motor_names=[name])
-            self.write("Min_Angle_Limit", 0, motor_names=[name])
-            self.write("Max_Angle_Limit", 4095, motor_names=[name])
-            self.write("Lock", 1)  # Close the write lock; changes to EEPROM now persist.
-
-    def set_offset(self, motor: str, zero_offset: int):
-        """
-        # TODO: write this
-        """
-        self.write("Lock", 0)  # Open the write lock, changes to EEPROM do NOT persist yet
-
-        zero_offset = int(zero_offset)
-
-        # Clamp to [-2047..+2047]
-        if zero_offset > 2047:
-            zero_offset = 2047
-            print(
-                f"Warning: '{zero_offset}' is getting clamped because its larger then 2047; This should not happen!"
-            )
-        elif zero_offset < -2047:
-            zero_offset = -2047
-            print(
-                f"Warning: '{zero_offset}' is getting clamped because its smaller then -2047; This should not happen!"
-            )
-
-        # Determine the direction (sign) bit and magnitude
-        direction_bit = 1 if zero_offset < 0 else 0
-        magnitude = abs(zero_offset)
-
-        # Combine sign bit (bit 11) with the magnitude (bits 0..10)
-        servo_offset = (direction_bit << 11) | magnitude
-
-        self.write("Offset", servo_offset, motor_names=motor)
-        print(
-            f"Set offset for {motor}: zero_offset={zero_offset}, servo_encoded={magnitude} + direction={direction_bit}"
-        )
-        self.write("Lock", 1)
-
-    def set_min_max(self, motor: str, min_max_range: tuple[int, int]):
-        """
-        # TODO: write this
-        """
-        self.write("Lock", 0)  # Open the write lock, changes to EEPROM do NOT persist yet
-
-        min_angle, max_angle = min_max_range
-        self.write("Min_Angle_Limit", min_angle, motor_names=motor)
-        self.write("Max_Angle_Limit", max_angle, motor_names=motor)
-        print(f"Set min max for {motor}, min: {min_angle}, max: {max_angle}")
-        self.write("Lock", 1)
-
     def apply_calibration(self, values: np.ndarray | list, motor_names: list[str] | None):
         if motor_names is None:
             motor_names = self.motor_names

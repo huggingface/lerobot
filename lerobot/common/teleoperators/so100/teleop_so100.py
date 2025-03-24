@@ -96,7 +96,15 @@ class SO100Teleop(Teleoperator):
         raise NotImplementedError
 
     def set_calibration(self) -> None:
-        pass
+        """After calibration all motors function in human interpretable ranges.
+        Rotations are expressed in degrees in nominal range of [-180, 180],
+        and linear motions (like gripper of Aloha) in nominal range of [0, 100].
+        """
+        if not self.calibration_fpath.exists():
+            logging.error("Calibration file not found. Please run calibration first")
+            raise FileNotFoundError(self.calibration_fpath)
+
+        self.arm.set_calibration(self.calibration_fpath)
 
     def get_action(self) -> np.ndarray:
         """The returned action does not have a batch dimension."""
