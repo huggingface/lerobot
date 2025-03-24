@@ -48,6 +48,7 @@ class WandBConfig:
     entity: str | None = None
     notes: str | None = None
     run_id: str | None = None
+    offline: bool = False
 
 
 @dataclass
