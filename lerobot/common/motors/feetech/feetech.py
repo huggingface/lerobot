@@ -163,15 +163,15 @@ class FeetechMotorsBus(MotorsBus):
                 return data_list, scs.COMM_RX_CORRUPT
 
             # find packet header
-            for idx in range(0, (rx_length - 1)):
-                if (rxpacket[idx] == 0xFF) and (rxpacket[idx + 1] == 0xFF):
+            for id_ in range(0, (rx_length - 1)):
+                if (rxpacket[id_] == 0xFF) and (rxpacket[id_ + 1] == 0xFF):
                     break
 
-            if idx == 0:  # found at the beginning of the packet
+            if id_ == 0:  # found at the beginning of the packet
                 # calculate checksum
                 checksum = 0
-                for idx in range(2, status_length - 1):  # except header & checksum
-                    checksum += rxpacket[idx]
+                for id_ in range(2, status_length - 1):  # except header & checksum
+                    checksum += rxpacket[id_]
 
                 checksum = scs.SCS_LOBYTE(~checksum)
                 if rxpacket[status_length - 1] == checksum:
@@ -190,8 +190,8 @@ class FeetechMotorsBus(MotorsBus):
                     rx_length = rx_length - 2
             else:
                 # remove unnecessary packets
-                del rxpacket[0:idx]
-                rx_length = rx_length - idx
+                del rxpacket[0:id_]
+                rx_length = rx_length - id_
 
     def broadcast_ping(self, num_retry: int = 0, raise_on_error: bool = False) -> dict[int, str] | None:
         for n_try in range(1 + num_retry):
