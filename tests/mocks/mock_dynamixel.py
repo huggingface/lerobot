@@ -282,7 +282,7 @@ class MockInstructionPacket(MockDynamixelPacketv2):
         """
         data = []
         for idx, value in ids_values.items():
-            split_value = DynamixelMotorsBus.split_int_bytes(value, data_length)
+            split_value = DynamixelMotorsBus._split_int_to_bytes(value, data_length)
             data += [idx, *split_value]
         params = [
             dxl.DXL_LOBYTE(start_address),
@@ -319,7 +319,7 @@ class MockInstructionPacket(MockDynamixelPacketv2):
             +2 is for the length bytes,
             +2 is for the CRC at the end.
         """
-        data = DynamixelMotorsBus.split_int_bytes(value, data_length)
+        data = DynamixelMotorsBus._split_int_to_bytes(value, data_length)
         params = [
             dxl.DXL_LOBYTE(start_address),
             dxl.DXL_HIBYTE(start_address),

@@ -67,24 +67,24 @@ def test_autouse_patch():
         "max four bytes",
     ],
 )  # fmt: skip
-def test_split_int_bytes(value, n_bytes, expected):
-    assert DynamixelMotorsBus.split_int_bytes(value, n_bytes) == expected
+def test_split_int_to_bytes(value, n_bytes, expected):
+    assert DynamixelMotorsBus._split_int_to_bytes(value, n_bytes) == expected
 
 
-def test_split_int_bytes_invalid_n_bytes():
+def test_split_int_to_bytes_invalid_n_bytes():
     with pytest.raises(NotImplementedError):
-        DynamixelMotorsBus.split_int_bytes(100, 3)
+        DynamixelMotorsBus._split_int_to_bytes(100, 3)
 
 
-def test_split_int_bytes_negative_numbers():
+def test_split_int_to_bytes_negative_numbers():
     with pytest.raises(ValueError):
-        neg = DynamixelMotorsBus.split_int_bytes(-1, 1)
+        neg = DynamixelMotorsBus._split_int_to_bytes(-1, 1)
         print(neg)
 
 
-def test_split_int_bytes_large_number():
+def test_split_int_to_bytes_large_number():
     with pytest.raises(ValueError):
-        DynamixelMotorsBus.split_int_bytes(2**32, 4)  # 4-byte max is 0xFFFFFFFF
+        DynamixelMotorsBus._split_int_to_bytes(2**32, 4)  # 4-byte max is 0xFFFFFFFF
 
 
 def test_abc_implementation(dummy_motors):

@@ -149,7 +149,7 @@ class MockInstructionPacket(MockFeetechPacket):
         """
         data = []
         for idx, value in ids_values.items():
-            split_value = FeetechMotorsBus.split_int_bytes(value, data_length)
+            split_value = FeetechMotorsBus._split_int_to_bytes(value, data_length)
             data += [idx, *split_value]
         params = [start_address, data_length, *data]
         length = len(ids_values) * (1 + data_length) + 4
@@ -179,7 +179,7 @@ class MockInstructionPacket(MockFeetechPacket):
             +1 is for the length bytes,
             +1 is for the checksum at the end.
         """
-        data = FeetechMotorsBus.split_int_bytes(value, data_length)
+        data = FeetechMotorsBus._split_int_to_bytes(value, data_length)
         params = [start_address, *data]
         length = data_length + 3
         return cls.build(scs_id=scs_id, params=params, length=length, instruct_type="Write")

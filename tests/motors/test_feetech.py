@@ -67,24 +67,24 @@ def test_autouse_patch():
         "max four bytes",
     ],
 )  # fmt: skip
-def test_split_int_bytes(value, n_bytes, expected):
-    assert FeetechMotorsBus.split_int_bytes(value, n_bytes) == expected
+def test_split_int_to_bytes(value, n_bytes, expected):
+    assert FeetechMotorsBus._split_int_to_bytes(value, n_bytes) == expected
 
 
-def test_split_int_bytes_invalid_n_bytes():
+def test_split_int_to_bytes_invalid_n_bytes():
     with pytest.raises(NotImplementedError):
-        FeetechMotorsBus.split_int_bytes(100, 3)
+        FeetechMotorsBus._split_int_to_bytes(100, 3)
 
 
-def test_split_int_bytes_negative_numbers():
+def test_split_int_to_bytes_negative_numbers():
     with pytest.raises(ValueError):
-        neg = FeetechMotorsBus.split_int_bytes(-1, 1)
+        neg = FeetechMotorsBus._split_int_to_bytes(-1, 1)
         print(neg)
 
 
-def test_split_int_bytes_large_number():
+def test_split_int_to_bytes_large_number():
     with pytest.raises(ValueError):
-        FeetechMotorsBus.split_int_bytes(2**32, 4)  # 4-byte max is 0xFFFFFFFF
+        FeetechMotorsBus._split_int_to_bytes(2**32, 4)  # 4-byte max is 0xFFFFFFFF
 
 
 def test_abc_implementation(dummy_motors):

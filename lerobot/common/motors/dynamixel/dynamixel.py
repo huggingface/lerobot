@@ -89,7 +89,7 @@ class DynamixelMotorsBus(MotorsBus):
         self.sync_reader = dxl.GroupSyncRead(self.port_handler, self.packet_handler, 0, 0)
         self.sync_writer = dxl.GroupSyncWrite(self.port_handler, self.packet_handler, 0, 0)
         self._comm_success = dxl.COMM_SUCCESS
-        self._error = 0x00
+        self._no_error = 0x00
 
     def broadcast_ping(
         self, num_retry: int = 0, raise_on_error: bool = False
@@ -102,16 +102,16 @@ class DynamixelMotorsBus(MotorsBus):
         if raise_on_error:
             raise ConnectionError(f"Broadcast ping returned a {comm} comm error.")
 
-    def calibrate_values(self, ids_values: dict[int, int]) -> dict[int, float]:
+    def _calibrate_values(self, ids_values: dict[int, int]) -> dict[int, float]:
         # TODO
         return ids_values
 
-    def uncalibrate_values(self, ids_values: dict[int, float]) -> dict[int, int]:
+    def _uncalibrate_values(self, ids_values: dict[int, float]) -> dict[int, int]:
         # TODO
         return ids_values
 
     @staticmethod
-    def split_int_bytes(value: int, n_bytes: int) -> list[int]:
+    def _split_int_to_bytes(value: int, n_bytes: int) -> list[int]:
         # Validate input
         if value < 0:
             raise ValueError(f"Negative values are not allowed: {value}")
