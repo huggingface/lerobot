@@ -128,12 +128,11 @@ class SO100Robot(Robot):
         TODO: Write description
         """
         print(
-            f"\nRunning calibration of {self.robot_type} {self.name} ..."
-        )  # TODO: Add arm type here 'follower' or 'leader'
+            f"\nRunning calibration of {self.robot_type} {self.name}"
+        )  # TODO(pepijn): Add arm type here 'follower' or 'leader'
         self.arm.write("Torque_Enable", TorqueMode.DISABLED.value)
-        for motor_name in self.arm.motor_names:
-            if motor_name in ["shoulder_pan"]:
-                self.arm.calibrate_motor(motor_name)
+        self.arm.find_offset()
+        self.arm.find_min_max()
 
     def get_observation(self) -> dict[str, np.ndarray]:
         """The returned observations do not have a batch dimension."""

@@ -32,8 +32,13 @@ def main():
     try:
         while True:
             motor_names = [
-                "shoulder_pan"
-            ]  # "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"
+                "shoulder_pan",
+                "shoulder_lift",
+                "elbow_flex",
+                "wrist_flex",
+                "wrist_roll",
+                "gripper",
+            ]
             leader_pos = robot_leader.arm.read("Present_Position", motor_names)
             robot_follower.arm.write("Goal_Position", leader_pos, motor_names)
 

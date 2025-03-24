@@ -102,7 +102,7 @@ def apply_feetech_offsets_from_calibration(motorsbus, calibration_dict: dict):
     start_pos = calibration_dict["start_pos"]
 
     # Open the write lock, changes to EEPROM do NOT persist yet
-    motorsbus.write("Lock", 1)
+    motorsbus.write("Lock", 0)
 
     # For each motor, set the 'Offset' parameter
     for m_name, old_offset in zip(motor_names, homing_offsets, strict=False):
@@ -144,7 +144,7 @@ def apply_feetech_offsets_from_calibration(motorsbus, calibration_dict: dict):
             f"old_offset={old_offset}, new_offset={new_offset}, servo_encoded={magnitude} + direction={direction_bit}"
         )
 
-    motorsbus.write("Lock", 0)
+    motorsbus.write("Lock", 1)
     print("Offsets have been saved to EEPROM successfully.")
 
 

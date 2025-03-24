@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import time
 from copy import deepcopy
 
 import numpy as np
@@ -240,26 +239,22 @@ class FeetechMotorsBus(MotorsBus):
     def _set_timeout(self, timeout: int = TIMEOUT_MS):
         self.port_handler.setPacketTimeoutMillis(timeout)
 
-    def reset_offset(self, motor_name: str) -> int:
+    def reset_offsets(self) -> int:
         """
-        Reset the offset for a given motor.
-        Args: motor_name (str)
-        Returns: int: The confirmed offset value (should be zero).
+        Reset the offsets
         """
-        self.write("Lock", 1)  # Open the write lock; changes to EEPROM do NOT persist yet.
-        self.write("Offset", 0, motor_names=[motor_name])
-        self.write("Lock", 0)  # Close the write lock; changes to EEPROM now persist.
+        for _, name in enumerate(self.motor_names):
+            self.write("Lock", 0)  # Open the write lock; changes to EEPROM do NOT persist yet.
+            self.write("Offset", 0, motor_names=[name])
+            self.write("Min_Angle_Limit", 0, motor_names=[name])
+            self.write("Max_Angle_Limit", 4095, motor_names=[name])
+            self.write("Lock", 1)  # Close the write lock; changes to EEPROM now persist.
 
-        # Confirm that the offset is zero by reading it back.
-        confirmed_offset = self.read("Offset", motor_names=[motor_name])
-        print(f"Offset for motor {motor_name} reset to: {confirmed_offset}")
-        return confirmed_offset
-
-    def set_calibration(self, motor: str, min_max_range: tuple[int, int], zero_offset: int):
+    def set_calibration(self, motor: str, zero_offset: int):
         """
         # TODO: write this
         """
-        self.write("Lock", 1)  # Open the write lock, changes to EEPROM do NOT persist yet
+        self.write("Lock", 0)  # Open the write lock, changes to EEPROM do NOT persist yet
 
         zero_offset = int(zero_offset)
 
@@ -282,17 +277,23 @@ class FeetechMotorsBus(MotorsBus):
         # Combine sign bit (bit 11) with the magnitude (bits 0..10)
         servo_offset = (direction_bit << 11) | magnitude
 
-        min_angle, max_angle = min_max_range
-        self.write("Min_Angle_Limit", min_angle, motor_names=motor)
-        self.write("Max_Angle_Limit", max_angle, motor_names=motor)
         self.write("Offset", servo_offset, motor_names=motor)
         print(
             f"Set offset for {motor}: zero_offset={zero_offset}, servo_encoded={magnitude} + direction={direction_bit}"
         )
+        self.write("Lock", 1)
 
-        self.write("Lock", 0)
-        time.sleep(0.1)
-        print("Offsets have been saved to EEPROM successfully.")
+    def set_min_max(self, motor: str, min_max_range: tuple[int, int]):
+        """
+        # TODO: write this
+        """
+        self.write("Lock", 0)  # Open the write lock, changes to EEPROM do NOT persist yet
+
+        min_angle, max_angle = min_max_range
+        self.write("Min_Angle_Limit", min_angle, motor_names=motor)
+        self.write("Max_Angle_Limit", max_angle, motor_names=motor)
+        print(f"Set min max for {motor}, min: {min_angle}, max: {max_angle}")
+        self.write("Lock", 1)
 
     def apply_calibration(self, values: np.ndarray | list, motor_names: list[str] | None):
         if motor_names is None:

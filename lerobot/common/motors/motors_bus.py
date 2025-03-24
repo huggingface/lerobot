@@ -20,6 +20,8 @@
 # ruff: noqa: N802
 
 import abc
+import select
+import sys
 import time
 import traceback
 from enum import Enum
@@ -308,51 +310,69 @@ class MotorsBus(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def reset_offset(self):
+    def set_min_max(self):
         pass
 
-    def calibrate_motor(self, motor_name: str):
-        self.reset_offset(motor_name)
-        time.sleep(0.1)
+    @abc.abstractmethod
+    def reset_offsets(self):
+        pass
 
-        input(f"Move {motor_name} to the middle of its range of motion and press ENTER....")
-        # The first read is the middle position.
-        middle = self.read("Present_Position", motor_names=[motor_name])
+    def find_min_max(self):
+        """
+        1) Reads Present_Position for *all* motors simultaneously until user presses Enter.
+        2) After user is done, it computes each motor's min and max.
+        3) If any motor crosses a total range >= 4096 ticks (full 360 deg),
+        raises an error for that motor.
+        4) Otherwise, calls set_min_max(...) on each motor individually.
+        """
+        print("Move all joints sequentially through their entire ranges of motion.")
+        print("Recording positions. Press ENTER to stop...")
+
+        # This will be a list of length N, each an array of motor positions [pos1, pos2, ...]
         recorded_positions = []
 
-        print(f"Move {motor_name} through its entire range of motion (hitting its limits on both sides).")
+        while True:
+            positions = self.read("Present_Position", motor_names=self.motor_names)
+            recorded_positions.append(positions)
+            time.sleep(0.01)
 
-        try:
-            while True:
-                pos = self.read("Present_Position", motor_names=[motor_name])
-                recorded_positions.append(pos)
-                time.sleep(0.01)
-        except KeyboardInterrupt:
-            pass
+            # Check if user pressed Enter
+            ready_to_read, _, _ = select.select([sys.stdin], [], [], 0)
+            if ready_to_read:
+                line = sys.stdin.readline()
+                if line.strip() == "":
+                    break  # user pressed Enter
 
-        # Unwrap the recorded positions if the range is too big.
-        if max(recorded_positions) - min(recorded_positions) > 2048:
-            adjusted = [p if p >= 2048 else p + 4096 for p in recorded_positions]
-        else:
-            adjusted = recorded_positions
+        # Convert recorded_positions (list of arrays) to a 2D numpy array: shape (num_timesteps, num_motors)
+        all_positions = np.array(recorded_positions, dtype=np.float32)
 
-        physical_min = min(adjusted)
-        physical_max = max(adjusted)
+        # For each motor, find min, max
+        for i, mname in enumerate(self.motor_names):
+            motor_column = all_positions[:, i]
+            raw_range = motor_column.max() - motor_column.min()
 
-        # Wrap the calibration limits back if needed.
-        cal_min = physical_min if physical_min < 4096 else physical_min - 4096
-        cal_max = physical_max if physical_max < 4096 else physical_max - 4096
+            # Check if motor made a full 360-degree rotation or more set min max at 0 and 4095
+            if raw_range >= 4000:
+                physical_min = 0
+                physical_max = 4095
+            else:
+                physical_min = int(motor_column.min())
+                physical_max = int(motor_column.max())
 
-        # The zero_offset is set so that the original middle reading is centered at 2047.
-        zero_offset = middle - 2047
+            print(f"Setting '{mname}' min={physical_min}, max={physical_max}")
+            self.set_min_max(mname, (physical_min, physical_max))
 
-        # Adjust calibration limits by the zero_offset.
-        cal_min_offset = (cal_min - zero_offset) % 4096
-        cal_max_offset = (cal_max - zero_offset) % 4096
+    def find_offset(self):
+        self.reset_offsets()
 
-        print("Done recording. Computing min, max...")
+        input("Move robot to the middle of its range of motion and press ENTER....")
 
-        self.set_calibration(motor_name, (cal_min_offset, cal_max_offset), zero_offset)
+        for _, name in enumerate(self.motor_names):
+            middle = self.read("Present_Position", motor_names=[name])
+            zero_offset = (
+                middle - 2047
+            )  # The zero_offset is set so that the original middle reading is centered at 2047.
+            self.set_calibration(name, zero_offset)
 
     @abc.abstractmethod
     def apply_calibration(self):
