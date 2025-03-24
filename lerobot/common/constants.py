@@ -22,6 +22,8 @@ OBS_ROBOT = "observation.state"
 OBS_IMAGE = "observation.image"
 OBS_IMAGES = "observation.images"
 ACTION = "action"
+OBS_IMAGE_2 = "observation.image2"
+OBS_IMAGE_3 = "observation.image3"
 
 # files & directories
 CHECKPOINTS_DIR = "checkpoints"
