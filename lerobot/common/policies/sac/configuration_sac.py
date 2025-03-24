@@ -18,57 +18,82 @@
 from dataclasses import dataclass, field
 from typing import Any
 
+from lerobot.common.optim.optimizers import MultiAdamConfig
+from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs.types import NormalizationMode
 
+
+@PreTrainedConfig.register_subclass("sac")
 @dataclass
-class SACConfig:
-    input_shapes: dict[str, list[int]] = field(
+class SACConfig(PreTrainedConfig):
+    """Configuration class for Soft Actor-Critic (SAC) policy.
+
+    Args:
+        n_obs_steps: Number of environment steps worth of observations to pass to the policy.
+        normalization_mapping: Mapping from feature types to normalization modes.
+        camera_number: Number of cameras to use.
+        storage_device: Device to use for storage.
+        vision_encoder_name: Name of the vision encoder to use.
+        freeze_vision_encoder: Whether to freeze the vision encoder.
+        image_encoder_hidden_dim: Hidden dimension for the image encoder.
+        shared_encoder: Whether to use a shared encoder.
+        discount: Discount factor for the RL algorithm.
+        temperature_init: Initial temperature for entropy regularization.
+        num_critics: Number of critic networks.
+        num_subsample_critics: Number of critics to subsample.
+        critic_lr: Learning rate for critic networks.
+        actor_lr: Learning rate for actor network.
+        temperature_lr: Learning rate for temperature parameter.
+        critic_target_update_weight: Weight for soft target updates.
+        utd_ratio: Update-to-data ratio (>1 to enable).
+        state_encoder_hidden_dim: Hidden dimension for state encoder.
+        latent_dim: Dimension of latent representation.
+        target_entropy: Target entropy for automatic temperature tuning.
+        use_backup_entropy: Whether to use backup entropy.
+        grad_clip_norm: Gradient clipping norm.
+        critic_network_kwargs: Additional arguments for critic networks.
+        actor_network_kwargs: Additional arguments for actor network.
+        policy_kwargs: Additional arguments for policy.
+    """
+
+    # Input / output structure
+    n_obs_steps: int = 1
+
+    normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
-            "observation.image": [3, 84, 84],
-            "observation.state": [4],
+            "VISUAL": NormalizationMode.MEAN_STD,
+            "STATE": NormalizationMode.MIN_MAX,
+            "ENV": NormalizationMode.MIN_MAX,
+            "ACTION": NormalizationMode.MIN_MAX,
         }
     )
-    output_shapes: dict[str, list[int]] = field(
-        default_factory=lambda: {
-            "action": [2],
-        }
-    )
-    input_normalization_modes: dict[str, str] = field(
-        default_factory=lambda: {
-            "observation.image": "mean_std",
-            "observation.state": "min_max",
-            "observation.environment_state": "min_max",
-        }
-    )
-    input_normalization_params: dict[str, dict[str, list[float]]] = field(
+    dataset_stats: dict[str, dict[str, list[float]]] = field(
         default_factory=lambda: {
             "observation.image": {
-                "mean": [[0.485, 0.456, 0.406]],
-                "std": [[0.229, 0.224, 0.225]],
+                "mean": [0.485, 0.456, 0.406],
+                "std": [0.229, 0.224, 0.225],
             },
-            "observation.state": {"min": [-1, -1, -1, -1], "max": [1, 1, 1, 1]},
+            "observation.state": {
+                "min": [0.0, 0.0],
+                "max": [1.0, 1.0],
+            },
+            "action": {
+                "min": [0.0, 0.0, 0.0],
+                "max": [1.0, 1.0, 1.0],
+            },
         }
     )
-    output_normalization_modes: dict[str, str] = field(default_factory=lambda: {"action": "min_max"})
-    output_normalization_params: dict[str, dict[str, list[float]]] = field(
-        default_factory=lambda: {
-            "action": {"min": [-1, -1], "max": [1, 1]},
-        }
-    )
-    # TODO: Move it outside of the config
-    actor_learner_config: dict[str, str | int] = field(
-        default_factory=lambda: {
-            "learner_host": "127.0.0.1",
-            "learner_port": 50051,
-        }
-    )
-    camera_number: int = 1
 
+    # Architecture specifics
+    camera_number: int = 1
     storage_device: str = "cpu"
-    # Add type annotations for these fields:
-    vision_encoder_name: str | None = field(default="helper2424/resnet10")
+    # Set to "helper2424/resnet10" for hil serl 
+    vision_encoder_name: str | None = None 
     freeze_vision_encoder: bool = True
     image_encoder_hidden_dim: int = 32
     shared_encoder: bool = True
+    
+    # SAC algorithm parameters
     discount: float = 0.99
     temperature_init: float = 1.0
     num_critics: int = 2
@@ -83,6 +108,8 @@ class SACConfig:
     target_entropy: float | None = None
     use_backup_entropy: bool = True
     grad_clip_norm: float = 40.0
+    
+    # Network configuration
     critic_network_kwargs: dict[str, Any] = field(
         default_factory=lambda: {
             "hidden_dims": [256, 256],
@@ -104,3 +131,52 @@ class SACConfig:
             "init_final": 0.05,
         }
     )
+    
+    # Deprecated, kept for backward compatibility
+    actor_learner_config: dict[str, str | int] = field(
+        default_factory=lambda: {
+            "learner_host": "127.0.0.1",
+            "learner_port": 50051,
+        }
+    )
+
+    def __post_init__(self):
+        super().__post_init__()
+        # Any validation specific to SAC configuration
+
+    def get_optimizer_preset(self) -> MultiAdamConfig:
+        return MultiAdamConfig(
+            weight_decay=0.0,
+            optimizer_groups={
+                "actor": {"lr": self.actor_lr},
+                "critic": {"lr": self.critic_lr},
+                "temperature": {"lr": self.temperature_lr},
+            },
+        )
+
+    def get_scheduler_preset(self) -> None:
+        return None
+
+    def validate_features(self) -> None:
+        # TODO: Maybe we should remove this raise?
+        if len(self.image_features) == 0:
+            raise ValueError("You must provide at least one image among the inputs.")
+
+    @property
+    def observation_delta_indices(self) -> list:
+        return list(range(1 - self.n_obs_steps, 1))
+
+    @property
+    def action_delta_indices(self) -> list:
+        return [0]  # SAC typically predicts one action at a time
+
+    @property
+    def reward_delta_indices(self) -> None:
+        return None
+
+if __name__ == "__main__":
+    import draccus
+    config = SACConfig()
+    draccus.set_config_type("json")
+    draccus.dump(config=config, stream=open(file='run_config.json', mode='w'), )
+    
