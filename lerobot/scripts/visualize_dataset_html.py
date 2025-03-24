@@ -464,7 +464,6 @@ def main():
     root = kwargs.pop("root")
     tolerance_s = kwargs.pop("tolerance_s")
 
-
     dataset = None
     if repo_id:
         dataset = (
@@ -472,9 +471,10 @@ def main():
             if not load_from_hf_hub
             else get_dataset_info(repo_id)
         )
-        
+
         # test annotation overrider
         from lerobot.common.datasets.annotation_overrider import TaskAnnotationOverrider
+
         overrider = TaskAnnotationOverrider("data/annotation_overrides.json")
         overrider.apply_overrides(dataset)
 
