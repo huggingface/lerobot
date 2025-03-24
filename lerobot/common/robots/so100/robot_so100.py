@@ -132,9 +132,6 @@ class SO100Robot(Robot):
             cam.connect()
 
     def calibrate(self) -> None:
-        """
-        TODO: Write description
-        """
         print(
             f"\nRunning calibration of {self.robot_type} {self.name}"
         )  # TODO(pepijn): Add arm type here 'follower' or 'leader'
