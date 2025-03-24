@@ -263,8 +263,8 @@ class MotorsBus(abc.ABC):
 
         self.calibration = None
 
-        self._id_to_model = {m.id: m.model for m in self.motors.values()}
-        self._id_to_name = {m.id: name for name, m in self.motors.items()}
+        self._id_to_model_dict = {m.id: m.model for m in self.motors.values()}
+        self._id_to_name_dict = {m.id: name for name, m in self.motors.items()}
 
     def __len__(self):
         return len(self.motors)
@@ -298,10 +298,10 @@ class MotorsBus(abc.ABC):
         return [m.id for m in self.motors.values()]
 
     def _id_to_model(self, motor_id: int) -> str:
-        return self._id_to_model[motor_id]
+        return self._id_to_model_dict[motor_id]
 
     def _id_to_name(self, motor_id: int) -> str:
-        return self._id_to_name[motor_id]
+        return self._id_to_name_dict[motor_id]
 
     def _get_motor_id(self, motor: NameOrID) -> int:
         if isinstance(motor, str):
