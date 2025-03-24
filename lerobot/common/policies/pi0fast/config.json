@@ -1,0 +1,82 @@
+{
+    "type": "pi0fast",
+    "n_obs_steps": 1,
+    "normalization_mapping": {
+        "VISUAL": "IDENTITY",
+        "STATE": "MEAN_STD",
+        "ACTION": "MEAN_STD"
+    },
+    "input_features": {
+        "observation.image": {
+            "type": "VISUAL",
+            "shape": [
+                3,
+                256,
+                256
+            ]
+        },
+        "observation.image2": {
+            "type": "VISUAL",
+            "shape": [
+                3,
+                256,
+                256
+            ]
+        },
+        "observation.image3": {
+            "type": "VISUAL",
+            "shape": [
+                3,
+                256,
+                256
+            ]
+        },
+        "observation.state": {
+            "type": "STATE",
+            "shape": [
+                8
+            ]
+        }
+    },
+    "output_features": {
+        "action": {
+            "type": "ACTION",
+            "shape": [
+                7
+            ]
+        }
+    },
+    "use_env_state": true,
+    "exclude_image_keys": "",
+    "normalize_per_robot_type": false,
+    "chunk_size": 10,
+    "n_action_steps": 5,
+    "max_state_dim": 32,
+    "max_action_dim": 32,
+    "resize_imgs_with_padding": [
+        224,
+        224
+    ],
+    "interpolate_like_pi": false,
+    "empty_cameras": 0,
+    "adapt_to_pi_aloha": false,
+    "use_delta_joint_actions_aloha": false,
+    "tokenizer_max_length": 48,
+    "proj_width": 1024,
+    "max_decoding_steps": 256,
+    "fast_skip_tokens": 128,
+    "max_input_seq_len": 256,
+    "use_cache": true,
+    "freeze_vision_encoder": true,
+    "freeze_lm_head": true,
+    "optimizer_lr": 0.0001,
+    "optimizer_betas": [
+        0.9,
+        0.95
+    ],
+    "optimizer_eps": 1e-08,
+    "optimizer_weight_decay": 1e-10,
+    "scheduler_warmup_steps": 1000,
+    "scheduler_decay_steps": 30000,
+    "scheduler_decay_lr": 2.5e-06
+}
