@@ -12,14 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 from copy import deepcopy
 from enum import Enum
+from pprint import pformat
 
 from ..motors_bus import Motor, MotorsBus
 from .tables import (
     CALIBRATION_REQUIRED,
     MODEL_BAUDRATE_TABLE,
     MODEL_CONTROL_TABLE,
+    MODEL_NUMBER,
     MODEL_RESOLUTION,
 )
 
@@ -27,7 +30,7 @@ PROTOCOL_VERSION = 0
 BAUDRATE = 1_000_000
 DEFAULT_TIMEOUT_MS = 1000
 
-MAX_ID_RANGE = 252
+logger = logging.getLogger(__name__)
 
 
 class OperatingMode(Enum):
@@ -53,6 +56,7 @@ class FeetechMotorsBus(MotorsBus):
     model_ctrl_table = deepcopy(MODEL_CONTROL_TABLE)
     model_resolution_table = deepcopy(MODEL_RESOLUTION)
     model_baudrate_table = deepcopy(MODEL_BAUDRATE_TABLE)
+    model_number_table = deepcopy(MODEL_NUMBER)
     calibration_required = deepcopy(CALIBRATION_REQUIRED)
     default_timeout = DEFAULT_TIMEOUT_MS
 
@@ -115,8 +119,97 @@ class FeetechMotorsBus(MotorsBus):
             ]
         return data
 
-    def broadcast_ping(
-        self, num_retry: int = 0, raise_on_error: bool = False
-    ) -> dict[int, list[int, int]] | None:
-        # TODO
-        raise NotImplementedError
+    def _broadcast_ping(self) -> tuple[dict[int, int], int]:
+        import scservo_sdk as scs
+
+        data_list = {}
+
+        status_length = 6
+
+        rx_length = 0
+        wait_length = status_length * scs.MAX_ID
+
+        txpacket = [0] * 6
+
+        tx_time_per_byte = (1000.0 / self.port_handler.getBaudRate()) * 10.0
+
+        txpacket[scs.PKT_ID] = scs.BROADCAST_ID
+        txpacket[scs.PKT_LENGTH] = 2
+        txpacket[scs.PKT_INSTRUCTION] = scs.INST_PING
+
+        result = self.packet_handler.txPacket(self.port_handler, txpacket)
+        if result != scs.COMM_SUCCESS:
+            self.port_handler.is_using = False
+            return data_list, result
+
+        # set rx timeout
+        self.port_handler.setPacketTimeoutMillis((wait_length * tx_time_per_byte) + (3.0 * scs.MAX_ID) + 16.0)
+
+        rxpacket = []
+        while True:
+            rxpacket += self.port_handler.readPort(wait_length - rx_length)
+            rx_length = len(rxpacket)
+
+            if self.port_handler.isPacketTimeout():  # or rx_length >= wait_length
+                break
+
+        self.port_handler.is_using = False
+
+        if rx_length == 0:
+            return data_list, scs.COMM_RX_TIMEOUT
+
+        while True:
+            if rx_length < status_length:
+                return data_list, scs.COMM_RX_CORRUPT
+
+            # find packet header
+            for idx in range(0, (rx_length - 1)):
+                if (rxpacket[idx] == 0xFF) and (rxpacket[idx + 1] == 0xFF):
+                    break
+
+            if idx == 0:  # found at the beginning of the packet
+                # calculate checksum
+                checksum = 0
+                for idx in range(2, status_length - 1):  # except header & checksum
+                    checksum += rxpacket[idx]
+
+                checksum = scs.SCS_LOBYTE(~checksum)
+                if rxpacket[status_length - 1] == checksum:
+                    result = scs.COMM_SUCCESS
+                    data_list[rxpacket[scs.PKT_ID]] = rxpacket[scs.PKT_ERROR]
+
+                    del rxpacket[0:status_length]
+                    rx_length = rx_length - status_length
+
+                    if rx_length == 0:
+                        return data_list, result
+                else:
+                    result = scs.COMM_RX_CORRUPT
+                    # remove header (0xFF 0xFF)
+                    del rxpacket[0:2]
+                    rx_length = rx_length - 2
+            else:
+                # remove unnecessary packets
+                del rxpacket[0:idx]
+                rx_length = rx_length - idx
+
+    def broadcast_ping(self, num_retry: int = 0, raise_on_error: bool = False) -> dict[int, str] | None:
+        for n_try in range(1 + num_retry):
+            ids_status, comm = self._broadcast_ping()
+            if self._is_comm_success(comm):
+                break
+            logger.debug(f"Broadcast failed on port '{self.port}' ({n_try=})")
+            logger.debug(self.packet_handler.getRxPacketError(comm))
+
+        if not self._is_comm_success(comm):
+            if raise_on_error:
+                raise ConnectionError
+
+            return ids_status if ids_status else None
+
+        ids_errors = {id_: status for id_, status in ids_status.items() if self._is_error(status)}
+        if ids_errors:
+            display_dict = {id_: self.packet_handler.getRxPacketError(err) for id_, err in ids_errors.items()}
+            logger.error(f"Some motors found returned an error status:\n{pformat(display_dict, indent=4)}")
+        model_numbers = self.sync_read("Model_Number", list(ids_status), num_retry)
+        return {id_: self._model_nb_to_model(model_nb) for id_, model_nb in model_numbers.items()}
