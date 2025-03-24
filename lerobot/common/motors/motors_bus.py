@@ -242,6 +242,7 @@ class MotorsBus(abc.ABC):
     model_ctrl_table: dict[str, dict]
     model_resolution_table: dict[str, int]
     model_baudrate_table: dict[str, dict]
+    model_number_table: dict[str, int]
     calibration_required: list[str]
     default_timeout: int
 
@@ -265,6 +266,7 @@ class MotorsBus(abc.ABC):
 
         self._id_to_model_dict = {m.id: m.model for m in self.motors.values()}
         self._id_to_name_dict = {m.id: name for name, m in self.motors.items()}
+        self._model_nb_to_model_dict = {v: k for k, v in self.model_number_table.items()}
 
     def __len__(self):
         return len(self.motors)
@@ -296,6 +298,9 @@ class MotorsBus(abc.ABC):
     @cached_property
     def ids(self) -> list[int]:
         return [m.id for m in self.motors.values()]
+
+    def _model_nb_to_model(self, motor_nb: int) -> str:
+        return self._model_nb_to_model_dict[motor_nb]
 
     def _id_to_model(self, motor_id: int) -> str:
         return self._id_to_model_dict[motor_id]
@@ -436,21 +441,33 @@ class MotorsBus(abc.ABC):
         """
         pass
 
-    def ping(self, motor: NameOrID, num_retry: int = 0, raise_on_error: bool = False) -> int | None:
+    def ping(self, motor: NameOrID, num_retry: int = 0, raise_on_error: bool = False) -> str | None:
         idx = self._get_motor_id(motor)
         for n_try in range(1 + num_retry):
             model_number, comm, error = self.packet_handler.ping(self.port_handler, idx)
             if self._is_comm_success(comm):
-                return model_number
+                break
             logger.debug(f"ping failed for {idx=}: {n_try=} got {comm=} {error=}")
 
-        if raise_on_error:
-            raise ConnectionError(f"Ping motor {motor} returned a {error} error code.")
+        if not self._is_comm_success(comm):
+            if raise_on_error:
+                logger.error(self.packet_handler.getRxPacketError(comm))
+                raise ConnectionError
+            else:
+                return
+        if self._is_error(error):
+            if raise_on_error:
+                logger.error(self.packet_handler.getTxRxResult(comm))
+                raise ConnectionError
+            else:
+                return
+
+        return self._model_nb_to_model(model_number)
 
     @abc.abstractmethod
     def broadcast_ping(
         self, num_retry: int = 0, raise_on_error: bool = False
-    ) -> dict[int, list[int, int]] | None:
+    ) -> dict[int, list[int, str]] | None:
         pass
 
     @overload

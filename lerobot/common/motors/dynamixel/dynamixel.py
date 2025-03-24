@@ -18,19 +18,21 @@
 # https://emanual.robotis.com/docs/en/dxl/protocol2/#fast-sync-read-0x8a
 # -> Need to check compatibility across models
 
+import logging
 from copy import deepcopy
 from enum import Enum
 
 from ..motors_bus import Motor, MotorsBus
-from .tables import MODEL_BAUDRATE_TABLE, MODEL_CONTROL_TABLE, MODEL_RESOLUTION
+from .tables import MODEL_BAUDRATE_TABLE, MODEL_CONTROL_TABLE, MODEL_NUMBER, MODEL_RESOLUTION
 
 PROTOCOL_VERSION = 2.0
 BAUDRATE = 1_000_000
 DEFAULT_TIMEOUT_MS = 1000
-MAX_ID_RANGE = 252
 
 CALIBRATION_REQUIRED = ["Goal_Position", "Present_Position"]
 CONVERT_UINT32_TO_INT32_REQUIRED = ["Goal_Position", "Present_Position"]
+
+logger = logging.getLogger(__name__)
 
 
 class OperatingMode(Enum):
@@ -73,6 +75,7 @@ class DynamixelMotorsBus(MotorsBus):
     model_ctrl_table = deepcopy(MODEL_CONTROL_TABLE)
     model_resolution_table = deepcopy(MODEL_RESOLUTION)
     model_baudrate_table = deepcopy(MODEL_BAUDRATE_TABLE)
+    model_number_table = deepcopy(MODEL_NUMBER)
     calibration_required = deepcopy(CALIBRATION_REQUIRED)
     default_timeout = DEFAULT_TIMEOUT_MS
 
@@ -135,13 +138,19 @@ class DynamixelMotorsBus(MotorsBus):
             ]
         return data
 
-    def broadcast_ping(
-        self, num_retry: int = 0, raise_on_error: bool = False
-    ) -> dict[int, list[int, int]] | None:
-        for _ in range(1 + num_retry):
+    def broadcast_ping(self, num_retry: int = 0, raise_on_error: bool = False) -> dict[int, str] | None:
+        for n_try in range(1 + num_retry):
             data_list, comm = self.packet_handler.broadcastPing(self.port_handler)
             if self._is_comm_success(comm):
-                return data_list
+                break
+            logger.debug(f"Broadcast failed on port '{self.port}' ({n_try=})")
+            logger.debug(self.packet_handler.getRxPacketError(comm))
 
-        if raise_on_error:
-            raise ConnectionError(f"Broadcast ping returned a {comm} comm error.")
+        if not self._is_comm_success(comm):
+            if raise_on_error:
+                logger.error(self.packet_handler.getRxPacketError(comm))
+                raise ConnectionError
+
+            return data_list if data_list else None
+
+        return {id_: self._model_nb_to_model(data[0]) for id_, data in data_list.items()}
