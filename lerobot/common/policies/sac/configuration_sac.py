@@ -48,9 +48,7 @@ class SACConfig:
             "observation.state": {"min": [-1, -1, -1, -1], "max": [1, 1, 1, 1]},
         }
     )
-    output_normalization_modes: dict[str, str] = field(
-        default_factory=lambda: {"action": "min_max"}
-    )
+    output_normalization_modes: dict[str, str] = field(default_factory=lambda: {"action": "min_max"})
     output_normalization_params: dict[str, dict[str, list[float]]] = field(
         default_factory=lambda: {
             "action": {"min": [-1, -1], "max": [1, 1]},

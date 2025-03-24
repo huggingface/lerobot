@@ -48,9 +48,7 @@ def auto_select_torch_device() -> torch.device:
         logging.info("Metal backend detected, using cuda.")
         return torch.device("mps")
     else:
-        logging.warning(
-            "No accelerated backend detected. Using default cpu, this will be slow."
-        )
+        logging.warning("No accelerated backend detected. Using default cpu, this will be slow.")
         return torch.device("cpu")
 
 
@@ -98,9 +96,7 @@ def is_torch_device_available(try_device: str) -> bool:
     elif try_device == "cpu":
         return True
     else:
-        raise ValueError(
-            f"Unknown device {try_device}. Supported devices are: cuda, mps or cpu."
-        )
+        raise ValueError(f"Unknown device {try_device}. Supported devices are: cuda, mps or cpu.")
 
 
 def is_amp_available(device: str):
@@ -158,10 +154,7 @@ def _relative_path_between(path1: Path, path2: Path) -> Path:
     except ValueError:  # most likely because path1 is not a subpath of path2
         common_parts = Path(osp.commonpath([path1, path2])).parts
         return Path(
-            "/".join(
-                [".."] * (len(path2.parts) - len(common_parts))
-                + list(path1.parts[len(common_parts) :])
-            )
+            "/".join([".."] * (len(path2.parts) - len(common_parts)) + list(path1.parts[len(common_parts) :]))
         )
 
 
@@ -172,26 +165,10 @@ def print_cuda_memory_usage():
     gc.collect()
     # Also clear the cache if you want to fully release the memory
     torch.cuda.empty_cache()
-    print(
-        "Current GPU Memory Allocated: {:.2f} MB".format(
-            torch.cuda.memory_allocated(0) / 1024**2
-        )
-    )
-    print(
-        "Maximum GPU Memory Allocated: {:.2f} MB".format(
-            torch.cuda.max_memory_allocated(0) / 1024**2
-        )
-    )
-    print(
-        "Current GPU Memory Reserved: {:.2f} MB".format(
-            torch.cuda.memory_reserved(0) / 1024**2
-        )
-    )
-    print(
-        "Maximum GPU Memory Reserved: {:.2f} MB".format(
-            torch.cuda.max_memory_reserved(0) / 1024**2
-        )
-    )
+    print("Current GPU Memory Allocated: {:.2f} MB".format(torch.cuda.memory_allocated(0) / 1024**2))
+    print("Maximum GPU Memory Allocated: {:.2f} MB".format(torch.cuda.max_memory_allocated(0) / 1024**2))
+    print("Current GPU Memory Reserved: {:.2f} MB".format(torch.cuda.memory_reserved(0) / 1024**2))
+    print("Maximum GPU Memory Reserved: {:.2f} MB".format(torch.cuda.max_memory_reserved(0) / 1024**2))
 
 
 def capture_timestamp_utc():
@@ -223,9 +200,7 @@ def say(text, blocking=False):
     if blocking:
         subprocess.run(cmd, check=True)
     else:
-        subprocess.Popen(
-            cmd, creationflags=subprocess.CREATE_NO_WINDOW if system == "Windows" else 0
-        )
+        subprocess.Popen(cmd, creationflags=subprocess.CREATE_NO_WINDOW if system == "Windows" else 0)
 
 
 def log_say(text, play_sounds, blocking=False):

@@ -225,9 +225,7 @@ def convert_lerobot_dataset_to_cropper_lerobot_dataset(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Crop rectangular ROIs from a LeRobot dataset."
-    )
+    parser = argparse.ArgumentParser(description="Crop rectangular ROIs from a LeRobot dataset.")
     parser.add_argument(
         "--repo-id",
         type=str,
@@ -249,9 +247,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     local_files_only = args.root is not None
-    dataset = LeRobotDataset(
-        repo_id=args.repo_id, root=args.root, local_files_only=local_files_only
-    )
+    dataset = LeRobotDataset(repo_id=args.repo_id, root=args.root, local_files_only=local_files_only)
 
     images = get_image_from_lerobot_dataset(dataset)
     images = {k: v.cpu().permute(1, 2, 0).numpy() for k, v in images.items()}

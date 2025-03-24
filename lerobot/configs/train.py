@@ -73,9 +73,7 @@ class TrainPipelineConfig(HubMixin):
         if policy_path:
             # Only load the policy config
             cli_overrides = parser.get_cli_overrides("policy")
-            self.policy = PreTrainedConfig.from_pretrained(
-                policy_path, cli_overrides=cli_overrides
-            )
+            self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
             self.policy.pretrained_path = policy_path
         elif self.resume:
             # The entire train config is already loaded, we just need to get the checkpoint dir
@@ -99,11 +97,7 @@ class TrainPipelineConfig(HubMixin):
             else:
                 self.job_name = f"{self.env.type}_{self.policy.type}"
 
-        if (
-            not self.resume
-            and isinstance(self.output_dir, Path)
-            and self.output_dir.is_dir()
-        ):
+        if not self.resume and isinstance(self.output_dir, Path) and self.output_dir.is_dir():
             raise FileExistsError(
                 f"Output directory {self.output_dir} already exists and resume is {self.resume}. "
                 f"Please change your output directory so that {self.output_dir} is not overwritten."
@@ -114,16 +108,10 @@ class TrainPipelineConfig(HubMixin):
             self.output_dir = Path("outputs/train") / train_dir
 
         if isinstance(self.dataset.repo_id, list):
-            raise NotImplementedError(
-                "LeRobotMultiDataset is not currently implemented."
-            )
+            raise NotImplementedError("LeRobotMultiDataset is not currently implemented.")
 
-        if not self.use_policy_training_preset and (
-            self.optimizer is None or self.scheduler is None
-        ):
-            raise ValueError(
-                "Optimizer and Scheduler must be set when the policy presets are not used."
-            )
+        if not self.use_policy_training_preset and (self.optimizer is None or self.scheduler is None):
+            raise ValueError("Optimizer and Scheduler must be set when the policy presets are not used.")
         elif self.use_policy_training_preset and not self.resume:
             self.optimizer = self.policy.get_optimizer_preset()
             self.scheduler = self.policy.get_scheduler_preset()

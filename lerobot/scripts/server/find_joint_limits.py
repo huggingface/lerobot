@@ -32,9 +32,7 @@ def find_joint_bounds(
         if display_cameras and not is_headless():
             image_keys = [key for key in observation if "image" in key]
             for key in image_keys:
-                cv2.imshow(
-                    key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR)
-                )
+                cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
             cv2.waitKey(1)
 
         if time.perf_counter() - start_episode_t > control_time_s:
@@ -69,9 +67,7 @@ def find_ee_bounds(
         if display_cameras and not is_headless():
             image_keys = [key for key in observation if "image" in key]
             for key in image_keys:
-                cv2.imshow(
-                    key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR)
-                )
+                cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
             cv2.waitKey(1)
 
         if time.perf_counter() - start_episode_t > control_time_s:

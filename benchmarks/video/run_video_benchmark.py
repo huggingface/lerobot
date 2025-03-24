@@ -85,9 +85,7 @@ def get_directory_size(directory: Path) -> int:
     return total_size
 
 
-def load_original_frames(
-    imgs_dir: Path, timestamps: list[float], fps: int
-) -> torch.Tensor:
+def load_original_frames(imgs_dir: Path, timestamps: list[float], fps: int) -> torch.Tensor:
     frames = []
     for ts in timestamps:
         idx = int(ts * fps)
@@ -129,9 +127,7 @@ def save_first_episode(imgs_dir: Path, dataset: LeRobotDataset) -> None:
     hf_dataset = dataset.hf_dataset.with_format(None)
 
     # We only save images from the first camera
-    img_keys = [
-        key for key in hf_dataset.features if key.startswith("observation.image")
-    ]
+    img_keys = [key for key in hf_dataset.features if key.startswith("observation.image")]
     imgs_dataset = hf_dataset.select_columns(img_keys[0])
 
     for i, item in enumerate(
@@ -148,9 +144,7 @@ def save_first_episode(imgs_dir: Path, dataset: LeRobotDataset) -> None:
             break
 
 
-def sample_timestamps(
-    timestamps_mode: str, ep_num_images: int, fps: int
-) -> list[float]:
+def sample_timestamps(timestamps_mode: str, ep_num_images: int, fps: int) -> list[float]:
     # Start at 5 to allow for 2_frames_4_space and 6_frames
     idx = random.randint(5, ep_num_images - 1)
     match timestamps_mode:
@@ -175,9 +169,7 @@ def decode_video_frames(
     backend: str,
 ) -> torch.Tensor:
     if backend in ["pyav", "video_reader"]:
-        return decode_video_frames_torchvision(
-            video_path, timestamps, tolerance_s, backend
-        )
+        return decode_video_frames_torchvision(video_path, timestamps, tolerance_s, backend)
     else:
         raise NotImplementedError(backend)
 
@@ -204,9 +196,7 @@ def benchmark_decoding(
         }
 
         with time_benchmark:
-            frames = decode_video_frames(
-                video_path, timestamps=timestamps, tolerance_s=5e-1, backend=backend
-            )
+            frames = decode_video_frames(video_path, timestamps=timestamps, tolerance_s=5e-1, backend=backend)
         result["load_time_video_ms"] = time_benchmark.result_ms / num_frames
 
         with time_benchmark:
@@ -215,18 +205,12 @@ def benchmark_decoding(
 
         frames_np, original_frames_np = frames.numpy(), original_frames.numpy()
         for i in range(num_frames):
-            result["mse_values"].append(
-                mean_squared_error(original_frames_np[i], frames_np[i])
-            )
+            result["mse_values"].append(mean_squared_error(original_frames_np[i], frames_np[i]))
             result["psnr_values"].append(
-                peak_signal_noise_ratio(
-                    original_frames_np[i], frames_np[i], data_range=1.0
-                )
+                peak_signal_noise_ratio(original_frames_np[i], frames_np[i], data_range=1.0)
             )
             result["ssim_values"].append(
-                structural_similarity(
-                    original_frames_np[i], frames_np[i], data_range=1.0, channel_axis=0
-                )
+                structural_similarity(original_frames_np[i], frames_np[i], data_range=1.0, channel_axis=0)
             )
 
         if save_frames and sample == 0:
@@ -246,9 +230,7 @@ def benchmark_decoding(
     # As these samples are independent, we run them in parallel threads to speed up the benchmark.
     with ThreadPoolExecutor(max_workers=num_workers) as executor:
         futures = [executor.submit(process_sample, i) for i in range(num_samples)]
-        for future in tqdm(
-            as_completed(futures), total=num_samples, desc="samples", leave=False
-        ):
+        for future in tqdm(as_completed(futures), total=num_samples, desc="samples", leave=False):
             result = future.result()
             load_times_video_ms.append(result["load_time_video_ms"])
             load_times_images_ms.append(result["load_time_images_ms"])
@@ -312,9 +294,7 @@ def benchmark_encoding_decoding(
         desc="decodings (timestamps_modes)",
         leave=False,
     ):
-        for backend in tqdm(
-            decoding_cfg["backends"], desc="decodings (backends)", leave=False
-        ):
+        for backend in tqdm(decoding_cfg["backends"], desc="decodings (backends)", leave=False):
             benchmark_row = benchmark_decoding(
                 imgs_dir,
                 video_path,
@@ -392,23 +372,14 @@ def main(
                 imgs_dir = output_dir / "images" / dataset.repo_id.replace("/", "_")
                 # We only use the first episode
                 save_first_episode(imgs_dir, dataset)
-                for key, values in tqdm(
-                    encoding_benchmarks.items(), desc="encodings (g, crf)", leave=False
-                ):
+                for key, values in tqdm(encoding_benchmarks.items(), desc="encodings (g, crf)", leave=False):
                     for value in tqdm(values, desc=f"encodings ({key})", leave=False):
                         encoding_cfg = BASE_ENCODING.copy()
                         encoding_cfg["vcodec"] = video_codec
                         encoding_cfg["pix_fmt"] = pixel_format
                         encoding_cfg[key] = value
-                        args_path = Path(
-                            "_".join(str(value) for value in encoding_cfg.values())
-                        )
-                        video_path = (
-                            output_dir
-                            / "videos"
-                            / args_path
-                            / f"{repo_id.replace('/', '_')}.mp4"
-                        )
+                        args_path = Path("_".join(str(value) for value in encoding_cfg.values()))
+                        video_path = output_dir / "videos" / args_path / f"{repo_id.replace('/', '_')}.mp4"
                         benchmark_table += benchmark_encoding_decoding(
                             dataset,
                             video_path,
@@ -434,9 +405,7 @@ def main(
     # Concatenate all results
     df_list = [pd.read_csv(csv_path) for csv_path in file_paths]
     concatenated_df = pd.concat(df_list, ignore_index=True)
-    concatenated_path = (
-        output_dir / f"{now:%Y-%m-%d}_{now:%H-%M-%S}_all_{num_samples}-samples.csv"
-    )
+    concatenated_path = output_dir / f"{now:%Y-%m-%d}_{now:%H-%M-%S}_all_{num_samples}-samples.csv"
     concatenated_df.to_csv(concatenated_path, header=True, index=False)
 
 

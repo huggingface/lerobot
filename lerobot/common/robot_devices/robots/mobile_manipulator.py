@@ -271,9 +271,7 @@ class MobileManipulator:
                 calibration = json.load(f)
         else:
             print(f"Missing calibration file '{arm_calib_path}'")
-            calibration = run_arm_manual_calibration(
-                arm, self.robot_type, name, arm_type
-            )
+            calibration = run_arm_manual_calibration(arm, self.robot_type, name, arm_type)
             print(f"Calibration is done! Saving calibration file '{arm_calib_path}'")
             arm_calib_path.parent.mkdir(parents=True, exist_ok=True)
             with open(arm_calib_path, "w") as f:
@@ -303,9 +301,7 @@ class MobileManipulator:
                 bus.write("Torque_Enable", 0, motor_id)
 
             # Then filter out wheels
-            arm_only_dict = {
-                k: v for k, v in bus.motors.items() if not k.startswith("wheel_")
-            }
+            arm_only_dict = {k: v for k, v in bus.motors.items() if not k.startswith("wheel_")}
             if not arm_only_dict:
                 continue
 
@@ -377,9 +373,7 @@ class MobileManipulator:
             if new_arm_state is not None and frames is not None:
                 self.last_frames = frames
 
-                remote_arm_state_tensor = torch.tensor(
-                    new_arm_state, dtype=torch.float32
-                )
+                remote_arm_state_tensor = torch.tensor(new_arm_state, dtype=torch.float32)
                 self.last_remote_arm_state = remote_arm_state_tensor
 
                 present_speed = new_speed
@@ -405,10 +399,7 @@ class MobileManipulator:
     def _process_present_speed(self, present_speed: dict) -> torch.Tensor:
         state_tensor = torch.zeros(3, dtype=torch.int32)
         if present_speed:
-            decoded = {
-                key: MobileManipulator.raw_to_degps(value)
-                for key, value in present_speed.items()
-            }
+            decoded = {key: MobileManipulator.raw_to_degps(value) for key, value in present_speed.items()}
             if "1" in decoded:
                 state_tensor[0] = decoded["1"]
             if "2" in decoded:
@@ -421,9 +412,7 @@ class MobileManipulator:
         self, record_data: bool = False
     ) -> None | tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
         if not self.is_connected:
-            raise RobotDeviceNotConnectedError(
-                "MobileManipulator is not connected. Run `connect()` first."
-            )
+            raise RobotDeviceNotConnectedError("MobileManipulator is not connected. Run `connect()` first.")
 
         speed_setting = self.speed_levels[self.speed_index]
         xy_speed = speed_setting["xy"]  # e.g. 0.1, 0.25, or 0.4
@@ -495,9 +484,7 @@ class MobileManipulator:
             body_state[2],
         )  # Convert x,y to mm/s
         wheel_state_tensor = torch.tensor(body_state_mm, dtype=torch.float32)
-        combined_state_tensor = torch.cat(
-            (remote_arm_state_tensor, wheel_state_tensor), dim=0
-        )
+        combined_state_tensor = torch.cat((remote_arm_state_tensor, wheel_state_tensor), dim=0)
 
         obs_dict = {"observation.state": combined_state_tensor}
 

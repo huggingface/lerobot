@@ -108,9 +108,7 @@ def test_robot(tmp_path, request, robot_type, mock):
     assert "observation.state" in observation
     assert isinstance(observation["observation.state"], torch.Tensor)
     assert observation["observation.state"].ndim == 1
-    dim_state = sum(
-        len(robot.follower_arms[name].motors) for name in robot.follower_arms
-    )
+    dim_state = sum(len(robot.follower_arms[name].motors) for name in robot.follower_arms)
     assert observation["observation.state"].shape[0] == dim_state
     # Cameras
     for name in robot.cameras:
@@ -121,9 +119,7 @@ def test_robot(tmp_path, request, robot_type, mock):
     assert "action" in action
     assert isinstance(action["action"], torch.Tensor)
     assert action["action"].ndim == 1
-    dim_action = sum(
-        len(robot.follower_arms[name].motors) for name in robot.follower_arms
-    )
+    dim_action = sum(len(robot.follower_arms[name].motors) for name in robot.follower_arms)
     assert action["action"].shape[0] == dim_action
     # TODO(rcadene): test if observation and action data are returned as expected
 
@@ -134,9 +130,7 @@ def test_robot(tmp_path, request, robot_type, mock):
         if "image" in name:
             # TODO(rcadene): skipping image for now as it's challenging to assess equality between two consecutive frames
             continue
-        torch.testing.assert_close(
-            captured_observation[name], observation[name], rtol=1e-4, atol=1
-        )
+        torch.testing.assert_close(captured_observation[name], observation[name], rtol=1e-4, atol=1)
         assert captured_observation[name].shape == observation[name].shape
 
     # Test send_action can run

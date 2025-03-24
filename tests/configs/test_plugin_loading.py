@@ -9,9 +9,7 @@ from lerobot.common.envs.configs import EnvConfig
 from lerobot.configs.parser import PluginLoadError, load_plugin, parse_plugin_args, wrap
 
 
-def create_plugin_code(
-    *, base_class: str = "EnvConfig", plugin_name: str = "test_env"
-) -> str:
+def create_plugin_code(*, base_class: str = "EnvConfig", plugin_name: str = "test_env") -> str:
     """Creates a dummy plugin module that implements its own EnvConfig subclass."""
     return f"""
 from dataclasses import dataclass

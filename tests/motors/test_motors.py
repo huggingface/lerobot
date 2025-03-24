@@ -79,9 +79,7 @@ def test_configure_motors_all_ids_1(request, motor_type, mock):
     else:
         raise ValueError(motor_type)
 
-    input(
-        "Are you sure you want to re-configure the motors? Press enter to continue..."
-    )
+    input("Are you sure you want to re-configure the motors? Press enter to continue...")
     # This test expect the configuration was already correct.
     motors_bus = make_motors_bus(motor_type, mock=mock)
     motors_bus.connect()

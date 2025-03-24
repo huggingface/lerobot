@@ -42,9 +42,7 @@ def run_camera_capture(cameras, images_lock, latest_images_dict, stop_event):
         local_dict = {}
         for name, cam in cameras.items():
             frame = cam.async_read()
-            ret, buffer = cv2.imencode(
-                ".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 90]
-            )
+            ret, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
             if ret:
                 local_dict[name] = base64.b64encode(buffer).decode("utf-8")
             else:
@@ -76,9 +74,7 @@ def calibrate_follower_arm(motors_bus, calib_dir_str):
         print(f"[INFO] Loaded calibration from {calib_file}")
     else:
         print("[INFO] Calibration file not found. Running manual calibration...")
-        calibration = run_arm_manual_calibration(
-            motors_bus, "lekiwi", "follower_arm", "follower"
-        )
+        calibration = run_arm_manual_calibration(motors_bus, "lekiwi", "follower_arm", "follower")
         print(f"[INFO] Calibration complete. Saving to {calib_file}")
         with open(calib_file, "w") as f:
             json.dump(calibration, f)
@@ -174,9 +170,7 @@ def run_lekiwi(robot_config):
                                 f"[WARNING] Received {len(arm_positions)} arm positions, expected {len(arm_motor_ids)}"
                             )
                         else:
-                            for motor, pos in zip(
-                                arm_motor_ids, arm_positions, strict=False
-                            ):
+                            for motor, pos in zip(arm_motor_ids, arm_positions, strict=False):
                                 motors_bus.write("Goal_Position", pos, motor)
                     # Process wheel (base) commands.
                     if "raw_velocity" in data:
@@ -207,9 +201,7 @@ def run_lekiwi(robot_config):
                 try:
                     pos = motors_bus.read("Present_Position", motor)
                     # Convert the position to a float (or use as is if already numeric).
-                    follower_arm_state.append(
-                        float(pos) if not isinstance(pos, (int, float)) else pos
-                    )
+                    follower_arm_state.append(float(pos) if not isinstance(pos, (int, float)) else pos)
                 except Exception as e:
                     print(f"[ERROR] Reading motor {motor} failed: {e}")
 

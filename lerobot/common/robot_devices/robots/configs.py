@@ -69,13 +69,9 @@ class ManipulatorRobotConfig(RobotConfig):
                 if not cam.mock:
                     cam.mock = True
 
-        if self.max_relative_target is not None and isinstance(
-            self.max_relative_target, Sequence
-        ):
+        if self.max_relative_target is not None and isinstance(self.max_relative_target, Sequence):
             for name in self.follower_arms:
-                if len(self.follower_arms[name].motors) != len(
-                    self.max_relative_target
-                ):
+                if len(self.follower_arms[name].motors) != len(self.max_relative_target):
                     raise ValueError(
                         f"len(max_relative_target)={len(self.max_relative_target)} but the follower arm with name {name} has "
                         f"{len(self.follower_arms[name].motors)} motors. Please make sure that the "

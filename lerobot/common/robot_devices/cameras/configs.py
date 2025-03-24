@@ -57,9 +57,7 @@ class OpenCVCameraConfig(CameraConfig):
         self.channels = 3
 
         if self.rotation not in [-90, None, 90, 180]:
-            raise ValueError(
-                f"`rotation` must be in [-90, None, 90, 180] (got {self.rotation})"
-            )
+            raise ValueError(f"`rotation` must be in [-90, None, 90, 180] (got {self.rotation})")
 
 
 @CameraConfig.register_subclass("intelrealsense")
@@ -104,12 +102,8 @@ class IntelRealSenseCameraConfig(CameraConfig):
 
         self.channels = 3
 
-        at_least_one_is_not_none = (
-            self.fps is not None or self.width is not None or self.height is not None
-        )
-        at_least_one_is_none = (
-            self.fps is None or self.width is None or self.height is None
-        )
+        at_least_one_is_not_none = self.fps is not None or self.width is not None or self.height is not None
+        at_least_one_is_none = self.fps is None or self.width is None or self.height is None
         if at_least_one_is_not_none and at_least_one_is_none:
             raise ValueError(
                 "For `fps`, `width` and `height`, either all of them need to be set, or none of them, "
@@ -117,6 +111,4 @@ class IntelRealSenseCameraConfig(CameraConfig):
             )
 
         if self.rotation not in [-90, None, 90, 180]:
-            raise ValueError(
-                f"`rotation` must be in [-90, None, 90, 180] (got {self.rotation})"
-            )
+            raise ValueError(f"`rotation` must be in [-90, None, 90, 180] (got {self.rotation})")

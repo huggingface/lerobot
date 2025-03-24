@@ -255,8 +255,7 @@ def record(
         if len(robot.cameras) > 0:
             dataset.start_image_writer(
                 num_processes=cfg.num_image_writer_processes,
-                num_threads=cfg.num_image_writer_threads_per_camera
-                * len(robot.cameras),
+                num_threads=cfg.num_image_writer_threads_per_camera * len(robot.cameras),
             )
         sanity_check_dataset_robot_compatibility(dataset, robot, cfg.fps, cfg.video)
     else:
@@ -269,19 +268,14 @@ def record(
             robot=robot,
             use_videos=cfg.video,
             image_writer_processes=cfg.num_image_writer_processes,
-            image_writer_threads=cfg.num_image_writer_threads_per_camera
-            * len(robot.cameras),
+            image_writer_threads=cfg.num_image_writer_threads_per_camera * len(robot.cameras),
         )
 
     # Load pretrained policy
-    policy = (
-        None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
-    )
+    policy = None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
 
     # Load pretrained policy
-    policy = (
-        None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
-    )
+    policy = None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
 
     if not robot.is_connected:
         robot.connect()
