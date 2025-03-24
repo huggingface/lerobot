@@ -510,9 +510,16 @@ def main():
     load_from_hf_hub = kwargs.pop("load_from_hf_hub")
     root = kwargs.pop("root")
 
+
     dataset = None
     if repo_id:
         dataset = LeRobotDataset(repo_id, root=root) if not load_from_hf_hub else get_dataset_info(repo_id)
+        
+        # test annotation overrider
+        from lerobot.common.datasets.annotation_overrider import TaskAnnotationOverrider
+        overrider = TaskAnnotationOverrider("data/annotation_overrides.json")
+        overrider.apply_overrides(dataset)
+        
 
     visualize_dataset_html(dataset, **vars(args))
 
