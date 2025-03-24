@@ -379,15 +379,16 @@ class MotorsBus(abc.ABC):
         input("Move robot to the middle of its range of motion and press ENTER....")
 
         for _, name in enumerate(self.motor_names):
-            self.write("Lock", 0)
-            self.write("Offset", 0, motor_names=[name])
-            self.write("Min_Angle_Limit", 0, motor_names=[name])
-            self.write("Max_Angle_Limit", 4095, motor_names=[name])
-            self.write("Lock", 1)
-
-            middle = self.read("Present_Position", motor_names=[name])
+            self.write("Lock", name, 0)
+            self.write("Offset", name, 0)
+            self.write("Min_Angle_Limit", name, 0)
+            self.write("Max_Angle_Limit", name, 4095)
+            self.write("Lock", name, 1)
+            middle = self.sync_read("Present_Position", name)
+            # Since sync_read returns a dict even for a single motor, extract the value.
+            middle_value = list(middle.values())[0] if isinstance(middle, dict) else middle
             zero_offset = (
-                middle - 2047
+                middle_value - 2047
             )  # The zero_offset is set so that the original middle reading is centered at 2047.
 
             self.set_offset(zero_offset, name)
@@ -399,9 +400,10 @@ class MotorsBus(abc.ABC):
         print("Recording positions. Press ENTER to stop...")
 
         recorded_positions = []
+        motor_names = getattr(self, "motor_names", list(self.motors.keys()))
 
         while True:
-            positions = self.read("Present_Position", motor_names=self.motor_names)
+            positions = self.sync_read("Present_Position", motor_names)
             recorded_positions.append(positions)
             time.sleep(0.01)
 
@@ -412,8 +414,10 @@ class MotorsBus(abc.ABC):
                 if line.strip() == "":
                     break  # user pressed Enter
 
-        # Convert recorded_positions (list of arrays) to a 2D numpy array: shape (num_timesteps, num_motors)
-        all_positions = np.array(recorded_positions, dtype=np.float32)
+        motor_names = getattr(self, "motor_names", list(self.motors.keys()))
+        all_positions = np.array(
+            [[pos[name] for name in motor_names] for pos in recorded_positions], dtype=np.float32
+        )
 
         # For each motor, find min, max
         for i, name in enumerate(self.motor_names):
@@ -457,7 +461,7 @@ class MotorsBus(abc.ABC):
         # self.set_min_max()
 
     def set_offset(self, zero_offset: int, name: str):
-        self.write("Lock", 0)
+        self.write("Lock", name, 0)
 
         zero_offset = int(zero_offset)
 
@@ -479,14 +483,14 @@ class MotorsBus(abc.ABC):
             direction_bit << 11
         ) | magnitude  # Combine sign bit (bit 11) with the magnitude (bits 0..10)
 
-        self.write("Offset", servo_offset, motor_names=[name])
-        self.write("Lock", 1)
+        self.write("Offset", name, servo_offset)
+        self.write("Lock", name, 1)
 
     def set_min_max(self, min: int, max: int, name: str):
-        self.write("Lock", 0)
-        self.write("Min_Angle_Limit", min, motor_names=[name])
-        self.write("Max_Angle_Limit", max, motor_names=[name])
-        self.write("Lock", 1)
+        self.write("Lock", name, 0)
+        self.write("Min_Angle_Limit", name, min)
+        self.write("Max_Angle_Limit", name, max)
+        self.write("Lock", name, 1)
 
     @abc.abstractmethod
     def _calibrate_values(self, ids_values: dict[int, int]) -> dict[int, float]:
