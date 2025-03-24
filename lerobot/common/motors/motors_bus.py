@@ -377,6 +377,7 @@ class MotorsBus(abc.ABC):
 
     def find_offset(self):
         input("Move robot to the middle of its range of motion and press ENTER....")
+        offsets = {}
 
         for name in self.names:
             self.write("Lock", name, 0)
@@ -392,8 +393,9 @@ class MotorsBus(abc.ABC):
             )  # The zero_offset is set so that the original middle reading is centered at 2047.
 
             self.set_offset(zero_offset, name)
+            offsets[name] = zero_offset
 
-        # TODO(pepijn): return offsets for storing in calib file
+        return offsets
 
     def find_min_max(self):
         print("Move all joints sequentially through their entire ranges of motion.")
@@ -419,6 +421,7 @@ class MotorsBus(abc.ABC):
             [[pos[name] for name in motor_names] for pos in recorded_positions], dtype=np.float32
         )
 
+        min_max = {}
         # For each motor, find min, max
         for i, name in enumerate(self.names):
             motor_column = all_positions[:, i]
@@ -434,7 +437,9 @@ class MotorsBus(abc.ABC):
 
             self.set_min_max(physical_min, physical_max, name)
 
-        # TODO(pepijn): return min, max for storing in calib file
+            min_max[name] = {"min": physical_min, "max": physical_max}
+
+        return min_max
 
     @property
     def are_motors_configured(self) -> bool:
@@ -455,30 +460,34 @@ class MotorsBus(abc.ABC):
 
         self.calibration = {int(idx): val for idx, val in calibration.items()}
 
-        # TODO(pepijn): For every motor set calibration offset from file
-        # for _, name in enumerate(self.motor_names):
-        # self.set_offset()
-        # self.set_min_max()
+        for _, cal_data in self.calibration.items():
+            name = cal_data.get("name")
+            if name not in self.arm.names:
+                logging.warning(f"Motor name '{name}' from calibration not found in arm names.")
+                continue
 
-    def set_offset(self, zero_offset: int, name: str):
+            self.arm.set_offset(cal_data["homing_offset"], name)
+            self.arm.set_min_max(cal_data["min"], cal_data["max"], name)
+
+    def set_offset(self, homing_offset: int, name: str):
         self.write("Lock", name, 0)
 
-        zero_offset = int(zero_offset)
+        homing_offset = int(homing_offset)
 
         # Clamp to [-2047..+2047]
-        if zero_offset > 2047:
-            zero_offset = 2047
+        if homing_offset > 2047:
+            homing_offset = 2047
             print(
-                f"Warning: '{zero_offset}' is getting clamped because its larger then 2047; This should not happen!"
+                f"Warning: '{homing_offset}' is getting clamped because its larger then 2047; This should not happen!"
             )
-        elif zero_offset < -2047:
-            zero_offset = -2047
+        elif homing_offset < -2047:
+            homing_offset = -2047
             print(
-                f"Warning: '{zero_offset}' is getting clamped because its smaller then -2047; This should not happen!"
+                f"Warning: '{homing_offset}' is getting clamped because its smaller then -2047; This should not happen!"
             )
 
-        direction_bit = 1 if zero_offset < 0 else 0  # Determine the direction (sign) bit and magnitude
-        magnitude = abs(zero_offset)
+        direction_bit = 1 if homing_offset < 0 else 0  # Determine the direction (sign) bit and magnitude
+        magnitude = abs(homing_offset)
         servo_offset = (
             direction_bit << 11
         ) | magnitude  # Combine sign bit (bit 11) with the magnitude (bits 0..10)

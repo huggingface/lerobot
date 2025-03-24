@@ -3,12 +3,12 @@
 import time
 
 from lerobot.common.motors.motors_bus import TorqueMode
-from lerobot.common.robots.so100.configuration_so100 import SO100RobotConfig
+from lerobot.common.robots.so100.configuration_so100 import SO100RobotFollowerConfig, SO100RobotLeaderConfig
 from lerobot.common.robots.so100.robot_so100 import SO100Robot
 
 
 def main():
-    config_follower = SO100RobotConfig(
+    config_follower = SO100RobotFollowerConfig(
         port="/dev/tty.usbmodem58760431201",
     )
 
@@ -17,7 +17,7 @@ def main():
     print("Connecting the robot (this automatically calibrates motors).")
     robot_follower.connect()
 
-    config_leader = SO100RobotConfig(
+    config_leader = SO100RobotLeaderConfig(
         port="/dev/tty.usbmodem58760430821",
     )
 

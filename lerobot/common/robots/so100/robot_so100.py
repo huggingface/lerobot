@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import logging
 import time
 
@@ -29,7 +30,7 @@ from lerobot.common.motors.motors_bus import CalibrationMode, Motor
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
-from .configuration_so100 import SO100RobotConfig
+from .configuration_so100 import SO100RobotFollowerConfig, SO100RobotLeaderConfig
 
 
 class SO100Robot(Robot):
@@ -37,10 +38,10 @@ class SO100Robot(Robot):
     [SO-100 Follower Arm](https://github.com/TheRobotStudio/SO-ARM100) designed by TheRobotStudio
     """
 
-    config_class = SO100RobotConfig
+    config_class = SO100RobotLeaderConfig | SO100RobotFollowerConfig
     name = "so100"
 
-    def __init__(self, config: SO100RobotConfig):
+    def __init__(self, config: SO100RobotLeaderConfig | SO100RobotFollowerConfig):
         super().__init__(config)
         self.config = config
         self.robot_type = config.type
@@ -58,6 +59,8 @@ class SO100Robot(Robot):
             },
         )
         self.cameras = make_cameras_from_configs(config.cameras)
+
+        self.calibration_fpath = config.calibration_fpath
 
     @property
     def state_feature(self) -> dict:
@@ -102,7 +105,12 @@ class SO100Robot(Robot):
             self.arm.write("Maximum_Acceleration", name, 254)
             self.arm.write("Acceleration", name, 254)
 
-        self.calibrate()
+        if not self.calibration_fpath.exists():
+            logging.info("Calibration file not found. Running calibration.")
+            self.calibrate()
+        else:
+            logging.info("Calibration file found. Loading calibration data.")
+            self.arm.set_calibration(self.calibration_fpath)
 
         for name in self.arm.names:
             self.arm.write("Torque_Enable", name, TorqueMode.ENABLED.value)
@@ -132,21 +140,27 @@ class SO100Robot(Robot):
             cam.connect()
 
     def calibrate(self) -> None:
-        print(
-            f"\nRunning calibration of {self.robot_type} {self.name}"
-        )  # TODO(pepijn): Add arm type here 'follower' or 'leader'
+        print(f"\nRunning calibration of {self.robot_type} {self.name}")
         for name in self.arm.names:
             self.arm.write("Torque_Enable", name, TorqueMode.DISABLED.value)
-        self.arm.find_offset()
-        self.arm.find_min_max()
-        # TODO(pepijn): store calibration in json (returned values from find_offset and find_min_max
 
-    def set_calibration(self) -> None:
-        if not self.calibration_fpath.exists():
-            logging.error("Calibration file not found. Please run calibration first")
-            raise FileNotFoundError(self.calibration_fpath)
+        offsets = self.arm.find_offset()
+        min_max = self.arm.find_min_max()
 
-        self.arm.set_calibration(self.calibration_fpath)
+        calibration = {}
+        for name in self.arm.names:
+            motor_id = self.arm.motors[name].id
+            calibration[str(motor_id)] = {
+                "name": name,
+                "homing_offset": offsets.get(name, 0),
+                "drive_mode": 0,
+                "min": min_max[name]["min"],
+                "max": min_max[name]["max"],
+            }
+
+        with open(self.calibration_fpath, "w") as f:
+            json.dump(calibration, f, indent=4)
+        print("Calibration saved to", self.calibration_fpath)
 
     def get_observation(self) -> dict[str, np.ndarray]:
         """The returned observations do not have a batch dimension."""
