@@ -106,10 +106,10 @@ class SO100Robot(Robot):
             self.arm.write("Acceleration", name, 254)
 
         if not self.calibration_fpath.exists():
-            logging.info("Calibration file not found. Running calibration.")
+            print("Calibration file not found. Running calibration.")
             self.calibrate()
         else:
-            logging.info("Calibration file found. Loading calibration data.")
+            print("Calibration file found. Loading calibration data.")
             self.arm.set_calibration(self.calibration_fpath)
 
         for name in self.arm.names:

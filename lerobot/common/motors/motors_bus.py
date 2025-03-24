@@ -377,23 +377,22 @@ class MotorsBus(abc.ABC):
 
     def find_offset(self):
         input("Move robot to the middle of its range of motion and press ENTER....")
-        offsets = {}
-
         for name in self.names:
             self.write("Lock", name, 0)
             self.write("Offset", name, 0)
+
+            # Also reset min, max angle limit to default
             self.write("Min_Angle_Limit", name, 0)
             self.write("Max_Angle_Limit", name, 4095)
             self.write("Lock", name, 1)
-            middle = self.sync_read("Present_Position", name)
-            # Since sync_read returns a dict even for a single motor, extract the value.
-            middle_value = list(middle.values())[0] if isinstance(middle, dict) else middle
-            zero_offset = (
-                middle_value - 2047
-            )  # The zero_offset is set so that the original middle reading is centered at 2047.
 
-            self.set_offset(zero_offset, name)
-            offsets[name] = zero_offset
+        middle_values = self.sync_read("Present_Position")
+
+        offsets = {}
+        for name, pos in middle_values.items():
+            offset = pos - 2047  # Center the middle reading at 2047.
+            self.set_offset(offset, name)
+            offsets[name] = offset
 
         return offsets
 
@@ -414,7 +413,7 @@ class MotorsBus(abc.ABC):
             if ready_to_read:
                 line = sys.stdin.readline()
                 if line.strip() == "":
-                    break  # user pressed Enter
+                    break
 
         motor_names = getattr(self, "motor_names", list(self.motors.keys()))
         all_positions = np.array(
@@ -422,7 +421,6 @@ class MotorsBus(abc.ABC):
         )
 
         min_max = {}
-        # For each motor, find min, max
         for i, name in enumerate(self.names):
             motor_column = all_positions[:, i]
             raw_range = motor_column.max() - motor_column.min()
@@ -462,12 +460,12 @@ class MotorsBus(abc.ABC):
 
         for _, cal_data in self.calibration.items():
             name = cal_data.get("name")
-            if name not in self.arm.names:
+            if name not in self.names:
                 logging.warning(f"Motor name '{name}' from calibration not found in arm names.")
                 continue
 
-            self.arm.set_offset(cal_data["homing_offset"], name)
-            self.arm.set_min_max(cal_data["min"], cal_data["max"], name)
+            self.set_offset(cal_data["homing_offset"], name)
+            self.set_min_max(cal_data["min"], cal_data["max"], name)
 
     def set_offset(self, homing_offset: int, name: str):
         self.write("Lock", name, 0)
@@ -597,8 +595,8 @@ class MotorsBus(abc.ABC):
                 f"{self.packet_handler.getTxRxResult(comm)}"
             )
 
-        if data_name in self.calibration_required and self.calibration is not None:
-            ids_values = self._calibrate_values(ids_values)
+        # if data_name in self.calibration_required and self.calibration is not None:
+        #     ids_values = self._calibrate_values(ids_values)
 
         return {id_key_map[idx]: val for idx, val in ids_values.items()}
 
