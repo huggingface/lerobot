@@ -47,6 +47,16 @@ class OperatingMode(Enum):
     STEP = 3
 
 
+class DriveMode(Enum):
+    NON_INVERTED = 0
+    INVERTED = 1
+
+
+class TorqueMode(Enum):
+    ENABLED = 1
+    DISABLED = 0
+
+
 class FeetechMotorsBus(MotorsBus):
     """
     The FeetechMotorsBus class allows to efficiently read and write to the attached motors. It relies on the

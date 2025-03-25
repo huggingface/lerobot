@@ -78,16 +78,6 @@ def assert_same_address(model_ctrl_table: dict[str, dict], motor_models: list[st
         )
 
 
-class TorqueMode(Enum):
-    ENABLED = 1
-    DISABLED = 0
-
-
-class DriveMode(Enum):
-    NON_INVERTED = 0
-    INVERTED = 1
-
-
 class CalibrationMode(Enum):
     DEGREE = 0
     RANGE_0_100 = 1

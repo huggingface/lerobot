@@ -65,6 +65,16 @@ class OperatingMode(Enum):
     PWM = 16
 
 
+class DriveMode(Enum):
+    NON_INVERTED = 0
+    INVERTED = 1
+
+
+class TorqueMode(Enum):
+    ENABLED = 1
+    DISABLED = 0
+
+
 class DynamixelMotorsBus(MotorsBus):
     """
     The Dynamixel implementation for a MotorsBus. It relies on the python dynamixel sdk to communicate with
