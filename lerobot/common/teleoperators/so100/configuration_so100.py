@@ -14,13 +14,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
 
 from ..config import TeleoperatorConfig
+
+# TODO(pepijn): Do this differently
+BASE_CALIBRATION_DIR = Path(".cache/calibration/so100")
+BASE_CALIBRATION_DIR.mkdir(parents=True, exist_ok=True)
 
 
 @TeleoperatorConfig.register_subclass("so100")
 @dataclass
 class SO100TeleopConfig(TeleoperatorConfig):
     # Port to connect to the teloperator
-    port: str
+    port: str = "/dev/tty.usbmodem58760430821"
+
+    calibration_fpath: Path = field(default=BASE_CALIBRATION_DIR / "follower_calibration.json")

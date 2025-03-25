@@ -30,7 +30,7 @@ from lerobot.common.motors.motors_bus import CalibrationMode, Motor
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
-from .configuration_so100 import SO100RobotFollowerConfig, SO100RobotLeaderConfig
+from .configuration_so100 import SO100RobotConfig
 
 
 class SO100Robot(Robot):
@@ -38,10 +38,10 @@ class SO100Robot(Robot):
     [SO-100 Follower Arm](https://github.com/TheRobotStudio/SO-ARM100) designed by TheRobotStudio
     """
 
-    config_class = SO100RobotLeaderConfig | SO100RobotFollowerConfig
+    config_class = SO100RobotConfig
     name = "so100"
 
-    def __init__(self, config: SO100RobotLeaderConfig | SO100RobotFollowerConfig):
+    def __init__(self, config: SO100RobotConfig):
         super().__init__(config)
         self.config = config
         self.robot_type = config.type
@@ -140,7 +140,7 @@ class SO100Robot(Robot):
             cam.connect()
 
     def calibrate(self) -> None:
-        print(f"\nRunning calibration of {self.robot_type} {self.name}")
+        print(f"\nRunning calibration of {self.name} robot")
         for name in self.arm.names:
             self.arm.write("Torque_Enable", name, TorqueMode.DISABLED.value)
 
