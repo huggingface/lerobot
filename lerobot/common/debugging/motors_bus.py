@@ -31,22 +31,26 @@ def visualize_motors_bus(motors_bus: MotorsBus):
         motors_bus.connect()
 
     # Disable torque on all motors so you can move them freely by hand
-    values_dict = {idx: 0 for idx in motors_bus.motor_ids}
-    motors_bus.write("Torque_Enable", values_dict)
+    for id_ in motors_bus.ids:
+        motors_bus.write("Torque_Enable", id_, 0)
+
     print("Torque disabled on all joints.")
 
     try:
         print("\nPress Ctrl+C to quit.\n")
         while True:
             # Read *raw* positions (no calibration).
-            raw_positions = motors_bus.read("Present_Position")
+            start = time.perf_counter()
+            raw_positions = motors_bus.sync_read("Present_Position", raw_values=True)
+            read_s = time.perf_counter() - start
 
             # # Read *already-homed* positions
             # homed_positions = motor_bus.read("Present_Position")
 
+            print(f"read_s: {read_s * 1e3:.2f}ms ({1 / read_s:.0f} Hz)")
             for name, raw_ticks in raw_positions.items():
-                idx = motors_bus.motors[name][0]
-                model = motors_bus.motors[name][1]
+                idx = motors_bus.motors[name].id
+                model = motors_bus.motors[name].model
 
                 # homed_val = homed_positions[i]  # degrees or % if linear
 
@@ -70,7 +74,7 @@ def visualize_motors_bus(motors_bus: MotorsBus):
                     f"INV_TICKS={inv_ticks:4d} "
                 )
             print("----------------------------------------------------")
-            time.sleep(0.25)
+            # time.sleep(0.25)
     except KeyboardInterrupt:
         pass
     finally:
