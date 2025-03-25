@@ -24,7 +24,7 @@ from lerobot.common.cameras.utils import make_cameras_from_configs
 from lerobot.common.constants import OBS_IMAGES, OBS_STATE
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.common.motors import CalibrationMode, Motor
-from lerobot.common.motors.calibration import find_min_max, find_offset, set_calibration
+from lerobot.common.motors.calibration import MotorCalibration
 from lerobot.common.motors.feetech import (
     FeetechMotorsBus,
     OperatingMode,
@@ -108,7 +108,7 @@ class SO100Robot(Robot):
             self.calibrate()
         else:
             print("Calibration file found. Loading calibration data.")
-            set_calibration(self.arm, self.calibration_fpath)
+            MotorCalibration.set_calibration(self.arm, self.calibration_fpath)
 
         for name in self.arm.names:
             self.arm.write("Torque_Enable", name, TorqueMode.ENABLED.value)
@@ -140,8 +140,8 @@ class SO100Robot(Robot):
     def calibrate(self) -> None:
         print(f"\nRunning calibration of {self.name} robot")
 
-        offsets = find_offset(self.arm)
-        min_max = find_min_max(self.arm)
+        offsets = MotorCalibration.find_offset(self.arm)
+        min_max = MotorCalibration.find_min_max(self.arm)
 
         calibration = {}
         for name in self.arm.names:
