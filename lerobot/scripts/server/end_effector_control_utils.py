@@ -1,14 +1,13 @@
-import argparse
+from lerobot.common.robot_devices.utils import busy_wait
+from lerobot.scripts.server.kinematics import RobotKinematics
 import logging
 import time
-
-import numpy as np
 import torch
-
-from lerobot.common.robot_devices.robots.factory import make_robot
-from lerobot.common.robot_devices.utils import busy_wait
-from lerobot.common.utils.utils import init_hydra_config
-from lerobot.scripts.server.kinematics import RobotKinematics
+import numpy as np
+import argparse
+from lerobot.common.robot_devices.robots.utils import make_robot_from_config
+from lerobot.scripts.server.gym_manipulator import make_robot_env, HILSerlRobotEnvConfig
+from lerobot.common.robot_devices.robots.configs import RobotConfig
 
 logging.basicConfig(level=logging.INFO)
 
@@ -677,15 +676,6 @@ def teleoperate_gym_env(env, controller, fps: int = 30):
         # Close the environment
         env.close()
 
-
-def make_robot_from_config(config_path, overrides=None):
-    """Helper function to create a robot from a config file."""
-    if overrides is None:
-        overrides = []
-    robot_cfg = init_hydra_config(config_path, overrides)
-    return make_robot(robot_cfg)
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Test end-effector control")
     parser.add_argument(
@@ -703,21 +693,22 @@ if __name__ == "__main__":
         help="Control mode to use",
     )
     parser.add_argument(
-        "--task",
+        "--robot-type",
         type=str,
-        default="Robot manipulation task",
-        help="Description of the task being performed",
+        default="so100",
+        help="Robot type (so100, koch, aloha, etc.)",
     )
     parser.add_argument(
-        "--push-to-hub",
-        default=True,
-        type=bool,
-        help="Push the dataset to Hugging Face Hub",
+        "--config-path",
+        type=str,
+        default=None,
+        help="Path to the config file in json format",
     )
-    # Add the rest of your existing arguments
+
     args = parser.parse_args()
 
-    robot = make_robot_from_config("lerobot/configs/robot/so100.yaml", [])
+    robot_config = RobotConfig.get_choice_class(args.robot_type)(mock=False)
+    robot = make_robot_from_config(robot_config)
 
     if not robot.is_connected:
         robot.connect()
@@ -743,12 +734,12 @@ if __name__ == "__main__":
 
         elif args.mode in ["keyboard_gym", "gamepad_gym"]:
             # Gym environment control modes
-            from lerobot.scripts.server.gym_manipulator import make_robot_env
+            cfg = HILSerlRobotEnvConfig()
+            if args.config_path is not None:
+                cfg = HILSerlRobotEnvConfig.from_json(args.config_path)
 
-            cfg = init_hydra_config("lerobot/configs/env/so100_real.yaml", [])
-            cfg.env.wrapper.ee_action_space_params.use_gamepad = False
-            env = make_robot_env(robot, None, cfg)
-            teleoperate_gym_env(env, controller)
+            env = make_robot_env(cfg, robot)
+            teleoperate_gym_env(env, controller, fps=args.fps)
 
         elif args.mode == "leader":
             # Leader-follower modes don't use controllers

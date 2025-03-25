@@ -1,7 +1,8 @@
-import argparse
 import logging
 import sys
 import time
+import sys
+
 from threading import Lock
 from typing import Annotated, Any, Dict, Tuple
 
@@ -9,6 +10,9 @@ import gymnasium as gym
 import numpy as np
 import torch
 import torchvision.transforms.functional as F  # noqa: N812
+import json
+
+from dataclasses import dataclass
 
 from lerobot.common.envs.utils import preprocess_observation
 from lerobot.common.robot_devices.control_utils import (
@@ -16,12 +20,69 @@ from lerobot.common.robot_devices.control_utils import (
     is_headless,
     reset_follower_position,
 )
-from lerobot.common.robot_devices.robots.factory import make_robot
-from lerobot.common.utils.utils import init_hydra_config, log_say
+
+from typing import Optional
+from lerobot.common.utils.utils import log_say
+from lerobot.common.robot_devices.robots.utils import make_robot_from_config
+
+from lerobot.common.robot_devices.robots.configs import RobotConfig
+
 from lerobot.scripts.server.kinematics import RobotKinematics
+from lerobot.configs import parser
 
 logging.basicConfig(level=logging.INFO)
 
+@dataclass
+class EEActionSpaceConfig:
+    """Configuration parameters for end-effector action space."""
+    x_step_size: float
+    y_step_size: float 
+    z_step_size: float
+    bounds: Dict[str, Any]  # Contains 'min' and 'max' keys with position bounds
+    use_gamepad: bool = False
+
+
+@dataclass
+class EnvWrapperConfig:
+    """Configuration for environment wrappers."""
+    display_cameras: bool = False
+    delta_action: float = 0.1
+    use_relative_joint_positions: bool = True
+    add_joint_velocity_to_observation: bool = False
+    add_ee_pose_to_observation: bool = False
+    crop_params_dict: Optional[Dict[str, Tuple[int, int, int, int]]] = None
+    resize_size: Optional[Tuple[int, int]] = None
+    control_time_s: float = 20.0
+    fixed_reset_joint_positions: Optional[Any] = None
+    reset_time_s: float = 5.0
+    joint_masking_action_space: Optional[Any] = None
+    ee_action_space_params: Optional[EEActionSpaceConfig] = None
+    reward_classifier_pretrained_path: Optional[str] = None
+    reward_classifier_config_file: Optional[str] = None
+
+
+@dataclass
+class HILSerlRobotEnvConfig:
+    """Configuration for the HILSerlRobotEnv environment."""
+    robot: RobotConfig
+    wrapper: EnvWrapperConfig
+    env_name: str = "real_robot"
+    fps: int = 10
+    mode: str = None  # Either "record", "replay", None
+    repo_id: Optional[str] = None
+    dataset_root: Optional[str] = None
+    task: str = ""
+    num_episodes: int = 10 # only for record mode
+    episode: int = 0
+    device: str = "cuda"
+    push_to_hub: bool = True
+    pretrained_policy_name_or_path: Optional[str] = None
+
+    @classmethod
+    def from_json(cls, json_path: str):
+        with open(json_path, "r") as f:
+            config = json.load(f)
+        return cls(**config)
 
 class HILSerlRobotEnv(gym.Env):
     """
@@ -49,7 +110,7 @@ class HILSerlRobotEnv(gym.Env):
         The environment is set up with a robot interface, which is used to capture observations and send joint commands. The setup
         supports both relative (delta) adjustments and absolute joint positions for controlling the robot.
 
-        Args:
+        cfg.
             robot: The robot interface object used to connect and interact with the physical robot.
             use_delta_action_space (bool): If True, uses a delta (relative) action space for joint control. Otherwise, absolute
                 joint positions are used.
@@ -77,14 +138,17 @@ class HILSerlRobotEnv(gym.Env):
         self.current_joint_positions = self.robot.follower_arms["main"].read("Present_Position")
 
         # Retrieve the size of the joint position interval bound.
-        self.relative_bounds_size = (
-            (
-                self.robot.config.joint_position_relative_bounds["max"]
-                - self.robot.config.joint_position_relative_bounds["min"]
-            )
-            if self.robot.config.joint_position_relative_bounds is not None
-            else None
-        )
+
+        self.relative_bounds_size = None
+        # (
+        #     (
+        #         self.robot.config.joint_position_relative_bounds["max"]
+        #         - self.robot.config.joint_position_relative_bounds["min"]
+        #     )
+        #     if self.robot.config.joint_position_relative_bounds is not None
+        #     else None
+        # )
+        self.robot.config.joint_position_relative_bounds = None
 
         self.robot.config.max_relative_target = (
             self.relative_bounds_size.float() if self.relative_bounds_size is not None else None
@@ -168,7 +232,7 @@ class HILSerlRobotEnv(gym.Env):
         Reset the environment to its initial state.
         This method resets the step counter and clears any episodic data.
 
-        Args:
+        cfg.
             seed (Optional[int]): A seed for random number generation to ensure reproducibility.
             options (Optional[dict]): Additional options to influence the reset behavior.
 
@@ -203,7 +267,7 @@ class HILSerlRobotEnv(gym.Env):
             - When True, a teleoperation step is executed. If using a delta action space, an absolute teleop action is converted
               to relative change based on the current joint positions.
 
-        Args:
+        cfg.
             action (tuple): A tuple with two elements:
                 - policy_action (np.ndarray or torch.Tensor): The commanded joint positions.
                 - intervention_bool (bool): True if the human operator intervenes by providing a teleoperation input.
@@ -258,7 +322,8 @@ class HILSerlRobotEnv(gym.Env):
             if teleop_action.dim() == 1:
                 teleop_action = teleop_action.unsqueeze(0)
 
-        # self.render()
+        if self.display_cameras:
+            self.render()
 
         self.current_step += 1
 
@@ -353,7 +418,7 @@ class RewardWrapper(gym.Wrapper):
         """
         Wrapper to add reward prediction to the environment, it use a trained classifer.
 
-        Args:
+        cfg.
             env: The environment to wrap
             reward_classifier: The reward classifier model
             device: The device to run the model on
@@ -396,7 +461,7 @@ class JointMaskingActionSpace(gym.Wrapper):
         """
         Wrapper to mask out dimensions of the action space.
 
-        Args:
+        cfg.
             env: The environment to wrap
             mask: Binary mask array where 0 indicates dimensions to remove
         """
@@ -428,7 +493,7 @@ class JointMaskingActionSpace(gym.Wrapper):
         """
         Convert masked action back to full action space.
 
-        Args:
+        cfg.
             action: Action in masked space. For Tuple spaces, the first element is masked.
 
         Returns:
@@ -859,7 +924,7 @@ class GamepadControlWrapper(gym.Wrapper):
         """
         Initialize the gamepad controller wrapper.
 
-        Args:
+        cfg.
             env: The environment to wrap
             x_step_size: Base movement step size for X axis in meters
             y_step_size: Base movement step size for Y axis in meters
@@ -937,7 +1002,7 @@ class GamepadControlWrapper(gym.Wrapper):
         """
         Step the environment, using gamepad input to override actions when active.
 
-        Args:
+        cfg.
             action: Original action from agent
 
         Returns:
@@ -1029,25 +1094,19 @@ class ActionScaleWrapper(gym.ActionWrapper):
         return action * self.scale_vector, is_intervention
 
 
-def make_robot_env(
-    robot,
-    reward_classifier,
-    cfg,
-    n_envs: int = 1,
-) -> gym.vector.VectorEnv:
+def make_robot_env(cfg, robot) -> gym.vector.VectorEnv:
     """
     Factory function to create a vectorized robot environment.
 
-    Args:
+    cfg.
         robot: Robot instance to control
         reward_classifier: Classifier model for computing rewards
         cfg: Configuration object containing environment parameters
-        n_envs: Number of environments to create in parallel. Defaults to 1.
 
     Returns:
         A vectorized gym environment with all the necessary wrappers applied.
     """
-    if "maniskill" in cfg.env.name:
+    if "maniskill" in cfg.env_name:
         from lerobot.scripts.server.maniskill_manipulator import make_maniskill
 
         logging.warning("WE SHOULD REMOVE THE MANISKILL BEFORE THE MERGE INTO MAIN")
@@ -1056,77 +1115,75 @@ def make_robot_env(
             n_envs=1,
         )
         return env
+    
     # Create base environment
     env = HILSerlRobotEnv(
         robot=robot,
-        display_cameras=cfg.env.wrapper.display_cameras,
-        delta=cfg.env.wrapper.delta_action,
-        use_delta_action_space=cfg.env.wrapper.use_relative_joint_positions
-        and cfg.env.wrapper.ee_action_space_params is None,
+        display_cameras=cfg.wrapper.display_cameras,
+        delta=cfg.wrapper.delta_action,
+        use_delta_action_space=cfg.wrapper.use_relative_joint_positions
+        and cfg.wrapper.ee_action_space_params is None,
     )
 
     # Add observation and image processing
-    if cfg.env.wrapper.add_joint_velocity_to_observation:
+    if cfg.wrapper.add_joint_velocity_to_observation:
         env = AddJointVelocityToObservation(env=env, fps=cfg.fps)
-    if cfg.env.wrapper.add_ee_pose_to_observation:
-        env = EEObservationWrapper(env=env, ee_pose_limits=cfg.env.wrapper.ee_action_space_params.bounds)
+    if cfg.wrapper.add_ee_pose_to_observation:
+        env = EEObservationWrapper(env=env, ee_pose_limits=cfg.wrapper.ee_action_space_params.bounds)
 
-    env = ConvertToLeRobotObservation(env=env, device=cfg.env.device)
+    env = ConvertToLeRobotObservation(env=env, device=cfg.device)
 
-    if cfg.env.wrapper.crop_params_dict is not None:
+    if cfg.wrapper.crop_params_dict is not None:
         env = ImageCropResizeWrapper(
             env=env,
-            crop_params_dict=cfg.env.wrapper.crop_params_dict,
-            resize_size=cfg.env.wrapper.resize_size,
+            crop_params_dict=cfg.wrapper.crop_params_dict,
+            resize_size=cfg.wrapper.resize_size,
         )
 
     # Add reward computation and control wrappers
     # env = RewardWrapper(env=env, reward_classifier=reward_classifier, device=cfg.device)
-    env = TimeLimitWrapper(env=env, control_time_s=cfg.env.wrapper.control_time_s, fps=cfg.fps)
-    if cfg.env.wrapper.ee_action_space_params is not None:
-        env = EEActionWrapper(env=env, ee_action_space_params=cfg.env.wrapper.ee_action_space_params)
+    env = TimeLimitWrapper(env=env, control_time_s=cfg.wrapper.control_time_s, fps=cfg.fps)
+    if cfg.wrapper.ee_action_space_params is not None:
+        env = EEActionWrapper(env=env, ee_action_space_params=cfg.wrapper.ee_action_space_params)
     if (
-        cfg.env.wrapper.ee_action_space_params is not None
-        and cfg.env.wrapper.ee_action_space_params.use_gamepad
+        cfg.wrapper.ee_action_space_params is not None
+        and cfg.wrapper.ee_action_space_params.use_gamepad
     ):
-        # env = ActionScaleWrapper(env=env, ee_action_space_params=cfg.env.wrapper.ee_action_space_params)
+        # env = ActionScaleWrapper(env=env, ee_action_space_params=cfg.wrapper.ee_action_space_params)
         env = GamepadControlWrapper(
             env=env,
-            x_step_size=cfg.env.wrapper.ee_action_space_params.x_step_size,
-            y_step_size=cfg.env.wrapper.ee_action_space_params.y_step_size,
-            z_step_size=cfg.env.wrapper.ee_action_space_params.z_step_size,
+            x_step_size=cfg.wrapper.ee_action_space_params.x_step_size,
+            y_step_size=cfg.wrapper.ee_action_space_params.y_step_size,
+            z_step_size=cfg.wrapper.ee_action_space_params.z_step_size,
         )
     else:
         env = KeyboardInterfaceWrapper(env=env)
 
     env = ResetWrapper(
         env=env,
-        reset_pose=cfg.env.wrapper.fixed_reset_joint_positions,
-        reset_time_s=cfg.env.wrapper.reset_time_s,
+        reset_pose=cfg.wrapper.fixed_reset_joint_positions,
+        reset_time_s=cfg.wrapper.reset_time_s,
     )
     if (
-        cfg.env.wrapper.ee_action_space_params is None
-        and cfg.env.wrapper.joint_masking_action_space is not None
+        cfg.wrapper.ee_action_space_params is None
+        and cfg.wrapper.joint_masking_action_space is not None
     ):
-        env = JointMaskingActionSpace(env=env, mask=cfg.env.wrapper.joint_masking_action_space)
+        env = JointMaskingActionSpace(env=env, mask=cfg.wrapper.joint_masking_action_space)
     env = BatchCompitableWrapper(env=env)
 
     return env
 
 
-def get_classifier(pretrained_path, config_path, device="mps"):
-    if pretrained_path is None or config_path is None:
+def get_classifier(cfg):
+    if cfg.wrapper.reward_classifier_pretrained_path is None or cfg.wrapper.reward_classifier_config_file is None:
         return None
 
-    from lerobot.common.policies.factory import _policy_cfg_from_hydra_cfg
     from lerobot.common.policies.hilserl.classifier.configuration_classifier import (
         ClassifierConfig,
     )
     from lerobot.common.policies.hilserl.classifier.modeling_classifier import (
         Classifier,
     )
-
-    cfg = init_hydra_config(config_path)
 
     classifier_config = _policy_cfg_from_hydra_cfg(ClassifierConfig, cfg)
     classifier_config.num_cameras = len(cfg.training.image_keys)  # TODO automate these paths
@@ -1136,21 +1193,11 @@ def get_classifier(pretrained_path, config_path, device="mps"):
     return model
 
 
-def record_dataset(
-    env,
-    repo_id,
-    root=None,
-    num_episodes=1,
-    control_time_s=20,
-    fps=30,
-    push_to_hub=True,
-    task_description="",
-    policy=None,
-):
+def record_dataset(env, policy, cfg: HILSerlRobotEnvConfig):
     """
     Record a dataset of robot interactions using either a policy or teleop.
 
-    Args:
+    cfg.
         env: The environment to record from
         repo_id: Repository ID for dataset storage
         root: Local root directory for dataset (optional)
@@ -1195,9 +1242,9 @@ def record_dataset(
 
     # Create dataset
     dataset = LeRobotDataset.create(
-        repo_id,
-        fps,
-        root=root,
+        cfg.repo_id,
+        cfg.fps,
+        root=cfg.dataset_root,
         use_videos=True,
         image_writer_threads=4,
         image_writer_processes=0,
@@ -1206,17 +1253,17 @@ def record_dataset(
 
     # Record episodes
     episode_index = 0
-    while episode_index < num_episodes:
+    while episode_index < cfg.record_num_episodes:
         obs, _ = env.reset()
         start_episode_t = time.perf_counter()
         log_say(f"Recording episode {episode_index}", play_sounds=True)
 
         # Run episode steps
-        while time.perf_counter() - start_episode_t < control_time_s:
+        while time.perf_counter() - start_episode_t < cfg.wrapper.control_time_s:
             start_loop_t = time.perf_counter()
 
             # Get action from policy if available
-            if policy is not None:
+            if cfg.pretrained_policy_name_or_path is not None:
                 action = policy.select_action(obs)
 
             # Step environment
@@ -1240,9 +1287,9 @@ def record_dataset(
             dataset.add_frame(frame)
 
             # Maintain consistent timing
-            if fps:
+            if cfg.fps:
                 dt_s = time.perf_counter() - start_loop_t
-                busy_wait(1 / fps - dt_s)
+                busy_wait(1 / cfg.fps - dt_s)
 
             if terminated or truncated:
                 break
@@ -1253,13 +1300,13 @@ def record_dataset(
             logging.info(f"Re-recording episode {episode_index}")
             continue
 
-        dataset.save_episode(task_description)
+        dataset.save_episode(cfg.task)
         episode_index += 1
 
     # Finalize dataset
     dataset.consolidate(run_compute_stats=True)
-    if push_to_hub:
-        dataset.push_to_hub(repo_id)
+    if cfg.push_to_hub:
+        dataset.push_to_hub(cfg.repo_id)
 
 
 def replay_episode(env, repo_id, root=None, episode=0):
@@ -1282,134 +1329,44 @@ def replay_episode(env, repo_id, root=None, episode=0):
         busy_wait(1 / 10 - dt_s)
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--fps", type=int, default=30, help="control frequency")
-    parser.add_argument(
-        "--robot-path",
-        type=str,
-        default="lerobot/configs/robot/koch.yaml",
-        help="Path to robot yaml file used to instantiate the robot using `make_robot` factory function.",
-    )
-    parser.add_argument(
-        "--robot-overrides",
-        type=str,
-        nargs="*",
-        help="Any key=value arguments to override config values (use dots for.nested=overrides)",
-    )
-    parser.add_argument(
-        "-p",
-        "--pretrained-policy-name-or-path",
-        help=(
-            "Either the repo ID of a model hosted on the Hub or a path to a directory containing weights "
-            "saved using `Policy.save_pretrained`. If not provided, the policy is initialized from scratch "
-        ),
-    )
-    parser.add_argument(
-        "--display-cameras",
-        help=("Whether to display the camera feed while the rollout is happening"),
-    )
-    parser.add_argument(
-        "--reward-classifier-pretrained-path",
-        type=str,
-        default=None,
-        help="Path to the pretrained classifier weights.",
-    )
-    parser.add_argument(
-        "--reward-classifier-config-file",
-        type=str,
-        default=None,
-        help="Path to a yaml config file that is necessary to build the reward classifier model.",
-    )
-    parser.add_argument("--env-path", type=str, default=None, help="Path to the env yaml file")
-    parser.add_argument(
-        "--env-overrides",
-        type=str,
-        default=None,
-        help="Overrides for the env yaml file",
-    )
-    parser.add_argument(
-        "--control-time-s",
-        type=float,
-        default=20,
-        help="Maximum episode length in seconds",
-    )
-    parser.add_argument(
-        "--reset-follower-pos",
-        type=int,
-        default=1,
-        help="Reset follower between episodes",
-    )
-    parser.add_argument(
-        "--replay-repo-id",
-        type=str,
-        default=None,
-        help="Repo ID of the episode to replay",
-    )
-    parser.add_argument("--dataset-root", type=str, default=None, help="Root of the dataset to replay")
-    parser.add_argument("--replay-episode", type=int, default=0, help="Episode to replay")
-    parser.add_argument(
-        "--record-repo-id",
-        type=str,
-        default=None,
-        help="Repo ID of the dataset to record",
-    )
-    parser.add_argument(
-        "--record-num-episodes",
-        type=int,
-        default=1,
-        help="Number of episodes to record",
-    )
-    parser.add_argument(
-        "--record-episode-task",
-        type=str,
-        default="",
-        help="Single line description of the task to record",
-    )
+@parser.wrap()
+def main(cfg: HILSerlRobotEnvConfig):
 
-    args = parser.parse_args()
+    robot = make_robot_from_config(cfg.robot)
 
-    robot_cfg = init_hydra_config(args.robot_path, args.robot_overrides)
-    robot = make_robot(robot_cfg)
-
-    reward_classifier = get_classifier(
-        args.reward_classifier_pretrained_path, args.reward_classifier_config_file
-    )
+    reward_classifier = None #get_classifier(
+        # cfg.wrapper.reward_classifier_pretrained_path, cfg.wrapper.reward_classifier_config_file
+    # )
     user_relative_joint_positions = True
 
-    cfg = init_hydra_config(args.env_path, args.env_overrides)
-    env = make_robot_env(
-        robot,
-        reward_classifier,
-        cfg,  # .wrapper,
-    )
+    env = make_robot_env(cfg, robot)
 
-    if args.record_repo_id is not None:
+    if cfg.mode == "record":
         policy = None
-        if args.pretrained_policy_name_or_path is not None:
+        if cfg.pretrained_policy_name_or_path is not None:
             from lerobot.common.policies.sac.modeling_sac import SACPolicy
 
-            policy = SACPolicy.from_pretrained(args.pretrained_policy_name_or_path)
+            policy = SACPolicy.from_pretrained(cfg.pretrained_policy_name_or_path)
             policy.to(cfg.device)
             policy.eval()
 
         record_dataset(
             env,
-            args.record_repo_id,
-            root=args.dataset_root,
-            num_episodes=args.record_num_episodes,
-            fps=args.fps,
-            task_description=args.record_episode_task,
+            cfg.repo_id,
+            root=cfg.dataset_root,
+            num_episodes=cfg.num_episodes,
+            fps=cfg.fps,
+            task_description=cfg.task,
             policy=policy,
         )
         exit()
 
-    if args.replay_repo_id is not None:
+    if cfg.mode == "replay":
         replay_episode(
             env,
-            args.replay_repo_id,
-            root=args.dataset_root,
-            episode=args.replay_episode,
+            cfg.replay_repo_id,
+            root=cfg.dataset_root,
+            episode=cfg.replay_episode,
         )
         exit()
 
@@ -1442,7 +1399,10 @@ if __name__ == "__main__":
             num_episode += 1
 
         dt_s = time.perf_counter() - start_loop_s
-        busy_wait(1 / args.fps - dt_s)
+        busy_wait(1 / cfg.fps - dt_s)
 
     logging.info(f"Success after 20 steps {sucesses}")
     logging.info(f"success rate {sum(sucesses) / len(sucesses)}")
+
+if __name__ == "__main__":
+    main()

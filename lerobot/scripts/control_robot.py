@@ -371,8 +371,8 @@ def replay(
         start_episode_t = time.perf_counter()
 
         action = actions[idx]["action"]
-        if replay_delta_actions:
-            action = action + current_joint_positions
+        # if replay_delta_actions:
+        #     action = action + current_joint_positions
         robot.send_action(action)
 
         dt_s = time.perf_counter() - start_episode_t
@@ -382,9 +382,7 @@ def replay(
         log_control_info(robot, dt_s, fps=cfg.fps)
 
 
-def _init_rerun(
-    control_config: ControlConfig, session_name: str = "lerobot_control_loop"
-) -> None:
+def _init_rerun(control_config: ControlConfig, session_name: str = "lerobot_control_loop") -> None:
     """Initializes the Rerun SDK for visualizing the control loop.
 
     Args:
@@ -430,23 +428,17 @@ def control_robot(cfg: ControlPipelineConfig):
     if isinstance(cfg.control, CalibrateControlConfig):
         calibrate(robot, cfg.control)
     elif isinstance(cfg.control, TeleoperateControlConfig):
-        _init_rerun(
-            control_config=cfg.control, session_name="lerobot_control_loop_teleop"
-        )
+        _init_rerun(control_config=cfg.control, session_name="lerobot_control_loop_teleop")
         teleoperate(robot, cfg.control)
     elif isinstance(cfg.control, RecordControlConfig):
-        _init_rerun(
-            control_config=cfg.control, session_name="lerobot_control_loop_record"
-        )
+        _init_rerun(control_config=cfg.control, session_name="lerobot_control_loop_record")
         record(robot, cfg.control)
     elif isinstance(cfg.control, ReplayControlConfig):
         replay(robot, cfg.control)
     elif isinstance(cfg.control, RemoteRobotConfig):
         from lerobot.common.robot_devices.robots.lekiwi_remote import run_lekiwi
 
-        _init_rerun(
-            control_config=cfg.control, session_name="lerobot_control_loop_remote"
-        )
+        _init_rerun(control_config=cfg.control, session_name="lerobot_control_loop_remote")
         run_lekiwi(cfg.robot)
 
     if robot.is_connected:

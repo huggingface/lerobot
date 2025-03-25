@@ -87,6 +87,8 @@ class RecordControlConfig(ControlConfig):
     play_sounds: bool = True
     # Resume recording on an existing dataset.
     resume: bool = False
+    # Reset follower arms to an initial configuration.
+    reset_follower_arms: bool = True
 
     def __post_init__(self):
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
