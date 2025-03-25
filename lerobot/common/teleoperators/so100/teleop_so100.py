@@ -20,9 +20,10 @@ import time
 import numpy as np
 
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from lerobot.common.motors import CalibrationMode, Motor, TorqueMode
+from lerobot.common.motors import CalibrationMode, Motor
 from lerobot.common.motors.feetech import (
     FeetechMotorsBus,
+    TorqueMode,
     apply_feetech_offsets_from_calibration,
 )
 
