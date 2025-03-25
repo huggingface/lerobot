@@ -17,7 +17,8 @@
 
 import numpy as np
 
-from ..motors_bus import CalibrationMode, MotorsBus, TorqueMode
+from ..motors_bus import CalibrationMode, MotorsBus
+from .dynamixel import TorqueMode
 from .tables import MODEL_RESOLUTION
 
 URL_TEMPLATE = (

@@ -16,9 +16,8 @@ import numpy as np
 from ..motors_bus import (
     CalibrationMode,
     MotorsBus,
-    TorqueMode,
 )
-from .feetech import FeetechMotorsBus
+from .feetech import FeetechMotorsBus, TorqueMode
 from .tables import MODEL_RESOLUTION
 
 URL_TEMPLATE = (
