@@ -65,6 +65,16 @@ class OperatingMode(Enum):
     PWM = 16
 
 
+class DriveMode(Enum):
+    NON_INVERTED = 0
+    INVERTED = 1
+
+
+class TorqueMode(Enum):
+    ENABLED = 1
+    DISABLED = 0
+
+
 class DynamixelMotorsBus(MotorsBus):
     """
     The Dynamixel implementation for a MotorsBus. It relies on the python dynamixel sdk to communicate with
@@ -138,7 +148,7 @@ class DynamixelMotorsBus(MotorsBus):
             ]
         return data
 
-    def broadcast_ping(self, num_retry: int = 0, raise_on_error: bool = False) -> dict[int, str] | None:
+    def broadcast_ping(self, num_retry: int = 0, raise_on_error: bool = False) -> dict[int, int] | None:
         for n_try in range(1 + num_retry):
             data_list, comm = self.packet_handler.broadcastPing(self.port_handler)
             if self._is_comm_success(comm):
@@ -152,4 +162,4 @@ class DynamixelMotorsBus(MotorsBus):
 
             return data_list if data_list else None
 
-        return {id_: self._model_nb_to_model(data[0]) for id_, data in data_list.items()}
+        return {id_: data[0] for id_, data in data_list.items()}

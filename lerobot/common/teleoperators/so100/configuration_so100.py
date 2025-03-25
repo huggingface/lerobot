@@ -24,7 +24,7 @@ from ..config import TeleoperatorConfig
 @dataclass
 class SO100TeleopConfig(TeleoperatorConfig):
     # Port to connect to the teloperator
-    port: str = "/dev/tty.usbmodem58760430821"
+    port: str
 
     # Directory to store calibration file
     calibration_dir: Path = Path(".cache/calibration/so100/")

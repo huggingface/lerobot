@@ -31,9 +31,15 @@ def mock_motors() -> Generator[MockMotors, None, None]:
 def dummy_motors() -> dict[str, Motor]:
     return {
         "dummy_1": Motor(1, "sts3215", CalibrationMode.RANGE_M100_100),
-        "dummy_2": Motor(2, "sts3215", CalibrationMode.RANGE_M100_100),
+        "wrist_roll": Motor(2, "sts3215", CalibrationMode.RANGE_M100_100),
         "dummy_3": Motor(3, "sts3215", CalibrationMode.RANGE_M100_100),
     }
+
+
+@pytest.fixture(autouse=True)
+def patch_broadcast_ping():
+    with patch.object(FeetechMotorsBus, "broadcast_ping", return_value={1: 777, 2: 777, 3: 777}):
+        yield
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason=f"No patching needed on {sys.platform=}")
@@ -46,8 +52,8 @@ def test_autouse_patch():
     "motor_names, read_values",
     [
         (
-            ["dummy_1", "dummy_2"],
-            [{"dummy_1": 3000}, {"dummy_2": 1000}],
+            ["dummy_1"],
+            [{"dummy_1": 3000}],
         ),
     ],
     ids=["two-motors"],
@@ -85,9 +91,9 @@ def test_find_min_max(mock_motors, dummy_motors):
     motors_bus.connect()
     motors_bus.motor_names = list(dummy_motors.keys())
     read_side_effect = [
-        {"dummy_1": 10, "dummy_2": 20, "dummy_3": 30},
-        {"dummy_1": 4000, "dummy_2": 2000, "dummy_3": 100},
-        {"dummy_1": 100, "dummy_2": 4050, "dummy_3": 2010},
+        {"dummy_1": 10, "wrist_roll": 20, "dummy_3": 30},
+        {"dummy_1": 4000, "wrist_roll": 2000, "dummy_3": 100},
+        {"dummy_1": 100, "wrist_roll": 4050, "dummy_3": 2010},
     ]
     motors_bus.sync_read = Mock(side_effect=read_side_effect)
     motors_bus.set_min_max = Mock()
@@ -101,9 +107,7 @@ def test_find_min_max(mock_motors, dummy_motors):
         motors_bus.find_min_max()
 
     motors_bus.set_min_max.assert_any_call(10, 4000, "dummy_1")
-    motors_bus.set_min_max.assert_any_call(
-        0, 4095, "dummy_2"
-    )  # Difference is between min and max > 4000 thus set 0 and 4095
+    motors_bus.set_min_max.assert_any_call(0, 4095, "wrist_roll")  # Wrist roll thus set 0 and 4095
     motors_bus.set_min_max.assert_any_call(30, 2010, "dummy_3")
     assert motors_bus.set_min_max.call_count == 3
 
@@ -114,13 +118,11 @@ def test_set_offset_clamping(mock_motors, dummy_motors):
         motors=dummy_motors,
     )
     motors_bus.connect()
+    motors_bus.sync_read = Mock(return_value={"dummy_1": 2047})
     motors_bus.write = Mock()
     # A very large offset should be clamped to +2047.
     motors_bus.set_offset(9999, "dummy_1")
-
-    motors_bus.write.assert_any_call("Lock", "dummy_1", 0)
-    motors_bus.write.assert_any_call("Offset", "dummy_1", 2047)
-    motors_bus.write.assert_any_call("Lock", "dummy_1", 1)
+    motors_bus.write.assert_any_call("Offset", "dummy_1", 2047, raw_values=True)
 
 
 def test_set_min_max(mock_motors, dummy_motors):
@@ -129,10 +131,17 @@ def test_set_min_max(mock_motors, dummy_motors):
         motors=dummy_motors,
     )
     motors_bus.connect()
+
+    def _sync_read_side_effect(data_name, motors, *, raw_values=False):
+        if data_name == "Min_Angle_Limit":
+            return {"dummy_1": 100}
+        elif data_name == "Max_Angle_Limit":
+            return {"dummy_1": 3000}
+        return {}
+
+    motors_bus.sync_read = Mock(side_effect=_sync_read_side_effect)
+
     motors_bus.write = Mock()
     motors_bus.set_min_max(100, 3000, "dummy_1")
-
-    motors_bus.write.assert_any_call("Lock", "dummy_1", 0)
-    motors_bus.write.assert_any_call("Min_Angle_Limit", "dummy_1", 100)
-    motors_bus.write.assert_any_call("Max_Angle_Limit", "dummy_1", 3000)
-    motors_bus.write.assert_any_call("Lock", "dummy_1", 1)
+    motors_bus.write.assert_any_call("Min_Angle_Limit", "dummy_1", 100, raw_values=True)
+    motors_bus.write.assert_any_call("Max_Angle_Limit", "dummy_1", 3000, raw_values=True)

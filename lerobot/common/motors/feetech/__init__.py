@@ -1,2 +1,2 @@
-from .feetech import FeetechMotorsBus, OperatingMode
+from .feetech import DriveMode, FeetechMotorsBus, OperatingMode, TorqueMode
 from .tables import *

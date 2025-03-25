@@ -22,10 +22,11 @@ from pathlib import Path
 import numpy as np
 
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from lerobot.common.motors import CalibrationMode, Motor, TorqueMode
+from lerobot.common.motors import CalibrationMode, Motor
 from lerobot.common.motors.feetech import (
     FeetechMotorsBus,
 )
+from lerobot.common.motors.feetech.feetech import TorqueMode
 
 from ..teleoperator import Teleoperator
 from .configuration_so100 import SO100TeleopConfig

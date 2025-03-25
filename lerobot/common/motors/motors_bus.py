@@ -45,35 +45,40 @@ MAX_ID_RANGE = 252
 logger = logging.getLogger(__name__)
 
 
+def get_ctrl_table(model_ctrl_table: dict[str, dict], model: str) -> dict[str, tuple[int, int]]:
+    ctrl_table = model_ctrl_table.get(model)
+    if ctrl_table is None:
+        raise KeyError(f"Control table for {model=} not found.")
+    return ctrl_table
+
+
+def get_address(model_ctrl_table: dict[str, dict], model: str, data_name: str) -> tuple[int, int]:
+    ctrl_table = get_ctrl_table(model_ctrl_table, model)
+    addr_bytes = ctrl_table.get(data_name)
+    if addr_bytes is None:
+        raise KeyError(f"Address for '{data_name}' not found in {model} control table.")
+    return addr_bytes
+
+
 def assert_same_address(model_ctrl_table: dict[str, dict], motor_models: list[str], data_name: str) -> None:
     all_addr = []
     all_bytes = []
     for model in motor_models:
-        addr, bytes = model_ctrl_table[model][data_name]
+        addr, bytes = get_address(model_ctrl_table, model, data_name)
         all_addr.append(addr)
         all_bytes.append(bytes)
 
     if len(set(all_addr)) != 1:
         raise NotImplementedError(
             f"At least two motor models use a different address for `data_name`='{data_name}'"
-            f"({list(zip(motor_models, all_addr, strict=False))}). Contact a LeRobot maintainer."
+            f"({list(zip(motor_models, all_addr, strict=False))})."
         )
 
     if len(set(all_bytes)) != 1:
         raise NotImplementedError(
             f"At least two motor models use a different bytes representation for `data_name`='{data_name}'"
-            f"({list(zip(motor_models, all_bytes, strict=False))}). Contact a LeRobot maintainer."
+            f"({list(zip(motor_models, all_bytes, strict=False))})."
         )
-
-
-class TorqueMode(Enum):
-    ENABLED = 1
-    DISABLED = 0
-
-
-class DriveMode(Enum):
-    NON_INVERTED = 0
-    INVERTED = 1
 
 
 class CalibrationMode(Enum):
@@ -278,7 +283,7 @@ class MotorsBus(abc.ABC):
         return (
             f"{self.__class__.__name__}(\n"
             f"    Port: '{self.port}',\n"
-            f"    Motors: \n{pformat(self.motors, indent=8)},\n"
+            f"    Motors: \n{pformat(self.motors, indent=8, sort_dicts=False)},\n"
             ")',\n"
         )
 
@@ -288,7 +293,9 @@ class MotorsBus(abc.ABC):
             return False
 
         first_table = self.model_ctrl_table[self.models[0]]
-        return any(DeepDiff(first_table, self.model_ctrl_table[model]) for model in self.models[1:])
+        return any(
+            DeepDiff(first_table, get_ctrl_table(self.model_ctrl_table, model)) for model in self.models[1:]
+        )
 
     @cached_property
     def names(self) -> list[str]:
@@ -320,15 +327,12 @@ class MotorsBus(abc.ABC):
             raise TypeError(f"'{motor}' should be int, str.")
 
     def _validate_motors(self) -> None:
-        # TODO(aliberts): improve error messages for this (display problematics values)
         if len(self.ids) != len(set(self.ids)):
-            raise ValueError("Some motors have the same id.")
+            raise ValueError(f"Some motors have the same id!\n{self}")
 
-        if len(self.names) != len(set(self.names)):
-            raise ValueError("Some motors have the same name.")
-
-        if any(model not in self.model_resolution_table for model in self.models):
-            raise ValueError("Some motors models are not available.")
+        # Ensure ctrl table available for all models
+        for model in self.models:
+            get_ctrl_table(self.model_ctrl_table, model)
 
     def _is_comm_success(self, comm: int) -> bool:
         return comm == self._comm_success
@@ -336,11 +340,30 @@ class MotorsBus(abc.ABC):
     def _is_error(self, error: int) -> bool:
         return error != self._no_error
 
+    def _assert_motors_exist(self) -> None:
+        found_models = self.broadcast_ping()
+        expected_models = {m.id: self.model_number_table[m.model] for m in self.motors.values()}
+        if not set(found_models) == set(self.ids):
+            raise RuntimeError(
+                f"{self.__class__.__name__} is supposed to have these motors: ({{id: model_nb}})"
+                f"\n{pformat(expected_models, indent=4, sort_dicts=False)}\n"
+                f"But it found these motors on port '{self.port}':"
+                f"\n{pformat(found_models, indent=4, sort_dicts=False)}\n"
+            )
+
+        for id_, model in expected_models.items():
+            if found_models[id_] != model:
+                raise RuntimeError(
+                    f"Motor '{self._id_to_name(id_)}' (id={id_}) is supposed to be of model_number={model} "
+                    f"('{self._id_to_model(id_)}') but a model_number={found_models[id_]} "
+                    "was found instead for that id."
+                )
+
     @property
     def is_connected(self) -> bool:
         return self.port_handler.is_open
 
-    def connect(self) -> None:
+    def connect(self, assert_motors_exist: bool = True) -> None:
         if self.is_connected:
             raise DeviceAlreadyConnectedError(
                 f"{self.__class__.__name__}('{self.port}') is already connected. Do not call `{self.__class__.__name__}.connect()` twice."
@@ -349,6 +372,8 @@ class MotorsBus(abc.ABC):
         try:
             if not self.port_handler.openPort():
                 raise OSError(f"Failed to open port '{self.port}'.")
+            elif assert_motors_exist:
+                self._assert_motors_exist()
         except (FileNotFoundError, OSError, serial.SerialException) as e:
             logger.error(
                 f"\nCould not connect on port '{self.port}'. Make sure you are using the correct port."
@@ -383,9 +408,9 @@ class MotorsBus(abc.ABC):
         input("Move robot to the middle of its range of motion and press ENTER....")
         for name in self.names:
             # Also reset to defaults
-            self.write("Offset", name, 0, True)
-            self.write("Min_Angle_Limit", name, 0, True)
-            self.write("Max_Angle_Limit", name, 4095, True)
+            self.write("Offset", name, 0, raw_value=True)
+            self.write("Min_Angle_Limit", name, 0, raw_value=True)
+            self.write("Max_Angle_Limit", name, 4095, raw_value=True)
 
         middle_values = self.sync_read("Present_Position", raw_values=True)
 
@@ -485,8 +510,8 @@ class MotorsBus(abc.ABC):
             direction_bit << 11
         ) | magnitude  # Combine sign bit (bit 11) with the magnitude (bits 0..10)
 
-        self.write("Offset", name, servo_offset, True)
-        read_offset = self.sync_read("Offset", name, True)
+        self.write("Offset", name, servo_offset, raw_values=True)
+        read_offset = self.sync_read("Offset", name, raw_values=True)
 
         if read_offset[name] != servo_offset:
             raise ValueError(
@@ -494,11 +519,11 @@ class MotorsBus(abc.ABC):
             )
 
     def set_min_max(self, min: int, max: int, name: str):
-        self.write("Min_Angle_Limit", name, min, True)
-        self.write("Max_Angle_Limit", name, max, True)
+        self.write("Min_Angle_Limit", name, min, raw_values=True)
+        self.write("Max_Angle_Limit", name, max, raw_values=True)
 
-        read_min = self.sync_read("Min_Angle_Limit", name, True)
-        read_max = self.sync_read("Max_Angle_Limit", name, True)
+        read_min = self.sync_read("Min_Angle_Limit", name, raw_values=True)
+        read_max = self.sync_read("Max_Angle_Limit", name, raw_values=True)
         if read_min[name] != min:
             raise ValueError(
                 f"Min is not set correctly for motor '{name}'. read: {read_min} does not equal {min}"
@@ -555,7 +580,7 @@ class MotorsBus(abc.ABC):
         """
         pass
 
-    def ping(self, motor: NameOrID, num_retry: int = 0, raise_on_error: bool = False) -> str | None:
+    def ping(self, motor: NameOrID, num_retry: int = 0, raise_on_error: bool = False) -> int | None:
         id_ = self._get_motor_id(motor)
         for n_try in range(1 + num_retry):
             model_number, comm, error = self.packet_handler.ping(self.port_handler, id_)
@@ -574,7 +599,7 @@ class MotorsBus(abc.ABC):
             else:
                 return
 
-        return self._model_nb_to_model(model_number)
+        return model_number
 
     @abc.abstractmethod
     def broadcast_ping(
@@ -584,16 +609,22 @@ class MotorsBus(abc.ABC):
 
     @overload
     def sync_read(
-        self, data_name: str, motors: None = ..., raw_values: bool = ..., num_retry: int = ...
+        self, data_name: str, motors: None = ..., *, raw_values: bool = ..., num_retry: int = ...
     ) -> dict[str, Value]: ...
     @overload
     def sync_read(
-        self, data_name: str, motors: NameOrID | list[NameOrID], raw_values: bool = ..., num_retry: int = ...
+        self,
+        data_name: str,
+        motors: NameOrID | list[NameOrID],
+        *,
+        raw_values: bool = ...,
+        num_retry: int = ...,
     ) -> dict[NameOrID, Value]: ...
     def sync_read(
         self,
         data_name: str,
         motors: NameOrID | list[NameOrID] | None = None,
+        *,
         raw_values: bool = False,
         num_retry: int = 0,
     ) -> dict[NameOrID, Value]:
@@ -614,7 +645,7 @@ class MotorsBus(abc.ABC):
 
         motor_ids = list(id_key_map)
 
-        comm, ids_values = self._sync_read(data_name, motor_ids, num_retry)
+        comm, ids_values = self._sync_read(data_name, motor_ids, num_retry=num_retry)
         if not self._is_comm_success(comm):
             raise ConnectionError(
                 f"Failed to sync read '{data_name}' on {motor_ids=} after {num_retry + 1} tries."
@@ -627,14 +658,14 @@ class MotorsBus(abc.ABC):
         return {id_key_map[id_]: val for id_, val in ids_values.items()}
 
     def _sync_read(
-        self, data_name: str, motor_ids: list[str], num_retry: int = 0
+        self, data_name: str, motor_ids: list[str], model: str | None = None, num_retry: int = 0
     ) -> tuple[int, dict[int, int]]:
         if self._has_different_ctrl_tables:
             models = [self._id_to_model(id_) for id_ in motor_ids]
             assert_same_address(self.model_ctrl_table, models, data_name)
 
-        model = self._id_to_model(next(iter(motor_ids)))
-        addr, n_bytes = self.model_ctrl_table[model][data_name]
+        model = self._id_to_model(next(iter(motor_ids))) if model is None else model
+        addr, n_bytes = get_address(self.model_ctrl_table, model, data_name)
         self._setup_sync_reader(motor_ids, addr, n_bytes)
 
         # FIXME(aliberts, pkooij): We should probably not have to do this.
@@ -673,6 +704,7 @@ class MotorsBus(abc.ABC):
         self,
         data_name: str,
         values: Value | dict[NameOrID, Value],
+        *,
         raw_values: bool = False,
         num_retry: int = 0,
     ) -> None:
@@ -691,7 +723,7 @@ class MotorsBus(abc.ABC):
         if not raw_values and data_name in self.calibration_required and self.calibration is not None:
             ids_values = self._uncalibrate_values(ids_values)
 
-        comm = self._sync_write(data_name, ids_values, num_retry)
+        comm = self._sync_write(data_name, ids_values, num_retry=num_retry)
         if not self._is_comm_success(comm):
             raise ConnectionError(
                 f"Failed to sync write '{data_name}' with {ids_values=} after {num_retry + 1} tries."
@@ -704,7 +736,7 @@ class MotorsBus(abc.ABC):
             assert_same_address(self.model_ctrl_table, models, data_name)
 
         model = self._id_to_model(next(iter(ids_values)))
-        addr, n_bytes = self.model_ctrl_table[model][data_name]
+        addr, n_bytes = get_address(self.model_ctrl_table, model, data_name)
         self._setup_sync_writer(ids_values, addr, n_bytes)
 
         for n_try in range(1 + num_retry):
@@ -727,7 +759,7 @@ class MotorsBus(abc.ABC):
             self.sync_writer.addParam(id_, data)
 
     def write(
-        self, data_name: str, motor: NameOrID, value: Value, raw_value: bool = False, num_retry: int = 0
+        self, data_name: str, motor: NameOrID, value: Value, *, raw_value: bool = False, num_retry: int = 0
     ) -> None:
         if not self.is_connected:
             raise DeviceNotConnectedError(
@@ -740,7 +772,7 @@ class MotorsBus(abc.ABC):
             id_value = self._uncalibrate_values({id_: value})
             value = id_value[id_]
 
-        comm, error = self._write(data_name, id_, value, num_retry)
+        comm, error = self._write(data_name, id_, value, num_retry=num_retry)
         if not self._is_comm_success(comm):
             raise ConnectionError(
                 f"Failed to write '{data_name}' on {id_=} with '{value}' after {num_retry + 1} tries."
@@ -754,7 +786,7 @@ class MotorsBus(abc.ABC):
 
     def _write(self, data_name: str, motor_id: int, value: int, num_retry: int = 0) -> tuple[int, int]:
         model = self._id_to_model(motor_id)
-        addr, n_bytes = self.model_ctrl_table[model][data_name]
+        addr, n_bytes = get_address(self.model_ctrl_table, model, data_name)
         data = self._split_int_to_bytes(value, n_bytes)
 
         for n_try in range(1 + num_retry):
@@ -776,7 +808,3 @@ class MotorsBus(abc.ABC):
 
         self.port_handler.closePort()
         logger.debug(f"{self.__class__.__name__} disconnected.")
-
-    def __del__(self):
-        if self.is_connected:
-            self.disconnect()

@@ -10,7 +10,7 @@ from ..config import RobotConfig
 @dataclass
 class SO100RobotConfig(RobotConfig):
     # Port to connect to the robot
-    port: str = "/dev/tty.usbmodem58760431201"
+    port: str
 
     # `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
     # Set this to a positive scalar to have the same value for all motors, or a list that is the same length as

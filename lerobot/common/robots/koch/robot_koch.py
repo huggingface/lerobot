@@ -22,10 +22,11 @@ from typing import Any
 from lerobot.common.cameras.utils import make_cameras_from_configs
 from lerobot.common.constants import OBS_IMAGES, OBS_STATE
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from lerobot.common.motors import CalibrationMode, Motor, TorqueMode
+from lerobot.common.motors import CalibrationMode, Motor
 from lerobot.common.motors.dynamixel import (
     DynamixelMotorsBus,
     OperatingMode,
+    TorqueMode,
     run_arm_calibration,
 )
 
@@ -124,7 +125,8 @@ class KochRobot(Robot):
 
     @property
     def is_connected(self) -> bool:
-        return self.arm.is_connected  # TODO(aliberts): add cam.is_connected for cam in self.cameras
+        # TODO(aliberts): add cam.is_connected for cam in self.cameras
+        return self.arm.is_connected
 
     def connect(self) -> None:
         if self.is_connected:
