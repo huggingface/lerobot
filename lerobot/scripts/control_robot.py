@@ -366,8 +366,8 @@ def replay(
         start_episode_t = time.perf_counter()
 
         action = actions[idx]["action"]
-        if replay_delta_actions:
-            action = action + current_joint_positions
+        # if replay_delta_actions:
+        #     action = action + current_joint_positions
         robot.send_action(action)
 
         dt_s = time.perf_counter() - start_episode_t
@@ -394,7 +394,6 @@ def control_robot(cfg: ControlPipelineConfig):
         replay(robot, cfg.control)
     elif isinstance(cfg.control, RemoteRobotConfig):
         from lerobot.common.robot_devices.robots.lekiwi_remote import run_lekiwi
-
         run_lekiwi(cfg.robot)
 
     if robot.is_connected:

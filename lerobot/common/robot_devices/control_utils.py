@@ -221,7 +221,7 @@ def record_episode(
         events=events,
         policy=policy,
         fps=fps,
-        record_delta_actions=record_delta_actions,
+        # record_delta_actions=record_delta_actions,
         teleoperate=policy is None,
         single_task=single_task,
     )
@@ -267,8 +267,8 @@ def control_loop(
 
         if teleoperate:
             observation, action = robot.teleop_step(record_data=True)
-            if record_delta_actions:
-                action["action"] = action["action"] - current_joint_positions
+            # if record_delta_actions:
+            #     action["action"] = action["action"] - current_joint_positions
         else:
             observation = robot.capture_observation()
 

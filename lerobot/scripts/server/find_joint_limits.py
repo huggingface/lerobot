@@ -5,10 +5,13 @@ import cv2
 import numpy as np
 
 from lerobot.common.robot_devices.control_utils import is_headless
-from lerobot.common.robot_devices.robots.factory import make_robot
-from lerobot.common.utils.utils import init_hydra_config
+from lerobot.common.robot_devices.robots.utils import make_robot_from_config
 from lerobot.scripts.server.kinematics import RobotKinematics
+from lerobot.configs import parser
+from lerobot.common.robot_devices.robots.configs import RobotConfig
 
+follower_port = "/dev/tty.usbmodem58760431631"
+leader_port = "/dev/tty.usbmodem58760433331"
 
 def find_joint_bounds(
     robot,
@@ -78,20 +81,28 @@ def find_ee_bounds(
             break
 
 
+def make_robot(robot_type="so100", mock=True):
+    """
+    Create a robot instance using the appropriate robot config class.
+    
+    Args:
+        robot_type: Robot type string (e.g., "so100", "koch", "aloha")
+        mock: Whether to use mock mode for hardware (default: True)
+        
+    Returns:
+        Robot instance
+    """
+    
+    # Get the appropriate robot config class based on robot_type
+    robot_config = RobotConfig.get_choice_class(robot_type)(mock=mock)
+    robot_config.leader_arms["main"].port = leader_port
+    robot_config.follower_arms["main"].port = follower_port
+    
+    return make_robot_from_config(robot_config)
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--robot-path",
-        type=str,
-        default="lerobot/configs/robot/koch.yaml",
-        help="Path to robot yaml file used to instantiate the robot using `make_robot` factory function.",
-    )
-    parser.add_argument(
-        "--robot-overrides",
-        type=str,
-        nargs="*",
-        help="Any key=value arguments to override config values (use dots for.nested=overrides)",
-    )
+    # Create argparse for script-specific arguments
+    parser = argparse.ArgumentParser(add_help=False)  # Set add_help=False to avoid conflict
     parser.add_argument(
         "--mode",
         type=str,
@@ -105,13 +116,29 @@ if __name__ == "__main__":
         default=30,
         help="Time step to use for control.",
     )
-    args = parser.parse_args()
-    robot_cfg = init_hydra_config(args.robot_path, args.robot_overrides)
-
-    robot = make_robot(robot_cfg)
+    parser.add_argument(
+        "--robot-type",
+        type=str,
+        default="so100",
+        help="Robot type (so100, koch, aloha, etc.)",
+    )
+    parser.add_argument(
+        "--mock",
+        type=int,
+        default=1,
+        help="Use mock mode for hardware simulation",
+    )
+    
+    # Only parse known args, leaving robot config args for Hydra if used
+    args, _ = parser.parse_known_args()
+    
+    # Create robot with the appropriate config
+    robot = make_robot(args.robot_type, args.mock)
+    
     if args.mode == "joint":
         find_joint_bounds(robot, args.control_time_s)
     elif args.mode == "ee":
         find_ee_bounds(robot, args.control_time_s)
+    
     if robot.is_connected:
         robot.disconnect()
