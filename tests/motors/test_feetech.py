@@ -93,18 +93,18 @@ def test_abc_implementation(dummy_motors):
 
 
 # @pytest.mark.skip("TODO")
-@pytest.mark.parametrize("idx", [1, 2, 3])
-def test_ping(idx, mock_motors, dummy_motors):
-    expected_model_nb = MODEL_NUMBER[dummy_motors[f"dummy_{idx}"].model]
-    ping_stub = mock_motors.build_ping_stub(idx)
-    mobel_nb_stub = mock_motors.build_read_stub("Model_Number", idx, expected_model_nb)
+@pytest.mark.parametrize("id_", [1, 2, 3])
+def test_ping(id_, mock_motors, dummy_motors):
+    expected_model_nb = MODEL_NUMBER[dummy_motors[f"dummy_{id_}"].model]
+    ping_stub = mock_motors.build_ping_stub(id_)
+    mobel_nb_stub = mock_motors.build_read_stub("Model_Number", id_, expected_model_nb)
     motors_bus = FeetechMotorsBus(
         port=mock_motors.port,
         motors=dummy_motors,
     )
     motors_bus.connect(assert_motors_exist=False)
 
-    ping_model_nb = motors_bus.ping(idx)
+    ping_model_nb = motors_bus.ping(id_)
 
     assert ping_model_nb == expected_model_nb
     assert mock_motors.stubs[ping_stub].called

@@ -46,8 +46,8 @@ class MockFeetechPacket(abc.ABC):
     @staticmethod
     def _add_checksum(packet: list[int]) -> list[int]:
         checksum = 0
-        for idx in range(2, len(packet) - 1):  # except header & checksum
-            checksum += packet[idx]
+        for id_ in range(2, len(packet) - 1):  # except header & checksum
+            checksum += packet[id_]
 
         packet[-1] = scs.SCS_LOBYTE(~checksum)
 
@@ -171,9 +171,9 @@ class MockInstructionPacket(MockFeetechPacket):
             +1 is for the checksum at the end.
         """
         data = []
-        for idx, value in ids_values.items():
+        for id_, value in ids_values.items():
             split_value = FeetechMotorsBus._split_int_to_bytes(value, data_length)
-            data += [idx, *split_value]
+            data += [id_, *split_value]
         params = [start_address, data_length, *data]
         length = len(ids_values) * (1 + data_length) + 4
         return cls.build(scs_id=scs.BROADCAST_ID, params=params, length=length, instruct_type="Sync_Write")
@@ -331,9 +331,9 @@ class MockMotors(MockSerial):
 
     def build_broadcast_ping_stub(self, ids: list[int] | None = None, num_invalid_try: int = 0) -> str:
         ping_request = MockInstructionPacket.ping(scs.BROADCAST_ID)
-        return_packets = b"".join(MockStatusPacket.ping(idx) for idx in ids)
+        return_packets = b"".join(MockStatusPacket.ping(id_) for id_ in ids)
         ping_response = self._build_send_fn(return_packets, num_invalid_try)
-        stub_name = "Ping_" + "_".join([str(idx) for idx in ids])
+        stub_name = "Ping_" + "_".join([str(id_) for id_ in ids])
         self.stub(
             name=stub_name,
             receive_bytes=ping_request,
@@ -386,17 +386,17 @@ class MockMotors(MockSerial):
         sync_read_request = MockInstructionPacket.sync_read(list(ids_values), address, length)
         if data_name == "Present_Position":
             return_packets = b"".join(
-                MockStatusPacket.present_position(idx, pos) for idx, pos in ids_values.items()
+                MockStatusPacket.present_position(id_, pos) for id_, pos in ids_values.items()
             )
         elif data_name == "Model_Number":
             return_packets = b"".join(
-                MockStatusPacket.model_number(idx, model_nb) for idx, model_nb in ids_values.items()
+                MockStatusPacket.model_number(id_, model_nb) for id_, model_nb in ids_values.items()
             )
         else:
             raise NotImplementedError
 
         sync_read_response = self._build_send_fn(return_packets, num_invalid_try)
-        stub_name = f"Sync_Read_{data_name}_" + "_".join([str(idx) for idx in ids_values])
+        stub_name = f"Sync_Read_{data_name}_" + "_".join([str(id_) for id_ in ids_values])
         self.stub(
             name=stub_name,
             receive_bytes=sync_read_request,
@@ -409,7 +409,7 @@ class MockMotors(MockSerial):
     ) -> str:
         address, length = self.ctrl_table[data_name]
         sync_read_request = MockInstructionPacket.sync_write(ids_values, address, length)
-        stub_name = f"Sync_Write_{data_name}_" + "_".join([str(idx) for idx in ids_values])
+        stub_name = f"Sync_Write_{data_name}_" + "_".join([str(id_) for id_ in ids_values])
         self.stub(
             name=stub_name,
             receive_bytes=sync_read_request,

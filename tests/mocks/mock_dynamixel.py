@@ -281,9 +281,9 @@ class MockInstructionPacket(MockDynamixelPacketv2):
             +2 is for the CRC at the end.
         """
         data = []
-        for idx, value in ids_values.items():
+        for id_, value in ids_values.items():
             split_value = DynamixelMotorsBus._split_int_to_bytes(value, data_length)
-            data += [idx, *split_value]
+            data += [id_, *split_value]
         params = [
             dxl.DXL_LOBYTE(start_address),
             dxl.DXL_HIBYTE(start_address),
@@ -444,10 +444,10 @@ class MockMotors(MockSerial):
         self, ids_models: dict[int, list[int]] | None = None, num_invalid_try: int = 0
     ) -> str:
         ping_request = MockInstructionPacket.ping(dxl.BROADCAST_ID)
-        return_packets = b"".join(MockStatusPacket.ping(idx, model) for idx, model in ids_models.items())
+        return_packets = b"".join(MockStatusPacket.ping(id_, model) for id_, model in ids_models.items())
         ping_response = self._build_send_fn(return_packets, num_invalid_try)
 
-        stub_name = "Ping_" + "_".join([str(idx) for idx in ids_models])
+        stub_name = "Ping_" + "_".join([str(id_) for id_ in ids_models])
         self.stub(
             name=stub_name,
             receive_bytes=ping_request,
@@ -482,10 +482,10 @@ class MockMotors(MockSerial):
         address, length = self.ctrl_table[data_name]
         sync_read_request = MockInstructionPacket.sync_read(list(ids_values), address, length)
         return_packets = b"".join(
-            MockStatusPacket.present_position(idx, pos) for idx, pos in ids_values.items()
+            MockStatusPacket.present_position(id_, pos) for id_, pos in ids_values.items()
         )
         sync_read_response = self._build_send_fn(return_packets, num_invalid_try)
-        stub_name = f"Sync_Read_{data_name}_" + "_".join([str(idx) for idx in ids_values])
+        stub_name = f"Sync_Read_{data_name}_" + "_".join([str(id_) for id_ in ids_values])
         self.stub(
             name=stub_name,
             receive_bytes=sync_read_request,
@@ -498,7 +498,7 @@ class MockMotors(MockSerial):
     ) -> str:
         address, length = self.ctrl_table[data_name]
         sync_read_request = MockInstructionPacket.sync_write(ids_values, address, length)
-        stub_name = f"Sync_Write_{data_name}_" + "_".join([str(idx) for idx in ids_values])
+        stub_name = f"Sync_Write_{data_name}_" + "_".join([str(id_) for id_ in ids_values])
         self.stub(
             name=stub_name,
             receive_bytes=sync_read_request,

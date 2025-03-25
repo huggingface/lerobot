@@ -92,17 +92,17 @@ def test_abc_implementation(dummy_motors):
     DynamixelMotorsBus(port="/dev/dummy-port", motors=dummy_motors)
 
 
-@pytest.mark.parametrize("idx", [1, 2, 3])
-def test_ping(idx, mock_motors, dummy_motors):
-    expected_model_nb = MODEL_NUMBER[dummy_motors[f"dummy_{idx}"].model]
-    stub_name = mock_motors.build_ping_stub(idx, expected_model_nb)
+@pytest.mark.parametrize("id_", [1, 2, 3])
+def test_ping(id_, mock_motors, dummy_motors):
+    expected_model_nb = MODEL_NUMBER[dummy_motors[f"dummy_{id_}"].model]
+    stub_name = mock_motors.build_ping_stub(id_, expected_model_nb)
     motors_bus = DynamixelMotorsBus(
         port=mock_motors.port,
         motors=dummy_motors,
     )
     motors_bus.connect(assert_motors_exist=False)
 
-    ping_model_nb = motors_bus.ping(idx)
+    ping_model_nb = motors_bus.ping(id_)
 
     assert ping_model_nb == expected_model_nb
     assert mock_motors.stubs[stub_name].called
