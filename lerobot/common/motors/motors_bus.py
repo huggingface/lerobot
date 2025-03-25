@@ -581,10 +581,14 @@ class MotorsBus(abc.ABC):
     # This could be at the cost of increase latency between the moment the data is produced by the motors and
     # the moment it is used by a policy.
     # def _async_read(self, motor_ids: list[str], address: int, n_bytes: int):
-    #     self.reader.rxPacket()
-    #     self.reader.txPacket()
+    #     if self.sync_reader.start_address != address or self.sync_reader.data_length != n_bytes or ...:
+    #         self._setup_sync_reader(motor_ids, address, n_bytes)
+    #     else:
+    #         self.sync_reader.rxPacket()
+    #         self.sync_reader.txPacket()
+
     #     for id_ in motor_ids:
-    #         value = self.reader.getData(id_, address, n_bytes)
+    #         value = self.sync_reader.getData(id_, address, n_bytes)
 
     def sync_write(
         self,
