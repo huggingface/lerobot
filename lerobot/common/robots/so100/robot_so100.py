@@ -98,9 +98,6 @@ class SO100Robot(Robot):
             # Set I_Coefficient and D_Coefficient to default value 0 and 32
             self.arm.write("I_Coefficient", name, 0)
             self.arm.write("D_Coefficient", name, 32)
-            # Close the write lock so that Maximum_Acceleration gets written to EPROM address,
-            # which is mandatory for Maximum_Acceleration to take effect after rebooting.
-            self.arm.write("Lock", name, 0)
             # Set Maximum_Acceleration to 254 to speedup acceleration and deceleration of
             # the motors. Note: this configuration is not in the official STS3215 Memory Table
             self.arm.write("Maximum_Acceleration", name, 254)
@@ -142,8 +139,6 @@ class SO100Robot(Robot):
 
     def calibrate(self) -> None:
         print(f"\nRunning calibration of {self.name} robot")
-        for name in self.arm.names:
-            self.arm.write("Torque_Enable", name, TorqueMode.DISABLED.value)
 
         offsets = self.arm.find_offset()
         min_max = self.arm.find_min_max()

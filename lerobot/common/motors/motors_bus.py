@@ -382,13 +382,12 @@ class MotorsBus(abc.ABC):
     def find_offset(self):
         input("Move robot to the middle of its range of motion and press ENTER....")
         for name in self.names:
-            self.write("Lock", name, 0, True)
+            # Also reset to defaults
             self.write("Offset", name, 0, True)
-
-            # Also reset min, max angle limit to default
             self.write("Min_Angle_Limit", name, 0, True)
             self.write("Max_Angle_Limit", name, 4095, True)
-            self.write("Lock", name, 1, True)
+
+        time.sleep(1)
 
         middle_values = self.sync_read("Present_Position", raw_values=True)
 
@@ -401,7 +400,9 @@ class MotorsBus(abc.ABC):
         return offsets
 
     def find_min_max(self):
-        print("Move all joints sequentially through their entire ranges of motion.")
+        print(
+            "Move all joints (except wrist_roll; id = 5) sequentially through their entire ranges of motion."
+        )
         print("Recording positions. Press ENTER to stop...")
 
         recorded_data = {name: [] for name in self.names}
@@ -424,10 +425,8 @@ class MotorsBus(abc.ABC):
             motor_values = recorded_data[name]
             raw_min = min(motor_values)
             raw_max = max(motor_values)
-            raw_range = raw_max - raw_min
 
-            # Check if motor made a full 360-degree rotation or more if so set min/max at 0 and 4095
-            if raw_range >= 4000:
+            if name == "wrist_roll":
                 physical_min = 0
                 physical_max = 4095
             else:
@@ -468,8 +467,6 @@ class MotorsBus(abc.ABC):
             self.set_min_max(cal_data["min"], cal_data["max"], name)
 
     def set_offset(self, homing_offset: int, name: str):
-        self.write("Lock", name, 0, True)
-
         homing_offset = int(homing_offset)
 
         # Clamp to [-2047..+2047]
@@ -491,13 +488,10 @@ class MotorsBus(abc.ABC):
         ) | magnitude  # Combine sign bit (bit 11) with the magnitude (bits 0..10)
 
         self.write("Offset", name, servo_offset, True)
-        self.write("Lock", name, 1, True)
 
     def set_min_max(self, min: int, max: int, name: str):
-        self.write("Lock", name, 0, True)
         self.write("Min_Angle_Limit", name, min, True)
         self.write("Max_Angle_Limit", name, max, True)
-        self.write("Lock", name, 1, True)
 
     @abc.abstractmethod
     def _calibrate_values(self, ids_values: dict[int, int]) -> dict[int, float]:
@@ -717,7 +711,7 @@ class MotorsBus(abc.ABC):
             self.sync_writer.addParam(id_, data)
 
     def write(
-        self, data_name: str, motor: NameOrID, value: Value, raw_value: bool = False, num_retry: int = 2
+        self, data_name: str, motor: NameOrID, value: Value, raw_value: bool = False, num_retry: int = 0
     ) -> None:
         if not self.is_connected:
             raise DeviceNotConnectedError(
