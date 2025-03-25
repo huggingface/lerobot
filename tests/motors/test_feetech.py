@@ -92,12 +92,13 @@ def test_abc_implementation(dummy_motors):
     FeetechMotorsBus(port="/dev/dummy-port", motors=dummy_motors)
 
 
-@pytest.mark.skip("TODO")
+# @pytest.mark.skip("TODO")
 @pytest.mark.parametrize("idx", [1, 2, 3])
 def test_ping(idx, mock_motors, dummy_motors):
     expected_model = dummy_motors[f"dummy_{idx}"].model
     model_nb = MODEL_NUMBER[expected_model]
-    stub_name = mock_motors.build_ping_stub(idx, model_nb)
+    ping_stub = mock_motors.build_ping_stub(idx)
+    mobel_nb_stub = mock_motors.build_read_stub("Model_Number", idx, model_nb)
     motors_bus = FeetechMotorsBus(
         port=mock_motors.port,
         motors=dummy_motors,
@@ -107,14 +108,15 @@ def test_ping(idx, mock_motors, dummy_motors):
     ping_model_nb = motors_bus.ping(idx)
 
     assert ping_model_nb == expected_model
-    assert mock_motors.stubs[stub_name].called
+    assert mock_motors.stubs[ping_stub].called
+    assert mock_motors.stubs[mobel_nb_stub].called
 
 
-@pytest.mark.skip("TODO")
 def test_broadcast_ping(mock_motors, dummy_motors):
     expected_models = {m.id: m.model for m in dummy_motors.values()}
     model_nbs = {id_: MODEL_NUMBER[model] for id_, model in expected_models.items()}
-    stub_name = mock_motors.build_broadcast_ping_stub(model_nbs)
+    ping_stub = mock_motors.build_broadcast_ping_stub(list(model_nbs))
+    mobel_nb_stub = mock_motors.build_sync_read_stub("Model_Number", model_nbs)
     motors_bus = FeetechMotorsBus(
         port=mock_motors.port,
         motors=dummy_motors,
@@ -124,7 +126,8 @@ def test_broadcast_ping(mock_motors, dummy_motors):
     ping_model_nbs = motors_bus.broadcast_ping()
 
     assert ping_model_nbs == expected_models
-    assert mock_motors.stubs[stub_name].called
+    assert mock_motors.stubs[ping_stub].called
+    assert mock_motors.stubs[mobel_nb_stub].called
 
 
 def test_sync_read_none(mock_motors, dummy_motors):
