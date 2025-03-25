@@ -17,12 +17,19 @@
 
 import argparse
 import datetime as dt
+import os
 from pathlib import Path
 
 import cv2
+import keyboard
+import rerun as rr
 
 
 def display_and_save_video_stream(output_dir: Path, fps: int, width: int, height: int):
+    rr.init("lerobot_capture_camera_feed")
+    memory_limit = os.getenv("LEROBOT_RERUN_MEMORY_LIMIT", "5%")
+    rr.spawn(memory_limit=memory_limit)
+
     now = dt.datetime.now()
     capture_dir = output_dir / f"{now:%Y-%m-%d}" / f"{now:%H-%M-%S}"
     if not capture_dir.exists():
@@ -45,18 +52,18 @@ def display_and_save_video_stream(output_dir: Path, fps: int, width: int, height
         if not ret:
             print("Error: Could not read frame.")
             break
-
-        cv2.imshow("Video Stream", frame)
+        rr.log("video/stream", rr.Image(frame.numpy()), static=True)
         cv2.imwrite(str(capture_dir / f"frame_{frame_index:06d}.png"), frame)
         frame_index += 1
 
         # Break the loop on 'q' key press
-        if cv2.waitKey(1) & 0xFF == ord("q"):
+        if keyboard.is_pressed("q"):
             break
 
     # Release the capture and destroy all windows
     cap.release()
-    cv2.destroyAllWindows()
+    # TODO(Steven): Find a way to close visualizer: https://github.com/rerun-io/rerun/pull/9400
+    # cv2.destroyAllWindows()
 
 
 if __name__ == "__main__":
