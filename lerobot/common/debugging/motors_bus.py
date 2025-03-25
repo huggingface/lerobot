@@ -49,20 +49,20 @@ def visualize_motors_bus(motors_bus: MotorsBus):
 
             print(f"read_s: {read_s * 1e3:.2f}ms ({1 / read_s:.0f} Hz)")
             for name, raw_ticks in raw_positions.items():
-                idx = motors_bus.motors[name].id
+                id_ = motors_bus.motors[name].id
                 model = motors_bus.motors[name].model
 
                 # homed_val = homed_positions[i]  # degrees or % if linear
 
                 # Manually compute "adjusted ticks" from raw ticks
-                manual_adjusted = adjusted_to_homing_ticks(raw_ticks, model, motors_bus, idx)
+                manual_adjusted = adjusted_to_homing_ticks(raw_ticks, model, motors_bus, id_)
                 # Convert to degrees
                 manual_degs = convert_ticks_to_degrees(manual_adjusted, model)
 
                 # Convert that deg back to ticks
                 manual_ticks = convert_degrees_to_ticks(manual_degs, model)
                 # Then invert them using offset & bus drive mode
-                inv_ticks = adjusted_to_motor_ticks(manual_ticks, model, motors_bus, idx)
+                inv_ticks = adjusted_to_motor_ticks(manual_ticks, model, motors_bus, id_)
 
                 print(
                     f"{name:15s} | "
