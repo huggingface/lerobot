@@ -21,10 +21,11 @@ import time
 import numpy as np
 
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from lerobot.common.motors import CalibrationMode, Motor, TorqueMode
+from lerobot.common.motors import CalibrationMode, Motor
 from lerobot.common.motors.dynamixel import (
     DynamixelMotorsBus,
     OperatingMode,
+    TorqueMode,
     run_arm_calibration,
 )
 
