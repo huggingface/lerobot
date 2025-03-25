@@ -17,6 +17,7 @@
 import json
 import logging
 import time
+from pathlib import Path
 
 import numpy as np
 
@@ -45,6 +46,8 @@ class SO100Robot(Robot):
         super().__init__(config)
         self.config = config
         self.robot_type = config.type
+        self.calibration_dir = Path(self.config.calibration_dir)
+        self.calibration_fpath = self.calibration_dir / "so100_robot.json"
         self.logs = {}
 
         self.arm = FeetechMotorsBus(
@@ -59,8 +62,6 @@ class SO100Robot(Robot):
             },
         )
         self.cameras = make_cameras_from_configs(config.cameras)
-
-        self.calibration_fpath = config.calibration_fpath
 
     @property
     def state_feature(self) -> dict:

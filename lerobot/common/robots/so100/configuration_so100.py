@@ -5,10 +5,6 @@ from lerobot.common.cameras import CameraConfig
 
 from ..config import RobotConfig
 
-# TODO(pepijn): Do this differently
-BASE_CALIBRATION_DIR = Path(".cache/calibration/so100")
-BASE_CALIBRATION_DIR.mkdir(parents=True, exist_ok=True)
-
 
 @RobotConfig.register_subclass("so100")
 @dataclass
@@ -24,4 +20,5 @@ class SO100RobotConfig(RobotConfig):
     # cameras
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
 
-    calibration_fpath: Path = field(default=BASE_CALIBRATION_DIR / "leader_calibration.json")
+    # Directory to store calibration file
+    calibration_dir: Path = Path(".cache/calibration/so100/")

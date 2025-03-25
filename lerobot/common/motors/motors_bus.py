@@ -32,7 +32,6 @@ from pathlib import Path
 from pprint import pformat
 from typing import Protocol, TypeAlias, overload
 
-import numpy as np
 import serial
 from deepdiff import DeepDiff
 
@@ -383,15 +382,15 @@ class MotorsBus(abc.ABC):
     def find_offset(self):
         input("Move robot to the middle of its range of motion and press ENTER....")
         for name in self.names:
-            self.write("Lock", name, 0)
-            self.write("Offset", name, 0)
+            self.write("Lock", name, 0, True)
+            self.write("Offset", name, 0, True)
 
             # Also reset min, max angle limit to default
-            self.write("Min_Angle_Limit", name, 0)
-            self.write("Max_Angle_Limit", name, 4095)
-            self.write("Lock", name, 1)
+            self.write("Min_Angle_Limit", name, 0, True)
+            self.write("Max_Angle_Limit", name, 4095, True)
+            self.write("Lock", name, 1, True)
 
-        middle_values = self.sync_read("Present_Position")
+        middle_values = self.sync_read("Present_Position", raw_values=True)
 
         offsets = {}
         for name, pos in middle_values.items():
@@ -405,12 +404,12 @@ class MotorsBus(abc.ABC):
         print("Move all joints sequentially through their entire ranges of motion.")
         print("Recording positions. Press ENTER to stop...")
 
-        recorded_positions = []
-        motor_names = getattr(self, "motor_names", list(self.motors.keys()))
+        recorded_data = {name: [] for name in self.names}
 
         while True:
-            positions = self.sync_read("Present_Position", motor_names)
-            recorded_positions.append(positions)
+            positions = self.sync_read("Present_Position", raw_values=True)
+            for name in self.names:
+                recorded_data[name].append(positions[name])
             time.sleep(0.01)
 
             # Check if user pressed Enter
@@ -420,26 +419,22 @@ class MotorsBus(abc.ABC):
                 if line.strip() == "":
                     break
 
-        motor_names = getattr(self, "motor_names", list(self.motors.keys()))
-        all_positions = np.array(
-            [[pos[name] for name in motor_names] for pos in recorded_positions], dtype=np.float32
-        )
-
         min_max = {}
-        for i, name in enumerate(self.names):
-            motor_column = all_positions[:, i]
-            raw_range = motor_column.max() - motor_column.min()
+        for name in self.names:
+            motor_values = recorded_data[name]
+            raw_min = min(motor_values)
+            raw_max = max(motor_values)
+            raw_range = raw_max - raw_min
 
-            # Check if motor made a full 360-degree rotation or more set min max at 0 and 4095
+            # Check if motor made a full 360-degree rotation or more if so set min/max at 0 and 4095
             if raw_range >= 4000:
                 physical_min = 0
                 physical_max = 4095
             else:
-                physical_min = int(motor_column.min())
-                physical_max = int(motor_column.max())
+                physical_min = int(raw_min)
+                physical_max = int(raw_max)
 
             self.set_min_max(physical_min, physical_max, name)
-
             min_max[name] = {"min": physical_min, "max": physical_max}
 
         return min_max
@@ -473,7 +468,7 @@ class MotorsBus(abc.ABC):
             self.set_min_max(cal_data["min"], cal_data["max"], name)
 
     def set_offset(self, homing_offset: int, name: str):
-        self.write("Lock", name, 0)
+        self.write("Lock", name, 0, True)
 
         homing_offset = int(homing_offset)
 
@@ -495,14 +490,14 @@ class MotorsBus(abc.ABC):
             direction_bit << 11
         ) | magnitude  # Combine sign bit (bit 11) with the magnitude (bits 0..10)
 
-        self.write("Offset", name, servo_offset)
-        self.write("Lock", name, 1)
+        self.write("Offset", name, servo_offset, True)
+        self.write("Lock", name, 1, True)
 
     def set_min_max(self, min: int, max: int, name: str):
-        self.write("Lock", name, 0)
-        self.write("Min_Angle_Limit", name, min)
-        self.write("Max_Angle_Limit", name, max)
-        self.write("Lock", name, 1)
+        self.write("Lock", name, 0, True)
+        self.write("Min_Angle_Limit", name, min, True)
+        self.write("Max_Angle_Limit", name, max, True)
+        self.write("Lock", name, 1, True)
 
     @abc.abstractmethod
     def _calibrate_values(self, ids_values: dict[int, int]) -> dict[int, float]:
@@ -722,7 +717,7 @@ class MotorsBus(abc.ABC):
             self.sync_writer.addParam(id_, data)
 
     def write(
-        self, data_name: str, motor: NameOrID, value: Value, raw_value: bool = False, num_retry: int = 0
+        self, data_name: str, motor: NameOrID, value: Value, raw_value: bool = False, num_retry: int = 2
     ) -> None:
         if not self.is_connected:
             raise DeviceNotConnectedError(

@@ -17,6 +17,7 @@
 import json
 import logging
 import time
+from pathlib import Path
 
 import numpy as np
 
@@ -42,6 +43,8 @@ class SO100Teleop(Teleoperator):
         super().__init__(config)
         self.config = config
         self.robot_type = config.type
+        self.calibration_dir = Path(self.config.calibration_dir)
+        self.calibration_fpath = self.calibration_dir / "so100_teleop.json"
 
         self.arm = FeetechMotorsBus(
             port=self.config.port,
@@ -56,8 +59,6 @@ class SO100Teleop(Teleoperator):
         )
 
         self.logs = {}
-
-        self.calibration_fpath = config.calibration_fpath
 
     @property
     def action_feature(self) -> dict:
