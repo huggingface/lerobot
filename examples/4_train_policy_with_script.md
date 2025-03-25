@@ -112,15 +112,15 @@ Now, let's assume that we want to reproduce the run just above. That run has pro
 We can then simply load the config values from this file using:
 ```bash
 python lerobot/scripts/train.py \
-    --config_path=outputs/train/act_aloha_transfer/checkpoints/last/pretrained_model/ \
+    --config_path=outputs/train/act_aloha_transfer/checkpoints/last/pretrained_model/train_config.json \
     --output_dir=outputs/train/act_aloha_transfer_2
 ```
-`--config_path` is also a special argument which allows to initialize the config from a local config file. It can point to a directory that contains `train_config.json` or to the config file itself directly.
+`--config_path` is also a special argument which allows to initialize the config from a local config file.
 
 Similarly to Hydra, we can still override some parameters in the CLI if we want to, e.g.:
 ```bash
 python lerobot/scripts/train.py \
-    --config_path=outputs/train/act_aloha_transfer/checkpoints/last/pretrained_model/ \
+    --config_path=outputs/train/act_aloha_transfer/checkpoints/last/pretrained_model/train_config.json \
     --output_dir=outputs/train/act_aloha_transfer_2
     --policy.n_action_steps=80
 ```
@@ -156,7 +156,7 @@ INFO 2025-01-24 16:10:56 ts/train.py:263 Checkpoint policy after step 100
 Now let's simulate a crash by killing the process (hit `ctrl`+`c`). We can then simply resume this run from the last checkpoint available with:
 ```bash
 python lerobot/scripts/train.py \
-    --config_path=outputs/train/run_resumption/checkpoints/last/pretrained_model/ \
+    --config_path=outputs/train/run_resumption/checkpoints/last/pretrained_model/train_config.json \
     --resume=true
 ```
 You should see from the logging that your training picks up from where it left off.
@@ -165,7 +165,7 @@ Another reason for which you might want to resume a run is simply to extend trai
 You could double the number of steps of the previous run with:
 ```bash
 python lerobot/scripts/train.py \
-    --config_path=outputs/train/run_resumption/checkpoints/last/pretrained_model/ \
+    --config_path=outputs/train/run_resumption/checkpoints/last/pretrained_model/train_config.json \
     --resume=true \
     --steps=200000
 ```
@@ -245,14 +245,14 @@ python lerobot/scripts/train.py \
 #### Train a policy from scratch - config file + CLI
 ```bash
 python lerobot/scripts/train.py \
-    --config_path=path/to/pretrained_model \  # <- can also be a repo_id
+    --config_path=path/to/pretrained_model/train_config.json \  # <- can also be a repo_id
     --policy.n_action_steps=80  # <- you may still override values
 ```
 
 #### Resume/continue a training run
 ```bash
 python lerobot/scripts/train.py \
-    --config_path=checkpoint/pretrained_model/ \
+    --config_path=checkpoint/pretrained_model/train_config.json \
     --resume=true \
     --steps=200000  # <- you can change some training parameters
 ```
