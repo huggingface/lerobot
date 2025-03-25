@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+import time
 
 import rerun as rr
 
@@ -21,6 +22,7 @@ from lerobot.common.robots.dummy.dummy import Dummy
 from lerobot.common.teleoperators.so100 import SO100Teleop, SO100TeleopConfig
 
 
+# IMO, it's better to use rerun in the application code instead of the library code
 def main():
     logging.info("Configuring Devices")
     leader_arm_config = SO100TeleopConfig(port="/dev/tty.usbmodem58760434171")
@@ -36,17 +38,27 @@ def main():
     robot.connect()
 
     rr.init("rerun_dummy_data")
-    rr.spawn(memory_limit="50%")  # add a bluprint config
+    # If data source and visualizer are in different host, use .connect() instead to establish a tcp connection
+    # We can define a custom blueprint configuration for the visualizer panels
+    # Memory limit will make sure no more than 5% of the memory is used by the visualizer
+    rr.spawn(memory_limit="5%")
+
     logging.info("Starting...")
     i = 0
     while i < 10000:
+        # An alternative would be do rerun log inside of these methods. But then that means embedding rerun into the library
         arm_action = leader_arm.get_action()
         observation = robot.get_observation()
 
         for j in range(arm_action.size):
+            # If you want to disable batching we can do it: export RERUN_FLUSH_NUM_BYTES=256
+            current_time = time.time()
+            rr.set_time_seconds(f"arm_action_{j}", current_time)
             rr.log(f"arm_action_{j}", rr.Scalar(arm_action[j]))
 
         for k, v in observation.items():
+            # This discards all previous image frames
+            rr.set_time_seconds(k, 0.0)
             rr.log(k, rr.Image(v))
 
         i += 1
