@@ -149,6 +149,7 @@ class KochRobot(Robot):
         self.is_connected = True
 
     def calibrate(self) -> None:
+        # TODO(pepijn): Do calibration in same way as so100
         """After calibration all motors function in human interpretable ranges.
         Rotations are expressed in degrees in nominal range of [-180, 180],
         and linear motions (like gripper of Aloha) in nominal range of [0, 100].

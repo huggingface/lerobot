@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import logging
 import time
 
@@ -21,11 +22,11 @@ import numpy as np
 
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.common.motors import CalibrationMode, Motor
+from lerobot.common.motors.calibration import find_min_max, find_offset, set_calibration
 from lerobot.common.motors.feetech import (
     FeetechMotorsBus,
-    TorqueMode,
-    apply_feetech_offsets_from_calibration,
 )
+from lerobot.common.motors.feetech.feetech import TorqueMode
 
 from ..teleoperator import Teleoperator
 from .configuration_so100 import SO100TeleopConfig
@@ -71,6 +72,13 @@ class SO100Teleop(Teleoperator):
         return {}
 
     def configure(self) -> None:
+        if not self.calibration_fpath.exists():
+            print("Calibration file not found. Running calibration.")
+            self.calibrate()
+        else:
+            print("Calibration file found. Loading calibration data.")
+            set_calibration(self.arm, self.calibration_fpath)
+
         # We assume that at connection time, arm is in a rest position,
         # and torque can be safely disabled to run calibration.
         for name in self.arm.names:
@@ -89,13 +97,32 @@ class SO100Teleop(Teleoperator):
         logging.info("Connecting arm.")
         self.arm.connect()
         self.configure()
-        self.calibrate()
 
         # Check arm can be read
         self.arm.sync_read("Present_Position")
 
     def calibrate(self) -> None:
-        raise NotImplementedError
+        print(f"\nRunning calibration of {self.name} teleop")
+        for name in self.arm.names:
+            self.arm.write("Torque_Enable", name, TorqueMode.DISABLED.value)
+
+        offsets = find_offset(self.arm)
+        min_max = find_min_max(self.arm)
+
+        calibration = {}
+        for name in self.arm.names:
+            motor_id = self.arm.motors[name].id
+            calibration[str(motor_id)] = {
+                "name": name,
+                "homing_offset": offsets.get(name, 0),
+                "drive_mode": 0,
+                "min": min_max[name]["min"],
+                "max": min_max[name]["max"],
+            }
+
+        with open(self.calibration_fpath, "w") as f:
+            json.dump(calibration, f, indent=4)
+        print("Calibration saved to", self.calibration_fpath)
 
     def set_calibration(self) -> None:
         """After calibration all motors function in human interpretable ranges.
@@ -107,7 +134,6 @@ class SO100Teleop(Teleoperator):
             raise FileNotFoundError(self.calibration_fpath)
 
         self.arm.set_calibration(self.calibration_fpath)
-        apply_feetech_offsets_from_calibration(self.arm, self.arm.calibration)
 
     def get_action(self) -> np.ndarray:
         """The returned action does not have a batch dimension."""
