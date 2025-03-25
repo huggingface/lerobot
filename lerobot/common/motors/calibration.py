@@ -55,7 +55,7 @@ def find_offset(motorbus: MotorsBus):
     offsets = {}
     for name, pos in middle_values.items():
         offset = pos - 2047  # Center the middle reading at 2047.
-        MotorCalibration.set_offset(motorbus, offset, name)
+        set_offset(motorbus, offset, name)
         offsets[name] = offset
 
     return offsets
@@ -93,7 +93,7 @@ def find_min_max(motorbus: MotorsBus):
             physical_min = int(raw_min)
             physical_max = int(raw_max)
 
-        MotorCalibration.set_min_max(motorbus, physical_min, physical_max, name)
+        set_min_max(motorbus, physical_min, physical_max, name)
         min_max[name] = {"min": physical_min, "max": physical_max}
 
     return min_max
@@ -111,8 +111,8 @@ def set_calibration(motorbus: MotorsBus, calibration_fpath: Path) -> None:
             print(f"Motor name '{name}' from calibration not found in arm names.")
             continue
 
-        MotorCalibration.set_offset(motorbus, cal_data["homing_offset"], name)
-        MotorCalibration.set_min_max(motorbus, cal_data["min"], cal_data["max"], name)
+        set_offset(motorbus, cal_data["homing_offset"], name)
+        set_min_max(motorbus, cal_data["min"], cal_data["max"], name)
 
 
 def set_offset(motorbus: MotorsBus, homing_offset: int, name: str):
