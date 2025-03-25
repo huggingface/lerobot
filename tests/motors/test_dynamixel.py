@@ -6,7 +6,7 @@ import dynamixel_sdk as dxl
 import pytest
 
 from lerobot.common.motors import CalibrationMode, Motor
-from lerobot.common.motors.dynamixel import DynamixelMotorsBus
+from lerobot.common.motors.dynamixel import MODEL_NUMBER, DynamixelMotorsBus
 from tests.mocks.mock_dynamixel import MockMotors, MockPortHandler
 
 
@@ -92,15 +92,10 @@ def test_abc_implementation(dummy_motors):
     DynamixelMotorsBus(port="/dev/dummy-port", motors=dummy_motors)
 
 
-@pytest.mark.parametrize(
-    "idx, model_nb",
-    [
-        (1, 1190),
-        (2, 1200),
-        (3, 1120),
-    ],
-)
-def test_ping(idx, model_nb, mock_motors, dummy_motors):
+@pytest.mark.parametrize("idx", [1, 2, 3])
+def test_ping(idx, mock_motors, dummy_motors):
+    expected_model = dummy_motors[f"dummy_{idx}"].model
+    model_nb = MODEL_NUMBER[expected_model]
     stub_name = mock_motors.build_ping_stub(idx, model_nb)
     motors_bus = DynamixelMotorsBus(
         port=mock_motors.port,
@@ -110,26 +105,23 @@ def test_ping(idx, model_nb, mock_motors, dummy_motors):
 
     ping_model_nb = motors_bus.ping(idx)
 
-    assert ping_model_nb == model_nb
+    assert ping_model_nb == expected_model
     assert mock_motors.stubs[stub_name].called
 
 
 def test_broadcast_ping(mock_motors, dummy_motors):
-    expected_pings = {
-        1: [1060, 50],
-        2: [1120, 30],
-        3: [1190, 10],
-    }
-    stub_name = mock_motors.build_broadcast_ping_stub(expected_pings)
+    expected_models = {m.id: m.model for m in dummy_motors.values()}
+    model_nbs = {id_: MODEL_NUMBER[model] for id_, model in expected_models.items()}
+    stub_name = mock_motors.build_broadcast_ping_stub(model_nbs)
     motors_bus = DynamixelMotorsBus(
         port=mock_motors.port,
         motors=dummy_motors,
     )
     motors_bus.connect()
 
-    ping_list = motors_bus.broadcast_ping()
+    ping_model_nbs = motors_bus.broadcast_ping()
 
-    assert ping_list == expected_pings
+    assert ping_model_nbs == expected_models
     assert mock_motors.stubs[stub_name].called
 
 

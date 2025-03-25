@@ -441,16 +441,13 @@ class MockMotors(MockSerial):
         return new_stub
 
     def build_broadcast_ping_stub(
-        self, ids_models_firmwares: dict[int, list[int]] | None = None, num_invalid_try: int = 0
+        self, ids_models: dict[int, list[int]] | None = None, num_invalid_try: int = 0
     ) -> str:
         ping_request = MockInstructionPacket.ping(dxl.BROADCAST_ID)
-        return_packets = b"".join(
-            MockStatusPacket.ping(idx, model, firm_ver)
-            for idx, (model, firm_ver) in ids_models_firmwares.items()
-        )
+        return_packets = b"".join(MockStatusPacket.ping(idx, model) for idx, model in ids_models.items())
         ping_response = self._build_send_fn(return_packets, num_invalid_try)
 
-        stub_name = "Ping_" + "_".join([str(idx) for idx in ids_models_firmwares])
+        stub_name = "Ping_" + "_".join([str(idx) for idx in ids_models])
         self.stub(
             name=stub_name,
             receive_bytes=ping_request,

@@ -2,7 +2,8 @@
 # https://docs.google.com/spreadsheets/d/1GVs7W1VS1PqdhA1nW-abeyAHhTUxKUdR/edit?usp=sharing&ouid=116566590112741600240&rtpof=true&sd=true
 # data_name: (address, size_byte)
 SCS_SERIES_CONTROL_TABLE = {
-    "Model": (3, 2),
+    "Firmware_Version": (0, 2),
+    "Model_Number": (3, 2),
     "ID": (5, 1),
     "Baud_Rate": (6, 1),
     "Return_Delay": (7, 1),
@@ -70,6 +71,11 @@ MODEL_CONTROL_TABLE = {
 MODEL_RESOLUTION = {
     "scs_series": 4096,
     "sts3215": 4096,
+}
+
+# {model: model_number}
+MODEL_NUMBER = {
+    "sts3215": 777,
 }
 
 MODEL_BAUDRATE_TABLE = {
