@@ -5,7 +5,7 @@ from unittest.mock import Mock, call, patch
 import pytest
 import scservo_sdk as scs
 
-from lerobot.common.motors import CalibrationMode, Motor
+from lerobot.common.motors import Motor, MotorNormMode
 from lerobot.common.motors.calibration import find_min_max, find_offset, set_min_max, set_offset
 from lerobot.common.motors.feetech import FeetechMotorsBus
 from tests.mocks.mock_feetech import MockMotors, MockPortHandler
@@ -31,9 +31,9 @@ def mock_motors() -> Generator[MockMotors, None, None]:
 @pytest.fixture
 def dummy_motors() -> dict[str, Motor]:
     return {
-        "dummy_1": Motor(1, "sts3215", CalibrationMode.RANGE_M100_100),
-        "wrist_roll": Motor(2, "sts3215", CalibrationMode.RANGE_M100_100),
-        "dummy_3": Motor(3, "sts3215", CalibrationMode.RANGE_M100_100),
+        "dummy_1": Motor(1, "sts3215", MotorNormMode.RANGE_M100_100),
+        "wrist_roll": Motor(2, "sts3215", MotorNormMode.RANGE_M100_100),
+        "dummy_3": Motor(3, "sts3215", MotorNormMode.RANGE_M100_100),
     }
 
 

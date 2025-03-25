@@ -21,7 +21,7 @@ import time
 import numpy as np
 
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from lerobot.common.motors import CalibrationMode, Motor
+from lerobot.common.motors import Motor, MotorNormMode
 from lerobot.common.motors.dynamixel import (
     DynamixelMotorsBus,
     OperatingMode,
@@ -51,12 +51,12 @@ class KochTeleop(Teleoperator):
         self.arm = DynamixelMotorsBus(
             port=self.config.port,
             motors={
-                "shoulder_pan": Motor(1, "xl330-m077", CalibrationMode.RANGE_M100_100),
-                "shoulder_lift": Motor(2, "xl330-m077", CalibrationMode.RANGE_M100_100),
-                "elbow_flex": Motor(3, "xl330-m077", CalibrationMode.RANGE_M100_100),
-                "wrist_flex": Motor(4, "xl330-m077", CalibrationMode.RANGE_M100_100),
-                "wrist_roll": Motor(5, "xl330-m077", CalibrationMode.RANGE_M100_100),
-                "gripper": Motor(6, "xl330-m077", CalibrationMode.RANGE_0_100),
+                "shoulder_pan": Motor(1, "xl330-m077", MotorNormMode.RANGE_M100_100),
+                "shoulder_lift": Motor(2, "xl330-m077", MotorNormMode.RANGE_M100_100),
+                "elbow_flex": Motor(3, "xl330-m077", MotorNormMode.RANGE_M100_100),
+                "wrist_flex": Motor(4, "xl330-m077", MotorNormMode.RANGE_M100_100),
+                "wrist_roll": Motor(5, "xl330-m077", MotorNormMode.RANGE_M100_100),
+                "gripper": Motor(6, "xl330-m077", MotorNormMode.RANGE_0_100),
             },
         )
 

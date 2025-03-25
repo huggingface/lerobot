@@ -76,7 +76,7 @@ def assert_same_address(model_ctrl_table: dict[str, dict], motor_models: list[st
         )
 
 
-class CalibrationMode(Enum):
+class MotorNormMode(Enum):
     DEGREE = 0
     RANGE_0_100 = 1
     RANGE_M100_100 = 2
@@ -87,7 +87,7 @@ class CalibrationMode(Enum):
 class Motor:
     id: int
     model: str
-    calibration: CalibrationMode
+    norm_mode: MotorNormMode
 
 
 class JointOutOfRangeError(Exception):

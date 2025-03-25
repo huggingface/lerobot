@@ -21,7 +21,7 @@ import time
 import numpy as np
 
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from lerobot.common.motors import CalibrationMode, Motor, TorqueMode
+from lerobot.common.motors import Motor, MotorNormMode, TorqueMode
 from lerobot.common.motors.dynamixel import (
     DynamixelMotorsBus,
     run_arm_calibration,
@@ -47,15 +47,15 @@ class WidowXTeleop(Teleoperator):
         self.arm = DynamixelMotorsBus(
             port=self.config.port,
             motors={
-                "waist": Motor(1, "xm430-w350", CalibrationMode.RANGE_M100_100),
-                "shoulder": Motor(2, "xm430-w350", CalibrationMode.RANGE_M100_100),
-                "shoulder_shadow": Motor(3, "xm430-w350", CalibrationMode.RANGE_M100_100),
-                "elbow": Motor(4, "xm430-w350", CalibrationMode.RANGE_M100_100),
-                "elbow_shadow": Motor(5, "xm430-w350", CalibrationMode.RANGE_M100_100),
-                "forearm_roll": Motor(6, "xm430-w350", CalibrationMode.RANGE_M100_100),
-                "wrist_angle": Motor(7, "xm430-w350", CalibrationMode.RANGE_M100_100),
-                "wrist_rotate": Motor(8, "xl430-w250", CalibrationMode.RANGE_M100_100),
-                "gripper": Motor(9, "xc430-w150", CalibrationMode.RANGE_0_100),
+                "waist": Motor(1, "xm430-w350", MotorNormMode.RANGE_M100_100),
+                "shoulder": Motor(2, "xm430-w350", MotorNormMode.RANGE_M100_100),
+                "shoulder_shadow": Motor(3, "xm430-w350", MotorNormMode.RANGE_M100_100),
+                "elbow": Motor(4, "xm430-w350", MotorNormMode.RANGE_M100_100),
+                "elbow_shadow": Motor(5, "xm430-w350", MotorNormMode.RANGE_M100_100),
+                "forearm_roll": Motor(6, "xm430-w350", MotorNormMode.RANGE_M100_100),
+                "wrist_angle": Motor(7, "xm430-w350", MotorNormMode.RANGE_M100_100),
+                "wrist_rotate": Motor(8, "xl430-w250", MotorNormMode.RANGE_M100_100),
+                "gripper": Motor(9, "xc430-w150", MotorNormMode.RANGE_0_100),
             },
         )
 

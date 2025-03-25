@@ -5,7 +5,7 @@ from unittest.mock import patch
 import dynamixel_sdk as dxl
 import pytest
 
-from lerobot.common.motors import CalibrationMode, Motor
+from lerobot.common.motors import Motor, MotorNormMode
 from lerobot.common.motors.dynamixel import MODEL_NUMBER, DynamixelMotorsBus
 from tests.mocks.mock_dynamixel import MockMotors, MockPortHandler
 
@@ -30,9 +30,9 @@ def mock_motors() -> Generator[MockMotors, None, None]:
 @pytest.fixture
 def dummy_motors() -> dict[str, Motor]:
     return {
-        "dummy_1": Motor(1, "xl430-w250", CalibrationMode.RANGE_M100_100),
-        "dummy_2": Motor(2, "xm540-w270", CalibrationMode.RANGE_M100_100),
-        "dummy_3": Motor(3, "xl330-m077", CalibrationMode.RANGE_M100_100),
+        "dummy_1": Motor(1, "xl430-w250", MotorNormMode.RANGE_M100_100),
+        "dummy_2": Motor(2, "xm540-w270", MotorNormMode.RANGE_M100_100),
+        "dummy_3": Motor(3, "xl330-m077", MotorNormMode.RANGE_M100_100),
     }
 
 

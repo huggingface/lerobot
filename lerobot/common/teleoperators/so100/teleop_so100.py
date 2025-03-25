@@ -21,7 +21,7 @@ import time
 import numpy as np
 
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from lerobot.common.motors import CalibrationMode, Motor
+from lerobot.common.motors import Motor, MotorNormMode
 from lerobot.common.motors.calibration import find_min_max, find_offset, set_calibration
 from lerobot.common.motors.feetech import (
     FeetechMotorsBus,
@@ -48,12 +48,12 @@ class SO100Teleop(Teleoperator):
         self.arm = FeetechMotorsBus(
             port=self.config.port,
             motors={
-                "shoulder_pan": Motor(1, "sts3215", CalibrationMode.RANGE_M100_100),
-                "shoulder_lift": Motor(2, "sts3215", CalibrationMode.RANGE_M100_100),
-                "elbow_flex": Motor(3, "sts3215", CalibrationMode.RANGE_M100_100),
-                "wrist_flex": Motor(4, "sts3215", CalibrationMode.RANGE_M100_100),
-                "wrist_roll": Motor(5, "sts3215", CalibrationMode.RANGE_M100_100),
-                "gripper": Motor(6, "sts3215", CalibrationMode.RANGE_0_100),
+                "shoulder_pan": Motor(1, "sts3215", MotorNormMode.RANGE_M100_100),
+                "shoulder_lift": Motor(2, "sts3215", MotorNormMode.RANGE_M100_100),
+                "elbow_flex": Motor(3, "sts3215", MotorNormMode.RANGE_M100_100),
+                "wrist_flex": Motor(4, "sts3215", MotorNormMode.RANGE_M100_100),
+                "wrist_roll": Motor(5, "sts3215", MotorNormMode.RANGE_M100_100),
+                "gripper": Motor(6, "sts3215", MotorNormMode.RANGE_0_100),
             },
         )
 

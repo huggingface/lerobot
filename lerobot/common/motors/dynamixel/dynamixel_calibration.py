@@ -17,7 +17,7 @@
 
 import numpy as np
 
-from ..motors_bus import CalibrationMode, MotorsBus
+from ..motors_bus import MotorNormMode, MotorsBus
 from .dynamixel import TorqueMode
 from .tables import MODEL_RESOLUTION
 
@@ -133,13 +133,13 @@ def run_arm_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm_type
     print()
 
     # Joints with rotational motions are expressed in degrees in nominal range of [-180, 180]
-    calib_mode = [CalibrationMode.DEGREE.name] * len(arm.names)
+    calib_mode = [MotorNormMode.DEGREE.name] * len(arm.names)
 
     # TODO(rcadene): make type of joints (DEGREE or LINEAR) configurable from yaml?
     if robot_type in ["aloha"] and "gripper" in arm.names:
         # Joints with linear motions (like gripper of Aloha) are expressed in nominal range of [0, 100]
         calib_idx = arm.names.index("gripper")
-        calib_mode[calib_idx] = CalibrationMode.LINEAR.name
+        calib_mode[calib_idx] = MotorNormMode.LINEAR.name
 
     calib_data = {
         "homing_offset": homing_offset.tolist(),
