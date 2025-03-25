@@ -193,7 +193,7 @@ class FeetechMotorsBus(MotorsBus):
                 del rxpacket[0:id_]
                 rx_length = rx_length - id_
 
-    def broadcast_ping(self, num_retry: int = 0, raise_on_error: bool = False) -> dict[int, str] | None:
+    def broadcast_ping(self, num_retry: int = 0, raise_on_error: bool = False) -> dict[int, int] | None:
         for n_try in range(1 + num_retry):
             ids_status, comm = self._broadcast_ping()
             if self._is_comm_success(comm):
@@ -211,5 +211,13 @@ class FeetechMotorsBus(MotorsBus):
         if ids_errors:
             display_dict = {id_: self.packet_handler.getRxPacketError(err) for id_, err in ids_errors.items()}
             logger.error(f"Some motors found returned an error status:\n{pformat(display_dict, indent=4)}")
-        model_numbers = self.sync_read("Model_Number", list(ids_status), num_retry)
-        return {id_: self._model_nb_to_model(model_nb) for id_, model_nb in model_numbers.items()}
+        comm, model_numbers = self._sync_read(
+            "Model_Number", list(ids_status), model="scs_series", num_retry=num_retry
+        )
+        if not self._is_comm_success(comm):
+            if raise_on_error:
+                raise ConnectionError(self.packet_handler.getRxPacketError(comm))
+
+            return model_numbers if model_numbers else None
+
+        return model_numbers
