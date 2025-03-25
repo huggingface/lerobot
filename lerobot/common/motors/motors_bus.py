@@ -20,12 +20,10 @@
 # https://github.com/astral-sh/ruff/issues/3711
 
 import abc
-import json
 import logging
 from dataclasses import dataclass
 from enum import Enum
 from functools import cached_property
-from pathlib import Path
 from pprint import pformat
 from typing import Protocol, TypeAlias, overload
 
@@ -413,12 +411,6 @@ class MotorsBus(abc.ABC):
         except ConnectionError as e:
             logger.error(e)
             return False
-
-    def set_calibration(self, calibration_fpath: Path) -> None:
-        with open(calibration_fpath) as f:
-            calibration = json.load(f)
-
-        self.calibration = {int(id_): val for id_, val in calibration.items()}
 
     @abc.abstractmethod
     def _calibrate_values(self, ids_values: dict[int, int]) -> dict[int, float]:

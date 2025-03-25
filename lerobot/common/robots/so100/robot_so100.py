@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import logging
 import time
 
@@ -23,11 +24,11 @@ from lerobot.common.cameras.utils import make_cameras_from_configs
 from lerobot.common.constants import OBS_IMAGES, OBS_STATE
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.common.motors import CalibrationMode, Motor
+from lerobot.common.motors.calibration import find_min_max, find_offset, set_calibration
 from lerobot.common.motors.feetech import (
     FeetechMotorsBus,
     OperatingMode,
     TorqueMode,
-    apply_feetech_offsets_from_calibration,
 )
 
 from ..robot import Robot
@@ -97,15 +98,17 @@ class SO100Robot(Robot):
             # Set I_Coefficient and D_Coefficient to default value 0 and 32
             self.arm.write("I_Coefficient", name, 0)
             self.arm.write("D_Coefficient", name, 32)
-            # Close the write lock so that Maximum_Acceleration gets written to EPROM address,
-            # which is mandatory for Maximum_Acceleration to take effect after rebooting.
-            self.arm.write("Lock", name, 0)
             # Set Maximum_Acceleration to 254 to speedup acceleration and deceleration of
             # the motors. Note: this configuration is not in the official STS3215 Memory Table
             self.arm.write("Maximum_Acceleration", name, 254)
             self.arm.write("Acceleration", name, 254)
 
-        self.calibrate()
+        if not self.calibration_fpath.exists():
+            print("Calibration file not found. Running calibration.")
+            self.calibrate()
+        else:
+            print("Calibration file found. Loading calibration data.")
+            set_calibration(self.arm, self.calibration_fpath)
 
         for name in self.arm.names:
             self.arm.write("Torque_Enable", name, TorqueMode.ENABLED.value)
@@ -135,15 +138,25 @@ class SO100Robot(Robot):
             cam.connect()
 
     def calibrate(self) -> None:
-        raise NotImplementedError
+        print(f"\nRunning calibration of {self.name} robot")
 
-    def set_calibration(self) -> None:
-        if not self.calibration_fpath.exists():
-            logging.error("Calibration file not found. Please run calibration first")
-            raise FileNotFoundError(self.calibration_fpath)
+        offsets = find_offset(self.arm)
+        min_max = find_min_max(self.arm)
 
-        self.arm.set_calibration(self.calibration_fpath)
-        apply_feetech_offsets_from_calibration(self.arm, self.arm.calibration)
+        calibration = {}
+        for name in self.arm.names:
+            motor_id = self.arm.motors[name].id
+            calibration[str(motor_id)] = {
+                "name": name,
+                "homing_offset": offsets.get(name, 0),
+                "drive_mode": 0,
+                "min": min_max[name]["min"],
+                "max": min_max[name]["max"],
+            }
+
+        with open(self.calibration_fpath, "w") as f:
+            json.dump(calibration, f, indent=4)
+        print("Calibration saved to", self.calibration_fpath)
 
     def get_observation(self) -> dict[str, np.ndarray]:
         """The returned observations do not have a batch dimension."""
