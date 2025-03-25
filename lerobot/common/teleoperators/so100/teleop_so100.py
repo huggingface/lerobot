@@ -17,12 +17,12 @@
 import json
 import logging
 import time
-from pathlib import Path
 
 import numpy as np
 
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.common.motors import CalibrationMode, Motor
+from lerobot.common.motors.calibration import find_min_max, find_offset, set_calibration
 from lerobot.common.motors.feetech import (
     FeetechMotorsBus,
 )
@@ -44,8 +44,6 @@ class SO100Teleop(Teleoperator):
         super().__init__(config)
         self.config = config
         self.robot_type = config.type
-        self.calibration_dir = Path(self.config.calibration_dir)
-        self.calibration_fpath = self.calibration_dir / "so100_teleop.json"
 
         self.arm = FeetechMotorsBus(
             port=self.config.port,
@@ -79,7 +77,7 @@ class SO100Teleop(Teleoperator):
             self.calibrate()
         else:
             print("Calibration file found. Loading calibration data.")
-            self.arm.set_calibration(self.calibration_fpath)
+            set_calibration(self.arm, self.calibration_fpath)
 
         # We assume that at connection time, arm is in a rest position,
         # and torque can be safely disabled to run calibration.
@@ -108,8 +106,8 @@ class SO100Teleop(Teleoperator):
         for name in self.arm.names:
             self.arm.write("Torque_Enable", name, TorqueMode.DISABLED.value)
 
-        offsets = self.arm.find_offset()
-        min_max = self.arm.find_min_max()
+        offsets = find_offset(self.arm)
+        min_max = find_min_max(self.arm)
 
         calibration = {}
         for name in self.arm.names:

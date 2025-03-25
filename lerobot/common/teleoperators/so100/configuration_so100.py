@@ -15,7 +15,6 @@
 # limitations under the License.
 
 from dataclasses import dataclass
-from pathlib import Path
 
 from ..config import TeleoperatorConfig
 
@@ -25,6 +24,3 @@ from ..config import TeleoperatorConfig
 class SO100TeleopConfig(TeleoperatorConfig):
     # Port to connect to the teloperator
     port: str
-
-    # Directory to store calibration file
-    calibration_dir: Path = Path(".cache/calibration/so100/")

@@ -1,5 +1,4 @@
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from lerobot.common.cameras import CameraConfig
 
@@ -19,6 +18,3 @@ class SO100RobotConfig(RobotConfig):
 
     # cameras
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
-
-    # Directory to store calibration file
-    calibration_dir: Path = Path(".cache/calibration/so100/")
