@@ -30,10 +30,7 @@ def main():
 
     try:
         while True:
-            motor_names = [
-                "shoulder_pan",
-            ]  # "shoulder_lift", "elbow_flex", "wrist_flex","wrist_roll","gripper",
-            leader_pos = robot_leader.arm.sync_read("Present_Position", motor_names)
+            leader_pos = robot_leader.arm.sync_read("Present_Position")
             robot_follower.arm.sync_write("Goal_Position", leader_pos)
 
             time.sleep(0.02)

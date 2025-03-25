@@ -387,8 +387,6 @@ class MotorsBus(abc.ABC):
             self.write("Min_Angle_Limit", name, 0, True)
             self.write("Max_Angle_Limit", name, 4095, True)
 
-        time.sleep(1)
-
         middle_values = self.sync_read("Present_Position", raw_values=True)
 
         offsets = {}
@@ -488,10 +486,28 @@ class MotorsBus(abc.ABC):
         ) | magnitude  # Combine sign bit (bit 11) with the magnitude (bits 0..10)
 
         self.write("Offset", name, servo_offset, True)
+        read_offset = self.sync_read("Offset", name, True)
+
+        if read_offset[name] != servo_offset:
+            raise ValueError(
+                f"Offset not set correctly for motor '{name}'. read: {read_offset} does not equal {servo_offset}"
+            )
 
     def set_min_max(self, min: int, max: int, name: str):
         self.write("Min_Angle_Limit", name, min, True)
         self.write("Max_Angle_Limit", name, max, True)
+
+        read_min = self.sync_read("Min_Angle_Limit", name, True)
+        read_max = self.sync_read("Max_Angle_Limit", name, True)
+        if read_min[name] != min:
+            raise ValueError(
+                f"Min is not set correctly for motor '{name}'. read: {read_min} does not equal {min}"
+            )
+
+        if read_max[name] != max:
+            raise ValueError(
+                f"Max is not set correctly for motor '{name}'. read: {read_max} does not equal {max}"
+            )
 
     @abc.abstractmethod
     def _calibrate_values(self, ids_values: dict[int, int]) -> dict[int, float]:

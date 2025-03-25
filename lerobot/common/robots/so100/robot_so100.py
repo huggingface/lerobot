@@ -25,8 +25,8 @@ from lerobot.common.cameras.utils import make_cameras_from_configs
 from lerobot.common.constants import OBS_IMAGES, OBS_STATE
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.common.motors import TorqueMode
-from lerobot.common.motors.dynamixel.dynamixel import OperatingMode
 from lerobot.common.motors.feetech import FeetechMotorsBus
+from lerobot.common.motors.feetech.feetech import OperatingMode
 from lerobot.common.motors.motors_bus import CalibrationMode, Motor
 
 from ..robot import Robot
