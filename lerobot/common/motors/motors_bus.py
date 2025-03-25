@@ -43,19 +43,18 @@ logger = logging.getLogger(__name__)
 
 
 def get_ctrl_table(model_ctrl_table: dict[str, dict], model: str) -> dict[str, tuple[int, int]]:
-    try:
-        return model_ctrl_table[model]
-    except KeyError:
-        raise KeyError(f"Control table for {model=} not found.") from None
+    ctrl_table = model_ctrl_table.get(model)
+    if ctrl_table is None:
+        raise KeyError(f"Control table for {model=} not found.")
+    return ctrl_table
 
 
 def get_address(model_ctrl_table: dict[str, dict], model: str, data_name: str) -> tuple[int, int]:
     ctrl_table = get_ctrl_table(model_ctrl_table, model)
-    try:
-        addr, bytes = ctrl_table[data_name]
-        return addr, bytes
-    except KeyError:
-        raise KeyError(f"Address for '{data_name}' not found in {model} control table.") from None
+    addr_bytes = ctrl_table.get(data_name)
+    if addr_bytes is None:
+        raise KeyError(f"Address for '{data_name}' not found in {model} control table.")
+    return addr_bytes
 
 
 def assert_same_address(model_ctrl_table: dict[str, dict], motor_models: list[str], data_name: str) -> None:
@@ -69,13 +68,13 @@ def assert_same_address(model_ctrl_table: dict[str, dict], motor_models: list[st
     if len(set(all_addr)) != 1:
         raise NotImplementedError(
             f"At least two motor models use a different address for `data_name`='{data_name}'"
-            f"({list(zip(motor_models, all_addr, strict=False))}). Contact a LeRobot maintainer."
+            f"({list(zip(motor_models, all_addr, strict=False))})."
         )
 
     if len(set(all_bytes)) != 1:
         raise NotImplementedError(
             f"At least two motor models use a different bytes representation for `data_name`='{data_name}'"
-            f"({list(zip(motor_models, all_bytes, strict=False))}). Contact a LeRobot maintainer."
+            f"({list(zip(motor_models, all_bytes, strict=False))})."
         )
 
 
