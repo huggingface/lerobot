@@ -26,6 +26,7 @@ from lerobot.common.robot_devices.robots.configs import (
     StretchRobotConfig,
     TrossenAIStationaryRobotConfig,
     TrossenAISoloRobotConfig,
+    TrossenAIMobileRobotConfig,
 )
 
 
@@ -68,6 +69,8 @@ def make_robot_config(robot_type: str, **kwargs) -> RobotConfig:
         return TrossenAIStationaryRobotConfig(**kwargs)
     elif robot_type == "trossen_ai_solo":
         return TrossenAISoloRobotConfig(**kwargs)
+    elif robot_type == "trossen_ai_mobile":
+        return TrossenAIMobileRobotConfig(**kwargs)
     else:
         raise ValueError(f"Robot type '{robot_type}' is not available.")
 
@@ -81,6 +84,10 @@ def make_robot_from_config(config: RobotConfig):
         from lerobot.common.robot_devices.robots.mobile_manipulator import MobileManipulator
 
         return MobileManipulator(config)
+    elif isinstance(config, TrossenAIMobileRobotConfig):
+        from lerobot.common.robot_devices.robots.trossen_ai_mobile import TrossenAIMobile
+
+        return TrossenAIMobile(config)
     else:
         from lerobot.common.robot_devices.robots.stretch import StretchRobot
 
