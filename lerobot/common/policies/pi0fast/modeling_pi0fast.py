@@ -175,6 +175,7 @@ class PI0FASTPolicy(PreTrainedPolicy):
 
         self.language_tokenizer = AutoProcessor.from_pretrained("google/paligemma-3b-pt-224")
         self.model = PI0FAST(config)
+        self.adapt_to_pi_aloha = True #self.config.adapt_to_pi_aloha # FIXME(mshukor): debug
 
         self.reset()
 
@@ -222,7 +223,7 @@ class PI0FASTPolicy(PreTrainedPolicy):
         """
         self.eval()
 
-        if self.config.adapt_to_pi_aloha:
+        if self.adapt_to_pi_aloha:
             batch[OBS_ROBOT] = self._pi_aloha_decode_state(batch[OBS_ROBOT])
 
         batch = self.normalize_inputs(batch)
@@ -241,7 +242,7 @@ class PI0FASTPolicy(PreTrainedPolicy):
 
             actions = self.unnormalize_outputs({"action": actions})["action"]
 
-            if self.config.adapt_to_pi_aloha:
+            if self.adapt_to_pi_aloha:
                 actions = self._pi_aloha_encode_actions(actions)
 
             # `self.model.forward` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
@@ -250,7 +251,7 @@ class PI0FASTPolicy(PreTrainedPolicy):
         return self._action_queue.popleft()
 
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
-        if self.config.adapt_to_pi_aloha:
+        if self.adapt_to_pi_aloha:
             batch[OBS_ROBOT] = self._pi_aloha_decode_state(batch[OBS_ROBOT])
             batch[ACTION] = self._pi_aloha_encode_actions_inv(batch[ACTION])
         batch = self.normalize_inputs(batch)

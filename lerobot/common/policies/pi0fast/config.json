@@ -46,9 +46,6 @@
             ]
         }
     },
-    "use_env_state": true,
-    "exclude_image_keys": "",
-    "normalize_per_robot_type": false,
     "chunk_size": 10,
     "n_action_steps": 5,
     "max_state_dim": 32,

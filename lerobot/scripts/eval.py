@@ -154,7 +154,12 @@ def rollout(
         observation = {
             key: observation[key].to(device, non_blocking=device.type == "cuda") for key in observation
         }
-
+        if hasattr(env.envs[0], "task_description"):
+            observation["task"] = env.call("task_description")
+        elif hasattr(env.envs[0], "task"):
+            observation["task"] = env.call("task")
+        else:
+            observation["task"] = ["" for _ in range(observation[list(observation.keys())[0]].shape[0])]
         with torch.inference_mode():
             action = policy.select_action(observation)
 
