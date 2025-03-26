@@ -21,26 +21,23 @@ from statistics import mean, quantiles
 
 # from lerobot.scripts.eval import eval_policy
 import grpc
-import hydra
 import torch
-from omegaconf import DictConfig
 from torch import nn
 from torch.multiprocessing import Event, Queue
 
 # TODO: Remove the import of maniskill
-# from lerobot.common.envs.factory import make_maniskill_env
-# from lerobot.common.envs.utils import preprocess_maniskill_observation
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.sac.modeling_sac import SACPolicy
-from lerobot.common.robot_devices.robots.factory import make_robot
-from lerobot.common.robot_devices.robots.utils import Robot
+from lerobot.common.robot_devices.robots.utils import Robot, make_robot
 from lerobot.common.robot_devices.utils import busy_wait
+from lerobot.common.utils.random_utils import set_seed
 from lerobot.common.utils.utils import (
     TimerManager,
     get_safe_torch_device,
     init_logging,
-    set_global_seed,
 )
+from lerobot.configs import parser
+from lerobot.configs.train import TrainPipelineConfig
 from lerobot.scripts.server import hilserl_pb2, hilserl_pb2_grpc, learner_service
 from lerobot.scripts.server.buffer import (
     Transition,
@@ -61,7 +58,7 @@ ACTOR_SHUTDOWN_TIMEOUT = 30
 
 
 def receive_policy(
-    cfg: DictConfig,
+    cfg: TrainPipelineConfig,
     parameters_queue: Queue,
     shutdown_event: any,  # Event,
     learner_client: hilserl_pb2_grpc.LearnerServiceStub | None = None,
@@ -72,12 +69,12 @@ def receive_policy(
     if not use_threads(cfg):
         # Setup process handlers to handle shutdown signal
         # But use shutdown event from the main process
-        setup_process_handlers(False)
+        setup_process_handlers(use_threads=False)
 
     if grpc_channel is None or learner_client is None:
         learner_client, grpc_channel = learner_service_client(
-            host=cfg.actor_learner_config.learner_host,
-            port=cfg.actor_learner_config.learner_port,
+            host=cfg.policy.actor_learner_config["learner_host"],
+            port=cfg.policy.actor_learner_config["learner_port"],
         )
 
     try:
@@ -132,7 +129,7 @@ def interactions_stream(
 
 
 def send_transitions(
-    cfg: DictConfig,
+    cfg: TrainPipelineConfig,
     transitions_queue: Queue,
     shutdown_event: any,  # Event,
     learner_client: hilserl_pb2_grpc.LearnerServiceStub | None = None,
@@ -156,8 +153,8 @@ def send_transitions(
 
     if grpc_channel is None or learner_client is None:
         learner_client, grpc_channel = learner_service_client(
-            host=cfg.actor_learner_config.learner_host,
-            port=cfg.actor_learner_config.learner_port,
+            host=cfg.policy.actor_learner_config["learner_host"],
+            port=cfg.policy.actor_learner_config["learner_port"],
         )
 
     try:
@@ -173,7 +170,7 @@ def send_transitions(
 
 
 def send_interactions(
-    cfg: DictConfig,
+    cfg: TrainPipelineConfig,
     interactions_queue: Queue,
     shutdown_event: any,  # Event,
     learner_client: hilserl_pb2_grpc.LearnerServiceStub | None = None,
@@ -196,8 +193,8 @@ def send_interactions(
 
     if grpc_channel is None or learner_client is None:
         learner_client, grpc_channel = learner_service_client(
-            host=cfg.actor_learner_config.learner_host,
-            port=cfg.actor_learner_config.learner_port,
+            host=cfg.policy.actor_learner_config["learner_host"],
+            port=cfg.policy.actor_learner_config["learner_port"],
         )
 
     try:
@@ -269,7 +266,7 @@ def update_policy_parameters(policy: SACPolicy, parameters_queue: Queue, device)
 
 
 def act_with_policy(
-    cfg: DictConfig,
+    cfg: TrainPipelineConfig,
     robot: Robot,
     reward_classifier: nn.Module,
     shutdown_event: any,  # Event,
@@ -291,7 +288,7 @@ def act_with_policy(
 
     online_env = make_robot_env(robot=robot, reward_classifier=reward_classifier, cfg=cfg)
 
-    set_global_seed(cfg.seed)
+    set_seed(cfg.seed)
     device = get_safe_torch_device(cfg.device, log=True)
 
     torch.backends.cudnn.benchmark = True
@@ -304,7 +301,7 @@ def act_with_policy(
     ### on both sides, the learner sends the updated parameters every n steps to update the actor's parameters
     # TODO: At some point we should just need make sac policy
     policy: SACPolicy = make_policy(
-        hydra_cfg=cfg,
+        cfg=cfg.policy,
         # dataset_stats=offline_dataset.meta.stats if not cfg.resume else None,
         # Hack: But if we do online training, we do not need dataset_stats
         dataset_stats=None,
@@ -469,7 +466,7 @@ def get_frequency_stats(list_policy_time: list[float]) -> dict[str, float]:
     return stats
 
 
-def log_policy_frequency_issue(policy_fps: float, cfg: DictConfig, interaction_step: int):
+def log_policy_frequency_issue(policy_fps: float, cfg: TrainPipelineConfig, interaction_step: int):
     if policy_fps < cfg.fps:
         logging.warning(
             f"[ACTOR] Policy FPS {policy_fps:.1f} below required {cfg.fps} at step {interaction_step}"
@@ -497,25 +494,25 @@ def establish_learner_connection(
     return False
 
 
-def use_threads(cfg: DictConfig) -> bool:
-    return cfg.actor_learner_config.concurrency.actor == "threads"
+def use_threads(cfg: TrainPipelineConfig) -> bool:
+    return cfg.policy.concurrency["actor"] == "threads"
 
 
-@hydra.main(version_base="1.2", config_name="default", config_path="../../configs")
-def actor_cli(cfg: dict):
+@parser.wrap()
+def actor_cli(cfg: TrainPipelineConfig):
     if not use_threads(cfg):
         import torch.multiprocessing as mp
 
         mp.set_start_method("spawn")
 
     init_logging(log_file="actor.log")
-    robot = make_robot(cfg=cfg.robot)
+    robot = make_robot(robot_type=cfg.env.robot)
 
     shutdown_event = setup_process_handlers(use_threads(cfg))
 
     learner_client, grpc_channel = learner_service_client(
-        host=cfg.actor_learner_config.learner_host,
-        port=cfg.actor_learner_config.learner_port,
+        host=cfg.policy.actor_learner_config["learner_host"],
+        port=cfg.policy.actor_learner_config["learner_port"],
     )
 
     logging.info("[ACTOR] Establishing connection with Learner")
@@ -570,22 +567,22 @@ def actor_cli(cfg: dict):
     # TODO: Remove this once we merge into main
     reward_classifier = None
     if (
-        cfg.env.reward_classifier.pretrained_path is not None
-        and cfg.env.reward_classifier.config_path is not None
+        cfg.env.reward_classifier["pretrained_path"] is not None
+        and cfg.env.reward_classifier["config_path"] is not None
     ):
         reward_classifier = get_classifier(
-            pretrained_path=cfg.env.reward_classifier.pretrained_path,
-            config_path=cfg.env.reward_classifier.config_path,
+            pretrained_path=cfg.env.reward_classifier["pretrained_path"],
+            config_path=cfg.env.reward_classifier["config_path"],
         )
 
     act_with_policy(
-        cfg,
-        robot,
-        reward_classifier,
-        shutdown_event,
-        parameters_queue,
-        transitions_queue,
-        interactions_queue,
+        cfg=cfg,
+        robot=robot,
+        reward_classifier=reward_classifier,
+        shutdown_event=shutdown_event,
+        parameters_queue=parameters_queue,
+        transitions_queue=transitions_queue,
+        interactions_queue=interactions_queue,
     )
     logging.info("[ACTOR] Policy process joined")
 

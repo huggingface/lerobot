@@ -34,11 +34,10 @@ TRAIN_CONFIG_NAME = "train_config.json"
 
 @dataclass
 class TrainPipelineConfig(HubMixin):
-    dataset: DatasetConfig
+    dataset: DatasetConfig | None = None # NOTE: In RL, we don't need a dataset
     env: envs.EnvConfig | None = None
     policy: PreTrainedConfig | None = None
-    # Set `dir` to where you would like to save all of the run outputs. If you run another training session
-    # with the same value for `dir` its contents will be overwritten unless you set `resume` to true.
+    # Set `dir` to where you would like to save all of the run outputs. If you run another training session # with the same value for `dir` its contents will be overwritten unless you set `resume` to true.
     output_dir: Path | None = None
     job_name: str | None = None
     # Set `resume` to true to resume a previous run. In order for this to work, you will need to make sure

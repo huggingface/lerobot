@@ -15,10 +15,12 @@ import json
 from dataclasses import dataclass
 
 from lerobot.common.envs.utils import preprocess_observation
+from lerobot.configs.train import TrainPipelineConfig
+from lerobot.common.envs.configs import EnvConfig
 from lerobot.common.robot_devices.control_utils import (
     busy_wait,
     is_headless,
-    reset_follower_position,
+    # reset_follower_position,
 )
 
 from typing import Optional
@@ -28,6 +30,7 @@ from lerobot.common.robot_devices.robots.utils import make_robot_from_config
 from lerobot.common.robot_devices.robots.configs import RobotConfig
 
 from lerobot.scripts.server.kinematics import RobotKinematics
+from lerobot.scripts.server.maniskill_manipulator import ManiskillEnvConfig, make_maniskill
 from lerobot.configs import parser
 
 logging.basicConfig(level=logging.INFO)
@@ -1094,7 +1097,10 @@ class ActionScaleWrapper(gym.ActionWrapper):
         return action * self.scale_vector, is_intervention
 
 
-def make_robot_env(cfg, robot) -> gym.vector.VectorEnv:
+@parser.wrap()
+def make_robot_env(cfg: EnvConfig) -> gym.vector.VectorEnv:
+# def make_robot_env(cfg: TrainPipelineConfig) -> gym.vector.VectorEnv:
+# def make_robot_env(cfg: ManiskillEnvConfig) -> gym.vector.VectorEnv:
     """
     Factory function to create a vectorized robot environment.
 
@@ -1106,7 +1112,7 @@ def make_robot_env(cfg, robot) -> gym.vector.VectorEnv:
     Returns:
         A vectorized gym environment with all the necessary wrappers applied.
     """
-    if "maniskill" in cfg.env_name:
+    if "maniskill" in cfg.name:
         from lerobot.scripts.server.maniskill_manipulator import make_maniskill
 
         logging.warning("WE SHOULD REMOVE THE MANISKILL BEFORE THE MERGE INTO MAIN")
@@ -1115,7 +1121,7 @@ def make_robot_env(cfg, robot) -> gym.vector.VectorEnv:
             n_envs=1,
         )
         return env
-    
+    robot = cfg.robot
     # Create base environment
     env = HILSerlRobotEnv(
         robot=robot,
@@ -1329,80 +1335,82 @@ def replay_episode(env, repo_id, root=None, episode=0):
         busy_wait(1 / 10 - dt_s)
 
 
-@parser.wrap()
-def main(cfg: HILSerlRobotEnvConfig):
+# @parser.wrap()
+# def main(cfg):
 
-    robot = make_robot_from_config(cfg.robot)
+#     robot = make_robot_from_config(cfg.robot)
 
-    reward_classifier = None #get_classifier(
-        # cfg.wrapper.reward_classifier_pretrained_path, cfg.wrapper.reward_classifier_config_file
-    # )
-    user_relative_joint_positions = True
+#     reward_classifier = None #get_classifier(
+#         # cfg.wrapper.reward_classifier_pretrained_path, cfg.wrapper.reward_classifier_config_file
+#     # )
+#     user_relative_joint_positions = True
 
-    env = make_robot_env(cfg, robot)
+#     env = make_robot_env(cfg, robot)
 
-    if cfg.mode == "record":
-        policy = None
-        if cfg.pretrained_policy_name_or_path is not None:
-            from lerobot.common.policies.sac.modeling_sac import SACPolicy
+#     if cfg.mode == "record":
+#         policy = None
+#         if cfg.pretrained_policy_name_or_path is not None:
+#             from lerobot.common.policies.sac.modeling_sac import SACPolicy
 
-            policy = SACPolicy.from_pretrained(cfg.pretrained_policy_name_or_path)
-            policy.to(cfg.device)
-            policy.eval()
+#             policy = SACPolicy.from_pretrained(cfg.pretrained_policy_name_or_path)
+#             policy.to(cfg.device)
+#             policy.eval()
 
-        record_dataset(
-            env,
-            cfg.repo_id,
-            root=cfg.dataset_root,
-            num_episodes=cfg.num_episodes,
-            fps=cfg.fps,
-            task_description=cfg.task,
-            policy=policy,
-        )
-        exit()
+#         record_dataset(
+#             env,
+#             cfg.repo_id,
+#             root=cfg.dataset_root,
+#             num_episodes=cfg.num_episodes,
+#             fps=cfg.fps,
+#             task_description=cfg.task,
+#             policy=policy,
+#         )
+#         exit()
 
-    if cfg.mode == "replay":
-        replay_episode(
-            env,
-            cfg.replay_repo_id,
-            root=cfg.dataset_root,
-            episode=cfg.replay_episode,
-        )
-        exit()
+#     if cfg.mode == "replay":
+#         replay_episode(
+#             env,
+#             cfg.replay_repo_id,
+#             root=cfg.dataset_root,
+#             episode=cfg.replay_episode,
+#         )
+#         exit()
 
-    env.reset()
+#     env.reset()
 
-    # Retrieve the robot's action space for joint commands.
-    action_space_robot = env.action_space.spaces[0]
+#     # Retrieve the robot's action space for joint commands.
+#     action_space_robot = env.action_space.spaces[0]
 
-    # Initialize the smoothed action as a random sample.
-    smoothed_action = action_space_robot.sample()
+#     # Initialize the smoothed action as a random sample.
+#     smoothed_action = action_space_robot.sample()
 
-    # Smoothing coefficient (alpha) defines how much of the new random sample to mix in.
-    # A value close to 0 makes the trajectory very smooth (slow to change), while a value close to 1 is less smooth.
-    alpha = 1.0
+#     # Smoothing coefficient (alpha) defines how much of the new random sample to mix in.
+#     # A value close to 0 makes the trajectory very smooth (slow to change), while a value close to 1 is less smooth.
+#     alpha = 1.0
 
-    num_episode = 0
-    sucesses = []
-    while num_episode < 20:
-        start_loop_s = time.perf_counter()
-        # Sample a new random action from the robot's action space.
-        new_random_action = action_space_robot.sample()
-        # Update the smoothed action using an exponential moving average.
-        smoothed_action = alpha * new_random_action + (1 - alpha) * smoothed_action
+#     num_episode = 0
+#     sucesses = []
+#     while num_episode < 20:
+#         start_loop_s = time.perf_counter()
+#         # Sample a new random action from the robot's action space.
+#         new_random_action = action_space_robot.sample()
+#         # Update the smoothed action using an exponential moving average.
+#         smoothed_action = alpha * new_random_action + (1 - alpha) * smoothed_action
 
-        # Execute the step: wrap the NumPy action in a torch tensor.
-        obs, reward, terminated, truncated, info = env.step((torch.from_numpy(smoothed_action), False))
-        if terminated or truncated:
-            sucesses.append(reward)
-            env.reset()
-            num_episode += 1
+#         # Execute the step: wrap the NumPy action in a torch tensor.
+#         obs, reward, terminated, truncated, info = env.step((torch.from_numpy(smoothed_action), False))
+#         if terminated or truncated:
+#             sucesses.append(reward)
+#             env.reset()
+#             num_episode += 1
 
-        dt_s = time.perf_counter() - start_loop_s
-        busy_wait(1 / cfg.fps - dt_s)
+#         dt_s = time.perf_counter() - start_loop_s
+#         busy_wait(1 / cfg.fps - dt_s)
 
-    logging.info(f"Success after 20 steps {sucesses}")
-    logging.info(f"success rate {sum(sucesses) / len(sucesses)}")
+#     logging.info(f"Success after 20 steps {sucesses}")
+#     logging.info(f"success rate {sum(sucesses) / len(sucesses)}")
 
+# if __name__ == "__main__":
+#     main()
 if __name__ == "__main__":
-    main()
+    make_robot_env()

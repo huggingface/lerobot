@@ -154,3 +154,61 @@ class XarmEnv(EnvConfig):
             "visualization_height": self.visualization_height,
             "max_episode_steps": self.episode_length,
         }
+
+
+@dataclass
+class VideoRecordConfig:
+    """Configuration for video recording in ManiSkill environments."""
+    enabled: bool = False
+    record_dir: str = "videos"
+    trajectory_name: str = "trajectory"
+
+@EnvConfig.register_subclass("maniskill_push")
+@dataclass
+class ManiskillEnvConfig(EnvConfig):
+    """Configuration for the ManiSkill environment."""
+    name: str = "maniskill/pushcube"
+    task: str = "PushCube-v1"
+    image_size: int = 64
+    control_mode: str = "pd_ee_delta_pose"
+    state_dim: int = 25
+    action_dim: int = 7
+    fps: int = 400
+    episode_length: int = 50
+    obs_type: str = "rgb"
+    render_mode: str = "rgb_array"
+    render_size: int = 64
+    device: str = "cuda"
+    robot: str = "so100" # This is a hack to make the robot config work
+    video_record: VideoRecordConfig = field(default_factory=VideoRecordConfig)
+    features: dict[str, PolicyFeature] = field(
+        default_factory=lambda: {
+            "action": PolicyFeature(type=FeatureType.ACTION, shape=(7,)),
+            "observation.image": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 64, 64)),
+            "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(25,)),
+        }
+    )
+    features_map: dict[str, str] = field(
+        default_factory=lambda: {
+            "action": ACTION,
+            "observation.image": OBS_IMAGE,
+            "observation.state": OBS_ROBOT,
+        }
+    )
+    reward_classifier: dict[str, str | None] = field(
+        default_factory=lambda: {
+            "pretrained_path": None,
+            "config_path": None,
+        }
+    )
+
+    @property
+    def gym_kwargs(self) -> dict:
+        return {
+            "obs_type": self.obs_type,
+            "render_mode": self.render_mode,
+            "max_episode_steps": self.episode_length,
+            "control_mode": self.control_mode,
+            "sensor_configs": {"width": self.image_size, "height": self.image_size},
+            "num_envs": 1,
+        }
