@@ -98,9 +98,14 @@ conda create -y -n lerobot python=3.10
 conda activate lerobot
 ```
 
+When using `miniconda`, if you don't have `fffmpeg` in your environment:
+```bash
+conda install ffmpeg
+```
+
 Install 🤗 LeRobot:
 ```bash
-pip install -e .
+pip install --no-binary=av -e .
 ```
 
 > **NOTE:** Depending on your platform, If you encounter any build errors during this step
