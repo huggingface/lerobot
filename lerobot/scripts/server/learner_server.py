@@ -614,7 +614,9 @@ def add_actor_information_and_train(
                 done=done,
                 observation_features=observation_features,
                 next_observation_features=next_observation_features,
-                complementary_info=batch.get("complementary_info")  # Pass complementary_info
+                complementary_info=batch.get(
+                    "complementary_info"
+                ),  # Pass complementary_info
             )
             optimizers["grasp_critic"].zero_grad()
             loss_grasp_critic.backward()
@@ -622,7 +624,7 @@ def add_actor_information_and_train(
                 policy.grasp_critic.parameters(), clip_grad_norm_value
             ).item()
             optimizers["grasp_critic"].step()
-            
+
             policy.update_target_networks()
             policy.update_grasp_target_networks()
 
@@ -679,7 +681,9 @@ def add_actor_information_and_train(
             done=done,
             observation_features=observation_features,
             next_observation_features=next_observation_features,
-            complementary_info=batch.get("complementary_info")  # Pass complementary_info
+            complementary_info=batch.get(
+                "complementary_info"
+            ),  # Pass complementary_info
         )
         optimizers["grasp_critic"].zero_grad()
         loss_grasp_critic.backward()
@@ -854,8 +858,7 @@ def make_optimizers_and_scheduler(cfg, policy: nn.Module):
         params=policy.critic_ensemble.parameters(), lr=policy.config.critic_lr
     )
     optimizer_grasp_critic = torch.optim.Adam(
-        params=policy.grasp_critic.parameters(), 
-        lr=policy.config.grasp_critic_lr
+        params=policy.grasp_critic.parameters(), lr=policy.config.grasp_critic_lr
     )
     optimizer_temperature = torch.optim.Adam(
         params=[policy.log_alpha], lr=policy.config.critic_lr

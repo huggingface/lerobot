@@ -1116,18 +1116,24 @@ class GripperPenaltyWrapper(gym.Wrapper):
 
     def reset(self, **kwargs):
         obs, info = self.env.reset(**kwargs)
-        self.last_gripper_pos = obs["observation.state"][0, 0] # first idx for the gripper
+        self.last_gripper_pos = obs["observation.state"][
+            0, 0
+        ]  # first idx for the gripper
         return obs, info
 
     def step(self, action):
         observation, reward, terminated, truncated, info = self.env.step(action)
 
-        if (action[-1] < -0.5 and self.last_gripper_pos > 0.9) or (action[-1] > 0.5 and self.last_gripper_pos < 0.9):
+        if (action[-1] < -0.5 and self.last_gripper_pos > 0.9) or (
+            action[-1] > 0.5 and self.last_gripper_pos < 0.9
+        ):
             info["grasp_penalty"] = self.penalty
         else:
             info["grasp_penalty"] = 0.0
 
-        self.last_gripper_pos = observation["observation.state"][0, 0] # first idx for the gripper
+        self.last_gripper_pos = observation["observation.state"][
+            0, 0
+        ]  # first idx for the gripper
         return observation, reward, terminated, truncated, info
 
 

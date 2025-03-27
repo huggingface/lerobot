@@ -271,7 +271,7 @@ class ReplayBuffer:
         # Initialize complementary_info storage
         self.complementary_info_keys = []
         self.complementary_info_storage = {}
-        
+
         self.initialized = True
 
     def __len__(self):
@@ -316,20 +316,20 @@ class ReplayBuffer:
                     if isinstance(value, torch.Tensor):
                         shape = value.shape if value.ndim > 0 else (1,)
                         self.complementary_info_storage[key] = torch.zeros(
-                            (self.capacity, *shape), 
-                            dtype=value.dtype, 
-                            device=self.storage_device
+                            (self.capacity, *shape),
+                            dtype=value.dtype,
+                            device=self.storage_device,
                         )
-                        
+
                 # Store the value
                 if key in self.complementary_info_storage:
                     if isinstance(value, torch.Tensor):
                         self.complementary_info_storage[key][self.position] = value
                     else:
                         # For non-tensor values (like grasp_penalty)
-                        self.complementary_info_storage[key][self.position] = torch.tensor(
-                            value, device=self.storage_device
-                    )
+                        self.complementary_info_storage[key][self.position] = (
+                            torch.tensor(value, device=self.storage_device)
+                        )
 
         self.position = (self.position + 1) % self.capacity
         self.size = min(self.size + 1, self.capacity)
@@ -402,10 +402,12 @@ class ReplayBuffer:
 
         # Add complementary_info to batch if it exists
         batch_complementary_info = {}
-        if hasattr(self, 'complementary_info_keys') and self.complementary_info_keys:
+        if hasattr(self, "complementary_info_keys") and self.complementary_info_keys:
             for key in self.complementary_info_keys:
                 if key in self.complementary_info_storage:
-                    batch_complementary_info[key] = self.complementary_info_storage[key][idx].to(self.device)
+                    batch_complementary_info[key] = self.complementary_info_storage[
+                        key
+                    ][idx].to(self.device)
 
         return BatchTransition(
             state=batch_state,
@@ -414,7 +416,9 @@ class ReplayBuffer:
             next_state=batch_next_state,
             done=batch_dones,
             truncated=batch_truncateds,
-            complementary_info=batch_complementary_info if batch_complementary_info else None,
+            complementary_info=batch_complementary_info
+            if batch_complementary_info
+            else None,
         )
 
     @classmethod

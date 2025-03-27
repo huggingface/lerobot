@@ -295,10 +295,12 @@ class SACPolicy(
         critics = self.critic_target if use_target else self.critic_ensemble
         q_values = critics(observations, actions, observation_features)
         return q_values
-    
-    def grasp_critic_forward(self, observations, use_target=False, observation_features=None):
+
+    def grasp_critic_forward(
+        self, observations, use_target=False, observation_features=None
+    ):
         """Forward pass through a grasp critic network
-        
+
         Args:
             observations: Dictionary of observations
             use_target: If True, use target critics, otherwise use ensemble critics
@@ -323,7 +325,7 @@ class SACPolicy(
                 param.data * self.config.critic_target_update_weight
                 + target_param.data * (1.0 - self.config.critic_target_update_weight)
             )
-    
+
     def update_grasp_target_networks(self):
         """Update grasp target networks with exponential moving average"""
         for target_param, param in zip(
@@ -398,18 +400,35 @@ class SACPolicy(
             ).mean(1)
         ).sum()
         return critics_loss
-    
-    def compute_loss_grasp_critic(self, observations, actions, rewards, next_observations, done, observation_features=None, next_observation_features=None, complementary_info=None):
 
+    def compute_loss_grasp_critic(
+        self,
+        observations,
+        actions,
+        rewards,
+        next_observations,
+        done,
+        observation_features=None,
+        next_observation_features=None,
+        complementary_info=None,
+    ):
         batch_size = rewards.shape[0]
-        grasp_actions = torch.clip(actions[:, -1].long() + 1, 0, 2)  # Map [-1, 0, 1] -> [0, 1, 2]
+        grasp_actions = torch.clip(
+            actions[:, -1].long() + 1, 0, 2
+        )  # Map [-1, 0, 1] -> [0, 1, 2]
 
         with torch.no_grad():
-            next_grasp_qs = self.grasp_critic_forward(next_observations, use_target=False)
+            next_grasp_qs = self.grasp_critic_forward(
+                next_observations, use_target=False
+            )
             best_next_grasp_action = torch.argmax(next_grasp_qs, dim=-1)
 
-            target_next_grasp_qs = self.grasp_critic_forward(next_observations, use_target=True)
-            target_next_grasp_q = target_next_grasp_qs[torch.arange(batch_size), best_next_grasp_action]
+            target_next_grasp_qs = self.grasp_critic_forward(
+                next_observations, use_target=True
+            )
+            target_next_grasp_q = target_next_grasp_qs[
+                torch.arange(batch_size), best_next_grasp_action
+            ]
 
         # Get the grasp penalty from complementary_info
         grasp_penalty = torch.zeros_like(rewards)
@@ -417,12 +436,16 @@ class SACPolicy(
             grasp_penalty = complementary_info["grasp_penalty"]
 
         grasp_rewards = rewards + grasp_penalty
-        target_grasp_q = grasp_rewards + (1 - done) * self.config.discount * target_next_grasp_q
+        target_grasp_q = (
+            grasp_rewards + (1 - done) * self.config.discount * target_next_grasp_q
+        )
 
         predicted_grasp_qs = self.grasp_critic_forward(observations, use_target=False)
         predicted_grasp_q = predicted_grasp_qs[torch.arange(batch_size), grasp_actions]
 
-        grasp_critic_loss = F.mse_loss(input=predicted_grasp_q, target=target_grasp_q, reduction="mean")
+        grasp_critic_loss = F.mse_loss(
+            input=predicted_grasp_q, target=target_grasp_q, reduction="mean"
+        )
         return grasp_critic_loss
 
     def compute_loss_temperature(
@@ -660,7 +683,9 @@ class GraspCritic(nn.Module):
         if self.encoder is not None and not encoder_is_shared:
             self.parameters_to_optimize += list(self.encoder.parameters())
 
-        self.output_layer = nn.Linear(in_features=hidden_dims[-1], out_features=self.output_dim)
+        self.output_layer = nn.Linear(
+            in_features=hidden_dims[-1], out_features=self.output_dim
+        )
         if init_final is not None:
             nn.init.uniform_(self.output_layer.weight, -init_final, init_final)
             nn.init.uniform_(self.output_layer.bias, -init_final, init_final)
@@ -672,7 +697,7 @@ class GraspCritic(nn.Module):
     def forward(
         self,
         observations: torch.Tensor,
-        observation_features: torch.Tensor | None = None
+        observation_features: torch.Tensor | None = None,
     ) -> torch.Tensor:
         device = get_device_from_parameters(self)
         # Move each tensor in observations to device
