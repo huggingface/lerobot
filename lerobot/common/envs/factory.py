@@ -68,4 +68,3 @@ def make_env(cfg: EnvConfig, n_envs: int = 1, use_async_envs: bool = False) -> g
     )
 
     return env
-

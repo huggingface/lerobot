@@ -279,10 +279,7 @@ def record(
 
     if not robot.is_connected:
         robot.connect()
-    listener, events = init_keyboard_listener(assign_rewards=assign_rewards)
-
-    if reset_follower:
-        initial_position = robot.follower_arms["main"].read("Present_Position")
+    listener, events = init_keyboard_listener(assign_rewards=cfg.assign_rewards)
 
     # Execute a few seconds without recording to:
     # 1. teleoperate the robot to move it in starting position if no policy provided,

@@ -1,11 +1,15 @@
 import logging
-from typing import Optional
+from typing import Dict, Optional, Tuple
 
 import torch
-from huggingface_hub import PyTorchModelHubMixin
 from torch import Tensor, nn
 
-from .configuration_classifier import ClassifierConfig
+from lerobot.common.constants import OBS_IMAGE
+from lerobot.common.policies.hilserl.classifier.configuration_classifier import (
+    ClassifierConfig,
+)
+from lerobot.common.policies.normalize import Normalize, Unnormalize
+from lerobot.common.policies.pretrained import PreTrainedPolicy
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -32,25 +36,32 @@ class ClassifierOutput:
         )
 
 
-class Classifier(
-    nn.Module,
-    PyTorchModelHubMixin,
-    # Add Hub metadata
-    library_name="lerobot",
-    repo_url="https://github.com/huggingface/lerobot",
-    tags=["robotics", "vision-classifier"],
-):
+class Classifier(PreTrainedPolicy):
     """Image classifier built on top of a pre-trained encoder."""
 
-    # Add name attribute for factory
-    name = "classifier"
+    name = "hilserl_classifier"
+    config_class = ClassifierConfig
 
-    def __init__(self, config: ClassifierConfig):
+    def __init__(
+        self,
+        config: ClassifierConfig,
+        dataset_stats: Dict[str, Dict[str, Tensor]] | None = None,
+    ):
         from transformers import AutoModel
 
-        super().__init__()
+        super().__init__(config)
         self.config = config
-        # self.processor = AutoImageProcessor.from_pretrained(self.config.model_name, trust_remote_code=True)
+
+        # Initialize normalization (standardized with the policy framework)
+        self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
+        self.normalize_targets = Normalize(
+            config.output_features, config.normalization_mapping, dataset_stats
+        )
+        self.unnormalize_outputs = Unnormalize(
+            config.output_features, config.normalization_mapping, dataset_stats
+        )
+
+        # Set up encoder
         encoder = AutoModel.from_pretrained(self.config.model_name, trust_remote_code=True)
         # Extract vision model if we're given a multimodal model
         if hasattr(encoder, "vision_model"):
@@ -81,8 +92,6 @@ class Classifier(
         else:
             raise ValueError("Unsupported CNN architecture")
 
-        self.encoder = self.encoder.to(self.config.device)
-
     def _freeze_encoder(self) -> None:
         """Freeze the encoder parameters."""
         for param in self.encoder.parameters():
@@ -109,22 +118,13 @@ class Classifier(
                 1 if self.config.num_classes == 2 else self.config.num_classes,
             ),
         )
-        self.classifier_head = self.classifier_head.to(self.config.device)
 
     def _get_encoder_output(self, x: torch.Tensor) -> torch.Tensor:
         """Extract the appropriate output from the encoder."""
-        # Process images with the processor (handles resizing and normalization)
-        # processed = self.processor(
-        #     images=x,  # LeRobotDataset already provides proper tensor format
-        #     return_tensors="pt",
-        # )
-        # processed = processed["pixel_values"].to(x.device)
-        processed = x
-
         with torch.no_grad():
             if self.is_cnn:
                 # The HF ResNet applies pooling internally
-                outputs = self.encoder(processed)
+                outputs = self.encoder(x)
                 # Get pooled output directly
                 features = outputs.pooler_output
 
@@ -132,14 +132,24 @@ class Classifier(
                     features = features.squeeze(-1).squeeze(-1)
                 return features
             else:  # Transformer models
-                outputs = self.encoder(processed)
+                outputs = self.encoder(x)
                 if hasattr(outputs, "pooler_output") and outputs.pooler_output is not None:
                     return outputs.pooler_output
                 return outputs.last_hidden_state[:, 0, :]
 
-    def forward(self, xs: torch.Tensor) -> ClassifierOutput:
-        """Forward pass of the classifier."""
-        # For training, we expect input to be a tensor directly from LeRobotDataset
+    def extract_images_and_labels(self, batch: Dict[str, Tensor]) -> Tuple[list, Tensor]:
+        """Extract image tensors and label tensors from batch."""
+        # Find image keys in input features
+        image_keys = [key for key in self.config.input_features if key.startswith(OBS_IMAGE)]
+
+        # Extract the images and labels
+        images = [batch[key] for key in image_keys]
+        labels = batch["next.reward"]
+
+        return images, labels
+
+    def predict(self, xs: list) -> ClassifierOutput:
+        """Forward pass of the classifier for inference."""
         encoder_outputs = torch.hstack([self._get_encoder_output(x) for x in xs])
         logits = self.classifier_head(encoder_outputs)
 
@@ -151,10 +161,77 @@ class Classifier(
 
         return ClassifierOutput(logits=logits, probabilities=probabilities, hidden_states=encoder_outputs)
 
-    def predict_reward(self, x, threshold=0.6):
+    def forward(self, batch: Dict[str, Tensor]) -> Tuple[Tensor, Dict[str, Tensor]]:
+        """Standard forward pass for training compatible with train.py."""
+        # Normalize inputs if needed
+        batch = self.normalize_inputs(batch)
+        batch = self.normalize_targets(batch)
+
+        # Extract images and labels
+        images, labels = self.extract_images_and_labels(batch)
+
+        # Get predictions
+        outputs = self.predict(images)
+
+        # Calculate loss
         if self.config.num_classes == 2:
-            probs = self.forward(x).probabilities
+            # Binary classification
+            loss = nn.functional.binary_cross_entropy_with_logits(outputs.logits, labels)
+            predictions = (torch.sigmoid(outputs.logits) > 0.5).float()
+        else:
+            # Multi-class classification
+            loss = nn.functional.cross_entropy(outputs.logits, labels.long())
+            predictions = torch.argmax(outputs.logits, dim=1)
+
+        # Calculate accuracy for logging
+        correct = (predictions == labels).sum().item()
+        total = labels.size(0)
+        accuracy = 100 * correct / total
+
+        # Return loss and metrics for logging
+        output_dict = {
+            "accuracy": accuracy,
+            "correct": correct,
+            "total": total,
+        }
+
+        return loss, output_dict
+
+    def predict_reward(self, batch, threshold=0.6):
+        """Legacy method for compatibility."""
+        images, _ = self.extract_images_and_labels(batch)
+        if self.config.num_classes == 2:
+            probs = self.predict(images).probabilities
             logging.debug(f"Predicted reward images: {probs}")
             return (probs > threshold).float()
         else:
-            return torch.argmax(self.forward(x).probabilities, dim=1)
+            return torch.argmax(self.predict(images).probabilities, dim=1)
+
+    # Methods required by PreTrainedPolicy abstract class
+
+    def get_optim_params(self) -> dict:
+        """Return optimizer parameters for the policy."""
+        return {
+            "params": self.parameters(),
+            "lr": getattr(self.config, "learning_rate", 1e-4),
+            "weight_decay": getattr(self.config, "weight_decay", 0.01),
+        }
+
+    def reset(self):
+        """Reset any stateful components (required by PreTrainedPolicy)."""
+        # Classifier doesn't have stateful components that need resetting
+        pass
+
+    def select_action(self, batch: Dict[str, Tensor]) -> Tensor:
+        """Return action (class prediction) based on input observation."""
+        images, _ = self.extract_images_and_labels(batch)
+
+        with torch.no_grad():
+            outputs = self.predict(images)
+
+            if self.config.num_classes == 2:
+                # For binary classification return 0 or 1
+                return (outputs.probabilities > 0.5).float()
+            else:
+                # For multi-class return the predicted class
+                return torch.argmax(outputs.probabilities, dim=1)
