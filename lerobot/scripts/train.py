@@ -51,7 +51,9 @@ from lerobot.common.utils.wandb_utils import WandBLogger
 from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.scripts.eval import eval_policy
-
+from lerobot.common.datasets.video_utils import (
+    decode_video_frames_torchcodec
+)
 
 def update_policy(
     train_metrics: MetricsTracker,
@@ -203,6 +205,23 @@ def train(cfg: TrainPipelineConfig):
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
         batch = next(dl_iter)
+
+        if dataset.video_backend == "torchcodec-gpu":
+            # add cuda decoding
+            for vid_key, timestamps_list in batch['query_timestamps'].items():
+                frames_list = []
+                # convert list of scalar tensors to a tensor of shape [T]
+                query_ts = torch.stack(timestamps_list).T  # shape: [T]
+                for i in range(query_ts.shape[0]):
+                    ep_idx = batch['episode_index'][i]
+                    timestamps = query_ts[i].tolist()
+                    video_path = dataset.root / dataset.meta.get_video_file_path(ep_idx, vid_key)
+                    #TODO: (jadechoghari) make sure user has cuda and num_wokers == 0
+                    frames = decode_video_frames_torchcodec(
+                        video_path, timestamps, dataset.tolerance_s, device="cuda"
+                    )
+                    frames_list.append(frames.squeeze(0))
+                batch[vid_key] = torch.stack(frames_list)
         train_tracker.dataloading_s = time.perf_counter() - start_time
 
         for key in batch:
