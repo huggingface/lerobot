@@ -69,7 +69,7 @@ git clone https://github.com/huggingface/lerobot.git ~/lerobot
 
 #### 5. Install LeRobot with dependencies for the feetech motors:
 ```bash
-cd ~/lerobot && pip install -e ".[feetech]"
+cd ~/lerobot && pip install --no-binary=av -e ".[feetech]"
 ```
 
 ## C. Install LeRobot on laptop
@@ -110,7 +110,7 @@ git clone https://github.com/huggingface/lerobot.git ~/lerobot
 
 #### 5. Install LeRobot with dependencies for the feetech motors:
 ```bash
-cd ~/lerobot && pip install -e ".[feetech]"
+cd ~/lerobot && pip install --no-binary=av -e ".[feetech]"
 ```
 
 Great :hugs:! You are now done installing LeRobot and we can begin assembling the SO100 arms and Mobile base :robot:.

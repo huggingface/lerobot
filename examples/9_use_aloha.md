@@ -32,7 +32,7 @@ git clone https://github.com/huggingface/lerobot.git ~/lerobot
 
 5. Install LeRobot with dependencies for the Aloha motors (dynamixel) and cameras (intelrealsense):
 ```bash
-cd ~/lerobot && pip install -e ".[dynamixel, intelrealsense]"
+cd ~/lerobot && pip install --no-binary=av -e ".[dynamixel, intelrealsense]"
 ```
 
 ## Teleoperate

@@ -108,9 +108,8 @@ Install 🤗 LeRobot:
 pip install --no-binary=av -e .
 ```
 
-> **NOTE:** Depending on your platform, If you encounter any build errors during this step
-you may need to install `cmake` and `build-essential` for building some of our dependencies.
-On linux: `sudo apt-get install cmake build-essential`
+> **NOTE:** If you encounter build errors, you may need to install additional dependencies (`cmake`, `build-essential`, and `ffmpeg libs`). On Linux, run:
+`sudo apt-get install cmake build-essential python-dev pkg-config libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev libswscale-dev libswresample-dev libavfilter-dev pkg-config`. For other systems, see: [Compiling PyAV](https://pyav.org/docs/develop/overview/installation.html#bring-your-own-ffmpeg)
 
 For simulations, 🤗 LeRobot comes with gymnasium environments that can be installed as extras:
 - [aloha](https://github.com/huggingface/gym-aloha)
@@ -119,7 +118,7 @@ For simulations, 🤗 LeRobot comes with gymnasium environments that can be inst
 
 For instance, to install 🤗 LeRobot with aloha and pusht, use:
 ```bash
-pip install -e ".[aloha, pusht]"
+pip install --no-binary=av -e ".[aloha, pusht]"
 ```
 
 To use [Weights and Biases](https://docs.wandb.ai/quickstart) for experiment tracking, log in with
