@@ -33,7 +33,7 @@ First, install the additional dependencies required for robots built with dynami
 
 Using `pip`:
 ```bash
-pip install -e ".[dynamixel]"
+pip install --no-binary=av -e ".[dynamixel]"
 ```
 
 Using `poetry`:

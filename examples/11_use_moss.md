@@ -33,7 +33,7 @@ git clone https://github.com/huggingface/lerobot.git ~/lerobot
 
 5. Install LeRobot with dependencies for the feetech motors:
 ```bash
-cd ~/lerobot && pip install -e ".[feetech]"
+cd ~/lerobot && pip install --no-binary=av -e ".[feetech]"
 ```
 
 ## Configure the motors
