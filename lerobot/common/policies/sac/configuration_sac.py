@@ -92,6 +92,14 @@ class SACConfig:
             "final_activation": None,
         }
     )
+    grasp_critic_network_kwargs: dict[str, Any] = field(
+        default_factory=lambda: {
+            "hidden_dims": [128, 128],
+            "activate_final": True,
+            "final_activation": None,
+            "output_dim": 3,
+        }
+    )
     actor_network_kwargs: dict[str, Any] = field(
         default_factory=lambda: {
             "hidden_dims": [256, 256],
