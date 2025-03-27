@@ -69,7 +69,7 @@ git clone https://github.com/huggingface/lerobot.git ~/lerobot
 
 #### 5. Install LeRobot with dependencies for the feetech motors:
 ```bash
-cd ~/lerobot && pip install -e ".[feetech]"
+cd ~/lerobot && pip install --no-binary=av -e ".[feetech]"
 ```
 
 ## C. Install LeRobot on laptop
@@ -110,7 +110,7 @@ git clone https://github.com/huggingface/lerobot.git ~/lerobot
 
 #### 5. Install LeRobot with dependencies for the feetech motors:
 ```bash
-cd ~/lerobot && pip install -e ".[feetech]"
+cd ~/lerobot && pip install --no-binary=av -e ".[feetech]"
 ```
 
 Great :hugs:! You are now done installing LeRobot and we can begin assembling the SO100 arms and Mobile base :robot:.
@@ -407,6 +407,12 @@ python lerobot/scripts/control_robot.py \
   --control.type=teleoperate \
   --control.fps=30
 ```
+
+> **NOTE:** To visualize the data, enable `--control.display_data=true`. This streams the data using `rerun`. You can adjust the viewer's behavior with these environment variables:
+> - `RERUN_FLUSH_NUM_BYTES`
+> - `LEROBOT_RERUN_MEMORY_LIMIT`
+> - `LEROBOT_VIEWER_IP` (only for remote robots)
+> - `LEROBOT_VIEWER_PORT` (only for remote robots)
 
 You should see on your laptop something like this: ```[INFO] Connected to remote robot at tcp://172.17.133.91:5555 and video stream at tcp://172.17.133.91:5556.``` Now you can move the leader arm and use the keyboard (w,a,s,d) to drive forward, left, backwards, right. And use (z,x) to turn left or turn right. You can use (r,f) to increase and decrease the speed of the mobile robot. There are three speed modes, see the table below:
 | Speed Mode | Linear Speed (m/s) | Rotation Speed (deg/s) |

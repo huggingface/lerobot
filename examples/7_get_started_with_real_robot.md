@@ -33,7 +33,7 @@ First, install the additional dependencies required for robots built with dynami
 
 Using `pip`:
 ```bash
-pip install -e ".[dynamixel]"
+pip install --no-binary=av -e ".[dynamixel]"
 ```
 
 Using `poetry`:
@@ -55,6 +55,13 @@ Finally, connect both arms to your computer via USB. Note that the USB doesn't p
 Now you are ready to configure your motors for the first time, as detailed in the sections below. In the upcoming sections, you'll learn about our classes and functions by running some python code in an interactive session, or by copy-pasting it in a python file.
 
 If you have already configured your motors the first time, you can streamline the process by directly running the teleoperate script (which is detailed further in the tutorial):
+
+> **NOTE:** To visualize the data, enable `--control.display_data=true`. This streams the data using `rerun`. You can adjust the viewer's behavior with these environment variables:
+> - `RERUN_FLUSH_NUM_BYTES`
+> - `LEROBOT_RERUN_MEMORY_LIMIT`
+> - `LEROBOT_VIEWER_IP` (only for remote robots)
+> - `LEROBOT_VIEWER_PORT` (only for remote robots)
+
 ```bash
 python lerobot/scripts/control_robot.py \
   --robot.type=koch \

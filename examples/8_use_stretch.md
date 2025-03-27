@@ -45,7 +45,7 @@ git clone https://github.com/huggingface/lerobot.git ~/lerobot
 
 6. Install LeRobot with stretch dependencies:
 ```bash
-cd ~/lerobot && pip install -e ".[stretch]"
+cd ~/lerobot && pip install --no-binary=av -e ".[stretch]"
 ```
 
 > **Note:** If you get this message, you can ignore it: `ERROR: pip's dependency resolver does not currently take into account all the packages that are installed.`
@@ -97,6 +97,13 @@ This is equivalent to running `stretch_robot_home.py`
 Before trying teleoperation, you need activate the gamepad controller by pressing the middle button. For more info, see Stretch's [doc](https://docs.hello-robot.com/0.3/getting_started/hello_robot/#gamepad-teleoperation).
 
 Now try out teleoperation (see above documentation to learn about the gamepad controls):
+
+> **NOTE:** To visualize the data, enable `--control.display_data=true`. This streams the data using `rerun`. You can adjust the viewer's behavior with these environment variables:
+> - `RERUN_FLUSH_NUM_BYTES`
+> - `LEROBOT_RERUN_MEMORY_LIMIT`
+> - `LEROBOT_VIEWER_IP` (only for remote robots)
+> - `LEROBOT_VIEWER_PORT` (only for remote robots)
+
 ```bash
 python lerobot/scripts/control_robot.py \
     --robot.type=stretch \
