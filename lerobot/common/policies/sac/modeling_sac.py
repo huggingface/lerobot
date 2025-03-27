@@ -17,6 +17,7 @@
 
 # TODO: (1) better device management
 
+from dataclasses import asdict
 import math
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple, Union
@@ -88,7 +89,7 @@ class SACPolicy(
         critic_heads = [
             CriticHead(
                 input_dim=encoder_critic.output_dim + config.output_features["action"].shape[0],
-                **config.critic_network_kwargs,
+                **asdict(config.critic_network_kwargs),
             )
             for _ in range(config.num_critics)
         ]
@@ -103,7 +104,7 @@ class SACPolicy(
         target_critic_heads = [
             CriticHead(
                 input_dim=encoder_critic.output_dim + config.output_features["action"].shape[0],
-                **config.critic_network_kwargs,
+                **asdict(config.critic_network_kwargs),
             )
             for _ in range(config.num_critics)
         ]
@@ -121,10 +122,10 @@ class SACPolicy(
 
         self.actor = Policy(
             encoder=encoder_actor,
-            network=MLP(input_dim=encoder_actor.output_dim, **config.actor_network_kwargs),
+            network=MLP(input_dim=encoder_actor.output_dim, **asdict(config.actor_network_kwargs)),
             action_dim=config.output_features["action"].shape[0],
             encoder_is_shared=config.shared_encoder,
-            **config.policy_kwargs,
+            **asdict(config.policy_kwargs),
         )
         if config.target_entropy is None:
             config.target_entropy = -np.prod(config.output_features["action"].shape[0]) / 2  # (-dim(A)/2)

@@ -1097,7 +1097,6 @@ class ActionScaleWrapper(gym.ActionWrapper):
         return action * self.scale_vector, is_intervention
 
 
-@parser.wrap()
 def make_robot_env(cfg: EnvConfig) -> gym.vector.VectorEnv:
 # def make_robot_env(cfg: TrainPipelineConfig) -> gym.vector.VectorEnv:
 # def make_robot_env(cfg: ManiskillEnvConfig) -> gym.vector.VectorEnv:
