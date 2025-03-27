@@ -173,7 +173,7 @@ class ManiskillEnvConfig(EnvConfig):
     control_mode: str = "pd_ee_delta_pose"
     state_dim: int = 25
     action_dim: int = 7
-    fps: int = 400
+    fps: int = 200
     episode_length: int = 50
     obs_type: str = "rgb"
     render_mode: str = "rgb_array"
