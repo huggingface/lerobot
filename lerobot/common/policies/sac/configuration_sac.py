@@ -233,11 +233,11 @@ class SACConfig(PreTrainedConfig):
 
     @property
     def observation_delta_indices(self) -> list:
-        return list(range(1 - self.n_obs_steps, 1))
+        return None
 
     @property
     def action_delta_indices(self) -> list:
-        return [0]  # SAC typically predicts one action at a time
+        return None  # SAC typically predicts one action at a time
 
     @property
     def reward_delta_indices(self) -> None:

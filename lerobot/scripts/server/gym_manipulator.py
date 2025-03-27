@@ -1100,15 +1100,15 @@ def make_robot_env(cfg) -> gym.vector.VectorEnv:
     Returns:
         A vectorized gym environment with all the necessary wrappers applied.
     """
-    # if "maniskill" in cfg.name:
-    #     from lerobot.scripts.server.maniskill_manipulator import make_maniskill
+    if "maniskill" in cfg.name:
+        from lerobot.scripts.server.maniskill_manipulator import make_maniskill
 
-    #     logging.warning("WE SHOULD REMOVE THE MANISKILL BEFORE THE MERGE INTO MAIN")
-    #     env = make_maniskill(
-    #         cfg=cfg,
-    #         n_envs=1,
-    #     )
-    #     return env
+        logging.warning("WE SHOULD REMOVE THE MANISKILL BEFORE THE MERGE INTO MAIN")
+        env = make_maniskill(
+            cfg=cfg,
+            n_envs=1,
+        )
+        return env
     robot = make_robot_from_config(cfg.robot)
     # Create base environment
     env = HILSerlRobotEnv(

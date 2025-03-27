@@ -163,6 +163,12 @@ class VideoRecordConfig:
     record_dir: str = "videos"
     trajectory_name: str = "trajectory"
 
+@dataclass
+class WrapperConfig:
+    """Configuration for environment wrappers."""
+    delta_action: float | None = None
+    joint_masking_action_space: list[bool] | None = None
+
 @EnvConfig.register_subclass("maniskill_push")
 @dataclass
 class ManiskillEnvConfig(EnvConfig):
@@ -181,6 +187,7 @@ class ManiskillEnvConfig(EnvConfig):
     device: str = "cuda"
     robot: str = "so100" # This is a hack to make the robot config work
     video_record: VideoRecordConfig = field(default_factory=VideoRecordConfig)
+    wrapper: WrapperConfig = field(default_factory=WrapperConfig)
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
             "action": PolicyFeature(type=FeatureType.ACTION, shape=(7,)),
