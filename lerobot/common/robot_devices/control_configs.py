@@ -116,6 +116,8 @@ class ReplayControlConfig(ControlConfig):
 @dataclass
 class RemoteRobotConfig(ControlConfig):
     log_interval: int = 100
+    # Display all cameras on screen
+    display_data: bool = False
 
 
 @dataclass

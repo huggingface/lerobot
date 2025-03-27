@@ -378,7 +378,9 @@ def _init_rerun(control_config: ControlConfig, session_name: str = "lerobot_cont
     Raises:
         ValueError: If viewer IP is missing for non-remote configurations with display enabled.
     """
-    if control_config.display_data and not is_headless():
+    if (control_config.display_data and not is_headless()) or (
+        control_config.display_data and isinstance(control_config, RemoteRobotConfig)
+    ):
         # Configure Rerun flush batch size
         batch_size = os.getenv("RERUN_FLUSH_NUM_BYTES", "8000")
         os.environ["RERUN_FLUSH_NUM_BYTES"] = batch_size
