@@ -16,7 +16,6 @@ import time
 from contextlib import nullcontext
 from pprint import pformat
 
-import hydra
 import numpy as np
 import torch
 import torch.nn as nn
@@ -32,11 +31,8 @@ from tqdm import tqdm
 
 from lerobot.common.datasets.factory import resolve_delta_timestamps
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.logger import Logger
-from lerobot.common.policies.factory import _policy_cfg_from_hydra_cfg
-from lerobot.common.policies.hilserl.classifier.configuration_classifier import (
-    ClassifierConfig,
-)
+from lerobot.common.policies.hilserl.classifier.configuration_classifier import ClassifierConfig
+
 from lerobot.common.policies.hilserl.classifier.modeling_classifier import Classifier
 from lerobot.common.utils.utils import (
     format_big_number,
@@ -295,8 +291,6 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
     # Main training pipeline with support for resuming training
     init_logging()
     logging.info(OmegaConf.to_yaml(cfg))
-
-    logger = Logger(cfg, out_dir, wandb_job_name=job_name)
 
     # Initialize training environment
     device = get_safe_torch_device(cfg.device, log=True)

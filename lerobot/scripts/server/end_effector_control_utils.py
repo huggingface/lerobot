@@ -1,13 +1,13 @@
+import argparse
+import logging
+import sys
+import time
+
+import numpy as np
+import torch
+
 from lerobot.common.robot_devices.utils import busy_wait
 from lerobot.scripts.server.kinematics import RobotKinematics
-import logging
-import time
-import torch
-import numpy as np
-import argparse
-from lerobot.common.robot_devices.robots.utils import make_robot_from_config
-from lerobot.scripts.server.gym_manipulator import make_robot_env, HILSerlRobotEnvConfig
-from lerobot.common.robot_devices.robots.configs import RobotConfig
 
 logging.basicConfig(level=logging.INFO)
 
@@ -458,12 +458,13 @@ class GamepadControllerHID(InputController):
 def test_forward_kinematics(robot, fps=10):
     logging.info("Testing Forward Kinematics")
     timestep = time.perf_counter()
+    kinematics = RobotKinematics(robot.robot_type)
     while time.perf_counter() - timestep < 60.0:
         loop_start_time = time.perf_counter()
         robot.teleop_step()
         obs = robot.capture_observation()
         joint_positions = obs["observation.state"].cpu().numpy()
-        ee_pos = RobotKinematics.fk_gripper_tip(joint_positions)
+        ee_pos = kinematics.fk_gripper_tip(joint_positions)
         logging.info(f"EE Position: {ee_pos[:3, 3]}")
         busy_wait(1 / fps - (time.perf_counter() - loop_start_time))
 
@@ -485,21 +486,19 @@ def test_inverse_kinematics(robot, fps=10):
 
 def teleoperate_inverse_kinematics_with_leader(robot, fps=10):
     logging.info("Testing Inverse Kinematics")
-    fk_func = RobotKinematics.fk_gripper_tip
+    kinematics = RobotKinematics(robot.robot_type)
     timestep = time.perf_counter()
     while time.perf_counter() - timestep < 60.0:
         loop_start_time = time.perf_counter()
         obs = robot.capture_observation()
         joint_positions = obs["observation.state"].cpu().numpy()
-        ee_pos = fk_func(joint_positions)
+        ee_pos = kinematics.fk_gripper_tip(joint_positions)
 
         leader_joint_positions = robot.leader_arms["main"].read("Present_Position")
-        leader_ee = fk_func(leader_joint_positions)
+        leader_ee = kinematics.fk_gripper_tip(leader_joint_positions)
 
         desired_ee_pos = leader_ee
-        target_joint_state = RobotKinematics.ik(
-            joint_positions, desired_ee_pos, position_only=True, fk_func=fk_func
-        )
+        target_joint_state = kinematics.ik(joint_positions, desired_ee_pos, position_only=True)
         robot.send_action(torch.from_numpy(target_joint_state))
         logging.info(f"Leader EE: {leader_ee[:3, 3]}, Follower EE: {ee_pos[:3, 3]}")
         busy_wait(1 / fps - (time.perf_counter() - loop_start_time))
@@ -513,10 +512,10 @@ def teleoperate_delta_inverse_kinematics_with_leader(robot, fps=10):
     obs = robot.capture_observation()
     joint_positions = obs["observation.state"].cpu().numpy()
 
-    fk_func = RobotKinematics.fk_gripper_tip
+    kinematics = RobotKinematics(robot.robot_type)
 
     leader_joint_positions = robot.leader_arms["main"].read("Present_Position")
-    initial_leader_ee = fk_func(leader_joint_positions)
+    initial_leader_ee = kinematics.fk_gripper_tip(leader_joint_positions)
 
     desired_ee_pos = np.diag(np.ones(4))
 
@@ -525,13 +524,13 @@ def teleoperate_delta_inverse_kinematics_with_leader(robot, fps=10):
 
         # Get leader state for teleoperation
         leader_joint_positions = robot.leader_arms["main"].read("Present_Position")
-        leader_ee = fk_func(leader_joint_positions)
+        leader_ee = kinematics.fk_gripper_tip(leader_joint_positions)
 
         # Get current state
         # obs = robot.capture_observation()
         # joint_positions = obs["observation.state"].cpu().numpy()
         joint_positions = robot.follower_arms["main"].read("Present_Position")
-        current_ee_pos = fk_func(joint_positions)
+        current_ee_pos = kinematics.fk_gripper_tip(joint_positions)
 
         # Calculate delta between leader and follower end-effectors
         # Scaling factor can be adjusted for sensitivity
@@ -545,9 +544,7 @@ def teleoperate_delta_inverse_kinematics_with_leader(robot, fps=10):
 
         if np.any(np.abs(ee_delta[:3, 3]) > 0.01):
             # Compute joint targets via inverse kinematics
-            target_joint_state = RobotKinematics.ik(
-                joint_positions, desired_ee_pos, position_only=True, fk_func=fk_func
-            )
+            target_joint_state = kinematics.ik(joint_positions, desired_ee_pos, position_only=True)
 
             initial_leader_ee = leader_ee.copy()
 
@@ -580,7 +577,8 @@ def teleoperate_delta_inverse_kinematics(robot, controller, fps=10, bounds=None,
     # Initial position capture
     obs = robot.capture_observation()
     joint_positions = obs["observation.state"].cpu().numpy()
-    current_ee_pos = fk_func(joint_positions)
+    kinematics = RobotKinematics(robot.robot_type)
+    current_ee_pos = kinematics.fk_gripper_tip(joint_positions)
 
     # Initialize desired position with current position
     desired_ee_pos = np.eye(4)  # Identity matrix
@@ -595,7 +593,7 @@ def teleoperate_delta_inverse_kinematics(robot, controller, fps=10, bounds=None,
 
             # Get currrent robot state
             joint_positions = robot.follower_arms["main"].read("Present_Position")
-            current_ee_pos = fk_func(joint_positions)
+            current_ee_pos = kinematics.fk_gripper_tip(joint_positions)
 
             # Get movement deltas from the controller
             delta_x, delta_y, delta_z = controller.get_deltas()
@@ -612,9 +610,7 @@ def teleoperate_delta_inverse_kinematics(robot, controller, fps=10, bounds=None,
             # Only send commands if there's actual movement
             if any([abs(v) > 0.001 for v in [delta_x, delta_y, delta_z]]):
                 # Compute joint targets via inverse kinematics
-                target_joint_state = RobotKinematics.ik(
-                    joint_positions, desired_ee_pos, position_only=True, fk_func=fk_func
-                )
+                target_joint_state = kinematics.ik(joint_positions, desired_ee_pos, position_only=True)
 
                 # Send command to robot
                 robot.send_action(torch.from_numpy(target_joint_state))
@@ -676,7 +672,17 @@ def teleoperate_gym_env(env, controller, fps: int = 30):
         # Close the environment
         env.close()
 
+
 if __name__ == "__main__":
+    from lerobot.common.robot_devices.robots.configs import RobotConfig
+    from lerobot.common.robot_devices.robots.utils import make_robot_from_config
+    from lerobot.scripts.server.gym_manipulator import (
+        EEActionSpaceConfig,
+        EnvWrapperConfig,
+        HILSerlRobotEnvConfig,
+        make_robot_env,
+    )
+
     parser = argparse.ArgumentParser(description="Test end-effector control")
     parser.add_argument(
         "--mode",
@@ -697,12 +703,6 @@ if __name__ == "__main__":
         type=str,
         default="so100",
         help="Robot type (so100, koch, aloha, etc.)",
-    )
-    parser.add_argument(
-        "--config-path",
-        type=str,
-        default=None,
-        help="Path to the config file in json format",
     )
 
     args = parser.parse_args()
@@ -725,7 +725,10 @@ if __name__ == "__main__":
         if args.mode.startswith("keyboard"):
             controller = KeyboardController(x_step_size=0.01, y_step_size=0.01, z_step_size=0.05)
         elif args.mode.startswith("gamepad"):
-            controller = GamepadController(x_step_size=0.02, y_step_size=0.02, z_step_size=0.05)
+            if sys.platform == "darwin":
+                controller = GamepadControllerHID(x_step_size=0.01, y_step_size=0.01, z_step_size=0.05)
+            else:
+                controller = GamepadController(x_step_size=0.01, y_step_size=0.01, z_step_size=0.05)
 
         # Handle mode categories
         if args.mode in ["keyboard", "gamepad"]:
@@ -734,12 +737,14 @@ if __name__ == "__main__":
 
         elif args.mode in ["keyboard_gym", "gamepad_gym"]:
             # Gym environment control modes
-            cfg = HILSerlRobotEnvConfig()
-            if args.config_path is not None:
-                cfg = HILSerlRobotEnvConfig.from_json(args.config_path)
-
+            cfg = HILSerlRobotEnvConfig(robot=robot_config, wrapper=EnvWrapperConfig())
+            cfg.wrapper.ee_action_space_params = EEActionSpaceConfig(
+                x_step_size=0.03, y_step_size=0.03, z_step_size=0.03, bounds=bounds
+            )
+            cfg.wrapper.ee_action_space_params.use_gamepad = False
+            cfg.device = "cpu"
             env = make_robot_env(cfg, robot)
-            teleoperate_gym_env(env, controller, fps=args.fps)
+            teleoperate_gym_env(env, controller, fps=cfg.fps)
 
         elif args.mode == "leader":
             # Leader-follower modes don't use controllers

@@ -122,6 +122,9 @@ def make_optimizer_and_scheduler(cfg, policy):
 
         optimizer = VQBeTOptimizer(policy, cfg)
         lr_scheduler = VQBeTScheduler(optimizer, cfg)
+    elif cfg.policy.name == "hilserl_classifier":
+        optimizer = torch.optim.AdamW(policy.parameters(), cfg.policy.learning_rate)
+        lr_scheduler = None
     else:
         raise NotImplementedError()
 

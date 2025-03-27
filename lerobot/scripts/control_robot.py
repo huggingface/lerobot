@@ -274,10 +274,7 @@ def record(
 
     if not robot.is_connected:
         robot.connect()
-    listener, events = init_keyboard_listener(assign_rewards=assign_rewards)
-
-    if reset_follower:
-        initial_position = robot.follower_arms["main"].read("Present_Position")
+    listener, events = init_keyboard_listener(assign_rewards=cfg.assign_rewards)
 
     # Execute a few seconds without recording to:
     # 1. teleoperate the robot to move it in starting position if no policy provided,
@@ -394,6 +391,7 @@ def control_robot(cfg: ControlPipelineConfig):
         replay(robot, cfg.control)
     elif isinstance(cfg.control, RemoteRobotConfig):
         from lerobot.common.robot_devices.robots.lekiwi_remote import run_lekiwi
+
         run_lekiwi(cfg.robot)
 
     if robot.is_connected:

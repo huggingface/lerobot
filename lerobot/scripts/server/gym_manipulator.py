@@ -1,45 +1,37 @@
 import logging
 import sys
 import time
-import sys
-
+from dataclasses import dataclass
 from threading import Lock
-from typing import Annotated, Any, Dict, Tuple
+from typing import Annotated, Any, Dict, Optional, Tuple
 
 import gymnasium as gym
 import numpy as np
 import torch
 import torchvision.transforms.functional as F  # noqa: N812
-import json
 
-from dataclasses import dataclass
-
-from lerobot.common.envs.utils import preprocess_observation
-from lerobot.configs.train import TrainPipelineConfig
 from lerobot.common.envs.configs import EnvConfig
+from lerobot.common.envs.utils import preprocess_observation
 from lerobot.common.robot_devices.control_utils import (
     busy_wait,
     is_headless,
-    # reset_follower_position,
+    reset_follower_position,
 )
-
-from typing import Optional
-from lerobot.common.utils.utils import log_say
-from lerobot.common.robot_devices.robots.utils import make_robot_from_config
-
 from lerobot.common.robot_devices.robots.configs import RobotConfig
-
-from lerobot.scripts.server.kinematics import RobotKinematics
-from lerobot.scripts.server.maniskill_manipulator import ManiskillEnvConfig, make_maniskill
+from lerobot.common.robot_devices.robots.utils import make_robot_from_config
+from lerobot.common.utils.utils import log_say
 from lerobot.configs import parser
+from lerobot.scripts.server.kinematics import RobotKinematics
 
 logging.basicConfig(level=logging.INFO)
+
 
 @dataclass
 class EEActionSpaceConfig:
     """Configuration parameters for end-effector action space."""
+
     x_step_size: float
-    y_step_size: float 
+    y_step_size: float
     z_step_size: float
     bounds: Dict[str, Any]  # Contains 'min' and 'max' keys with position bounds
     use_gamepad: bool = False
@@ -48,6 +40,7 @@ class EEActionSpaceConfig:
 @dataclass
 class EnvWrapperConfig:
     """Configuration for environment wrappers."""
+
     display_cameras: bool = False
     delta_action: float = 0.1
     use_relative_joint_positions: bool = True
@@ -64,28 +57,27 @@ class EnvWrapperConfig:
     reward_classifier_config_file: Optional[str] = None
 
 
+@EnvConfig.register_subclass(name="gym_manipulator")
 @dataclass
-class HILSerlRobotEnvConfig:
+class HILSerlRobotEnvConfig(EnvConfig):
     """Configuration for the HILSerlRobotEnv environment."""
-    robot: RobotConfig
-    wrapper: EnvWrapperConfig
-    env_name: str = "real_robot"
+
+    robot: Optional[RobotConfig] = None
+    wrapper: Optional[EnvWrapperConfig] = None
     fps: int = 10
     mode: str = None  # Either "record", "replay", None
     repo_id: Optional[str] = None
     dataset_root: Optional[str] = None
     task: str = ""
-    num_episodes: int = 10 # only for record mode
+    num_episodes: int = 10  # only for record mode
     episode: int = 0
     device: str = "cuda"
     push_to_hub: bool = True
     pretrained_policy_name_or_path: Optional[str] = None
 
-    @classmethod
-    def from_json(cls, json_path: str):
-        with open(json_path, "r") as f:
-            config = json.load(f)
-        return cls(**config)
+    def gym_kwargs(self) -> dict:
+        return {}
+
 
 class HILSerlRobotEnv(gym.Env):
     """
@@ -580,8 +572,7 @@ class ImageCropResizeWrapper(gym.Wrapper):
             if key_crop not in self.env.observation_space.keys():  # noqa: SIM118
                 raise ValueError(f"Key {key_crop} not in observation space")
         for key in crop_params_dict:
-            top, left, height, width = crop_params_dict[key]
-            new_shape = (top + height, left + width)
+            new_shape = (3, resize_size[0], resize_size[1])
             self.observation_space[key] = gym.spaces.Box(low=0, high=255, shape=new_shape)
 
         self.resize_size = resize_size
@@ -1097,9 +1088,7 @@ class ActionScaleWrapper(gym.ActionWrapper):
         return action * self.scale_vector, is_intervention
 
 
-def make_robot_env(cfg: EnvConfig) -> gym.vector.VectorEnv:
-# def make_robot_env(cfg: TrainPipelineConfig) -> gym.vector.VectorEnv:
-# def make_robot_env(cfg: ManiskillEnvConfig) -> gym.vector.VectorEnv:
+def make_robot_env(cfg) -> gym.vector.VectorEnv:
     """
     Factory function to create a vectorized robot environment.
 
@@ -1111,16 +1100,16 @@ def make_robot_env(cfg: EnvConfig) -> gym.vector.VectorEnv:
     Returns:
         A vectorized gym environment with all the necessary wrappers applied.
     """
-    if "maniskill" in cfg.name:
-        from lerobot.scripts.server.maniskill_manipulator import make_maniskill
+    # if "maniskill" in cfg.name:
+    #     from lerobot.scripts.server.maniskill_manipulator import make_maniskill
 
-        logging.warning("WE SHOULD REMOVE THE MANISKILL BEFORE THE MERGE INTO MAIN")
-        env = make_maniskill(
-            cfg=cfg,
-            n_envs=1,
-        )
-        return env
-    robot = cfg.robot
+    #     logging.warning("WE SHOULD REMOVE THE MANISKILL BEFORE THE MERGE INTO MAIN")
+    #     env = make_maniskill(
+    #         cfg=cfg,
+    #         n_envs=1,
+    #     )
+    #     return env
+    robot = make_robot_from_config(cfg.robot)
     # Create base environment
     env = HILSerlRobotEnv(
         robot=robot,
@@ -1150,10 +1139,7 @@ def make_robot_env(cfg: EnvConfig) -> gym.vector.VectorEnv:
     env = TimeLimitWrapper(env=env, control_time_s=cfg.wrapper.control_time_s, fps=cfg.fps)
     if cfg.wrapper.ee_action_space_params is not None:
         env = EEActionWrapper(env=env, ee_action_space_params=cfg.wrapper.ee_action_space_params)
-    if (
-        cfg.wrapper.ee_action_space_params is not None
-        and cfg.wrapper.ee_action_space_params.use_gamepad
-    ):
+    if cfg.wrapper.ee_action_space_params is not None and cfg.wrapper.ee_action_space_params.use_gamepad:
         # env = ActionScaleWrapper(env=env, ee_action_space_params=cfg.wrapper.ee_action_space_params)
         env = GamepadControlWrapper(
             env=env,
@@ -1169,10 +1155,7 @@ def make_robot_env(cfg: EnvConfig) -> gym.vector.VectorEnv:
         reset_pose=cfg.wrapper.fixed_reset_joint_positions,
         reset_time_s=cfg.wrapper.reset_time_s,
     )
-    if (
-        cfg.wrapper.ee_action_space_params is None
-        and cfg.wrapper.joint_masking_action_space is not None
-    ):
+    if cfg.wrapper.ee_action_space_params is None and cfg.wrapper.joint_masking_action_space is not None:
         env = JointMaskingActionSpace(env=env, mask=cfg.wrapper.joint_masking_action_space)
     env = BatchCompitableWrapper(env=env)
 
@@ -1180,7 +1163,10 @@ def make_robot_env(cfg: EnvConfig) -> gym.vector.VectorEnv:
 
 
 def get_classifier(cfg):
-    if cfg.wrapper.reward_classifier_pretrained_path is None or cfg.wrapper.reward_classifier_config_file is None:
+    if (
+        cfg.wrapper.reward_classifier_pretrained_path is None
+        or cfg.wrapper.reward_classifier_config_file is None
+    ):
         return None
 
     from lerobot.common.policies.hilserl.classifier.configuration_classifier import (
@@ -1258,7 +1244,8 @@ def record_dataset(env, policy, cfg: HILSerlRobotEnvConfig):
 
     # Record episodes
     episode_index = 0
-    while episode_index < cfg.record_num_episodes:
+    recorded_action = None
+    while episode_index < cfg.num_episodes:
         obs, _ = env.reset()
         start_episode_t = time.perf_counter()
         log_say(f"Recording episode {episode_index}", play_sounds=True)
@@ -1279,16 +1266,19 @@ def record_dataset(env, policy, cfg: HILSerlRobotEnvConfig):
                 break
 
             # For teleop, get action from intervention
-            if policy is None:
-                action = {"action": info["action_intervention"].cpu().squeeze(0).float()}
+            recorded_action = {
+                "action": info["action_intervention"].cpu().squeeze(0).float() if policy is None else action
+            }
 
             # Process observation for dataset
             obs = {k: v.cpu().squeeze(0).float() for k, v in obs.items()}
+            obs["observation.images.side"] = torch.clamp(obs["observation.images.side"], 0, 1)
 
             # Add frame to dataset
-            frame = {**obs, **action}
-            frame["next.reward"] = reward
-            frame["next.done"] = terminated or truncated
+            frame = {**obs, **recorded_action}
+            frame["next.reward"] = np.array([reward], dtype=np.float32)
+            frame["next.done"] = np.array([terminated or truncated], dtype=bool)
+            frame["task"] = cfg.task
             dataset.add_frame(frame)
 
             # Maintain consistent timing
@@ -1309,9 +1299,9 @@ def record_dataset(env, policy, cfg: HILSerlRobotEnvConfig):
         episode_index += 1
 
     # Finalize dataset
-    dataset.consolidate(run_compute_stats=True)
+    # dataset.consolidate(run_compute_stats=True)
     if cfg.push_to_hub:
-        dataset.push_to_hub(cfg.repo_id)
+        dataset.push_to_hub()
 
 
 def replay_episode(env, repo_id, root=None, episode=0):
@@ -1334,82 +1324,69 @@ def replay_episode(env, repo_id, root=None, episode=0):
         busy_wait(1 / 10 - dt_s)
 
 
-# @parser.wrap()
-# def main(cfg):
+@parser.wrap()
+def main(cfg: EnvConfig):
+    env = make_robot_env(cfg)
 
-#     robot = make_robot_from_config(cfg.robot)
+    if cfg.mode == "record":
+        policy = None
+        if cfg.pretrained_policy_name_or_path is not None:
+            from lerobot.common.policies.sac.modeling_sac import SACPolicy
 
-#     reward_classifier = None #get_classifier(
-#         # cfg.wrapper.reward_classifier_pretrained_path, cfg.wrapper.reward_classifier_config_file
-#     # )
-#     user_relative_joint_positions = True
+            policy = SACPolicy.from_pretrained(cfg.pretrained_policy_name_or_path)
+            policy.to(cfg.device)
+            policy.eval()
 
-#     env = make_robot_env(cfg, robot)
+        record_dataset(
+            env,
+            policy=None,
+            cfg=cfg,
+        )
+        exit()
 
-#     if cfg.mode == "record":
-#         policy = None
-#         if cfg.pretrained_policy_name_or_path is not None:
-#             from lerobot.common.policies.sac.modeling_sac import SACPolicy
+    if cfg.mode == "replay":
+        replay_episode(
+            env,
+            cfg.replay_repo_id,
+            root=cfg.dataset_root,
+            episode=cfg.replay_episode,
+        )
+        exit()
 
-#             policy = SACPolicy.from_pretrained(cfg.pretrained_policy_name_or_path)
-#             policy.to(cfg.device)
-#             policy.eval()
+    env.reset()
 
-#         record_dataset(
-#             env,
-#             cfg.repo_id,
-#             root=cfg.dataset_root,
-#             num_episodes=cfg.num_episodes,
-#             fps=cfg.fps,
-#             task_description=cfg.task,
-#             policy=policy,
-#         )
-#         exit()
+    # Retrieve the robot's action space for joint commands.
+    action_space_robot = env.action_space.spaces[0]
 
-#     if cfg.mode == "replay":
-#         replay_episode(
-#             env,
-#             cfg.replay_repo_id,
-#             root=cfg.dataset_root,
-#             episode=cfg.replay_episode,
-#         )
-#         exit()
+    # Initialize the smoothed action as a random sample.
+    smoothed_action = action_space_robot.sample()
 
-#     env.reset()
+    # Smoothing coefficient (alpha) defines how much of the new random sample to mix in.
+    # A value close to 0 makes the trajectory very smooth (slow to change), while a value close to 1 is less smooth.
+    alpha = 1.0
 
-#     # Retrieve the robot's action space for joint commands.
-#     action_space_robot = env.action_space.spaces[0]
+    num_episode = 0
+    sucesses = []
+    while num_episode < 20:
+        start_loop_s = time.perf_counter()
+        # Sample a new random action from the robot's action space.
+        new_random_action = action_space_robot.sample()
+        # Update the smoothed action using an exponential moving average.
+        smoothed_action = alpha * new_random_action + (1 - alpha) * smoothed_action
 
-#     # Initialize the smoothed action as a random sample.
-#     smoothed_action = action_space_robot.sample()
+        # Execute the step: wrap the NumPy action in a torch tensor.
+        obs, reward, terminated, truncated, info = env.step((torch.from_numpy(smoothed_action), False))
+        if terminated or truncated:
+            sucesses.append(reward)
+            env.reset()
+            num_episode += 1
 
-#     # Smoothing coefficient (alpha) defines how much of the new random sample to mix in.
-#     # A value close to 0 makes the trajectory very smooth (slow to change), while a value close to 1 is less smooth.
-#     alpha = 1.0
+        dt_s = time.perf_counter() - start_loop_s
+        busy_wait(1 / cfg.fps - dt_s)
 
-#     num_episode = 0
-#     sucesses = []
-#     while num_episode < 20:
-#         start_loop_s = time.perf_counter()
-#         # Sample a new random action from the robot's action space.
-#         new_random_action = action_space_robot.sample()
-#         # Update the smoothed action using an exponential moving average.
-#         smoothed_action = alpha * new_random_action + (1 - alpha) * smoothed_action
+    logging.info(f"Success after 20 steps {sucesses}")
+    logging.info(f"success rate {sum(sucesses) / len(sucesses)}")
 
-#         # Execute the step: wrap the NumPy action in a torch tensor.
-#         obs, reward, terminated, truncated, info = env.step((torch.from_numpy(smoothed_action), False))
-#         if terminated or truncated:
-#             sucesses.append(reward)
-#             env.reset()
-#             num_episode += 1
 
-#         dt_s = time.perf_counter() - start_loop_s
-#         busy_wait(1 / cfg.fps - dt_s)
-
-#     logging.info(f"Success after 20 steps {sucesses}")
-#     logging.info(f"success rate {sum(sucesses) / len(sucesses)}")
-
-# if __name__ == "__main__":
-#     main()
 if __name__ == "__main__":
-    make_robot_env()
+    main()

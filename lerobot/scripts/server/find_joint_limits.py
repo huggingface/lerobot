@@ -63,9 +63,10 @@ def find_ee_bounds(
         if time.perf_counter() - start_episode_t < 5:
             continue
 
+        kinematics = RobotKinematics(robot.robot_type)
         joint_positions = robot.follower_arms["main"].read("Present_Position")
         print(f"Joint positions: {joint_positions}")
-        ee_list.append(RobotKinematics.fk_gripper_tip(joint_positions)[:3, 3])
+        ee_list.append(kinematics.fk_gripper_tip(joint_positions)[:3, 3])
 
         if display_cameras and not is_headless():
             image_keys = [key for key in observation if "image" in key]
@@ -81,20 +82,19 @@ def find_ee_bounds(
             break
 
 
-def make_robot(robot_type="so100", mock=True):
+def make_robot(robot_type="so100"):
     """
     Create a robot instance using the appropriate robot config class.
     
     Args:
         robot_type: Robot type string (e.g., "so100", "koch", "aloha")
-        mock: Whether to use mock mode for hardware (default: True)
         
     Returns:
         Robot instance
     """
     
     # Get the appropriate robot config class based on robot_type
-    robot_config = RobotConfig.get_choice_class(robot_type)(mock=mock)
+    robot_config = RobotConfig.get_choice_class(robot_type)(mock=False)
     robot_config.leader_arms["main"].port = leader_port
     robot_config.follower_arms["main"].port = follower_port
     
@@ -122,18 +122,12 @@ if __name__ == "__main__":
         default="so100",
         help="Robot type (so100, koch, aloha, etc.)",
     )
-    parser.add_argument(
-        "--mock",
-        type=int,
-        default=1,
-        help="Use mock mode for hardware simulation",
-    )
-    
+
     # Only parse known args, leaving robot config args for Hydra if used
-    args, _ = parser.parse_known_args()
+    args = parser.parse_args()
     
     # Create robot with the appropriate config
-    robot = make_robot(args.robot_type, args.mock)
+    robot = make_robot(args.robot_type)
     
     if args.mode == "joint":
         find_joint_bounds(robot, args.control_time_s)
