@@ -897,7 +897,6 @@ if __name__ == "__main__":
     #     for j in range(i + 1, num_critics):
     #         diff = torch.abs(q_values[i] - q_values[j]).mean().item()
     #         print(f"Mean difference between critic {i} and {j}: {diff:.6f}")
-    import draccus
 
     from lerobot.configs import parser
 

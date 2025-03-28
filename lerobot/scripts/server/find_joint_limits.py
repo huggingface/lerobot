@@ -5,13 +5,14 @@ import cv2
 import numpy as np
 
 from lerobot.common.robot_devices.control_utils import is_headless
-from lerobot.common.robot_devices.robots.utils import make_robot_from_config
-from lerobot.scripts.server.kinematics import RobotKinematics
-from lerobot.configs import parser
 from lerobot.common.robot_devices.robots.configs import RobotConfig
+from lerobot.common.robot_devices.robots.utils import make_robot_from_config
+from lerobot.configs import parser
+from lerobot.scripts.server.kinematics import RobotKinematics
 
 follower_port = "/dev/tty.usbmodem58760431631"
 leader_port = "/dev/tty.usbmodem58760433331"
+
 
 def find_joint_bounds(
     robot,
@@ -85,20 +86,21 @@ def find_ee_bounds(
 def make_robot(robot_type="so100"):
     """
     Create a robot instance using the appropriate robot config class.
-    
+
     Args:
         robot_type: Robot type string (e.g., "so100", "koch", "aloha")
-        
+
     Returns:
         Robot instance
     """
-    
+
     # Get the appropriate robot config class based on robot_type
     robot_config = RobotConfig.get_choice_class(robot_type)(mock=False)
     robot_config.leader_arms["main"].port = leader_port
     robot_config.follower_arms["main"].port = follower_port
-    
+
     return make_robot_from_config(robot_config)
+
 
 if __name__ == "__main__":
     # Create argparse for script-specific arguments
@@ -125,14 +127,14 @@ if __name__ == "__main__":
 
     # Only parse known args, leaving robot config args for Hydra if used
     args = parser.parse_args()
-    
+
     # Create robot with the appropriate config
     robot = make_robot(args.robot_type)
-    
+
     if args.mode == "joint":
         find_joint_bounds(robot, args.control_time_s)
     elif args.mode == "ee":
         find_ee_bounds(robot, args.control_time_s)
-    
+
     if robot.is_connected:
         robot.disconnect()

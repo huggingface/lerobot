@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 
 from lerobot.common.optim.optimizers import MultiAdamConfig
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
+from lerobot.configs.types import NormalizationMode
 
 
 @dataclass

@@ -99,36 +99,37 @@ class SGDConfig(OptimizerConfig):
 @dataclass
 class MultiAdamConfig(OptimizerConfig):
     """Configuration for multiple Adam optimizers with different parameter groups.
-    
+
     This creates a dictionary of Adam optimizers, each with its own hyperparameters.
-    
+
     Args:
         lr: Default learning rate (used if not specified for a group)
         weight_decay: Default weight decay (used if not specified for a group)
         optimizer_groups: Dictionary mapping parameter group names to their hyperparameters
         grad_clip_norm: Gradient clipping norm
     """
+
     lr: float = 1e-3
     weight_decay: float = 0.0
     grad_clip_norm: float = 10.0
     optimizer_groups: dict[str, dict[str, Any]] = field(default_factory=dict)
-    
+
     def build(self, params_dict: dict[str, list]) -> dict[str, torch.optim.Optimizer]:
         """Build multiple Adam optimizers.
-        
+
         Args:
             params_dict: Dictionary mapping parameter group names to lists of parameters
                          The keys should match the keys in optimizer_groups
-        
+
         Returns:
             Dictionary mapping parameter group names to their optimizers
         """
         optimizers = {}
-        
+
         for name, params in params_dict.items():
             # Get group-specific hyperparameters or use defaults
             group_config = self.optimizer_groups.get(name, {})
-            
+
             # Create optimizer with merged parameters (defaults + group-specific)
             optimizer_kwargs = {
                 "lr": group_config.get("lr", self.lr),
@@ -136,15 +137,17 @@ class MultiAdamConfig(OptimizerConfig):
                 "eps": group_config.get("eps", 1e-5),
                 "weight_decay": group_config.get("weight_decay", self.weight_decay),
             }
-            
+
             optimizers[name] = torch.optim.Adam(params, **optimizer_kwargs)
-            
+
         return optimizers
 
 
-def save_optimizer_state(optimizer: torch.optim.Optimizer | dict[str, torch.optim.Optimizer], save_dir: Path) -> None:
+def save_optimizer_state(
+    optimizer: torch.optim.Optimizer | dict[str, torch.optim.Optimizer], save_dir: Path
+) -> None:
     """Save optimizer state to disk.
-    
+
     Args:
         optimizer: Either a single optimizer or a dictionary of optimizers.
         save_dir: Directory to save the optimizer state.
@@ -173,11 +176,11 @@ def load_optimizer_state(
     optimizer: torch.optim.Optimizer | dict[str, torch.optim.Optimizer], save_dir: Path
 ) -> torch.optim.Optimizer | dict[str, torch.optim.Optimizer]:
     """Load optimizer state from disk.
-    
+
     Args:
         optimizer: Either a single optimizer or a dictionary of optimizers.
         save_dir: Directory to load the optimizer state from.
-        
+
     Returns:
         The updated optimizer(s) with loaded state.
     """
@@ -201,7 +204,7 @@ def _load_single_optimizer_state(optimizer: torch.optim.Optimizer, save_dir: Pat
     current_state_dict = optimizer.state_dict()
     flat_state = load_file(save_dir / OPTIMIZER_STATE)
     state = unflatten_dict(flat_state)
-    
+
     # Handle case where 'state' key might not exist (for newly created optimizers)
     if "state" in state:
         loaded_state_dict = {"state": {int(k): v for k, v in state["state"].items()}}

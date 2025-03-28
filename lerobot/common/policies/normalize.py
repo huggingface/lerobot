@@ -82,8 +82,10 @@ def create_stats_buffers(
         if stats and key in stats:
             if norm_mode is NormalizationMode.MEAN_STD:
                 if "mean" not in stats[key] or "std" not in stats[key]:
-                    raise ValueError(f"Missing 'mean' or 'std' in stats for key {key} with MEAN_STD normalization")
-                
+                    raise ValueError(
+                        f"Missing 'mean' or 'std' in stats for key {key} with MEAN_STD normalization"
+                    )
+
                 if isinstance(stats[key]["mean"], np.ndarray):
                     buffer["mean"].data = torch.from_numpy(stats[key]["mean"]).to(dtype=torch.float32)
                     buffer["std"].data = torch.from_numpy(stats[key]["std"]).to(dtype=torch.float32)
@@ -96,12 +98,16 @@ def create_stats_buffers(
                     buffer["std"].data = stats[key]["std"].clone().to(dtype=torch.float32)
                 else:
                     type_ = type(stats[key]["mean"])
-                    raise ValueError(f"np.ndarray or torch.Tensor expected for 'mean', but type is '{type_}' instead.")
-                    
+                    raise ValueError(
+                        f"np.ndarray or torch.Tensor expected for 'mean', but type is '{type_}' instead."
+                    )
+
             elif norm_mode is NormalizationMode.MIN_MAX:
                 if "min" not in stats[key] or "max" not in stats[key]:
-                    raise ValueError(f"Missing 'min' or 'max' in stats for key {key} with MIN_MAX normalization")
-                
+                    raise ValueError(
+                        f"Missing 'min' or 'max' in stats for key {key} with MIN_MAX normalization"
+                    )
+
                 if isinstance(stats[key]["min"], np.ndarray):
                     buffer["min"].data = torch.from_numpy(stats[key]["min"]).to(dtype=torch.float32)
                     buffer["max"].data = torch.from_numpy(stats[key]["max"]).to(dtype=torch.float32)
@@ -110,7 +116,9 @@ def create_stats_buffers(
                     buffer["max"].data = stats[key]["max"].clone().to(dtype=torch.float32)
                 else:
                     type_ = type(stats[key]["min"])
-                    raise ValueError(f"np.ndarray or torch.Tensor expected for 'min', but type is '{type_}' instead.")
+                    raise ValueError(
+                        f"np.ndarray or torch.Tensor expected for 'min', but type is '{type_}' instead."
+                    )
 
         stats_buffers[key] = buffer
     return stats_buffers

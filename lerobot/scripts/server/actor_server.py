@@ -47,7 +47,7 @@ from lerobot.scripts.server.buffer import (
     python_object_to_bytes,
     transitions_to_bytes,
 )
-from lerobot.scripts.server.gym_manipulator import get_classifier, make_robot_env
+from lerobot.scripts.server.gym_manipulator import make_robot_env
 from lerobot.scripts.server.network_utils import (
     receive_bytes_in_chunks,
     send_bytes_in_chunks,
@@ -444,7 +444,7 @@ def receive_policy(
 
         # Initialize logging with explicit log file
         init_logging(log_file=log_file)
-        logging.info(f"Actor receive policy process logging initialized")
+        logging.info("Actor receive policy process logging initialized")
 
         # Setup process handlers to handle shutdown signal
         # But use shutdown event from the main process
