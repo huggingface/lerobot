@@ -39,7 +39,7 @@ from lerobot.datasets.utils import (
     write_stats,
     write_tasks,
 )
-from lerobot.datasets.video_utils import concatenate_video_files, get_video_duration_in_s
+from lerobot.datasets.video_utils import concatenate_media_files, get_media_duration_in_s
 
 
 def validate_all_metadata(all_metadata: list[LeRobotDatasetMetadata]):
@@ -297,7 +297,7 @@ def aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chu
                 file_index=file_idx,
             )
 
-            src_duration = get_video_duration_in_s(src_path)
+            src_duration = get_media_duration_in_s(src_path, media_type="video")
 
             if not dst_path.exists():
                 # Store offset before incrementing
@@ -329,7 +329,7 @@ def aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chu
             else:
                 # Append to existing video file - use current accumulated offset
                 videos_idx[key]["src_to_offset"][(src_chunk_idx, src_file_idx)] = current_offset
-                concatenate_video_files(
+                concatenate_media_files(
                     [dst_path, src_path],
                     dst_path,
                 )
