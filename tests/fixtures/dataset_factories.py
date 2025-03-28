@@ -28,6 +28,7 @@ from datasets import Dataset
 
 from lerobot.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset, LeRobotDatasetMetadata
 from lerobot.datasets.utils import (
+    DEFAULT_AUDIO_PATH,
     DEFAULT_CHUNK_SIZE,
     DEFAULT_DATA_FILE_SIZE_IN_MB,
     DEFAULT_DATA_PATH,
@@ -162,6 +163,7 @@ def info_factory(features_factory):
         video_files_size_in_mb: float = DEFAULT_VIDEO_FILE_SIZE_IN_MB,
         data_path: str = DEFAULT_DATA_PATH,
         video_path: str = DEFAULT_VIDEO_PATH,
+        audio_path: str = DEFAULT_AUDIO_PATH,
         motor_features: dict = DUMMY_MOTOR_FEATURES,
         camera_features: dict = DUMMY_CAMERA_FEATURES,
         use_videos: bool = True,
@@ -181,6 +183,7 @@ def info_factory(features_factory):
             "splits": {},
             "data_path": data_path,
             "video_path": video_path if use_videos else None,
+            "audio_path": audio_path,
             "features": features,
         }
 
