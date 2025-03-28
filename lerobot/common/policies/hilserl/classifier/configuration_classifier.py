@@ -1,10 +1,9 @@
-from dataclasses import dataclass, field
-from typing import Dict, List
+from dataclasses import dataclass
+from typing import List
 
 from lerobot.common.optim.optimizers import AdamWConfig, OptimizerConfig
 from lerobot.common.optim.schedulers import LRSchedulerConfig
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import FeatureType, PolicyFeature
 
 
 @PreTrainedConfig.register_subclass(name="hilserl_classifier")

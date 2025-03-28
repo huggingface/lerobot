@@ -515,7 +515,7 @@ class ReplayBuffer:
             frame_dict["action"] = self.actions[actual_idx].cpu()
             frame_dict["next.reward"] = torch.tensor([self.rewards[actual_idx]], dtype=torch.float32).cpu()
             frame_dict["next.done"] = torch.tensor([self.dones[actual_idx]], dtype=torch.bool).cpu()
-            
+
             # Add task field which is required by LeRobotDataset
             frame_dict["task"] = task_name
 
