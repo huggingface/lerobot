@@ -20,6 +20,7 @@ from functools import cached_property
 from typing import Any
 
 from lerobot.cameras.utils import make_cameras_from_configs
+from lerobot.microphones.utils import make_microphones_from_configs
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.dynamixel import (
     DynamixelMotorsBus,
@@ -61,6 +62,7 @@ class KochFollower(Robot):
             calibration=self.calibration,
         )
         self.cameras = make_cameras_from_configs(config.cameras)
+        self.microphones = make_microphones_from_configs(config.microphones)
 
     @property
     def _motors_ft(self) -> dict[str, type]:
@@ -72,9 +74,16 @@ class KochFollower(Robot):
             cam: (self.config.cameras[cam].height, self.config.cameras[cam].width, 3) for cam in self.cameras
         }
 
+    @property
+    def _microphones_ft(self) -> dict[str, tuple]:
+        return {
+            mic: (self.config.microphones[mic].sampling_rate, self.config.microphones[mic].channels)
+            for mic in self.microphones
+        }
+
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
-        return {**self._motors_ft, **self._cameras_ft}
+        return {**self._motors_ft, **self._cameras_ft, **self._microphones_ft}
 
     @cached_property
     def action_features(self) -> dict[str, type]:
@@ -82,7 +91,11 @@ class KochFollower(Robot):
 
     @property
     def is_connected(self) -> bool:
-        return self.bus.is_connected and all(cam.is_connected for cam in self.cameras.values())
+        return (
+            self.bus.is_connected
+            and all(cam.is_connected for cam in self.cameras.values())
+            and all(mic.is_connected for mic in self.microphones.values())
+        )
 
     def connect(self, calibrate: bool = True) -> None:
         """
@@ -101,6 +114,9 @@ class KochFollower(Robot):
 
         for cam in self.cameras.values():
             cam.connect()
+
+        for mic in self.microphones.values():
+            mic.connect()
 
         self.configure()
         logger.info(f"{self} connected.")
@@ -238,5 +254,7 @@ class KochFollower(Robot):
         self.bus.disconnect(self.config.disable_torque_on_disconnect)
         for cam in self.cameras.values():
             cam.disconnect()
+        for mic in self.microphones.values():
+            mic.disconnect()
 
         logger.info(f"{self} disconnected.")
