@@ -17,21 +17,19 @@
 
 # TODO: (1) better device management
 
-from dataclasses import asdict
 import math
-from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple, Union
+from dataclasses import asdict
+from typing import Callable, List, Optional, Tuple
 
 import einops
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
-from huggingface_hub import PyTorchModelHubMixin
 from torch import Tensor
 
-from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.policies.normalize import Normalize, Unnormalize
+from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.policies.sac.configuration_sac import SACConfig
 from lerobot.common.policies.utils import get_device_from_parameters
 
