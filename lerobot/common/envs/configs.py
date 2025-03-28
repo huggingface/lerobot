@@ -14,10 +14,12 @@
 
 import abc
 from dataclasses import dataclass, field
+from typing import Any, Dict, Optional, Tuple
 
 import draccus
 
 from lerobot.common.constants import ACTION, OBS_ENV, OBS_IMAGE, OBS_IMAGES, OBS_ROBOT
+from lerobot.common.robot_devices.robots.configs import RobotConfig
 from lerobot.configs.types import FeatureType, PolicyFeature
 
 
@@ -159,20 +161,84 @@ class XarmEnv(EnvConfig):
 @dataclass
 class VideoRecordConfig:
     """Configuration for video recording in ManiSkill environments."""
+
     enabled: bool = False
     record_dir: str = "videos"
     trajectory_name: str = "trajectory"
 
+
 @dataclass
 class WrapperConfig:
     """Configuration for environment wrappers."""
+
     delta_action: float | None = None
     joint_masking_action_space: list[bool] | None = None
+
+
+@dataclass
+class EEActionSpaceConfig:
+    """Configuration parameters for end-effector action space."""
+
+    x_step_size: float
+    y_step_size: float
+    z_step_size: float
+    bounds: Dict[str, Any]  # Contains 'min' and 'max' keys with position bounds
+    use_gamepad: bool = False
+
+
+@dataclass
+class EnvWrapperConfig:
+    """Configuration for environment wrappers."""
+
+    display_cameras: bool = False
+    delta_action: float = 0.1
+    use_relative_joint_positions: bool = True
+    add_joint_velocity_to_observation: bool = False
+    add_ee_pose_to_observation: bool = False
+    crop_params_dict: Optional[Dict[str, Tuple[int, int, int, int]]] = None
+    resize_size: Optional[Tuple[int, int]] = None
+    control_time_s: float = 20.0
+    fixed_reset_joint_positions: Optional[Any] = None
+    reset_time_s: float = 5.0
+    joint_masking_action_space: Optional[Any] = None
+    ee_action_space_params: Optional[EEActionSpaceConfig] = None
+    use_gripper: bool = False
+
+
+@EnvConfig.register_subclass(name="gym_manipulator")
+@dataclass
+class HILSerlRobotEnvConfig(EnvConfig):
+    """Configuration for the HILSerlRobotEnv environment."""
+
+    robot: Optional[RobotConfig] = None
+    wrapper: Optional[EnvWrapperConfig] = None
+    fps: int = 10
+    name: str = "real_robot"
+    mode: str = None  # Either "record", "replay", None
+    repo_id: Optional[str] = None
+    dataset_root: Optional[str] = None
+    task: str = ""
+    num_episodes: int = 10  # only for record mode
+    episode: int = 0
+    device: str = "cuda"
+    push_to_hub: bool = True
+    pretrained_policy_name_or_path: Optional[str] = None
+    reward_classifier: dict[str, str | None] = field(
+        default_factory=lambda: {
+            "pretrained_path": None,
+            "config_path": None,
+        }
+    )
+
+    def gym_kwargs(self) -> dict:
+        return {}
+
 
 @EnvConfig.register_subclass("maniskill_push")
 @dataclass
 class ManiskillEnvConfig(EnvConfig):
     """Configuration for the ManiSkill environment."""
+
     name: str = "maniskill/pushcube"
     task: str = "PushCube-v1"
     image_size: int = 64
@@ -185,7 +251,7 @@ class ManiskillEnvConfig(EnvConfig):
     render_mode: str = "rgb_array"
     render_size: int = 64
     device: str = "cuda"
-    robot: str = "so100" # This is a hack to make the robot config work
+    robot: str = "so100"  # This is a hack to make the robot config work
     video_record: VideoRecordConfig = field(default_factory=VideoRecordConfig)
     wrapper: WrapperConfig = field(default_factory=WrapperConfig)
     features: dict[str, PolicyFeature] = field(

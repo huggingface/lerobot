@@ -29,6 +29,9 @@ class InputController:
         self.z_step_size = z_step_size
         self.running = True
         self.episode_end_status = None  # None, "success", or "failure"
+        self.intervention_flag = False
+        self.open_gripper_command = False
+        self.close_gripper_command = False
 
     def start(self):
         """Start the controller and initialize resources."""
@@ -69,6 +72,19 @@ class InputController:
         status = self.episode_end_status
         self.episode_end_status = None  # Reset after reading
         return status
+
+    def should_intervene(self):
+        """Return True if intervention flag was set."""
+        return self.intervention_flag
+
+    def gripper_command(self):
+        """Return the current gripper command."""
+        if self.open_gripper_command == self.close_gripper_command:
+            return "no-op"
+        elif self.open_gripper_command:
+            return "open"
+        elif self.close_gripper_command:
+            return "close"
 
 
 class KeyboardController(InputController):
@@ -326,7 +342,6 @@ class GamepadControllerHID(InputController):
         self.buttons = {}
         self.quit_requested = False
         self.save_requested = False
-        self.intervention_flag = False
 
     def find_device(self):
         """Look for the gamepad device by vendor and product ID."""
@@ -416,7 +431,13 @@ class GamepadControllerHID(InputController):
                     buttons = data[5]
 
                     # Check if RB is pressed then the intervention flag should be set
-                    self.intervention_flag = data[6] == 2
+                    self.intervention_flag = data[6] in [2, 6, 10, 14]
+
+                    # Check if RT is pressed
+                    self.open_gripper_command = data[6] in [8, 10, 12]
+
+                    # Check if LT is pressed
+                    self.close_gripper_command = data[6] in [4, 6, 12]
 
                     # Check if Y/Triangle button (bit 7) is pressed for saving
                     # Check if X/Square button (bit 5) is pressed for failure
@@ -676,12 +697,8 @@ def teleoperate_gym_env(env, controller, fps: int = 30):
 if __name__ == "__main__":
     from lerobot.common.robot_devices.robots.configs import RobotConfig
     from lerobot.common.robot_devices.robots.utils import make_robot_from_config
-    from lerobot.scripts.server.gym_manipulator import (
-        EEActionSpaceConfig,
-        EnvWrapperConfig,
-        HILSerlRobotEnvConfig,
-        make_robot_env,
-    )
+    from lerobot.scripts.server.gym_manipulator import make_robot_env
+    from lerobot.common.envs.configs import HILSerlRobotEnvConfig, EEActionSpaceConfig, EnvWrapperConfig
 
     parser = argparse.ArgumentParser(description="Test end-effector control")
     parser.add_argument(

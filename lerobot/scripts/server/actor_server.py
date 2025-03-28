@@ -28,7 +28,6 @@ from torch.multiprocessing import Event, Queue
 # TODO: Remove the import of maniskill
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.sac.modeling_sac import SACPolicy
-from lerobot.common.robot_devices.robots.utils import Robot, make_robot
 from lerobot.common.robot_devices.utils import busy_wait
 from lerobot.common.utils.random_utils import set_seed
 from lerobot.common.utils.utils import (
@@ -268,7 +267,7 @@ def update_policy_parameters(policy: SACPolicy, parameters_queue: Queue, device)
 
 def act_with_policy(
     cfg: TrainPipelineConfig,
-    robot: Robot,
+    # robot: Robot,
     reward_classifier: nn.Module,
     shutdown_event: any,  # Event,
     parameters_queue: Queue,
@@ -287,7 +286,7 @@ def act_with_policy(
 
     logging.info("make_env online")
 
-    online_env = make_robot_env( cfg=cfg.env)
+    online_env = make_robot_env(cfg=cfg.env)
 
     set_seed(cfg.seed)
     device = get_safe_torch_device(cfg.policy.device, log=True)
@@ -503,7 +502,6 @@ def actor_cli(cfg: TrainPipelineConfig):
         mp.set_start_method("spawn")
 
     init_logging(log_file="actor.log")
-    robot = make_robot(robot_type=cfg.env.robot)
 
     shutdown_event = setup_process_handlers(use_threads(cfg))
 
@@ -563,18 +561,17 @@ def actor_cli(cfg: TrainPipelineConfig):
     # HACK: FOR MANISKILL we do not have a reward classifier
     # TODO: Remove this once we merge into main
     reward_classifier = None
-    if (
-        cfg.env.reward_classifier["pretrained_path"] is not None
-        and cfg.env.reward_classifier["config_path"] is not None
-    ):
-        reward_classifier = get_classifier(
-            pretrained_path=cfg.env.reward_classifier["pretrained_path"],
-            config_path=cfg.env.reward_classifier["config_path"],
-        )
+    # if (
+    #     cfg.env.reward_classifier["pretrained_path"] is not None
+    #     and cfg.env.reward_classifier["config_path"] is not None
+    # ):
+    #     reward_classifier = get_classifier(
+    #         pretrained_path=cfg.env.reward_classifier["pretrained_path"],
+    #         config_path=cfg.env.reward_classifier["config_path"],
+    #     )
 
     act_with_policy(
         cfg=cfg,
-        robot=robot,
         reward_classifier=reward_classifier,
         shutdown_event=shutdown_event,
         parameters_queue=parameters_queue,

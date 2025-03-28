@@ -53,9 +53,7 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
 
         # sanity check that images are channel last
         _, h, w, c = img.shape
-        assert c < h and c < w, (
-            f"expect channel last images, but instead got {img.shape=}"
-        )
+        assert c < h and c < w, f"expect channel last images, but instead got {img.shape=}"
 
         # sanity check that images are uint8
         assert img.dtype == torch.uint8, f"expect torch.uint8, but instead {img.dtype=}"
@@ -95,7 +93,7 @@ def env_to_policy_features(env_cfg: EnvConfig) -> dict[str, PolicyFeature]:
         else:
             feature = ft
 
-        policy_key = env_cfg.features_map[key]
+        policy_key = env_cfg.features_map.get(key, key)
         policy_features[policy_key] = feature
 
     return policy_features
