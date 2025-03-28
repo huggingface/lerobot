@@ -135,18 +135,6 @@ class SACConfig(PreTrainedConfig):
         }
     )
 
-    input_features: dict[str, PolicyFeature] = field(
-        default_factory=lambda: {
-            "observation.image": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 64, 64)),
-            "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(2,)),
-        }
-    )
-    output_features: dict[str, PolicyFeature] = field(
-        default_factory=lambda: {
-            "action": PolicyFeature(type=FeatureType.ACTION, shape=(3,)),
-        }
-    )
-
     # Architecture specifics
     camera_number: int = 1
     device: str = "cuda"
