@@ -48,18 +48,32 @@ def flex_attention_forward(
 
     key_states = key_states[:, :, :, None, :]
     key_states = key_states.expand(
-        batch_size, key_states.shape[1], num_key_value_heads, num_key_value_groups, head_dim
+        batch_size,
+        key_states.shape[1],
+        num_key_value_heads,
+        num_key_value_groups,
+        head_dim,
     )
     key_states = key_states.reshape(
-        batch_size, key_states.shape[1], num_key_value_heads * num_key_value_groups, head_dim
+        batch_size,
+        key_states.shape[1],
+        num_key_value_heads * num_key_value_groups,
+        head_dim,
     )
 
     value_states = value_states[:, :, :, None, :]
     value_states = value_states.expand(
-        batch_size, value_states.shape[1], num_key_value_heads, num_key_value_groups, head_dim
+        batch_size,
+        value_states.shape[1],
+        num_key_value_heads,
+        num_key_value_groups,
+        head_dim,
     )
     value_states = value_states.reshape(
-        batch_size, value_states.shape[1], num_key_value_heads * num_key_value_groups, head_dim
+        batch_size,
+        value_states.shape[1],
+        num_key_value_heads * num_key_value_groups,
+        head_dim,
     )
 
     query_states = query_states.transpose(1, 2)

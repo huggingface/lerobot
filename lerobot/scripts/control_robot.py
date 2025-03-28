@@ -269,10 +269,12 @@ def record(
     # Load pretrained policy
     policy = None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
 
+    # Load pretrained policy
+    policy = None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
+
     if not robot.is_connected:
         robot.connect()
-
-    listener, events = init_keyboard_listener()
+    listener, events = init_keyboard_listener(assign_rewards=cfg.assign_rewards)
 
     # Execute a few seconds without recording to:
     # 1. teleoperate the robot to move it in starting position if no policy provided,
@@ -280,7 +282,14 @@ def record(
     # 3. place the cameras windows on screen
     enable_teleoperation = policy is None
     log_say("Warmup record", cfg.play_sounds)
-    warmup_record(robot, events, enable_teleoperation, cfg.warmup_time_s, cfg.display_cameras, cfg.fps)
+    warmup_record(
+        robot,
+        events,
+        enable_teleoperation,
+        cfg.warmup_time_s,
+        cfg.display_cameras,
+        cfg.fps,
+    )
 
     if has_method(robot, "teleop_safety_stop"):
         robot.teleop_safety_stop()
@@ -345,15 +354,17 @@ def replay(
 
     dataset = LeRobotDataset(cfg.repo_id, root=cfg.root, episodes=[cfg.episode])
     actions = dataset.hf_dataset.select_columns("action")
-
     if not robot.is_connected:
         robot.connect()
 
     log_say("Replaying episode", cfg.play_sounds, blocking=True)
     for idx in range(dataset.num_frames):
+        current_joint_positions = robot.follower_arms["main"].read("Present_Position")
         start_episode_t = time.perf_counter()
 
         action = actions[idx]["action"]
+        # if replay_delta_actions:
+        #     action = action + current_joint_positions
         robot.send_action(action)
 
         dt_s = time.perf_counter() - start_episode_t

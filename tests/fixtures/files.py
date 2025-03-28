@@ -102,7 +102,10 @@ def episode_path(episodes_factory):
 @pytest.fixture(scope="session")
 def single_episode_parquet_path(hf_dataset_factory, info_factory):
     def _create_single_episode_parquet(
-        dir: Path, ep_idx: int = 0, hf_dataset: datasets.Dataset | None = None, info: dict | None = None
+        dir: Path,
+        ep_idx: int = 0,
+        hf_dataset: datasets.Dataset | None = None,
+        info: dict | None = None,
     ) -> Path:
         if not info:
             info = info_factory()
