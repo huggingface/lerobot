@@ -2,15 +2,20 @@
 
 ## Table of Contents
 
-  - [A. Teleoperate](#a-teleoperate)
-  - [B. Record a dataset](#b-record-a-dataset)
-  - [C. Visualize a dataset](#c-visualize-a-dataset)
-  - [D. Replay an episode](#d-replay-an-episode)
-  - [E. Train a policy](#e-train-a-policy)
-  - [F. Evaluate your policy](#f-evaluate-your-policy)
-  - [G. More Information](#g-more-information)
+  - [A. Install LeRobot](#a-install-lerobot)
+  - [B. Teleoperate](#b-teleoperate)
+  - [C. Record a dataset](#c-record-a-dataset)
+  - [D. Visualize a dataset](#d-visualize-a-dataset)
+  - [E. Replay an episode](#e-replay-an-episode)
+  - [F. Train a policy](#f-train-a-policy)
+  - [G. Evaluate your policy](#g-evaluate-your-policy)
+  - [H. More Information](#h-more-information)
 
-## A. Teleoperate
+## A. Install LeRobot
+
+Before running the following commands, make sure you have installed LeRobot by following the [installation instructions](https://github.com/lerobot/lerobot/blob/main/README.md).
+
+## B. Teleoperate
 
 **Simple teleop**
 #### a. Teleop without displaying cameras
@@ -22,7 +27,6 @@ python lerobot/scripts/control_robot.py \
   --control.type=teleoperate
 ```
 
-
 #### b. Teleop with displaying cameras
 You will be able to display the cameras while you are teleoperating by running the following code. This is useful to prepare your setup before recording your first dataset.
 ```bash
@@ -31,7 +35,7 @@ python lerobot/scripts/control_robot.py \
   --control.type=teleoperate
 ```
 
-## B. Record a dataset
+## C. Record a dataset
 
 Once you're familiar with teleoperation, you can record your first dataset with roarm_m3.
 
@@ -64,7 +68,7 @@ python lerobot/scripts/control_robot.py \
 
 Note: You can resume recording by adding `--control.resume=true`.
 
-## C. Visualize a dataset
+## D. Visualize a dataset
 
 If you uploaded your dataset to the hub with `--control.push_to_hub=true`, you can [visualize your dataset online](https://huggingface.co/spaces/lerobot/visualize_dataset) by copy pasting your repo id given by:
 ```bash
@@ -79,7 +83,7 @@ python lerobot/scripts/visualize_dataset_html.py \
   --local-files-only 1
 ```
 
-## D. Replay an episode
+## E. Replay an episode
 
 Now try to replay episode nth on your bot:
 ```bash
@@ -91,7 +95,7 @@ python lerobot/scripts/control_robot.py \
   --control.episode=n-1
 ```
 
-## E. Train a policy
+## F. Train a policy
 
 To train a policy to control your robot, use the [`python lerobot/scripts/train.py`](../lerobot/scripts/train.py) script. A few arguments are required. Here is an example command:
 ```bash
@@ -112,7 +116,7 @@ Let's explain it:
 
 Training should take several hours. You will find checkpoints in `outputs/train/act_roarm_m3_test/checkpoints`.
 
-## F. Evaluate your policy
+## G. Evaluate your policy
 
 You can use the `record` function from [`lerobot/scripts/control_robot.py`](../lerobot/scripts/control_robot.py) but with a policy checkpoint as input. For instance, run this command to record 10 evaluation episodes:
 ```bash
@@ -135,6 +139,6 @@ As you can see, it's almost the same command as previously used to record your t
 1. There is an additional `--control.policy.path` argument which indicates the path to your policy checkpoint with  (e.g. `outputs/train/eval_act_roarm_m3_test/checkpoints/last/pretrained_model`). You can also use the model repository if you uploaded a model checkpoint to the hub (e.g. `${HF_USER}/act_roarm_m3_test`).
 2. The name of dataset begins by `eval` to reflect that you are running inference (e.g. `${HF_USER}/eval_act_roarm_m3_test`).
 
-## G. More Information
+## H. More Information
 
 Follow this [previous tutorial](https://github.com/huggingface/lerobot/blob/main/examples/7_get_started_with_real_robot.md#4-train-a-policy-on-your-data) for a more in-depth tutorial on controlling real robots with LeRobot.
