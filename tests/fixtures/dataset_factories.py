@@ -29,6 +29,7 @@ from lerobot.common.datasets.utils import (
     DEFAULT_FEATURES,
     DEFAULT_PARQUET_PATH,
     DEFAULT_VIDEO_PATH,
+    DEFAULT_COMPRESSED_AUDIO_PATH,
     get_hf_features_from_features,
     hf_transform_to_torch,
 )
@@ -121,6 +122,7 @@ def info_factory(features_factory):
         chunks_size: int = DEFAULT_CHUNK_SIZE,
         data_path: str = DEFAULT_PARQUET_PATH,
         video_path: str = DEFAULT_VIDEO_PATH,
+        audio_path: str = DEFAULT_COMPRESSED_AUDIO_PATH,
         motor_features: dict = DUMMY_MOTOR_FEATURES,
         camera_features: dict = DUMMY_CAMERA_FEATURES,
         use_videos: bool = True,
@@ -139,6 +141,7 @@ def info_factory(features_factory):
             "splits": {},
             "data_path": data_path,
             "video_path": video_path if use_videos else None,
+            "audio_path": audio_path,
             "features": features,
         }
 
