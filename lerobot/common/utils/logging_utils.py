@@ -94,7 +94,7 @@ class MetricsTracker:
         metrics: dict[str, AverageMeter],
         initial_step: int = 0,
     ):
-        self.__dict__.update({k: None for k in self.__keys__})
+        self.__dict__.update(dict.fromkeys(self.__keys__))
         self._batch_size = batch_size
         self._num_frames = num_frames
         self._avg_samples_per_ep = num_frames / num_episodes
