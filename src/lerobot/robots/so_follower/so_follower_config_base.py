@@ -17,6 +17,7 @@
 from dataclasses import dataclass, field
 
 from lerobot.cameras import CameraConfig
+from lerobot.microphones import MicrophoneConfig
 
 from ..config import RobotConfig
 
@@ -37,6 +38,9 @@ class SOFollowerConfigBase(RobotConfig):
 
     # cameras
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
+
+    # microphones
+    microphones: dict[str, MicrophoneConfig] = field(default_factory=dict)
 
     # Set to `True` for backward compatibility with previous policies/dataset
     use_degrees: bool = False
