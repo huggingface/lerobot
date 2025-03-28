@@ -21,6 +21,7 @@ from typing import Any
 import numpy as np
 
 from lerobot.cameras import make_cameras_from_configs
+from lerobot.microphones import make_microphones_from_configs
 from lerobot.errors import DeviceNotConnectedError
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.motors import Motor, MotorNormMode
@@ -59,6 +60,7 @@ class SO100FollowerEndEffector(SO100Follower):
         )
 
         self.cameras = make_cameras_from_configs(config.cameras)
+        self.microphones = make_microphones_from_configs(config.microphones)
 
         self.config = config
 

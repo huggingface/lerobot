@@ -15,6 +15,7 @@
 from dataclasses import dataclass, field
 
 from lerobot.cameras import CameraConfig
+from lerobot.microphones import MicrophoneConfig
 
 from ..config import RobotConfig
 
@@ -43,3 +44,6 @@ class ViperXConfig(RobotConfig):
     # Troubleshooting: If one of your IntelRealSense cameras freeze during
     # data recording due to bandwidth limit, you might need to plug the camera
     # on another USB hub or PCIe card.
+
+    # microphones
+    microphones: dict[str, MicrophoneConfig] = field(default_factory=dict)
