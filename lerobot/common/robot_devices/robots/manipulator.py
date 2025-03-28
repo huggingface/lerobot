@@ -216,7 +216,7 @@ class ManipulatorRobot:
 
     @property
     def features(self):
-        return {**self.motor_features, **self.camera_features}
+        return {**self.motor_features, **self.camera_features, **self.microphones_features}
 
     @property
     def has_camera(self):
