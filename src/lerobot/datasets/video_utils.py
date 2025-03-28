@@ -362,39 +362,6 @@ with warnings.catch_warnings():
     # to make VideoFrame available in HuggingFace `datasets`
     register_feature(VideoFrame, "VideoFrame")
 
-
-def get_audio_info(video_path: Path | str) -> dict:
-    # Set logging level
-    logging.getLogger("libav").setLevel(av.logging.ERROR)
-
-    # Getting audio stream information
-    audio_info = {}
-    with av.open(str(video_path), "r") as audio_file:
-        try:
-            audio_stream = audio_file.streams.audio[0]
-        except IndexError:
-            # Reset logging level
-            av.logging.restore_default_callback()
-            return {"has_audio": False}
-
-        audio_info["audio.channels"] = audio_stream.channels
-        audio_info["audio.codec"] = audio_stream.codec.canonical_name
-        # In an ideal loseless case : bit depth x sample rate x channels = bit rate.
-        # In an actual compressed case, the bit rate is set according to the compression level : the lower the bit rate, the more compression is applied.
-        audio_info["audio.bit_rate"] = audio_stream.bit_rate
-        audio_info["audio.sample_rate"] = audio_stream.sample_rate  # Number of samples per second
-        # In an ideal loseless case : fixed number of bits per sample.
-        # In an actual compressed case : variable number of bits per sample (often reduced to match a given depth rate).
-        audio_info["audio.bit_depth"] = audio_stream.format.bits
-        audio_info["audio.channel_layout"] = audio_stream.layout.name
-        audio_info["has_audio"] = True
-
-    # Reset logging level
-    av.logging.restore_default_callback()
-
-    return audio_info
-
-
 def get_video_info(video_path: Path | str) -> dict:
     # Set logging level
     logging.getLogger("libav").setLevel(av.logging.ERROR)
@@ -423,9 +390,6 @@ def get_video_info(video_path: Path | str) -> dict:
 
     # Reset logging level
     av.logging.restore_default_callback()
-
-    # Adding audio stream information
-    video_info.update(**get_audio_info(video_path))
 
     return video_info
 
@@ -456,12 +420,12 @@ def get_image_pixel_channels(image: Image):
 
 class VideoEncodingManager:
     """
-    Context manager that ensures proper video encoding and data cleanup even if exceptions occur.
+    Context manager that ensures proper video and audio encoding and data cleanup even if exceptions occur.
 
     This manager handles:
     - Batch encoding for any remaining episodes when recording interrupted
-    - Cleaning up temporary image files from interrupted episodes
-    - Removing empty image directories
+    - Cleaning up temporary image and audio files from interrupted episodes
+    - Removing empty image and audio directories
 
     Args:
         dataset: The LeRobotDataset instance
@@ -488,6 +452,7 @@ class VideoEncodingManager:
                 f"from episode {start_ep} to {end_ep - 1}"
             )
             self.dataset.batch_encode_videos(start_ep, end_ep)
+            self.dataset.batch_encode_audio(start_ep, end_ep)
 
         # Clean up episode images if recording was interrupted
         if exc_type is not None:
@@ -501,6 +466,15 @@ class VideoEncodingManager:
                         f"Cleaning up interrupted episode images for episode {interrupted_episode_index}, camera {key}"
                     )
                     shutil.rmtree(img_dir)
+            for key in self.dataset.meta.audio_keys:
+                audio_dir = self.dataset._get_audio_file_path(
+                    episode_index=interrupted_episode_index, audio_key=key
+                ).parent
+                if audio_dir.exists():
+                    logging.debug(
+                        f"Cleaning up interrupted episode audio for episode {interrupted_episode_index}, microphone {key}"
+                    )
+                    shutil.rmtree(audio_dir)
 
         # Clean up any remaining images directory if it's empty
         img_dir = self.dataset.root / "images"
@@ -513,5 +487,17 @@ class VideoEncodingManager:
                 logging.debug("Cleaned up empty images directory")
         else:
             logging.debug(f"Images directory is not empty, containing {len(png_files)} PNG files")
+
+        # Clean up any remaining audio directory if it's empty
+        audio_dir = self.dataset.root / "raw_audio"
+        # Check for any remaining PNG files
+        wav_files = list(audio_dir.rglob("*.wav"))
+        if len(wav_files) == 0:
+            # Only remove the images directory if no PNG files remain
+            if audio_dir.exists():
+                shutil.rmtree(audio_dir)
+                logging.debug("Cleaned up empty audio directory")
+        else:
+            logging.debug(f"Audio directory is not empty, containing {len(wav_files)} WAV files")
 
         return False  # Don't suppress the original exception
