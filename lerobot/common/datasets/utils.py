@@ -55,6 +55,10 @@ TASKS_PATH = "meta/tasks.jsonl"
 DEFAULT_VIDEO_PATH = "videos/chunk-{episode_chunk:03d}/{video_key}/episode_{episode_index:06d}.mp4"
 DEFAULT_PARQUET_PATH = "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet"
 DEFAULT_IMAGE_PATH = "images/{image_key}/episode_{episode_index:06d}/frame_{frame_index:06d}.png"
+DEFAULT_RAW_AUDIO_PATH = "audio/{audio_key}/episode_{episode_index:06d}.wav"
+DEFAULT_COMPRESSED_AUDIO_PATH = "audio/chunk-{episode_chunk:03d}/{audio_key}/episode_{episode_index:06d}.m4a"
+
+DEFAULT_AUDIO_CHUNK_DURATION = 0.5  # seconds
 
 DATASET_CARD_TEMPLATE = """
 ---
@@ -363,7 +367,7 @@ def get_safe_version(repo_id: str, version: str | packaging.version.Version) -> 
 def get_hf_features_from_features(features: dict) -> datasets.Features:
     hf_features = {}
     for key, ft in features.items():
-        if ft["dtype"] == "video":
+        if ft["dtype"] == "video" or ft["dtype"] == "audio":
             continue
         elif ft["dtype"] == "image":
             hf_features[key] = datasets.Image()
@@ -394,7 +398,13 @@ def get_features_from_robot(robot: Robot, use_videos: bool = True) -> dict:
             key: {"dtype": "video" if use_videos else "image", **ft}
             for key, ft in robot.camera_features.items()
         }
-    return {**robot.motor_features, **camera_ft, **DEFAULT_FEATURES}
+    microphones_ft = {}
+    if robot.microphones:
+        microphones_ft = {
+            key: {"dtype": "audio", **ft}
+            for key, ft in robot.microphones_features.items()
+        }
+    return {**robot.motor_features, **camera_ft, **microphones_ft, **DEFAULT_FEATURES}
 
 
 def dataset_to_policy_features(features: dict[str, dict]) -> dict[str, PolicyFeature]:
@@ -448,6 +458,7 @@ def create_empty_dataset_info(
         "splits": {},
         "data_path": DEFAULT_PARQUET_PATH,
         "video_path": DEFAULT_VIDEO_PATH if use_videos else None,
+        "audio_path": DEFAULT_COMPRESSED_AUDIO_PATH,
         "features": features,
     }
 
@@ -721,6 +732,7 @@ def validate_features_presence(
 ):
     error_message = ""
     missing_features = expected_features - actual_features
+    missing_features =  {feature for feature in missing_features if "observation.audio" not in feature}
     extra_features = actual_features - (expected_features | optional_features)
 
     if missing_features or extra_features:
