@@ -223,6 +223,10 @@ def record_loop(
     if policy is not None:
         policy.reset()
 
+    if dataset is not None:
+        for microphone_key, microphone in robot.microphones.items():
+            dataset.add_microphone_recording(microphone, microphone_key)
+
     timestamp = 0
     start_episode_t = time.perf_counter()
     while timestamp < control_time_s:
@@ -283,6 +287,8 @@ def record_loop(
 
         timestamp = time.perf_counter() - start_episode_t
 
+    for _, microphone in robot.microphones.items():
+        microphone.stop_recording()
 
 @parser.wrap()
 def record(cfg: RecordConfig) -> LeRobotDataset:

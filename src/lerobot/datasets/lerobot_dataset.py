@@ -80,6 +80,8 @@ from lerobot.datasets.video_utils import (
     get_safe_default_codec,
     get_video_info,
 )
+from lerobot.robots import Robot
+from lerobot.microphones import Microphone
 
 CODEBASE_VERSION = "v2.1"
 
@@ -893,6 +895,17 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 self.episode_buffer[key].append(frame[key])
 
         self.episode_buffer["size"] += 1
+
+    def add_microphone_recording(self, microphone: Microphone, microphone_key: str) -> None:
+        """
+        This function will start recording audio from the microphone and save it to disk.
+        """
+
+        audio_dir = self._get_raw_audio_file_path(self.num_episodes, "observation.audio." + microphone_key).parent
+        if not audio_dir.is_dir():
+            audio_dir.mkdir(parents=True, exist_ok=True)
+        
+        microphone.start_recording(output_file = self._get_raw_audio_file_path(self.num_episodes, "observation.audio." + microphone_key))
 
     def save_episode(self, episode_data: dict | None = None) -> None:
         """
