@@ -238,9 +238,8 @@ class Microphone:
             self.thread.daemon = True
             self.thread.start()
             
-        self.stream.start()
-
         self.logs["start_timestamp"] = capture_timestamp_utc()
+        self.stream.start()
 
     def stop_recording(self) -> None:
 
