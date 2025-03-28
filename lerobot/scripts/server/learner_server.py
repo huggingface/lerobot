@@ -376,8 +376,14 @@ def start_learner_server(
     cfg: TrainPipelineConfig,
 ):
     if not use_threads(cfg):
-        # We need init logging for MP separataly
-        init_logging()
+        # Create a process-specific log file
+        log_dir = os.path.join(cfg.output_dir, "logs")
+        os.makedirs(log_dir, exist_ok=True)
+        log_file = os.path.join(log_dir, f"learner_server_process_{os.getpid()}.log")
+        
+        # Initialize logging with explicit log file
+        init_logging(log_file=log_file)
+        logging.info(f"Learner server process logging initialized")
 
         # Setup process handlers to handle shutdown signal
         # But use shutdown event from the main process
@@ -499,6 +505,13 @@ def add_actor_information_and_train(
         interaction_message_queue (Queue): Queue for receiving interaction messages from the actor.
         parameters_queue (Queue): Queue for sending policy parameters to the actor.
     """
+    # Initialize logging for multiprocessing
+    if not use_threads(cfg):
+        log_dir = os.path.join(cfg.output_dir, "logs")
+        os.makedirs(log_dir, exist_ok=True)
+        log_file = os.path.join(log_dir, f"learner_train_process_{os.getpid()}.log")
+        init_logging(log_file=log_file)
+        logging.info(f"Initialized logging for actor information and training process")
 
     device = get_safe_torch_device(try_device=cfg.policy.device, log=True)
     storage_device = get_safe_torch_device(try_device=cfg.policy.storage_device)
@@ -940,7 +953,14 @@ def train(cfg: TrainPipelineConfig, job_name: str | None = None):
     if job_name is None:
         raise ValueError("Job name must be specified either in config or as a parameter")
 
-    init_logging()
+    # Create logs directory to ensure it exists
+    log_dir = os.path.join(cfg.output_dir, "logs")
+    os.makedirs(log_dir, exist_ok=True)
+    log_file = os.path.join(log_dir, f"learner_{job_name}.log")
+    
+    # Initialize logging with explicit log file
+    init_logging(log_file=log_file)
+    logging.info(f"Learner logging initialized, writing to {log_file}")
     logging.info(pformat(cfg.to_dict()))
 
     # Setup WandB logging if enabled

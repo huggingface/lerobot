@@ -18,6 +18,7 @@ import time
 from functools import lru_cache
 from queue import Empty
 from statistics import mean, quantiles
+import os
 
 # from lerobot.scripts.eval import eval_policy
 import grpc
@@ -66,6 +67,15 @@ def receive_policy(
     logging.info("[ACTOR] Start receiving parameters from the Learner")
 
     if not use_threads(cfg):
+        # Create a process-specific log file
+        log_dir = os.path.join(cfg.output_dir, "logs")
+        os.makedirs(log_dir, exist_ok=True)
+        log_file = os.path.join(log_dir, f"actor_receive_policy_{os.getpid()}.log")
+        
+        # Initialize logging with explicit log file
+        init_logging(log_file=log_file)
+        logging.info(f"Actor receive policy process logging initialized")
+        
         # Setup process handlers to handle shutdown signal
         # But use shutdown event from the main process
         setup_process_handlers(use_threads=False)
@@ -147,6 +157,15 @@ def send_transitions(
     """
 
     if not use_threads(cfg):
+        # Create a process-specific log file
+        log_dir = os.path.join(cfg.output_dir, "logs")
+        os.makedirs(log_dir, exist_ok=True)
+        log_file = os.path.join(log_dir, f"actor_transitions_{os.getpid()}.log")
+        
+        # Initialize logging with explicit log file
+        init_logging(log_file=log_file)
+        logging.info(f"Actor transitions process logging initialized")
+        
         # Setup process handlers to handle shutdown signal
         # But use shutdown event from the main process
         setup_process_handlers(False)
@@ -187,6 +206,15 @@ def send_interactions(
     """
 
     if not use_threads(cfg):
+        # Create a process-specific log file
+        log_dir = os.path.join(cfg.output_dir, "logs")
+        os.makedirs(log_dir, exist_ok=True)
+        log_file = os.path.join(log_dir, f"actor_interactions_{os.getpid()}.log")
+        
+        # Initialize logging with explicit log file
+        init_logging(log_file=log_file)
+        logging.info(f"Actor interactions process logging initialized")
+        
         # Setup process handlers to handle shutdown signal
         # But use shutdown event from the main process
         setup_process_handlers(False)
@@ -283,6 +311,13 @@ def act_with_policy(
     Args:
         cfg (DictConfig): Configuration settings for the interaction process.
     """
+    # Initialize logging for multiprocessing
+    if not use_threads(cfg):
+        log_dir = os.path.join(cfg.output_dir, "logs")
+        os.makedirs(log_dir, exist_ok=True)
+        log_file = os.path.join(log_dir, f"actor_policy_{os.getpid()}.log")
+        init_logging(log_file=log_file)
+        logging.info(f"Actor policy process logging initialized")
 
     logging.info("make_env online")
 
@@ -496,12 +531,20 @@ def use_threads(cfg: TrainPipelineConfig) -> bool:
 
 @parser.wrap()
 def actor_cli(cfg: TrainPipelineConfig):
+    cfg.validate()
     if not use_threads(cfg):
         import torch.multiprocessing as mp
 
         mp.set_start_method("spawn")
-
-    init_logging(log_file="actor.log")
+    
+    # Create logs directory to ensure it exists
+    log_dir = os.path.join(cfg.output_dir, "logs")
+    os.makedirs(log_dir, exist_ok=True)
+    log_file = os.path.join(log_dir, f"actor_{cfg.job_name}.log")
+    
+    # Initialize logging with explicit log file
+    init_logging(log_file=log_file)
+    logging.info(f"Actor logging initialized, writing to {log_file}")
 
     shutdown_event = setup_process_handlers(use_threads(cfg))
 
