@@ -27,6 +27,7 @@ from torch.optim import Optimizer
 from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.datasets.sampler import EpisodeAwareSampler
 from lerobot.common.datasets.utils import cycle
+from lerobot.common.datasets.video_utils import decode_video_frames_torchcodec
 from lerobot.common.envs.factory import make_env
 from lerobot.common.optim.factory import make_optimizer_and_scheduler
 from lerobot.common.policies.factory import make_policy
@@ -51,9 +52,7 @@ from lerobot.common.utils.wandb_utils import WandBLogger
 from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.scripts.eval import eval_policy
-from lerobot.common.datasets.video_utils import (
-    decode_video_frames_torchcodec
-)
+
 
 def update_policy(
     train_metrics: MetricsTracker,
@@ -213,12 +212,12 @@ def train(cfg: TrainPipelineConfig):
                 "to enable CUDA decoding when using `video_backend='torchcodec-gpu'`."
             )
             # add cuda decoding
-            for vid_key, timestamps_list in batch['query_timestamps'].items():
+            for vid_key, timestamps_list in batch["query_timestamps"].items():
                 frames_list = []
                 # convert list of scalar tensors to a tensor of shape [T, B]
                 query_ts = torch.stack(timestamps_list).T  # convert to shape: [B, T]
                 for i in range(query_ts.shape[0]):
-                    ep_idx = batch['episode_index'][i]
+                    ep_idx = batch["episode_index"][i]
                     timestamps = query_ts[i].tolist()
                     video_path = dataset.root / dataset.meta.get_video_file_path(ep_idx, vid_key)
                     frames = decode_video_frames_torchcodec(
