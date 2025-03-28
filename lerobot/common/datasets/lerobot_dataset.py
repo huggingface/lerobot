@@ -739,6 +739,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
             if self.video_backend != "torchcodec-gpu":
                 video_frames = self._query_videos(query_timestamps, ep_idx)
                 item = {**video_frames, **item}
+            else:
+                item["query_timestamps"] = query_timestamps
 
         if self.image_transforms is not None:
             image_keys = self.meta.camera_keys
