@@ -1,9 +1,8 @@
 import logging
 import sys
 import time
-from dataclasses import dataclass
 from threading import Lock
-from typing import Annotated, Any, Dict, Optional, Tuple
+from typing import Annotated, Any, Dict, Tuple
 
 import gymnasium as gym
 import numpy as np
@@ -17,66 +16,13 @@ from lerobot.common.robot_devices.control_utils import (
     is_headless,
     reset_follower_position,
 )
-from lerobot.common.robot_devices.robots.configs import RobotConfig
 from lerobot.common.robot_devices.robots.utils import make_robot_from_config
 from lerobot.common.utils.utils import log_say
 from lerobot.configs import parser
 from lerobot.scripts.server.kinematics import RobotKinematics
 
 logging.basicConfig(level=logging.INFO)
-
-
-@dataclass
-class EEActionSpaceConfig:
-    """Configuration parameters for end-effector action space."""
-
-    x_step_size: float
-    y_step_size: float
-    z_step_size: float
-    bounds: Dict[str, Any]  # Contains 'min' and 'max' keys with position bounds
-    use_gamepad: bool = False
-
-
-@dataclass
-class EnvWrapperConfig:
-    """Configuration for environment wrappers."""
-
-    display_cameras: bool = False
-    delta_action: float = 0.1
-    use_relative_joint_positions: bool = True
-    add_joint_velocity_to_observation: bool = False
-    add_ee_pose_to_observation: bool = False
-    crop_params_dict: Optional[Dict[str, Tuple[int, int, int, int]]] = None
-    resize_size: Optional[Tuple[int, int]] = None
-    control_time_s: float = 20.0
-    fixed_reset_joint_positions: Optional[Any] = None
-    reset_time_s: float = 5.0
-    joint_masking_action_space: Optional[Any] = None
-    ee_action_space_params: Optional[EEActionSpaceConfig] = None
-    reward_classifier_pretrained_path: Optional[str] = None
-    reward_classifier_config_file: Optional[str] = None
-
-
-@EnvConfig.register_subclass(name="gym_manipulator")
-@dataclass
-class HILSerlRobotEnvConfig(EnvConfig):
-    """Configuration for the HILSerlRobotEnv environment."""
-
-    robot: Optional[RobotConfig] = None
-    wrapper: Optional[EnvWrapperConfig] = None
-    fps: int = 10
-    mode: str = None  # Either "record", "replay", None
-    repo_id: Optional[str] = None
-    dataset_root: Optional[str] = None
-    task: str = ""
-    num_episodes: int = 10  # only for record mode
-    episode: int = 0
-    device: str = "cuda"
-    push_to_hub: bool = True
-    pretrained_policy_name_or_path: Optional[str] = None
-
-    def gym_kwargs(self) -> dict:
-        return {}
+MAX_GRIPPER_COMMAND = 25
 
 
 class HILSerlRobotEnv(gym.Env):
@@ -813,9 +759,10 @@ class BatchCompitableWrapper(gym.ObservationWrapper):
 
 
 class EEActionWrapper(gym.ActionWrapper):
-    def __init__(self, env, ee_action_space_params=None):
+    def __init__(self, env, ee_action_space_params=None, use_gripper=False):
         super().__init__(env)
         self.ee_action_space_params = ee_action_space_params
+        self.use_gripper = use_gripper
 
         # Initialize kinematics instance for the appropriate robot type
         robot_type = getattr(env.unwrapped.robot.config, "robot_type", "so100")
@@ -829,10 +776,12 @@ class EEActionWrapper(gym.ActionWrapper):
                 ee_action_space_params.z_step_size,
             ]
         )
+        if self.use_gripper:
+            action_space_bounds = np.concatenate([action_space_bounds, [1.0]])
         ee_action_space = gym.spaces.Box(
             low=-action_space_bounds,
             high=action_space_bounds,
-            shape=(3,),
+            shape=(3 + int(self.use_gripper),),
             dtype=np.float32,
         )
         if isinstance(self.action_space, gym.spaces.Tuple):
@@ -847,6 +796,10 @@ class EEActionWrapper(gym.ActionWrapper):
         desired_ee_pos = np.eye(4)
         if isinstance(action, tuple):
             action, _ = action
+
+        if self.use_gripper:
+            gripper_command = action[-1]
+            action = action[:-1]
 
         current_joint_pos = self.unwrapped.robot.follower_arms["main"].read("Present_Position")
         current_ee_pos = self.fk_function(current_joint_pos)
@@ -863,6 +816,12 @@ class EEActionWrapper(gym.ActionWrapper):
             position_only=True,
             fk_func=self.fk_function,
         )
+        if self.use_gripper:
+            gripper_command = gripper_command * MAX_GRIPPER_COMMAND
+            gripper_state = self.unwrapped.robot.follower_arms["main"].read("Present_Position")[-1]
+            gripper_action = np.clip(gripper_state + gripper_command, 0, MAX_GRIPPER_COMMAND)
+            target_joint_pos[-1] = gripper_action
+
         return target_joint_pos, is_intervention
 
 
@@ -912,6 +871,7 @@ class GamepadControlWrapper(gym.Wrapper):
         x_step_size=1.0,
         y_step_size=1.0,
         z_step_size=1.0,
+        use_gripper=False,
         auto_reset=False,
         input_threshold=0.001,
     ):
@@ -948,6 +908,7 @@ class GamepadControlWrapper(gym.Wrapper):
                 z_step_size=z_step_size,
             )
         self.auto_reset = auto_reset
+        self.use_gripper = use_gripper
         self.input_threshold = input_threshold
         self.controller.start()
 
@@ -976,6 +937,15 @@ class GamepadControlWrapper(gym.Wrapper):
 
         # Create action from gamepad input
         gamepad_action = np.array([delta_x, delta_y, delta_z], dtype=np.float32)
+
+        if self.use_gripper:
+            gripper_command = self.controller.gripper_command()
+            if gripper_command == "open":
+                gamepad_action = np.concatenate([gamepad_action, [1.0]])
+            elif gripper_command == "close":
+                gamepad_action = np.concatenate([gamepad_action, [-1.0]])
+            else:
+                gamepad_action = np.concatenate([gamepad_action, [0.0]])
 
         # Check episode ending buttons
         # We'll rely on controller.get_episode_end_status() which returns "success", "failure", or None
@@ -1023,6 +993,7 @@ class GamepadControlWrapper(gym.Wrapper):
                 final_action = (torch.from_numpy(gamepad_action), False)
             else:
                 final_action = torch.from_numpy(gamepad_action)
+
         else:
             # Use the original action
             final_action = action
@@ -1138,7 +1109,11 @@ def make_robot_env(cfg) -> gym.vector.VectorEnv:
     # env = RewardWrapper(env=env, reward_classifier=reward_classifier, device=cfg.device)
     env = TimeLimitWrapper(env=env, control_time_s=cfg.wrapper.control_time_s, fps=cfg.fps)
     if cfg.wrapper.ee_action_space_params is not None:
-        env = EEActionWrapper(env=env, ee_action_space_params=cfg.wrapper.ee_action_space_params)
+        env = EEActionWrapper(
+            env=env,
+            ee_action_space_params=cfg.wrapper.ee_action_space_params,
+            use_gripper=cfg.wrapper.use_gripper,
+        )
     if cfg.wrapper.ee_action_space_params is not None and cfg.wrapper.ee_action_space_params.use_gamepad:
         # env = ActionScaleWrapper(env=env, ee_action_space_params=cfg.wrapper.ee_action_space_params)
         env = GamepadControlWrapper(
@@ -1146,6 +1121,7 @@ def make_robot_env(cfg) -> gym.vector.VectorEnv:
             x_step_size=cfg.wrapper.ee_action_space_params.x_step_size,
             y_step_size=cfg.wrapper.ee_action_space_params.y_step_size,
             z_step_size=cfg.wrapper.ee_action_space_params.z_step_size,
+            use_gripper=cfg.wrapper.use_gripper,
         )
     else:
         env = KeyboardInterfaceWrapper(env=env)
@@ -1184,7 +1160,7 @@ def get_classifier(cfg):
     return model
 
 
-def record_dataset(env, policy, cfg: HILSerlRobotEnvConfig):
+def record_dataset(env, policy, cfg):
     """
     Record a dataset of robot interactions using either a policy or teleop.
 
