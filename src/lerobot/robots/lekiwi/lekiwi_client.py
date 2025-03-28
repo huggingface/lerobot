@@ -98,8 +98,12 @@ class LeKiwiClient(Robot):
         return {name: (cfg.height, cfg.width, 3) for name, cfg in self.config.cameras.items()}
 
     @cached_property
+    def _microphones_ft(self) -> dict[str, tuple]:
+        return {name: (cfg.sampling_rate, cfg.channels) for name, cfg in self.config.microphones.items()}
+
+    @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
-        return {**self._state_ft, **self._cameras_ft}
+        return {**self._state_ft, **self._cameras_ft, **self._microphones_ft}
 
     @cached_property
     def action_features(self) -> dict[str, type]:
