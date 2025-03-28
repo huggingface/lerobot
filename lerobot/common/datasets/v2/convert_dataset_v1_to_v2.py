@@ -167,8 +167,8 @@ def parse_robot_config(robot_cfg: RobotConfig) -> tuple[str, dict]:
             for motor in robot_cfg.leader_arms[arm].motors
         ]
     elif robot_cfg.type == "roarm_m3":
-        state_names = ["roam_m3", "roam_m3", "roam_m3", "roam_m3", "roam_m3", "roam_m3"]
-        action_names = ["roam_m3", "roam_m3", "roam_m3", "roam_m3", "roam_m3", "roam_m3"]
+        state_names = ["1", "2", "3", "4", "5", "6"]
+        action_names = ["1", "2", "3", "4", "5", "6"]
     # elif robot_cfg["robot_type"] == "stretch3": TODO
     else:
         raise NotImplementedError(
