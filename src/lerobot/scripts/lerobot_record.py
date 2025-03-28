@@ -286,6 +286,10 @@ def record_loop(
         preprocessor.reset()
         postprocessor.reset()
 
+    if dataset is not None:
+        for microphone_key, microphone in robot.microphones.items():
+            dataset.add_microphone_recording(microphone, microphone_key)
+
     timestamp = 0
     start_episode_t = time.perf_counter()
     while timestamp < control_time_s:
@@ -367,6 +371,9 @@ def record_loop(
         busy_wait(1 / fps - dt_s)
 
         timestamp = time.perf_counter() - start_episode_t
+
+    for _, microphone in robot.microphones.items():
+        microphone.stop_recording()
 
 
 @parser.wrap()
