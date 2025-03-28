@@ -494,6 +494,47 @@ class So100RobotConfig(ManipulatorRobotConfig):
     mock: bool = False
 
 
+@RobotConfig.register_subclass("roarm_m3")
+@dataclass
+class RoarmRobotConfig(RobotConfig):
+    # `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
+    # Set this to a positive scalar to have the same value for all motors, or a list that is the same length as
+    # the number of motors in your follower arms.
+    max_relative_target: int | None = None
+
+    leader_arms: dict[str, str] = field(
+        default_factory=lambda: {
+            "main": "/dev/ttyUSB0",
+        }
+    )
+
+    # Follower arms configuration: left and right ports
+    follower_arms: dict[str, str] = field(
+        default_factory=lambda: {
+            "main": "/dev/ttyUSB1",
+        }
+    )
+
+    cameras: dict[str, CameraConfig] = field(
+        default_factory=lambda: {
+            "laptop": OpenCVCameraConfig(
+                camera_index=0,
+                fps=30,
+                width=640,
+                height=480,
+            ),
+            "phone": OpenCVCameraConfig(
+                camera_index=2,
+                fps=30,
+                width=640,
+                height=480,
+            ),
+        }
+    )
+
+    mock: bool = False
+
+
 @RobotConfig.register_subclass("stretch")
 @dataclass
 class StretchRobotConfig(RobotConfig):
