@@ -28,6 +28,7 @@ import numpy as np
 import torch
 
 from lerobot.common.robot_devices.cameras.utils import make_cameras_from_configs
+from lerobot.common.robot_devices.microphones.utils import make_microphones_from_configs
 from lerobot.common.robot_devices.motors.utils import MotorsBus, make_motors_buses_from_configs
 from lerobot.common.robot_devices.robots.configs import ManipulatorRobotConfig
 from lerobot.common.robot_devices.robots.utils import get_arm_id
@@ -164,6 +165,7 @@ class ManipulatorRobot:
         self.leader_arms = make_motors_buses_from_configs(self.config.leader_arms)
         self.follower_arms = make_motors_buses_from_configs(self.config.follower_arms)
         self.cameras = make_cameras_from_configs(self.config.cameras)
+        self.microphones = make_microphones_from_configs(self.config.microphones)
         self.is_connected = False
         self.logs = {}
 
@@ -198,6 +200,18 @@ class ManipulatorRobot:
                 "names": state_names,
             },
         }
+    
+    @property
+    def microphones_features(self) -> dict:
+        mic_ft = {}
+        for mic_key, mic in self.microphones.items():
+            key = f"observation.audio.{mic_key}"
+            mic_ft[key] = {
+                "dtype": mic.data_type,
+                "shape": (mic.channels,),
+                "info": None,
+            }
+        return mic_ft
 
     @property
     def features(self):
@@ -210,6 +224,14 @@ class ManipulatorRobot:
     @property
     def num_cameras(self):
         return len(self.cameras)
+    
+    @property
+    def has_microphone(self):
+        return len(self.microphones) > 0
+    
+    @property
+    def num_microphones(self):
+        return len(self.microphones)
 
     @property
     def available_arms(self):
@@ -228,7 +250,7 @@ class ManipulatorRobot:
                 "ManipulatorRobot is already connected. Do not run `robot.connect()` twice."
             )
 
-        if not self.leader_arms and not self.follower_arms and not self.cameras:
+        if not self.leader_arms and not self.follower_arms and not self.cameras and not self.microphones:
             raise ValueError(
                 "ManipulatorRobot doesn't have any device to connect. See example of usage in docstring of the class."
             )
@@ -288,6 +310,10 @@ class ManipulatorRobot:
         # Connect the cameras
         for name in self.cameras:
             self.cameras[name].connect()
+
+        # Connect the microphones
+        for name in self.microphones:
+            self.microphones[name].connect()
 
         self.is_connected = True
 
@@ -619,6 +645,9 @@ class ManipulatorRobot:
 
         for name in self.cameras:
             self.cameras[name].disconnect()
+
+        for name in self.microphones:
+            self.microphones[name].disconnect()
 
         self.is_connected = False
 
