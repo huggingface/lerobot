@@ -258,10 +258,24 @@ class GamepadController(InputController):
                 elif event.button == 0:
                     self.episode_end_status = "rerecord_episode"
 
+                # RB button (6) for opening gripper
+                elif event.button == 6:
+                    self.open_gripper_command = True
+
+                # LT button (7) for closing gripper
+                elif event.button == 7:
+                    self.close_gripper_command = True
+
             # Reset episode status on button release
             elif event.type == pygame.JOYBUTTONUP:
                 if event.button in [0, 2, 3]:
                     self.episode_end_status = None
+
+                elif event.button == 6:
+                    self.open_gripper_command = False
+
+                elif event.button == 7:
+                    self.close_gripper_command = False
 
             # Check for RB button (typically button 5) for intervention flag
             if self.joystick.get_button(5):
@@ -297,10 +311,6 @@ class GamepadController(InputController):
         except pygame.error:
             logging.error("Error reading gamepad. Is it still connected?")
             return 0.0, 0.0, 0.0
-
-    def should_intervene(self):
-        """Return True if intervention flag was set."""
-        return self.intervention_flag
 
 
 class GamepadControllerHID(InputController):
@@ -470,10 +480,6 @@ class GamepadControllerHID(InputController):
     def should_save(self):
         """Return True if save button was pressed."""
         return self.save_requested
-
-    def should_intervene(self):
-        """Return True if intervention flag was set."""
-        return self.intervention_flag
 
 
 def test_forward_kinematics(robot, fps=10):

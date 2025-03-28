@@ -552,6 +552,8 @@ class ImageCropResizeWrapper(gym.Wrapper):
 
             obs[k] = F.crop(obs[k], *self.crop_params_dict[k])
             obs[k] = F.resize(obs[k], self.resize_size)
+            # TODO(michel-aractingi): Bug in resize, it returns values outside [0, 1]
+            obs[k] = obs[k].clamp(0.0, 1.0)
 
             # Check for NaNs after processing
             if torch.isnan(obs[k]).any():
@@ -569,6 +571,7 @@ class ImageCropResizeWrapper(gym.Wrapper):
                 obs[k] = obs[k].cpu()
             obs[k] = F.crop(obs[k], *self.crop_params_dict[k])
             obs[k] = F.resize(obs[k], self.resize_size)
+            obs[k] = obs[k].clamp(0.0, 1.0)
             obs[k] = obs[k].to(device)
         return obs, info
 
@@ -588,7 +591,7 @@ class ConvertToLeRobotObservation(gym.ObservationWrapper):
             key: observation[key].to(self.device, non_blocking=self.device.type == "cuda")
             for key in observation
         }
-        observation = {k: torch.tensor(v, device=self.device) for k, v in observation.items()}
+
         return observation
 
 
@@ -817,7 +820,14 @@ class EEActionWrapper(gym.ActionWrapper):
             fk_func=self.fk_function,
         )
         if self.use_gripper:
-            gripper_command = gripper_command * MAX_GRIPPER_COMMAND
+            # Quantize gripper command to -1, 0 or 1
+            if gripper_command < -0.2:
+                gripper_command = -1.0
+            elif gripper_command > 0.2:
+                gripper_command = 1.0
+            else:
+                gripper_command = 0.0
+
             gripper_state = self.unwrapped.robot.follower_arms["main"].read("Present_Position")[-1]
             gripper_action = np.clip(gripper_state + gripper_command, 0, MAX_GRIPPER_COMMAND)
             target_joint_pos[-1] = gripper_action
@@ -1248,7 +1258,6 @@ def record_dataset(env, policy, cfg):
 
             # Process observation for dataset
             obs = {k: v.cpu().squeeze(0).float() for k, v in obs.items()}
-            obs["observation.images.side"] = torch.clamp(obs["observation.images.side"], 0, 1)
 
             # Add frame to dataset
             frame = {**obs, **recorded_action}
