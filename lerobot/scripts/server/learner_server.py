@@ -78,7 +78,7 @@ from lerobot.scripts.server.buffer import (
 )
 from lerobot.scripts.server.utils import setup_process_handlers
 
-
+logging.basicConfig(level=logging.INFO)
 def handle_resume_logic(cfg: TrainPipelineConfig) -> TrainPipelineConfig:
     """
     Handle the resume logic for training.
