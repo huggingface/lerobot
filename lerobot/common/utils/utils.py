@@ -228,3 +228,13 @@ def is_valid_numpy_dtype_string(dtype_str: str) -> bool:
     except TypeError:
         # If a TypeError is raised, the string is not a valid dtype
         return False
+
+
+def get_elapsed_time_in_days_hours_minutes_seconds(elapsed_time_s: float):
+    days = int(elapsed_time_s // (24 * 3600))
+    elapsed_time_s %= 24 * 3600
+    hours = int(elapsed_time_s // 3600)
+    elapsed_time_s %= 3600
+    minutes = int(elapsed_time_s // 60)
+    seconds = elapsed_time_s % 60
+    return days, hours, minutes, seconds
