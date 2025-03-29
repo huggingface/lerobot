@@ -393,6 +393,10 @@ python lerobot/scripts/control_robot.py \
 ```
 
 # F. Teleoperate
+
+> [!TIP]
+> If you're using a Mac, you might need to give Terminal permission to access your keyboard. Go to System Preferences > Security & Privacy > Input Monitoring and check the box for Terminal.
+
 To teleoperate SSH into your Raspberry Pi, and run `conda activate lerobot` and this script:
 ```bash
 python lerobot/scripts/control_robot.py \
