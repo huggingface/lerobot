@@ -43,6 +43,13 @@ Teleoperation consists in manually operating the leader arms to move the followe
 2. Our code assumes that your robot has been assembled following Trossen Robotics instructions. This allows us to skip calibration, as we use the pre-defined calibration files in `.cache/calibration/aloha_default`. If you replace a motor, make sure you follow the exact instructions from Trossen Robotics.
 
 By running the following code, you can start your first **SAFE** teleoperation:
+
+> **NOTE:** To visualize the data, enable `--control.display_data=true`. This streams the data using `rerun`. You can adjust the viewer's behavior with these environment variables:
+> - `RERUN_FLUSH_NUM_BYTES`
+> - `LEROBOT_RERUN_MEMORY_LIMIT`
+> - `LEROBOT_VIEWER_IP` (only for remote robots)
+> - `LEROBOT_VIEWER_PORT` (only for remote robots)
+
 ```bash
 python lerobot/scripts/control_robot.py \
   --robot.type=aloha \

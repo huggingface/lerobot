@@ -172,8 +172,7 @@ def test_record_and_replay_and_policy(tmp_path, request, robot_type, mock):
         push_to_hub=False,
         # TODO(rcadene, aliberts): test video=True
         video=False,
-        # TODO(rcadene): display cameras through cv2 sometimes crashes on mac
-        display_cameras=False,
+        display_data=False,
         play_sounds=False,
     )
     dataset = record(robot, rec_cfg)
@@ -226,7 +225,7 @@ def test_record_and_replay_and_policy(tmp_path, request, robot_type, mock):
         num_episodes=2,
         push_to_hub=False,
         video=False,
-        display_cameras=False,
+        display_data=False,
         play_sounds=False,
         num_image_writer_processes=num_image_writer_processes,
     )
@@ -273,7 +272,7 @@ def test_resume_record(tmp_path, request, robot_type, mock):
         episode_time_s=1,
         push_to_hub=False,
         video=False,
-        display_cameras=False,
+        display_data=False,
         play_sounds=False,
         num_episodes=1,
     )
@@ -330,7 +329,7 @@ def test_record_with_event_rerecord_episode(tmp_path, request, robot_type, mock)
             num_episodes=1,
             push_to_hub=False,
             video=False,
-            display_cameras=False,
+            display_data=False,
             play_sounds=False,
         )
         dataset = record(robot, rec_cfg)
@@ -380,7 +379,7 @@ def test_record_with_event_exit_early(tmp_path, request, robot_type, mock):
             num_episodes=1,
             push_to_hub=False,
             video=False,
-            display_cameras=False,
+            display_data=False,
             play_sounds=False,
         )
 
@@ -433,7 +432,7 @@ def test_record_with_event_stop_recording(tmp_path, request, robot_type, mock, n
             num_episodes=2,
             push_to_hub=False,
             video=False,
-            display_cameras=False,
+            display_data=False,
             play_sounds=False,
             num_image_writer_processes=num_image_writer_processes,
         )
