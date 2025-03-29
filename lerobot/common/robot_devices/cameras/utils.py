@@ -44,6 +44,10 @@ def make_cameras_from_configs(camera_configs: dict[str, CameraConfig]) -> list[C
             from lerobot.common.robot_devices.cameras.intelrealsense import IntelRealSenseCamera
 
             cameras[key] = IntelRealSenseCamera(cfg)
+        elif cfg.type == "ros2":
+            from lerobot.common.robot_devices.cameras.ros2 import ROS2Camera
+
+            cameras[key] = ROS2Camera(cfg)
         else:
             raise ValueError(f"The camera type '{cfg.type}' is not valid.")
 

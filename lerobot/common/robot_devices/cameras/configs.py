@@ -112,3 +112,37 @@ class IntelRealSenseCameraConfig(CameraConfig):
 
         if self.rotation not in [-90, None, 90, 180]:
             raise ValueError(f"`rotation` must be in [-90, None, 90, 180] (got {self.rotation})")
+
+
+@CameraConfig.register_subclass("ros2")
+@dataclass
+class ROS2CameraConfig(CameraConfig):
+    """
+    Example of tested options for any camera with a ROS 2 driver:
+
+    ```python
+    ROS2CameraConfig(topic="/image_raw", fps=30, width=640, height=480)
+    ```
+    """
+
+    # TODO(Yadunund): Consider converting inputs to lists to subscribe to multiple
+    # topics with the same node.
+    topic: str
+    fps: int | None = None
+    width: int | None = None
+    height: int | None = None
+    color_mode: str = "rgb"
+    channels: int | None = None
+    rotation: int | None = None
+    mock: bool = False
+
+    def __post_init__(self):
+        if self.color_mode not in ["rgb", "bgr"]:
+            raise ValueError(
+                f"`color_mode` is expected to be 'rgb' or 'bgr', but {self.color_mode} is provided."
+            )
+
+        self.channels = 3
+
+        if self.rotation not in [-90, None, 90, 180]:
+            raise ValueError(f"`rotation` must be in [-90, None, 90, 180] (got {self.rotation})")
