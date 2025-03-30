@@ -38,6 +38,8 @@ from lerobot.common.datasets.utils import (
     DEFAULT_IMAGE_PATH,
     INFO_PATH,
     TASKS_PATH,
+    SAFETY_VIOLATIONS_PATH,
+    SAFETY_VIOLATIONS_NO_VIOLATION,
     append_jsonlines,
     backward_compatible_episodes_stats,
     check_delta_timestamps,
@@ -58,6 +60,7 @@ from lerobot.common.datasets.utils import (
     load_info,
     load_stats,
     load_tasks,
+    load_safety_violations,
     validate_episode_buffer,
     validate_frame,
     write_episode,
@@ -105,6 +108,10 @@ class LeRobotDatasetMetadata:
         check_version_compatibility(self.repo_id, self._version, CODEBASE_VERSION)
         self.tasks, self.task_to_task_index = load_tasks(self.root)
         self.episodes = load_episodes(self.root)
+
+        # load safety violations
+        self.load_safety_violations()
+        
         if self._version < packaging.version.parse("v2.1"):
             self.stats = load_stats(self.root)
             self.episodes_stats = backward_compatible_episodes_stats(self.stats, self.episodes)
@@ -125,6 +132,14 @@ class LeRobotDatasetMetadata:
             allow_patterns=allow_patterns,
             ignore_patterns=ignore_patterns,
         )
+
+    def load_safety_violations(self):
+        try:
+            safety_violations, violation_to_violation_index = load_safety_violations(self.root)
+            self.safety_violations = safety_violations
+            self.violation_to_violation_index = violation_to_violation_index
+        except Exception:
+            pass
 
     @property
     def _version(self) -> packaging.version.Version:
@@ -991,6 +1006,28 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # Save updated metadata
         write_info(self.meta.info, self.meta.root)
 
+    def save_modified_episode(self, episode_id):
+        """
+        Save the modified hf_dataset back to disk.
+        This method should be called after making modifications like adding annotations.
+        """
+        # Filter dataset for the current episode
+        def filter_func(example):
+            return example["episode_index"] == episode_id
+        
+        ep_dataset = self.hf_dataset.filter(filter_func)
+        
+        # Convert to format expected by to_parquet
+        ep_dataset.set_format(None)  # Reset format if any was set
+        
+        # Get the path for this episode's parquet file
+        ep_data_path = self.root / self.meta.get_data_file_path(ep_index=episode_id)
+        ep_data_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Save to parquet
+        print(f"Saving modified data for episode {episode_id} to {ep_data_path}")
+        ep_dataset.to_parquet(ep_data_path)
+
     def clear_episode_buffer(self) -> None:
         episode_index = self.episode_buffer["episode_index"]
         if self.image_writer is not None:
@@ -1057,6 +1094,141 @@ class LeRobotDataset(torch.utils.data.Dataset):
             encode_video_frames(img_dir, video_path, self.fps, overwrite=True)
 
         return video_paths
+    
+    def add_safety_violation(
+        self,
+        violation_description: str,
+        episode_id: int,
+        start_frame_index: int,
+        end_frame_index: int,
+    ) -> int:
+        """
+        Add a new safety violation to the dataset's metadata and apply it to 
+        frames within the specified range.
+        
+        Args:
+            violation_description: String describing the safety violation
+            episode_id: Episode index where the violation occurs
+            start_frame_index: Starting frame index within the episode (inclusive)
+            end_frame_index: Ending frame index within the episode (exclusive)
+            
+        Returns:
+            The index of the newly added safety violation
+        """
+        # Create safety_violations structure if it doesn't exist
+        if not hasattr(self.meta, 'safety_violations'):
+            self.meta.safety_violations = {}
+            self.meta.violation_to_violation_index = {}
+            
+        # Check if this violation description already exists
+        violation_index = self.meta.violation_to_violation_index.get(violation_description, None)
+        
+        # If not, create a new violation entry
+        if violation_index is None:
+            violation_index = len(self.meta.safety_violations)
+            self.meta.violation_to_violation_index[violation_description] = violation_index
+            self.meta.safety_violations[violation_index] = violation_description
+            
+            # Save to jsonl file
+            safety_violation_dict = {
+                "violation_index": violation_index,
+                "violation": violation_description,
+            }
+            
+            # Create the safety_violations.jsonl file if it doesn't exist
+            violations_path = self.root / SAFETY_VIOLATIONS_PATH
+            violations_path.parent.mkdir(exist_ok=True, parents=True)
+            append_jsonlines(safety_violation_dict, violations_path)
+            
+            # Update info file with the new violation metadata
+            if "total_safety_violations" not in self.meta.info:
+                self.meta.info["total_safety_violations"] = 1
+            else:
+                self.meta.info["total_safety_violations"] += 1
+                
+            # Write updated info to disk
+            write_json(self.meta.info, self.root / "meta/info.json")
+            
+        # Apply the violation to the specified frames
+        self.apply_safety_violation_to_frames(
+            violation_index, 
+            episode_id,
+            start_frame_index,
+            end_frame_index
+        )
+        
+        return violation_index
+
+    def apply_safety_violation_to_frames(
+        self,
+        violation_index: int,
+        episode_id: int,
+        start_frame_index: int,
+        end_frame_index: int
+    ):
+        """
+        Apply a safety violation to all frames within the specified range.
+        
+        Args:
+            violation_index: Index of the safety violation to apply
+            episode_id: Episode index where the violation occurs
+            start_frame_index: Starting frame index within the episode (inclusive)
+            end_frame_index: Ending frame index within the episode (exclusive)
+        """
+        # Check if the safety_violation_index column exists in the dataset
+        column_exists = "safety_violation_index" in self.hf_dataset.features
+        
+        # Define a filter function to find frames in the specified range
+        def filter_violation_frames(example):
+            episode_match = example["episode_index"] == episode_id
+            frame_range = (example["frame_index"] >= start_frame_index) & (example["frame_index"] < end_frame_index)
+            return episode_match & frame_range
+        
+        # Get frames to apply the violation to
+        frames_with_violation = self.hf_dataset.filter(filter_violation_frames)
+        
+        if len(frames_with_violation) == 0:
+            print(f"Warning: No frames found in episode {episode_id} with frame indices {start_frame_index}-{end_frame_index}")
+            return
+        
+        # Extract global indices for these frames
+        global_indices = [frame["index"].item() for frame in frames_with_violation]
+        
+        # If column doesn't exist, we need to add it to the whole dataset with default values
+        if not column_exists:
+            # Create a new column filled with the default NO_VIOLATION value
+            safety_violation_column = [SAFETY_VIOLATIONS_NO_VIOLATION] * len(self.hf_dataset)
+                        
+            # Update the values for frames with violations
+            for idx in global_indices:
+                safety_violation_column[idx] = violation_index
+            
+            # Add the column to the dataset
+            print("Adding 'safety_violation_index' column to dataset")
+            self.hf_dataset = self.hf_dataset.add_column("safety_violation_index", safety_violation_column)
+            
+            # Update dataset features metadata
+            self.meta.info["features"]["safety_violation_index"] = {
+                "dtype": "int64",
+                "shape": (1,),
+                "names": None
+            }
+            self.save_modified_dataset() 
+        else:
+            # If the column already exists, create a new dataset with updated values
+            
+            # First, get the current safety violation indices
+            safety_violation_column = [index.item() if hasattr(index, 'item') else index for index in self.hf_dataset["safety_violation_index"]]
+                        
+            # Update the values for frames with violations
+            for idx in global_indices:
+                safety_violation_column[idx] = violation_index
+            
+            # Update the column in the dataset
+            print("Updating 'safety_violation_index' column in dataset")
+            self.hf_dataset = self.hf_dataset.remove_columns(["safety_violation_index"])
+            self.hf_dataset = self.hf_dataset.add_column("safety_violation_index", safety_violation_column)
+            self.save_modified_episode(episode_id=episode_id)
 
     @classmethod
     def create(

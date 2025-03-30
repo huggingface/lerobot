@@ -51,6 +51,10 @@ EPISODES_PATH = "meta/episodes.jsonl"
 STATS_PATH = "meta/stats.json"
 EPISODES_STATS_PATH = "meta/episodes_stats.jsonl"
 TASKS_PATH = "meta/tasks.jsonl"
+SAFETY_VIOLATIONS_PATH = "meta/safety_violations.jsonl"
+
+# default value, indicating no safety violation in frame
+SAFETY_VIOLATIONS_NO_VIOLATION = -1
 
 DEFAULT_VIDEO_PATH = "videos/chunk-{episode_chunk:03d}/{video_key}/episode_{episode_index:06d}.mp4"
 DEFAULT_PARQUET_PATH = "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet"
@@ -221,7 +225,6 @@ def load_episodes(local_dir: Path) -> dict:
     episodes = load_jsonlines(local_dir / EPISODES_PATH)
     return {item["episode_index"]: item for item in sorted(episodes, key=lambda x: x["episode_index"])}
 
-
 def write_episode_stats(episode_index: int, episode_stats: dict, local_dir: Path):
     # We wrap episode_stats in a dictionary since `episode_stats["episode_index"]`
     # is a dictionary of stats and not an integer.
@@ -236,6 +239,11 @@ def load_episodes_stats(local_dir: Path) -> dict:
         for item in sorted(episodes_stats, key=lambda x: x["episode_index"])
     }
 
+def load_safety_violations(local_dir: Path) -> tuple[dict, dict]:
+    safety_violations = load_jsonlines(local_dir / SAFETY_VIOLATIONS_PATH)
+    safety_violations = {item["violation_index"]: item["violation"] for item in sorted(safety_violations, key=lambda x: x["violation_index"])}
+    violation_to_violation_index = {violation: violation_index for violation_index, violation in safety_violations.items()}
+    return safety_violations, violation_to_violation_index
 
 def backward_compatible_episodes_stats(
     stats: dict[str, dict[str, np.ndarray]], episodes: list[int]
