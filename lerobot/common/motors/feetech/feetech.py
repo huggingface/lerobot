@@ -17,13 +17,15 @@ from copy import deepcopy
 from enum import Enum
 from pprint import pformat
 
-from ..motors_bus import Motor, MotorsBus
+from ..motors_bus import Motor, MotorsBus, NameOrID, Value
 from .tables import (
-    CALIBRATION_REQUIRED,
+    AVAILABLE_BAUDRATES,
+    ENCODINGS,
     MODEL_BAUDRATE_TABLE,
     MODEL_CONTROL_TABLE,
     MODEL_NUMBER,
     MODEL_RESOLUTION,
+    NORMALIZATION_REQUIRED,
 )
 
 PROTOCOL_VERSION = 0
@@ -31,6 +33,29 @@ BAUDRATE = 1_000_000
 DEFAULT_TIMEOUT_MS = 1000
 
 logger = logging.getLogger(__name__)
+
+
+def encode_sign_magnitude(value: int, sign_bit_index: int):
+    """
+    https://en.wikipedia.org/wiki/Signed_number_representations#Sign%E2%80%93magnitude
+    """
+    max_magnitude = (1 << sign_bit_index) - 1
+    magnitude = abs(value)
+    if magnitude > max_magnitude:
+        raise ValueError(f"Magnitude {magnitude} exceeds {max_magnitude} (max for {sign_bit_index=})")
+
+    direction_bit = 1 if value < 0 else 0
+    return (direction_bit << sign_bit_index) | magnitude
+
+
+def decode_sign_magnitude(encoded_value: int, sign_bit_index: int):
+    """
+    https://en.wikipedia.org/wiki/Signed_number_representations#Sign%E2%80%93magnitude
+    """
+    direction_bit = (encoded_value >> sign_bit_index) & 1
+    magnitude_mask = (1 << sign_bit_index) - 1
+    magnitude = encoded_value & magnitude_mask
+    return -magnitude if direction_bit else magnitude
 
 
 class OperatingMode(Enum):
@@ -63,12 +88,16 @@ class FeetechMotorsBus(MotorsBus):
     python feetech sdk to communicate with the motors, which is itself based on the dynamixel sdk.
     """
 
-    model_ctrl_table = deepcopy(MODEL_CONTROL_TABLE)
-    model_resolution_table = deepcopy(MODEL_RESOLUTION)
-    model_baudrate_table = deepcopy(MODEL_BAUDRATE_TABLE)
-    model_number_table = deepcopy(MODEL_NUMBER)
-    calibration_required = deepcopy(CALIBRATION_REQUIRED)
+    available_baudrates = deepcopy(AVAILABLE_BAUDRATES)
     default_timeout = DEFAULT_TIMEOUT_MS
+    model_baudrate_table = deepcopy(MODEL_BAUDRATE_TABLE)
+    model_ctrl_table = deepcopy(MODEL_CONTROL_TABLE)
+    model_number_table = deepcopy(MODEL_NUMBER)
+    model_resolution_table = deepcopy(MODEL_RESOLUTION)
+    normalization_required = deepcopy(NORMALIZATION_REQUIRED)
+
+    # Feetech specific
+    encodings = deepcopy(ENCODINGS)
 
     def __init__(
         self,
@@ -89,15 +118,36 @@ class FeetechMotorsBus(MotorsBus):
         # By default, Feetech motors have a 500µs delay response time (corresponding to a value of 250 on the
         # 'Return_Delay' address). We ensure this is reduced to the minimum of 2µs (value of 0).
         for id_ in self.ids:
-            self.write("Return_Delay", id_, 0)
+            self.write("Return_Delay_Time", id_, 0)
 
-    def _calibrate_values(self, ids_values: dict[int, int]) -> dict[int, float]:
+    def _get_half_turn_homings(self, positions: dict[NameOrID, Value]) -> dict[NameOrID, Value]:
+        """
+        On Feetech Motors:
+        Present_Position = Actual_Position - Homing_Offset
+        """
+        half_turn_homings = {}
+        for motor, pos in positions.items():
+            model = self._get_motor_model(motor)
+            max_res = self.model_resolution_table[model] - 1
+            half_turn_homings[motor] = pos - int(max_res / 2)
+
+        return half_turn_homings
+
+    def _normalize(self, data_name: str, ids_values: dict[int, int]) -> dict[int, float]:
         # TODO
         return ids_values
 
-    def _uncalibrate_values(self, ids_values: dict[int, float]) -> dict[int, int]:
+    def _unnormalize(self, data_name: str, ids_values: dict[int, float]) -> dict[int, int]:
         # TODO
         return ids_values
+
+    def _encode_value(self, value: int, data_name: str | None = None, n_bytes: int | None = None) -> int:
+        sign_bit = self.encodings.get(data_name)
+        return encode_sign_magnitude(value, sign_bit) if sign_bit is not None else value
+
+    def _decode_value(self, value: int, data_name: str | None = None, n_bytes: int | None = None) -> int:
+        sign_bit = self.encodings.get(data_name)
+        return decode_sign_magnitude(value, sign_bit) if sign_bit is not None else value
 
     @staticmethod
     def _split_int_to_bytes(value: int, n_bytes: int) -> list[int]:
@@ -114,8 +164,6 @@ class FeetechMotorsBus(MotorsBus):
 
         import scservo_sdk as scs
 
-        # Note: No need to convert back into unsigned int, since this byte preprocessing
-        # already handles it for us.
         if n_bytes == 1:
             data = [value]
         elif n_bytes == 2:

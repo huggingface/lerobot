@@ -6,10 +6,10 @@ SCS_SERIES_CONTROL_TABLE = {
     "Model_Number": (3, 2),
     "ID": (5, 1),
     "Baud_Rate": (6, 1),
-    "Return_Delay": (7, 1),
+    "Return_Delay_Time": (7, 1),
     "Response_Status_Level": (8, 1),
-    "Min_Angle_Limit": (9, 2),
-    "Max_Angle_Limit": (11, 2),
+    "Min_Position_Limit": (9, 2),
+    "Max_Position_Limit": (11, 2),
     "Max_Temperature_Limit": (13, 1),
     "Max_Voltage_Limit": (14, 1),
     "Min_Voltage_Limit": (15, 1),
@@ -25,8 +25,8 @@ SCS_SERIES_CONTROL_TABLE = {
     "CCW_Dead_Zone": (27, 1),
     "Protection_Current": (28, 2),
     "Angular_Resolution": (30, 1),
-    "Offset": (31, 2),
-    "Mode": (33, 1),
+    "Homing_Offset": (31, 2),
+    "Operating_Mode": (33, 1),
     "Protective_Torque": (34, 1),
     "Protection_Time": (35, 1),
     "Overload_Torque": (36, 1),
@@ -81,6 +81,14 @@ MODEL_NUMBER = {
 MODEL_BAUDRATE_TABLE = {
     "scs_series": SCS_SERIES_BAUDRATE_TABLE,
     "sts3215": SCS_SERIES_BAUDRATE_TABLE,
+}
+
+NORMALIZATION_REQUIRED = ["Goal_Position", "Present_Position"]
+
+# Sign-Magnitude encoding bits
+ENCODINGS = {
+    "Homing_Offset": 11,
+    "Goal_Speed": 15,
 }
 
 AVAILABLE_BAUDRATES = [

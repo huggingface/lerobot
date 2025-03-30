@@ -22,17 +22,48 @@ import logging
 from copy import deepcopy
 from enum import Enum
 
-from ..motors_bus import Motor, MotorsBus
-from .tables import MODEL_BAUDRATE_TABLE, MODEL_CONTROL_TABLE, MODEL_NUMBER, MODEL_RESOLUTION
+from ..motors_bus import Motor, MotorsBus, NameOrID, Value
+from .tables import (
+    AVAILABLE_BAUDRATES,
+    MODEL_BAUDRATE_TABLE,
+    MODEL_CONTROL_TABLE,
+    MODEL_NUMBER,
+    MODEL_RESOLUTION,
+)
 
 PROTOCOL_VERSION = 2.0
 BAUDRATE = 1_000_000
 DEFAULT_TIMEOUT_MS = 1000
 
-CALIBRATION_REQUIRED = ["Goal_Position", "Present_Position"]
+NORMALIZATION_REQUIRED = ["Goal_Position", "Present_Position"]
 CONVERT_UINT32_TO_INT32_REQUIRED = ["Goal_Position", "Present_Position"]
 
 logger = logging.getLogger(__name__)
+
+
+def encode_twos_complement(value: int, n_bytes: int):
+    if value >= 0:
+        return value
+
+    bit_width = n_bytes * 8
+    min_val = -(1 << (bit_width - 1))
+    max_val = (1 << (bit_width - 1)) - 1
+
+    if not (min_val <= value <= max_val):
+        raise ValueError(
+            f"Value {value} out of range for {n_bytes}-byte two's complement: [{min_val}, {max_val}]"
+        )
+
+    return (1 << bit_width) + value
+
+
+def decode_twos_complement(value: int, n_bytes: int) -> int:
+    # https://en.wikipedia.org/wiki/Two%27s_complement
+    bits = n_bytes * 8
+    sign_bit = 1 << (bits - 1)
+    if value & sign_bit:
+        value -= 1 << bits
+    return value
 
 
 class OperatingMode(Enum):
@@ -82,12 +113,13 @@ class DynamixelMotorsBus(MotorsBus):
     https://emanual.robotis.com/docs/en/software/dynamixel/dynamixel_sdk/sample_code/python_read_write_protocol_2_0/#python-read-write-protocol-20
     """
 
-    model_ctrl_table = deepcopy(MODEL_CONTROL_TABLE)
-    model_resolution_table = deepcopy(MODEL_RESOLUTION)
-    model_baudrate_table = deepcopy(MODEL_BAUDRATE_TABLE)
-    model_number_table = deepcopy(MODEL_NUMBER)
-    calibration_required = deepcopy(CALIBRATION_REQUIRED)
+    available_baudrates = deepcopy(AVAILABLE_BAUDRATES)
     default_timeout = DEFAULT_TIMEOUT_MS
+    model_baudrate_table = deepcopy(MODEL_BAUDRATE_TABLE)
+    model_ctrl_table = deepcopy(MODEL_CONTROL_TABLE)
+    model_number_table = deepcopy(MODEL_NUMBER)
+    model_resolution_table = deepcopy(MODEL_RESOLUTION)
+    normalization_required = deepcopy(NORMALIZATION_REQUIRED)
 
     def __init__(
         self,
@@ -110,13 +142,32 @@ class DynamixelMotorsBus(MotorsBus):
         for id_ in self.ids:
             self.write("Return_Delay_Time", id_, 0)
 
-    def _calibrate_values(self, ids_values: dict[int, int]) -> dict[int, float]:
+    def _get_half_turn_homings(self, positions: dict[NameOrID, Value]) -> dict[NameOrID, Value]:
+        """
+        On Dynamixel Motors:
+        Present_Position = Actual_Position + Homing_Offset
+        """
+        half_turn_homings = {}
+        for motor, pos in positions.items():
+            model = self._get_motor_model(motor)
+            max_res = self.model_resolution_table[model] - 1
+            half_turn_homings[motor] = int(max_res / 2) - pos
+
+        return half_turn_homings
+
+    def _normalize(self, ids_values: dict[int, int]) -> dict[int, float]:
         # TODO
         return ids_values
 
-    def _uncalibrate_values(self, ids_values: dict[int, float]) -> dict[int, int]:
+    def _unnormalize(self, ids_values: dict[int, float]) -> dict[int, int]:
         # TODO
         return ids_values
+
+    def _encode_value(self, value: int, data_name: str | None = None, n_bytes: int | None = None) -> int:
+        return encode_twos_complement(value, n_bytes)
+
+    def _decode_value(self, value: int, data_name: str | None = None, n_bytes: int | None = None) -> int:
+        return decode_twos_complement(value, n_bytes)
 
     @staticmethod
     def _split_int_to_bytes(value: int, n_bytes: int) -> list[int]:
@@ -154,11 +205,11 @@ class DynamixelMotorsBus(MotorsBus):
             if self._is_comm_success(comm):
                 break
             logger.debug(f"Broadcast failed on port '{self.port}' ({n_try=})")
-            logger.debug(self.packet_handler.getRxPacketError(comm))
+            logger.debug(self.packet_handler.getTxRxResult(comm))
 
         if not self._is_comm_success(comm):
             if raise_on_error:
-                raise ConnectionError(self.packet_handler.getRxPacketError(comm))
+                raise ConnectionError(self.packet_handler.getTxRxResult(comm))
 
             return data_list if data_list else None
 
