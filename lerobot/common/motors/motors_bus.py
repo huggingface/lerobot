@@ -29,6 +29,7 @@ from typing import Protocol, TypeAlias, overload
 
 import serial
 from deepdiff import DeepDiff
+from tqdm import tqdm
 
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
@@ -378,6 +379,26 @@ class MotorsBus(abc.ABC):
 
         self.set_timeout()
         logger.debug(f"{self.__class__.__name__} connected.")
+
+    @classmethod
+    def scan_port(cls, port: str) -> dict[int, list[int]]:
+        bus = cls(port, {})
+        try:
+            bus.port_handler.openPort()
+        except (FileNotFoundError, OSError, serial.SerialException) as e:
+            raise ConnectionError(
+                f"Could not connect to port '{port}'. Make sure you are using the correct port."
+                "\nTry running `python lerobot/scripts/find_motors_bus_port.py`\n"
+            ) from e
+        baudrate_ids = {}
+        for baudrate in tqdm(bus.available_baudrates, desc="Scanning port"):
+            bus.set_baudrate(baudrate)
+            ids_models = bus.broadcast_ping()
+            if ids_models:
+                tqdm.write(f"Motors found for {baudrate=}: {pformat(ids_models, indent=4)}")
+                baudrate_ids[baudrate] = list(ids_models)
+
+        return baudrate_ids
 
     @abc.abstractmethod
     def _configure_motors(self) -> None:

@@ -83,4 +83,16 @@ MODEL_BAUDRATE_TABLE = {
     "sts3215": SCS_SERIES_BAUDRATE_TABLE,
 }
 
-CALIBRATION_REQUIRED = ["Goal_Position", "Present_Position"]
+AVAILABLE_BAUDRATES = [
+    4800,
+    9600,
+    14400,
+    19200,
+    38400,
+    57600,
+    115200,
+    128000,
+    250000,
+    500000,
+    1000000,
+]
