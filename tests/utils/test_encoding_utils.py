@@ -149,7 +149,7 @@ def test_encode_twos_complement_out_of_range(value, n_bytes):
         (2_147_483_647, 4),
     ],
 )
-def test_twos_complement_roundtrip(value, n_bytes):
+def test_encode_decode_twos_complement(value, n_bytes):
     encoded = encode_twos_complement(value, n_bytes)
     decoded = decode_twos_complement(encoded, n_bytes)
     assert decoded == value, f"Failed at value={value}, n_bytes={n_bytes}"
