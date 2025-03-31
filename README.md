@@ -98,18 +98,14 @@ conda create -y -n lerobot python=3.10
 conda activate lerobot
 ```
 
-When using `miniconda`, if you don't have `ffmpeg` in your environment:
-```bash
-conda install ffmpeg
-```
-
 Install 🤗 LeRobot:
 ```bash
-pip install --no-binary=av -e .
+pip install -e .
 ```
 
-> **NOTE:** If you encounter build errors, you may need to install additional dependencies (`cmake`, `build-essential`, and `ffmpeg libs`). On Linux, run:
-`sudo apt-get install cmake build-essential python-dev pkg-config libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev libswscale-dev libswresample-dev libavfilter-dev pkg-config`. For other systems, see: [Compiling PyAV](https://pyav.org/docs/develop/overview/installation.html#bring-your-own-ffmpeg)
+> **NOTE:** Depending on your platform, If you encounter any build errors during this step
+you may need to install `cmake` and `build-essential` for building some of our dependencies.
+On linux: `sudo apt-get install cmake build-essential`
 
 For simulations, 🤗 LeRobot comes with gymnasium environments that can be installed as extras:
 - [aloha](https://github.com/huggingface/gym-aloha)
@@ -118,7 +114,7 @@ For simulations, 🤗 LeRobot comes with gymnasium environments that can be inst
 
 For instance, to install 🤗 LeRobot with aloha and pusht, use:
 ```bash
-pip install --no-binary=av -e ".[aloha, pusht]"
+pip install -e ".[aloha, pusht]"
 ```
 
 To use [Weights and Biases](https://docs.wandb.ai/quickstart) for experiment tracking, log in with
