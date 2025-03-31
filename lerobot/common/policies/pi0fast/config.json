@@ -72,7 +72,7 @@
         0.95
     ],
     "optimizer_eps": 1e-08,
-    "optimizer_weight_decay": 1e-10,
+    "optimizer_weight_decay": 1e-5,
     "scheduler_warmup_steps": 1000,
     "scheduler_decay_steps": 30000,
     "scheduler_decay_lr": 2.5e-06

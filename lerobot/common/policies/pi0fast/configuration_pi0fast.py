@@ -8,13 +8,6 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 
 
-@dataclass
-class PEFTConfig:
-    r: int = 4
-    lora_alpha: int = 16
-    lora_dropout: float = 0.1
-    target_modules: str = "q_proj,v_proj"
-
 
 @PreTrainedConfig.register_subclass("pi0fast")
 @dataclass
@@ -71,10 +64,10 @@ class PI0FASTConfig(PreTrainedConfig):
     freeze_lm_head: bool = True
 
     # Training presets
-    optimizer_lr: float = 2.5e-5
+    optimizer_lr: float = 1e-4
     optimizer_betas: tuple[float, float] = (0.9, 0.95)
     optimizer_eps: float = 1e-8
-    optimizer_weight_decay: float = 1e-10
+    optimizer_weight_decay: float = 1e-5
 
     scheduler_warmup_steps: int = 1_000
     scheduler_decay_steps: int = 30_000
@@ -85,15 +78,8 @@ class PI0FASTConfig(PreTrainedConfig):
 
     padding_side: str = "right"
 
-    # peft_method: str = ""
-    # peft_config: PEFTConfig = PEFTConfig()
-
     precision: str = "bfloat16"
-    attention_mode: str = "prefix"
-
-    action_kw_to_prefix: bool = True
-
-    # TODO: Add EMA
+    grad_clip_norm: float = 1
 
     def __post_init__(self):
         super().__post_init__()
@@ -110,10 +96,6 @@ class PI0FASTConfig(PreTrainedConfig):
             )
 
     def validate_features(self) -> None:
-        # TODO: implement value error
-        # if not self.image_features and not self.env_state_feature:
-        #     raise ValueError("You must provide at least one image or the environment state among the inputs.")
-
         for i in range(self.empty_cameras):
             key = f"observation.images.empty_camera_{i}"
             empty_camera = PolicyFeature(
@@ -128,6 +110,7 @@ class PI0FASTConfig(PreTrainedConfig):
             betas=self.optimizer_betas,
             eps=self.optimizer_eps,
             weight_decay=self.optimizer_weight_decay,
+            grad_clip_norm=self.grad_clip_norm,
         )
 
     def get_scheduler_preset(self):
