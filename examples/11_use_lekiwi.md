@@ -69,7 +69,7 @@ git clone https://github.com/huggingface/lerobot.git ~/lerobot
 
 #### 5. Install LeRobot with dependencies for the feetech motors:
 ```bash
-cd ~/lerobot && pip install -e ".[feetech]"
+cd ~/lerobot && pip install --no-binary=av -e ".[feetech]"
 ```
 
 ## C. Install LeRobot on laptop
@@ -110,15 +110,9 @@ git clone https://github.com/huggingface/lerobot.git ~/lerobot
 
 #### 5. Install LeRobot with dependencies for the feetech motors:
 ```bash
-cd ~/lerobot && pip install -e ".[feetech]"
+cd ~/lerobot && pip install --no-binary=av -e ".[feetech]"
 ```
 
-*EXTRA: For Linux only (not Mac)*: install extra dependencies for recording datasets:
-```bash
-conda install -y -c conda-forge ffmpeg
-pip uninstall -y opencv-python
-conda install -y -c conda-forge "opencv>=4.10.0"
-```
 Great :hugs:! You are now done installing LeRobot and we can begin assembling the SO100 arms and Mobile base :robot:.
 Every time you now want to use LeRobot you can go to the `~/lerobot` folder where we installed LeRobot and run one of the commands.
 
@@ -399,6 +393,10 @@ python lerobot/scripts/control_robot.py \
 ```
 
 # F. Teleoperate
+
+> [!TIP]
+> If you're using a Mac, you might need to give Terminal permission to access your keyboard. Go to System Preferences > Security & Privacy > Input Monitoring and check the box for Terminal.
+
 To teleoperate SSH into your Raspberry Pi, and run `conda activate lerobot` and this script:
 ```bash
 python lerobot/scripts/control_robot.py \
