@@ -167,6 +167,7 @@ class SACConfig(PreTrainedConfig):
     num_critics: int = 2
     num_subsample_critics: int | None = None
     critic_lr: float = 3e-4
+    grasp_critic_lr: float = 3e-4
     actor_lr: float = 3e-4
     temperature_lr: float = 3e-4
     critic_target_update_weight: float = 0.005
