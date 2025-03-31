@@ -214,7 +214,7 @@ class SACPolicy(
     def forward(
         self,
         batch: dict[str, Tensor | dict[str, Tensor]],
-        model: Literal["actor", "critic", "temperature"] = "critic",
+        model: Literal["actor", "critic", "grasp_critic", "temperature"] = "critic",
     ) -> dict[str, Tensor]:
         """Compute the loss for the given model
 
@@ -227,7 +227,7 @@ class SACPolicy(
                 - done: Done mask tensor
                 - observation_feature: Optional pre-computed observation features
                 - next_observation_feature: Optional pre-computed next observation features
-            model: Which model to compute the loss for ("actor", "critic", or "temperature")
+            model: Which model to compute the loss for ("actor", "critic", "grasp_critic", or "temperature")
 
         Returns:
             The computed loss tensor
@@ -253,6 +253,21 @@ class SACPolicy(
                 done=done,
                 observation_features=observation_features,
                 next_observation_features=next_observation_features,
+            )
+        
+        if model == "grasp_critic":
+            # Extract grasp_critic-specific components
+            complementary_info: dict[str, Tensor] = batch["complementary_info"]
+
+            return self.compute_loss_grasp_critic(
+                observations=observations,
+                actions=actions,
+                rewards=rewards,
+                next_observations=next_observations,
+                done=done,
+                observation_features=observation_features,
+                next_observation_features=next_observation_features,
+                complementary_info=complementary_info,
             )
 
         if model == "actor":
