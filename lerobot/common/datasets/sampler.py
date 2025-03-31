@@ -43,7 +43,10 @@ class EpisodeAwareSampler:
         ):
             if episode_indices_to_use is None or episode_idx in episode_indices_to_use:
                 indices.extend(
-                    range(start_index.item() + drop_n_first_frames, end_index.item() - drop_n_last_frames)
+                    range(
+                        start_index.item() + drop_n_first_frames,
+                        end_index.item() - drop_n_last_frames,
+                    )
                 )
 
         self.indices = indices

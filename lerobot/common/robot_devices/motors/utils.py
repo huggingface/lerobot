@@ -30,7 +30,9 @@ class MotorsBus(Protocol):
     def write(self): ...
 
 
-def make_motors_buses_from_configs(motors_bus_configs: dict[str, MotorsBusConfig]) -> list[MotorsBus]:
+def make_motors_buses_from_configs(
+    motors_bus_configs: dict[str, MotorsBusConfig],
+) -> list[MotorsBus]:
     motors_buses = {}
 
     for key, cfg in motors_bus_configs.items():

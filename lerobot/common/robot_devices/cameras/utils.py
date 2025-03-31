@@ -41,7 +41,9 @@ def make_cameras_from_configs(camera_configs: dict[str, CameraConfig]) -> list[C
             cameras[key] = OpenCVCamera(cfg)
 
         elif cfg.type == "intelrealsense":
-            from lerobot.common.robot_devices.cameras.intelrealsense import IntelRealSenseCamera
+            from lerobot.common.robot_devices.cameras.intelrealsense import (
+                IntelRealSenseCamera,
+            )
 
             cameras[key] = IntelRealSenseCamera(cfg)
         else:
@@ -58,7 +60,9 @@ def make_camera(camera_type, **kwargs) -> Camera:
         return OpenCVCamera(config)
 
     elif camera_type == "intelrealsense":
-        from lerobot.common.robot_devices.cameras.intelrealsense import IntelRealSenseCamera
+        from lerobot.common.robot_devices.cameras.intelrealsense import (
+            IntelRealSenseCamera,
+        )
 
         config = IntelRealSenseCameraConfig(**kwargs)
         return IntelRealSenseCamera(config)

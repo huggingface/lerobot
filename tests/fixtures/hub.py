@@ -67,7 +67,9 @@ def mock_snapshot_download_factory(
             tasks = tasks_factory(total_tasks=info["total_tasks"])
         if not episodes:
             episodes = episodes_factory(
-                total_episodes=info["total_episodes"], total_frames=info["total_frames"], tasks=tasks
+                total_episodes=info["total_episodes"],
+                total_frames=info["total_frames"],
+                tasks=tasks,
             )
         if not hf_dataset:
             hf_dataset = hf_dataset_factory(tasks=tasks, episodes=episodes, fps=info["fps"])
@@ -93,7 +95,13 @@ def mock_snapshot_download_factory(
 
             # List all possible files
             all_files = []
-            meta_files = [INFO_PATH, STATS_PATH, EPISODES_STATS_PATH, TASKS_PATH, EPISODES_PATH]
+            meta_files = [
+                INFO_PATH,
+                STATS_PATH,
+                EPISODES_STATS_PATH,
+                TASKS_PATH,
+                EPISODES_PATH,
+            ]
             all_files.extend(meta_files)
 
             data_files = []
@@ -105,7 +113,9 @@ def mock_snapshot_download_factory(
             all_files.extend(data_files)
 
             allowed_files = filter_repo_objects(
-                all_files, allow_patterns=allow_patterns, ignore_patterns=ignore_patterns
+                all_files,
+                allow_patterns=allow_patterns,
+                ignore_patterns=ignore_patterns,
             )
 
             # Create allowed files

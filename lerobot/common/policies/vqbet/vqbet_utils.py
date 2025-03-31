@@ -377,7 +377,10 @@ class ResidualVQ(nn.Module):
         self.layers = nn.ModuleList(
             [
                 VectorQuantize(
-                    dim=codebook_dim, codebook_dim=codebook_dim, accept_image_fmap=accept_image_fmap, **kwargs
+                    dim=codebook_dim,
+                    codebook_dim=codebook_dim,
+                    accept_image_fmap=accept_image_fmap,
+                    **kwargs,
                 )
                 for _ in range(num_quantizers)
             ]
