@@ -417,7 +417,7 @@ def add_actor_information_and_train(
             )
 
             optimizers["grasp_critic"].step()
-            
+
             policy.update_target_networks()
             policy.update_grasp_target_networks()
 
@@ -762,7 +762,9 @@ def make_optimizers_and_scheduler(cfg, policy: nn.Module):
         lr=cfg.policy.actor_lr,
     )
     optimizer_critic = torch.optim.Adam(params=policy.critic_ensemble.parameters(), lr=cfg.policy.critic_lr)
-    optimizer_grasp_critic = torch.optim.Adam(params=policy.grasp_critic.parameters(), lr=policy.config.grasp_critic_lr)
+    optimizer_grasp_critic = torch.optim.Adam(
+        params=policy.grasp_critic.parameters(), lr=policy.config.grasp_critic_lr
+    )
     optimizer_temperature = torch.optim.Adam(params=[policy.log_alpha], lr=cfg.policy.critic_lr)
     lr_scheduler = None
     optimizers = {
