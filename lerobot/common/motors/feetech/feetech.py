@@ -112,14 +112,6 @@ class FeetechMotorsBus(MotorsBus):
 
         return half_turn_homings
 
-    def _normalize(self, data_name: str, ids_values: dict[int, int]) -> dict[int, float]:
-        # TODO
-        return ids_values
-
-    def _unnormalize(self, data_name: str, ids_values: dict[int, float]) -> dict[int, int]:
-        # TODO
-        return ids_values
-
     def _encode_value(self, value: int, data_name: str | None = None, n_bytes: int | None = None) -> int:
         sign_bit = self.encodings.get(data_name)
         return encode_sign_magnitude(value, sign_bit) if sign_bit is not None else value

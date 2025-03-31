@@ -132,14 +132,6 @@ class DynamixelMotorsBus(MotorsBus):
 
         return half_turn_homings
 
-    def _normalize(self, ids_values: dict[int, int]) -> dict[int, float]:
-        # TODO
-        return ids_values
-
-    def _unnormalize(self, ids_values: dict[int, float]) -> dict[int, int]:
-        # TODO
-        return ids_values
-
     def _encode_value(self, value: int, data_name: str | None = None, n_bytes: int | None = None) -> int:
         return encode_twos_complement(value, n_bytes)
 
