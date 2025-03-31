@@ -43,6 +43,14 @@ class CriticNetworkConfig:
 
 
 @dataclass
+class GraspCriticNetworkConfig:
+    hidden_dims: list[int] = field(default_factory=lambda: [256, 256])
+    activate_final: bool = True
+    final_activation: str | None = None
+    output_dim: int = 3
+
+
+@dataclass
 class ActorNetworkConfig:
     hidden_dims: list[int] = field(default_factory=lambda: [256, 256])
     activate_final: bool = True
