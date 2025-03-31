@@ -92,6 +92,23 @@ def test_abc_implementation(dummy_motors):
     FeetechMotorsBus(port="/dev/dummy-port", motors=dummy_motors)
 
 
+@pytest.mark.skip("TODO")
+def test_scan_port(mock_motors):
+    expected = {
+        9_600: {1: 777},
+        57_600: {2: 777},
+        500_000: {237: 777},
+    }
+    expected_model_nbs = {id_: model for d in expected.values() for id_, model in d.items()}
+    ping_stub = mock_motors.build_broadcast_ping_stub(list(expected_model_nbs))
+    mobel_nb_stub = mock_motors.build_sync_read_stub("Model_Number", expected_model_nbs)
+    found = FeetechMotorsBus.scan_port(mock_motors.port)
+
+    assert found == expected
+    assert mock_motors.stubs[ping_stub].called
+    assert mock_motors.stubs[mobel_nb_stub].called
+
+
 @pytest.mark.parametrize("id_", [1, 2, 3])
 def test_ping(id_, mock_motors, dummy_motors):
     expected_model_nb = MODEL_NUMBER[dummy_motors[f"dummy_{id_}"].model]
