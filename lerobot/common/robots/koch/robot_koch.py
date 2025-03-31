@@ -14,7 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
 import logging
 import time
 from typing import Any
@@ -22,12 +21,11 @@ from typing import Any
 from lerobot.common.cameras.utils import make_cameras_from_configs
 from lerobot.common.constants import OBS_IMAGES, OBS_STATE
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from lerobot.common.motors import Motor, MotorNormMode
+from lerobot.common.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.common.motors.dynamixel import (
     DynamixelMotorsBus,
     OperatingMode,
     TorqueMode,
-    run_arm_calibration,
 )
 
 from ..robot import Robot
@@ -63,7 +61,6 @@ class KochRobot(Robot):
         )
         self.cameras = make_cameras_from_configs(config.cameras)
 
-        self.is_connected = False
         self.logs = {}
 
     @property
@@ -88,6 +85,28 @@ class KochRobot(Robot):
                 "info": None,
             }
         return cam_ft
+
+    @property
+    def is_connected(self) -> bool:
+        # TODO(aliberts): add cam.is_connected for cam in self.cameras
+        return self.arm.is_connected
+
+    def connect(self) -> None:
+        if self.is_connected:
+            raise DeviceAlreadyConnectedError(
+                "ManipulatorRobot is already connected. Do not run `robot.connect()` twice."
+            )
+
+        logging.info("Connecting arm.")
+        self.arm.connect()
+        if not self.is_calibrated:
+            self.calibrate()
+
+        self.configure()
+
+        # Connect the cameras
+        for cam in self.cameras.values():
+            cam.connect()
 
     def configure(self) -> None:
         for name in self.arm.names:
@@ -120,54 +139,42 @@ class KochRobot(Robot):
 
         logging.info("Torque enabled.")
 
-        # Move gripper to 45 degrees so that we can use it as a trigger.
-        self.arm.write("Goal_Position", "gripper", self.config.gripper_open_degree)
-
     @property
-    def is_connected(self) -> bool:
-        # TODO(aliberts): add cam.is_connected for cam in self.cameras
-        return self.arm.is_connected
-
-    def connect(self) -> None:
-        if self.is_connected:
-            raise DeviceAlreadyConnectedError(
-                "ManipulatorRobot is already connected. Do not run `robot.connect()` twice."
-            )
-
-        logging.info("Connecting arm.")
-        self.arm.connect()
-        self.configure()
-        # self.calibrate()  # TODO
-
-        # Check arm can be read
-        self.arm.sync_read("Present_Position")
-
-        # Connect the cameras
-        for cam in self.cameras.values():
-            cam.connect()
-
-        self.is_connected = True
+    def is_calibrated(self) -> bool:
+        motors_calibration = self.arm.get_calibration()
+        return motors_calibration == self.calibration
 
     def calibrate(self) -> None:
-        # TODO(pepijn): Do calibration in same way as so100
-        """After calibration all motors function in human interpretable ranges.
-        Rotations are expressed in degrees in nominal range of [-180, 180],
-        and linear motions (like gripper of Aloha) in nominal range of [0, 100].
-        """
-        if self.calibration_fpath.exists():
-            with open(self.calibration_fpath) as f:
-                calibration = json.load(f)
-        else:
-            # TODO(rcadene): display a warning in __init__ if calibration file not available
-            logging.info(f"Missing calibration file '{self.calibration_fpath}'")
-            calibration = run_arm_calibration(self.arm, self.robot_type, self.name, "follower")
+        print(f"\nRunning calibration of {self.id} Koch robot")
+        for name in self.arm.names:
+            self.arm.write("Torque_Enable", name, TorqueMode.DISABLED.value)
+            self.arm.write("Operating_Mode", name, OperatingMode.EXTENDED_POSITION.value)
 
-            logging.info(f"Calibration is done! Saving calibration file '{self.calibration_fpath}'")
-            self.calibration_fpath.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.calibration_fpath, "w") as f:
-                json.dump(calibration, f)
+        input("Move robot to the middle of its range of motion and press ENTER....")
+        homing_offsets = self.arm.set_half_turn_homings()
 
-        self.arm.set_calibration(calibration)
+        fixed_range = ["shoulder_pan", "wrist_roll"]
+        auto_range_motors = [name for name in self.arm.names if name not in fixed_range]
+        print(
+            "Move all joints except 'wrist_roll' (id=5) sequentially through their entire ranges of motion."
+        )
+        print("Recording positions. Press ENTER to stop...")
+        ranges = self.arm.register_ranges_of_motion(auto_range_motors)
+        for name in fixed_range:
+            ranges[name] = {"min": 0, "max": 4095}
+
+        self.calibration = {}
+        for name, motor in self.arm.motors.items():
+            self.calibration[name] = MotorCalibration(
+                id=motor.id,
+                drive_mode=0,
+                homing_offset=homing_offsets[name],
+                range_min=ranges[name]["min"],
+                range_max=ranges[name]["max"],
+            )
+
+        self._save_calibration()
+        print("Calibration saved to", self.calibration_fpath)
 
     def get_observation(self) -> dict[str, Any]:
         obs_dict = {}
@@ -226,5 +233,3 @@ class KochRobot(Robot):
         self.arm.disconnect()
         for cam in self.cameras.values():
             cam.disconnect()
-
-        self.is_connected = False
