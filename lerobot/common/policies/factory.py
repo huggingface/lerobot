@@ -16,7 +16,6 @@
 
 import logging
 
-import torch
 from torch import nn
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
@@ -24,6 +23,7 @@ from lerobot.common.datasets.utils import dataset_to_policy_features
 from lerobot.common.envs.configs import EnvConfig
 from lerobot.common.envs.utils import env_to_policy_features
 from lerobot.common.policies.act.configuration_act import ACTConfig
+from lerobot.common.policies.dexvla.configuration_dexvla import DexVLAConfig
 from lerobot.common.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.common.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.common.policies.pretrained import PreTrainedPolicy
@@ -55,6 +55,10 @@ def get_policy_class(name: str) -> PreTrainedPolicy:
         from lerobot.common.policies.pi0.modeling_pi0 import PI0Policy
 
         return PI0Policy
+    elif name == "dexvla":
+        from lerobot.common.policies.dexvla.modeling_dexvla import DexVLAPolicy
+
+        return DexVLAPolicy
     else:
         raise NotImplementedError(f"Policy with name {name} is not implemented.")
 
@@ -70,13 +74,14 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return VQBeTConfig(**kwargs)
     elif policy_type == "pi0":
         return PI0Config(**kwargs)
+    elif policy_type == "dexvla":
+        return DexVLAConfig(**kwargs)
     else:
         raise ValueError(f"Policy type '{policy_type}' is not available.")
 
 
 def make_policy(
     cfg: PreTrainedConfig,
-    device: str | torch.device,
     ds_meta: LeRobotDatasetMetadata | None = None,
     env_cfg: EnvConfig | None = None,
 ) -> PreTrainedPolicy:
@@ -88,7 +93,6 @@ def make_policy(
     Args:
         cfg (PreTrainedConfig): The config of the policy to make. If `pretrained_path` is set, the policy will
             be loaded with the weights from that path.
-        device (str): the device to load the policy onto.
         ds_meta (LeRobotDatasetMetadata | None, optional): Dataset metadata to take input/output shapes and
             statistics to use for (un)normalization of inputs/outputs in the policy. Defaults to None.
         env_cfg (EnvConfig | None, optional): The config of a gym environment to parse features from. Must be
@@ -96,7 +100,7 @@ def make_policy(
 
     Raises:
         ValueError: Either ds_meta or env and env_cfg must be provided.
-        NotImplementedError: if the policy.type is 'vqbet' and the device 'mps' (due to an incompatibility)
+        NotImplementedError: if the policy.type is 'vqbet' and the policy device 'mps' (due to an incompatibility)
 
     Returns:
         PreTrainedPolicy: _description_
@@ -111,7 +115,7 @@ def make_policy(
     # https://github.com/pytorch/pytorch/issues/77764. As a temporary fix, you can set the environment
     # variable `PYTORCH_ENABLE_MPS_FALLBACK=1` to use the CPU as a fallback for this op. WARNING: this will be
     # slower than running natively on MPS.
-    if cfg.type == "vqbet" and str(device) == "mps":
+    if cfg.type == "vqbet" and cfg.device == "mps":
         raise NotImplementedError(
             "Current implementation of VQBeT does not support `mps` backend. "
             "Please use `cpu` or `cuda` backend."
@@ -145,7 +149,7 @@ def make_policy(
         # Make a fresh policy.
         policy = policy_cls(**kwargs)
 
-    policy.to(device)
+    policy.to(cfg.device)
     assert isinstance(policy, nn.Module)
 
     # policy = torch.compile(policy, mode="reduce-overhead")
