@@ -117,6 +117,7 @@ class UploadDataset(PipelineStep):
                         commit_message=f"DataTrove upload ({len(chunk)} files)",
                         revision=self.branch,
                     )
+                    # TODO: every 100 chunks super_squach_commits()
                     logging.info("create_commit completed!")
                     break
                 except HfHubHTTPError as e:
