@@ -285,9 +285,7 @@ def add_actor_information_and_train(
         # ds_meta=cfg.dataset,
         env_cfg=cfg.env,
     )
-
-    # compile policy
-    policy = torch.compile(policy)
+ 
     assert isinstance(policy, nn.Module)
     policy.train()
 

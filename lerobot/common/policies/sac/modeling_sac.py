@@ -112,7 +112,6 @@ class SACPolicy(
 
         self.critic_ensemble = torch.compile(self.critic_ensemble)
         self.critic_target = torch.compile(self.critic_target)
-
         self.actor = Policy(
             encoder=encoder_actor,
             network=MLP(input_dim=encoder_actor.output_dim, **asdict(config.actor_network_kwargs)),
