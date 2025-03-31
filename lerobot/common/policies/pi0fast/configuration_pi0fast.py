@@ -8,7 +8,6 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 
 
-
 @PreTrainedConfig.register_subclass("pi0fast")
 @dataclass
 class PI0FASTConfig(PreTrainedConfig):
@@ -33,7 +32,7 @@ class PI0FASTConfig(PreTrainedConfig):
     resize_imgs_with_padding: tuple[int, int] = (224, 224)
     interpolate_like_pi: bool = False
 
-    # Add empty images. Used by pi0_aloha_sim which adds the emtpy
+    # Add empty images. Used by pi0_aloha_sim which adds the empty
     # left and right wrist cameras in addition to the top camera.
     empty_cameras: int = 0
 
