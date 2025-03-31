@@ -231,7 +231,6 @@ def act_with_policy(
         cfg=cfg.policy,
         env_cfg=cfg.env,
     )
-    policy = torch.compile(policy)
     assert isinstance(policy, nn.Module)
 
     obs, info = online_env.reset()
