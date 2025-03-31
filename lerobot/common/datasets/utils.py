@@ -239,11 +239,10 @@ def load_episodes_stats(local_dir: Path) -> dict:
         for item in sorted(episodes_stats, key=lambda x: x["episode_index"])
     }
 
-def load_safety_violations(local_dir: Path) -> tuple[dict, dict]:
+def load_safety_violations(local_dir: Path) -> dict:
     safety_violations = load_jsonlines(local_dir / SAFETY_VIOLATIONS_PATH)
     safety_violations = {item["violation_index"]: item["violation"] for item in sorted(safety_violations, key=lambda x: x["violation_index"])}
-    violation_to_violation_index = {violation: violation_index for violation_index, violation in safety_violations.items()}
-    return safety_violations, violation_to_violation_index
+    return safety_violations
 
 def backward_compatible_episodes_stats(
     stats: dict[str, dict[str, np.ndarray]], episodes: list[int]
@@ -869,3 +868,23 @@ def validate_episode_buffer(episode_buffer: dict, total_episodes: int, features:
             f"In episode_buffer not in features: {buffer_keys - set(features)}"
             f"In features not in episode_buffer: {set(features) - buffer_keys}"
         )
+
+def get_next_available_index(safety_violations: dict):
+    """
+    Find the smallest non-negative integer that is not currently used as a violation index.
+    
+    Returns:
+        int: The next available violation index
+    """
+    if not safety_violations:
+        return 0
+        
+    # Get all existing indices and convert to integers
+    existing_indices = set(int(idx) for idx in safety_violations.keys())
+    
+    # Find the first missing index
+    next_index = 0
+    while next_index in existing_indices:
+        next_index += 1
+        
+    return next_index
