@@ -25,12 +25,11 @@ Designed by Physical Intelligence. Ported from Jax by Hugging Face.
 Example of finetuning the pi0+FAST pretrained model (`pi0_fast_base` in `openpi`):
 ```bash
 python lerobot/scripts/train.py \
---policy.path=lerobot/pi0fast \
+--policy.path=lerobot/pi0fast_base \
 --dataset.repo_id=danaaubakirova/koch_test
 ```
 
-Example of finetuning the pi0+FAST neural network with PaliGemma and expert Gemma
-pretrained with VLM default parameters before pi0+FAST finetuning:
+Example of training the pi0+FAST neural network with from scratch:
 ```bash
 python lerobot/scripts/train.py \
 --policy.type=pi0fast \
@@ -39,7 +38,7 @@ python lerobot/scripts/train.py \
 
 Example of using the pi0 pretrained model outside LeRobot training framework:
 ```python
-policy = PI0FASTPolicy.from_pretrained("lerobot/pi0fast")
+policy = PI0FASTPolicy.from_pretrained("lerobot/pi0fast_base")
 ```
 
 """
