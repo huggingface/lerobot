@@ -247,6 +247,9 @@ class SACPolicy(
                 + target_param.data * (1.0 - self.config.critic_target_update_weight)
             )
 
+    def update_temperature(self):
+        self.temperature = self.log_alpha.exp().item()
+
     def compute_loss_critic(
         self,
         observations,
@@ -257,7 +260,6 @@ class SACPolicy(
         observation_features: Tensor | None = None,
         next_observation_features: Tensor | None = None,
     ) -> Tensor:
-        self.temperature = self.log_alpha.exp().item()
         with torch.no_grad():
             next_action_preds, next_log_probs, _ = self.actor(next_observations, next_observation_features)
 
@@ -319,8 +321,6 @@ class SACPolicy(
         observations,
         observation_features: Tensor | None = None,
     ) -> Tensor:
-        self.temperature = self.log_alpha.exp().item()
-
         actions_pi, log_probs, _ = self.actor(observations, observation_features)
 
         # TODO: (maractingi, azouitine) This is to slow, we should find a way to do this in a more efficient way
