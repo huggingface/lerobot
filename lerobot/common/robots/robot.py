@@ -1,7 +1,11 @@
 import abc
+from pathlib import Path
 from typing import Any
 
+import draccus
+
 from lerobot.common.constants import HF_LEROBOT_CALIBRATION, ROBOTS
+from lerobot.common.motors import MotorCalibration
 
 from .config import RobotConfig
 
@@ -23,6 +27,9 @@ class Robot(abc.ABC):
         )
         self.calibration_dir.mkdir(parents=True, exist_ok=True)
         self.calibration_fpath = self.calibration_dir / f"{self.id}.json"
+        self.calibration: dict[str, MotorCalibration] = {}
+        if self.calibration_fpath.is_file():
+            self._load_calibration()
 
     # TODO(aliberts): create a proper Feature class for this that links with datasets
     @abc.abstractproperty
@@ -47,9 +54,27 @@ class Robot(abc.ABC):
         pass
 
     @abc.abstractmethod
+    def configure(self) -> None:
+        pass
+
+    @abc.abstractproperty
+    def is_calibrated(self) -> bool:
+        pass
+
+    @abc.abstractmethod
     def calibrate(self) -> None:
         """Calibrates the robot."""
         pass
+
+    def _load_calibration(self, fpath: Path | None = None) -> None:
+        fpath = self.calibration_fpath if fpath is None else fpath
+        with open(fpath) as f, draccus.config_type("json"):
+            self.calibration = draccus.load(dict[str, MotorCalibration], f)
+
+    def _save_calibration(self, fpath: Path | None = None) -> None:
+        fpath = self.calibration_fpath if fpath is None else fpath
+        with open(fpath, "w") as f, draccus.config_type("json"):
+            draccus.dump(self.calibration, f, indent=4)
 
     @abc.abstractmethod
     def get_observation(self) -> dict[str, Any]:
@@ -65,7 +90,3 @@ class Robot(abc.ABC):
     def disconnect(self) -> None:
         """Disconnects from the robot."""
         pass
-
-    def __del__(self):
-        if getattr(self, "is_connected", False):
-            self.disconnect()
