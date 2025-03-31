@@ -19,6 +19,7 @@ import torch
 from PIL import Image
 from qwen_vl_utils import fetch_image
 
+
 class Qwen2VLAProcess:
     def __init__(
         self,

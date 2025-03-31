@@ -2,7 +2,7 @@
 DexVLA: Vision-Language Model with Plug-In Diffusion Expert for Visuomotor Policy Learning</h1>
 
 This policy is Community Contributed. For more information about DexVLA, you can also refer to [this](https://github.com/juruobenruo/DexVLA).
-This is [project website](https://dex-vla.github.io/). 
+This is [project website](https://dex-vla.github.io/).
 
 ## Dataset
 ### Data format

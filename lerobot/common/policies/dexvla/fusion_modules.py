@@ -16,6 +16,7 @@
 
 import torch.nn as nn
 
+
 class ActionProjector(nn.Module):
     def __init__(self, in_dim, out_dim=1024):
         super().__init__()
