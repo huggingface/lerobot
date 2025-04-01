@@ -154,6 +154,7 @@ class SACPolicy(
         return {
             "actor": self.actor.parameters_to_optimize,
             "critic": self.critic_ensemble.parameters_to_optimize,
+            "grasp_critic": self.grasp_critic.parameters_to_optimize,
             "temperature": self.log_alpha,
         }
 
