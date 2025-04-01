@@ -42,12 +42,6 @@ class CriticNetworkConfig:
     final_activation: str | None = None
 
 
-@dataclass
-class GraspCriticNetworkConfig:
-    hidden_dims: list[int] = field(default_factory=lambda: [256, 256])
-    activate_final: bool = True
-    final_activation: str | None = None
-    output_dim: int = 3
 
 
 @dataclass
@@ -152,6 +146,7 @@ class SACConfig(PreTrainedConfig):
     freeze_vision_encoder: bool = True
     image_encoder_hidden_dim: int = 32
     shared_encoder: bool = True
+    num_discrete_actions: int | None = None
 
     # Training parameter
     online_steps: int = 1000000
@@ -182,7 +177,7 @@ class SACConfig(PreTrainedConfig):
     critic_network_kwargs: CriticNetworkConfig = field(default_factory=CriticNetworkConfig)
     actor_network_kwargs: ActorNetworkConfig = field(default_factory=ActorNetworkConfig)
     policy_kwargs: PolicyConfig = field(default_factory=PolicyConfig)
-
+    grasp_critic_network_kwargs: CriticNetworkConfig = field(default_factory=CriticNetworkConfig)
     actor_learner_config: ActorLearnerConfig = field(default_factory=ActorLearnerConfig)
     concurrency: ConcurrencyConfig = field(default_factory=ConcurrencyConfig)
 
