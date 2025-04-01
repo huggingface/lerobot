@@ -33,7 +33,8 @@ from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.policies.sac.configuration_sac import SACConfig
 from lerobot.common.policies.utils import get_device_from_parameters
 
-DISCRETE_DIMENSION_INDEX = -1 # Gripper is always the last dimension
+DISCRETE_DIMENSION_INDEX = -1  # Gripper is always the last dimension
+
 
 class SACPolicy(
     PreTrainedPolicy,
@@ -49,6 +50,10 @@ class SACPolicy(
         super().__init__(config)
         config.validate_features()
         self.config = config
+
+        continuous_action_dim = config.output_features["action"].shape[0]
+        if config.num_discrete_actions is not None:
+            continuous_action_dim -= 1
 
         if config.dataset_stats is not None:
             input_normalization_params = _convert_normalization_params_to_tensor(config.dataset_stats)
@@ -117,10 +122,7 @@ class SACPolicy(
         self.grasp_critic = None
         self.grasp_critic_target = None
 
-        continuous_action_dim = config.output_features["action"].shape[0]
         if config.num_discrete_actions is not None:
-
-            continuous_action_dim -= 1
             # Create grasp critic
             self.grasp_critic = GraspCritic(
                 encoder=encoder_critic,
@@ -142,7 +144,6 @@ class SACPolicy(
             self.grasp_critic = torch.compile(self.grasp_critic)
             self.grasp_critic_target = torch.compile(self.grasp_critic_target)
 
-
         self.actor = Policy(
             encoder=encoder_actor,
             network=MLP(input_dim=encoder_actor.output_dim, **asdict(config.actor_network_kwargs)),
@@ -162,11 +163,14 @@ class SACPolicy(
         self.temperature = self.log_alpha.exp().item()
 
     def get_optim_params(self) -> dict:
-        return {
+        optim_params = {
             "actor": self.actor.parameters_to_optimize,
             "critic": self.critic_ensemble.parameters_to_optimize,
             "temperature": self.log_alpha,
         }
+        if self.config.num_discrete_actions is not None:
+            optim_params["grasp_critic"] = self.grasp_critic.parameters_to_optimize
+        return optim_params
 
     def reset(self):
         """Reset the policy"""
@@ -262,7 +266,7 @@ class SACPolicy(
             done: Tensor = batch["done"]
             next_observation_features: Tensor = batch.get("next_observation_feature")
 
-            loss_critic =  self.compute_loss_critic(
+            loss_critic = self.compute_loss_critic(
                 observations=observations,
                 actions=actions,
                 rewards=rewards,
@@ -283,18 +287,21 @@ class SACPolicy(
 
             return {"loss_critic": loss_critic}
 
-
         if model == "actor":
-            return {"loss_actor": self.compute_loss_actor(
-                observations=observations,
-                observation_features=observation_features,
-            )}
+            return {
+                "loss_actor": self.compute_loss_actor(
+                    observations=observations,
+                    observation_features=observation_features,
+                )
+            }
 
         if model == "temperature":
-            return {"loss_temperature": self.compute_loss_temperature(
-                observations=observations,
-                observation_features=observation_features,
-            )}
+            return {
+                "loss_temperature": self.compute_loss_temperature(
+                    observations=observations,
+                    observation_features=observation_features,
+                )
+            }
 
         raise ValueError(f"Unknown model type: {model}")
 
@@ -366,7 +373,7 @@ class SACPolicy(
             # In the buffer we have the full action space (continuous + discrete)
             # We need to split them before concatenating them in the critic forward
             actions: Tensor = actions[:, :DISCRETE_DIMENSION_INDEX]
-            
+
         q_preds = self.critic_forward(
             observations=observations,
             actions=actions,
@@ -407,15 +414,13 @@ class SACPolicy(
             # For DQN, select actions using online network, evaluate with target network
             next_grasp_qs = self.grasp_critic_forward(next_observations, use_target=False)
             best_next_grasp_action = torch.argmax(next_grasp_qs, dim=-1)
-            
+
             # Get target Q-values from target network
             target_next_grasp_qs = self.grasp_critic_forward(observations=next_observations, use_target=True)
-            
+
             # Use gather to select Q-values for best actions
             target_next_grasp_q = torch.gather(
-                target_next_grasp_qs, 
-                dim=1, 
-                index=best_next_grasp_action.unsqueeze(-1)
+                target_next_grasp_qs, dim=1, index=best_next_grasp_action.unsqueeze(-1)
             ).squeeze(-1)
 
         # Compute target Q-value with Bellman equation
@@ -423,13 +428,9 @@ class SACPolicy(
 
         # Get predicted Q-values for current observations
         predicted_grasp_qs = self.grasp_critic_forward(observations=observations, use_target=False)
-        
+
         # Use gather to select Q-values for taken actions
-        predicted_grasp_q = torch.gather(
-            predicted_grasp_qs,
-            dim=1,
-            index=actions.unsqueeze(-1)
-        ).squeeze(-1)
+        predicted_grasp_q = torch.gather(predicted_grasp_qs, dim=1, index=actions.unsqueeze(-1)).squeeze(-1)
 
         # Compute MSE loss between predicted and target Q-values
         grasp_critic_loss = F.mse_loss(input=predicted_grasp_q, target=target_grasp_q)
@@ -642,7 +643,7 @@ class GraspCritic(nn.Module):
         self,
         encoder: Optional[nn.Module],
         network: nn.Module,
-        output_dim: int = 3, # TODO (azouitine): rename it number of discret acitons smth like that
+        output_dim: int = 3,  # TODO (azouitine): rename it number of discret acitons smth like that
         init_final: Optional[float] = None,
         encoder_is_shared: bool = False,
     ):
