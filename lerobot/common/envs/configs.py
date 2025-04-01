@@ -257,6 +257,7 @@ class ManiskillEnvConfig(EnvConfig):
     robot: str = "so100"  # This is a hack to make the robot config work
     video_record: VideoRecordConfig = field(default_factory=VideoRecordConfig)
     wrapper: WrapperConfig = field(default_factory=WrapperConfig)
+    mock_gripper: bool = False
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
             "action": PolicyFeature(type=FeatureType.ACTION, shape=(7,)),
