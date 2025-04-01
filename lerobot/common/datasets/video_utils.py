@@ -257,6 +257,7 @@ def encode_video_frames(
 ) -> None:
     """More info on ffmpeg arguments tuning on `benchmark/video/README.md`"""
     video_path = Path(video_path)
+    imgs_dir = Path(imgs_dir)
     video_path.parent.mkdir(parents=True, exist_ok=True)
 
     ffmpeg_args = OrderedDict(
