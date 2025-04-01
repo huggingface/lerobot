@@ -87,6 +87,7 @@ class SACConfig(PreTrainedConfig):
         freeze_vision_encoder: Whether to freeze the vision encoder during training.
         image_encoder_hidden_dim: Hidden dimension size for the image encoder.
         shared_encoder: Whether to use a shared encoder for actor and critic.
+        num_discrete_actions: Number of discrete actions, eg for gripper actions.
         concurrency: Configuration for concurrency settings.
         actor_learner: Configuration for actor-learner architecture.
         online_steps: Number of steps for online training.
@@ -162,7 +163,6 @@ class SACConfig(PreTrainedConfig):
     num_critics: int = 2
     num_subsample_critics: int | None = None
     critic_lr: float = 3e-4
-    grasp_critic_lr: float = 3e-4
     actor_lr: float = 3e-4
     temperature_lr: float = 3e-4
     critic_target_update_weight: float = 0.005
