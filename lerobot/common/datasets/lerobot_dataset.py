@@ -103,6 +103,14 @@ class LeRobotDatasetMetadata:
 
     def load_metadata(self):
         self.info = load_info(self.root)
+        # self.info['features']['observation.state']['shape'] = (13,)
+        # self.info['features']['observation.state']['names'] = ['left_arm_1', 'left_arm_2', 'left_arm_3', 'left_arm_4', 'left_arm_5', 'left_arm_6', 
+        #                                                        'right_arm_1', 'right_arm_2', 'right_arm_3', 'right_arm_4', 'right_arm_5', 'right_arm_6', 'vacuum']
+        # self.info['features']['action']['shape'] = (13,)
+        # self.info['features']['action']['names'] = ['left_arm_exp_1', 'left_arm_exp_2', 'left_arm_exp_3', 'left_arm_exp_4', 'left_arm_exp_5', 'left_arm_exp_6', 
+        #                                             'right_arm_exp_1', 'right_arm_exp_2', 'right_arm_exp_3', 'right_arm_exp_4', 'right_arm_exp_5', 'right_arm_exp_6', 'vacuum_exp']
+        
+        
         check_version_compatibility(self.repo_id, self._version, CODEBASE_VERSION)
         self.tasks, self.task_to_task_index = load_tasks(self.root)
         self.episodes = load_episodes(self.root)
@@ -110,7 +118,15 @@ class LeRobotDatasetMetadata:
             self.stats = load_stats(self.root)
             self.episodes_stats = backward_compatible_episodes_stats(self.stats, self.episodes)
         else:
+            # print("v2.1 episode stat process")
             self.episodes_stats = load_episodes_stats(self.root)
+            # print("episode stats: ", type(self.episodes_stats))
+            # for _, episode_stats in self.episodes_stats.items():
+            #     for feature in ['observation.state', 'action']:
+            #         for sub_feature in ['min', 'max', 'mean', 'std']:
+            #             episode_stats[feature][sub_feature] = np.delete(episode_stats[feature][sub_feature], [6,13], axis=0)
+                        # print('after process', feature, sub_feature, episode_stats[feature][sub_feature].shape)
+                
             self.stats = aggregate_stats(list(self.episodes_stats.values()))
 
     def pull_from_repo(
@@ -731,6 +747,17 @@ class LeRobotDataset(torch.utils.data.Dataset):
             query_result = self._query_hf_dataset(query_indices)
             item = {**item, **padding}
             for key, val in query_result.items():
+                # # remove gripper in original data
+                # if "observation.state" == key:
+                #     keep_cols = [i for i in range(15) if i not in {6, 13}]
+                #     # 切片操作删除指定列
+                #     val = val[:, keep_cols]
+                #     # print("emmmmmm in __getitem_ state", val.shape)
+                # if "action" == key:
+                #     keep_cols = [i for i in range(15) if i not in {6, 13}]
+                #     # 切片操作删除指定列
+                #     val = val[:, keep_cols]
+                #     # print("emmmmmm in __getitem_ action", val.shape)
                 item[key] = val
 
         if len(self.meta.video_keys) > 0:

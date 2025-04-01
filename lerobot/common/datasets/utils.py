@@ -419,6 +419,9 @@ def dataset_to_policy_features(features: dict[str, dict]) -> dict[str, PolicyFea
             type = FeatureType.ACTION
         else:
             continue
+        
+        if 'depth' in key:
+            continue
 
         policy_features[key] = PolicyFeature(
             type=type,
