@@ -196,6 +196,7 @@ class SACConfig(PreTrainedConfig):
             optimizer_groups={
                 "actor": {"lr": self.actor_lr},
                 "critic": {"lr": self.critic_lr},
+                "grasp_critic": {"lr": self.critic_lr},
                 "temperature": {"lr": self.temperature_lr},
             },
         )
