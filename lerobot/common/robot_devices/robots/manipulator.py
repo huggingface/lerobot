@@ -181,6 +181,7 @@ class ManipulatorRobot:
                 "shape": (cam.height, cam.width, cam.channels),
                 "names": ["height", "width", "channels"],
                 "info": None,
+                "audio": "observation.audio." + cam.microphone if cam.microphone is not None else None,
             }
         return cam_ft
 
@@ -207,9 +208,9 @@ class ManipulatorRobot:
         for mic_key, mic in self.microphones.items():
             key = f"observation.audio.{mic_key}"
             mic_ft[key] = {
-                "dtype": mic.data_type,
-                "shape": (mic.channels,),
-                "info": None,
+                "shape": (len(mic.channels),),
+                "names": "channels",
+                "info" : None,
             }
         return mic_ft
 
