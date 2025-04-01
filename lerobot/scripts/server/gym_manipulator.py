@@ -761,6 +761,62 @@ class BatchCompitableWrapper(gym.ObservationWrapper):
         return observation
 
 
+class GripperPenaltyWrapper(gym.RewardWrapper):
+    def __init__(self, env, penalty: float = -0.1):
+        super().__init__(env)
+        self.penalty = penalty
+        self.last_gripper_state = None
+
+    def reward(self, reward, action):
+        gripper_state_normalized = self.last_gripper_state / MAX_GRIPPER_COMMAND
+
+        if isinstance(action, tuple):
+            action = action[0]
+        action_normalized = action[-1] / MAX_GRIPPER_COMMAND
+
+        gripper_penalty_bool = (gripper_state_normalized < 0.1 and action_normalized > 0.9) or (
+            gripper_state_normalized > 0.9 and action_normalized < 0.1
+        )
+        breakpoint()
+
+        return reward + self.penalty * gripper_penalty_bool
+
+    def step(self, action):
+        self.last_gripper_state = self.unwrapped.robot.follower_arms["main"].read("Present_Position")[-1]
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        reward = self.reward(reward, action)
+        return obs, reward, terminated, truncated, info
+
+    def reset(self, **kwargs):
+        self.last_gripper_state = None
+        return super().reset(**kwargs)
+
+
+class GripperQuantizationWrapper(gym.ActionWrapper):
+    def __init__(self, env, quantization_threshold: float = 0.2):
+        super().__init__(env)
+        self.quantization_threshold = quantization_threshold
+
+    def action(self, action):
+        is_intervention = False
+        if isinstance(action, tuple):
+            action, is_intervention = action
+
+        gripper_command = action[-1]
+        # Quantize gripper command to -1, 0 or 1
+        if gripper_command < -self.quantization_threshold:
+            gripper_command = -MAX_GRIPPER_COMMAND
+        elif gripper_command > self.quantization_threshold:
+            gripper_command = MAX_GRIPPER_COMMAND
+        else:
+            gripper_command = 0.0
+
+        gripper_state = self.unwrapped.robot.follower_arms["main"].read("Present_Position")[-1]
+        gripper_action = np.clip(gripper_state + gripper_command, 0, MAX_GRIPPER_COMMAND)
+        action[-1] = gripper_action.item()
+        return action, is_intervention
+
+
 class EEActionWrapper(gym.ActionWrapper):
     def __init__(self, env, ee_action_space_params=None, use_gripper=False):
         super().__init__(env)
@@ -820,17 +876,7 @@ class EEActionWrapper(gym.ActionWrapper):
             fk_func=self.fk_function,
         )
         if self.use_gripper:
-            # Quantize gripper command to -1, 0 or 1
-            if gripper_command < -0.2:
-                gripper_command = -1.0
-            elif gripper_command > 0.2:
-                gripper_command = 1.0
-            else:
-                gripper_command = 0.0
-
-            gripper_state = self.unwrapped.robot.follower_arms["main"].read("Present_Position")[-1]
-            gripper_action = np.clip(gripper_state + gripper_command, 0, MAX_GRIPPER_COMMAND)
-            target_joint_pos[-1] = gripper_action
+            target_joint_pos[-1] = gripper_command
 
         return target_joint_pos, is_intervention
 
@@ -1069,31 +1115,6 @@ class ActionScaleWrapper(gym.ActionWrapper):
         return action * self.scale_vector, is_intervention
 
 
-class GripperPenaltyWrapper(gym.Wrapper):
-    def __init__(self, env, penalty=-0.05):
-        super().__init__(env)
-        self.penalty = penalty
-        self.last_gripper_pos = None
-
-    def reset(self, **kwargs):
-        obs, info = self.env.reset(**kwargs)
-        self.last_gripper_pos = obs["observation.state"][0, 0]  # first idx for the gripper
-        return obs, info
-
-    def step(self, action):
-        observation, reward, terminated, truncated, info = self.env.step(action)
-
-        if (action[-1] < -0.5 and self.last_gripper_pos > 0.9) or (
-            action[-1] > 0.5 and self.last_gripper_pos < 0.9
-        ):
-            info["grasp_penalty"] = self.penalty
-        else:
-            info["grasp_penalty"] = 0.0
-
-        self.last_gripper_pos = observation["observation.state"][0, 0]  # first idx for the gripper
-        return observation, reward, terminated, truncated, info
-
-
 def make_robot_env(cfg) -> gym.vector.VectorEnv:
     """
     Factory function to create a vectorized robot environment.
@@ -1143,6 +1164,12 @@ def make_robot_env(cfg) -> gym.vector.VectorEnv:
     # Add reward computation and control wrappers
     # env = RewardWrapper(env=env, reward_classifier=reward_classifier, device=cfg.device)
     env = TimeLimitWrapper(env=env, control_time_s=cfg.wrapper.control_time_s, fps=cfg.fps)
+    if cfg.wrapper.use_gripper:
+        env = GripperQuantizationWrapper(
+            env=env, quantization_threshold=cfg.wrapper.gripper_quantization_threshold
+        )
+        # env = GripperPenaltyWrapper(env=env, penalty=cfg.wrapper.gripper_penalty)
+
     if cfg.wrapper.ee_action_space_params is not None:
         env = EEActionWrapper(
             env=env,
@@ -1169,7 +1196,6 @@ def make_robot_env(cfg) -> gym.vector.VectorEnv:
     if cfg.wrapper.ee_action_space_params is None and cfg.wrapper.joint_masking_action_space is not None:
         env = JointMaskingActionSpace(env=env, mask=cfg.wrapper.joint_masking_action_space)
     env = BatchCompitableWrapper(env=env)
-    env = GripperPenaltyWrapper(env=env)
 
     return env
 
