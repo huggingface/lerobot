@@ -171,3 +171,6 @@ dmypy.json
 
 # Cython debug symbols
 cython_debug/
+
+# lerobot calibration cache
+.cache
