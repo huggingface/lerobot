@@ -737,6 +737,7 @@ def make_optimizers_and_scheduler(cfg, policy: nn.Module):
     This function sets up Adam optimizers for:
     - The **actor network**, ensuring that only relevant parameters are optimized.
     - The **critic ensemble**, which evaluates the value function.
+    - The **grasp critic**, which evaluates the quality of grasp attempts.
     - The **temperature parameter**, which controls the entropy in soft actor-critic (SAC)-like methods.
 
     It also initializes a learning rate scheduler, though currently, it is set to `None`.
@@ -752,7 +753,7 @@ def make_optimizers_and_scheduler(cfg, policy: nn.Module):
     Returns:
         Tuple[Dict[str, torch.optim.Optimizer], Optional[torch.optim.lr_scheduler._LRScheduler]]:
         A tuple containing:
-        - `optimizers`: A dictionary mapping component names ("actor", "critic", "temperature") to their respective Adam optimizers.
+        - `optimizers`: A dictionary mapping component names ("actor", "critic", "grasp_critic", "temperature") to their respective Adam optimizers.
         - `lr_scheduler`: Currently set to `None` but can be extended to support learning rate scheduling.
 
     """
