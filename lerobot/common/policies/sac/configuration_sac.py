@@ -43,6 +43,14 @@ class CriticNetworkConfig:
 
 
 @dataclass
+class GraspCriticNetworkConfig:
+    hidden_dims: list[int] = field(default_factory=lambda: [256, 256])
+    activate_final: bool = True
+    final_activation: str | None = None
+    output_dim: int = 3
+
+
+@dataclass
 class ActorNetworkConfig:
     hidden_dims: list[int] = field(default_factory=lambda: [256, 256])
     activate_final: bool = True
@@ -159,6 +167,7 @@ class SACConfig(PreTrainedConfig):
     num_critics: int = 2
     num_subsample_critics: int | None = None
     critic_lr: float = 3e-4
+    grasp_critic_lr: float = 3e-4
     actor_lr: float = 3e-4
     temperature_lr: float = 3e-4
     critic_target_update_weight: float = 0.005
@@ -187,6 +196,7 @@ class SACConfig(PreTrainedConfig):
             optimizer_groups={
                 "actor": {"lr": self.actor_lr},
                 "critic": {"lr": self.critic_lr},
+                "grasp_critic": {"lr": self.critic_lr},
                 "temperature": {"lr": self.temperature_lr},
             },
         )
