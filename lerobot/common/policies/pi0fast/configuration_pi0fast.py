@@ -81,7 +81,7 @@ class PI0FASTConfig(PreTrainedConfig):
 
     # Allows padding/truncation of generated action tokens during detokenization to ensure decoding.
     # In the original version, tensors of 0s were generated if shapes didn't match for stable decoding.
-    relaxed_decoding: bool = True
+    relaxed_action_decoding: bool = True
 
     def __post_init__(self):
         super().__post_init__()
