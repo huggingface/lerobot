@@ -66,7 +66,7 @@ from torch import Tensor, nn
 from tqdm import trange
 
 from lerobot.common.envs.factory import make_env
-from lerobot.common.envs.utils import preprocess_observation
+from lerobot.common.envs.utils import preprocess_observation, infer_envs_task, check_env_attributes_and_types
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.policies.utils import get_device_from_parameters
@@ -145,6 +145,7 @@ def rollout(
         disable=inside_slurm(),  # we dont want progress bar when we use slurm, since it clutters the logs
         leave=False,
     )
+    check_env_attributes_and_types(env)
     while not np.all(done):
         # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
         observation = preprocess_observation(observation)
@@ -154,12 +155,10 @@ def rollout(
         observation = {
             key: observation[key].to(device, non_blocking=device.type == "cuda") for key in observation
         }
-        if hasattr(env.envs[0], "task_description"):
-            observation["task"] = env.call("task_description")
-        elif hasattr(env.envs[0], "task"):
-            observation["task"] = env.call("task")
-        else:  # IIRC This was to deal with datasets without language instructions, i.e. aloha transfer cube and etc.?
-            observation["task"] = ["" for _ in range(observation[list(observation.keys())[0]].shape[0])]
+
+        # Infer "task" from envs. Works with AsyncVectorEnv.
+        observation = infer_envs_task(env, observation)
+        
         with torch.inference_mode():
             action = policy.select_action(observation)
 
