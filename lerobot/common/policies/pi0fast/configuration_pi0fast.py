@@ -79,7 +79,7 @@ class PI0FASTConfig(PreTrainedConfig):
     precision: str = "bfloat16"
     grad_clip_norm: float = 1
 
-    # Allows padding/truncation of generated action tokens during detokenization to ensure decoding. 
+    # Allows padding/truncation of generated action tokens during detokenization to ensure decoding.
     # In the original version, tensors of 0s were generated if shapes didn't match for stable decoding.
     relaxed_decoding: bool = True
 
