@@ -74,14 +74,6 @@ PRECISION = {
 }
 
 
-def display(tensor: torch.Tensor):
-    if tensor.dtype == torch.bool:
-        tensor = tensor.float()
-    print(f"Shape: {tensor.shape}")
-    print(f"Mean: {tensor.mean().item()}")
-    print(f"Std: {tensor.std().item()}")
-    print(f"Min: {tensor.min().item()}")
-    print(f"Max: {tensor.max().item()}")
 
 
 def normalize(x, min_val, max_val):
