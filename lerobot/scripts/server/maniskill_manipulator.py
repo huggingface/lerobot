@@ -16,7 +16,6 @@ from lerobot.common.policies.sac.configuration_sac import SACConfig
 from lerobot.common.policies.sac.modeling_sac import SACPolicy
 
 
-
 def preprocess_maniskill_observation(
     observations: dict[str, np.ndarray],
 ) -> dict[str, torch.Tensor]:
@@ -156,6 +155,7 @@ class TimeLimitWrapper(gym.Wrapper):
         self.current_step = 0
         return super().reset(seed=seed, options=options)
 
+
 class ManiskillMockGripperWrapper(gym.Wrapper):
     def __init__(self, env, nb_discrete_actions: int = 3):
         super().__init__(env)
@@ -166,11 +166,16 @@ class ManiskillMockGripperWrapper(gym.Wrapper):
         self.action_space = gym.spaces.Tuple((action_space_agent, env.action_space[1]))
 
     def step(self, action):
-        action_agent, telop_action  = action  
+        if isinstance(action, tuple):
+            action_agent, telop_action = action
+        else:
+            telop_action = 0
+            action_agent = action
         real_action = action_agent[:-1]
         final_action = (real_action, telop_action)
         obs, reward, terminated, truncated, info = self.env.step(final_action)
-        return obs, reward, terminated, truncated, info 
+        return obs, reward, terminated, truncated, info
+
 
 def make_maniskill(
     cfg: ManiskillEnvConfig,
