@@ -19,7 +19,7 @@ from pprint import pformat
 
 from lerobot.common.utils.encoding_utils import decode_sign_magnitude, encode_sign_magnitude
 
-from ..motors_bus import Motor, MotorCalibration, MotorsBus, NameOrID, Value
+from ..motors_bus import Motor, MotorCalibration, MotorsBus, NameOrID, Value, get_address
 from .tables import (
     AVAILABLE_BAUDRATES,
     ENCODINGS,
@@ -261,3 +261,36 @@ class FeetechMotorsBus(MotorsBus):
             return model_numbers if model_numbers else None
 
         return model_numbers
+
+    def _is_eprom(self, address: int) -> bool:
+        """
+        HACK: because of https://gitee.com/ftservo/SCServoSDK/issues/IBY2S6
+        When writing to EPROM on for Feetech motors with Lock=0, we need to:
+            - 1. write several times
+            - 2. reset serial's buffer
+        """
+        return address < 40
+
+    def _write(self, data_name: str, motor_id: int, value: int, num_retry: int = 0) -> tuple[int, int]:
+        model = self._id_to_model(motor_id)
+        addr, n_bytes = get_address(self.model_ctrl_table, model, data_name)
+        value = self._encode_value(value, data_name, n_bytes)
+        data = self._split_int_to_bytes(value, n_bytes)
+
+        if self._is_eprom(addr):  # HACK
+            num_retry = max(num_retry, 5)
+
+        for n_try in range(1 + num_retry):
+            comm, error = self.packet_handler.writeTxRx(self.port_handler, motor_id, addr, n_bytes, data)
+            if self._is_comm_success(comm):
+                break
+            logger.debug(
+                f"Failed to write '{data_name}' ({addr=} {n_bytes=}) on {motor_id=} with '{value}' ({n_try=})"
+            )
+            logger.debug(self.packet_handler.getRxPacketError(comm))
+
+        if self._is_eprom(addr):  # HACK
+            self.port_handler.ser.reset_output_buffer()
+            self.port_handler.ser.reset_input_buffer()
+
+        return comm, error

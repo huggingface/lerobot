@@ -2,6 +2,7 @@
 # https://docs.google.com/spreadsheets/d/1GVs7W1VS1PqdhA1nW-abeyAHhTUxKUdR/edit?usp=sharing&ouid=116566590112741600240&rtpof=true&sd=true
 # data_name: (address, size_byte)
 SCS_SERIES_CONTROL_TABLE = {
+    # EPROM
     "Firmware_Version": (0, 2),
     "Model_Number": (3, 2),
     "ID": (5, 1),
@@ -33,6 +34,7 @@ SCS_SERIES_CONTROL_TABLE = {
     "Speed_closed_loop_P_proportional_coefficient": (37, 1),
     "Over_Current_Protection_Time": (38, 1),
     "Velocity_closed_loop_I_integral_coefficient": (39, 1),
+    # SRAM
     "Torque_Enable": (40, 1),
     "Acceleration": (41, 1),
     "Goal_Position": (42, 2),
