@@ -1,0 +1,15 @@
+robot:
+  arm_bus:
+    Lock: 0
+    Torque_Limit: 1000
+    Protection_Current: 500
+    Over_Current_Protection_Time: 10
+    Max_Torque_Limit: 1000
+    Overload_Torque: 40  # Play around with this
+    Protection_Time: 1000  # When does it kick in?
+    Protective_Torque: 1
+    Maximum_Acceleration: 100
+    Torque_Enable: 1
+    Acceleration: 100
+  hand_bus:
+    Acceleration: 100

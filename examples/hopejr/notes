@@ -1,0 +1,103 @@
+test and test4
+installed serial and opencv
+after pip install -e .
+pip install -e ".[feetech]"
+
+robot.hand_bus.read("Present_Position") 
+array([ 349,  799, 1000, 1004,  508,  503,  673,  608,  791,  390,  552,
+        506,  600,  565,  428,  379], dtype=int32)
+
+robot.hand_bus.write("Goal_Position",[349,799,500,500,508,503,673,608,791,390,552,506,600,565,428,379])
+
+
+robot.arm_bus.write("Goal_Position", [1825, 2045, 2010, 2035, 1414, 1800, 1615])
+robot.arm_bus.read("Present_Position")
+
+robot.arm_bus.write("Goal_Position", [1500], ["elbow_flex"])
+robot.arm_bus.write("Goal_Position", [2000], ["wrist_yaw"])
+
+ranges:                                [600-2300, 1500-2300, 1300-2800, 1000-2500, 600-2800,400-1700, 1300-2300]
+                                        shoulder_up, 
+                                                shoulder forward, 
+                                                            shoulder yaw, 
+                                                                        elbow_flex
+                                                                                  wrist_yaw, 
+                                                                                            wrist_pitch, 
+                                                                                                        wrist_roll
+
+COM18
+
+C:/Users/Lenovo/AppData/Local/Programs/Python/Python310/python.exe c:/Users/Lenovo/Documents/HuggingFace/lerobot/examples/test4.py
+
+wrist pitch is fucked
+
+
+so the wrist motor was fucked 
+and we didnt know which one it was because 
+if the chain hjas an issue we dont know how to locate whihc motor is at fault (cables are hard to remove)
+
+to calibrate:
+
+python lerobot/scripts/configure_motor.py \
+  --port /dev/ttyACM1 \
+  --brand feetech \
+  --model sts3250 \
+  --baudrate 1000000 \
+  --ID 2
+
+
+python lerobot/scripts/configure_motor.py \
+  --port /dev/ttyACM0 \
+  --brand feetech \
+  --model sm8512bl \
+  --baudrate 115200 \
+  --ID 1
+
+python lerobot/scripts/configure_motor.py \
+  --port /dev/ttyACM1 \
+  --brand feetech \
+  --model scs0009 \
+  --baudrate 1000000 \
+  --ID 30
+
+  why are the motors beeping?
+
+
+#interpolate between start and end pos 
+robot.arm_bus.write("Goal_Position", [int((i*interp+j*(1-interp))) for i, j in zip(arm_calibration["start_pos"], arm_calibration["end_pos"])])
+
+control maj M to look for stuff
+
+set calibration is useless
+
+move the joints to that position too
+
+
+/home/nepyope/Desktop/HuggingFace/lerobot/lerobot/common/robot_devices/motors/feetech.py
+
+theres clearly some lag, and its probably because of an out of range issue
+
+
+    # hand_calibration = robot.get_hand_calibration()
+    # joint = input("Enter joint name: ")
+    # j1 = f"{joint}_pinky_side"
+    # j2 = f"{joint}_thumb_side"
+    # encoder = EncoderReader("/dev/ttyUSB0", 115200)
+    # start_angle1 = hand_calibration['start_pos'][hand_calibration['motor_names'].index(j1)]
+    # end_angle1 = hand_calibration['end_pos'][hand_calibration['motor_names'].index(j1)]
+    # start_angle2 = hand_calibration['start_pos'][hand_calibration['motor_names'].index(j2)]
+    # end_angle2 = hand_calibration['end_pos'][hand_calibration['motor_names'].index(j2)]
+    # # start_angle = shoulder_calibration['start_pos'][shoulder_calibration['motor_names'].index(joint)]
+    # # end_angle = shoulder_calibration['end_pos'][shoulder_calibration['motor_names'].index(joint)]
+    # while True:
+    #     angle1 = int(start_angle1+(end_angle1-start_angle1)*encoder.read()/1000)
+    #     angle2 = int(start_angle2+(end_angle2-start_angle2)*encoder.read()/1000)
+
+    #     robot.hand_bus.write("Goal_Position",angle1, [j1])
+    #     robot.hand_bus.write("Goal_Position",angle2, [j2])
+    #     print(angle1, angle2)
+    #     time.sleep(0.1)
+
+    # print(robot.hand_bus.find_motor_indices())
+    # exit()
+
