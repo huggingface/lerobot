@@ -66,7 +66,7 @@ from torch import Tensor, nn
 from tqdm import trange
 
 from lerobot.common.envs.factory import make_env
-from lerobot.common.envs.utils import preprocess_observation, infer_envs_task, check_env_attributes_and_types
+from lerobot.common.envs.utils import check_env_attributes_and_types, infer_envs_task, preprocess_observation
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.policies.utils import get_device_from_parameters
@@ -158,7 +158,7 @@ def rollout(
 
         # Infer "task" from envs. Works with AsyncVectorEnv.
         observation = infer_envs_task(env, observation)
-        
+
         with torch.inference_mode():
             action = policy.select_action(observation)
 

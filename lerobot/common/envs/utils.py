@@ -13,13 +13,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from typing import Any
 import warnings
+from typing import Any
+
 import einops
+import gym
 import numpy as np
 import torch
 from torch import Tensor
-import gym
+
 from lerobot.common.envs.configs import EnvConfig
 from lerobot.common.utils.utils import get_channel_first_image_shape
 from lerobot.configs.types import FeatureType, PolicyFeature
@@ -89,26 +91,29 @@ def env_to_policy_features(env_cfg: EnvConfig) -> dict[str, PolicyFeature]:
 
     return policy_features
 
+
 def check_all_envs_same_type(env: gym.vector.VectorEnv) -> bool:
     first_type = type(env.envs[0])  # Get type of first env
     return all(type(e) is first_type for e in env.envs)  # Fast type check
 
+
 def check_env_attributes_and_types(env: gym.vector.VectorEnv) -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("once", UserWarning)  # Apply filter only in this function
-        
+
         if not (hasattr(env.envs[0], "task_description") and hasattr(env.envs[0], "task")):
             warnings.warn(
                 "The environment does not have 'task_description' and 'task'. Some policies require these features.",
                 UserWarning,
-                stacklevel=2
+                stacklevel=2,
             )
         if not check_all_envs_same_type(env):
             warnings.warn(
                 "The environments have different types. Make sure you infer the right task from each environment. Empty task will be passed instead.",
                 UserWarning,
-                stacklevel=2
+                stacklevel=2,
             )
+
 
 def infer_envs_task(env: gym.vector.VectorEnv, observation: dict[str, Any]) -> dict[str, Any]:
     if hasattr(env.envs[0], "task_description"):
