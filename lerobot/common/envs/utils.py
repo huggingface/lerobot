@@ -92,7 +92,7 @@ def env_to_policy_features(env_cfg: EnvConfig) -> dict[str, PolicyFeature]:
     return policy_features
 
 
-def check_all_envs_same_type(env: gym.vector.VectorEnv) -> bool:
+def are_all_envs_same_type(env: gym.vector.VectorEnv) -> bool:
     first_type = type(env.envs[0])  # Get type of first env
     return all(type(e) is first_type for e in env.envs)  # Fast type check
 
