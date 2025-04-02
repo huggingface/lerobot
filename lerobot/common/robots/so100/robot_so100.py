@@ -25,12 +25,13 @@ from lerobot.common.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.common.motors.feetech import (
     FeetechMotorsBus,
     OperatingMode,
-    TorqueMode,
 )
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
 from .configuration_so100 import SO100RobotConfig
+
+logger = logging.getLogger(__name__)
 
 
 class SO100Robot(Robot):
@@ -44,9 +45,6 @@ class SO100Robot(Robot):
     def __init__(self, config: SO100RobotConfig):
         super().__init__(config)
         self.config = config
-        self.robot_type = config.type
-        self.logs = {}
-
         self.arm = FeetechMotorsBus(
             port=self.config.port,
             motors={
@@ -89,65 +87,46 @@ class SO100Robot(Robot):
         return self.arm.is_connected
 
     def connect(self) -> None:
+        """
+        We assume that at connection time, arm is in a rest position,
+        and torque can be safely disabled to run calibration.
+        """
         if self.is_connected:
-            raise DeviceAlreadyConnectedError(
-                "ManipulatorRobot is already connected. Do not run `robot.connect()` twice."
-            )
+            raise DeviceAlreadyConnectedError(f"{self} already connected")
 
-        logging.info("Connecting arm.")
         self.arm.connect()
         if not self.is_calibrated:
             self.calibrate()
-
-        self.configure()
 
         # Connect the cameras
         for cam in self.cameras.values():
             cam.connect()
 
-    def configure(self) -> None:
-        for name in self.arm.names:
-            # We assume that at connection time, arm is in a rest position,
-            # and torque can be safely disabled to run calibration.
-            self.arm.write("Torque_Enable", name, TorqueMode.DISABLED.value)
-            self.arm.write("Operating_Mode", name, OperatingMode.POSITION.value)
-
-            # Set P_Coefficient to lower value to avoid shakiness (Default is 32)
-            self.arm.write("P_Coefficient", name, 16)
-            # Set I_Coefficient and D_Coefficient to default value 0 and 32
-            self.arm.write("I_Coefficient", name, 0)
-            self.arm.write("D_Coefficient", name, 32)
-            # Set Maximum_Acceleration to 254 to speedup acceleration and deceleration of
-            # the motors. Note: this configuration is not in the official STS3215 Memory Table
-            self.arm.write("Maximum_Acceleration", name, 254)
-            self.arm.write("Acceleration", name, 254)
-
-        for name in self.arm.names:
-            self.arm.write("Torque_Enable", name, TorqueMode.ENABLED.value)
-
-        logging.info("Torque activated.")
+        self.configure()
+        logger.info(f"{self} connected.")
 
     @property
     def is_calibrated(self) -> bool:
-        motors_calibration = self.arm.get_calibration()
-        return motors_calibration == self.calibration
+        return self.arm.is_calibrated
 
     def calibrate(self) -> None:
-        print(f"\nRunning calibration of {self.id} SO-100 robot")
+        logger.info(f"\nRunning calibration of {self}")
+        self.arm.disable_torque()
         for name in self.arm.names:
-            self.arm.write("Torque_Enable", name, TorqueMode.DISABLED.value)
             self.arm.write("Operating_Mode", name, OperatingMode.POSITION.value)
 
         input("Move robot to the middle of its range of motion and press ENTER....")
         homing_offsets = self.arm.set_half_turn_homings()
 
-        print(
-            "Move all joints except 'wrist_roll' (id=5) sequentially through their entire ranges of motion."
+        full_turn_motor = "wrist_roll"
+        unknown_range_motors = [name for name in self.arm.names if name != full_turn_motor]
+        logger.info(
+            f"Move all joints except '{full_turn_motor}' sequentially through their "
+            "entire ranges of motion.\nRecording positions. Press ENTER to stop..."
         )
-        print("Recording positions. Press ENTER to stop...")
-        auto_range_motors = [name for name in self.arm.names if name != "wrist_roll"]
-        ranges = self.arm.register_ranges_of_motion(auto_range_motors)
-        ranges["wrist_roll"] = {"min": 0, "max": 4095}
+        range_mins, range_maxes = self.arm.record_ranges_of_motion(unknown_range_motors)
+        range_mins[full_turn_motor] = 0
+        range_maxes[full_turn_motor] = 4095
 
         self.calibration = {}
         for name, motor in self.arm.motors.items():
@@ -155,33 +134,49 @@ class SO100Robot(Robot):
                 id=motor.id,
                 drive_mode=0,
                 homing_offset=homing_offsets[name],
-                range_min=ranges[name]["min"],
-                range_max=ranges[name]["max"],
+                range_min=range_mins[name],
+                range_max=range_maxes[name],
             )
 
+        self.arm.write_calibration(self.calibration)
         self._save_calibration()
         print("Calibration saved to", self.calibration_fpath)
 
+    def configure(self) -> None:
+        self.arm.disable_torque()
+        self.arm.configure_motors()
+        for name in self.arm.names:
+            self.arm.write("Operating_Mode", name, OperatingMode.POSITION.value)
+            # Set P_Coefficient to lower value to avoid shakiness (Default is 32)
+            self.arm.write("P_Coefficient", name, 16)
+            # Set I_Coefficient and D_Coefficient to default value 0 and 32
+            self.arm.write("I_Coefficient", name, 0)
+            self.arm.write("D_Coefficient", name, 32)
+            # Set Maximum_Acceleration to 254 to speedup acceleration and deceleration of
+            # the motors. Note: this address is not in the official STS3215 Memory Table
+            self.arm.write("Maximum_Acceleration", name, 254)
+            self.arm.write("Acceleration", name, 254)
+
+        self.arm.enable_torque()
+
     def get_observation(self) -> dict[str, Any]:
-        """The returned observations do not have a batch dimension."""
         if not self.is_connected:
-            raise DeviceNotConnectedError(
-                "ManipulatorRobot is not connected. You need to run `robot.connect()`."
-            )
+            raise DeviceNotConnectedError(f"{self} is not connected.")
 
         obs_dict = {}
 
         # Read arm position
-        before_read_t = time.perf_counter()
+        start = time.perf_counter()
         obs_dict[OBS_STATE] = self.arm.sync_read("Present_Position")
-        self.logs["read_pos_dt_s"] = time.perf_counter() - before_read_t
+        dt_ms = (time.perf_counter() - start) * 1e3
+        logger.debug(f"{self} read state: {dt_ms:.1f}ms")
 
         # Capture images from cameras
         for cam_key, cam in self.cameras.items():
-            before_camread_t = time.perf_counter()
+            start = time.perf_counter()
             obs_dict[f"{OBS_IMAGES}.{cam_key}"] = cam.async_read()
-            self.logs[f"read_camera_{cam_key}_dt_s"] = cam.logs["delta_timestamp_s"]
-            self.logs[f"async_read_camera_{cam_key}_dt_s"] = time.perf_counter() - before_camread_t
+            dt_ms = (time.perf_counter() - start) * 1e3
+            logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
 
         return obs_dict
 
@@ -199,9 +194,7 @@ class SO100Robot(Robot):
             the action sent to the motors, potentially clipped.
         """
         if not self.is_connected:
-            raise DeviceNotConnectedError(
-                "ManipulatorRobot is not connected. You need to run `robot.connect()`."
-            )
+            raise DeviceNotConnectedError(f"{self} is not connected.")
 
         goal_pos = action
 
@@ -209,16 +202,12 @@ class SO100Robot(Robot):
         # /!\ Slower fps expected due to reading from the follower.
         if self.config.max_relative_target is not None:
             present_pos = self.arm.sync_read("Present_Position")
-            goal_pos = ensure_safe_goal_position(goal_pos, present_pos, self.config.max_relative_target)
+            goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in goal_pos.items()}
+            goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
 
         # Send goal position to the arm
         self.arm.sync_write("Goal_Position", goal_pos)
-
         return goal_pos
-
-    def print_logs(self):
-        # TODO(aliberts): move robot-specific logs logic here
-        pass
 
     def disconnect(self):
         if not self.is_connected:
@@ -226,6 +215,8 @@ class SO100Robot(Robot):
                 "ManipulatorRobot is not connected. You need to run `robot.connect()` before disconnecting."
             )
 
-        self.arm.disconnect()
+        self.arm.disconnect(self.config.disable_torque_on_disconnect)
         for cam in self.cameras.values():
             cam.disconnect()
+
+        logger.info(f"{self} disconnected.")

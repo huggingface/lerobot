@@ -25,12 +25,13 @@ from lerobot.common.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.common.motors.dynamixel import (
     DynamixelMotorsBus,
     OperatingMode,
-    TorqueMode,
 )
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
 from .configuration_koch import KochRobotConfig
+
+logger = logging.getLogger(__name__)
 
 
 class KochRobot(Robot):
@@ -46,8 +47,6 @@ class KochRobot(Robot):
     def __init__(self, config: KochRobotConfig):
         super().__init__(config)
         self.config = config
-        self.robot_type = config.type
-
         self.arm = DynamixelMotorsBus(
             port=self.config.port,
             motors={
@@ -58,10 +57,9 @@ class KochRobot(Robot):
                 "wrist_roll": Motor(5, "xl330-m288", MotorNormMode.RANGE_M100_100),
                 "gripper": Motor(6, "xl330-m288", MotorNormMode.RANGE_0_100),
             },
+            calibration=self.calibration,
         )
         self.cameras = make_cameras_from_configs(config.cameras)
-
-        self.logs = {}
 
     @property
     def state_feature(self) -> dict:
@@ -92,33 +90,70 @@ class KochRobot(Robot):
         return self.arm.is_connected
 
     def connect(self) -> None:
+        """
+        We assume that at connection time, arm is in a rest position,
+        and torque can be safely disabled to run calibration.
+        """
         if self.is_connected:
-            raise DeviceAlreadyConnectedError(
-                "ManipulatorRobot is already connected. Do not run `robot.connect()` twice."
-            )
+            raise DeviceAlreadyConnectedError(f"{self} already connected")
 
-        logging.info("Connecting arm.")
         self.arm.connect()
         if not self.is_calibrated:
             self.calibrate()
 
-        self.configure()
-
-        # Connect the cameras
         for cam in self.cameras.values():
             cam.connect()
 
-    def configure(self) -> None:
+        self.configure()
+        logger.info(f"{self} connected.")
+
+    @property
+    def is_calibrated(self) -> bool:
+        return self.arm.is_calibrated
+
+    def calibrate(self) -> None:
+        logger.info(f"\nRunning calibration of {self}")
+        self.arm.disable_torque()
         for name in self.arm.names:
-            # Torque must be deactivated to change values in the motors' EEPROM area
-            # We assume that at configuration time, arm is in a rest position,
-            # and torque can be safely disabled to run calibration.
-            self.arm.write("Torque_Enable", name, TorqueMode.DISABLED.value)
+            self.arm.write("Operating_Mode", name, OperatingMode.EXTENDED_POSITION.value)
+
+        input("Move robot to the middle of its range of motion and press ENTER....")
+        homing_offsets = self.arm.set_half_turn_homings()
+
+        full_turn_motors = ["shoulder_pan", "wrist_roll"]
+        unknown_range_motors = [name for name in self.arm.names if name not in full_turn_motors]
+        logger.info(
+            f"Move all joints except {full_turn_motors} sequentially through their entire "
+            "ranges of motion.\nRecording positions. Press ENTER to stop..."
+        )
+        range_mins, range_maxes = self.arm.record_ranges_of_motion(unknown_range_motors)
+        for name in full_turn_motors:
+            range_mins[name] = 0
+            range_maxes[name] = 4095
+
+        self.calibration = {}
+        for name, motor in self.arm.motors.items():
+            self.calibration[name] = MotorCalibration(
+                id=motor.id,
+                drive_mode=0,
+                homing_offset=homing_offsets[name],
+                range_min=range_mins[name],
+                range_max=range_maxes[name],
+            )
+
+        self.arm.write_calibration(self.calibration)
+        self._save_calibration()
+        logger.info(f"Calibration saved to {self.calibration_fpath}")
+
+    def configure(self) -> None:
+        self.arm.disable_torque()
+        self.arm.configure_motors()
+        # Use 'extended position mode' for all motors except gripper, because in joint mode the servos
+        # can't rotate more than 360 degrees (from 0 to 4095) And some mistake can happen while
+        # assembling the arm, you could end up with a servo with a position 0 or 4095 at a crucial
+        # point
+        for name in self.arm.names:
             if name != "gripper":
-                # Use 'extended position mode' for all motors except gripper, because in joint mode the servos
-                # can't rotate more than 360 degrees (from 0 to 4095) And some mistake can happen while
-                # assembling the arm, you could end up with a servo with a position 0 or 4095 at a crucial
-                # point
                 self.arm.write("Operating_Mode", name, OperatingMode.EXTENDED_POSITION.value)
 
         # Use 'position control current based' for gripper to be limited by the limit of the current.
@@ -133,63 +168,26 @@ class KochRobot(Robot):
         self.arm.write("Position_P_Gain", "elbow_flex", 1500)
         self.arm.write("Position_I_Gain", "elbow_flex", 0)
         self.arm.write("Position_D_Gain", "elbow_flex", 600)
-
-        for name in self.arm.names:
-            self.arm.write("Torque_Enable", name, TorqueMode.ENABLED.value)
-
-        logging.info("Torque enabled.")
-
-    @property
-    def is_calibrated(self) -> bool:
-        motors_calibration = self.arm.get_calibration()
-        return motors_calibration == self.calibration
-
-    def calibrate(self) -> None:
-        print(f"\nRunning calibration of {self.id} Koch robot")
-        for name in self.arm.names:
-            self.arm.write("Torque_Enable", name, TorqueMode.DISABLED.value)
-            self.arm.write("Operating_Mode", name, OperatingMode.EXTENDED_POSITION.value)
-
-        input("Move robot to the middle of its range of motion and press ENTER....")
-        homing_offsets = self.arm.set_half_turn_homings()
-
-        fixed_range = ["shoulder_pan", "wrist_roll"]
-        auto_range_motors = [name for name in self.arm.names if name not in fixed_range]
-        print(
-            "Move all joints except 'wrist_roll' (id=5) sequentially through their entire ranges of motion."
-        )
-        print("Recording positions. Press ENTER to stop...")
-        ranges = self.arm.register_ranges_of_motion(auto_range_motors)
-        for name in fixed_range:
-            ranges[name] = {"min": 0, "max": 4095}
-
-        self.calibration = {}
-        for name, motor in self.arm.motors.items():
-            self.calibration[name] = MotorCalibration(
-                id=motor.id,
-                drive_mode=0,
-                homing_offset=homing_offsets[name],
-                range_min=ranges[name]["min"],
-                range_max=ranges[name]["max"],
-            )
-
-        self._save_calibration()
-        print("Calibration saved to", self.calibration_fpath)
+        self.arm.enable_torque()
 
     def get_observation(self) -> dict[str, Any]:
+        if not self.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+
         obs_dict = {}
 
         # Read arm position
-        before_read_t = time.perf_counter()
+        start = time.perf_counter()
         obs_dict[OBS_STATE] = self.arm.sync_read("Present_Position")
-        self.logs["read_pos_dt_s"] = time.perf_counter() - before_read_t
+        dt_ms = (time.perf_counter() - start) * 1e3
+        logger.debug(f"{self} read state: {dt_ms:.1f}ms")
 
         # Capture images from cameras
         for cam_key, cam in self.cameras.items():
-            before_camread_t = time.perf_counter()
+            start = time.perf_counter()
             obs_dict[f"{OBS_IMAGES}.{cam_key}"] = cam.async_read()
-            self.logs[f"read_camera_{cam_key}_dt_s"] = cam.logs["delta_timestamp_s"]
-            self.logs[f"async_read_camera_{cam_key}_dt_s"] = time.perf_counter() - before_camread_t
+            dt_ms = (time.perf_counter() - start) * 1e3
+            logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
 
         return obs_dict
 
@@ -206,6 +204,9 @@ class KochRobot(Robot):
         Returns:
             dict[str, float]: The action sent to the motors, potentially clipped.
         """
+        if not self.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+
         goal_pos = action
 
         # Cap goal position when too far away from present position.
@@ -217,12 +218,7 @@ class KochRobot(Robot):
 
         # Send goal position to the arm
         self.arm.sync_write("Goal_Position", goal_pos)
-
         return goal_pos
-
-    def print_logs(self):
-        # TODO(aliberts): move robot-specific logs logic here
-        pass
 
     def disconnect(self):
         if not self.is_connected:
@@ -230,6 +226,8 @@ class KochRobot(Robot):
                 "ManipulatorRobot is not connected. You need to run `robot.connect()` before disconnecting."
             )
 
-        self.arm.disconnect()
+        self.arm.disconnect(self.config.disable_torque_on_disconnect)
         for cam in self.cameras.values():
             cam.disconnect()
+
+        logger.info(f"{self} disconnected.")

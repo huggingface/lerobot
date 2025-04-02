@@ -23,11 +23,12 @@ from lerobot.common.motors.dynamixel import (
     DriveMode,
     DynamixelMotorsBus,
     OperatingMode,
-    TorqueMode,
 )
 
 from ..teleoperator import Teleoperator
 from .configuration_koch import KochTeleopConfig
+
+logger = logging.getLogger(__name__)
 
 
 class KochTeleop(Teleoperator):
@@ -43,8 +44,6 @@ class KochTeleop(Teleoperator):
     def __init__(self, config: KochTeleopConfig):
         super().__init__(config)
         self.config = config
-        self.robot_type = config.type
-
         self.arm = DynamixelMotorsBus(
             port=self.config.port,
             motors={
@@ -55,9 +54,8 @@ class KochTeleop(Teleoperator):
                 "wrist_roll": Motor(5, "xl330-m077", MotorNormMode.RANGE_M100_100),
                 "gripper": Motor(6, "xl330-m077", MotorNormMode.RANGE_0_100),
             },
+            calibration=self.calibration,
         )
-
-        self.logs = {}
 
     @property
     def action_feature(self) -> dict:
@@ -77,23 +75,60 @@ class KochTeleop(Teleoperator):
 
     def connect(self) -> None:
         if self.is_connected:
-            raise DeviceAlreadyConnectedError(
-                "ManipulatorRobot is already connected. Do not run `robot.connect()` twice."
-            )
+            raise DeviceAlreadyConnectedError(f"{self} already connected")
 
-        logging.info("Connecting arm.")
         self.arm.connect()
         if not self.is_calibrated:
             self.calibrate()
 
         self.configure()
+        logger.info(f"{self} connected.")
+
+    @property
+    def is_calibrated(self) -> bool:
+        return self.arm.is_calibrated
+
+    def calibrate(self) -> None:
+        logger.info(f"\nRunning calibration of {self}")
+        self.arm.disable_torque()
+        for name in self.arm.names:
+            self.arm.write("Operating_Mode", name, OperatingMode.EXTENDED_POSITION.value)
+
+        self.arm.write("Drive_Mode", "elbow_flex", DriveMode.INVERTED.value)
+        drive_modes = {name: 1 if name == "elbow_flex" else 0 for name in self.arm.names}
+
+        input("Move robot to the middle of its range of motion and press ENTER....")
+        homing_offsets = self.arm.set_half_turn_homings()
+
+        full_turn_motors = ["shoulder_pan", "wrist_roll"]
+        unknown_range_motors = [name for name in self.arm.names if name not in full_turn_motors]
+        logger.info(
+            f"Move all joints except {full_turn_motors} sequentially through their "
+            "entire ranges of motion.\nRecording positions. Press ENTER to stop..."
+        )
+        range_mins, range_maxes = self.arm.record_ranges_of_motion(unknown_range_motors)
+        for name in full_turn_motors:
+            range_mins[name] = 0
+            range_maxes[name] = 4095
+
+        self.calibration = {}
+        for name, motor in self.arm.motors.items():
+            self.calibration[name] = MotorCalibration(
+                id=motor.id,
+                drive_mode=drive_modes[name],
+                homing_offset=homing_offsets[name],
+                range_min=range_mins[name],
+                range_max=range_maxes[name],
+            )
+
+        self.arm.write_calibration(self.calibration)
+        self._save_calibration()
+        logger.info(f"Calibration saved to {self.calibration_fpath}")
 
     def configure(self) -> None:
+        self.arm.disable_torque()
+        self.arm.configure_motors()
         for name in self.arm.names:
-            # Torque must be deactivated to change values in the motors' EEPROM area
-            # We assume that at configuration time, arm is in a rest position,
-            # and torque can be safely disabled to run calibration.
-            self.arm.write("Torque_Enable", name, TorqueMode.DISABLED.value)
             if name != "gripper":
                 # Use 'extended position mode' for all motors except gripper, because in joint mode the servos
                 # can't rotate more than 360 degrees (from 0 to 4095) And some mistake can happen while
@@ -108,56 +143,14 @@ class KochTeleop(Teleoperator):
         # to make it move, and it will move back to its original target position when we release the force.
         self.arm.write("Operating_Mode", "gripper", OperatingMode.CURRENT_POSITION.value)
         # Set gripper's goal pos in current position mode so that we can use it as a trigger.
-        self.arm.write("Torque_Enable", "gripper", TorqueMode.ENABLED.value)
+        self.arm.enable_torque("gripper")
         self.arm.write("Goal_Position", "gripper", self.config.gripper_open_pos)
 
-    @property
-    def is_calibrated(self) -> bool:
-        motors_calibration = self.arm.get_calibration()
-        return motors_calibration == self.calibration
-
-    def calibrate(self) -> None:
-        print(f"\nRunning calibration of {self.id} Koch teleop")
-        for name in self.arm.names:
-            self.arm.write("Torque_Enable", name, TorqueMode.DISABLED.value)
-            self.arm.write("Operating_Mode", name, OperatingMode.EXTENDED_POSITION.value)
-
-        self.arm.write("Drive_Mode", "elbow_flex", DriveMode.INVERTED.value)
-        drive_modes = {name: 1 if name == "elbow_flex" else 0 for name in self.arm.names}
-
-        input("Move robot to the middle of its range of motion and press ENTER....")
-        homing_offsets = self.arm.set_half_turn_homings()
-
-        fixed_range = ["shoulder_pan", "wrist_roll"]
-        auto_range_motors = [name for name in self.arm.names if name not in fixed_range]
-        print(
-            "Move all joints except 'wrist_roll' (id=5) sequentially through their entire ranges of motion."
-        )
-        print("Recording positions. Press ENTER to stop...")
-        ranges = self.arm.register_ranges_of_motion(auto_range_motors)
-        for name in fixed_range:
-            ranges[name] = {"min": 0, "max": 4095}
-
-        self.calibration = {}
-        for name, motor in self.arm.motors.items():
-            self.calibration[name] = MotorCalibration(
-                id=motor.id,
-                drive_mode=drive_modes[name],
-                homing_offset=homing_offsets[name],
-                range_min=ranges[name]["min"],
-                range_max=ranges[name]["max"],
-            )
-
-        self._save_calibration()
-        print("Calibration saved to", self.calibration_fpath)
-
     def get_action(self) -> dict[str, float]:
-        """The returned action does not have a batch dimension."""
-        # Read arm position
-        start_time = time.perf_counter()
+        start = time.perf_counter()
         action = self.arm.sync_read("Present_Position")
-        self.logs["read_pos_dt_s"] = time.perf_counter() - start_time
-
+        dt_ms = (time.perf_counter() - start) * 1e3
+        logger.debug(f"{self} read action: {dt_ms:.1f}ms")
         return action
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
@@ -171,3 +164,4 @@ class KochTeleop(Teleoperator):
             )
 
         self.arm.disconnect()
+        logger.info(f"{self} disconnected.")

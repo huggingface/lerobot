@@ -31,6 +31,9 @@ class Robot(abc.ABC):
         if self.calibration_fpath.is_file():
             self._load_calibration()
 
+    def __str__(self) -> str:
+        return f"{self.id} {self.__class__.__name__}"
+
     # TODO(aliberts): create a proper Feature class for this that links with datasets
     @abc.abstractproperty
     def state_feature(self) -> dict:
@@ -53,10 +56,6 @@ class Robot(abc.ABC):
         """Connects to the robot."""
         pass
 
-    @abc.abstractmethod
-    def configure(self) -> None:
-        pass
-
     @abc.abstractproperty
     def is_calibrated(self) -> bool:
         pass
@@ -75,6 +74,10 @@ class Robot(abc.ABC):
         fpath = self.calibration_fpath if fpath is None else fpath
         with open(fpath, "w") as f, draccus.config_type("json"):
             draccus.dump(self.calibration, f, indent=4)
+
+    @abc.abstractmethod
+    def configure(self) -> None:
+        pass
 
     @abc.abstractmethod
     def get_observation(self) -> dict[str, Any]:
