@@ -518,7 +518,25 @@ class MotorsBus(abc.ABC):
         self.calibration = calibration_dict
 
     def set_half_turn_homings(self, motors: NameOrID | list[NameOrID] | None = None) -> dict[NameOrID, Value]:
-        """This assumes motors present positions are roughly in the middle of their desired range"""
+        """
+        This assumes motors present positions are roughly in the middle of their desired range
+
+        Step 1: Set homing and min max to 0
+
+        Step 2: Read Present_Position which will be Actual_Position since
+        Present_Position = Actual_Position ± Homing_Offset (1)
+        and Homing_Offset = 0 from step 1
+
+        Step 3: We want to set the Homing_Offset such that the current Present_Position to be half range of 1
+        revolution. For instance, if 1 revolution corresponds to 4095 (4096 steps), this means we want the
+        current Present_Position to be 2047.
+
+        In that example:
+        Present_Position = 2047 (2)
+        Actual_Position = X (read in step 2)
+        from (1) and (2):
+        => Homing_Offset = ±(X - 2048)
+        """
         if motors is None:
             motors = self.names
         elif isinstance(motors, (str, int)):
@@ -526,27 +544,17 @@ class MotorsBus(abc.ABC):
         else:
             raise TypeError(motors)
 
-        # Step 1: Set homing and min max to 0
         self.reset_calibration(motors)
-
-        # Step 2: Read Present_Position which will be Actual_Position since
-        # Present_Position = Actual_Position ± Homing_Offset (1)
-        # and Homing_Offset = 0 from step 1
         actual_positions = self.sync_read("Present_Position", motors, normalize=False)
-
-        # Step 3: We want to set the Homing_Offset such that the current Present_Position to be half range of
-        # 1 revolution.
-        # For instance, if 1 revolution corresponds to 4095 (4096 steps), this means we want the current
-        # Present_Position to be 2047. In that example:
-        # Present_Position = 2047 (2)
-        # Actual_Position = X (read in step 2)
-        # from (1) and (2):
-        # => Homing_Offset = ±(X - 2048)
         homing_offsets = self._get_half_turn_homings(actual_positions)
         for motor, offset in homing_offsets.items():
             self.write("Homing_Offset", motor, offset)
 
         return homing_offsets
+
+    @abc.abstractmethod
+    def _get_half_turn_homings(self, positions: dict[NameOrID, Value]) -> dict[NameOrID, Value]:
+        pass
 
     def record_ranges_of_motion(
         self, motors: NameOrID | list[NameOrID] | None = None, display_values: bool = True
@@ -585,10 +593,6 @@ class MotorsBus(abc.ABC):
                 move_cursor_up(len(motors) + 3)
 
         return mins, maxes
-
-    @abc.abstractmethod
-    def _get_half_turn_homings(self, positions: dict[NameOrID, Value]) -> dict[NameOrID, Value]:
-        pass
 
     def _normalize(self, data_name: str, ids_values: dict[int, int]) -> dict[int, float]:
         normalized_values = {}
