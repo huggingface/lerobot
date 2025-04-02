@@ -116,7 +116,7 @@ def check_env_attributes_and_types(env: gym.vector.VectorEnv) -> None:
 
 
 def add_envs_task(env: gym.vector.VectorEnv, observation: dict[str, Any]) -> dict[str, Any]:
-    """ Adds task feature to the observation dict with respect to the first environment attribute. """
+    """Adds task feature to the observation dict with respect to the first environment attribute."""
     if hasattr(env.envs[0], "task_description"):
         observation["task"] = env.call("task_description")
     elif hasattr(env.envs[0], "task"):
