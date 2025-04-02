@@ -107,7 +107,7 @@ def check_env_attributes_and_types(env: gym.vector.VectorEnv) -> None:
                 UserWarning,
                 stacklevel=2,
             )
-        if not check_all_envs_same_type(env):
+        if not are_all_envs_same_type(env):
             warnings.warn(
                 "The environments have different types. Make sure you infer the right task from each environment. Empty task will be passed instead.",
                 UserWarning,
