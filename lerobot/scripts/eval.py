@@ -158,7 +158,7 @@ def rollout(
             observation["task"] = env.call("task_description")
         elif hasattr(env.envs[0], "task"):
             observation["task"] = env.call("task")
-        else: #IIRC This was to deal with datasets without language instructions, i.e. aloha transfer cube and etc.?
+        else:  # IIRC This was to deal with datasets without language instructions, i.e. aloha transfer cube and etc.?
             observation["task"] = ["" for _ in range(observation[list(observation.keys())[0]].shape[0])]
         with torch.inference_mode():
             action = policy.select_action(observation)
