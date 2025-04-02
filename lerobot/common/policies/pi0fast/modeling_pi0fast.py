@@ -67,6 +67,7 @@ PRECISION = {
     "bfloat16": torch.bfloat16,
 }
 
+
 def normalize(x, min_val, max_val):
     return (x - min_val) / (max_val - min_val)
 
