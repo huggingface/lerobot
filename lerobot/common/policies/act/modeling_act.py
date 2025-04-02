@@ -36,6 +36,7 @@ from torchvision.ops.misc import FrozenBatchNorm2d
 from lerobot.common.policies.act.configuration_act import ACTConfig
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.pretrained import PreTrainedPolicy
+from lerobot.common.policies.utils import smoothen_actions
 
 
 class ACTPolicy(PreTrainedPolicy):
@@ -136,6 +137,8 @@ class ACTPolicy(PreTrainedPolicy):
 
             # TODO(rcadene): make _forward return output dictionary?
             actions = self.unnormalize_outputs({"action": actions})["action"]
+            # use low-pass filter to prevent jerky actions
+            actions = smoothen_actions(actions)
 
             # `self.model.forward` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
             # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
