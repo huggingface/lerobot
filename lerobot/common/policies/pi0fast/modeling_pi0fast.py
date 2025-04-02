@@ -846,7 +846,10 @@ class PI0FAST(nn.Module):
         decoded_actions = [
             torch.tensor(
                 self.decode_actions_with_fast(
-                    tok.tolist(), time_horizon=action_horizon, action_dim=action_dim, relaxed_decoding=self.config.relaxed_decoding
+                    tok.tolist(),
+                    time_horizon=action_horizon,
+                    action_dim=action_dim,
+                    relaxed_decoding=self.config.relaxed_decoding,
                 ),
                 device=tokens.device,
             ).squeeze(0)
