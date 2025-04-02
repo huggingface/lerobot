@@ -24,7 +24,7 @@ from enum import Enum
 
 from lerobot.common.utils.encoding_utils import decode_twos_complement, encode_twos_complement
 
-from ..motors_bus import Motor, MotorsBus, NameOrID, Value
+from ..motors_bus import Motor, MotorCalibration, MotorsBus, NameOrID, Value
 from .tables import (
     AVAILABLE_BAUDRATES,
     MODEL_BAUDRATE_TABLE,
@@ -102,8 +102,9 @@ class DynamixelMotorsBus(MotorsBus):
         self,
         port: str,
         motors: dict[str, Motor],
+        calibration: dict[str, MotorCalibration] | None = None,
     ):
-        super().__init__(port, motors)
+        super().__init__(port, motors, calibration)
         import dynamixel_sdk as dxl
 
         self.port_handler = dxl.PortHandler(self.port)
@@ -113,11 +114,25 @@ class DynamixelMotorsBus(MotorsBus):
         self._comm_success = dxl.COMM_SUCCESS
         self._no_error = 0x00
 
-    def _configure_motors(self) -> None:
+    def configure_motors(self) -> None:
         # By default, Dynamixel motors have a 500µs delay response time (corresponding to a value of 250 on
         # the 'Return_Delay_Time' address). We ensure this is reduced to the minimum of 2µs (value of 0).
         for id_ in self.ids:
             self.write("Return_Delay_Time", id_, 0)
+
+    def _disable_torque(self, motors: list[NameOrID]) -> None:
+        for motor in motors:
+            self.write("Torque_Enable", motor, TorqueMode.DISABLED.value)
+
+    def _enable_torque(self, motors: list[NameOrID]) -> None:
+        for motor in motors:
+            self.write("Torque_Enable", motor, TorqueMode.ENABLED.value)
+
+    def _encode_value(self, value: int, data_name: str | None = None, n_bytes: int | None = None) -> int:
+        return encode_twos_complement(value, n_bytes)
+
+    def _decode_value(self, value: int, data_name: str | None = None, n_bytes: int | None = None) -> int:
+        return decode_twos_complement(value, n_bytes)
 
     def _get_half_turn_homings(self, positions: dict[NameOrID, Value]) -> dict[NameOrID, Value]:
         """
@@ -131,12 +146,6 @@ class DynamixelMotorsBus(MotorsBus):
             half_turn_homings[motor] = int(max_res / 2) - pos
 
         return half_turn_homings
-
-    def _encode_value(self, value: int, data_name: str | None = None, n_bytes: int | None = None) -> int:
-        return encode_twos_complement(value, n_bytes)
-
-    def _decode_value(self, value: int, data_name: str | None = None, n_bytes: int | None = None) -> int:
-        return decode_twos_complement(value, n_bytes)
 
     @staticmethod
     def _split_int_to_bytes(value: int, n_bytes: int) -> list[int]:

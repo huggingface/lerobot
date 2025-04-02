@@ -19,7 +19,7 @@ from pprint import pformat
 
 from lerobot.common.utils.encoding_utils import decode_sign_magnitude, encode_sign_magnitude
 
-from ..motors_bus import Motor, MotorsBus, NameOrID, Value
+from ..motors_bus import Motor, MotorCalibration, MotorsBus, NameOrID, Value
 from .tables import (
     AVAILABLE_BAUDRATES,
     ENCODINGS,
@@ -82,8 +82,9 @@ class FeetechMotorsBus(MotorsBus):
         self,
         port: str,
         motors: dict[str, Motor],
+        calibration: dict[str, MotorCalibration] | None = None,
     ):
-        super().__init__(port, motors)
+        super().__init__(port, motors, calibration)
         import scservo_sdk as scs
 
         self.port_handler = scs.PortHandler(self.port)
@@ -93,7 +94,7 @@ class FeetechMotorsBus(MotorsBus):
         self._comm_success = scs.COMM_SUCCESS
         self._no_error = 0x00
 
-    def _configure_motors(self) -> None:
+    def configure_motors(self) -> None:
         # By default, Feetech motors have a 500µs delay response time (corresponding to a value of 250 on the
         # 'Return_Delay' address). We ensure this is reduced to the minimum of 2µs (value of 0).
         for id_ in self.ids:
@@ -111,6 +112,16 @@ class FeetechMotorsBus(MotorsBus):
             half_turn_homings[motor] = pos - int(max_res / 2)
 
         return half_turn_homings
+
+    def _disable_torque(self, motors: list[NameOrID]) -> None:
+        for motor in motors:
+            self.write("Torque_Enable", motor, TorqueMode.DISABLED.value)
+            self.write("Lock", motor, 0)
+
+    def _enable_torque(self, motors: list[NameOrID]) -> None:
+        for motor in motors:
+            self.write("Torque_Enable", motor, TorqueMode.ENABLED.value)
+            self.write("Lock", motor, 1)
 
     def _encode_value(self, value: int, data_name: str | None = None, n_bytes: int | None = None) -> int:
         sign_bit = self.encodings.get(data_name)
