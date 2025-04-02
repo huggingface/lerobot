@@ -73,12 +73,13 @@ class PI0FASTConfig(PreTrainedConfig):
     scheduler_decay_lr: float = 2.5e-6
 
     checkpoint_path: str = None
-    load_paligemma_weights: bool = False
 
     padding_side: str = "right"
 
     precision: str = "bfloat16"
     grad_clip_norm: float = 1
+
+    relaxed_decoding: bool = True
 
     def __post_init__(self):
         super().__post_init__()
