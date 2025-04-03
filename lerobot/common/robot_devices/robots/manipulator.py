@@ -541,6 +541,15 @@ class ManipulatorRobot:
             self.logs[f"read_camera_{name}_dt_s"] = self.cameras[name].logs["delta_timestamp_s"]
             self.logs[f"async_read_camera_{name}_dt_s"] = time.perf_counter() - before_camread_t
 
+        # Capture audio from microphones
+        audio = {}
+        for name in self.microphones:
+            before_audioread_t = time.perf_counter()
+            audio[name] = self.microphones[name].read()
+            audio[name] = torch.from_numpy(audio[name])
+            self.logs[f"read_microphone_{name}_dt_s"] = self.microphones[name].logs["delta_timestamp_s"]
+            self.logs[f"async_read_microphone_{name}_dt_s"] = time.perf_counter() - before_audioread_t
+
         # Populate output dictionaries
         obs_dict, action_dict = {}, {}
         obs_dict["observation.state"] = state
@@ -580,6 +589,15 @@ class ManipulatorRobot:
             images[name] = torch.from_numpy(images[name])
             self.logs[f"read_camera_{name}_dt_s"] = self.cameras[name].logs["delta_timestamp_s"]
             self.logs[f"async_read_camera_{name}_dt_s"] = time.perf_counter() - before_camread_t
+
+        # Capture audio from microphones
+        audio = {}
+        for name in self.microphones:
+            before_audioread_t = time.perf_counter()
+            audio[name] = self.microphones[name].read()
+            audio[name] = torch.from_numpy(audio[name])
+            self.logs[f"read_microphone_{name}_dt_s"] = self.microphones[name].logs["delta_timestamp_s"]
+            self.logs[f"async_read_microphone_{name}_dt_s"] = time.perf_counter() - before_audioread_t
 
         # Populate output dictionaries and format to pytorch
         obs_dict = {}
