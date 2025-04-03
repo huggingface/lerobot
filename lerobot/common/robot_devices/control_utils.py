@@ -28,6 +28,7 @@ import cv2
 import torch
 from deepdiff import DeepDiff
 from termcolor import colored
+import tqdm
 
 from lerobot.common.datasets.image_writer import safe_stop_image_writer
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
@@ -283,18 +284,31 @@ def control_loop(
             break
 
 
-def reset_environment(robot, events, reset_time_s, fps):
+def reset_environment(robot, events, reset_time_s):
     # TODO(rcadene): refactor warmup_record and reset_environment
     if has_method(robot, "teleop_safety_stop"):
         robot.teleop_safety_stop()
+    timestamp = 0
+    start_vencod_t = time.perf_counter()
+    if "next.reward" in events:
+        events["next.reward"] = 0
 
-    control_loop(
-        robot=robot,
-        control_time_s=reset_time_s,
-        events=events,
-        fps=fps,
-        teleoperate=True,
-    )
+    # Wait if necessary
+    with tqdm.tqdm(total=reset_time_s, desc="Waiting") as pbar:
+        last_update = 0  # Track the last update time
+        while timestamp < reset_time_s:
+            robot.teleop_step(record_data=False)
+            timestamp = time.perf_counter() - start_vencod_t
+            
+            # Update progress bar every second
+            current_second = int(timestamp)
+            if current_second > last_update:
+                pbar.update(current_second - last_update)
+                last_update = current_second
+                
+            if events["exit_early"]:
+                events["exit_early"] = False
+                break
 
 
 def stop_recording(robot, listener, display_cameras):
