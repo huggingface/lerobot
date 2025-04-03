@@ -40,7 +40,7 @@ class HopeJrHand(Robot):
     def __init__(self, config: HopeJrHandConfig):
         super().__init__(config)
         self.config = config
-        self.arm = FeetechMotorsBus(
+        self.hand = FeetechMotorsBus(
             port=self.config.port,
             motors={
                 # Thumb
@@ -72,8 +72,8 @@ class HopeJrHand(Robot):
     def state_feature(self) -> dict:
         return {
             "dtype": "float32",
-            "shape": (len(self.arm),),
-            "names": {"motors": list(self.arm.motors)},
+            "shape": (len(self.hand),),
+            "names": {"motors": list(self.hand.motors)},
         }
 
     @property
@@ -94,17 +94,13 @@ class HopeJrHand(Robot):
     @property
     def is_connected(self) -> bool:
         # TODO(aliberts): add cam.is_connected for cam in self.cameras
-        return self.arm.is_connected
+        return self.hand.is_connected
 
     def connect(self) -> None:
-        """
-        We assume that at connection time, arm is in a rest position,
-        and torque can be safely disabled to run calibration.
-        """
         if self.is_connected:
             raise DeviceAlreadyConnectedError(f"{self} already connected")
 
-        self.arm.connect()
+        self.hand.connect()
         if not self.is_calibrated:
             self.calibrate()
 
@@ -117,30 +113,30 @@ class HopeJrHand(Robot):
 
     @property
     def is_calibrated(self) -> bool:
-        return self.arm.is_calibrated
+        return self.hand.is_calibrated
 
     def calibrate(self) -> None:
         raise NotImplementedError  # TODO(aliberts): adapt code below (copied from koch)
         logger.info(f"\nRunning calibration of {self}")
-        self.arm.disable_torque()
-        for name in self.arm.names:
-            self.arm.write("Operating_Mode", name, OperatingMode.POSITION.value)
+        self.hand.disable_torque()
+        for name in self.hand.names:
+            self.hand.write("Operating_Mode", name, OperatingMode.POSITION.value)
 
         input("Move robot to the middle of its range of motion and press ENTER....")
-        homing_offsets = self.arm.set_half_turn_homings()
+        homing_offsets = self.hand.set_half_turn_homings()
 
         full_turn_motor = "wrist_roll"
-        unknown_range_motors = [name for name in self.arm.names if name != full_turn_motor]
+        unknown_range_motors = [name for name in self.hand.names if name != full_turn_motor]
         logger.info(
             f"Move all joints except '{full_turn_motor}' sequentially through their "
             "entire ranges of motion.\nRecording positions. Press ENTER to stop..."
         )
-        range_mins, range_maxes = self.arm.record_ranges_of_motion(unknown_range_motors)
+        range_mins, range_maxes = self.hand.record_ranges_of_motion(unknown_range_motors)
         range_mins[full_turn_motor] = 0
         range_maxes[full_turn_motor] = 4095
 
         self.calibration = {}
-        for name, motor in self.arm.motors.items():
+        for name, motor in self.hand.motors.items():
             self.calibration[name] = MotorCalibration(
                 id=motor.id,
                 drive_mode=0,
@@ -149,15 +145,15 @@ class HopeJrHand(Robot):
                 range_max=range_maxes[name],
             )
 
-        self.arm.write_calibration(self.calibration)
+        self.hand.write_calibration(self.calibration)
         self._save_calibration()
         print("Calibration saved to", self.calibration_fpath)
 
     def configure(self) -> None:
-        self.arm.disable_torque()
-        self.arm.configure_motors()
+        self.hand.disable_torque()
+        self.hand.configure_motors()
         # TODO
-        self.arm.enable_torque()
+        self.hand.enable_torque()
 
     def get_observation(self) -> dict[str, Any]:
         if not self.is_connected:
@@ -165,9 +161,9 @@ class HopeJrHand(Robot):
 
         obs_dict = {}
 
-        # Read arm position
+        # Read hand position
         start = time.perf_counter()
-        obs_dict[OBS_STATE] = self.arm.sync_read("Present_Position")
+        obs_dict[OBS_STATE] = self.hand.sync_read("Present_Position")
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
 
@@ -184,14 +180,14 @@ class HopeJrHand(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        self.arm.sync_write("Goal_Position", action)
+        self.hand.sync_write("Goal_Position", action)
         return action
 
     def disconnect(self):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        self.arm.disconnect(self.config.disable_torque_on_disconnect)
+        self.hand.disconnect(self.config.disable_torque_on_disconnect)
         for cam in self.cameras.values():
             cam.disconnect()
 
