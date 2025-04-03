@@ -90,7 +90,7 @@ python lerobot/scripts/train.py \
 --output_dir /path/to/output \
 --steps 10000 \
 --save_freq 1000 \
---optimizer_lr 2e-5 
+--optimizer_lr 2e-5
 ~~~
 
 ### Training Stage 3
@@ -108,7 +108,7 @@ python lerobot/scripts/train.py \
 --output_dir /path/to/output \
 --steps 10000 \
 --save_freq 1000 \
---optimizer_lr 2e-5 
+--optimizer_lr 2e-5
 ~~~
 
 ### Training Time
@@ -133,7 +133,7 @@ python lerobot/scripts/eval.py \
 --policy.qwen2_vl_path /path/to/official/Qwen2-VL-2B-Instruct \
 --env.task AlohaInsertion-v0 \
 --eval.n_episodes 1 \
---eval.batch_size 1 
+--eval.batch_size 1
 ~~~
 
 ### Inference Speed
