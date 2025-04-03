@@ -310,7 +310,7 @@ def record(
             (recorded_episodes < cfg.num_episodes - 1) or events["rerecord_episode"]
         ):
             log_say("Reset the environment", cfg.play_sounds)
-            reset_environment(robot, events, cfg.reset_time_s, cfg.fps)
+            reset_environment(robot, events, cfg.reset_time_s)
 
         if events["rerecord_episode"]:
             log_say("Re-record episode", cfg.play_sounds)
