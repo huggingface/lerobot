@@ -468,21 +468,6 @@ class MotorsBus(abc.ABC):
             if self.port_handler.getBaudRate() != baudrate:
                 raise OSError("Failed to write bus baud rate.")
 
-    def reset_calibration(self, motors: NameOrID | list[NameOrID] | None = None) -> None:
-        if motors is None:
-            motors = self.names
-        elif isinstance(motors, (str, int)):
-            motors = [motors]
-        elif not isinstance(motors, list):
-            raise TypeError(motors)
-
-        for motor in motors:
-            model = self._get_motor_model(motor)
-            max_res = self.model_resolution_table[model] - 1
-            self.write("Homing_Offset", motor, 0, normalize=False)
-            self.write("Min_Position_Limit", motor, 0, normalize=False)
-            self.write("Max_Position_Limit", motor, max_res, normalize=False)
-
     @property
     def is_calibrated(self) -> bool:
         return self.calibration == self.read_calibration()
@@ -516,6 +501,23 @@ class MotorsBus(abc.ABC):
             self.write("Max_Position_Limit", motor, calibration.range_max)
 
         self.calibration = calibration_dict
+
+    def reset_calibration(self, motors: NameOrID | list[NameOrID] | None = None) -> None:
+        if motors is None:
+            motors = self.names
+        elif isinstance(motors, (str, int)):
+            motors = [motors]
+        elif not isinstance(motors, list):
+            raise TypeError(motors)
+
+        for motor in motors:
+            model = self._get_motor_model(motor)
+            max_res = self.model_resolution_table[model] - 1
+            self.write("Homing_Offset", motor, 0, normalize=False)
+            self.write("Min_Position_Limit", motor, 0, normalize=False)
+            self.write("Max_Position_Limit", motor, max_res, normalize=False)
+
+        self.calibration = {}
 
     def set_half_turn_homings(self, motors: NameOrID | list[NameOrID] | None = None) -> dict[NameOrID, Value]:
         """
@@ -892,9 +894,22 @@ class MotorsBus(abc.ABC):
                 f"\n{self.packet_handler.getRxPacketError(error)}"
             )
 
-    @abc.abstractmethod
     def _write(self, data_name: str, motor_id: int, value: int, num_retry: int = 0) -> tuple[int, int]:
-        pass
+        model = self._id_to_model(motor_id)
+        addr, n_bytes = get_address(self.model_ctrl_table, model, data_name)
+        value = self._encode_value(value, data_name, n_bytes)
+        data = self._split_int_to_bytes(value, n_bytes)
+
+        for n_try in range(1 + num_retry):
+            comm, error = self.packet_handler.writeTxRx(self.port_handler, motor_id, addr, n_bytes, data)
+            if self._is_comm_success(comm):
+                break
+            logger.debug(
+                f"Failed to write '{data_name}' ({addr=} {n_bytes=}) on {motor_id=} with '{value}' ({n_try=})"
+            )
+            logger.debug(self.packet_handler.getRxPacketError(comm))
+
+        return comm, error
 
     def disconnect(self, disable_torque: bool = True) -> None:
         if not self.is_connected:

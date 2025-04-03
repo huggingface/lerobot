@@ -7,6 +7,7 @@ import serial
 from mock_serial import MockSerial
 
 from lerobot.common.motors.feetech import SCS_SERIES_CONTROL_TABLE, FeetechMotorsBus
+from lerobot.common.motors.feetech.feetech import patch_setPacketTimeout
 
 from .mock_serial_patch import WaitableStub
 
@@ -307,6 +308,9 @@ class MockPortHandler(scs.PortHandler):
         self.tx_time_per_byte = (1000.0 / self.baudrate) * 10.0
 
         return True
+
+    def setPacketTimeout(self, packet_length):  # noqa: N802
+        return patch_setPacketTimeout(self, packet_length)
 
 
 class MockMotors(MockSerial):

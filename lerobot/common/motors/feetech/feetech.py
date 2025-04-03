@@ -19,7 +19,7 @@ from pprint import pformat
 
 from lerobot.common.utils.encoding_utils import decode_sign_magnitude, encode_sign_magnitude
 
-from ..motors_bus import Motor, MotorCalibration, MotorsBus, NameOrID, Value, get_address
+from ..motors_bus import Motor, MotorCalibration, MotorsBus, NameOrID, Value
 from .tables import (
     AVAILABLE_BAUDRATES,
     ENCODINGS,
@@ -61,6 +61,19 @@ class TorqueMode(Enum):
     DISABLED = 0
 
 
+def patch_setPacketTimeout(self, packet_length):  # noqa: N802
+    """
+    HACK: This patches the PortHandler behavior to set the correct packet timeouts.
+
+    It fixes https://gitee.com/ftservo/SCServoSDK/issues/IBY2S6
+    The bug is fixed on the official Feetech SDK repo (https://gitee.com/ftservo/FTServo_Python)
+    but because that version is not published on PyPI, we rely on the (unofficial) on that is, which needs
+    patching.
+    """
+    self.packet_start_time = self.getCurrentTime()
+    self.packet_timeout = (self.tx_time_per_byte * packet_length) + (self.tx_time_per_byte * 3.0) + 50
+
+
 class FeetechMotorsBus(MotorsBus):
     """
     The FeetechMotorsBus class allows to efficiently read and write to the attached motors. It relies on the
@@ -88,6 +101,10 @@ class FeetechMotorsBus(MotorsBus):
         import scservo_sdk as scs
 
         self.port_handler = scs.PortHandler(self.port)
+        # HACK: monkeypatch
+        self.port_handler.setPacketTimeout = patch_setPacketTimeout.__get__(
+            self.port_handler, scs.PortHandler
+        )
         self.packet_handler = scs.PacketHandler(PROTOCOL_VERSION)
         self.sync_reader = scs.GroupSyncRead(self.port_handler, self.packet_handler, 0, 0)
         self.sync_writer = scs.GroupSyncWrite(self.port_handler, self.packet_handler, 0, 0)
@@ -261,36 +278,3 @@ class FeetechMotorsBus(MotorsBus):
             return model_numbers if model_numbers else None
 
         return model_numbers
-
-    def _is_eprom(self, address: int) -> bool:
-        """
-        HACK: because of https://gitee.com/ftservo/SCServoSDK/issues/IBY2S6
-        When writing to EPROM on for Feetech motors with Lock=0, we need to:
-            - 1. write several times
-            - 2. reset serial's buffer
-        """
-        return address < 40
-
-    def _write(self, data_name: str, motor_id: int, value: int, num_retry: int = 0) -> tuple[int, int]:
-        model = self._id_to_model(motor_id)
-        addr, n_bytes = get_address(self.model_ctrl_table, model, data_name)
-        value = self._encode_value(value, data_name, n_bytes)
-        data = self._split_int_to_bytes(value, n_bytes)
-
-        if self._is_eprom(addr):  # HACK
-            num_retry = max(num_retry, 5)
-
-        for n_try in range(1 + num_retry):
-            comm, error = self.packet_handler.writeTxRx(self.port_handler, motor_id, addr, n_bytes, data)
-            if self._is_comm_success(comm):
-                break
-            logger.debug(
-                f"Failed to write '{data_name}' ({addr=} {n_bytes=}) on {motor_id=} with '{value}' ({n_try=})"
-            )
-            logger.debug(self.packet_handler.getRxPacketError(comm))
-
-        if self._is_eprom(addr):  # HACK
-            self.port_handler.ser.reset_output_buffer()
-            self.port_handler.ser.reset_input_buffer()
-
-        return comm, error
