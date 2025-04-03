@@ -316,6 +316,9 @@ def record_loop(
     if dataset is not None:
         for microphone_key, microphone in robot.microphones.items():
             dataset.add_microphone_recording(microphone, microphone_key)
+    else:
+        for _, microphone in robot.microphones.items():
+            microphone.start_recording()
 
     timestamp = 0
     start_episode_t = time.perf_counter()

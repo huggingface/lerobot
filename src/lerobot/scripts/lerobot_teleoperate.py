@@ -145,6 +145,10 @@ def teleop_loop(
     """
 
     display_len = max(len(key) for key in robot.action_features)
+
+    for _, microphone in robot.microphones.items():
+        microphone.start_recording()
+
     start = time.perf_counter()
 
     while True:
@@ -192,7 +196,10 @@ def teleop_loop(
         move_cursor_up(1)
 
         if duration is not None and time.perf_counter() - start >= duration:
-            return
+            break
+
+    for _, microphone in robot.microphones.items():
+        microphone.stop_recording()
 
 
 @parser.wrap()
