@@ -26,9 +26,9 @@ from functools import cache
 
 import cv2
 import torch
+import tqdm
 from deepdiff import DeepDiff
 from termcolor import colored
-import tqdm
 
 from lerobot.common.datasets.image_writer import safe_stop_image_writer
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
@@ -300,19 +300,20 @@ def reset_environment(robot, events, reset_time_s, fps):
             start_loop_t = time.perf_counter()
             robot.teleop_step(record_data=False)
             timestamp = time.perf_counter() - start_vencod_t
-            
+
             # Update progress bar every second
             current_second = int(timestamp)
             if current_second > last_update:
                 pbar.update(current_second - last_update)
                 last_update = current_second
-                
+
             if events["exit_early"]:
                 events["exit_early"] = False
                 break
-            
+
             dt_s = time.perf_counter() - start_loop_t
             busy_wait(1 / fps - dt_s)
+
 
 def stop_recording(robot, listener, display_cameras):
     robot.disconnect()
