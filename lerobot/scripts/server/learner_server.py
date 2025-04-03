@@ -381,11 +381,11 @@ def add_actor_information_and_train(
             # Sample from the iterators
             batch = next(online_iterator)
 
-        if dataset_repo_id is not None:
-            batch_offline = next(offline_iterator)
-            batch = concatenate_batch_transitions(
-                left_batch_transitions=batch, right_batch_transition=batch_offline
-            )
+            if dataset_repo_id is not None:
+                batch_offline = next(offline_iterator)
+                batch = concatenate_batch_transitions(
+                    left_batch_transitions=batch, right_batch_transition=batch_offline
+                )
 
             actions = batch["action"]
             rewards = batch["reward"]
@@ -435,8 +435,8 @@ def add_actor_information_and_train(
             # Update target networks
             policy.update_target_networks()
 
-            # Sample for the last update in the UTD ratio
-            batch = next(online_iterator)
+        # Sample for the last update in the UTD ratio
+        batch = next(online_iterator)
 
         if dataset_repo_id is not None:
             batch_offline = next(offline_iterator)
