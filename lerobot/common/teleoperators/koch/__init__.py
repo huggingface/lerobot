@@ -1,4 +1,2 @@
-from .configuration_koch import KochTeleopConfig
-from .teleop_koch import KochTeleop
-
-__all__ = ["KochTeleopConfig", "KochTeleop"]
+from .config_koch_leader import KochLeaderConfig
+from .koch_leader import KochLeader

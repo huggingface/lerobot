@@ -30,10 +30,10 @@ def make_robot_config(robot_type: str, **kwargs) -> RobotConfig:
         from .aloha.configuration_aloha import AlohaRobotConfig
 
         return AlohaRobotConfig(**kwargs)
-    elif robot_type == "koch":
-        from .koch.configuration_koch import KochRobotConfig
+    elif robot_type == "koch_follower":
+        from .koch.config_koch_follower import KochFollowerConfig
 
-        return KochRobotConfig(**kwargs)
+        return KochFollowerConfig(**kwargs)
     # elif robot_type == "koch_bimanual":
     #     return KochBimanualRobotConfig(**kwargs)
     elif robot_type == "moss":

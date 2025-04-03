@@ -26,22 +26,22 @@ from lerobot.common.motors.dynamixel import (
 )
 
 from ..teleoperator import Teleoperator
-from .configuration_koch import KochTeleopConfig
+from .config_koch_leader import KochLeaderConfig
 
 logger = logging.getLogger(__name__)
 
 
-class KochTeleop(Teleoperator):
+class KochLeader(Teleoperator):
     """
     - [Koch v1.0](https://github.com/AlexanderKoch-Koch/low_cost_robot), with and without the wrist-to-elbow
         expansion, developed by Alexander Koch from [Tau Robotics](https://tau-robotics.com)
     - [Koch v1.1](https://github.com/jess-moss/koch-v1-1) developed by Jess Moss
     """
 
-    config_class = KochTeleopConfig
-    name = "koch"
+    config_class = KochLeaderConfig
+    name = "koch_leader"
 
-    def __init__(self, config: KochTeleopConfig):
+    def __init__(self, config: KochLeaderConfig):
         super().__init__(config)
         self.config = config
         self.arm = DynamixelMotorsBus(
@@ -147,6 +147,9 @@ class KochTeleop(Teleoperator):
         self.arm.write("Goal_Position", "gripper", self.config.gripper_open_pos)
 
     def get_action(self) -> dict[str, float]:
+        if not self.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+
         start = time.perf_counter()
         action = self.arm.sync_read("Present_Position")
         dt_ms = (time.perf_counter() - start) * 1e3
@@ -159,9 +162,7 @@ class KochTeleop(Teleoperator):
 
     def disconnect(self) -> None:
         if not self.is_connected:
-            raise DeviceNotConnectedError(
-                "ManipulatorRobot is not connected. You need to run `robot.connect()` before disconnecting."
-            )
+            raise DeviceNotConnectedError(f"{self} is not connected.")
 
         self.arm.disconnect()
         logger.info(f"{self} disconnected.")

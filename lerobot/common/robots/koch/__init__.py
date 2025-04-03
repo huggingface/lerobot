@@ -1,4 +1,2 @@
-from .configuration_koch import KochRobotConfig
-from .robot_koch import KochRobot
-
-__all__ = ["KochRobotConfig", "KochRobot"]
+from .config_koch_follower import KochFollowerConfig
+from .koch_follower import KochFollower

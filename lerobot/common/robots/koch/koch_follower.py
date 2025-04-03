@@ -29,22 +29,22 @@ from lerobot.common.motors.dynamixel import (
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
-from .configuration_koch import KochRobotConfig
+from .config_koch_follower import KochFollowerConfig
 
 logger = logging.getLogger(__name__)
 
 
-class KochRobot(Robot):
+class KochFollower(Robot):
     """
     - [Koch v1.0](https://github.com/AlexanderKoch-Koch/low_cost_robot), with and without the wrist-to-elbow
         expansion, developed by Alexander Koch from [Tau Robotics](https://tau-robotics.com)
     - [Koch v1.1](https://github.com/jess-moss/koch-v1-1) developed by Jess Moss
     """
 
-    config_class = KochRobotConfig
-    name = "koch"
+    config_class = KochFollowerConfig
+    name = "koch_follower"
 
-    def __init__(self, config: KochRobotConfig):
+    def __init__(self, config: KochFollowerConfig):
         super().__init__(config)
         self.config = config
         self.arm = DynamixelMotorsBus(
@@ -222,9 +222,7 @@ class KochRobot(Robot):
 
     def disconnect(self):
         if not self.is_connected:
-            raise DeviceNotConnectedError(
-                "ManipulatorRobot is not connected. You need to run `robot.connect()` before disconnecting."
-            )
+            raise DeviceNotConnectedError(f"{self} is not connected.")
 
         self.arm.disconnect(self.config.disable_torque_on_disconnect)
         for cam in self.cameras.values():

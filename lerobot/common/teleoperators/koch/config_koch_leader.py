@@ -19,10 +19,10 @@ from dataclasses import dataclass
 from ..config import TeleoperatorConfig
 
 
-@TeleoperatorConfig.register_subclass("koch")
+@TeleoperatorConfig.register_subclass("koch_leader")
 @dataclass
-class KochTeleopConfig(TeleoperatorConfig):
-    # Port to connect to the teloperator
+class KochLeaderConfig(TeleoperatorConfig):
+    # Port to connect to the arm
     port: str
 
     # Sets the arm in torque mode with the gripper motor set to this value. This makes it possible to squeeze
