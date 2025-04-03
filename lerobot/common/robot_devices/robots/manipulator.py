@@ -165,6 +165,7 @@ class ManipulatorRobot:
         self.leader_arms = make_motors_buses_from_configs(self.config.leader_arms)
         self.follower_arms = make_motors_buses_from_configs(self.config.follower_arms)
         self.cameras = make_cameras_from_configs(self.config.cameras)
+        self.force_feedback_gain = self.config.force_feedback_gain
         self.is_connected = False
         self.logs = {}
 
@@ -494,6 +495,8 @@ class ManipulatorRobot:
 
             goal_pos = goal_pos.numpy().astype(np.float32)
             self.follower_arms[name].write("Goal_Position", goal_pos)
+            external_efforts = -1 * self.force_feedback_gain * self.follower_arms[name].read("External_Efforts")
+            self.leader_arms[name].write("External_Efforts", external_efforts)
             self.logs[f"write_follower_{name}_goal_pos_dt_s"] = time.perf_counter() - before_fwrite_t
 
         # Early exit when recording data is not requested
