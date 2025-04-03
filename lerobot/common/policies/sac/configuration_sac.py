@@ -42,8 +42,6 @@ class CriticNetworkConfig:
     final_activation: str | None = None
 
 
-
-
 @dataclass
 class ActorNetworkConfig:
     hidden_dims: list[int] = field(default_factory=lambda: [256, 256])
@@ -94,6 +92,7 @@ class SACConfig(PreTrainedConfig):
         online_env_seed: Seed for the online environment.
         online_buffer_capacity: Capacity of the online replay buffer.
         offline_buffer_capacity: Capacity of the offline replay buffer.
+        async_prefetch: Whether to use asynchronous prefetching for the buffers.
         online_step_before_learning: Number of steps before learning starts.
         policy_update_freq: Frequency of policy updates.
         discount: Discount factor for the SAC algorithm.
@@ -154,6 +153,7 @@ class SACConfig(PreTrainedConfig):
     online_env_seed: int = 10000
     online_buffer_capacity: int = 100000
     offline_buffer_capacity: int = 100000
+    async_prefetch: bool = False
     online_step_before_learning: int = 100
     policy_update_freq: int = 1
 
