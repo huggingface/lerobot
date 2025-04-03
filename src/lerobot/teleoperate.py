@@ -103,6 +103,10 @@ def teleop_loop(
     teleop: Teleoperator, robot: Robot, fps: int, display_data: bool = False, duration: float | None = None
 ):
     display_len = max(len(key) for key in robot.action_features)
+
+    for _, microphone in robot.microphones.items():
+        microphone.start_recording()
+
     start = time.perf_counter()
     while True:
         loop_start = time.perf_counter()
@@ -127,6 +131,9 @@ def teleop_loop(
             return
 
         move_cursor_up(len(action) + 5)
+
+    for _, microphone in robot.microphones.items():
+        microphone.stop_recording()
 
 
 @draccus.wrap()
