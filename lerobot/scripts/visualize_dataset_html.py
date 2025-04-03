@@ -15,28 +15,24 @@
 
 import argparse
 import base64
-import json
 import os
 import sys
 import tempfile
 import urllib.parse
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Tuple, Union
 
 import cv2
-import flask
 import numpy as np
 import requests
-from flask import Flask, Response, jsonify, request
+from allowed_hosts import ALLOWED_HOSTS, ALLOWED_SCHEMES
+from flask import Flask, jsonify, request
 from flask_cors import CORS
-from PIL import Image
 
 from lerobot.data.dataset import Dataset
 from lerobot.data.episode import Episode
 from lerobot.data.frame import Frame
 from lerobot.data.utils import get_dataset_path
-
-from allowed_hosts import ALLOWED_SCHEMES, ALLOWED_HOSTS
 
 app = Flask(__name__)
 CORS(app)
@@ -45,15 +41,15 @@ CORS(app)
 def validate_url(url):
     """Validate URL against allowed schemes and hosts."""
     parsed_url = urllib.parse.urlparse(url)
-    
+
     # Check if scheme is allowed
     if parsed_url.scheme not in ALLOWED_SCHEMES:
         return False
-    
+
     # Check if host is allowed
     if parsed_url.netloc not in ALLOWED_HOSTS:
         return False
-    
+
     return True
 
 
@@ -203,52 +199,52 @@ def index():
     <body>
         <div class="container">
             <h1>Dataset Viewer</h1>
-            
+
             <div class="episode-selector">
                 <label for="episode-id">Episode ID:</label>
                 <input type="text" id="episode-id" placeholder="Enter episode ID">
                 <button onclick="loadEpisode()">Load Episode</button>
             </div>
-            
+
             <div class="frame-counter">
                 Frame: <span id="current-frame">0</span> / <span id="total-frames">0</span>
             </div>
-            
+
             <div class="frame-viewer">
                 <div class="frame-container">
                     <h3>RGB Image</h3>
                     <img id="rgb-image" class="frame-image" src="" alt="RGB Image">
                 </div>
-                
+
                 <div class="frame-container">
                     <h3>Depth Image</h3>
                     <img id="depth-image" class="frame-image" src="" alt="Depth Image">
                 </div>
             </div>
-            
+
             <div class="frame-info" id="frame-info">
                 <h3>Frame Information</h3>
                 <pre id="frame-data"></pre>
             </div>
-            
+
             <div class="navigation">
                 <button id="prev-button" onclick="prevFrame()" disabled>Previous Frame</button>
                 <button id="next-button" onclick="nextFrame()" disabled>Next Frame</button>
             </div>
         </div>
-        
+
         <script>
             let currentEpisode = null;
             let currentFrameIndex = 0;
             let frames = [];
-            
+
             function loadEpisode() {
                 const episodeId = document.getElementById('episode-id').value;
                 if (!episodeId) {
                     alert('Please enter an episode ID');
                     return;
                 }
-                
+
                 fetch(`/api/episode/${episodeId}`)
                     .then(response => response.json())
                     .then(data => {
@@ -264,10 +260,10 @@ def index():
                         alert('Error loading episode. Please check the episode ID and try again.');
                     });
             }
-            
+
             function loadFrame(frameIndex) {
                 if (!currentEpisode) return;
-                
+
                 fetch(`/api/episode/${currentEpisode.episode_id}/frame/${frameIndex}`)
                     .then(response => response.json())
                     .then(data => {
@@ -277,14 +273,14 @@ def index():
                         } else {
                             document.getElementById('rgb-image').src = '';
                         }
-                        
+
                         // Update depth image
                         if (data.depth) {
                             document.getElementById('depth-image').src = `data:image/jpeg;base64,${data.depth}`;
                         } else {
                             document.getElementById('depth-image').src = '';
                         }
-                        
+
                         // Update frame info
                         const frameInfo = {
                             frame_id: data.frame_id,
@@ -292,10 +288,10 @@ def index():
                             state: data.state
                         };
                         document.getElementById('frame-data').textContent = JSON.stringify(frameInfo, null, 2);
-                        
+
                         // Update current frame counter
                         document.getElementById('current-frame').textContent = frameIndex + 1;
-                        
+
                         // Update navigation buttons
                         document.getElementById('prev-button').disabled = frameIndex === 0;
                         document.getElementById('next-button').disabled = frameIndex >= currentEpisode.num_frames - 1;
@@ -305,14 +301,14 @@ def index():
                         alert('Error loading frame data.');
                     });
             }
-            
+
             function prevFrame() {
                 if (currentFrameIndex > 0) {
                     currentFrameIndex--;
                     loadFrame(currentFrameIndex);
                 }
             }
-            
+
             function nextFrame() {
                 if (currentEpisode && currentFrameIndex < currentEpisode.num_frames - 1) {
                     currentFrameIndex++;
@@ -371,14 +367,16 @@ def proxy():
         # Make the request but don't forward headers from the original request
         # to prevent header injection
         response = requests.get(url, timeout=5)
-        
+
         # Don't return the actual response to the user, just a success message
         # This prevents SSRF attacks where the response might contain sensitive information
-        return jsonify({
-            "status": "success",
-            "message": "Request completed successfully",
-            "status_code": response.status_code
-        })
+        return jsonify(
+            {
+                "status": "success",
+                "message": "Request completed successfully",
+                "status_code": response.status_code,
+            }
+        )
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
