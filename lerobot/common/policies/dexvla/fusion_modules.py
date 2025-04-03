@@ -50,9 +50,9 @@ class FiLM(nn.Module):
         nn.init.zeros_(self.shift_fc.bias)
 
     def forward(self, x, condition):
-        # 计算缩放和偏移参数
+        # calculate scale and shift
         scale = self.scale_fc(condition)
         shift = self.shift_fc(condition)
 
-        # 应用 FiLM 调制
+        # film
         return x * (1 + scale) + shift

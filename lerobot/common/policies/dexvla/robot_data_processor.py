@@ -69,10 +69,16 @@ class Qwen2VLAProcess:
         )
 
         if eval:
-            return model_inputs
+            new_dict = {}
+            for k, v in model_inputs.items():
+                if "image_grid" in k:
+                    new_dict["image_grid_spatiotemporal"] = v
+                else:
+                    new_dict[k] = v
+            return new_dict
 
         input_labels = torch.ones_like(model_inputs["input_ids"]) * -100
-        answer = reasoning + "Next action:" + "<|im_end|>" if use_reasoning else "" + "<|im_end|>"
+        answer = reasoning + " Next action:" + "<|im_end|>" if use_reasoning else "" + "<|im_end|>"
 
         output_text = self.tokenizer(answer, padding=True, return_tensors="pt")
         output_labels = output_text["input_ids"]
@@ -84,7 +90,10 @@ class Qwen2VLAProcess:
 
         data_dict["labels"] = labels
         for k, v in model_inputs.items():
-            data_dict[k] = v
+            if "image_grid" in k:
+                data_dict["image_grid_spatiotemporal"] = v
+            else:
+                data_dict[k] = v
         return data_dict
 
     def forward(self, batch, use_reasoning=True):

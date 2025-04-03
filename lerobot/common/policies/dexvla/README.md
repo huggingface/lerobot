@@ -85,14 +85,12 @@ python lerobot/scripts/train.py \
 --policy.pretrain_scaledp_path /path/to/pretrained/scale_dp_h/open_scale_dp_l_backbone.safetensors \
 --policy.policy_head_size 'scaledp_h' \
 --policy.training_stage 2 \
---dataset.repo_i folding_blue_tshirt \
---batch_size 2 \
+--dataset.repo_i lerobot/aloha_mobile_chair \
 --policy.using_film true \
 --output_dir /path/to/output \
 --steps 10000 \
 --save_freq 1000 \
---optimizer_lr 2e-5 \
---policy.device=cuda
+--optimizer_lr 2e-5 
 ~~~
 
 ### Training Stage 3
@@ -104,14 +102,13 @@ python lerobot/scripts/train.py \
 --.pretrained_path /path/to/pretrained/stage2/weights \
 --policy.policy_head_size 'scaledp_h' \
 --policy.training_stage 3 \
---dataset.repo_i folding_blue_tshirt \
+--dataset.repo_i lerobot/aloha_mobile_chair \
 --batch_size 2 \
 --policy.using_film true \
 --output_dir /path/to/output \
 --steps 10000 \
 --save_freq 1000 \
---optimizer_lr 2e-5 \
---policy.device=cuda
+--optimizer_lr 2e-5 
 ~~~
 
 ### Training Time
@@ -136,8 +133,7 @@ python lerobot/scripts/eval.py \
 --policy.qwen2_vl_path /path/to/official/Qwen2-VL-2B-Instruct \
 --env.task AlohaInsertion-v0 \
 --eval.n_episodes 1 \
---eval.batch_size 1 \
---device cuda
+--eval.batch_size 1 
 ~~~
 
 ### Inference Speed

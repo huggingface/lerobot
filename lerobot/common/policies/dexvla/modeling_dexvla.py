@@ -125,7 +125,7 @@ class DexVLAPolicy(PreTrainedPolicy):
         try:
             reasonings = batch["reasoning"]
         except KeyError:
-            reasonings = ["no reasoning"] * len(task_descs)
+            reasonings = ["None."] * len(task_descs)
 
         pass
         is_pad = batch["action_is_pad"]
@@ -208,10 +208,13 @@ class DexVLAPolicy(PreTrainedPolicy):
         all_hidden_states = torch.cat(last_hidden_states, dim=1)
 
         action_hidden_states = None
+        labels_input = torch.ones((1, input_token_len)) * -100
+        labels_output = torch.ones((1, output_ids.shape[1] - input_token_len))
+        labels = torch.cat([labels_input, labels_output], dim=1)
 
         if self.model.using_film:
             action_hidden_states = self.model.film_forward(
-                labels=torch.ones_like(output_ids),
+                labels=labels,
                 input_ids=output_ids,
                 hidden_states=torch.cat(last_hidden_states, dim=1),
             )

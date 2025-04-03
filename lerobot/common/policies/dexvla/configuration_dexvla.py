@@ -50,6 +50,8 @@ class DexVLAConfig(PreTrainedConfig):
     n_action_steps: int = 50
     n_obs_steps: int = 1
 
+    device: str = "cuda"
+
     hidden_size: int = 1536
     qwen2_vl_path: str = (
         None  # '/media/rl/HDD/data/weights/Qwen2-VL-2B-Instruct', official weights of qwen2vl
