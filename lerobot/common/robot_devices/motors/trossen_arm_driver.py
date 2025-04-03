@@ -76,7 +76,7 @@ class TrossenArmDriver:
         self.is_connected = False
         self.logs = {}
         self.fps = 30
-        self.home_pose = [0, np.pi/12, np.pi/12, 0, 0, 0, 0]
+        self.home_pose = [0, np.pi/3, np.pi/6, np.pi/5, 0, 0, 0]
         self.sleep_pose = [0, 0, 0, 0, 0, 0, 0]
 
         self.motors={
@@ -242,8 +242,10 @@ class TrossenArmDriver:
                 self.driver.set_all_modes(trossen.Mode.position)
             else:
                 self.driver.set_all_modes(trossen.Mode.external_effort)
-                self.driver.set_all_external_efforts([0.0] * 7, 0.0, True)
+                self.driver.set_all_external_efforts([0.0] * self.driver.get_num_joints(), 0.0, True)
         elif data_name == "Reset":
+            self.driver.set_all_modes(trossen.Mode.velocity)
+            self.driver.set_all_velocities([0.0] * self.driver.get_num_joints(), 0.0, False)
             self.driver.set_all_modes(trossen.Mode.position)
             self.driver.set_all_positions(self.home_pose, 2.0, False)
         else:
@@ -256,8 +258,10 @@ class TrossenArmDriver:
             raise RobotDeviceNotConnectedError(
                 f"TrossenArmDriver ({self.ip}) is not connected. Try running `motors_bus.connect()` first."
             )
+        self.driver.set_all_modes(trossen.Mode.velocity)
+        self.driver.set_all_velocities([0.0] * self.driver.get_num_joints(), 0.0, False)
         self.driver.set_all_modes(trossen.Mode.position)
-        self.driver.set_all_positions(self.home_pose, 2.0, False)
+        self.driver.set_all_positions(self.home_pose, 2.0, True)
         self.driver.set_all_positions(self.sleep_pose, 2.0, False)
 
         self.is_connected = False
