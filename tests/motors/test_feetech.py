@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import scservo_sdk as scs
 
-from lerobot.common.motors import Motor, MotorNormMode
+from lerobot.common.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.common.motors.feetech import MODEL_NUMBER, FeetechMotorsBus
 from lerobot.common.utils.encoding_utils import encode_sign_magnitude
 from tests.mocks.mock_feetech import MockMotors, MockPortHandler
@@ -35,6 +35,23 @@ def dummy_motors() -> dict[str, Motor]:
         "dummy_2": Motor(2, "sts3215", MotorNormMode.RANGE_M100_100),
         "dummy_3": Motor(3, "sts3215", MotorNormMode.RANGE_M100_100),
     }
+
+
+@pytest.fixture
+def dummy_calibration(dummy_motors) -> dict[str, MotorCalibration]:
+    homings = [-709, -2006, 1624]
+    mins = [43, 27, 145]
+    maxes = [1335, 3608, 3999]
+    calibration = {}
+    for name, motor in dummy_motors.items():
+        calibration[name] = MotorCalibration(
+            id=motor.id,
+            drive_mode=0,
+            homing_offset=homings[motor.id - 1],
+            range_min=mins[motor.id - 1],
+            range_max=maxes[motor.id - 1],
+        )
+    return calibration
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason=f"No patching needed on {sys.platform=}")
@@ -454,6 +471,28 @@ def test_write_by_name(data_name, dxl_id, value, mock_motors, dummy_motors):
     motors_bus.write(data_name, f"dummy_{dxl_id}", value, normalize=False)
 
     assert mock_motors.stubs[stub_name].called
+
+
+def test_is_calibrated(mock_motors, dummy_motors, dummy_calibration):
+    encoded_homings = {m.id: encode_sign_magnitude(m.homing_offset, 11) for m in dummy_calibration.values()}
+    mins = {m.id: m.range_min for m in dummy_calibration.values()}
+    maxes = {m.id: m.range_max for m in dummy_calibration.values()}
+    offsets_stub = mock_motors.build_sync_read_stub("Homing_Offset", encoded_homings)
+    mins_stub = mock_motors.build_sync_read_stub("Min_Position_Limit", mins)
+    maxes_stub = mock_motors.build_sync_read_stub("Max_Position_Limit", maxes)
+    motors_bus = FeetechMotorsBus(
+        port=mock_motors.port,
+        motors=dummy_motors,
+        calibration=dummy_calibration,
+    )
+    motors_bus.connect(assert_motors_exist=False)
+
+    is_calibrated = motors_bus.is_calibrated
+
+    assert is_calibrated
+    assert mock_motors.stubs[offsets_stub].called
+    assert mock_motors.stubs[mins_stub].called
+    assert mock_motors.stubs[maxes_stub].called
 
 
 def test_reset_calibration(mock_motors, dummy_motors):

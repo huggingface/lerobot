@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import dynamixel_sdk as dxl
 import pytest
 
-from lerobot.common.motors import Motor, MotorNormMode
+from lerobot.common.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.common.motors.dynamixel import MODEL_NUMBER, DynamixelMotorsBus
 from lerobot.common.utils.encoding_utils import encode_twos_complement
 from tests.mocks.mock_dynamixel import MockMotors, MockPortHandler
@@ -35,6 +35,24 @@ def dummy_motors() -> dict[str, Motor]:
         "dummy_2": Motor(2, "xm540-w270", MotorNormMode.RANGE_M100_100),
         "dummy_3": Motor(3, "xl330-m077", MotorNormMode.RANGE_M100_100),
     }
+
+
+@pytest.fixture
+def dummy_calibration(dummy_motors) -> dict[str, MotorCalibration]:
+    drive_modes = [0, 1, 0]
+    homings = [-709, -2006, 1624]
+    mins = [43, 27, 145]
+    maxes = [1335, 3608, 3999]
+    calibration = {}
+    for name, motor in dummy_motors.items():
+        calibration[name] = MotorCalibration(
+            id=motor.id,
+            drive_mode=drive_modes[motor.id - 1],
+            homing_offset=homings[motor.id - 1],
+            range_min=mins[motor.id - 1],
+            range_max=maxes[motor.id - 1],
+        )
+    return calibration
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason=f"No patching needed on {sys.platform=}")
@@ -433,6 +451,31 @@ def test_write_by_name(data_name, dxl_id, value, mock_motors, dummy_motors):
     motors_bus.write(data_name, f"dummy_{dxl_id}", value, normalize=False)
 
     assert mock_motors.stubs[stub_name].called
+
+
+def test_is_calibrated(mock_motors, dummy_motors, dummy_calibration):
+    drive_modes = {m.id: m.drive_mode for m in dummy_calibration.values()}
+    encoded_homings = {m.id: encode_twos_complement(m.homing_offset, 4) for m in dummy_calibration.values()}
+    mins = {m.id: m.range_min for m in dummy_calibration.values()}
+    maxes = {m.id: m.range_max for m in dummy_calibration.values()}
+    drive_modes_stub = mock_motors.build_sync_read_stub("Drive_Mode", drive_modes)
+    offsets_stub = mock_motors.build_sync_read_stub("Homing_Offset", encoded_homings)
+    mins_stub = mock_motors.build_sync_read_stub("Min_Position_Limit", mins)
+    maxes_stub = mock_motors.build_sync_read_stub("Max_Position_Limit", maxes)
+    motors_bus = DynamixelMotorsBus(
+        port=mock_motors.port,
+        motors=dummy_motors,
+        calibration=dummy_calibration,
+    )
+    motors_bus.connect(assert_motors_exist=False)
+
+    is_calibrated = motors_bus.is_calibrated
+
+    assert is_calibrated
+    assert mock_motors.stubs[drive_modes_stub].called
+    assert mock_motors.stubs[offsets_stub].called
+    assert mock_motors.stubs[mins_stub].called
+    assert mock_motors.stubs[maxes_stub].called
 
 
 def test_reset_calibration(mock_motors, dummy_motors):
