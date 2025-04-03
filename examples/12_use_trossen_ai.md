@@ -25,23 +25,20 @@ rm ~/miniconda3/miniconda.sh
 conda create -y -n lerobot python=3.10 && conda activate lerobot
 ```
 
-4. Clone LeRobot:
+4. Install ffmpeg for miniconda
+```bash
+conda install -c conda-forge 'ffmpeg>=7.0' -y
+```
+
+5. Clone LeRobot:
 ```bash
 git clone -b trossen-ai https://github.com/Interbotix/lerobot.git ~/lerobot
 ```
 
-5. Install LeRobot with dependencies for the Trossen AI arms (trossen-arm) and cameras (intelrealsense):
+6. Install LeRobot with dependencies for the Trossen AI arms (trossen-arm) and cameras (intelrealsense):
 
 ```bash
 cd ~/lerobot && pip install -e ".[trossen_ai]"
-```
-
-For Linux only (not Mac), install extra dependencies for recording datasets:
-
-```bash
-conda install -y -c conda-forge ffmpeg
-pip uninstall -y opencv-python
-conda install -y -c conda-forge "opencv>=4.10.0"
 ```
 
 ## Teleoperate
