@@ -26,20 +26,20 @@ from lerobot.common.motors.dynamixel import (
 )
 
 from ..teleoperator import Teleoperator
-from .configuration_widowx import WidowXTeleopConfig
+from .config_widowx import WidowXConfig
 
 logger = logging.getLogger(__name__)
 
 
-class WidowXTeleop(Teleoperator):
+class WidowX(Teleoperator):
     """
     [WidowX](https://www.trossenrobotics.com/widowx-250) developed by Trossen Robotics
     """
 
-    config_class = WidowXTeleopConfig
+    config_class = WidowXConfig
     name = "widowx"
 
-    def __init__(self, config: WidowXTeleopConfig):
+    def __init__(self, config: WidowXConfig):
         super().__init__(config)
         self.config = config
         self.arm = DynamixelMotorsBus(

@@ -7,7 +7,7 @@ from ..config import RobotConfig
 
 @RobotConfig.register_subclass("viperx")
 @dataclass
-class ViperXRobotConfig(RobotConfig):
+class ViperXConfig(RobotConfig):
     port: str  # Port to connect to the arm
 
     disable_torque_on_disconnect: bool = True

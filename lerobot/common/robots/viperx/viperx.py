@@ -19,22 +19,22 @@ from lerobot.common.motors.dynamixel import (
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
-from .configuration_viperx import ViperXRobotConfig
+from .config_viperx import ViperXConfig
 
 logger = logging.getLogger(__name__)
 
 
-class ViperXRobot(Robot):
+class ViperX(Robot):
     """
     [ViperX](https://www.trossenrobotics.com/viperx-300) developed by Trossen Robotics
     """
 
-    config_class = ViperXRobotConfig
+    config_class = ViperXConfig
     name = "viperx"
 
     def __init__(
         self,
-        config: ViperXRobotConfig,
+        config: ViperXConfig,
     ):
         super().__init__(config)
         self.config = config

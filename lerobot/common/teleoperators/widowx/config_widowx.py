@@ -21,5 +21,5 @@ from ..config import TeleoperatorConfig
 
 @TeleoperatorConfig.register_subclass("widowx")
 @dataclass
-class WidowXTeleopConfig(TeleoperatorConfig):
+class WidowXConfig(TeleoperatorConfig):
     port: str  # Port to connect to the arm
