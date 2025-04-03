@@ -29,20 +29,20 @@ from lerobot.common.motors.feetech import (
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
-from .configuration_so100 import SO100RobotConfig
+from .config_so100_follower import SO100FollowerConfig
 
 logger = logging.getLogger(__name__)
 
 
-class SO100Robot(Robot):
+class SO100Follower(Robot):
     """
     [SO-100 Follower Arm](https://github.com/TheRobotStudio/SO-ARM100) designed by TheRobotStudio
     """
 
-    config_class = SO100RobotConfig
-    name = "so100"
+    config_class = SO100FollowerConfig
+    name = "so100_follower"
 
-    def __init__(self, config: SO100RobotConfig):
+    def __init__(self, config: SO100FollowerConfig):
         super().__init__(config)
         self.config = config
         self.arm = FeetechMotorsBus(
@@ -211,9 +211,7 @@ class SO100Robot(Robot):
 
     def disconnect(self):
         if not self.is_connected:
-            raise DeviceNotConnectedError(
-                "ManipulatorRobot is not connected. You need to run `robot.connect()` before disconnecting."
-            )
+            raise DeviceNotConnectedError(f"{self} is not connected.")
 
         self.arm.disconnect(self.config.disable_torque_on_disconnect)
         for cam in self.cameras.values():

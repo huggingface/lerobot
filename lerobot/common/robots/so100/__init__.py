@@ -1,4 +1,2 @@
-from .configuration_so100 import SO100RobotConfig
-from .robot_so100 import SO100Robot
-
-__all__ = ["SO100RobotConfig", "SO100Robot"]
+from .config_so100_follower import SO100FollowerConfig
+from .so100_follower import SO100Follower

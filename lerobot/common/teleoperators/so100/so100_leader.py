@@ -25,20 +25,20 @@ from lerobot.common.motors.feetech import (
 )
 
 from ..teleoperator import Teleoperator
-from .configuration_so100 import SO100TeleopConfig
+from .config_so100_leader import SO100LeaderConfig
 
 logger = logging.getLogger(__name__)
 
 
-class SO100Teleop(Teleoperator):
+class SO100Leader(Teleoperator):
     """
     [SO-100 Leader Arm](https://github.com/TheRobotStudio/SO-ARM100) designed by TheRobotStudio
     """
 
-    config_class = SO100TeleopConfig
-    name = "so100"
+    config_class = SO100LeaderConfig
+    name = "so100_leader"
 
-    def __init__(self, config: SO100TeleopConfig):
+    def __init__(self, config: SO100LeaderConfig):
         super().__init__(config)
         self.config = config
         self.arm = FeetechMotorsBus(
@@ -136,9 +136,7 @@ class SO100Teleop(Teleoperator):
 
     def disconnect(self) -> None:
         if not self.is_connected:
-            raise DeviceNotConnectedError(
-                "ManipulatorRobot is not connected. You need to run `robot.connect()` before disconnecting."
-            )
+            DeviceNotConnectedError(f"{self} is not connected.")
 
         self.arm.disconnect()
         logger.info(f"{self} disconnected.")

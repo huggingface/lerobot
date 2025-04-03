@@ -5,10 +5,10 @@ from lerobot.common.cameras import CameraConfig
 from ..config import RobotConfig
 
 
-@RobotConfig.register_subclass("so100")
+@RobotConfig.register_subclass("so100_follower")
 @dataclass
-class SO100RobotConfig(RobotConfig):
-    # Port to connect to the robot
+class SO100FollowerConfig(RobotConfig):
+    # Port to connect to the arm
     port: str
 
     disable_torque_on_disconnect: bool = True
