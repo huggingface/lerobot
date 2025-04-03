@@ -45,7 +45,7 @@ git clone https://github.com/huggingface/lerobot.git ~/lerobot
 
 6. Install LeRobot with stretch dependencies:
 ```bash
-cd ~/lerobot && pip install -e ".[stretch]"
+cd ~/lerobot && pip install --no-binary=av -e ".[stretch]"
 ```
 
 > **Note:** If you get this message, you can ignore it: `ERROR: pip's dependency resolver does not currently take into account all the packages that are installed.`
