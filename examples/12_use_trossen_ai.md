@@ -66,7 +66,7 @@ By adding `--robot.force_feedback_gain=0.1`, we override the default value for `
 python lerobot/scripts/control_robot.py \
   --robot.type=trossen_ai_stationary \
   --robot.max_relative_target=null \
-  --robot.force_feedback_gain=0.0 \
+  --robot.force_feedback_gain=0.1 \
   --control.type=teleoperate
 ```
 This parameter can be used in both teleoperate and record modes, depending on whether you want the operator to feel contact feedback during data collection.
