@@ -60,6 +60,16 @@ python lerobot/scripts/control_robot.py \
   --robot.max_relative_target=null \
   --control.type=teleoperate
 ```
+By adding `--robot.force_feedback_gain=0.1`, we override the default value for `force_feedback_gain` defined in [`TrossenAIBimanualRobot`](lerobot/common/robot_devices/robots/configs.py). This enables **force feedback** from the follower arm to the leader arm — meaning the user can **feel contact forces** when the robot interacts with external objects (e.g., gripping or bumping into something). A typical starting value is `0.1` for a responsive feel. You can disable this behavior entirely by setting `--robot.force_feedback_gain=0.0` in the command line:
+
+```bash
+python lerobot/scripts/control_robot.py \
+  --robot.type=trossen_ai_stationary \
+  --robot.max_relative_target=null \
+  --robot.force_feedback_gain=0.0 \
+  --control.type=teleoperate
+```
+This parameter can be used in both teleoperate and record modes, depending on whether you want the operator to feel contact feedback during data collection.
 
 ## Record a dataset
 
