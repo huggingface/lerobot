@@ -121,7 +121,7 @@ class LeKiwi(Robot):
 
         motors = self.arm_motors + self.base_motors
 
-        self.bus.disable_torque(motors)
+        self.bus.disable_torque(self.arm_motors)
         for name in self.arm_motors:
             self.bus.write("Operating_Mode", name, OperatingMode.POSITION.value)
 
@@ -162,7 +162,7 @@ class LeKiwi(Robot):
         # and torque can be safely disabled to run calibration.
         self.bus.disable_torque(self.arm_motors)
         for name in self.arm_motors:
-            self.bus.write("Mode", name, OperatingMode.POSITION.value)
+            self.bus.write("Operating_Mode", name, OperatingMode.POSITION.value)
             # Set P_Coefficient to lower value to avoid shakiness (Default is 32)
             self.bus.write("P_Coefficient", name, 16)
             # Set I_Coefficient and D_Coefficient to default value 0 and 32
@@ -174,7 +174,7 @@ class LeKiwi(Robot):
             self.bus.write("Acceleration", name, 254)
 
         for name in self.base_motors:
-            self.bus.write("Mode", name, OperatingMode.VELOCITY.value)
+            self.bus.write("Operating_Mode", name, OperatingMode.VELOCITY.value)
 
         self.bus.enable_torque()
 
