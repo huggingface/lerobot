@@ -18,10 +18,11 @@ import numpy as np
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.robots.config import RobotMode
-from lerobot.common.robots.lekiwi.configuration_daemon_lekiwi import LeKiwiClientConfig
-from lerobot.common.robots.lekiwi.lekiwi_client import LeKiwiClient
 from lerobot.common.teleoperators.keyboard import KeyboardTeleop, KeyboardTeleopConfig
-from lerobot.common.teleoperators.so100 import SO100Teleop, SO100TeleopConfig
+from lerobot.common.teleoperators.so100 import SO100Leader, SO100LeaderConfig
+
+from .configuration_daemon_lekiwi import LeKiwiClientConfig
+from .lekiwi_client import LeKiwiClient
 
 DUMMY_FEATURES = {
     "observation.state": {
@@ -81,8 +82,8 @@ DUMMY_FEATURES = {
 
 def main():
     logging.info("Configuring Teleop Devices")
-    leader_arm_config = SO100TeleopConfig(port="/dev/tty.usbmodem58760429271")
-    leader_arm = SO100Teleop(leader_arm_config)
+    leader_arm_config = SO100LeaderConfig(port="/dev/tty.usbmodem58760429271")
+    leader_arm = SO100Leader(leader_arm_config)
 
     keyboard_config = KeyboardTeleopConfig()
     keyboard = KeyboardTeleop(keyboard_config)
