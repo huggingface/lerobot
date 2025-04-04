@@ -18,8 +18,8 @@ import numpy as np
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.robots.config import RobotMode
-from lerobot.common.robots.lekiwi.configuration_daemon_lekiwi import DaemonLeKiwiRobotConfig
-from lerobot.common.robots.lekiwi.daemon_lekiwi import DaemonLeKiwiRobot
+from lerobot.common.robots.lekiwi.configuration_daemon_lekiwi import LeKiwiClientConfig
+from lerobot.common.robots.lekiwi.lekiwi_client import LeKiwiClient
 from lerobot.common.teleoperators.keyboard import KeyboardTeleop, KeyboardTeleopConfig
 from lerobot.common.teleoperators.so100 import SO100Teleop, SO100TeleopConfig
 
@@ -87,11 +87,11 @@ def main():
     keyboard_config = KeyboardTeleopConfig()
     keyboard = KeyboardTeleop(keyboard_config)
 
-    logging.info("Configuring LeKiwiRobot Daemon")
-    robot_config = DaemonLeKiwiRobotConfig(
+    logging.info("Configuring LeKiwi Client")
+    robot_config = LeKiwiClientConfig(
         id="daemonlekiwi", calibration_dir=".cache/calibration/lekiwi", robot_mode=RobotMode.TELEOP
     )
-    robot = DaemonLeKiwiRobot(robot_config)
+    robot = LeKiwiClient(robot_config)
 
     logging.info("Creating LeRobot Dataset")
 
@@ -106,10 +106,10 @@ def main():
     leader_arm.connect()
     keyboard.connect()
 
-    logging.info("Connecting remote LeKiwiRobot")
+    logging.info("Connecting remote LeKiwi")
     robot.connect()
 
-    logging.info("Starting LeKiwiRobot teleoperation")
+    logging.info("Starting LeKiwi teleoperation")
     i = 0
     while i < 1000:
         arm_action = leader_arm.get_action()
@@ -135,11 +135,11 @@ def main():
     dataset.save_episode()
     # dataset.push_to_hub()
 
-    logging.info("Disconnecting Teleop Devices and LeKiwiRobot Daemon")
+    logging.info("Disconnecting Teleop Devices and LeKiwi Client")
     robot.disconnect()
     leader_arm.disconnect()
     keyboard.disconnect()
-    logging.info("Finished LeKiwiRobot cleanly")
+    logging.info("Finished LeKiwi cleanly")
 
 
 if __name__ == "__main__":

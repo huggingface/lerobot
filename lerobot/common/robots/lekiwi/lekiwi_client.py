@@ -26,7 +26,7 @@ from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnecte
 from lerobot.common.robots.config import RobotMode
 
 from ..robot import Robot
-from .configuration_daemon_lekiwi import DaemonLeKiwiRobotConfig
+from .configuration_daemon_lekiwi import LeKiwiClientConfig
 
 
 # TODO(Steven): This doesn't need to inherit from Robot
@@ -40,11 +40,11 @@ from .configuration_daemon_lekiwi import DaemonLeKiwiRobotConfig
 # 2. Adding it into the robot implementation
 # (meaning the policy might be needed to be train
 # over the teleop action space)
-class DaemonLeKiwiRobot(Robot):
-    config_class = DaemonLeKiwiRobotConfig
-    name = "daemonlekiwi"
+class LeKiwiClient(Robot):
+    config_class = LeKiwiClientConfig
+    name = "lekiwi_client"
 
-    def __init__(self, config: DaemonLeKiwiRobotConfig):
+    def __init__(self, config: LeKiwiClientConfig):
         super().__init__(config)
         self.config = config
         self.id = config.id
@@ -150,7 +150,7 @@ class DaemonLeKiwiRobot(Robot):
         # TODO(Steven): Nothing to calibrate.
         # Consider triggering calibrate() on the remote mobile robot?
         # Although this would require a more complex comms schema
-        logging.warning("DaemonLeKiwiRobot has nothing to calibrate.")
+        logging.warning("LeKiwiClient has nothing to calibrate.")
         return
 
     # Consider moving these static functions out of the class
@@ -235,7 +235,7 @@ class DaemonLeKiwiRobot(Robot):
             wheel_degps = wheel_degps * scale
 
         # Convert each wheel’s angular speed (deg/s) to a raw integer.
-        wheel_raw = [DaemonLeKiwiRobot._degps_to_raw(deg) for deg in wheel_degps]
+        wheel_raw = [LeKiwiClient._degps_to_raw(deg) for deg in wheel_degps]
 
         return {"left_wheel": wheel_raw[0], "back_wheel": wheel_raw[1], "right_wheel": wheel_raw[2]}
 
@@ -259,7 +259,7 @@ class DaemonLeKiwiRobot(Robot):
         """
 
         # Convert each raw command back to an angular speed in deg/s.
-        wheel_degps = np.array([DaemonLeKiwiRobot._raw_to_degps(int(r)) for r in wheel_raw])
+        wheel_degps = np.array([LeKiwiClient._raw_to_degps(int(r)) for r in wheel_raw])
         # Convert from deg/s to rad/s.
         wheel_radps = wheel_degps * (np.pi / 180.0)
         # Compute each wheel’s linear speed (m/s) from its angular speed.
@@ -352,7 +352,7 @@ class DaemonLeKiwiRobot(Robot):
             return (self.last_frames, self.last_present_speed, self.last_remote_arm_state)
         return frames, present_speed, remote_arm_state_tensor
 
-    # TODO(Steven): The returned space is different from the get_observation of LeKiwiRobot
+    # TODO(Steven): The returned space is different from the get_observation of LeKiwi
     # This returns body-frames velocities instead of wheel pos/speeds
     def get_observation(self) -> dict[str, np.ndarray]:
         """
@@ -361,9 +361,7 @@ class DaemonLeKiwiRobot(Robot):
         and a camera frame. Receives over ZMQ, translate to body-frame vel
         """
         if not self.is_connected:
-            raise DeviceNotConnectedError(
-                "DaemonLeKiwiRobot is not connected. You need to run `robot.connect()`."
-            )
+            raise DeviceNotConnectedError("LeKiwiClient is not connected. You need to run `robot.connect()`.")
 
         obs_dict = {}
 

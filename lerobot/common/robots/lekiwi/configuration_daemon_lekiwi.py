@@ -17,9 +17,9 @@ from dataclasses import dataclass, field
 from lerobot.common.robots.config import RobotConfig
 
 
-@RobotConfig.register_subclass("daemon_lekiwi")
+@RobotConfig.register_subclass("lekiwi_client")
 @dataclass
-class DaemonLeKiwiRobotConfig(RobotConfig):
+class LeKiwiClientConfig(RobotConfig):
     # Network Configuration
     remote_ip: str = "172.18.133.90"
     port_zmq_cmd: int = 5555

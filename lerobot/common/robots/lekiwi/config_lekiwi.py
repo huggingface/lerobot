@@ -21,7 +21,7 @@ from lerobot.common.robots.config import RobotConfig
 
 @RobotConfig.register_subclass("lekiwi")
 @dataclass
-class LeKiwiRobotConfig(RobotConfig):
+class LeKiwiConfig(RobotConfig):
     port = "/dev/ttyACM0"  # port to connect to the bus
 
     disable_torque_on_disconnect: bool = True
