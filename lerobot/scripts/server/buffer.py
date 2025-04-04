@@ -15,7 +15,6 @@
 # limitations under the License.
 import functools
 import io
-import os
 import pickle
 from typing import Any, Callable, Optional, Sequence, TypedDict
 
@@ -388,8 +387,8 @@ class ReplayBuffer:
         Yields:
             BatchTransition: Prefetched batch transitions
         """
-        import threading
         import queue
+        import threading
 
         # Use thread-safe queue
         data_queue = queue.Queue(maxsize=queue_size)
