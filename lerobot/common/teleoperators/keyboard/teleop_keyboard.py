@@ -75,6 +75,14 @@ class KeyboardTeleop(Teleoperator):
     def feedback_feature(self) -> dict:
         return {}
 
+    @property
+    def is_connected(self) -> bool:
+        pass
+
+    @property
+    def is_calibrated(self) -> bool:
+        pass
+
     def connect(self) -> None:
         # TODO(Steven): Consider instead of raising a warning and then returning the status
         # if self.is_connected:
@@ -118,6 +126,9 @@ class KeyboardTeleop(Teleoperator):
         while not self.event_queue.empty():
             key_char, is_pressed = self.event_queue.get_nowait()
             self.current_pressed[key_char] = is_pressed
+
+    def configure(self):
+        pass
 
     def get_action(self) -> np.ndarray:
         before_read_t = time.perf_counter()
