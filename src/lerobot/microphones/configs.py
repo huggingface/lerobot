@@ -22,7 +22,6 @@ class MicrophoneConfig(draccus.ChoiceRegistry, abc.ABC):
     microphone_index: int
     sampling_rate: int | None = None
     channels: list[int] | None = None
-    data_type: str | None = None
 
     @property
     def type(self) -> str:

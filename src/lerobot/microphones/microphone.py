@@ -111,7 +111,7 @@ class Microphone:
     ```python
     from lerobot.common.robot_devices.microphones.configs import MicrophoneConfig
 
-    config = MicrophoneConfig(microphone_index=0, sampling_rate=16000, channels=[1], data_type="int16")
+    config = MicrophoneConfig(microphone_index=0, sampling_rate=16000, channels=[1])
     microphone = Microphone(config)
 
     microphone.connect()
@@ -131,7 +131,6 @@ class Microphone:
         #Store the recording sampling rate and channels
         self.sampling_rate = config.sampling_rate
         self.channels = config.channels
-        self.data_type = config.data_type
 
         #Input audio stream
         self.stream = None
@@ -190,7 +189,7 @@ class Microphone:
             device=self.microphone_index,
             samplerate=self.sampling_rate,
             channels=max(self.channels)+1,
-            dtype=self.data_type,
+            dtype="float32",
             callback=self._audio_callback,
         )
         #Remark : the blocksize parameter could be passed to the stream to ensure that audio_callback always recieve same length buffers.
@@ -207,6 +206,7 @@ class Microphone:
         self.read_queue.put(indata[:,self.channels])
 
     def _record_loop(self, output_file: Path) -> None:
+        #Can only be run on a single process/thread for file writing safety 
         with sf.SoundFile(output_file, mode='x', samplerate=self.sampling_rate,
                       channels=max(self.channels)+1, subtype=sf.default_subtype(output_file.suffix[1:])) as file:
             while not self.record_stop_event.is_set():
