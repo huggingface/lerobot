@@ -287,6 +287,7 @@ class LeKiwiClient(Robot):
 
     # TODO(Steven): This is flaky, for example, if we received a state but failed decoding the image, we will not update any value
     # TODO(Steven): All this function needs to be refactored
+    # TODO(Steven): Fix this next
     def _get_data(self):
         # Copied from robot_lekiwi.py
         """Polls the video socket for up to 15 ms. If data arrives, decode only
@@ -470,7 +471,9 @@ class LeKiwiClient(Robot):
 
             motors_name = self.state_feature.get("names").get("motors")
 
-            common_keys = [key for key in action if any(key in motor for motor in motors_name)]
+            common_keys = [
+                key for key in action if key in (motor.replace("arm_", "") for motor in motors_name)
+            ]
 
             if len(common_keys) < 6:
                 logging.error("Action should include at least the states of the leader arm")
