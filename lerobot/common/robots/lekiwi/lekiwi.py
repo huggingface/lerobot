@@ -32,12 +32,12 @@ from lerobot.common.motors.feetech import (
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
-from .configuration_lekiwi import LeKiwiRobotConfig
+from .config_lekiwi import LeKiwiConfig
 
 logger = logging.getLogger(__name__)
 
 
-class LeKiwiRobot(Robot):
+class LeKiwi(Robot):
     """
     The robot includes a three omniwheel mobile base and a remote follower arm.
     The leader arm is connected locally (on the laptop) and its joint positions are recorded and then
@@ -45,10 +45,10 @@ class LeKiwiRobot(Robot):
     In parallel, keyboard teleoperation is used to generate raw velocity commands for the wheels.
     """
 
-    config_class = LeKiwiRobotConfig
+    config_class = LeKiwiConfig
     name = "lekiwi"
 
-    def __init__(self, config: LeKiwiRobotConfig):
+    def __init__(self, config: LeKiwiConfig):
         super().__init__(config)
         self.config = config
         self.id = config.id

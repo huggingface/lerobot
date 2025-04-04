@@ -22,15 +22,15 @@ import numpy as np
 import zmq
 
 from lerobot.common.constants import OBS_STATE
-from lerobot.common.robots.lekiwi.configuration_lekiwi import LeKiwiRobotConfig
-from lerobot.common.robots.lekiwi.lekiwi_robot import LeKiwiRobot
+from lerobot.common.robots.lekiwi.config_lekiwi import LeKiwiConfig
+from lerobot.common.robots.lekiwi.lekiwi import LeKiwi
 
 # Network Configuration
 PORT_ZMQ_CMD: int = 5555
 PORT_ZMQ_OBSERVATIONS: int = 5556
 
 
-class RemoteAgent:
+class HostAgent:
     def __init__(self):
         self.zmq_context = zmq.Context()
         self.zmq_cmd_socket = self.zmq_context.socket(zmq.PULL)
@@ -48,15 +48,15 @@ class RemoteAgent:
 
 
 def main():
-    logging.info("Configuring LeKiwiRobot")
-    robot_config = LeKiwiRobotConfig()
-    robot = LeKiwiRobot(robot_config)
+    logging.info("Configuring LeKiwi")
+    robot_config = LeKiwiConfig()
+    robot = LeKiwi(robot_config)
 
-    logging.info("Connecting LeKiwiRobot")
+    logging.info("Connecting LeKiwi")
     robot.connect()
 
-    logging.info("Starting RemoteAgent")
-    remote_agent = RemoteAgent()
+    logging.info("Starting HostAgent")
+    remote_agent = HostAgent()
 
     last_cmd_time = time.time()
     logging.info("Waiting for commands...")
@@ -101,7 +101,7 @@ def main():
         robot.disconnect()
         remote_agent.disconnect()
 
-    logging.info("Finished LeKiwiRobot cleanly")
+    logging.info("Finished LeKiwi cleanly")
 
 
 if __name__ == "__main__":
