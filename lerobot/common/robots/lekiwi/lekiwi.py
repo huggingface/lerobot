@@ -14,12 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import base64
 import logging
 import time
 from typing import Any
-
-import cv2
 
 from lerobot.common.cameras.utils import make_cameras_from_configs
 from lerobot.common.constants import OBS_IMAGES, OBS_STATE
@@ -64,8 +61,8 @@ class LeKiwi(Robot):
                 "arm_gripper": Motor(6, "sts3215", MotorNormMode.RANGE_0_100),
                 # base
                 "base_left_wheel": Motor(7, "sts3215", MotorNormMode.RANGE_M100_100),
-                "base_back_wheel": Motor(8, "sts3215", MotorNormMode.RANGE_M100_100),
-                "base_right_wheel": Motor(9, "sts3215", MotorNormMode.RANGE_M100_100),
+                "base_right_wheel": Motor(8, "sts3215", MotorNormMode.RANGE_M100_100),
+                "base_back_wheel": Motor(9, "sts3215", MotorNormMode.RANGE_M100_100),
             },
             calibration=self.calibration,
         )
@@ -119,23 +116,33 @@ class LeKiwi(Robot):
     def is_calibrated(self) -> bool:
         return self.bus.is_calibrated
 
+    # TODO(Steven): I think we should extend this to give the user the option of re-calibrate
+    # calibrate(recalibrate: bool = False) -> None:
+    # If true, then we overwrite the previous calibration file with new values
     def calibrate(self) -> None:
         logger.info(f"\nRunning calibration of {self}")
+
+        motors = self.arm_motors + self.base_motors
+
         self.bus.disable_torque(self.arm_motors)
         for name in self.arm_motors:
             self.bus.write("Operating_Mode", name, OperatingMode.POSITION.value)
 
         input("Move robot to the middle of its range of motion and press ENTER....")
-        homing_offsets = self.bus.set_half_turn_homings(self.arm_motors)
+        homing_offsets = self.bus.set_half_turn_homings(motors)
 
-        full_turn_motor = "arm_wrist_roll"
-        unknown_range_motors = [name for name in self.arm_motors if name != full_turn_motor]
-        logger.info(
+        # TODO(Steven): Might be worth to do this also in other robots but it should be added in the docs
+        full_turn_motor = [
+            motor for motor in motors if any(keyword in motor for keyword in ["wheel", "gripper"])
+        ]
+        unknown_range_motors = [motor for motor in motors if motor not in full_turn_motor]
+
+        print(
             f"Move all arm joints except '{full_turn_motor}' sequentially through their "
             "entire ranges of motion.\nRecording positions. Press ENTER to stop..."
         )
         range_mins, range_maxes = self.bus.record_ranges_of_motion(unknown_range_motors)
-        for name in [*self.base_motors, full_turn_motor]:
+        for name in full_turn_motor:
             range_mins[name] = 0
             range_maxes[name] = 4095
 
@@ -159,7 +166,7 @@ class LeKiwi(Robot):
         # and torque can be safely disabled to run calibration.
         self.bus.disable_torque(self.arm_motors)
         for name in self.arm_motors:
-            self.bus.write("Mode", name, OperatingMode.POSITION.value)
+            self.bus.write("Operating_Mode", name, OperatingMode.POSITION.value)
             # Set P_Coefficient to lower value to avoid shakiness (Default is 32)
             self.bus.write("P_Coefficient", name, 16)
             # Set I_Coefficient and D_Coefficient to default value 0 and 32
@@ -171,15 +178,15 @@ class LeKiwi(Robot):
             self.bus.write("Acceleration", name, 254)
 
         for name in self.base_motors:
-            self.bus.write("Mode", name, OperatingMode.VELOCITY.value)
+            self.bus.write("Operating_Mode", name, OperatingMode.VELOCITY.value)
 
-        self.bus.enable_torque()
+        self.bus.enable_torque()  # TODO(Steven): Operation has failed with: ConnectionError: Failed to write 'Lock' on id_=6 with '1' after 1 tries. [TxRxResult] Incorrect status packet!
 
     def get_observation(self) -> dict[str, Any]:
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        obs_dict = {}
+        obs_dict = {OBS_IMAGES: {}}
 
         # Read actuators position for arm and vel for base
         start = time.perf_counter()
@@ -192,12 +199,7 @@ class LeKiwi(Robot):
         # Capture images from cameras
         for cam_key, cam in self.cameras.items():
             start = time.perf_counter()
-            frame = cam.async_read()
-            ret, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
-            if ret:
-                obs_dict[f"{OBS_IMAGES}.{cam_key}"] = base64.b64encode(buffer).decode("utf-8")
-            else:
-                obs_dict[f"{OBS_IMAGES}.{cam_key}"] = ""
+            obs_dict[OBS_IMAGES][cam_key] = cam.async_read()
             dt_ms = (time.perf_counter() - start) * 1e3
             logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
 
@@ -229,15 +231,19 @@ class LeKiwi(Robot):
             present_pos = self.bus.sync_read("Present_Position", self.arm_motors)
             goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in arm_goal_pos.items()}
             arm_safe_goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
+            arm_goal_pos = arm_safe_goal_pos
+
+        # TODO(Steven):  Message fetching failed: Magnitude 34072 exceeds 32767 (max for sign_bit_index=15)
+        # TODO(Steven): IMO, this should be a check in the motor bus
 
         # Send goal position to the actuators
-        self.bus.sync_write("Goal_Position", arm_safe_goal_pos)
+        self.bus.sync_write("Goal_Position", arm_goal_pos)
         self.bus.sync_write("Goal_Speed", base_goal_vel)
 
-        return {**arm_safe_goal_pos, **base_goal_vel}
+        return {**arm_goal_pos, **base_goal_vel}
 
     def stop_base(self):
-        self.bus.sync_write("Goal_Speed", {name: 0 for name in self.base_motors}, num_retry=5)
+        self.bus.sync_write("Goal_Speed", dict.fromkeys(self.base_motors, 0), num_retry=5)
         logger.info("Base motors stopped")
 
     def disconnect(self):
