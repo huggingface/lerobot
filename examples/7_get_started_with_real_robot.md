@@ -33,7 +33,7 @@ First, install the additional dependencies required for robots built with dynami
 
 Using `pip`:
 ```bash
-pip install -e ".[dynamixel]"
+pip install --no-binary=av -e ".[dynamixel]"
 ```
 
 Using `poetry`:
@@ -44,13 +44,6 @@ poetry sync --extras "dynamixel"
 Using `uv`:
 ```bash
 uv sync --extra "dynamixel"
-```
-
-/!\ For Linux only, ffmpeg and opencv requires conda install for now. Run this exact sequence of commands:
-```bash
-conda install -c conda-forge ffmpeg
-pip uninstall opencv-python
-conda install -c conda-forge "opencv>=4.10.0"
 ```
 
 You are now ready to plug the 5V power supply to the motor bus of the leader arm (the smaller one) since all its motors only require 5V.
@@ -834,11 +827,6 @@ It contains:
 - `dtRphone:33.84 (29.5hz)` which is the delta time of capturing an image from the phone camera in the thread running asynchronously.
 
 Troubleshooting:
-- On Linux, if you encounter a hanging issue when using cameras, uninstall opencv and re-install it with conda:
-```bash
-pip uninstall opencv-python
-conda install -c conda-forge opencv=4.10.0
-```
 - On Linux, if you encounter any issue during video encoding with `ffmpeg: unknown encoder libsvtav1`, you can:
   - install with conda-forge by running `conda install -c conda-forge ffmpeg` (it should be compiled with `libsvtav1`),
   - or, install [Homebrew](https://brew.sh) and run `brew install ffmpeg` (it should be compiled with `libsvtav1`),

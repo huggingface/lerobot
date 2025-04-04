@@ -1,1 +1,1 @@
-from .motors_bus import CalibrationMode, DriveMode, Motor, MotorsBus, TorqueMode
+from .motors_bus import Motor, MotorCalibration, MotorNormMode, MotorsBus

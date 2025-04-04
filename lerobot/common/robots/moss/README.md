@@ -33,14 +33,7 @@ git clone https://github.com/huggingface/lerobot.git ~/lerobot
 
 5. Install LeRobot with dependencies for the feetech motors:
 ```bash
-cd ~/lerobot && pip install -e ".[feetech]"
-```
-
-For Linux only (not Mac), install extra dependencies for recording datasets:
-```bash
-conda install -y -c conda-forge ffmpeg
-pip uninstall -y opencv-python
-conda install -y -c conda-forge "opencv>=4.10.0"
+cd ~/lerobot && pip install --no-binary=av -e ".[feetech]"
 ```
 
 ## Configure the motors

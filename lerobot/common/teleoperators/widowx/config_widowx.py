@@ -19,12 +19,7 @@ from dataclasses import dataclass
 from ..config import TeleoperatorConfig
 
 
-@TeleoperatorConfig.register_subclass("koch")
+@TeleoperatorConfig.register_subclass("widowx")
 @dataclass
-class KochTeleopConfig(TeleoperatorConfig):
-    # Port to connect to the teloperator
-    port: str
-
-    # Sets the arm in torque mode with the gripper motor set to this angle. This makes it possible
-    # to squeeze the gripper and have it spring back to an open position on its own.
-    gripper_open_degree: float = 35.156
+class WidowXConfig(TeleoperatorConfig):
+    port: str  # Port to connect to the arm

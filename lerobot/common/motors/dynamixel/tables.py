@@ -80,13 +80,24 @@ MODEL_RESOLUTION = {
 
 # {model: model_number}
 # https://emanual.robotis.com/docs/en/dxl/x/{MODEL}/#control-table-of-eeprom-area
-MODELS_TABLE = {
+MODEL_NUMBER = {
     "xl330-m077": 1190,
     "xl330-m288": 1200,
     "xl430-w250": 1060,
     "xm430-w350": 1020,
     "xm540-w270": 1120,
     "xc430-w150": 1070,
+}
+
+# {model: available_operating_modes}
+# https://emanual.robotis.com/docs/en/dxl/x/{MODEL}/#operating-mode11
+MODEL_OPERATING_MODES = {
+    "xl330-m077": [0, 1, 3, 4, 5, 16],
+    "xl330-m288": [0, 1, 3, 4, 5, 16],
+    "xl430-w250": [1, 3, 4, 16],
+    "xm430-w350": [0, 1, 3, 4, 5, 16],
+    "xm540-w270": [0, 1, 3, 4, 5, 16],
+    "xc430-w150": [1, 3, 4, 16],
 }
 
 MODEL_CONTROL_TABLE = {
@@ -108,3 +119,23 @@ MODEL_BAUDRATE_TABLE = {
     "xm540-w270": X_SERIES_BAUDRATE_TABLE,
     "xc430-w150": X_SERIES_BAUDRATE_TABLE,
 }
+
+AVAILABLE_BAUDRATES = [
+    9_600,
+    19_200,
+    38_400,
+    57_600,
+    115_200,
+    230_400,
+    460_800,
+    500_000,
+    576_000,
+    921_600,
+    1_000_000,
+    1_152_000,
+    2_000_000,
+    2_500_000,
+    3_000_000,
+    3_500_000,
+    4_000_000,
+]

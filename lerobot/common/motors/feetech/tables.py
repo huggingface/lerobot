@@ -2,13 +2,15 @@
 # https://docs.google.com/spreadsheets/d/1GVs7W1VS1PqdhA1nW-abeyAHhTUxKUdR/edit?usp=sharing&ouid=116566590112741600240&rtpof=true&sd=true
 # data_name: (address, size_byte)
 SCS_SERIES_CONTROL_TABLE = {
-    "Model": (3, 2),
+    # EPROM
+    "Firmware_Version": (0, 2),
+    "Model_Number": (3, 2),
     "ID": (5, 1),
     "Baud_Rate": (6, 1),
-    "Return_Delay": (7, 1),
+    "Return_Delay_Time": (7, 1),
     "Response_Status_Level": (8, 1),
-    "Min_Angle_Limit": (9, 2),
-    "Max_Angle_Limit": (11, 2),
+    "Min_Position_Limit": (9, 2),
+    "Max_Position_Limit": (11, 2),
     "Max_Temperature_Limit": (13, 1),
     "Max_Voltage_Limit": (14, 1),
     "Min_Voltage_Limit": (15, 1),
@@ -24,14 +26,15 @@ SCS_SERIES_CONTROL_TABLE = {
     "CCW_Dead_Zone": (27, 1),
     "Protection_Current": (28, 2),
     "Angular_Resolution": (30, 1),
-    "Offset": (31, 2),
-    "Mode": (33, 1),
+    "Homing_Offset": (31, 2),
+    "Operating_Mode": (33, 1),
     "Protective_Torque": (34, 1),
     "Protection_Time": (35, 1),
     "Overload_Torque": (36, 1),
     "Speed_closed_loop_P_proportional_coefficient": (37, 1),
     "Over_Current_Protection_Time": (38, 1),
     "Velocity_closed_loop_I_integral_coefficient": (39, 1),
+    # SRAM
     "Torque_Enable": (40, 1),
     "Acceleration": (41, 1),
     "Goal_Position": (42, 2),
@@ -72,9 +75,34 @@ MODEL_RESOLUTION = {
     "sts3215": 4096,
 }
 
+# {model: model_number}
+MODEL_NUMBER = {
+    "sts3215": 777,
+}
+
 MODEL_BAUDRATE_TABLE = {
     "scs_series": SCS_SERIES_BAUDRATE_TABLE,
     "sts3215": SCS_SERIES_BAUDRATE_TABLE,
 }
 
-CALIBRATION_REQUIRED = ["Goal_Position", "Present_Position"]
+NORMALIZATION_REQUIRED = ["Goal_Position", "Present_Position"]
+
+# Sign-Magnitude encoding bits
+ENCODINGS = {
+    "Homing_Offset": 11,
+    "Goal_Speed": 15,
+}
+
+AVAILABLE_BAUDRATES = [
+    4_800,
+    9_600,
+    14_400,
+    19_200,
+    38_400,
+    57_600,
+    115_200,
+    128_000,
+    250_000,
+    500_000,
+    1_000_000,
+]
