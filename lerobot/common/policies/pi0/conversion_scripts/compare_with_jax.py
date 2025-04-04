@@ -66,6 +66,12 @@ def main():
     dataset_meta.stats["observation.state"]["std"] = torch.tensor(
         norm_stats["norm_stats"]["state"]["std"][:num_motors], dtype=torch.float32
     )
+    dataset_meta.stats["action"]["mean"] = torch.tensor(
+        norm_stats["norm_stats"]["actions"]["mean"][:num_motors], dtype=torch.float32
+    )
+    dataset_meta.stats["action"]["std"] = torch.tensor(
+        norm_stats["norm_stats"]["actions"]["std"][:num_motors], dtype=torch.float32
+    )
 
     # Create LeRobot batch from Jax
     batch = {}
