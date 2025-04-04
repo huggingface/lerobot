@@ -189,7 +189,7 @@ class HomonculusArm(Teleoperator):
                                 * np.arcsin((b_value - min_reading) / (max_reading - min_reading))
                                 / (np.pi / 2)
                             )
-                        except Exception as e:
+                        except Exception:
                             print("not working")
                             print(smoothed_vals)
                             print("not working")
