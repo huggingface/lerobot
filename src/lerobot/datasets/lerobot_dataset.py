@@ -1263,6 +1263,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 compress_level = 1 if self.features[key]["dtype"] == "video" else 6
                 self._save_image(frame[key], img_path, compress_level)
                 self.episode_buffer[key].append(str(img_path))
+            elif self.features[key]["dtype"] == "audio":
+                if frame_index == 0:
+                    audio_path = self._get_raw_audio_file_path(
+                        episode_index=self.episode_buffer["episode_index"], audio_key=key
+                    )
+                    self.episode_buffer[key].append(str(audio_path))
             else:
                 self.episode_buffer[key].append(frame[key])
 
