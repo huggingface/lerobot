@@ -102,7 +102,7 @@ def predict_action(
         torch.inference_mode(),
         torch.autocast(device_type=device.type) if device.type == "cuda" and use_amp else nullcontext(),
     ):
-        # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
+        # Convert to pytorch format: normalizing and permuting (channel first)
         observation = prepare_observation_for_inference(observation, device, task, robot_type)
         observation = preprocessor(observation)
 
