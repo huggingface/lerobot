@@ -118,21 +118,27 @@ class LeKiwi(Robot):
 
     def calibrate(self) -> None:
         logger.info(f"\nRunning calibration of {self}")
-        self.bus.disable_torque(self.arm_motors)
+
+        motors = self.arm_motors + self.base_motors
+
+        self.bus.disable_torque(motors)
         for name in self.arm_motors:
             self.bus.write("Operating_Mode", name, OperatingMode.POSITION.value)
 
         input("Move robot to the middle of its range of motion and press ENTER....")
-        homing_offsets = self.bus.set_half_turn_homings(self.arm_motors)
+        homing_offsets = self.bus.set_half_turn_homings(motors)
 
-        full_turn_motor = "arm_wrist_roll"
-        unknown_range_motors = [name for name in self.arm_motors if name != full_turn_motor]
+        full_turn_motor = [
+            motor for motor in motors if any(keyword in motor for keyword in ["wheel", "gripper"])
+        ]
+        unknown_range_motors = [motor for motor in motors if motor not in full_turn_motor]
+
         logger.info(
             f"Move all arm joints except '{full_turn_motor}' sequentially through their "
             "entire ranges of motion.\nRecording positions. Press ENTER to stop..."
         )
         range_mins, range_maxes = self.bus.record_ranges_of_motion(unknown_range_motors)
-        for name in [*self.base_motors, full_turn_motor]:
+        for name in full_turn_motor:
             range_mins[name] = 0
             range_maxes[name] = 4095
 
