@@ -26,7 +26,7 @@ from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnecte
 from lerobot.common.robots.config import RobotMode
 
 from ..robot import Robot
-from .configuration_daemon_lekiwi import LeKiwiClientConfig
+from .config_lekiwi import LeKiwiClientConfig
 
 
 # TODO(Steven): This doesn't need to inherit from Robot
