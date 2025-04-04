@@ -1,5 +1,19 @@
 #!/usr/bin/env python
 
+# Copyright 2025 Ilia Larchenko and The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """The implementation of the Decoder-Only Transformer (DOT) policy.
 
 More details here: https://github.com/IliaLarchenko/dot_policy
@@ -20,6 +34,40 @@ from lerobot.common.policies.pretrained import PreTrainedPolicy
 
 
 class DOT(nn.Module):
+    """The underlying neural network for DOT
+    Note: Unlike ACT, DOT has no encoder, no VAE, and no cross-attention. All inputs are directly projected
+    to the model dimension and passed as memory to a Transformer decoder.
+
+    - Inputs (images, state, env_state) are linearly projected and concatenated.
+    - A trainable prefix token and positional embeddings are added.
+    - The Transformer decoder predicts a sequence of future actions autoregressively.
+
+                              DOT Transformer
+                          Used for autoregressive action prediction
+                          (no encoder, no VAE)
+
+          ┌──────────────────────────────────────────────────────┐
+          │              image emb.  state emb.  env_state emb.  │
+          │                  │          │             │          │
+          │          ┌───────┘          │             │          │
+          │          │         ┌────────┘             │          │
+          │          ▼         ▼                      ▼          │
+          │      ┌──────────────────────────────────────────┐    │
+          │      │    Concatenate + Add Positional Emb.     │    │
+          │      └──────────────────────────────────────────┘    │
+          │                            │                         │
+          │                            ▼                         │
+          │         ┌───────────────────────────────────┐        │
+          │         │     Transformer Decoder (L layers)│        │
+          │         └───────────────────────────────────┘        │
+          │                            │                         │
+          │                            ▼                         │
+          │                  Linear projection to action space   │
+          │                            │                         │
+          │                            ▼                         │
+          │                         Outputs                      │
+          └──────────────────────────────────────────────────────┘
+    """
     def __init__(self, config: DOTConfig):
         super().__init__()
         self.config = config
@@ -29,7 +77,8 @@ class DOT(nn.Module):
 
         self.image_names = sorted(config.image_features.keys())
 
-        # I use one backbone for all cameras and simply project the output to the model dimension
+        # Set up a shared visual backbone (e.g., ResNet18) for all cameras.
+        # The final layer is replaced with a linear projection to match model_dim.
         if len(self.image_names) > 0:
             backbone = getattr(torchvision.models, self.config.vision_backbone)(
                 weights=self.config.pretrained_backbone_weights,
@@ -60,7 +109,7 @@ class DOT(nn.Module):
         }
         self.obs_mapping = {k: v for k, v in obs_mapping.items() if k in self.projections_names}
 
-        # Extra trainable vector that I add to the input features (not necessary)
+        # Optional trainable prefix token added to the input sequence (can be used for task conditioning or extra context)
         self.prefix_input = nn.Parameter(torch.randn(1, 1, config.dim_model))
 
         # Setup transformer decoder
@@ -78,7 +127,7 @@ class DOT(nn.Module):
             dec_layer, num_layers=self.config.n_decoder_layers, norm=decoder_norm
         )
 
-        # Decoder uses as input not-trainable positional encodings
+        # Sinusoidal positional encodings for the decoder input tokens (fixed, not trainable)
         decoder_pos = create_sinusoidal_pos_embedding(
             config.train_horizon + config.lookback_obs_steps, config.dim_model
         )
@@ -91,11 +140,12 @@ class DOT(nn.Module):
         )
         self.register_buffer("decoder_pos", decoder_pos)
 
+        # Extend positional encodings for inference (when inference_horizon > train_horizon)
         decoder_pos_inf = self.decoder_pos[
             : self.decoder_pos.shape[0] + self.config.inference_horizon - self.config.train_horizon
         ]
         self.register_buffer("decoder_pos_inf", decoder_pos_inf)
-
+        # Causal mask for decoder: prevent attending to future positions
         mask = torch.zeros(len(decoder_pos), len(decoder_pos), dtype=torch.bool)
         mask[
             : len(decoder_pos) + config.inference_horizon - config.train_horizon,
@@ -103,7 +153,7 @@ class DOT(nn.Module):
         ] = True
         self.register_buffer("mask", mask)
 
-        # Input features need a trainable positional embeddings
+        # Learnable positional embeddings for input tokens (state/image/env projections)
         self.inputs_pos_emb = nn.Parameter(torch.empty(1, self.n_features, self.config.dim_model))
         nn.init.uniform_(
             self.inputs_pos_emb,
@@ -121,29 +171,57 @@ class DOT(nn.Module):
         for state in self.projections_names:
             batch_state = self.obs_mapping[state]
             if batch_state in batch:
-                bs, n_obs, *obs_shape = batch[batch_state].shape
-                enc = self.projections[state](batch[batch_state].view(bs * n_obs, *obs_shape)).view(
-                    bs, n_obs, -1
+                batch_size, n_obs, *obs_shape = batch[batch_state].shape
+                enc = self.projections[state](batch[batch_state].view(batch_size * n_obs, *obs_shape)).view(
+                    batch_size, n_obs, -1
                 )
                 inputs_projections_list.append(enc)
 
         return torch.cat(inputs_projections_list, dim=1)
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, Tensor]:
-        inputs_projections = self._process_inputs(batch)
-        bs = inputs_projections.shape[0]
+        """
+        A forward pass through the Decision Transformer (DOT).
 
-        inputs_projections += self.inputs_pos_emb.expand(bs, -1, -1)
-        inputs_projections = torch.cat([self.prefix_input.expand(bs, -1, -1), inputs_projections], dim=1)
+        The model uses a transformer decoder to predict a sequence of future actions from projected
+        and positionally-embedded image, state, and environment features.
 
+        Args:
+            batch (dict): A dictionary containing the following keys (if available):
+                - "observation.images": (B, T, C, H, W) tensor of camera frames.
+                - "observation.state": (B, T, D) tensor of proprioceptive robot states.
+                - "observation.environment_state": (B, T, D) tensor of environment states.
+
+        Returns:
+            Tensor: A tensor of shape (B, horizon, action_dim) containing predicted future actions.
+        """
+        # Project image/state/env_state inputs to the model dimension and concatenate along the time axis.
+        inputs_projections = self._process_inputs(batch) # (B, T, D)
+        batch_size = inputs_projections.shape[0]
+
+        # Add learnable positional embeddings to each projected input token.
+        inputs_projections += self.inputs_pos_emb.expand(batch_size, -1, -1)
+
+        # Prepend a trainable prefix token to the input sequence
+        inputs_projections = torch.cat([self.prefix_input.expand(batch_size, -1, -1), inputs_projections], dim=1) # (B, T+1, D)
+
+        # Use different positional encodings and masks for training vs. inference.
         if self.training:
-            decoder_out = self.decoder(self.decoder_pos.expand(bs, -1, -1), inputs_projections, self.mask)
+            decoder_out = self.decoder(self.decoder_pos.expand(batch_size, -1, -1), inputs_projections, self.mask)
         else:
-            decoder_out = self.decoder(self.decoder_pos_inf.expand(bs, -1, -1), inputs_projections)
+            decoder_out = self.decoder(self.decoder_pos_inf.expand(batch_size, -1, -1), inputs_projections)
         return self.action_head(decoder_out)
 
 
 class DOTPolicy(PreTrainedPolicy):
+    """
+    Decision Transformer (DOT) Policy. (github: https://github.com/IliaLarchenko/dot_policy)
+
+    A minimal transformer decoder-based policy for autoregressive action prediction in robot control.
+    This is a simplified alternative to ACT: no encoder, no VAE, and no cross-attention, making it efficient
+    for deployment in low-dimensional environments with visual and proprioceptive inputs.
+    """
+
     name = "dot"
     config_class = DOTConfig
 
@@ -152,6 +230,12 @@ class DOTPolicy(PreTrainedPolicy):
         config: DOTConfig,
         dataset_stats: dict[str, dict[str, Tensor]] | None = None,
     ):
+        """
+        Args:
+            config (DOTConfig): Configuration for the DOT model and policy behavior.
+            dataset_stats (optional): Dataset statistics used for normalizing inputs/outputs.
+                If not provided, stats should be set later via `load_state_dict()` before inference.
+        """
         super().__init__(config)
         config.validate_features()
         self.config = config
@@ -204,7 +288,7 @@ class DOTPolicy(PreTrainedPolicy):
         loss_weights = loss_weights.view(1, -1, 1)
         self.register_buffer("loss_weights", loss_weights)
 
-        # TODO: properly move it to dataloader and process on CPU
+        # TODO(jadechoghari): Move augmentations to dataloader (__getitem__) for CPU-side processing.
         # Nearest interpolation is required for PushT but may be not the best in general
         self.resize_transform = transforms.Resize(
             config.rescale_shape, interpolation=InterpolationMode.NEAREST
@@ -223,8 +307,8 @@ class DOTPolicy(PreTrainedPolicy):
         return self.model.parameters()
 
     def _update_observation_buffers(self, buffer_name: str, observation: Tensor) -> Tensor:
-        # We keep the last lookback_obs_steps + 1 of each input in the queue
-        # Every step they are updated and the oldest one is removed
+        # Maintain a rolling buffer of lookback_obs_steps + 1; 
+        # shift left and append new observation each step
         if buffer_name not in self._input_buffers:
             self._input_buffers[buffer_name] = observation.unsqueeze(1).repeat(
                 1,
@@ -251,7 +335,7 @@ class DOTPolicy(PreTrainedPolicy):
             batch["observation.images"] = torch.stack(
                 [self.resize_transform(batch[k]) for k in self.image_names],
                 dim=1,
-            )  # bs, n_cam, c, h, w
+            )  # batch_size, n_cam, c, h, w
 
         # Update observation queues for all inputs and stack the last n_obs_steps
         for name, batch_name in self.model.obs_mapping.items():
@@ -260,7 +344,7 @@ class DOTPolicy(PreTrainedPolicy):
         # Reshape images tensor to keep the same order as during training
         if "observation.images" in batch:
             batch["observation.images"] = batch["observation.images"].flatten(1, 2)
-            # bs, n_obs * n_cam, c, h, w
+            # batch_size, n_obs * n_cam, c, h, w
 
         return batch
 
@@ -279,6 +363,13 @@ class DOTPolicy(PreTrainedPolicy):
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
+        """
+        Select an action given current environment observations.
+
+        This function handles autoregressive rollout during inference using a fixed prediction horizon.
+        The model predicts every `predict_every_n` steps, and returns actions every `return_every_n` steps.
+        Between predictions, previously predicted actions are reused by shifting and repeating the last step.
+        """
         self.eval()
 
         batch = self._prepare_batch_for_inference(batch)
@@ -304,6 +395,7 @@ class DOTPolicy(PreTrainedPolicy):
         return action
 
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
+        """Run the batch through the model and compute the loss for training or validation."""
         lookback_ind = torch.randint(0, 2 * self.config.lookback_aug + 1, (1,)).item()
         for k in list(self.model.obs_mapping.values()) + list(self.image_names) + ["action", "action_is_pad"]:
             if k != "observation.images":
@@ -317,7 +409,6 @@ class DOTPolicy(PreTrainedPolicy):
         batch = self.normalize_targets(self.normalize_inputs(batch))
 
         if len(self.config.image_features) > 0:
-            # Maybe not the best way but it works well
             scale = 1 - torch.rand(1) * (1 - self.crop_scale)
             new_shape = (
                 int(self.config.rescale_shape[0] * scale),
@@ -326,16 +417,16 @@ class DOTPolicy(PreTrainedPolicy):
             crop_transform = transforms.RandomCrop(new_shape)
 
             for k in self.image_names:
-                bs, n_obs, c, h, w = batch[k].shape
-                batch[k] = batch[k].view(bs * n_obs, c, h, w)
+                batch_size, n_obs, c, h, w = batch[k].shape
+                batch[k] = batch[k].view(batch_size * n_obs, c, h, w)
                 batch[k] = crop_transform(self.resize_transform(batch[k]))
-                batch[k] = batch[k].view(bs, n_obs, c, *batch[k].shape[-2:])
+                batch[k] = batch[k].view(batch_size, n_obs, c, *batch[k].shape[-2:])
             batch["observation.images"] = torch.stack([batch[k] for k in self.image_names], dim=2).flatten(
                 1, 2
-            )  # bs, n_obs * n_cam, c, h, w
+            )  # batch_size, n_obs * n_cam, c, h, w
 
         # Add random noise to states during training
-        # TODO: it should be done in the dataloader
+        # TODO(jadechoghari): better to move this to the dataloader
         if self.state_noise is not None:
             for k in self.model.obs_mapping.values():
                 if k != "observation.images":
@@ -343,13 +434,14 @@ class DOTPolicy(PreTrainedPolicy):
 
         actions_hat = self.model(batch)
 
-        loss = nn.functional.l1_loss(batch["action"], actions_hat, reduction="none")
+        l1_loss = nn.functional.l1_loss(batch["action"], actions_hat, reduction="none")
         rev_padding = (~batch["action_is_pad"]).unsqueeze(-1)
 
         # Apply padding, weights and decay to the loss
-        loss = (loss * rev_padding * self.loss_weights).mean()
+        l1_loss = (l1_loss * rev_padding * self.loss_weights).mean()
 
-        loss_dict = {"loss": loss}
+        loss_dict = {"l1_loss": l1_loss.item()}
+        loss = l1_loss
 
         # Reduce the aggressiveness of augmentations
         self.state_noise *= self.config.noise_decay
@@ -370,7 +462,17 @@ class DOTPolicy(PreTrainedPolicy):
 
 
 class LoRAConv2d(nn.Module):
-    def __init__(self, base_conv, rank=4):
+    """
+    Applies Low-Rank Adaptation (LoRA) to a Conv2D layer.
+
+    LoRA adds trainable low-rank matrices (A and B) to adapt pretrained weights without full fine-tuning.
+    The adaptation is merged into the base conv weights via `merge_lora()` after training.
+
+    Args:
+        base_conv (nn.Conv2d): The original convolutional layer to be adapted.
+        rank (int): The rank of the low-rank approximation (default: 4).
+    """
+    def __init__(self, base_conv: nn.Conv2d, rank: int = 4):
         super().__init__()
         self.base_conv = base_conv
 
@@ -379,10 +481,11 @@ class LoRAConv2d(nn.Module):
         self.weight_shape = (out_channels, in_channels, kh, kw)
         fan_in = in_channels * kh * kw
 
+        # Low-rank trainable matrices A and B
         self.lora_A = nn.Parameter(torch.normal(0, 0.02, (out_channels, rank)))
         self.lora_B = nn.Parameter(torch.normal(0, 0.02, (rank, fan_in)))
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         lora_update = torch.matmul(self.lora_A, self.lora_B).view(self.weight_shape)
 
         return nn.functional.conv2d(
@@ -395,7 +498,7 @@ class LoRAConv2d(nn.Module):
             groups=self.base_conv.groups,
         )
 
-    def merge_lora(self):
+    def merge_lora(self) -> nn.Conv2d:
         """Merge LoRA weights into the base convolution and return a standard Conv2d layer"""
         lora_update = torch.matmul(self.lora_A, self.lora_B).view(self.weight_shape)
         self.base_conv.weight.copy_(self.base_conv.weight + lora_update)
@@ -403,7 +506,7 @@ class LoRAConv2d(nn.Module):
         return self.base_conv
 
 
-def replace_conv2d_with_lora(module, rank=4):
+def replace_conv2d_with_lora(module: nn.Module, rank: int = 4) -> nn.Module:
     """Recursively replace Conv2d layers with LoRAConv2d in the module"""
     for name, child in list(module.named_children()):
         if isinstance(child, nn.Conv2d):
@@ -413,7 +516,7 @@ def replace_conv2d_with_lora(module, rank=4):
     return module
 
 
-def merge_lora_weights(module):
+def merge_lora_weights(module: nn.Module) -> nn.Module:
     """Recursively merge LoRA weights in the module"""
     for name, child in list(module.named_children()):
         if isinstance(child, LoRAConv2d):
@@ -423,7 +526,11 @@ def merge_lora_weights(module):
     return module
 
 
-def add_lora_to_backbone(backbone, rank=4, verbose=True):
+def add_lora_to_backbone(backbone: nn.Module, rank: int = 4) -> nn.Module:
+    """
+    Adds LoRA to a convolutional backbone by replacing Conv2d layers
+    and freezing all other weights except LoRA layers and the final classifier.
+    """
     replace_conv2d_with_lora(backbone, rank)
 
     for name, param in backbone.named_parameters():
@@ -436,6 +543,7 @@ def add_lora_to_backbone(backbone, rank=4, verbose=True):
 
 
 def create_sinusoidal_pos_embedding(num_positions: int, dimension: int) -> Tensor:
+    """Generates sinusoidal positional embeddings like in the original Transformer paper."""
     position = torch.arange(num_positions, dtype=torch.float).unsqueeze(1)
     div_term = torch.exp(torch.arange(0, dimension, 2, dtype=torch.float) * (-math.log(10000.0) / dimension))
     pe = torch.zeros(num_positions, dimension)

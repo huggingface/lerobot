@@ -1,3 +1,18 @@
+#!/usr/bin/env python
+
+# Copyright 2025 Ilia Larchenko and The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 from dataclasses import dataclass, field
 
 from lerobot.common.optim.optimizers import AdamWConfig
@@ -9,19 +24,72 @@ from lerobot.configs.types import NormalizationMode
 @PreTrainedConfig.register_subclass("dot")
 @dataclass
 class DOTConfig(PreTrainedConfig):
-    """Configuration for DOT (Decision Transformer) policy.
+    """Configuration class for the Decision Transformer (DOT) policy.
 
-    You need to change some parameters in this configuration to make it work for your problem:
+    DOT is a transformer-based policy for sequential decision making that predicts future actions based on
+    a history of past observations and actions. This configuration enables fine-grained
+    control over the model’s temporal horizon, input normalization, architectural parameters, and
+    augmentation strategies.
 
-    FPS/prediction horizon related features - may need to adjust:
-    - train_horizon: the number of steps to predict during training
-    - inference_horizon: the number of steps to predict during validation
-    - alpha: exponential factor for weighting of each next action
-    - train_alpha: exponential factor for action weighting during training
+    Defaults are configured for general robot manipulation tasks like Push-T and ALOHA insert/transfer.
 
-    For inference speed optimization:
-    - predict_every_n: number of frames to predict in the future
-    - return_every_n: instead of returning next predicted actions, returns nth future action
+    The parameters you will most likely need to modify are those related to temporal structure and
+    normalization:
+        - `train_horizon` and `inference_horizon`
+        - `lookback_obs_steps` and `lookback_aug`
+        - `alpha` and `train_alpha`
+        - `normalization_mapping`
+
+    Notes on the temporal design:
+        - `train_horizon`: Length of action sequence the model is trained on. Must be ≥ `inference_horizon`.
+        - `inference_horizon`: How far into the future the model predicts during inference (in environment steps).
+            A good rule of thumb is 2×FPS (e.g., 30–50 for 15–25 FPS environments).
+        - `alpha` / `train_alpha`: Control exponential decay of loss weights for inference and training.
+            These should be tuned such that all predicted steps contribute meaningful signal.
+
+    Notes on the inputs:
+        - Observations can come from:
+            - Images (e.g., keys starting with `"observation.images"`)
+            - Proprioceptive state (`"observation.state"`)
+            - Environment state (`"observation.environment_state"`)
+        - At least one of image or environment state inputs must be provided.
+        - The "action" key is required as an output.
+
+    Args:
+        n_obs_steps: Number of past steps passed to the model, including the current step.
+        train_horizon: Number of future steps the model is trained to predict.
+        inference_horizon: Number of future steps predicted during inference.
+        lookback_obs_steps: Number of past steps to include for temporal context.
+        lookback_aug: Number of steps into the far past from which to randomly sample for augmentation.
+        normalization_mapping: Dictionary specifying normalization mode for each input/output group.
+        override_dataset_stats: If True, replaces the dataset's stats with manually defined `new_dataset_stats`.
+        new_dataset_stats: Optional manual min/max overrides used if `override_dataset_stats=True`.
+        vision_backbone: Name of the ResNet variant used for image encoding (e.g., "resnet18").
+        pretrained_backbone_weights: Optional pretrained weights (e.g., "ResNet18_Weights.IMAGENET1K_V1").
+        pre_norm: Whether to apply pre-norm in transformer layers.
+        lora_rank: If > 0, applies LoRA adapters of the given rank to transformer layers.
+        merge_lora: Whether to merge LoRA weights at inference time.
+        dim_model: Dimension of the transformer hidden state.
+        n_heads: Number of attention heads.
+        dim_feedforward: Dimension of the feedforward MLP inside the transformer.
+        n_decoder_layers: Number of transformer decoder layers.
+        rescale_shape: Resize shape for input images (e.g., (96, 96)).
+        crop_scale: Image crop scale for augmentation.
+        state_noise: Magnitude of additive uniform noise for state inputs.
+        noise_decay: Decay factor applied to `crop_scale` and `state_noise` during training.
+        dropout: Dropout rate used in transformer layers.
+        alpha: Decay factor for inference loss weighting.
+        train_alpha: Decay factor for training loss weighting.
+        predict_every_n: Predict actions every `n` frames instead of every frame.
+        return_every_n: Return every `n`-th predicted action during inference.
+        optimizer_lr: Initial learning rate.
+        optimizer_min_lr: Minimum learning rate for cosine scheduler.
+        optimizer_lr_cycle_steps: Total steps in one learning rate cycle.
+        optimizer_weight_decay: L2 weight decay for optimizer.
+
+    Raises:
+        ValueError: If the temporal settings are inconsistent (e.g., `train_horizon < inference_horizon`,
+                    or `predict_every_n` > allowed bounds).
     """
 
     # Input / output structure.
