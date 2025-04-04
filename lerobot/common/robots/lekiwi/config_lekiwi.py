@@ -16,7 +16,8 @@ from dataclasses import dataclass, field
 
 from lerobot.common.cameras.configs import CameraConfig
 from lerobot.common.cameras.opencv.configuration_opencv import OpenCVCameraConfig
-from lerobot.common.robots.config import RobotConfig
+
+from ..config import RobotConfig
 
 
 @RobotConfig.register_subclass("lekiwi")

@@ -14,7 +14,7 @@
 
 from dataclasses import dataclass, field
 
-from lerobot.common.robots.config import RobotConfig
+from ..config import RobotConfig
 
 
 @RobotConfig.register_subclass("lekiwi_client")

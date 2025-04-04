@@ -22,8 +22,9 @@ import numpy as np
 import zmq
 
 from lerobot.common.constants import OBS_STATE
-from lerobot.common.robots.lekiwi.config_lekiwi import LeKiwiConfig
-from lerobot.common.robots.lekiwi.lekiwi import LeKiwi
+
+from .config_lekiwi import LeKiwiConfig
+from .lekiwi import LeKiwi
 
 # Network Configuration
 PORT_ZMQ_CMD: int = 5555
