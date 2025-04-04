@@ -108,7 +108,7 @@ class DOTConfig(PreTrainedConfig):
         }
     )
 
-    # Not sure if there is a better way to do this with new config system.
+    # Align with the new config system
     override_dataset_stats: bool = False
     new_dataset_stats: dict[str, dict[str, list[float]]] = field(
         default_factory=lambda: {
