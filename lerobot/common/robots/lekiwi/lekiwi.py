@@ -116,6 +116,9 @@ class LeKiwi(Robot):
     def is_calibrated(self) -> bool:
         return self.bus.is_calibrated
 
+    # TODO(Steven): I think we should extend this to give the user the option of re-calibrate
+    # calibrate(recalibrate: bool = False) -> None:
+    # If true, then we overwrite the previous calibration file with new values
     def calibrate(self) -> None:
         logger.info(f"\nRunning calibration of {self}")
 
@@ -133,7 +136,7 @@ class LeKiwi(Robot):
         ]
         unknown_range_motors = [motor for motor in motors if motor not in full_turn_motor]
 
-        logger.info(
+        print(
             f"Move all arm joints except '{full_turn_motor}' sequentially through their "
             "entire ranges of motion.\nRecording positions. Press ENTER to stop..."
         )
