@@ -543,7 +543,7 @@ class MotorsBus(abc.ABC):
             motors = self.names
         elif isinstance(motors, (str, int)):
             motors = [motors]
-        else:
+        elif not isinstance(motors, list):
             raise TypeError(motors)
 
         self.reset_calibration(motors)
