@@ -14,8 +14,6 @@
 
 import logging
 
-import numpy as np
-
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.robots.config import RobotMode
 from lerobot.common.teleoperators.keyboard import KeyboardTeleop, KeyboardTeleopConfig
@@ -115,7 +113,7 @@ def main():
     while i < 1000:
         arm_action = leader_arm.get_action()
         base_action = keyboard.get_action()
-        action = np.append(arm_action, base_action) if base_action.size > 0 else arm_action
+        action = {**arm_action, **base_action} if base_action.size > 0 else arm_action
 
         # TODO(Steven): Deal with policy action space
         # robot.set_mode(RobotMode.AUTO)
@@ -125,8 +123,7 @@ def main():
         action_sent = robot.send_action(action)
         observation = robot.get_observation()
 
-        frame = {"action": action_sent}
-        frame.update(observation)
+        frame = {**action_sent, **observation}
         frame.update({"task": "Dummy Task Dataset"})
 
         logging.info("Saved a frame into the dataset")

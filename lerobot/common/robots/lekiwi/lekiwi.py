@@ -14,12 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import base64
 import logging
 import time
 from typing import Any
-
-import cv2
 
 from lerobot.common.cameras.utils import make_cameras_from_configs
 from lerobot.common.constants import OBS_IMAGES, OBS_STATE
@@ -192,12 +189,7 @@ class LeKiwi(Robot):
         # Capture images from cameras
         for cam_key, cam in self.cameras.items():
             start = time.perf_counter()
-            frame = cam.async_read()
-            ret, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
-            if ret:
-                obs_dict[f"{OBS_IMAGES}.{cam_key}"] = base64.b64encode(buffer).decode("utf-8")
-            else:
-                obs_dict[f"{OBS_IMAGES}.{cam_key}"] = ""
+            obs_dict[f"{OBS_IMAGES}.{cam_key}"] = cam.async_read()
             dt_ms = (time.perf_counter() - start) * 1e3
             logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
 
@@ -229,15 +221,17 @@ class LeKiwi(Robot):
             present_pos = self.bus.sync_read("Present_Position", self.arm_motors)
             goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in arm_goal_pos.items()}
             arm_safe_goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
+            arm_goal_pos = arm_safe_goal_pos
 
         # Send goal position to the actuators
-        self.bus.sync_write("Goal_Position", arm_safe_goal_pos)
+        self.bus.sync_write("Goal_Position", arm_goal_pos)
         self.bus.sync_write("Goal_Speed", base_goal_vel)
 
-        return {**arm_safe_goal_pos, **base_goal_vel}
+        return {**arm_goal_pos, **base_goal_vel}
 
     def stop_base(self):
-        self.bus.sync_write("Goal_Speed", {name: 0 for name in self.base_motors}, num_retry=5)
+        # TODO(Steven): Check this warning
+        self.bus.sync_write("Goal_Speed", dict.fromkeys(self.base_motors, 0), num_retry=5)
         logger.info("Base motors stopped")
 
     def disconnect(self):

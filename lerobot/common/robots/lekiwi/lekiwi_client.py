@@ -15,6 +15,7 @@
 import base64
 import json
 import logging
+from typing import Any
 
 import cv2
 import numpy as np
@@ -124,6 +125,14 @@ class LeKiwiClient(Robot):
             },
         }
         return cam_ft
+
+    @property
+    def is_connected(self) -> bool:
+        pass
+
+    @property
+    def is_calibrated(self) -> bool:
+        pass
 
     def connect(self) -> None:
         """Establishes ZMQ sockets with the remote mobile robot"""
@@ -354,7 +363,7 @@ class LeKiwiClient(Robot):
 
     # TODO(Steven): The returned space is different from the get_observation of LeKiwi
     # This returns body-frames velocities instead of wheel pos/speeds
-    def get_observation(self) -> dict[str, np.ndarray]:
+    def get_observation(self) -> dict[str, Any]:
         """
         Capture observations from the remote robot: current follower arm positions,
         present wheel speeds (converted to body-frame velocities: x, y, theta),
@@ -418,6 +427,9 @@ class LeKiwiClient(Robot):
 
         return self._body_to_wheel_raw(x_cmd, y_cmd, theta_cmd)
 
+    def configure(self):
+        pass
+
     # TODO(Steven): This assumes this call is always called from a keyboard teleop command
     # TODO(Steven): Doing this mapping in here adds latecy between send_action and movement from the user perspective.
     # t0: get teleop_cmd
@@ -430,7 +442,7 @@ class LeKiwiClient(Robot):
     # t2': send_action(motor_cmd)
     # t3': execute motor_cmd
     # t3'-t2' << t3-t1
-    def send_action(self, action: np.ndarray) -> np.ndarray:
+    def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         """Command lekiwi to move to a target joint configuration. Translates to motor space + sends over ZMQ
 
         Args:
