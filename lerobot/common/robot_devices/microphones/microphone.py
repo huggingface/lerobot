@@ -242,7 +242,7 @@ class Microphone:
             with self.read_queue.mutex:
                 self.read_queue.queue.clear()
                 #self.read_queue.all_tasks_done.notify_all()
-            audio_readings = np.array(audio_readings).reshape(-1, len(self.channels))
+            audio_readings = np.array(audio_readings, dtype=np.float32).reshape(-1, len(self.channels))
 
         return audio_readings
 

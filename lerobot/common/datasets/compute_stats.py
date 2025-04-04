@@ -15,8 +15,7 @@
 # limitations under the License.
 import numpy as np
 
-from lerobot.common.datasets.utils import load_image_as_numpy
-
+from lerobot.common.datasets.utils import load_image_as_numpy, load_audio
 
 def estimate_num_samples(
     dataset_len: int, min_num_samples: int = 100, max_num_samples: int = 10_000, power: float = 0.75
@@ -71,6 +70,12 @@ def sample_images(image_paths: list[str]) -> np.ndarray:
 
     return images
 
+def sample_audio(audio_path: str) -> np.ndarray:
+
+    data = load_audio(audio_path)
+    sampled_indices = sample_indices(len(data))
+
+    return(data[sampled_indices])
 
 def get_feature_stats(array: np.ndarray, axis: tuple, keepdims: bool) -> dict[str, np.ndarray]:
     return {
@@ -90,6 +95,10 @@ def compute_episode_stats(episode_data: dict[str, list[str] | np.ndarray], featu
         elif features[key]["dtype"] in ["image", "video"]:
             ep_ft_array = sample_images(data)  # data is a list of image paths
             axes_to_reduce = (0, 2, 3)  # keep channel dim
+            keepdims = True
+        elif features[key]["dtype"] == "audio":
+            ep_ft_array = sample_audio(data[0])
+            axes_to_reduce = 0 
             keepdims = True
         else:
             ep_ft_array = data  # data is already a np.ndarray
