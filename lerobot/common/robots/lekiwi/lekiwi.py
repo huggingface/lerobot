@@ -179,7 +179,7 @@ class LeKiwi(Robot):
         for name in self.base_motors:
             self.bus.write("Operating_Mode", name, OperatingMode.VELOCITY.value)
 
-        self.bus.enable_torque()
+        self.bus.enable_torque()  # TODO(Steven): Operation has failed with: ConnectionError: Failed to write 'Lock' on id_=6 with '1' after 1 tries. [TxRxResult] Incorrect status packet!
 
     def get_observation(self) -> dict[str, Any]:
         if not self.is_connected:

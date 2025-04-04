@@ -603,6 +603,7 @@ class MotorsBus(abc.ABC):
             min_ = self.calibration[name].range_min
             max_ = self.calibration[name].range_max
             bounded_val = min(max_, max(min_, val))
+            # TODO(Steven): normalization can go boom if max_ == min_, we should add a check probably in record_ranges_of_motions (which probably indicates the user forgot to move a motor)
             if self.motors[name].norm_mode is MotorNormMode.RANGE_M100_100:
                 normalized_values[id_] = (((bounded_val - min_) / (max_ - min_)) * 200) - 100
             elif self.motors[name].norm_mode is MotorNormMode.RANGE_0_100:

@@ -22,7 +22,7 @@ import time
 import cv2
 import zmq
 
-from lerobot.common.constants import OBS_IMAGES, OBS_STATE
+from lerobot.common.constants import OBS_IMAGES
 
 from .config_lekiwi import LeKiwiConfig
 from .lekiwi import LeKiwi
@@ -85,7 +85,6 @@ def main():
                 robot.stop_base()
 
             last_observation = robot.get_observation()
-            last_observation[OBS_STATE] = last_observation[OBS_STATE].tolist()
 
             # Encode ndarrays to base64 strings
             for cam_key, _ in robot.cameras.items():
