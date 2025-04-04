@@ -269,6 +269,7 @@ def add_actor_information_and_train(
     policy_parameters_push_frequency = cfg.policy.actor_learner_config.policy_parameters_push_frequency
     saving_checkpoint = cfg.save_checkpoint
     online_steps = cfg.policy.online_steps
+    async_prefetch = cfg.policy.async_prefetch
 
     # Initialize logging for multiprocessing
     if not use_threads(cfg):
@@ -326,6 +327,9 @@ def add_actor_information_and_train(
     if cfg.dataset is not None:
         dataset_repo_id = cfg.dataset.repo_id
 
+    # Initialize iterators
+    online_iterator = None
+    offline_iterator = None
     # NOTE: THIS IS THE MAIN LOOP OF THE LEARNER
     while True:
         # Exit the training loop if shutdown is requested
@@ -359,13 +363,26 @@ def add_actor_information_and_train(
         if len(replay_buffer) < online_step_before_learning:
             continue
 
+        if online_iterator is None:
+            logging.debug("[LEARNER] Initializing online replay buffer iterator")
+            online_iterator = replay_buffer.get_iterator(
+                batch_size=batch_size, async_prefetch=async_prefetch, queue_size=2
+            )
+
+        if offline_replay_buffer is not None and offline_iterator is None:
+            logging.debug("[LEARNER] Initializing offline replay buffer iterator")
+            offline_iterator = offline_replay_buffer.get_iterator(
+                batch_size=batch_size, async_prefetch=async_prefetch, queue_size=2
+            )
+
         logging.debug("[LEARNER] Starting optimization loop")
         time_for_one_optimization_step = time.time()
         for _ in range(utd_ratio - 1):
-            batch = replay_buffer.sample(batch_size=batch_size)
+            # Sample from the iterators
+            batch = next(online_iterator)
 
             if dataset_repo_id is not None:
-                batch_offline = offline_replay_buffer.sample(batch_size=batch_size)
+                batch_offline = next(offline_iterator)
                 batch = concatenate_batch_transitions(
                     left_batch_transitions=batch, right_batch_transition=batch_offline
                 )
@@ -392,24 +409,37 @@ def add_actor_information_and_train(
                 "next_observation_feature": next_observation_features,
             }
 
-            # Use the forward method for critic loss
-            loss_critic = policy.forward(forward_batch, model="critic")
+            # Use the forward method for critic loss (includes both main critic and grasp critic)
+            critic_output = policy.forward(forward_batch, model="critic")
+
+            # Main critic optimization
+            loss_critic = critic_output["loss_critic"]
             optimizers["critic"].zero_grad()
             loss_critic.backward()
-
-            # clip gradients
             critic_grad_norm = torch.nn.utils.clip_grad_norm_(
                 parameters=policy.critic_ensemble.parameters(), max_norm=clip_grad_norm_value
             )
-
             optimizers["critic"].step()
 
+            # Grasp critic optimization (if available)
+            if policy.config.num_discrete_actions is not None:
+                discrete_critic_output = policy.forward(forward_batch, model="grasp_critic")
+                loss_grasp_critic = discrete_critic_output["loss_grasp_critic"]
+                optimizers["grasp_critic"].zero_grad()
+                loss_grasp_critic.backward()
+                grasp_critic_grad_norm = torch.nn.utils.clip_grad_norm_(
+                    parameters=policy.grasp_critic.parameters_to_optimize, max_norm=clip_grad_norm_value
+                )
+                optimizers["grasp_critic"].step()
+
+            # Update target networks
             policy.update_target_networks()
 
-        batch = replay_buffer.sample(batch_size=batch_size)
+        # Sample for the last update in the UTD ratio
+        batch = next(online_iterator)
 
         if dataset_repo_id is not None:
-            batch_offline = offline_replay_buffer.sample(batch_size=batch_size)
+            batch_offline = next(offline_iterator)
             batch = concatenate_batch_transitions(
                 left_batch_transitions=batch, right_batch_transition=batch_offline
             )
@@ -437,63 +467,80 @@ def add_actor_information_and_train(
             "next_observation_feature": next_observation_features,
         }
 
-        # Use the forward method for critic loss
-        loss_critic = policy.forward(forward_batch, model="critic")
+        # Use the forward method for critic loss (includes both main critic and grasp critic)
+        critic_output = policy.forward(forward_batch, model="critic")
+
+        # Main critic optimization
+        loss_critic = critic_output["loss_critic"]
         optimizers["critic"].zero_grad()
         loss_critic.backward()
-
-        # clip gradients
         critic_grad_norm = torch.nn.utils.clip_grad_norm_(
             parameters=policy.critic_ensemble.parameters(), max_norm=clip_grad_norm_value
         ).item()
-
         optimizers["critic"].step()
 
-        training_infos = {}
-        training_infos["loss_critic"] = loss_critic.item()
-        training_infos["critic_grad_norm"] = critic_grad_norm
+        # Initialize training info dictionary
+        training_infos = {
+            "loss_critic": loss_critic.item(),
+            "critic_grad_norm": critic_grad_norm,
+        }
 
+        # Grasp critic optimization (if available)
+        if policy.config.num_discrete_actions is not None:
+            discrete_critic_output = policy.forward(forward_batch, model="grasp_critic")
+            loss_grasp_critic = discrete_critic_output["loss_grasp_critic"]
+            optimizers["grasp_critic"].zero_grad()
+            loss_grasp_critic.backward()
+            grasp_critic_grad_norm = torch.nn.utils.clip_grad_norm_(
+                parameters=policy.grasp_critic.parameters_to_optimize, max_norm=clip_grad_norm_value
+            ).item()
+            optimizers["grasp_critic"].step()
+
+            # Add grasp critic info to training info
+            training_infos["loss_grasp_critic"] = loss_grasp_critic.item()
+            training_infos["grasp_critic_grad_norm"] = grasp_critic_grad_norm
+
+        # Actor and temperature optimization (at specified frequency)
         if optimization_step % policy_update_freq == 0:
             for _ in range(policy_update_freq):
-                # Use the forward method for actor loss
-                loss_actor = policy.forward(forward_batch, model="actor")
-
+                # Actor optimization
+                actor_output = policy.forward(forward_batch, model="actor")
+                loss_actor = actor_output["loss_actor"]
                 optimizers["actor"].zero_grad()
                 loss_actor.backward()
-
-                # clip gradients
                 actor_grad_norm = torch.nn.utils.clip_grad_norm_(
                     parameters=policy.actor.parameters_to_optimize, max_norm=clip_grad_norm_value
                 ).item()
-
                 optimizers["actor"].step()
 
+                # Add actor info to training info
                 training_infos["loss_actor"] = loss_actor.item()
                 training_infos["actor_grad_norm"] = actor_grad_norm
 
-                # Temperature optimization using forward method
-                loss_temperature = policy.forward(forward_batch, model="temperature")
+                # Temperature optimization
+                temperature_output = policy.forward(forward_batch, model="temperature")
+                loss_temperature = temperature_output["loss_temperature"]
                 optimizers["temperature"].zero_grad()
                 loss_temperature.backward()
-
-                #  clip gradients
                 temp_grad_norm = torch.nn.utils.clip_grad_norm_(
                     parameters=[policy.log_alpha], max_norm=clip_grad_norm_value
                 ).item()
-
                 optimizers["temperature"].step()
 
+                # Add temperature info to training info
                 training_infos["loss_temperature"] = loss_temperature.item()
                 training_infos["temperature_grad_norm"] = temp_grad_norm
                 training_infos["temperature"] = policy.temperature
 
+                # Update temperature
                 policy.update_temperature()
 
-        # Check if it's time to push updated policy to actors
+        # Push policy to actors if needed
         if time.time() - last_time_policy_pushed > policy_parameters_push_frequency:
             push_actor_policy_to_queue(parameters_queue=parameters_queue, policy=policy)
             last_time_policy_pushed = time.time()
 
+        # Update target networks
         policy.update_target_networks()
 
         # Log training metrics at specified intervals
@@ -697,7 +744,7 @@ def save_training_checkpoint(
     logging.info("Resume training")
 
 
-def make_optimizers_and_scheduler(cfg, policy: nn.Module):
+def make_optimizers_and_scheduler(cfg: TrainPipelineConfig, policy: nn.Module):
     """
     Creates and returns optimizers for the actor, critic, and temperature components of a reinforcement learning policy.
 
@@ -728,7 +775,14 @@ def make_optimizers_and_scheduler(cfg, policy: nn.Module):
         params=policy.actor.parameters_to_optimize,
         lr=cfg.policy.actor_lr,
     )
-    optimizer_critic = torch.optim.Adam(params=policy.critic_ensemble.parameters(), lr=cfg.policy.critic_lr)
+    optimizer_critic = torch.optim.Adam(
+        params=policy.critic_ensemble.parameters_to_optimize, lr=cfg.policy.critic_lr
+    )
+
+    if cfg.policy.num_discrete_actions is not None:
+        optimizer_grasp_critic = torch.optim.Adam(
+            params=policy.grasp_critic.parameters_to_optimize, lr=cfg.policy.critic_lr
+        )
     optimizer_temperature = torch.optim.Adam(params=[policy.log_alpha], lr=cfg.policy.critic_lr)
     lr_scheduler = None
     optimizers = {
@@ -736,6 +790,8 @@ def make_optimizers_and_scheduler(cfg, policy: nn.Module):
         "critic": optimizer_critic,
         "temperature": optimizer_temperature,
     }
+    if cfg.policy.num_discrete_actions is not None:
+        optimizers["grasp_critic"] = optimizer_grasp_critic
     return optimizers, lr_scheduler
 
 
@@ -970,12 +1026,8 @@ def get_observation_features(
         return None, None
 
     with torch.no_grad():
-        observation_features = (
-            policy.actor.encoder(observations) if policy.actor.encoder is not None else None
-        )
-        next_observation_features = (
-            policy.actor.encoder(next_observations) if policy.actor.encoder is not None else None
-        )
+        observation_features = policy.actor.encoder.get_image_features(observations)
+        next_observation_features = policy.actor.encoder.get_image_features(next_observations)
 
     return observation_features, next_observation_features
 

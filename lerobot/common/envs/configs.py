@@ -203,6 +203,9 @@ class EnvWrapperConfig:
     joint_masking_action_space: Optional[Any] = None
     ee_action_space_params: Optional[EEActionSpaceConfig] = None
     use_gripper: bool = False
+    gripper_quantization_threshold: float = 0.8
+    gripper_penalty: float = 0.0
+    open_gripper_on_reset: bool = False
 
 
 @EnvConfig.register_subclass(name="gym_manipulator")
@@ -254,6 +257,7 @@ class ManiskillEnvConfig(EnvConfig):
     robot: str = "so100"  # This is a hack to make the robot config work
     video_record: VideoRecordConfig = field(default_factory=VideoRecordConfig)
     wrapper: WrapperConfig = field(default_factory=WrapperConfig)
+    mock_gripper: bool = False
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
             "action": PolicyFeature(type=FeatureType.ACTION, shape=(7,)),

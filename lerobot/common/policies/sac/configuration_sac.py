@@ -85,12 +85,14 @@ class SACConfig(PreTrainedConfig):
         freeze_vision_encoder: Whether to freeze the vision encoder during training.
         image_encoder_hidden_dim: Hidden dimension size for the image encoder.
         shared_encoder: Whether to use a shared encoder for actor and critic.
+        num_discrete_actions: Number of discrete actions, eg for gripper actions.
         concurrency: Configuration for concurrency settings.
         actor_learner: Configuration for actor-learner architecture.
         online_steps: Number of steps for online training.
         online_env_seed: Seed for the online environment.
         online_buffer_capacity: Capacity of the online replay buffer.
         offline_buffer_capacity: Capacity of the offline replay buffer.
+        async_prefetch: Whether to use asynchronous prefetching for the buffers.
         online_step_before_learning: Number of steps before learning starts.
         policy_update_freq: Frequency of policy updates.
         discount: Discount factor for the SAC algorithm.
@@ -144,12 +146,14 @@ class SACConfig(PreTrainedConfig):
     freeze_vision_encoder: bool = True
     image_encoder_hidden_dim: int = 32
     shared_encoder: bool = True
+    num_discrete_actions: int | None = None
 
     # Training parameter
     online_steps: int = 1000000
     online_env_seed: int = 10000
     online_buffer_capacity: int = 100000
     offline_buffer_capacity: int = 100000
+    async_prefetch: bool = False
     online_step_before_learning: int = 100
     policy_update_freq: int = 1
 
@@ -173,7 +177,7 @@ class SACConfig(PreTrainedConfig):
     critic_network_kwargs: CriticNetworkConfig = field(default_factory=CriticNetworkConfig)
     actor_network_kwargs: ActorNetworkConfig = field(default_factory=ActorNetworkConfig)
     policy_kwargs: PolicyConfig = field(default_factory=PolicyConfig)
-
+    grasp_critic_network_kwargs: CriticNetworkConfig = field(default_factory=CriticNetworkConfig)
     actor_learner_config: ActorLearnerConfig = field(default_factory=ActorLearnerConfig)
     concurrency: ConcurrencyConfig = field(default_factory=ConcurrencyConfig)
 
