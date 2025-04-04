@@ -21,7 +21,7 @@ from lerobot.common.robots.config import RobotMode
 from lerobot.common.teleoperators.keyboard import KeyboardTeleop, KeyboardTeleopConfig
 from lerobot.common.teleoperators.so100 import SO100Leader, SO100LeaderConfig
 
-from .configuration_daemon_lekiwi import LeKiwiClientConfig
+from .config_lekiwi import LeKiwiClientConfig
 from .lekiwi_client import LeKiwiClient
 
 DUMMY_FEATURES = {
