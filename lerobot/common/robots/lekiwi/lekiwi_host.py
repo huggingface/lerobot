@@ -14,18 +14,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import base64
 import json
 import logging
 import time
 
-import numpy as np
+import cv2
 import zmq
 
-from lerobot.common.constants import OBS_STATE
+from lerobot.common.constants import OBS_IMAGES
 
 from .config_lekiwi import LeKiwiConfig
 from .lekiwi import LeKiwi
 
+# TODO(Steven): Move this to the config file
 # Network Configuration
 PORT_ZMQ_CMD: int = 5555
 PORT_ZMQ_OBSERVATIONS: int = 5556
@@ -69,7 +71,7 @@ def main():
             loop_start_time = time.time()
             try:
                 msg = remote_agent.zmq_cmd_socket.recv_string(zmq.NOBLOCK)
-                data = np.array(json.loads(msg))
+                data = dict(json.loads(msg))
                 _action_sent = robot.send_action(data)
                 last_cmd_time = time.time()
             except zmq.Again:
@@ -84,7 +86,18 @@ def main():
                 robot.stop_base()
 
             last_observation = robot.get_observation()
-            last_observation[OBS_STATE] = last_observation[OBS_STATE].tolist()
+
+            # Encode ndarrays to base64 strings
+            for cam_key, _ in robot.cameras.items():
+                ret, buffer = cv2.imencode(
+                    ".jpg", last_observation[OBS_IMAGES][cam_key], [int(cv2.IMWRITE_JPEG_QUALITY), 90]
+                )
+                if ret:
+                    last_observation[OBS_IMAGES][cam_key] = base64.b64encode(buffer).decode("utf-8")
+                else:
+                    last_observation[OBS_IMAGES][cam_key] = ""
+
+            # Send the observation to the remote agent
             remote_agent.zmq_observation_socket.send_string(json.dumps(last_observation))
 
             # Ensure a short sleep to avoid overloading the CPU.

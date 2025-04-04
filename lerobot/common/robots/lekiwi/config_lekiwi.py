@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import enum
 from dataclasses import dataclass, field
 
 from lerobot.common.cameras.configs import CameraConfig
@@ -20,6 +21,12 @@ from lerobot.common.cameras.opencv.configuration_opencv import OpenCVCameraConfi
 from ..config import RobotConfig
 
 
+class RobotMode(enum.Enum):
+    TELEOP = 0
+    AUTO = 1
+
+
+# TODO(Steven): Consider sending config at initial step over a socket
 @RobotConfig.register_subclass("lekiwi")
 @dataclass
 class LeKiwiConfig(RobotConfig):
@@ -48,7 +55,7 @@ class LeKiwiConfig(RobotConfig):
 @dataclass
 class LeKiwiClientConfig(RobotConfig):
     # Network Configuration
-    remote_ip: str = "172.18.133.90"
+    remote_ip: str = "172.18.129.208"
     port_zmq_cmd: int = 5555
     port_zmq_observations: int = 5556
 
@@ -68,3 +75,5 @@ class LeKiwiClientConfig(RobotConfig):
             "quit": "q",
         }
     )
+
+    robot_mode: RobotMode | None = None
