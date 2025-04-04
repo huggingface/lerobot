@@ -155,7 +155,8 @@ def rollout(
             key: observation[key].to(device, non_blocking=device.type == "cuda") for key in observation
         }
 
-        # Infer "task" from attributes of environments. Works with SyncVectorEnv.
+        # Infer "task" from attributes of environments.
+        # TODO: works with SyncVectorEnv but not AsyncVectorEnv
         observation = add_envs_task(env, observation)
 
         with torch.inference_mode():
