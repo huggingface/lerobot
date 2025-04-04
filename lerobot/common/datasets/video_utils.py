@@ -86,6 +86,7 @@ def decode_audio_torchvision(
     reader.add_basic_audio_stream(
         frames_per_chunk = int(ceil(duration * audio_sampling_rate)),    #Too much is better than not enough
         buffer_chunk_size = -1, #No dropping frames
+        format = "fltp",    #Format as float32
     )
 
     audio_chunks = []
@@ -103,7 +104,6 @@ def decode_audio_torchvision(
         audio_chunks.append(current_audio_chunk)
 
     audio_chunks = torch.stack(audio_chunks)
-    #TODO(CarolinePascal) : pytorch format conversion ?
 
     assert len(timestamps) == len(audio_chunks)
     return audio_chunks
