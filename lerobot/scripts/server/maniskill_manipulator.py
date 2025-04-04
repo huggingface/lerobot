@@ -1,5 +1,3 @@
-import logging
-import time
 from typing import Any
 
 import einops
@@ -10,10 +8,6 @@ from mani_skill.utils.wrappers.record import RecordEpisode
 from mani_skill.vector.wrappers.gymnasium import ManiSkillVectorEnv
 
 from lerobot.common.envs.configs import ManiskillEnvConfig
-from lerobot.configs import parser
-from lerobot.configs.train import TrainPipelineConfig
-from lerobot.common.policies.sac.configuration_sac import SACConfig
-from lerobot.common.policies.sac.modeling_sac import SACPolicy
 
 
 def preprocess_maniskill_observation(
