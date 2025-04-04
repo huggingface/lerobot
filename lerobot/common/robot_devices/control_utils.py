@@ -284,9 +284,7 @@ def control_loop(
                 action = {"action": action}
 
         if dataset is not None:
-            #Remove audio frames which are directly written in a dedicated file
-            audioless_observation = {key: observation[key] for key in observation if key not in robot.microphones}
-            frame = {**audioless_observation, **action, "task": single_task}
+            frame = {**observation, **action, "task": single_task}
             dataset.add_frame(frame)
 
         # TODO(Steven): This should be more general (for RemoteRobot instead of checking the name, but anyways it will change soon)

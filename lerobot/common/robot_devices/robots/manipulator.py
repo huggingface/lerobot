@@ -556,6 +556,8 @@ class ManipulatorRobot:
         action_dict["action"] = action
         for name in self.cameras:
             obs_dict[f"observation.images.{name}"] = images[name]
+        for name in self.microphones:
+            obs_dict[f"observation.audio.{name}"] = audio[name]
 
         return obs_dict, action_dict
 
@@ -604,6 +606,8 @@ class ManipulatorRobot:
         obs_dict["observation.state"] = state
         for name in self.cameras:
             obs_dict[f"observation.images.{name}"] = images[name]
+        for name in self.microphones:
+            obs_dict[f"observation.audio.{name}"] = audio[name]
         return obs_dict
 
     def send_action(self, action: torch.Tensor) -> torch.Tensor:
