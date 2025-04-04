@@ -142,15 +142,8 @@ from pprint import pformat
 # from safetensors.torch import load_file, save_file
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.policies.factory import make_policy
-from lerobot.common.robot_devices.control_configs import (
-    CalibrateControlConfig,
-    ControlPipelineConfig,
-    RecordControlConfig,
-    RemoteRobotConfig,
-    ReplayControlConfig,
-    TeleoperateControlConfig,
-)
-from lerobot.common.robot_devices.control_utils import (
+from lerobot.common.robots.utils import Robot, make_robot_from_config
+from lerobot.common.utils.control_utils import (
     control_loop,
     init_keyboard_listener,
     log_control_info,
@@ -161,10 +154,17 @@ from lerobot.common.robot_devices.control_utils import (
     stop_recording,
     warmup_record,
 )
-from lerobot.common.robot_devices.robots.utils import Robot, make_robot_from_config
-from lerobot.common.robot_devices.utils import busy_wait, safe_disconnect
+from lerobot.common.utils.robot_utils import busy_wait, safe_disconnect
 from lerobot.common.utils.utils import has_method, init_logging, log_say
 from lerobot.configs import parser
+from lerobot.configs.control import (
+    CalibrateControlConfig,
+    ControlPipelineConfig,
+    RecordControlConfig,
+    RemoteRobotConfig,
+    ReplayControlConfig,
+    TeleoperateControlConfig,
+)
 
 ########################################################################################
 # Control modes
@@ -379,7 +379,7 @@ def control_robot(cfg: ControlPipelineConfig):
     elif isinstance(cfg.control, ReplayControlConfig):
         replay(robot, cfg.control)
     elif isinstance(cfg.control, RemoteRobotConfig):
-        from lerobot.common.robot_devices.robots.lekiwi_remote import run_lekiwi
+        from lerobot.common.robots.lekiwi.lekiwi_remote import run_lekiwi
 
         run_lekiwi(cfg.robot)
 

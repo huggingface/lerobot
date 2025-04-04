@@ -23,10 +23,9 @@ import pytest
 import torch
 
 from lerobot import available_cameras, available_motors, available_robots
-from lerobot.common.robot_devices.cameras.utils import Camera
-from lerobot.common.robot_devices.cameras.utils import make_camera as make_camera_device
-from lerobot.common.robot_devices.motors.utils import MotorsBus
-from lerobot.common.robot_devices.motors.utils import make_motors_bus as make_motors_bus_device
+from lerobot.common.cameras import Camera
+from lerobot.common.motors.motors_bus import MotorsBus
+from lerobot.common.motors.utils import make_motors_bus as make_motors_bus_device
 from lerobot.common.utils.import_utils import is_package_available
 
 DEVICE = os.environ.get("LEROBOT_TEST_DEVICE", "cuda") if torch.cuda.is_available() else "cpu"
@@ -306,11 +305,19 @@ def mock_calibration_dir(calibration_dir):
 def make_camera(camera_type: str, **kwargs) -> Camera:
     if camera_type == "opencv":
         camera_index = kwargs.pop("camera_index", OPENCV_CAMERA_INDEX)
-        return make_camera_device(camera_type, camera_index=camera_index, **kwargs)
+        kwargs["camera_index"] = camera_index
+        from lerobot.common.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
+
+        config = OpenCVCameraConfig(**kwargs)
+        return OpenCVCamera(config)
 
     elif camera_type == "intelrealsense":
         serial_number = kwargs.pop("serial_number", INTELREALSENSE_SERIAL_NUMBER)
-        return make_camera_device(camera_type, serial_number=serial_number, **kwargs)
+        kwargs["serial_number"] = serial_number
+        from lerobot.common.cameras.intel import RealSenseCamera, RealSenseCameraConfig
+
+        config = RealSenseCameraConfig(**kwargs)
+        return RealSenseCamera(config)
     else:
         raise ValueError(f"The camera type '{camera_type}' is not valid.")
 
