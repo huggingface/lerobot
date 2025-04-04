@@ -33,6 +33,7 @@ from datasets.table import embed_table_storage
 from huggingface_hub import DatasetCard, DatasetCardData, HfApi
 from huggingface_hub.errors import RevisionNotFoundError
 from PIL import Image as PILImage
+from soundfile import read
 from torchvision import transforms
 
 from lerobot.configs.types import DictLike, FeatureType, PolicyFeature
@@ -257,6 +258,9 @@ def load_image_as_numpy(
         img_array /= 255.0
     return img_array
 
+def load_audio(fpath: str | Path) -> np.ndarray:
+    audio_data, _ = read(fpath, dtype="float32")
+    return audio_data
 
 def hf_transform_to_torch(items_dict: dict[torch.Tensor | None]):
     """Get a transform function that convert items from Hugging Face dataset (pyarrow)
@@ -781,6 +785,8 @@ def validate_feature_dtype_and_shape(name: str, feature: dict, value: np.ndarray
         return validate_feature_numpy_array(name, expected_dtype, expected_shape, value)
     elif expected_dtype in ["image", "video"]:
         return validate_feature_image_or_video(name, expected_shape, value)
+    elif expected_dtype == "audio":
+        return validate_feature_audio(name, expected_shape, value)
     elif expected_dtype == "string":
         return validate_feature_string(name, value)
     else:
@@ -821,6 +827,17 @@ def validate_feature_image_or_video(name: str, expected_shape: list[str], value:
 
     return error_message
 
+def validate_feature_audio(name: str, expected_shape: list[str], value: np.ndarray):
+    error_message = ""
+    if isinstance(value, np.ndarray):
+        actual_shape = value.shape
+        c = expected_shape
+        if len(actual_shape) != 2 or (actual_shape[-1] != c[-1] and actual_shape[0] != c[0]): #The number of frames might be different
+            error_message += f"The feature '{name}' of shape '{actual_shape}' does not have the expected shape '{(c,)}'.\n"
+    else:
+        error_message += f"The feature '{name}' is expected to be of type 'np.ndarray', but type '{type(value)}' provided instead.\n"
+
+    return error_message
 
 def validate_feature_string(name: str, value: str):
     if not isinstance(value, str):
