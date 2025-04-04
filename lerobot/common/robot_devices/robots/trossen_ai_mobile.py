@@ -201,7 +201,7 @@ class TrossenAIMobile():
         }
 
     def teleop_step(
-        self, record_data=False
+        self, record_data=False, record_joint_angles=True,
     ) -> None | tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
 
         if not self.is_connected:
@@ -280,7 +280,8 @@ class TrossenAIMobile():
 
         # Populate output dictionaries
         obs_dict, action_dict = {}, {}
-        obs_dict["observation.state"] = state
+        if record_joint_angles:
+            obs_dict["observation.state"] = state
         action_dict["action"] = action
         for name in self.cameras:
             obs_dict[f"observation.images.{name}"] = images[name]
