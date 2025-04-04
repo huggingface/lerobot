@@ -106,7 +106,7 @@ def prepare_observation_for_inference(
     This function takes a dictionary of NumPy arrays, performs necessary
     preprocessing, and prepares it for model inference. The steps include:
     1. Converting NumPy arrays to PyTorch tensors.
-    2. Normalizing and permuting image data (if any).
+    2. Normalizing and permuting image data and audio data (if any).
     3. Adding a batch dimension to each tensor.
     4. Moving all tensors to the specified compute device.
     5. Adding task and robot type information to the dictionary.
@@ -129,6 +129,9 @@ def prepare_observation_for_inference(
         if "image" in name:
             observation[name] = observation[name].type(torch.float32) / 255
             observation[name] = observation[name].permute(2, 0, 1).contiguous()
+        elif "audio" in name:
+            observation[name] = observation[name].type(torch.float32)
+            observation[name] = observation[name].permute(1, 0).contiguous()
         observation[name] = observation[name].unsqueeze(0)
         observation[name] = observation[name].to(device)
 
