@@ -74,7 +74,7 @@ from lerobot.common.datasets.video_utils import (
 )
 from lerobot.common.robot_devices.robots.utils import Robot
 
-CODEBASE_VERSION = "v2.1"
+CODEBASE_VERSION = "v3.0"
 
 
 class LeRobotDatasetMetadata:
@@ -617,6 +617,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """hf_dataset contains all the observations, states, actions, rewards, etc."""
         if self.episodes is None:
             path = str(self.root / "data")
+            # TODO(rcadene): load_dataset convert parquet to arrow.
+            # set num_proc to accelerate this conversion
             hf_dataset = load_dataset("parquet", data_dir=path, split="train")
         else:
             files = [str(self.root / self.meta.get_data_file_path(ep_idx)) for ep_idx in self.episodes]
