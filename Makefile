@@ -1,3 +1,17 @@
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 .PHONY: tests
 
 PYTHON_PATH := $(shell which python)
@@ -33,6 +47,7 @@ test-act-ete-train:
 		--policy.dim_model=64 \
 		--policy.n_action_steps=20 \
 		--policy.chunk_size=20 \
+		--policy.device=$(DEVICE) \
 		--env.type=aloha \
 		--env.episode_length=5 \
 		--dataset.repo_id=lerobot/aloha_sim_transfer_cube_human \
@@ -47,7 +62,6 @@ test-act-ete-train:
 		--save_checkpoint=true \
 		--log_freq=1 \
 		--wandb.enable=false \
-		--device=$(DEVICE) \
 		--output_dir=tests/outputs/act/
 
 test-act-ete-train-resume:
@@ -58,11 +72,11 @@ test-act-ete-train-resume:
 test-act-ete-eval:
 	python lerobot/scripts/eval.py \
 		--policy.path=tests/outputs/act/checkpoints/000004/pretrained_model \
+		--policy.device=$(DEVICE) \
 		--env.type=aloha \
 		--env.episode_length=5 \
 		--eval.n_episodes=1 \
-		--eval.batch_size=1 \
-		--device=$(DEVICE)
+		--eval.batch_size=1
 
 test-diffusion-ete-train:
 	python lerobot/scripts/train.py \
@@ -70,6 +84,7 @@ test-diffusion-ete-train:
 		--policy.down_dims='[64,128,256]' \
 		--policy.diffusion_step_embed_dim=32 \
 		--policy.num_inference_steps=10 \
+		--policy.device=$(DEVICE) \
 		--env.type=pusht \
 		--env.episode_length=5 \
 		--dataset.repo_id=lerobot/pusht \
@@ -84,21 +99,21 @@ test-diffusion-ete-train:
 		--save_freq=2 \
 		--log_freq=1 \
 		--wandb.enable=false \
-		--device=$(DEVICE) \
 		--output_dir=tests/outputs/diffusion/
 
 test-diffusion-ete-eval:
 	python lerobot/scripts/eval.py \
 		--policy.path=tests/outputs/diffusion/checkpoints/000002/pretrained_model \
+		--policy.device=$(DEVICE) \
 		--env.type=pusht \
 		--env.episode_length=5 \
 		--eval.n_episodes=1 \
-		--eval.batch_size=1 \
-		--device=$(DEVICE)
+		--eval.batch_size=1
 
 test-tdmpc-ete-train:
 	python lerobot/scripts/train.py \
 		--policy.type=tdmpc \
+		--policy.device=$(DEVICE) \
 		--env.type=xarm \
 		--env.task=XarmLift-v0 \
 		--env.episode_length=5 \
@@ -114,15 +129,14 @@ test-tdmpc-ete-train:
 		--save_freq=2 \
 		--log_freq=1 \
 		--wandb.enable=false \
-		--device=$(DEVICE) \
 		--output_dir=tests/outputs/tdmpc/
 
 test-tdmpc-ete-eval:
 	python lerobot/scripts/eval.py \
 		--policy.path=tests/outputs/tdmpc/checkpoints/000002/pretrained_model \
+		--policy.device=$(DEVICE) \
 		--env.type=xarm \
 		--env.episode_length=5 \
 		--env.task=XarmLift-v0 \
 		--eval.n_episodes=1 \
-		--eval.batch_size=1 \
-		--device=$(DEVICE)
+		--eval.batch_size=1

@@ -26,6 +26,7 @@ from lerobot.common.policies.act.configuration_act import ACTConfig
 from lerobot.common.policies.dexvla.configuration_dexvla import DexVLAConfig
 from lerobot.common.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.common.policies.pi0.configuration_pi0 import PI0Config
+from lerobot.common.policies.pi0fast.configuration_pi0fast import PI0FASTConfig
 from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.policies.tdmpc.configuration_tdmpc import TDMPCConfig
 from lerobot.common.policies.vqbet.configuration_vqbet import VQBeTConfig
@@ -59,6 +60,10 @@ def get_policy_class(name: str) -> PreTrainedPolicy:
         from lerobot.common.policies.dexvla.modeling_dexvla import DexVLAPolicy
 
         return DexVLAPolicy
+    elif name == "pi0fast":
+        from lerobot.common.policies.pi0fast.modeling_pi0fast import PI0FASTPolicy
+
+        return PI0FASTPolicy
     else:
         raise NotImplementedError(f"Policy with name {name} is not implemented.")
 
@@ -76,6 +81,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return PI0Config(**kwargs)
     elif policy_type == "dexvla":
         return DexVLAConfig(**kwargs)
+    elif policy_type == "pi0fast":
+        return PI0FASTConfig(**kwargs)
     else:
         raise ValueError(f"Policy type '{policy_type}' is not available.")
 
