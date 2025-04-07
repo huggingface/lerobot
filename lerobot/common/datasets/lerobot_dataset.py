@@ -210,7 +210,7 @@ class LeRobotDatasetMetadata:
     @property
     def audio_camera_keys_mapping(self) -> dict[str, str]:
         """Mapping between camera keys and audio keys when both are linked."""
-        return {self.features[camera_key]["audio"]:camera_key for camera_key in self.camera_keys if self.features[camera_key]["audio"] is not None}
+        return {self.features[camera_key]["audio"]:camera_key for camera_key in self.camera_keys if self.features[camera_key]["audio"] is not None and self.features[camera_key]["dtype"] == "video"}
 
     @property
     def names(self) -> dict[str, list | dict]:
