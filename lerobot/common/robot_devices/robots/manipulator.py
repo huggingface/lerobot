@@ -203,11 +203,12 @@ class ManipulatorRobot:
         }
     
     @property
-    def microphones_features(self) -> dict:
+    def microphone_features(self) -> dict:
         mic_ft = {}
         for mic_key, mic in self.microphones.items():
             key = f"observation.audio.{mic_key}"
             mic_ft[key] = {
+                "dtype": "audio",
                 "shape": (len(mic.channels),),
                 "names": "channels",
                 "info" : None,
@@ -216,7 +217,7 @@ class ManipulatorRobot:
 
     @property
     def features(self):
-        return {**self.motor_features, **self.camera_features, **self.microphones_features}
+        return {**self.motor_features, **self.camera_features, **self.microphone_features}
 
     @property
     def has_camera(self):
