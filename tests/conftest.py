@@ -58,6 +58,8 @@ def _check_component_availability(component_type, available_components, make_com
             print("\nNo physical device detected.")
         elif isinstance(e, ValueError) and "camera_index" in str(e):
             print("\nNo physical camera detected.")
+        elif isinstance(e, ValueError) and "microphone_index" in str(e):
+            print("\nNo physical microphone detected.")
         else:
             traceback.print_exc()
 
