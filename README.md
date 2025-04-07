@@ -83,50 +83,107 @@
 - Thanks to Antonio Loquercio and Ashish Kumar for their early support.
 - Thanks to [Seungjae (Jay) Lee](https://sjlee.cc/), [Mahi Shafiullah](https://mahis.life/) and colleagues for open sourcing [VQ-BeT](https://sjlee.cc/vq-bet/) policy and helping us adapt the codebase to our repository. The policy is adapted from [VQ-BeT repo](https://github.com/jayLEE0301/vq_bet_official).
 
-
 ## Installation
 
-Download our source code:
+### 1. Clone the repository
 ```bash
 git clone https://github.com/huggingface/lerobot.git
 cd lerobot
 ```
 
+### 2. Set up Python environment
 Create a virtual environment with Python 3.10 and activate it, e.g. with [`miniconda`](https://docs.anaconda.com/free/miniconda/index.html):
 ```bash
 conda create -y -n lerobot python=3.10
 conda activate lerobot
 ```
 
-When using `miniconda`, if you don't have `ffmpeg` in your environment:
+### 3. Choose your installation method
+
+- **Option A**: torchcodec support (better performance) only available for Linux systems with x86/x86_64 architecture (not ARM) and macOS systems with ARM architecture (M chips, not Intel x86_64). Recommended if available.
+- **Option B**: libsvtav1 support instead
+
+<details>
+<summary><strong>Option A: torchcodec support </strong></summary>
+
+*Supported platforms:*
+- Linux (x86/x86_64 only)
+- macOS (ARM/M chips only)
+
+#### Linux
 ```bash
-conda install ffmpeg
+sudo apt-get install cmake build-essential python3-dev pkg-config \
+    libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev \
+    libswscale-dev libswresample-dev libavfilter-dev
+conda install ffmpeg # In the virtual environment
 ```
 
-Install 🤗 LeRobot:
+#### macOS
+```bash
+brew install pkg-config
+conda install ffmpeg # In the virtual environment
+```
+
+</details>
+
+<details>
+<summary><strong>Option B: libsvtav1 support</strong></summary>
+
+#### Linux (Ubuntu 24.04)
+```bash
+sudo apt-get install cmake build-essential python3-dev pkg-config \
+    libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev \
+    libswscale-dev libswresample-dev libavfilter-dev ffmpeg
+```
+
+#### macOS
+```bash
+brew install pkg-config ffmpeg@6
+echo "export PATH=\"/opt/homebrew/opt/ffmpeg@6/bin:\$PATH\"" >> ~/.zshrc
+echo "export LDFLAGS=\"-L/opt/homebrew/opt/ffmpeg@6/lib\"" >> ~/.zshrc
+echo "export CPPFLAGS=\"-I/opt/homebrew/opt/ffmpeg@6/include\"" >> ~/.zshrc
+echo "export PKG_CONFIG_PATH=\"/opt/homebrew/opt/ffmpeg@6/lib/pkgconfig\"" >> ~/.zshrc
+
+# Restart terminal or run: source ~/.zshrc
+```
+
+</details>
+
+### Install LeRobot in the virtual environment
 ```bash
 pip install --no-binary=av -e .
 ```
 
-> **NOTE:** If you encounter build errors, you may need to install additional dependencies (`cmake`, `build-essential`, and `ffmpeg libs`). On Linux, run:
-`sudo apt-get install cmake build-essential python-dev pkg-config libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev libswscale-dev libswresample-dev libavfilter-dev pkg-config`. For other systems, see: [Compiling PyAV](https://pyav.org/docs/develop/overview/installation.html#bring-your-own-ffmpeg)
-
-For simulations, 🤗 LeRobot comes with gymnasium environments that can be installed as extras:
-- [aloha](https://github.com/huggingface/gym-aloha)
-- [xarm](https://github.com/huggingface/gym-xarm)
-- [pusht](https://github.com/huggingface/gym-pusht)
-
-For instance, to install 🤗 LeRobot with aloha and pusht, use:
+### 4. Other environments/dependencies (Optional)
+For testing and developing:
 ```bash
+pip install --no-binary=av -e ".[dev, test]"
+```
+
+For motor hardware support:
+```bash
+pip install --no-binary=av -e ".[dynamixel, feetech]"
+```
+
+For simulation environments:
+```bash
+# Example: Install with Aloha and PushT support
 pip install --no-binary=av -e ".[aloha, pusht]"
 ```
 
-To use [Weights and Biases](https://docs.wandb.ai/quickstart) for experiment tracking, log in with
+| Environment | Docs |
+|-------------|------|
+| Aloha | [gym-aloha](https://github.com/huggingface/gym-aloha) |
+| xArm | [gym-xarm](https://github.com/huggingface/gym-xarm) |
+| PushT | [gym-pusht](https://github.com/huggingface/gym-pusht) |
+
+### 5. Experiment Tracking (Optional)
+To use Weights & Biases:
+
 ```bash
 wandb login
 ```
-
-(note: you will also need to enable WandB in the configuration. See below.)
+*Note: Remember to enable WandB in your configuration file.*
 
 ## Walkthrough
 
