@@ -532,7 +532,8 @@
                 btnPause.classList.contains('hidden') ? btnPlay.click() : btnPause.click();
             } else if (key === 'ArrowDown' || key === 'ArrowUp') {
                 const episodes = {{ episodes }};  // Access episodes directly from the Jinja template
-                const nextEpisodeId = key === 'ArrowDown' ? {{ episode_id }} + 1 : {{ episode_id }} - 1;
+                const currentIndex = episodes.indexOf({{ episode_id }});
+                const nextEpisodeId = key === 'ArrowDown' ? episodes.at(currentIndex + 1) : episodes.at(currentIndex - 1);
                 const lowestEpisodeId = episodes.at(0);
                 const highestEpisodeId = episodes.at(-1);
                 if (nextEpisodeId >= lowestEpisodeId && nextEpisodeId <= highestEpisodeId) {
