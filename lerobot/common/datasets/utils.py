@@ -403,13 +403,7 @@ def get_features_from_robot(robot: Robot, use_videos: bool = True) -> dict:
             key: {"dtype": "video" if use_videos else "image", **ft}
             for key, ft in robot.camera_features.items()
         }
-    microphones_ft = {}
-    if robot.microphones:
-        microphones_ft = {
-            key: {"dtype": "audio", **ft}
-            for key, ft in robot.microphones_features.items()
-        }
-    return {**robot.motor_features, **camera_ft, **microphones_ft, **DEFAULT_FEATURES}
+    return {**robot.motor_features, **camera_ft, **robot.microphone_features, **DEFAULT_FEATURES}
 
 
 def dataset_to_policy_features(features: dict[str, dict]) -> dict[str, PolicyFeature]:
