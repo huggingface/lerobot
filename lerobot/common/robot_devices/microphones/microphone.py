@@ -44,8 +44,7 @@ def find_microphones(raise_when_empty=False, mock=False) -> list[dict]:
     microphones = []
 
     if mock:
-        #TODO(CarolinePascal): Implement mock microphones
-        pass
+        import tests.microphones.mock_sounddevice as sd
     else:
         import sounddevice as sd
 
@@ -161,8 +160,7 @@ class Microphone:
             raise RobotDeviceAlreadyConnectedError(f"Microphone {self.microphone_index} is already connected.")
         
         if self.mock:
-            #TODO(CarolinePascal): Implement mock microphones
-            pass
+            import tests.microphones.mock_sounddevice as sd
         else:
             import sounddevice as sd
 
