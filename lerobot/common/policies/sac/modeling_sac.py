@@ -448,7 +448,7 @@ class SACPolicy(
         # Compute target Q-value with Bellman equation
         rewards_gripper = rewards
         if gripper_penalties is not None:
-            rewards_gripper = rewards - gripper_penalties
+            rewards_gripper = rewards + gripper_penalties
         target_grasp_q = rewards_gripper + (1 - done) * self.config.discount * target_next_grasp_q
 
         # Get predicted Q-values for current observations
