@@ -36,6 +36,7 @@ from lerobot.common.datasets.utils import (
 from tests.fixtures.constants import (
     DEFAULT_FPS,
     DUMMY_CAMERA_FEATURES,
+    DUMMY_MICROPHONE_FEATURES,
     DUMMY_MOTOR_FEATURES,
     DUMMY_REPO_ID,
     DUMMY_ROBOT_TYPE,
@@ -91,6 +92,7 @@ def features_factory():
     def _create_features(
         motor_features: dict = DUMMY_MOTOR_FEATURES,
         camera_features: dict = DUMMY_CAMERA_FEATURES,
+        audio_features: dict = DUMMY_MICROPHONE_FEATURES,
         use_videos: bool = True,
     ) -> dict:
         if use_videos:
@@ -102,6 +104,7 @@ def features_factory():
         return {
             **motor_features,
             **camera_ft,
+            **audio_features,
             **DEFAULT_FEATURES,
         }
 
@@ -125,9 +128,10 @@ def info_factory(features_factory):
         audio_path: str = DEFAULT_COMPRESSED_AUDIO_PATH,
         motor_features: dict = DUMMY_MOTOR_FEATURES,
         camera_features: dict = DUMMY_CAMERA_FEATURES,
+        audio_features: dict = DUMMY_MICROPHONE_FEATURES,
         use_videos: bool = True,
     ) -> dict:
-        features = features_factory(motor_features, camera_features, use_videos)
+        features = features_factory(motor_features, camera_features, audio_features, use_videos)
         return {
             "codebase_version": codebase_version,
             "robot_type": robot_type,
@@ -163,6 +167,14 @@ def stats_factory():
                     "mean": np.full((3, 1, 1), 0.5, dtype=np.float32).tolist(),
                     "min": np.full((3, 1, 1), 0, dtype=np.float32).tolist(),
                     "std": np.full((3, 1, 1), 0.25, dtype=np.float32).tolist(),
+                    "count": [10],
+                }
+            elif dtype == "audio":
+                stats[key] = {
+                    "mean": np.full((shape[0],), 0.0, dtype=np.float32).tolist(),
+                    "max": np.full((shape[0],), 1, dtype=np.float32).tolist(),
+                    "min": np.full((shape[0],), -1, dtype=np.float32).tolist(),
+                    "std": np.full((shape[0],), 0.5, dtype=np.float32).tolist(),
                     "count": [10],
                 }
             else:
