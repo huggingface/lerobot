@@ -40,5 +40,18 @@ DUMMY_VIDEO_INFO = {
     "video.is_depth_map": False,
     "has_audio": False,
 }
+DUMMY_MICROPHONE_FEATURES = {
+    "laptop": {"dtype": "audio", "shape": (1,), "names": ["channels"], "info": None},
+    "phone": {"dtype": "audio", "shape": (1,), "names": ["channels"], "info": None},
+}
+DEFAULT_SAMPLE_RATE = 48000
+DUMMY_AUDIO_CHANNELS = 2
+DUMMY_AUDIO_INFO = {
+    "has_audio": True,
+    "audio.sample_rate": DEFAULT_SAMPLE_RATE,
+    "audio.codec": "aac",
+    "audio.channels": DUMMY_AUDIO_CHANNELS,
+    "audio.channel_layout": "stereo",
+}
 DUMMY_CHW = (3, 96, 128)
 DUMMY_HWC = (96, 128, 3)
