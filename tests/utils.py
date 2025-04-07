@@ -20,7 +20,7 @@ from functools import wraps
 import pytest
 import torch
 
-from lerobot import available_cameras, available_motors, available_robots
+from lerobot import available_cameras, available_microphones, available_motors, available_robots
 from lerobot.utils.import_utils import is_package_available
 
 DEVICE = os.environ.get("LEROBOT_TEST_DEVICE", "cuda") if torch.cuda.is_available() else "cpu"
@@ -33,6 +33,10 @@ TEST_CAMERA_TYPES = []
 for camera_type in available_cameras:
     TEST_CAMERA_TYPES += [(camera_type, True), (camera_type, False)]
 
+TEST_MICROPHONE_TYPES = []
+for microphone_type in available_microphones:
+    TEST_MICROPHONE_TYPES += [(microphone_type, True), (microphone_type, False)]
+
 TEST_MOTOR_TYPES = []
 for motor_type in available_motors:
     TEST_MOTOR_TYPES += [(motor_type, True), (motor_type, False)]
@@ -40,6 +44,9 @@ for motor_type in available_motors:
 # Camera indices used for connecting physical cameras
 OPENCV_CAMERA_INDEX = int(os.environ.get("LEROBOT_TEST_OPENCV_CAMERA_INDEX", 0))
 INTELREALSENSE_SERIAL_NUMBER = int(os.environ.get("LEROBOT_TEST_INTELREALSENSE_SERIAL_NUMBER", 128422271614))
+
+# Microphone indices used for connecting physical microphones
+MICROPHONE_INDEX = int(os.environ.get("LEROBOT_TEST_MICROPHONE_INDEX", 0))
 
 DYNAMIXEL_PORT = os.environ.get("LEROBOT_TEST_DYNAMIXEL_PORT", "/dev/tty.usbmodem575E0032081")
 DYNAMIXEL_MOTORS = {
