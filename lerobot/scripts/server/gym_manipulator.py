@@ -800,18 +800,21 @@ class GripperPenaltyWrapper(gym.RewardWrapper):
         else:
             gripper_action = action[-1]
         obs, reward, terminated, truncated, info = self.env.step(action)
-        grasp_reward = self.reward(reward, gripper_action)
+        gripper_penalty = self.reward(reward, gripper_action)
 
         if self.gripper_penalty_in_reward:
-            reward += grasp_reward
+            reward += gripper_penalty
         else:
-            info["grasp_reward"] = grasp_reward
+            info["gripper_penalty"] = gripper_penalty
             
         return obs, reward, terminated, truncated, info
 
     def reset(self, **kwargs):
         self.last_gripper_state = None
-        return super().reset(**kwargs)
+        obs, info = super().reset(**kwargs)
+        if self.gripper_penalty_in_reward:
+            info["gripper_penalty"] = 0.0
+        return obs, info
 
 class GripperActionWrapper(gym.ActionWrapper):
     def __init__(self, env, quantization_threshold: float = 0.2):
@@ -1192,7 +1195,7 @@ def make_robot_env(cfg) -> gym.vector.VectorEnv:
         env = GripperActionWrapper(
             env=env, quantization_threshold=cfg.wrapper.gripper_quantization_threshold
         )
-        env = GripperPenaltyWrapper(env=env, penalty=cfg.wrapper.gripper_penalty)
+        env = GripperPenaltyWrapper(env=env, penalty=cfg.wrapper.gripper_penalty, gripper_penalty_in_reward=cfg.wrapper.gripper_penalty_in_reward)
 
     if cfg.wrapper.ee_action_space_params is not None:
         env = EEActionWrapper(

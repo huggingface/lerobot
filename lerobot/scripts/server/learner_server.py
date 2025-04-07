@@ -408,6 +408,7 @@ def add_actor_information_and_train(
                 "done": done,
                 "observation_feature": observation_features,
                 "next_observation_feature": next_observation_features,
+                "complementary_info": batch.get("complementary_info", None),
             }
 
             # Use the forward method for critic loss (includes both main critic and grasp critic)

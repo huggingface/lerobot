@@ -281,7 +281,7 @@ def act_with_policy(
         for key, tensor in obs.items():
             if torch.isnan(tensor).any():
                 logging.error(f"[ACTOR] NaN values found in obs[{key}] at step {interaction_step}")
-
+            
         list_transition_to_send_to_learner.append(
             Transition(
                 state=obs,
