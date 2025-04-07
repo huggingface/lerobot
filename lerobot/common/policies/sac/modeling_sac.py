@@ -224,10 +224,6 @@ class SACPolicy(
 
         critics = self.critic_target if use_target else self.critic_ensemble
         q_values = critics(observations, actions, observation_features)
-        if not use_target:
-            for name, param in critics.named_parameters():
-                if param.requires_grad:
-                    print(f"Critic Ensemble layer {name}, norm {param.data.norm().item()}")
         return q_values
 
     def grasp_critic_forward(self, observations, use_target=False, observation_features=None) -> torch.Tensor:
@@ -243,10 +239,6 @@ class SACPolicy(
         """
         grasp_critic = self.grasp_critic_target if use_target else self.grasp_critic
         q_values = grasp_critic(observations, observation_features)
-        if not use_target:
-            for name, param in grasp_critic.named_parameters():
-                if param.requires_grad:
-                    print(f"Grasp critic layer {name}, norm {param.data.norm().item()}")
         return q_values
 
     def forward(
@@ -577,7 +569,6 @@ class SACObservationEncoder(nn.Module):
         obs_dict = self.input_normalization(obs_dict)
         if len(self.all_image_keys) > 0 and vision_encoder_cache is None:
             vision_encoder_cache = self.get_image_features(obs_dict)
-            feat.append(vision_encoder_cache)
 
         if vision_encoder_cache is not None:
             feat.append(vision_encoder_cache)
@@ -805,6 +796,7 @@ class GraspCritic(nn.Module):
         )
 
         self.output_layer = nn.Linear(in_features=hidden_dims[-1], out_features=self.output_dim)
+        init_final = 0.05
         if init_final is not None:
             nn.init.uniform_(self.output_layer.weight, -init_final, init_final)
             nn.init.uniform_(self.output_layer.bias, -init_final, init_final)
