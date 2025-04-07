@@ -35,6 +35,8 @@ from lerobot.common.robot_devices.microphones.configs import MicrophoneConfig
 from lerobot.common.robot_devices.utils import (
     RobotDeviceAlreadyConnectedError,
     RobotDeviceNotConnectedError,
+    RobotDeviceNotRecordingError,
+    RobotDeviceAlreadyRecordingError,
     busy_wait,
 )
 
@@ -152,6 +154,7 @@ class Microphone:
 
         self.logs = {}
         self.is_connected = False
+        self.is_recording = False
 
     def connect(self) -> None:
         if self.is_connected:
@@ -250,8 +253,8 @@ class Microphone:
 
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(f"Microphone {self.microphone_index} is not connected.")
-        if not self.stream.active:
-            raise RuntimeError(f"Microphone {self.microphone_index} is not recording.")
+        if not self.is_recording:
+            raise RobotDeviceNotRecordingError(f"Microphone {self.microphone_index} is not recording.")
         
         start_time = time.perf_counter()
 
@@ -269,6 +272,8 @@ class Microphone:
 
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(f"Microphone {self.microphone_index} is not connected.")
+        if self.is_recording:
+            raise RobotDeviceAlreadyRecordingError(f"Microphone {self.microphone_index} is already recording.")
         
         self.read_queue = Queue()
         with self.read_queue.mutex:
@@ -291,13 +296,16 @@ class Microphone:
             self.record_thread.daemon = True
             self.record_thread.start()
             
+        self.is_recording = True
         self.stream.start()
 
     def stop_recording(self) -> None:
 
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(f"Microphone {self.microphone_index} is not connected.")
-
+        if not self.is_recording:
+            raise RobotDeviceNotRecordingError(f"Microphone {self.microphone_index} is not recording.")
+        
         if self.record_thread is not None:
             #self.record_queue.join()
             self.record_stop_event.set()
@@ -309,12 +317,14 @@ class Microphone:
             self.stream.stop()  #Wait for all buffers to be processed
             #Remark : stream.abort() flushes the buffers !
 
+        self.is_recording = False
+
     def disconnect(self) -> None:
 
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(f"Microphone {self.microphone_index} is not connected.")
 
-        if self.stream.active:
+        if self.is_recording:
             self.stop_recording()
 
         self.stream.close()
