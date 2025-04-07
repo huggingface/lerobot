@@ -185,6 +185,11 @@ available_cameras = [
     "intelrealsense",
 ]
 
+# lists all available microphones from `lerobot/microphones`
+available_microphones = [
+    "microphone",
+]
+
 # lists all available motors from `lerobot/motors`
 available_motors = [
     "dynamixel",
