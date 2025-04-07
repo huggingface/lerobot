@@ -37,6 +37,8 @@ from lerobot.microphones.configs import MicrophoneConfig
 from lerobot.errors import (
     DeviceAlreadyConnectedError,
     DeviceNotConnectedError,
+    DeviceAlreadyRecordingError,
+    DeviceNotRecordingError,
 )
 
 def find_microphones(raise_when_empty=False) -> list[dict]:
@@ -145,6 +147,7 @@ class Microphone:
 
         self.logs = {}
         self.is_connected = False
+        self.is_recording = False
 
     def connect(self) -> None:
         if self.is_connected:
@@ -256,6 +259,8 @@ class Microphone:
 
         if not self.is_connected:
             raise DeviceNotConnectedError(f"Microphone {self.microphone_index} is not connected.")
+        if self.is_recording:
+            raise DeviceAlreadyRecordingError(f"Microphone {self.microphone_index} is already recording.")
         
         self.read_queue = Queue()
         with self.read_queue.mutex:
@@ -278,15 +283,16 @@ class Microphone:
             self.record_thread.daemon = True
             self.record_thread.start()
             
+        self.is_recording = True
         self.stream.start()
 
     def stop_recording(self) -> None:
 
         if not self.is_connected:
             raise DeviceNotConnectedError(f"Microphone {self.microphone_index} is not connected.")
+        if not self.is_recording:
+            raise DeviceNotRecordingError(f"Microphone {self.microphone_index} is not recording.")
         
-        self.logs["stop_timestamp"] = capture_timestamp_utc()
-
         if self.record_thread is not None:
             #self.record_queue.join()
             self.record_stop_event.set()
@@ -298,12 +304,16 @@ class Microphone:
             self.stream.stop()  #Wait for all buffers to be processed
             #Remark : stream.abort() flushes the buffers !
 
+        self.is_recording = False
+
+        self.logs["stop_timestamp"] = capture_timestamp_utc()
+
     def disconnect(self) -> None:
 
         if not self.is_connected:
             raise DeviceNotConnectedError(f"Microphone {self.microphone_index} is not connected.")
 
-        if self.stream.active:
+        if self.is_recording:
             self.stop_recording()
 
         self.stream.close()
