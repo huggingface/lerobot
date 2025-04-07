@@ -107,6 +107,20 @@ class ACTPolicy(PreTrainedPolicy):
             self._action_queue = deque([], maxlen=self.config.n_action_steps)
 
     @torch.no_grad
+    def select_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
+        """Select the entire action chunk given environment observations.
+
+        This method wraps `select_action_chunk` in order to return all actions the policy infers at a time.
+        Resuse the `select_action` method in order to reuse the open source lerobot, but its performance may
+        decrease a bit.
+        """
+        first_action = self.select_action(batch)        
+        result_tensor = torch.cat([first_action] + list(self._action_queue), dim=0)
+        self._action_queue = deque([], maxlen=self.config.n_action_steps)
+        return result_tensor
+
+
+    @torch.no_grad
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
         """Select a single action given environment observations.
 

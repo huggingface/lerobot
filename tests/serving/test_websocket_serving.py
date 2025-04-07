@@ -38,6 +38,6 @@ if isinstance(response, str):
     exit()
 
 infer_result = msgpack_utils.unpackb(response)
-print(infer_result)
+print(infer_result['actions'].shape, infer_result)
 assert len(infer_result['actions'][0]) == len(input['state'])
 

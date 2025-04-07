@@ -94,9 +94,10 @@ class WebsocketPolicyServer:
                     if isinstance(obs[key], torch.Tensor):
                         obs[key] = obs[key].to("cuda", non_blocking=True)
                         
-                with torch.inference_mode():     
-                    action = self._policy.select_action(obs)
-                    print("inference once with action:", action)
+                with torch.inference_mode():
+                    action = self._policy.select_action_chunk(obs)
+                    action = action.squeeze(0)
+                    print("inference once with action:", action.shape, action)
                     res = {"actions": action.cpu().numpy()}
                 await websocket.send(packer.pack(res))
             except websockets.ConnectionClosed:
