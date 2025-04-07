@@ -485,7 +485,7 @@ class VQBeTHead(nn.Module):
     def forward(self, x, **kwargs) -> dict:
         # N is the batch size, and T is number of action query tokens, which are process through same GPT
         N, T, _ = x.shape
-        # we calculate N and T side parallely. Thus, the dimensions would be
+        # we calculate N and T side parallelly. Thus, the dimensions would be
         # (batch size * number of action query tokens, action chunk size, action dimension)
         x = einops.rearrange(x, "N T WA -> (N T) WA")
 
@@ -772,7 +772,7 @@ class VqVae(nn.Module):
         Encoder and decoder are MLPs consisting of an input, output layer, and hidden layer, respectively.
         The vq_layer uses residual VQs.
 
-        This class contains functions for training the encoder and decoder along with the residual VQ layer (for trainign phase 1),
+        This class contains functions for training the encoder and decoder along with the residual VQ layer (for training phase 1),
         as well as functions to help BeT training part in training phase 2.
         """
 

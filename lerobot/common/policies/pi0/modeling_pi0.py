@@ -24,7 +24,7 @@ Designed by Physical Intelligence. Ported from Jax by Hugging Face.
 
 Install pi0 extra dependencies:
 ```bash
-pip install -e ".[pi0]"
+pip install --no-binary=av -e ".[pi0]"
 ```
 
 Example of finetuning the pi0 pretrained model (`pi0_base` in `openpi`):
@@ -313,7 +313,7 @@ class PI0Policy(PreTrainedPolicy):
         state = self.prepare_state(batch)
         lang_tokens, lang_masks = self.prepare_language(batch)
         actions = self.prepare_action(batch)
-        actions_is_pad = batch.get("actions_id_pad")
+        actions_is_pad = batch.get("action_is_pad")
 
         loss_dict = {}
         losses = self.model.forward(images, img_masks, lang_tokens, lang_masks, state, actions, noise, time)
