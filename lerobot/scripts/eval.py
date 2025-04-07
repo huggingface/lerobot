@@ -69,6 +69,7 @@ from lerobot.common.envs.factory import make_env
 from lerobot.common.envs.utils import add_envs_task, check_env_attributes_and_types, preprocess_observation
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.pretrained import PreTrainedPolicy
+from lerobot.common.policies.pi0.modeling_pi0 import PI0Policy
 from lerobot.common.policies.utils import get_device_from_parameters
 from lerobot.common.utils.io_utils import write_video
 from lerobot.common.utils.random_utils import set_seed
@@ -152,7 +153,7 @@ def rollout(
             all_observations.append(deepcopy(observation))
 
         observation = {
-            key: observation[key].to(device, non_blocking=device.type == "cuda") for key in observation
+            key: observation[key].to(device, non_blocking=device.type != "cuda") for key in observation
         }
 
         # Infer "task" from attributes of environments.

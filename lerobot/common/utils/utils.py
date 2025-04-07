@@ -24,6 +24,9 @@ from pathlib import Path
 
 import numpy as np
 import torch
+if hasattr(torch, 'npu'):
+    import torch_npu
+    logging.info("exists npu, import torch_npu")
 
 
 def none_or_int(value):
@@ -46,6 +49,9 @@ def auto_select_torch_device() -> torch.device:
     elif torch.backends.mps.is_available():
         logging.info("Metal backend detected, using cuda.")
         return torch.device("mps")
+    elif torch_npu.npu.is_available():
+        logging.info("Npu backend detected, using npu.")
+        return torch.device("npu")
     else:
         logging.warning("No accelerated backend detected. Using default cpu, this will be slow.")
         return torch.device("cpu")
@@ -94,8 +100,10 @@ def is_torch_device_available(try_device: str) -> bool:
         return torch.backends.mps.is_available()
     elif try_device == "cpu":
         return True
+    elif try_device == "npu":
+        return torch_npu.npu.is_available()
     else:
-        raise ValueError(f"Unknown device {try_device}. Supported devices are: cuda, mps or cpu.")
+        raise ValueError(f"Unknown device {try_device}. Supported devices are: cuda, mps, cpu or npu.")
 
 
 def is_amp_available(device: str):
