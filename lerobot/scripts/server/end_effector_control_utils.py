@@ -258,24 +258,24 @@ class GamepadController(InputController):
                 elif event.button == 0:
                     self.episode_end_status = "rerecord_episode"
 
-                # RB button (6) for opening gripper
+                # LT button for closing gripper
                 elif event.button == 6:
-                    self.open_gripper_command = True
-
-                # LT button (7) for closing gripper
-                elif event.button == 7:
                     self.close_gripper_command = True
+
+                # RB button for opening gripper
+                elif event.button == 7:
+                    self.open_gripper_command = True
 
             # Reset episode status on button release
             elif event.type == pygame.JOYBUTTONUP:
                 if event.button in [0, 2, 3]:
                     self.episode_end_status = None
-
-                elif event.button == 6:
-                    self.open_gripper_command = False
-
-                elif event.button == 7:
+                
+                if event.button == 6:
                     self.close_gripper_command = False
+                
+                if event.button == 7:
+                    self.open_gripper_command = False
 
             # Check for RB button (typically button 5) for intervention flag
             if self.joystick.get_button(5):

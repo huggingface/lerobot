@@ -144,8 +144,8 @@ class SACPolicy(
 
             self.grasp_critic_target.load_state_dict(self.grasp_critic.state_dict())
 
-            self.grasp_critic = torch.compile(self.grasp_critic)
-            self.grasp_critic_target = torch.compile(self.grasp_critic_target)
+            # self.grasp_critic = torch.compile(self.grasp_critic)
+            # self.grasp_critic_target = torch.compile(self.grasp_critic_target)
 
         self.actor = Policy(
             encoder=encoder_actor,
@@ -224,6 +224,10 @@ class SACPolicy(
 
         critics = self.critic_target if use_target else self.critic_ensemble
         q_values = critics(observations, actions, observation_features)
+        if not use_target:
+            for name, param in critics.named_parameters():
+                if param.requires_grad:
+                    print(f"Critic Ensemble layer {name}, norm {param.data.norm().item()}")
         return q_values
 
     def grasp_critic_forward(self, observations, use_target=False, observation_features=None) -> torch.Tensor:
@@ -239,6 +243,10 @@ class SACPolicy(
         """
         grasp_critic = self.grasp_critic_target if use_target else self.grasp_critic
         q_values = grasp_critic(observations, observation_features)
+        if not use_target:
+            for name, param in grasp_critic.named_parameters():
+                if param.requires_grad:
+                    print(f"Grasp critic layer {name}, norm {param.data.norm().item()}")
         return q_values
 
     def forward(

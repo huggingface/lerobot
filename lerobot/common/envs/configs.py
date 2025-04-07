@@ -171,7 +171,6 @@ class VideoRecordConfig:
 class WrapperConfig:
     """Configuration for environment wrappers."""
 
-    delta_action: float | None = None
     joint_masking_action_space: list[bool] | None = None
 
 
@@ -191,7 +190,6 @@ class EnvWrapperConfig:
     """Configuration for environment wrappers."""
 
     display_cameras: bool = False
-    delta_action: float = 0.1
     use_relative_joint_positions: bool = True
     add_joint_velocity_to_observation: bool = False
     add_ee_pose_to_observation: bool = False
@@ -203,7 +201,7 @@ class EnvWrapperConfig:
     joint_masking_action_space: Optional[Any] = None
     ee_action_space_params: Optional[EEActionSpaceConfig] = None
     use_gripper: bool = False
-    gripper_quantization_threshold: float = 0.8
+    gripper_quantization_threshold: float | None = None
     gripper_penalty: float = 0.0
     open_gripper_on_reset: bool = False
 

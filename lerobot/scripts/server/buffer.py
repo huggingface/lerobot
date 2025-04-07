@@ -505,7 +505,6 @@ class ReplayBuffer:
         state_keys: Optional[Sequence[str]] = None,
         capacity: Optional[int] = None,
         action_mask: Optional[Sequence[int]] = None,
-        action_delta: Optional[float] = None,
         image_augmentation_function: Optional[Callable] = None,
         use_drq: bool = True,
         storage_device: str = "cpu",
@@ -520,7 +519,6 @@ class ReplayBuffer:
             state_keys (Optional[Sequence[str]]): The list of keys that appear in `state` and `next_state`.
             capacity (Optional[int]): Buffer capacity. If None, uses dataset length.
             action_mask (Optional[Sequence[int]]): Indices of action dimensions to keep.
-            action_delta (Optional[float]): Factor to divide actions by.
             image_augmentation_function (Optional[Callable]): Function for image augmentation.
                 If None, uses default random shift with pad=4.
             use_drq (bool): Whether to use DrQ image augmentation when sampling.
@@ -565,8 +563,6 @@ class ReplayBuffer:
                 else:
                     first_action = first_action[:, action_mask]
 
-            if action_delta is not None:
-                first_action = first_action / action_delta
 
             # Get complementary info if available
             first_complementary_info = None
@@ -598,8 +594,6 @@ class ReplayBuffer:
                 else:
                     action = action[:, action_mask]
 
-            if action_delta is not None:
-                action = action / action_delta
 
             replay_buffer.add(
                 state=data["state"],

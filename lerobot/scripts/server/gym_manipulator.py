@@ -42,7 +42,6 @@ class HILSerlRobotEnv(gym.Env):
         self,
         robot,
         use_delta_action_space: bool = True,
-        delta: float | None = None,
         display_cameras: bool = False,
     ):
         """
@@ -55,8 +54,6 @@ class HILSerlRobotEnv(gym.Env):
             robot: The robot interface object used to connect and interact with the physical robot.
             use_delta_action_space (bool): If True, uses a delta (relative) action space for joint control. Otherwise, absolute
                 joint positions are used.
-            delta (float or None): A scaling factor for the relative adjustments applied to joint positions. Should be a value between
-                0 and 1 when using a delta action space.
             display_cameras (bool): If True, the robot's camera feeds will be displayed during execution.
         """
         super().__init__()
@@ -74,7 +71,6 @@ class HILSerlRobotEnv(gym.Env):
         self.current_step = 0
         self.episode_data = None
 
-        self.delta = delta
         self.use_delta_action_space = use_delta_action_space
         self.current_joint_positions = self.robot.follower_arms["main"].read("Present_Position")
 
@@ -555,6 +551,9 @@ class ImageCropResizeWrapper(gym.Wrapper):
             # TODO(michel-aractingi): Bug in resize, it returns values outside [0, 1]
             obs[k] = obs[k].clamp(0.0, 1.0)
 
+            # import cv2
+            # cv2.imwrite(f"tmp_img/{k}.jpg", cv2.cvtColor(obs[k].squeeze(0).permute(1,2,0).cpu().numpy()*255, cv2.COLOR_RGB2BGR))
+
             # Check for NaNs after processing
             if torch.isnan(obs[k]).any():
                 logging.error(f"NaN values detected in observation {k} after crop and resize")
@@ -720,19 +719,31 @@ class ResetWrapper(gym.Wrapper):
         env: HILSerlRobotEnv,
         reset_pose: np.ndarray | None = None,
         reset_time_s: float = 5,
+        open_gripper_on_reset: bool = False
     ):
         super().__init__(env)
         self.reset_time_s = reset_time_s
         self.reset_pose = reset_pose
         self.robot = self.unwrapped.robot
+        self.open_gripper_on_reset = open_gripper_on_reset
 
     def reset(self, *, seed=None, options=None):
+
+
         if self.reset_pose is not None:
             start_time = time.perf_counter()
             log_say("Reset the environment.", play_sounds=True)
             reset_follower_position(self.robot, self.reset_pose)
             busy_wait(self.reset_time_s - (time.perf_counter() - start_time))
             log_say("Reset the environment done.", play_sounds=True)
+            if self.open_gripper_on_reset:
+                current_joint_pos = self.robot.follower_arms["main"].read("Present_Position")
+                current_joint_pos[-1] = MAX_GRIPPER_COMMAND
+                self.robot.send_action(torch.from_numpy(current_joint_pos))
+                busy_wait(0.1)
+                current_joint_pos[-1] = 0.0
+                self.robot.send_action(torch.from_numpy(current_joint_pos))
+                busy_wait(0.2)
         else:
             log_say(
                 f"Manually reset the environment for {self.reset_time_s} seconds.",
@@ -777,7 +788,6 @@ class GripperPenaltyWrapper(gym.RewardWrapper):
         gripper_penalty_bool = (gripper_state_normalized < 0.1 and action_normalized > 0.9) or (
             gripper_state_normalized > 0.9 and action_normalized < 0.1
         )
-        breakpoint()
 
         return reward + self.penalty * gripper_penalty_bool
 
@@ -791,8 +801,7 @@ class GripperPenaltyWrapper(gym.RewardWrapper):
         self.last_gripper_state = None
         return super().reset(**kwargs)
 
-
-class GripperQuantizationWrapper(gym.ActionWrapper):
+class GripperActionWrapper(gym.ActionWrapper):
     def __init__(self, env, quantization_threshold: float = 0.2):
         super().__init__(env)
         self.quantization_threshold = quantization_threshold
@@ -801,16 +810,18 @@ class GripperQuantizationWrapper(gym.ActionWrapper):
         is_intervention = False
         if isinstance(action, tuple):
             action, is_intervention = action
-
         gripper_command = action[-1]
-        # Quantize gripper command to -1, 0 or 1
-        if gripper_command < -self.quantization_threshold:
-            gripper_command = -MAX_GRIPPER_COMMAND
-        elif gripper_command > self.quantization_threshold:
-            gripper_command = MAX_GRIPPER_COMMAND
-        else:
-            gripper_command = 0.0
 
+        # Gripper actions are between 0, 2
+        # we want to quantize them to -1, 0 or 1
+        gripper_command = gripper_command - 1.0
+
+        if self.quantization_threshold is not None:
+            # Quantize gripper command to -1, 0 or 1
+            gripper_command = (
+                np.sign(gripper_command) if abs(gripper_command) > self.quantization_threshold else 0.0
+            )
+        gripper_command = gripper_command * MAX_GRIPPER_COMMAND
         gripper_state = self.unwrapped.robot.follower_arms["main"].read("Present_Position")[-1]
         gripper_action = np.clip(gripper_state + gripper_command, 0, MAX_GRIPPER_COMMAND)
         action[-1] = gripper_action.item()
@@ -836,10 +847,12 @@ class EEActionWrapper(gym.ActionWrapper):
             ]
         )
         if self.use_gripper:
-            action_space_bounds = np.concatenate([action_space_bounds, [1.0]])
+            # gripper actions open at 2.0, and closed at 0.0
+            min_action_space_bounds = np.concatenate([-action_space_bounds, [0.0]])
+            max_action_space_bounds = np.concatenate([action_space_bounds, [2.0]])
         ee_action_space = gym.spaces.Box(
-            low=-action_space_bounds,
-            high=action_space_bounds,
+            low=min_action_space_bounds,
+            high=max_action_space_bounds,
             shape=(3 + int(self.use_gripper),),
             dtype=np.float32,
         )
@@ -997,11 +1010,11 @@ class GamepadControlWrapper(gym.Wrapper):
         if self.use_gripper:
             gripper_command = self.controller.gripper_command()
             if gripper_command == "open":
-                gamepad_action = np.concatenate([gamepad_action, [1.0]])
+                gamepad_action = np.concatenate([gamepad_action, [2.0]])
             elif gripper_command == "close":
-                gamepad_action = np.concatenate([gamepad_action, [-1.0]])
-            else:
                 gamepad_action = np.concatenate([gamepad_action, [0.0]])
+            else:
+                gamepad_action = np.concatenate([gamepad_action, [1.0]])
 
         # Check episode ending buttons
         # We'll rely on controller.get_episode_end_status() which returns "success", "failure", or None
@@ -1141,7 +1154,6 @@ def make_robot_env(cfg) -> gym.vector.VectorEnv:
     env = HILSerlRobotEnv(
         robot=robot,
         display_cameras=cfg.wrapper.display_cameras,
-        delta=cfg.wrapper.delta_action,
         use_delta_action_space=cfg.wrapper.use_relative_joint_positions
         and cfg.wrapper.ee_action_space_params is None,
     )
@@ -1165,7 +1177,7 @@ def make_robot_env(cfg) -> gym.vector.VectorEnv:
     # env = RewardWrapper(env=env, reward_classifier=reward_classifier, device=cfg.device)
     env = TimeLimitWrapper(env=env, control_time_s=cfg.wrapper.control_time_s, fps=cfg.fps)
     if cfg.wrapper.use_gripper:
-        env = GripperQuantizationWrapper(
+        env = GripperActionWrapper(
             env=env, quantization_threshold=cfg.wrapper.gripper_quantization_threshold
         )
         # env = GripperPenaltyWrapper(env=env, penalty=cfg.wrapper.gripper_penalty)
@@ -1176,6 +1188,7 @@ def make_robot_env(cfg) -> gym.vector.VectorEnv:
             ee_action_space_params=cfg.wrapper.ee_action_space_params,
             use_gripper=cfg.wrapper.use_gripper,
         )
+
     if cfg.wrapper.ee_action_space_params is not None and cfg.wrapper.ee_action_space_params.use_gamepad:
         # env = ActionScaleWrapper(env=env, ee_action_space_params=cfg.wrapper.ee_action_space_params)
         env = GamepadControlWrapper(
@@ -1192,6 +1205,7 @@ def make_robot_env(cfg) -> gym.vector.VectorEnv:
         env=env,
         reset_pose=cfg.wrapper.fixed_reset_joint_positions,
         reset_time_s=cfg.wrapper.reset_time_s,
+        open_gripper_on_reset=cfg.wrapper.open_gripper_on_reset
     )
     if cfg.wrapper.ee_action_space_params is None and cfg.wrapper.joint_masking_action_space is not None:
         env = JointMaskingActionSpace(env=env, mask=cfg.wrapper.joint_masking_action_space)
@@ -1341,11 +1355,10 @@ def record_dataset(env, policy, cfg):
         dataset.push_to_hub()
 
 
-def replay_episode(env, repo_id, root=None, episode=0):
+def replay_episode(env, cfg):
     from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 
-    local_files_only = root is not None
-    dataset = LeRobotDataset(repo_id, root=root, episodes=[episode], local_files_only=local_files_only)
+    dataset = LeRobotDataset(cfg.repo_id, root=cfg.dataset_root, episodes=[cfg.episode])
     env.reset()
 
     actions = dataset.hf_dataset.select_columns("action")
@@ -1353,7 +1366,7 @@ def replay_episode(env, repo_id, root=None, episode=0):
     for idx in range(dataset.num_frames):
         start_episode_t = time.perf_counter()
 
-        action = actions[idx]["action"][:4]
+        action = actions[idx]["action"]
         env.step((action, False))
         # env.step((action / env.unwrapped.delta, False))
 
@@ -1384,9 +1397,7 @@ def main(cfg: EnvConfig):
     if cfg.mode == "replay":
         replay_episode(
             env,
-            cfg.replay_repo_id,
-            root=cfg.dataset_root,
-            episode=cfg.replay_episode,
+            cfg=cfg,
         )
         exit()
 
