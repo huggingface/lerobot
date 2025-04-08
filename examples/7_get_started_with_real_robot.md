@@ -55,6 +55,13 @@ Finally, connect both arms to your computer via USB. Note that the USB doesn't p
 Now you are ready to configure your motors for the first time, as detailed in the sections below. In the upcoming sections, you'll learn about our classes and functions by running some python code in an interactive session, or by copy-pasting it in a python file.
 
 If you have already configured your motors the first time, you can streamline the process by directly running the teleoperate script (which is detailed further in the tutorial):
+
+> **NOTE:** To visualize the data, enable `--control.display_data=true`. This streams the data using `rerun`. You can adjust the viewer's behavior with these environment variables (refer to `rerun` documentation for more information):
+> - [`RERUN_FLUSH_NUM_BYTES`](https://rerun.io/docs/reference/sdk/micro-batching) [default: 8000]
+> - [`LEROBOT_RERUN_MEMORY_LIMIT`](https://rerun.io/docs/howto/visualization/limit-ram) [default: 5%]
+> - [`LEROBOT_VIEWER_IP`](https://ref.rerun.io/docs/python/0.22.1/common/initialization_functions/#rerun.connect_tcp) (only for remote robots) [default: None]
+> - [`LEROBOT_VIEWER_PORT`](https://ref.rerun.io/docs/python/0.22.1/common/initialization_functions/#rerun.connect_tcp) (only for remote robots) [default: 9876]
+
 ```bash
 python lerobot/scripts/control_robot.py \
   --robot.type=koch \

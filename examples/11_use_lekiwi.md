@@ -424,6 +424,12 @@ python lerobot/scripts/control_robot.py \
   --control.fps=30
 ```
 
+> **NOTE:** To visualize the data, enable `--control.display_data=true`. This streams the data using `rerun`. You can adjust the viewer's behavior with these environment variables (refer to `rerun` documentation for more information):
+> - [`RERUN_FLUSH_NUM_BYTES`](https://rerun.io/docs/reference/sdk/micro-batching) [default: 8000]
+> - [`LEROBOT_RERUN_MEMORY_LIMIT`](https://rerun.io/docs/howto/visualization/limit-ram) [default: 5%]
+> - [`LEROBOT_VIEWER_IP`](https://ref.rerun.io/docs/python/0.22.1/common/initialization_functions/#rerun.connect_tcp) (only for remote robots) [default: None]
+> - [`LEROBOT_VIEWER_PORT`](https://ref.rerun.io/docs/python/0.22.1/common/initialization_functions/#rerun.connect_tcp) (only for remote robots) [default: 9876]
+
 You should see on your laptop something like this: ```[INFO] Connected to remote robot at tcp://172.17.133.91:5555 and video stream at tcp://172.17.133.91:5556.``` Now you can move the leader arm and use the keyboard (w,a,s,d) to drive forward, left, backwards, right. And use (z,x) to turn left or turn right. You can use (r,f) to increase and decrease the speed of the mobile robot. There are three speed modes, see the table below:
 | Speed Mode | Linear Speed (m/s) | Rotation Speed (deg/s) |
 | ---------- | ------------------ | ---------------------- |

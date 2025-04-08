@@ -102,6 +102,13 @@ This is equivalent to running `stretch_robot_home.py`
 Before trying teleoperation, you need activate the gamepad controller by pressing the middle button. For more info, see Stretch's [doc](https://docs.hello-robot.com/0.3/getting_started/hello_robot/#gamepad-teleoperation).
 
 Now try out teleoperation (see above documentation to learn about the gamepad controls):
+
+> **NOTE:** To visualize the data, enable `--control.display_data=true`. This streams the data using `rerun`. You can adjust the viewer's behavior with these environment variables (refer to `rerun` documentation for more information):
+> - [`RERUN_FLUSH_NUM_BYTES`](https://rerun.io/docs/reference/sdk/micro-batching) [default: 8000]
+> - [`LEROBOT_RERUN_MEMORY_LIMIT`](https://rerun.io/docs/howto/visualization/limit-ram) [default: 5%]
+> - [`LEROBOT_VIEWER_IP`](https://ref.rerun.io/docs/python/0.22.1/common/initialization_functions/#rerun.connect_tcp) (only for remote robots) [default: None]
+> - [`LEROBOT_VIEWER_PORT`](https://ref.rerun.io/docs/python/0.22.1/common/initialization_functions/#rerun.connect_tcp) (only for remote robots) [default: 9876]
+
 ```bash
 python lerobot/scripts/control_robot.py \
     --robot.type=stretch \
