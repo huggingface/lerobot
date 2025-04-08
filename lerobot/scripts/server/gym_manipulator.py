@@ -1195,7 +1195,8 @@ def make_robot_env(cfg) -> gym.vector.VectorEnv:
         env = GripperActionWrapper(
             env=env, quantization_threshold=cfg.wrapper.gripper_quantization_threshold
         )
-        env = GripperPenaltyWrapper(env=env, penalty=cfg.wrapper.gripper_penalty, gripper_penalty_in_reward=cfg.wrapper.gripper_penalty_in_reward)
+        if cfg.wrapper.gripper_penalty is not None:
+            env = GripperPenaltyWrapper(env=env, penalty=cfg.wrapper.gripper_penalty, gripper_penalty_in_reward=cfg.wrapper.gripper_penalty_in_reward)
 
     if cfg.wrapper.ee_action_space_params is not None:
         env = EEActionWrapper(
