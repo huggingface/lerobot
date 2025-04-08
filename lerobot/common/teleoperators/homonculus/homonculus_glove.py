@@ -73,7 +73,7 @@ class HomonculusGlove(Teleoperator):
         # Initialize a buffer (deque) for each joint
         self.joints_buffer = {joint: deque(maxlen=self.buffer_size) for joint in self.joints}
         # Last read dictionary
-        self.last_d = {joint: 100 for joint in self.joints}
+        self.last_d = dict.fromkeys(self.joints, 100)
 
         self.calibration = None
         self.thread = threading.Thread(target=self.async_read, daemon=True)

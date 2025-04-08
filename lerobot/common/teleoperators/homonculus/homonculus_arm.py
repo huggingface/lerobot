@@ -64,10 +64,10 @@ class HomonculusArm(Teleoperator):
         self.joints_buffer = {joint: deque(maxlen=self.buffer_size) for joint in self.joints}
 
         # Last read dictionary
-        self.last_d = {joint: 100 for joint in self.joints}
+        self.last_d = dict.fromkeys(self.joints, 100)
 
         # For adaptive EMA, we store a "previous smoothed" state per joint
-        self.adaptive_ema_state = {joint: None for joint in self.joints}
+        self.adaptive_ema_state = dict.fromkeys(self.joints)
         self.kalman_state = {joint: {"x": None, "P": None} for joint in self.joints}
 
         self.calibration = None
