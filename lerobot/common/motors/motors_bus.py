@@ -353,7 +353,7 @@ class MotorsBus(abc.ABC):
 
     def _get_ids_values_dict(self, values: Value | dict[str, Value] | None) -> list[str]:
         if isinstance(values, (int, float)):
-            return {id_: values for id_ in self.ids}
+            return dict.fromkeys(self.ids, values)
         elif isinstance(values, dict):
             return {self.motors[motor].id: val for motor, val in values.items()}
         else:
@@ -499,7 +499,7 @@ class MotorsBus(abc.ABC):
         try:
             drive_modes = self.sync_read("Drive_Mode", normalize=False)
         except KeyError:
-            drive_modes = {name: 0 for name in self.names}
+            drive_modes = dict.fromkeys(self.names, 0)
 
         calibration = {}
         for name, motor in self.motors.items():
