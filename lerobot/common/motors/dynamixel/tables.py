@@ -1,4 +1,4 @@
-# data_name: (address, size_byte)
+# {data_name: (address, size_byte)}
 # https://emanual.robotis.com/docs/en/dxl/x/{MODEL}/#control-table
 X_SERIES_CONTROL_TABLE = {
     "Model_Number": (0, 2),
@@ -66,6 +66,27 @@ X_SERIES_BAUDRATE_TABLE = {
     6: 4_000_000,
 }
 
+# {data_name: size_byte}
+X_SERIES_ENCODINGS_TABLE = {
+    "Homing_Offset": X_SERIES_CONTROL_TABLE["Homing_Offset"][1],
+    "Goal_PWM": X_SERIES_CONTROL_TABLE["Goal_PWM"][1],
+    "Goal_Current": X_SERIES_CONTROL_TABLE["Goal_Current"][1],
+    "Goal_Velocity": X_SERIES_CONTROL_TABLE["Goal_Velocity"][1],
+    "Present_PWM": X_SERIES_CONTROL_TABLE["Present_PWM"][1],
+    "Present_Current": X_SERIES_CONTROL_TABLE["Present_Current"][1],
+    "Present_Velocity": X_SERIES_CONTROL_TABLE["Present_Velocity"][1],
+}
+
+MODEL_ENCODING_TABLE = {
+    "x_series": X_SERIES_ENCODINGS_TABLE,
+    "xl330-m077": X_SERIES_ENCODINGS_TABLE,
+    "xl330-m288": X_SERIES_ENCODINGS_TABLE,
+    "xl430-w250": X_SERIES_ENCODINGS_TABLE,
+    "xm430-w350": X_SERIES_ENCODINGS_TABLE,
+    "xm540-w270": X_SERIES_ENCODINGS_TABLE,
+    "xc430-w150": X_SERIES_ENCODINGS_TABLE,
+}
+
 # {model: model_resolution}
 # https://emanual.robotis.com/docs/en/dxl/x/{MODEL}/#specifications
 MODEL_RESOLUTION = {
@@ -80,7 +101,7 @@ MODEL_RESOLUTION = {
 
 # {model: model_number}
 # https://emanual.robotis.com/docs/en/dxl/x/{MODEL}/#control-table-of-eeprom-area
-MODEL_NUMBER = {
+MODEL_NUMBER_TABLE = {
     "xl330-m077": 1190,
     "xl330-m288": 1200,
     "xl430-w250": 1060,

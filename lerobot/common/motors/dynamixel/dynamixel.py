@@ -29,7 +29,8 @@ from .tables import (
     AVAILABLE_BAUDRATES,
     MODEL_BAUDRATE_TABLE,
     MODEL_CONTROL_TABLE,
-    MODEL_NUMBER,
+    MODEL_ENCODING_TABLE,
+    MODEL_NUMBER_TABLE,
     MODEL_RESOLUTION,
 )
 
@@ -37,7 +38,7 @@ PROTOCOL_VERSION = 2.0
 BAUDRATE = 1_000_000
 DEFAULT_TIMEOUT_MS = 1000
 
-NORMALIZATION_REQUIRED = ["Goal_Position", "Present_Position"]
+NORMALIZED_DATA = ["Goal_Position", "Present_Position"]
 CONVERT_UINT32_TO_INT32_REQUIRED = ["Goal_Position", "Present_Position"]
 
 logger = logging.getLogger(__name__)
@@ -94,9 +95,10 @@ class DynamixelMotorsBus(MotorsBus):
     default_timeout = DEFAULT_TIMEOUT_MS
     model_baudrate_table = deepcopy(MODEL_BAUDRATE_TABLE)
     model_ctrl_table = deepcopy(MODEL_CONTROL_TABLE)
-    model_number_table = deepcopy(MODEL_NUMBER)
+    model_encoding_table = deepcopy(MODEL_ENCODING_TABLE)
+    model_number_table = deepcopy(MODEL_NUMBER_TABLE)
     model_resolution_table = deepcopy(MODEL_RESOLUTION)
-    normalization_required = deepcopy(NORMALIZATION_REQUIRED)
+    normalized_data = deepcopy(NORMALIZED_DATA)
 
     def __init__(
         self,
@@ -128,11 +130,25 @@ class DynamixelMotorsBus(MotorsBus):
         for motor in motors:
             self.write("Torque_Enable", motor, TorqueMode.ENABLED.value)
 
-    def _encode_value(self, value: int, data_name: str | None = None, n_bytes: int | None = None) -> int:
-        return encode_twos_complement(value, n_bytes)
+    def _encode_sign(self, data_name: str, ids_values: dict[int, int]) -> dict[int, int]:
+        for id_ in ids_values:
+            model = self._id_to_model(id_)
+            encoding_table = self.model_encoding_table.get(model)
+            if encoding_table and data_name in encoding_table:
+                n_bytes = encoding_table[data_name]
+                ids_values[id_] = encode_twos_complement(ids_values[id_], n_bytes)
 
-    def _decode_value(self, value: int, data_name: str | None = None, n_bytes: int | None = None) -> int:
-        return decode_twos_complement(value, n_bytes)
+        return ids_values
+
+    def _decode_sign(self, data_name: str, ids_values: dict[int, int]) -> dict[int, int]:
+        for id_ in ids_values:
+            model = self._id_to_model(id_)
+            encoding_table = self.model_encoding_table.get(model)
+            if encoding_table and data_name in encoding_table:
+                n_bytes = encoding_table[data_name]
+                ids_values[id_] = decode_twos_complement(ids_values[id_], n_bytes)
+
+        return ids_values
 
     def _get_half_turn_homings(self, positions: dict[NameOrID, Value]) -> dict[NameOrID, Value]:
         """
@@ -182,13 +198,13 @@ class DynamixelMotorsBus(MotorsBus):
             data_list, comm = self.packet_handler.broadcastPing(self.port_handler)
             if self._is_comm_success(comm):
                 break
-            logger.debug(f"Broadcast failed on port '{self.port}' ({n_try=})")
+            logger.debug(f"Broadcast ping failed on port '{self.port}' ({n_try=})")
             logger.debug(self.packet_handler.getTxRxResult(comm))
 
         if not self._is_comm_success(comm):
             if raise_on_error:
                 raise ConnectionError(self.packet_handler.getTxRxResult(comm))
 
-            return data_list if data_list else None
+            return
 
         return {id_: data[0] for id_, data in data_list.items()}

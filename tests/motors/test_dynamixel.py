@@ -6,7 +6,7 @@ import dynamixel_sdk as dxl
 import pytest
 
 from lerobot.common.motors import Motor, MotorCalibration, MotorNormMode
-from lerobot.common.motors.dynamixel import MODEL_NUMBER, DynamixelMotorsBus
+from lerobot.common.motors.dynamixel import MODEL_NUMBER_TABLE, DynamixelMotorsBus
 from lerobot.common.utils.encoding_utils import encode_twos_complement
 from tests.mocks.mock_dynamixel import MockMotors, MockPortHandler
 
@@ -113,7 +113,7 @@ def test_abc_implementation(dummy_motors):
 
 @pytest.mark.parametrize("id_", [1, 2, 3])
 def test_ping(id_, mock_motors, dummy_motors):
-    expected_model_nb = MODEL_NUMBER[dummy_motors[f"dummy_{id_}"].model]
+    expected_model_nb = MODEL_NUMBER_TABLE[dummy_motors[f"dummy_{id_}"].model]
     stub_name = mock_motors.build_ping_stub(id_, expected_model_nb)
     motors_bus = DynamixelMotorsBus(
         port=mock_motors.port,
@@ -129,7 +129,7 @@ def test_ping(id_, mock_motors, dummy_motors):
 
 def test_broadcast_ping(mock_motors, dummy_motors):
     models = {m.id: m.model for m in dummy_motors.values()}
-    expected_model_nbs = {id_: MODEL_NUMBER[model] for id_, model in models.items()}
+    expected_model_nbs = {id_: MODEL_NUMBER_TABLE[model] for id_, model in models.items()}
     stub_name = mock_motors.build_broadcast_ping_stub(expected_model_nbs)
     motors_bus = DynamixelMotorsBus(
         port=mock_motors.port,
@@ -171,55 +171,7 @@ def test_sync_read_none(mock_motors, dummy_motors):
         (3, 4016),
     ],
 )
-def test_sync_read_by_id(id_, position, mock_motors, dummy_motors):
-    expected_position = {id_: position}
-    stub_name = mock_motors.build_sync_read_stub("Present_Position", expected_position)
-    motors_bus = DynamixelMotorsBus(
-        port=mock_motors.port,
-        motors=dummy_motors,
-    )
-    motors_bus.connect(assert_motors_exist=False)
-
-    read_position = motors_bus.sync_read("Present_Position", id_, normalize=False)
-
-    assert mock_motors.stubs[stub_name].called
-    assert read_position == expected_position
-
-
-@pytest.mark.parametrize(
-    "ids, positions",
-    [
-        ([1],       [1337]),
-        ([1, 2],    [1337, 42]),
-        ([1, 2, 3], [1337, 42, 4016]),
-    ],
-    ids=["1 motor", "2 motors", "3 motors"],
-)  # fmt: skip
-def test_sync_read_by_ids(ids, positions, mock_motors, dummy_motors):
-    assert len(ids) == len(positions)
-    expected_positions = dict(zip(ids, positions, strict=True))
-    stub_name = mock_motors.build_sync_read_stub("Present_Position", expected_positions)
-    motors_bus = DynamixelMotorsBus(
-        port=mock_motors.port,
-        motors=dummy_motors,
-    )
-    motors_bus.connect(assert_motors_exist=False)
-
-    read_positions = motors_bus.sync_read("Present_Position", ids, normalize=False)
-
-    assert mock_motors.stubs[stub_name].called
-    assert read_positions == expected_positions
-
-
-@pytest.mark.parametrize(
-    "id_, position",
-    [
-        (1, 1337),
-        (2, 42),
-        (3, 4016),
-    ],
-)
-def test_sync_read_by_name(id_, position, mock_motors, dummy_motors):
+def test_sync_read_single_value(id_, position, mock_motors, dummy_motors):
     expected_position = {f"dummy_{id_}": position}
     stub_name = mock_motors.build_sync_read_stub("Present_Position", {id_: position})
     motors_bus = DynamixelMotorsBus(
@@ -243,7 +195,7 @@ def test_sync_read_by_name(id_, position, mock_motors, dummy_motors):
     ],
     ids=["1 motor", "2 motors", "3 motors"],
 )  # fmt: skip
-def test_sync_read_by_names(ids, positions, mock_motors, dummy_motors):
+def test_sync_read(ids, positions, mock_motors, dummy_motors):
     assert len(ids) == len(positions)
     names = [f"dummy_{dxl_id}" for dxl_id in ids]
     expected_positions = dict(zip(names, positions, strict=True))
@@ -271,9 +223,9 @@ def test_sync_read_by_names(ids, positions, mock_motors, dummy_motors):
     ],
 )
 def test_sync_read_num_retry(num_retry, num_invalid_try, pos, mock_motors, dummy_motors):
-    expected_position = {1: pos}
+    expected_position = {"dummy_1": pos}
     stub_name = mock_motors.build_sync_read_stub(
-        "Present_Position", expected_position, num_invalid_try=num_invalid_try
+        "Present_Position", {1: pos}, num_invalid_try=num_invalid_try
     )
     motors_bus = DynamixelMotorsBus(
         port=mock_motors.port,
@@ -282,11 +234,11 @@ def test_sync_read_num_retry(num_retry, num_invalid_try, pos, mock_motors, dummy
     motors_bus.connect(assert_motors_exist=False)
 
     if num_retry >= num_invalid_try:
-        pos_dict = motors_bus.sync_read("Present_Position", 1, normalize=False, num_retry=num_retry)
-        assert pos_dict == {1: pos}
+        pos_dict = motors_bus.sync_read("Present_Position", "dummy_1", normalize=False, num_retry=num_retry)
+        assert pos_dict == expected_position
     else:
         with pytest.raises(ConnectionError):
-            _ = motors_bus.sync_read("Present_Position", 1, normalize=False, num_retry=num_retry)
+            _ = motors_bus.sync_read("Present_Position", "dummy_1", normalize=False, num_retry=num_retry)
 
     expected_calls = min(1 + num_retry, 1 + num_invalid_try)
     assert mock_motors.stubs[stub_name].calls == expected_calls
@@ -316,28 +268,6 @@ def test_sync_write_single_value(data_name, value, mock_motors, dummy_motors):
 
 
 @pytest.mark.parametrize(
-    "id_, position",
-    [
-        (1, 1337),
-        (2, 42),
-        (3, 4016),
-    ],
-)
-def test_sync_write_by_id(id_, position, mock_motors, dummy_motors):
-    value = {id_: position}
-    stub_name = mock_motors.build_sync_write_stub("Goal_Position", value)
-    motors_bus = DynamixelMotorsBus(
-        port=mock_motors.port,
-        motors=dummy_motors,
-    )
-    motors_bus.connect(assert_motors_exist=False)
-
-    motors_bus.sync_write("Goal_Position", value, normalize=False)
-
-    assert mock_motors.stubs[stub_name].wait_called()
-
-
-@pytest.mark.parametrize(
     "ids, positions",
     [
         ([1],       [1337]),
@@ -346,54 +276,7 @@ def test_sync_write_by_id(id_, position, mock_motors, dummy_motors):
     ],
     ids=["1 motor", "2 motors", "3 motors"],
 )  # fmt: skip
-def test_sync_write_by_ids(ids, positions, mock_motors, dummy_motors):
-    assert len(ids) == len(positions)
-    values = dict(zip(ids, positions, strict=True))
-    stub_name = mock_motors.build_sync_write_stub("Goal_Position", values)
-    motors_bus = DynamixelMotorsBus(
-        port=mock_motors.port,
-        motors=dummy_motors,
-    )
-    motors_bus.connect(assert_motors_exist=False)
-
-    motors_bus.sync_write("Goal_Position", values, normalize=False)
-
-    assert mock_motors.stubs[stub_name].wait_called()
-
-
-@pytest.mark.parametrize(
-    "id_, position",
-    [
-        (1, 1337),
-        (2, 42),
-        (3, 4016),
-    ],
-)
-def test_sync_write_by_name(id_, position, mock_motors, dummy_motors):
-    id_value = {id_: position}
-    stub_name = mock_motors.build_sync_write_stub("Goal_Position", id_value)
-    motors_bus = DynamixelMotorsBus(
-        port=mock_motors.port,
-        motors=dummy_motors,
-    )
-    motors_bus.connect(assert_motors_exist=False)
-
-    write_value = {f"dummy_{id_}": position}
-    motors_bus.sync_write("Goal_Position", write_value, normalize=False)
-
-    assert mock_motors.stubs[stub_name].wait_called()
-
-
-@pytest.mark.parametrize(
-    "ids, positions",
-    [
-        ([1],       [1337]),
-        ([1, 2],    [1337, 42]),
-        ([1, 2, 3], [1337, 42, 4016]),
-    ],
-    ids=["1 motor", "2 motors", "3 motors"],
-)  # fmt: skip
-def test_sync_write_by_names(ids, positions, mock_motors, dummy_motors):
+def test_sync_write(ids, positions, mock_motors, dummy_motors):
     assert len(ids) == len(positions)
     ids_values = dict(zip(ids, positions, strict=True))
     stub_name = mock_motors.build_sync_write_stub("Goal_Position", ids_values)
@@ -418,29 +301,7 @@ def test_sync_write_by_names(ids, positions, mock_motors, dummy_motors):
         ("Goal_Position", 3, 42),
     ],
 )
-def test_write_by_id(data_name, dxl_id, value, mock_motors, dummy_motors):
-    stub_name = mock_motors.build_write_stub(data_name, dxl_id, value)
-    motors_bus = DynamixelMotorsBus(
-        port=mock_motors.port,
-        motors=dummy_motors,
-    )
-    motors_bus.connect(assert_motors_exist=False)
-
-    motors_bus.write(data_name, dxl_id, value, normalize=False)
-
-    assert mock_motors.stubs[stub_name].called
-
-
-@pytest.mark.parametrize(
-    "data_name, dxl_id, value",
-    [
-        ("Torque_Enable", 1, 0),
-        ("Torque_Enable", 1, 1),
-        ("Goal_Position", 2, 1337),
-        ("Goal_Position", 3, 42),
-    ],
-)
-def test_write_by_name(data_name, dxl_id, value, mock_motors, dummy_motors):
+def test_write(data_name, dxl_id, value, mock_motors, dummy_motors):
     stub_name = mock_motors.build_write_stub(data_name, dxl_id, value)
     motors_bus = DynamixelMotorsBus(
         port=mock_motors.port,
