@@ -80,7 +80,7 @@ def record_audio_from_microphones(
         microphone = Microphone(config)
         microphone.connect()
         print(
-            f"Recording audio from microphone {microphone_id} for {record_time_s} seconds at {microphone.sampling_rate} Hz."
+            f"Recording audio from microphone {microphone_id} for {record_time_s} seconds at {microphone.sample_rate} Hz."
         )
         microphones.append(microphone)
 
@@ -111,13 +111,13 @@ class Microphone:
     """
     The Microphone class handles all microphones compatible with sounddevice (and the underlying PortAudio library). Most microphones and sound cards are compatible, accross all OS (Linux, Mac, Windows).
 
-    A Microphone instance requires the sounddevice index of the microphone, which may be obtained using `python -m sounddevice`. It also requires the recording sampling rate as well as the list of recorded channels.
+    A Microphone instance requires the sounddevice index of the microphone, which may be obtained using `python -m sounddevice`. It also requires the recording sample rate as well as the list of recorded channels.
 
     Example of usage:
     ```python
     from lerobot.common.robot_devices.microphones.configs import MicrophoneConfig
 
-    config = MicrophoneConfig(microphone_index=0, sampling_rate=16000, channels=[1])
+    config = MicrophoneConfig(microphone_index=0, sample_rate=16000, channels=[1])
     microphone = Microphone(config)
 
     microphone.connect()
@@ -134,8 +134,8 @@ class Microphone:
         self.config = config
         self.microphone_index = config.microphone_index
 
-        #Store the recording sampling rate and channels
-        self.sampling_rate = config.sampling_rate
+        #Store the recording sample rate and channels
+        self.sample_rate = config.sample_rate
         self.channels = config.channels
 
         self.mock = config.mock
@@ -177,15 +177,15 @@ class Microphone:
         #Check if provided recording parameters are compatible with the microphone
         actual_microphone = sd.query_devices(self.microphone_index)
 
-        if self.sampling_rate is not None :
-            if self.sampling_rate > actual_microphone["default_samplerate"]:
+        if self.sample_rate is not None :
+            if self.sample_rate > actual_microphone["default_samplerate"]:
                 raise OSError(
-                    f"Provided sampling rate {self.sampling_rate} is higher than the sampling rate of the microphone {actual_microphone['default_samplerate']}."
+                    f"Provided sample rate {self.sample_rate} is higher than the sample rate of the microphone {actual_microphone['default_samplerate']}."
                 )
-            elif self.sampling_rate < actual_microphone["default_samplerate"]:
-                logging.warning("Provided sampling rate is lower than the sampling rate of the microphone. Performance may be impacted.")
+            elif self.sample_rate < actual_microphone["default_samplerate"]:
+                logging.warning("Provided sample rate is lower than the sample rate of the microphone. Performance may be impacted.")
         else:
-            self.sampling_rate = int(actual_microphone["default_samplerate"])
+            self.sample_rate = int(actual_microphone["default_samplerate"])
 
         if self.channels is not None:
             if any(c > actual_microphone["max_input_channels"] for c in self.channels):
@@ -201,7 +201,7 @@ class Microphone:
         #Create the audio stream
         self.stream = sd.InputStream(
             device=self.microphone_index,
-            samplerate=self.sampling_rate,
+            samplerate=self.sample_rate,
             channels=max(self.channels)+1,
             dtype="float32",
             callback=self._audio_callback,
@@ -221,7 +221,7 @@ class Microphone:
 
     def _record_loop(self, output_file: Path) -> None:
         #Can only be run on a single process/thread for file writing safety 
-        with sf.SoundFile(output_file, mode='x', samplerate=self.sampling_rate,
+        with sf.SoundFile(output_file, mode='x', samplerate=self.sample_rate,
                       channels=max(self.channels)+1, subtype=sf.default_subtype(output_file.suffix[1:])) as file:
             while not self.record_stop_event.is_set():
                 file.write(self.record_queue.get())
