@@ -18,14 +18,14 @@
 import argparse
 import datetime as dt
 import os
+import time
 from pathlib import Path
 
 import cv2
-import keyboard
 import rerun as rr
 
 
-def display_and_save_video_stream(output_dir: Path, fps: int, width: int, height: int):
+def display_and_save_video_stream(output_dir: Path, fps: int, width: int, height: int, duration: int):
     rr.init("lerobot_capture_camera_feed")
     memory_limit = os.getenv("LEROBOT_RERUN_MEMORY_LIMIT", "5%")
     rr.spawn(memory_limit=memory_limit)
@@ -46,7 +46,8 @@ def display_and_save_video_stream(output_dir: Path, fps: int, width: int, height
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
 
     frame_index = 0
-    while True:
+    start_time = time.time()
+    while time.time() - start_time < duration:
         ret, frame = cap.read()
 
         if not ret:
@@ -55,10 +56,6 @@ def display_and_save_video_stream(output_dir: Path, fps: int, width: int, height
         rr.log("video/stream", rr.Image(frame.numpy()), static=True)
         cv2.imwrite(str(capture_dir / f"frame_{frame_index:06d}.png"), frame)
         frame_index += 1
-
-        # Break the loop on 'q' key press
-        if keyboard.is_pressed("q"):
-            break
 
     # Release the capture and destroy all windows
     cap.release()
@@ -92,6 +89,12 @@ if __name__ == "__main__":
         type=int,
         default=720,
         help="Height of the captured images.",
+    )
+    parser.add_argument(
+        "--duration",
+        type=int,
+        default=20,
+        help="Duration in seconds for which the video stream should be captured.",
     )
     args = parser.parse_args()
     display_and_save_video_stream(**vars(args))
