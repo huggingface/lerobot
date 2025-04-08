@@ -21,18 +21,21 @@ from lerobot.common.utils.encoding_utils import decode_sign_magnitude, encode_si
 
 from ..motors_bus import Motor, MotorCalibration, MotorsBus, NameOrID, Value
 from .tables import (
-    AVAILABLE_BAUDRATES,
-    ENCODINGS,
+    FIRMWARE_VERSION,
     MODEL_BAUDRATE_TABLE,
     MODEL_CONTROL_TABLE,
+    MODEL_ENCODING_TABLE,
     MODEL_NUMBER,
+    MODEL_NUMBER_TABLE,
     MODEL_RESOLUTION,
-    NORMALIZATION_REQUIRED,
+    SCAN_BAUDRATES,
 )
 
 PROTOCOL_VERSION = 0
 BAUDRATE = 1_000_000
 DEFAULT_TIMEOUT_MS = 1000
+
+NORMALIZED_DATA = ["Goal_Position", "Present_Position"]
 
 logger = logging.getLogger(__name__)
 
@@ -80,16 +83,14 @@ class FeetechMotorsBus(MotorsBus):
     python feetech sdk to communicate with the motors, which is itself based on the dynamixel sdk.
     """
 
-    available_baudrates = deepcopy(AVAILABLE_BAUDRATES)
+    available_baudrates = deepcopy(SCAN_BAUDRATES)
     default_timeout = DEFAULT_TIMEOUT_MS
     model_baudrate_table = deepcopy(MODEL_BAUDRATE_TABLE)
     model_ctrl_table = deepcopy(MODEL_CONTROL_TABLE)
-    model_number_table = deepcopy(MODEL_NUMBER)
+    model_encoding_table = deepcopy(MODEL_ENCODING_TABLE)
+    model_number_table = deepcopy(MODEL_NUMBER_TABLE)
     model_resolution_table = deepcopy(MODEL_RESOLUTION)
-    normalization_required = deepcopy(NORMALIZATION_REQUIRED)
-
-    # Feetech specific
-    encodings = deepcopy(ENCODINGS)
+    normalized_data = deepcopy(NORMALIZED_DATA)
 
     def __init__(
         self,
@@ -140,13 +141,25 @@ class FeetechMotorsBus(MotorsBus):
             self.write("Torque_Enable", motor, TorqueMode.ENABLED.value)
             self.write("Lock", motor, 1)
 
-    def _encode_value(self, value: int, data_name: str | None = None, n_bytes: int | None = None) -> int:
-        sign_bit = self.encodings.get(data_name)
-        return encode_sign_magnitude(value, sign_bit) if sign_bit is not None else value
+    def _encode_sign(self, data_name: str, ids_values: dict[int, int]) -> dict[int, int]:
+        for id_ in ids_values:
+            model = self._id_to_model(id_)
+            encoding_table = self.model_encoding_table.get(model)
+            if encoding_table and data_name in encoding_table:
+                sign_bit = encoding_table[data_name]
+                ids_values[id_] = encode_sign_magnitude(ids_values[id_], sign_bit)
 
-    def _decode_value(self, value: int, data_name: str | None = None, n_bytes: int | None = None) -> int:
-        sign_bit = self.encodings.get(data_name)
-        return decode_sign_magnitude(value, sign_bit) if sign_bit is not None else value
+        return ids_values
+
+    def _decode_sign(self, data_name: str, ids_values: dict[int, int]) -> dict[int, int]:
+        for id_ in ids_values:
+            model = self._id_to_model(id_)
+            encoding_table = self.model_encoding_table.get(model)
+            if encoding_table and data_name in encoding_table:
+                sign_bit = encoding_table[data_name]
+                ids_values[id_] = decode_sign_magnitude(ids_values[id_], sign_bit)
+
+        return ids_values
 
     @staticmethod
     def _split_int_to_bytes(value: int, n_bytes: int) -> list[int]:
@@ -220,15 +233,15 @@ class FeetechMotorsBus(MotorsBus):
                 return data_list, scs.COMM_RX_CORRUPT
 
             # find packet header
-            for id_ in range(0, (rx_length - 1)):
-                if (rxpacket[id_] == 0xFF) and (rxpacket[id_ + 1] == 0xFF):
+            for idx in range(0, (rx_length - 1)):
+                if (rxpacket[idx] == 0xFF) and (rxpacket[idx + 1] == 0xFF):
                     break
 
-            if id_ == 0:  # found at the beginning of the packet
+            if idx == 0:  # found at the beginning of the packet
                 # calculate checksum
                 checksum = 0
-                for id_ in range(2, status_length - 1):  # except header & checksum
-                    checksum += rxpacket[id_]
+                for idx in range(2, status_length - 1):  # except header & checksum
+                    checksum += rxpacket[idx]
 
                 checksum = scs.SCS_LOBYTE(~checksum)
                 if rxpacket[status_length - 1] == checksum:
@@ -247,34 +260,71 @@ class FeetechMotorsBus(MotorsBus):
                     rx_length = rx_length - 2
             else:
                 # remove unnecessary packets
-                del rxpacket[0:id_]
-                rx_length = rx_length - id_
+                del rxpacket[0:idx]
+                rx_length = rx_length - idx
 
     def broadcast_ping(self, num_retry: int = 0, raise_on_error: bool = False) -> dict[int, int] | None:
         for n_try in range(1 + num_retry):
             ids_status, comm = self._broadcast_ping()
             if self._is_comm_success(comm):
                 break
-            logger.debug(f"Broadcast failed on port '{self.port}' ({n_try=})")
-            logger.debug(self.packet_handler.getRxPacketError(comm))
+            logger.debug(f"Broadcast ping failed on port '{self.port}' ({n_try=})")
+            logger.debug(self.packet_handler.getTxRxResult(comm))
 
         if not self._is_comm_success(comm):
             if raise_on_error:
-                raise ConnectionError(self.packet_handler.getRxPacketError(comm))
-
-            return ids_status if ids_status else None
+                raise ConnectionError(self.packet_handler.getTxRxResult(comm))
+            return
 
         ids_errors = {id_: status for id_, status in ids_status.items() if self._is_error(status)}
         if ids_errors:
             display_dict = {id_: self.packet_handler.getRxPacketError(err) for id_, err in ids_errors.items()}
             logger.error(f"Some motors found returned an error status:\n{pformat(display_dict, indent=4)}")
-        comm, model_numbers = self._sync_read(
-            "Model_Number", list(ids_status), model="scs_series", num_retry=num_retry
-        )
+
+        return self._get_model_number(list(ids_status), raise_on_error)
+
+    def _get_firmware_version(self, motor_ids: list[int], raise_on_error: bool = False) -> dict[int, int]:
+        # comm, major = self._sync_read(*FIRMWARE_MAJOR_VERSION, motor_ids)
+        # if not self._is_comm_success(comm):
+        #     if raise_on_error:
+        #         raise ConnectionError(self.packet_handler.getTxRxResult(comm))
+        #     return
+
+        # comm, minor = self._sync_read(*FIRMWARE_MINOR_VERSION, motor_ids)
+        # if not self._is_comm_success(comm):
+        #     if raise_on_error:
+        #         raise ConnectionError(self.packet_handler.getTxRxResult(comm))
+        #     return
+
+        # return {id_: f"{major[id_]}.{minor[id_]}" for id_ in motor_ids}
+
+        comm, firmware_versions = self._sync_read(*FIRMWARE_VERSION, motor_ids)
         if not self._is_comm_success(comm):
             if raise_on_error:
-                raise ConnectionError(self.packet_handler.getRxPacketError(comm))
+                raise ConnectionError(self.packet_handler.getTxRxResult(comm))
+            return
 
-            return model_numbers if model_numbers else None
+        return firmware_versions
+
+    def _get_model_number(self, motor_ids: list[int], raise_on_error: bool = False) -> dict[int, int]:
+        # comm, major = self._sync_read(*MODEL_MAJOR_VERSION, motor_ids)
+        # if not self._is_comm_success(comm):
+        #     if raise_on_error:
+        #         raise ConnectionError(self.packet_handler.getTxRxResult(comm))
+        #     return
+
+        # comm, minor = self._sync_read(*MODEL_MINOR_VERSION, motor_ids)
+        # if not self._is_comm_success(comm):
+        #     if raise_on_error:
+        #         raise ConnectionError(self.packet_handler.getTxRxResult(comm))
+        #     return
+
+        # return {id_: f"{major[id_]}.{minor[id_]}" for id_ in motor_ids}
+
+        comm, model_numbers = self._sync_read(*MODEL_NUMBER, motor_ids)
+        if not self._is_comm_success(comm):
+            if raise_on_error:
+                raise ConnectionError(self.packet_handler.getTxRxResult(comm))
+            return
 
         return model_numbers

@@ -5,7 +5,7 @@ import scservo_sdk as scs
 import serial
 from mock_serial import MockSerial
 
-from lerobot.common.motors.feetech import SCS_SERIES_CONTROL_TABLE, FeetechMotorsBus
+from lerobot.common.motors.feetech import STS_SMS_SERIES_CONTROL_TABLE, FeetechMotorsBus
 from lerobot.common.motors.feetech.feetech import patch_setPacketTimeout
 
 from .mock_serial_patch import WaitableStub
@@ -297,7 +297,7 @@ class MockMotors(MockSerial):
     instruction packets. It is meant to test MotorsBus classes.
     """
 
-    ctrl_table = SCS_SERIES_CONTROL_TABLE
+    ctrl_table = STS_SMS_SERIES_CONTROL_TABLE
 
     def __init__(self):
         super().__init__()
@@ -338,12 +338,6 @@ class MockMotors(MockSerial):
     def build_read_stub(
         self, data_name: str, scs_id: int, value: int | None = None, num_invalid_try: int = 0
     ) -> str:
-        """
-        'data_name' supported:
-            - Model_Number
-        """
-        if data_name != "Model_Number":
-            raise NotImplementedError
         address, length = self.ctrl_table[data_name]
         read_request = MockInstructionPacket.read(scs_id, address, length)
         return_packet = MockStatusPacket.read(scs_id, value, length)
