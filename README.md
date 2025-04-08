@@ -100,7 +100,7 @@ conda activate lerobot
 
 When using `miniconda`, if you don't have `ffmpeg` in your environment:
 ```bash
-conda install ffmpeg
+conda install ffmpeg -c conda-forge
 ```
 
 Install 🤗 LeRobot:
