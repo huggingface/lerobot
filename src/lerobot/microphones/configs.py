@@ -21,7 +21,7 @@ import draccus
 @dataclass(kw_only=True)
 class MicrophoneConfig(draccus.ChoiceRegistry, abc.ABC):
     microphone_index: int
-    sampling_rate: int | None = None
+    sample_rate: int | None = None
     channels: list[int] | None = None
 
     @property
