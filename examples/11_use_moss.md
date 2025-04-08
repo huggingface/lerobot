@@ -31,9 +31,15 @@ conda create -y -n lerobot python=3.10 && conda activate lerobot
 git clone https://github.com/huggingface/lerobot.git ~/lerobot
 ```
 
-5. Install LeRobot with dependencies for the feetech motors:
+5. Install ffmpeg in your environment:
+When using `miniconda`, install `ffmpeg` in your environment:
 ```bash
-cd ~/lerobot && pip install --no-binary=av -e ".[feetech]"
+conda install ffmpeg -c conda-forge
+```
+
+6. Install LeRobot with dependencies for the feetech motors:
+```bash
+cd ~/lerobot && pip install -e ".[feetech]"
 ```
 
 ## Configure the motors

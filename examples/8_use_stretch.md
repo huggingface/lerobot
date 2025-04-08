@@ -43,14 +43,19 @@ conda create -y -n lerobot python=3.10 && conda activate lerobot
 git clone https://github.com/huggingface/lerobot.git ~/lerobot
 ```
 
-6. Install LeRobot with stretch dependencies:
+6. When using `miniconda`, install `ffmpeg` in your environment:
 ```bash
-cd ~/lerobot && pip install --no-binary=av -e ".[stretch]"
+conda install ffmpeg -c conda-forge
+```
+
+7. Install LeRobot with stretch dependencies:
+```bash
+cd ~/lerobot && pip install -e ".[stretch]"
 ```
 
 > **Note:** If you get this message, you can ignore it: `ERROR: pip's dependency resolver does not currently take into account all the packages that are installed.`
 
-7. Run a [system check](https://docs.hello-robot.com/0.3/getting_started/stretch_hardware_overview/#system-check) to make sure your robot is ready:
+8. Run a [system check](https://docs.hello-robot.com/0.3/getting_started/stretch_hardware_overview/#system-check) to make sure your robot is ready:
 ```bash
 stretch_system_check.py
 ```

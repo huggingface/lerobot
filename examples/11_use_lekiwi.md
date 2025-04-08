@@ -67,9 +67,15 @@ conda activate lerobot
 git clone https://github.com/huggingface/lerobot.git ~/lerobot
 ```
 
-#### 5. Install LeRobot with dependencies for the feetech motors:
+#### 5. Install ffmpeg in your environment:
+When using `miniconda`, install `ffmpeg` in your environment:
 ```bash
-cd ~/lerobot && pip install --no-binary=av -e ".[feetech]"
+conda install ffmpeg -c conda-forge
+```
+
+#### 6. Install LeRobot with dependencies for the feetech motors:
+```bash
+cd ~/lerobot && pip install -e ".[feetech]"
 ```
 
 ## C. Install LeRobot on laptop
@@ -108,9 +114,15 @@ conda activate lerobot
 git clone https://github.com/huggingface/lerobot.git ~/lerobot
 ```
 
-#### 5. Install LeRobot with dependencies for the feetech motors:
+#### 5. Install ffmpeg in your environment:
+When using `miniconda`, install `ffmpeg` in your environment:
 ```bash
-cd ~/lerobot && pip install --no-binary=av -e ".[feetech]"
+conda install ffmpeg -c conda-forge
+```
+
+#### 6. Install LeRobot with dependencies for the feetech motors:
+```bash
+cd ~/lerobot && pip install -e ".[feetech]"
 ```
 
 Great :hugs:! You are now done installing LeRobot and we can begin assembling the SO100 arms and Mobile base :robot:.
