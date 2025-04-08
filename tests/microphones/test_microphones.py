@@ -75,7 +75,7 @@ def test_microphone(tmp_path, request, microphone_type, mock):
     microphone = make_microphone(**microphone_kwargs)
     microphone.connect()
     assert microphone.is_connected
-    assert microphone.sampling_rate is not None
+    assert microphone.sample_rate is not None
     assert microphone.channels is not None
 
     # Test connecting twice raises an error
@@ -122,7 +122,7 @@ def test_microphone(tmp_path, request, microphone_type, mock):
     microphone.stop_recording()
 
     recorded_audio, recorded_sample_rate = read(fpath)
-    assert recorded_sample_rate == microphone.sampling_rate
+    assert recorded_sample_rate == microphone.sample_rate
 
     error_msg = (
         "Recording time difference between read() and stop_recording()",

@@ -349,7 +349,7 @@ def test_add_frame_audio(audio_dataset):
 
     dataset.save_episode()
 
-    assert dataset[0]["observation.audio.microphone"].shape == torch.Size((int(DEFAULT_AUDIO_CHUNK_DURATION*microphone.sampling_rate),DUMMY_AUDIO_CHANNELS))
+    assert dataset[0]["observation.audio.microphone"].shape == torch.Size((int(DEFAULT_AUDIO_CHUNK_DURATION*microphone.sample_rate),DUMMY_AUDIO_CHANNELS))
 
 # TODO(aliberts):
 # - [ ] test various attributes & state from init and create
