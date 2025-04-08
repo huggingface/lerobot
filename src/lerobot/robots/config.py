@@ -36,7 +36,7 @@ class RobotConfig(draccus.ChoiceRegistry, abc.ABC):
                         )
         if hasattr(self, "microphones") and self.microphones:
             for _, config in self.microphones.items():
-                for attr in ["sampling_rate", "channels"]:
+                for attr in ["sample_rate", "channels"]:
                     if getattr(config, attr) is None:
                         raise ValueError(
                             f"Specifying '{attr}' is required for the microphone to be used in a robot"
