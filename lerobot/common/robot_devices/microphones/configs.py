@@ -31,6 +31,6 @@ class MicrophoneConfig(MicrophoneConfigBase):
     """
 
     microphone_index: int
-    sampling_rate: int | None = None
+    sample_rate: int | None = None
     channels: list[int] | None = None
     mock: bool = False
