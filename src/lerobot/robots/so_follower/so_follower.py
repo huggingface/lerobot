@@ -78,8 +78,7 @@ class SOFollower(Robot):
     @property
     def _microphones_ft(self) -> dict[str, tuple]:
         return {
-            mic: (self.config.microphones[mic].sampling_rate, self.config.microphones[mic].channels)
-            for mic in self.microphones
+            mic: (self.config.microphones[mic].sample_rate, self.config.microphones[mic].channels) for mic in self.microphones
         }
 
     @cached_property
