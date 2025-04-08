@@ -30,9 +30,14 @@ conda create -y -n lerobot python=3.10 && conda activate lerobot
 git clone https://github.com/huggingface/lerobot.git ~/lerobot
 ```
 
-5. Install LeRobot with dependencies for the Aloha motors (dynamixel) and cameras (intelrealsense):
+5. When using `miniconda`, install `ffmpeg` in your environment:
 ```bash
-cd ~/lerobot && pip install --no-binary=av -e ".[dynamixel, intelrealsense]"
+conda install ffmpeg -c conda-forge
+```
+
+6. Install LeRobot with dependencies for the Aloha motors (dynamixel) and cameras (intelrealsense):
+```bash
+cd ~/lerobot && pip install -e ".[dynamixel, intelrealsense]"
 ```
 
 ## Teleoperate
