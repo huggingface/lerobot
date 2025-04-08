@@ -61,7 +61,6 @@ dependencies = [
     "numba>=0.59.0",
     "omegaconf>=2.3.0",
     "opencv-python-headless>=4.9.0",
-    "keyboard>=0.13.5",
     "packaging>=24.2",
     "pymunk>=6.6.0",
     "pynput>=1.7.7",
