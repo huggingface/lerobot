@@ -1026,8 +1026,8 @@ def get_observation_features(
         return None, None
 
     with torch.no_grad():
-        observation_features = policy.actor.encoder.get_image_features(observations)
-        next_observation_features = policy.actor.encoder.get_image_features(next_observations)
+        observation_features = policy.actor.encoder.get_image_features(observations, normalize=True)
+        next_observation_features = policy.actor.encoder.get_image_features(next_observations, normalize=True)
 
     return observation_features, next_observation_features
 
