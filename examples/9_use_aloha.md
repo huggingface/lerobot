@@ -32,14 +32,7 @@ git clone https://github.com/huggingface/lerobot.git ~/lerobot
 
 5. Install LeRobot with dependencies for the Aloha motors (dynamixel) and cameras (intelrealsense):
 ```bash
-cd ~/lerobot && pip install -e ".[dynamixel, intelrealsense]"
-```
-
-For Linux only (not Mac), install extra dependencies for recording datasets:
-```bash
-conda install -y -c conda-forge ffmpeg
-pip uninstall -y opencv-python
-conda install -y -c conda-forge "opencv>=4.10.0"
+cd ~/lerobot && pip install --no-binary=av -e ".[dynamixel, intelrealsense]"
 ```
 
 ## Teleoperate

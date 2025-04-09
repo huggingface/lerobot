@@ -36,8 +36,8 @@ repos:
       - id: end-of-file-fixer
       - id: trailing-whitespace
 
-  - repo: https://github.com/crate-ci/typos
-    rev: v1.30.2
+  - repo: https://github.com/adhtruong/mirrors-typos
+    rev: v1.31.1
     hooks:
       - id: typos
         args: [--force-exclude]
@@ -48,7 +48,7 @@ repos:
     -   id: pyupgrade
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.9.10
+    rev: v0.11.4
     hooks:
       - id: ruff
         args: [--fix]
@@ -57,12 +57,12 @@ repos:
 
   ##### Security #####
   - repo: https://github.com/gitleaks/gitleaks
-    rev: v8.24.0
+    rev: v8.24.2
     hooks:
       - id: gitleaks
 
   - repo: https://github.com/woodruffw/zizmor-pre-commit
-    rev: v1.4.1
+    rev: v1.5.2
     hooks:
       - id: zizmor
 

@@ -474,7 +474,7 @@ class ManipulatorRobot:
             # Used when record_data=True
             follower_goal_pos[name] = goal_pos
 
-            goal_pos = goal_pos.numpy().astype(np.int32)
+            goal_pos = goal_pos.numpy().astype(np.float32)
             self.follower_arms[name].write("Goal_Position", goal_pos)
             self.logs[f"write_follower_{name}_goal_pos_dt_s"] = time.perf_counter() - before_fwrite_t
 
@@ -596,7 +596,7 @@ class ManipulatorRobot:
             action_sent.append(goal_pos)
 
             # Send goal position to each follower
-            goal_pos = goal_pos.numpy().astype(np.int32)
+            goal_pos = goal_pos.numpy().astype(np.float32)
             self.follower_arms[name].write("Goal_Position", goal_pos)
 
         return torch.cat(action_sent)

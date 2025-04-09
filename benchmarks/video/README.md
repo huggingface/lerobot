@@ -51,7 +51,7 @@ For a comprehensive list and documentation of these parameters, see the ffmpeg d
 ### Decoding parameters
 **Decoder**
 We tested two video decoding backends from torchvision:
-- `pyav` (default)
+- `pyav`
 - `video_reader` (requires to build torchvision from source)
 
 **Requested timestamps**
