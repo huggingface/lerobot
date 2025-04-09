@@ -107,8 +107,11 @@ def predict_action(observation, policy, device, use_amp):
         torch.inference_mode(),
         torch.autocast(device_type=device.type) if device.type == "cuda" and use_amp else nullcontext(),
     ):
-        # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
         for name in observation:
+            # Skip pre-processing the task text, the VLA will do the tokenization
+            if "task" in name:
+                continue
+            # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
             if "image" in name:
                 observation[name] = observation[name].type(torch.float32) / 255
                 observation[name] = observation[name].permute(2, 0, 1).contiguous()
@@ -252,6 +255,9 @@ def control_loop(
             observation = robot.capture_observation()
 
             if policy is not None:
+                # Pass the task to the policy if provided for VLA model
+                if observation.get("task") is None and single_task is not None:
+                    observation["task"] = [single_task]
                 pred_action = predict_action(
                     observation, policy, get_safe_torch_device(policy.config.device), policy.config.use_amp
                 )
