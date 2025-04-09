@@ -56,11 +56,7 @@ Now you are ready to configure your motors for the first time, as detailed in th
 
 If you have already configured your motors the first time, you can streamline the process by directly running the teleoperate script (which is detailed further in the tutorial):
 
-> **NOTE:** To visualize the data, enable `--control.display_data=true`. This streams the data using `rerun`. You can adjust the viewer's behavior with these environment variables (refer to `rerun` documentation for more information):
-> - [`RERUN_FLUSH_NUM_BYTES`](https://rerun.io/docs/reference/sdk/micro-batching) [default: 8000]
-> - [`LEROBOT_RERUN_MEMORY_LIMIT`](https://rerun.io/docs/howto/visualization/limit-ram) [default: 5%]
-> - [`LEROBOT_VIEWER_IP`](https://ref.rerun.io/docs/python/0.22.1/common/initialization_functions/#rerun.connect_tcp) (only for remote robots) [default: None]
-> - [`LEROBOT_VIEWER_PORT`](https://ref.rerun.io/docs/python/0.22.1/common/initialization_functions/#rerun.connect_tcp) (only for remote robots) [default: 9876]
+> **NOTE:** To visualize the data, enable `--control.display_data=true`. This streams the data using `rerun`.
 
 ```bash
 python lerobot/scripts/control_robot.py \
@@ -834,6 +830,10 @@ It contains:
 - `dtRphone:33.84 (29.5hz)` which is the delta time of capturing an image from the phone camera in the thread running asynchronously.
 
 Troubleshooting:
+- On Linux, if you encounter any issue during video encoding with `ffmpeg: unknown encoder libsvtav1`, you can:
+   - install with conda-forge by running `conda install -c conda-forge ffmpeg` (it should be compiled with `libsvtav1`),
+   - or, install [ffmpeg build dependencies](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#GettheDependencies) and [compile ffmpeg from source with libsvtav1](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#libsvtav1),
+   - and, make sure you use the corresponding ffmpeg binary to your install with `which ffmpeg`.
 - On Linux, if the left and right arrow keys and escape key don't have any effect during data recording, make sure you've set the `$DISPLAY` environment variable. See [pynput limitations](https://pynput.readthedocs.io/en/latest/limitations.html#linux).
 
 At the end of data recording, your dataset will be uploaded on your Hugging Face page (e.g. https://huggingface.co/datasets/cadene/koch_test) that you can obtain by running:

@@ -49,11 +49,7 @@ Teleoperation consists in manually operating the leader arms to move the followe
 
 By running the following code, you can start your first **SAFE** teleoperation:
 
-> **NOTE:** To visualize the data, enable `--control.display_data=true`. This streams the data using `rerun`. You can adjust the viewer's behavior with these environment variables (refer to `rerun` documentation for more information):
-> - [`RERUN_FLUSH_NUM_BYTES`](https://rerun.io/docs/reference/sdk/micro-batching) [default: 8000]
-> - [`LEROBOT_RERUN_MEMORY_LIMIT`](https://rerun.io/docs/howto/visualization/limit-ram) [default: 5%]
-> - [`LEROBOT_VIEWER_IP`](https://ref.rerun.io/docs/python/0.22.1/common/initialization_functions/#rerun.connect_tcp) (only for remote robots) [default: None]
-> - [`LEROBOT_VIEWER_PORT`](https://ref.rerun.io/docs/python/0.22.1/common/initialization_functions/#rerun.connect_tcp) (only for remote robots) [default: 9876]
+> **NOTE:** To visualize the data, enable `--control.display_data=true`. This streams the data using `rerun`.
 
 ```bash
 python lerobot/scripts/control_robot.py \

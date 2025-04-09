@@ -307,10 +307,6 @@ def stop_recording(robot, listener, display_data):
     if not is_headless() and listener is not None:
         listener.stop()
 
-        # TODO(Steven): Find a way to close visualizer: https://github.com/rerun-io/rerun/pull/9400
-        # if display_data:
-        #     cv2.destroyAllWindows()
-
 
 def sanity_check_dataset_name(repo_id, policy_cfg):
     _, dataset_name = repo_id.split("/")

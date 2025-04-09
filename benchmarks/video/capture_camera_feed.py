@@ -24,11 +24,13 @@ from pathlib import Path
 import cv2
 import rerun as rr
 
+# see https://rerun.io/docs/howto/visualization/limit-ram
+RERUN_MEMORY_LIMIT = os.getenv("LEROBOT_RERUN_MEMORY_LIMIT", "5%")
+
 
 def display_and_save_video_stream(output_dir: Path, fps: int, width: int, height: int, duration: int):
     rr.init("lerobot_capture_camera_feed")
-    memory_limit = os.getenv("LEROBOT_RERUN_MEMORY_LIMIT", "5%")
-    rr.spawn(memory_limit=memory_limit)
+    rr.spawn(memory_limit=RERUN_MEMORY_LIMIT)
 
     now = dt.datetime.now()
     capture_dir = output_dir / f"{now:%Y-%m-%d}" / f"{now:%H-%M-%S}"
@@ -57,10 +59,10 @@ def display_and_save_video_stream(output_dir: Path, fps: int, width: int, height
         cv2.imwrite(str(capture_dir / f"frame_{frame_index:06d}.png"), frame)
         frame_index += 1
 
-    # Release the capture and destroy all windows
+    # Release the capture
     cap.release()
-    # TODO(Steven): Find a way to close visualizer: https://github.com/rerun-io/rerun/pull/9400
-    # cv2.destroyAllWindows()
+
+    # TODO(Steven): Add a graceful shutdown via a close() method for the Viewer context, though not currently supported in the Rerun API.
 
 
 if __name__ == "__main__":
