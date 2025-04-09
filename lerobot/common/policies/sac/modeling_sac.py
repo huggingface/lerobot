@@ -428,6 +428,7 @@ class SACPolicy(
         actions_discrete = torch.round(actions_discrete)
         actions_discrete = actions_discrete.long()
 
+        gripper_penalties: Tensor | None = None
         if complementary_info is not None:
             gripper_penalties: Tensor | None = complementary_info.get("gripper_penalty")
 

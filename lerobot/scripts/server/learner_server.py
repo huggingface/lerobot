@@ -406,7 +406,8 @@ def add_actor_information_and_train(
                 "next_state": next_observations,
                 "done": done,
                 "observation_feature": observation_features,
-                "next_observation_feature": next_observation_features,
+                "next_observation_feature": next_observation_features, 
+                "complementary_info": batch["complementary_info"],
             }
 
             # Use the forward method for critic loss (includes both main critic and grasp critic)
@@ -992,7 +993,6 @@ def initialize_offline_replay_buffer(
         device=device,
         state_keys=cfg.policy.input_features.keys(),
         action_mask=active_action_dims,
-        action_delta=cfg.env.wrapper.delta_action,
         storage_device=storage_device,
         optimize_memory=True,
         capacity=cfg.policy.offline_buffer_capacity,
