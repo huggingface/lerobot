@@ -158,6 +158,7 @@ class Microphone:
         self.logs = {}
         self.is_connected = False
         self.is_recording = False
+        self.is_writing = False
 
     def connect(self) -> None:
         if self.is_connected:
@@ -220,7 +221,8 @@ class Microphone:
             logging.warning(status)
         # Slicing makes copy unecessary 
         # Two separate queues are necessary because .get() also pops the data from the queue
-        self.record_queue.put(indata[:,self.channels])
+        if self.is_writing:
+            self.record_queue.put(indata[:,self.channels])
         self.read_queue.put(indata[:,self.channels])
 
     @staticmethod
@@ -300,6 +302,8 @@ class Microphone:
                 self.record_thread = Thread(target=Microphone._record_loop, args=(self.record_queue, self.record_stop_event, self.sample_rate, self.channels, output_file, ))
             self.record_thread.daemon = True
             self.record_thread.start()
+
+            self.is_writing = True
             
         self.is_recording = True
         self.stream.start()
