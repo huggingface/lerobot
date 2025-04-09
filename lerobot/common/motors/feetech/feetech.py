@@ -31,7 +31,7 @@ from .tables import (
     SCAN_BAUDRATES,
 )
 
-PROTOCOL_VERSION = 0
+DEFAULT_PROTOCOL_VERSION = 0
 BAUDRATE = 1_000_000
 DEFAULT_TIMEOUT_MS = 1000
 
@@ -97,6 +97,7 @@ class FeetechMotorsBus(MotorsBus):
         port: str,
         motors: dict[str, Motor],
         calibration: dict[str, MotorCalibration] | None = None,
+        protocol_version: int = DEFAULT_PROTOCOL_VERSION,
     ):
         super().__init__(port, motors, calibration)
         import scservo_sdk as scs
@@ -106,7 +107,7 @@ class FeetechMotorsBus(MotorsBus):
         self.port_handler.setPacketTimeout = patch_setPacketTimeout.__get__(
             self.port_handler, scs.PortHandler
         )
-        self.packet_handler = scs.PacketHandler(PROTOCOL_VERSION)
+        self.packet_handler = scs.PacketHandler(protocol_version)
         self.sync_reader = scs.GroupSyncRead(self.port_handler, self.packet_handler, 0, 0)
         self.sync_writer = scs.GroupSyncWrite(self.port_handler, self.packet_handler, 0, 0)
         self._comm_success = scs.COMM_SUCCESS
