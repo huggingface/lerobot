@@ -26,7 +26,8 @@ from lerobot.common.datasets.compute_stats import (
     estimate_num_samples,
     get_feature_stats,
     sample_images,
-    sample_audio,
+    sample_audio_from_path,
+    sample_audio_from_data,
     sample_indices,
 )
 
@@ -73,10 +74,18 @@ def test_sample_images(mock_load):
     assert images.dtype == np.uint8
     assert len(images) == estimate_num_samples(100)
 
-@patch("lerobot.common.datasets.compute_stats.load_audio", side_effect=mock_load_audio)
-def test_sample_audio(mock_load):
+@patch("lerobot.common.datasets.compute_stats.load_audio_from_path", side_effect=mock_load_audio)
+def test_sample_audio_from_path(mock_load):
     audio_path = "audio.wav"
-    audio_samples = sample_audio(audio_path)
+    audio_samples = sample_audio_from_path(audio_path)
+    assert isinstance(audio_samples, np.ndarray)
+    assert audio_samples.shape[1] == 2
+    assert audio_samples.dtype == np.float32
+    assert len(audio_samples) == estimate_num_samples(16000)
+
+def test_sample_audio_from_data(mock_load):
+    audio_data = np.ones((16000, 2), dtype=np.float32)
+    audio_samples = sample_audio_from_data(audio_data)
     assert isinstance(audio_samples, np.ndarray)
     assert audio_samples.shape[1] == 2
     assert audio_samples.dtype == np.float32
@@ -166,7 +175,7 @@ def test_compute_episode_stats():
     with patch(
         "lerobot.common.datasets.compute_stats.load_image_as_numpy", side_effect=mock_load_image_as_numpy
     ), patch(
-        "lerobot.common.datasets.compute_stats.load_audio", side_effect=mock_load_audio
+        "lerobot.common.datasets.compute_stats.load_audio_from_path", side_effect=mock_load_audio
     ):
         stats = compute_episode_stats(episode_data, features)
 
