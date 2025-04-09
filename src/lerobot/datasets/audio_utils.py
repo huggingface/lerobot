@@ -78,9 +78,9 @@ def decode_audio_torchaudio(
     # TODO(CarolinePascal) : sort timestamps ?
 
     reader.add_basic_audio_stream(
-        frames_per_chunk = int(ceil(duration * audio_sample_rate)),    #Too much is better than not enough
-        buffer_chunk_size = -1, #No dropping frames
-        format = "fltp",    #Format as float32
+        frames_per_chunk=int(ceil(duration * audio_sample_rate)),  # Too much is better than not enough
+        buffer_chunk_size=-1,  # No dropping frames
+        format="fltp",  # Format as float32
     )
 
     audio_chunks = []
@@ -93,7 +93,9 @@ def decode_audio_torchaudio(
         current_audio_chunk = reader.pop_chunks()[0]
 
         if log_loaded_timestamps:
-            logging.info(f"audio chunk loaded at starting timestamp={current_audio_chunk['pts']:.4f} with duration={len(current_audio_chunk) / audio_sample_rate:.4f}")
+            logging.info(
+                f"audio chunk loaded at starting timestamp={current_audio_chunk['pts']:.4f} with duration={len(current_audio_chunk) / audio_sample_rate:.4f}"
+            )
 
         audio_chunks.append(current_audio_chunk)
 
