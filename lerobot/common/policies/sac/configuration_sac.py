@@ -120,7 +120,7 @@ class SACConfig(PreTrainedConfig):
         }
     )
 
-    dataset_stats: dict[str, dict[str, list[float]]] = field(
+    dataset_stats: dict[str, dict[str, list[float]]] | None = field(
         default_factory=lambda: {
             "observation.image": {
                 "mean": [0.485, 0.456, 0.406],
