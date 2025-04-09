@@ -116,6 +116,35 @@ class MockInstructionPacket(MockFeetechPacket):
         return cls.build(scs_id=scs_id, params=params, length=length, instruct_type="Read")
 
     @classmethod
+    def write(
+        cls,
+        scs_id: int,
+        value: int,
+        start_address: int,
+        data_length: int,
+    ) -> bytes:
+        """
+        Builds a "Write" instruction.
+
+        The parameters for Write are:
+            param[0]   = start_address L
+            param[1]   = start_address H
+            param[2]   = 1st Byte
+            param[3]   = 2nd Byte
+            ...
+            param[1+X] = X-th Byte
+
+        And 'length' = data_length + 3, where:
+            +1 is for instruction byte,
+            +1 is for the length bytes,
+            +1 is for the checksum at the end.
+        """
+        data = FeetechMotorsBus._split_int_to_bytes(value, data_length)
+        params = [start_address, *data]
+        length = data_length + 3
+        return cls.build(scs_id=scs_id, params=params, length=length, instruct_type="Write")
+
+    @classmethod
     def sync_read(
         cls,
         scs_ids: list[int],
@@ -177,35 +206,6 @@ class MockInstructionPacket(MockFeetechPacket):
         params = [start_address, data_length, *data]
         length = len(ids_values) * (1 + data_length) + 4
         return cls.build(scs_id=scs.BROADCAST_ID, params=params, length=length, instruct_type="Sync_Write")
-
-    @classmethod
-    def write(
-        cls,
-        scs_id: int,
-        value: int,
-        start_address: int,
-        data_length: int,
-    ) -> bytes:
-        """
-        Builds a "Write" instruction.
-
-        The parameters for Write are:
-            param[0]   = start_address L
-            param[1]   = start_address H
-            param[2]   = 1st Byte
-            param[3]   = 2nd Byte
-            ...
-            param[1+X] = X-th Byte
-
-        And 'length' = data_length + 3, where:
-            +1 is for instruction byte,
-            +1 is for the length bytes,
-            +1 is for the checksum at the end.
-        """
-        data = FeetechMotorsBus._split_int_to_bytes(value, data_length)
-        params = [start_address, *data]
-        length = data_length + 3
-        return cls.build(scs_id=scs_id, params=params, length=length, instruct_type="Write")
 
 
 class MockStatusPacket(MockFeetechPacket):

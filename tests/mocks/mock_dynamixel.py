@@ -213,6 +213,40 @@ class MockInstructionPacket(MockDynamixelPacketv2):
         return cls.build(dxl_id=dxl_id, params=params, length=length, instruct_type="Ping")
 
     @classmethod
+    def write(
+        cls,
+        dxl_id: int,
+        value: int,
+        start_address: int,
+        data_length: int,
+    ) -> bytes:
+        """
+        Builds a "Write" instruction.
+        https://emanual.robotis.com/docs/en/dxl/protocol2/#write-0x03
+
+        The parameters for Write (Protocol 2.0) are:
+            param[0]   = start_address L
+            param[1]   = start_address H
+            param[2]   = 1st Byte
+            param[3]   = 2nd Byte
+            ...
+            param[1+X] = X-th Byte
+
+        And 'length' = data_length + 5, where:
+            +1 is for instruction byte,
+            +2 is for the length bytes,
+            +2 is for the CRC at the end.
+        """
+        data = DynamixelMotorsBus._split_int_to_bytes(value, data_length)
+        params = [
+            dxl.DXL_LOBYTE(start_address),
+            dxl.DXL_HIBYTE(start_address),
+            *data,
+        ]
+        length = data_length + 5
+        return cls.build(dxl_id=dxl_id, params=params, length=length, instruct_type="Write")
+
+    @classmethod
     def sync_read(
         cls,
         dxl_ids: list[int],
@@ -292,40 +326,6 @@ class MockInstructionPacket(MockDynamixelPacketv2):
         ]
         length = len(ids_values) * (1 + data_length) + 7
         return cls.build(dxl_id=dxl.BROADCAST_ID, params=params, length=length, instruct_type="Sync_Write")
-
-    @classmethod
-    def write(
-        cls,
-        dxl_id: int,
-        value: int,
-        start_address: int,
-        data_length: int,
-    ) -> bytes:
-        """
-        Builds a "Write" instruction.
-        https://emanual.robotis.com/docs/en/dxl/protocol2/#write-0x03
-
-        The parameters for Write (Protocol 2.0) are:
-            param[0]   = start_address L
-            param[1]   = start_address H
-            param[2]   = 1st Byte
-            param[3]   = 2nd Byte
-            ...
-            param[1+X] = X-th Byte
-
-        And 'length' = data_length + 5, where:
-            +1 is for instruction byte,
-            +2 is for the length bytes,
-            +2 is for the CRC at the end.
-        """
-        data = DynamixelMotorsBus._split_int_to_bytes(value, data_length)
-        params = [
-            dxl.DXL_LOBYTE(start_address),
-            dxl.DXL_HIBYTE(start_address),
-            *data,
-        ]
-        length = data_length + 5
-        return cls.build(dxl_id=dxl_id, params=params, length=length, instruct_type="Write")
 
 
 class MockStatusPacket(MockDynamixelPacketv2):
