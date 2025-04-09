@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 import decord
+import numpy as np
 import pyarrow as pa
 import torch
 import torchvision
@@ -249,7 +250,7 @@ def decode_video_frames_torchcodec(
 def decode_video_frames_decord(
     video_path: Path | str,
     timestamps: list[float],
-) -> torch.Tensor::
+) -> torch.Tensor:
     video_path = str(video_path)
     vr = decord.VideoReader(video_path)
     num_frames = len(vr)
