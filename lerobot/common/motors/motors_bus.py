@@ -393,6 +393,10 @@ class MotorsBus(abc.ABC):
                     "was found instead for that id."
                 )
 
+    @abc.abstractmethod
+    def _assert_protocol_is_compatible(self, instruction_name: str) -> None:
+        pass
+
     @property
     def is_connected(self) -> bool:
         return self.port_handler.is_open
@@ -723,6 +727,63 @@ class MotorsBus(abc.ABC):
     ) -> dict[int, list[int, str]] | None:
         pass
 
+    def read(
+        self,
+        data_name: str,
+        motor: str,
+        *,
+        normalize: bool = True,
+        num_retry: int = 0,
+    ) -> Value:
+        if not self.is_connected:
+            raise DeviceNotConnectedError(
+                f"{self.__class__.__name__}('{self.port}') is not connected. You need to run `{self.__class__.__name__}.connect()`."
+            )
+
+        id_ = self.motors[motor].id
+        model = self.motors[motor].model
+        addr, n_bytes = get_address(self.model_ctrl_table, model, data_name)
+
+        value, comm, error = self._read(addr, n_bytes, id_, num_retry=num_retry)
+        if not self._is_comm_success(comm):
+            raise ConnectionError(
+                f"Failed to read '{data_name}' on {id_=} after {num_retry + 1} tries."
+                f"{self.packet_handler.getTxRxResult(comm)}"
+            )
+        elif self._is_error(error):
+            raise RuntimeError(
+                f"Failed to read '{data_name}' on {id_=} after {num_retry + 1} tries."
+                f"\n{self.packet_handler.getRxPacketError(error)}"
+            )
+
+        id_value = self._decode_sign(data_name, {id_: value})
+
+        if normalize and data_name in self.normalized_data:
+            id_value = self._normalize(data_name, id_value)
+
+        return id_value[id_]
+
+    def _read(self, addr: int, n_bytes: int, motor_id: int, num_retry: int = 0) -> tuple[int, int]:
+        if n_bytes == 1:
+            read_fn = self.packet_handler.read1ByteTxRx
+        elif n_bytes == 2:
+            read_fn = self.packet_handler.read2ByteTxRx
+        elif n_bytes == 4:
+            read_fn = self.packet_handler.read4ByteTxRx
+        else:
+            raise ValueError(n_bytes)
+
+        for n_try in range(1 + num_retry):
+            value, comm, error = read_fn(self.port_handler, motor_id, addr)
+            if self._is_comm_success(comm):
+                break
+            logger.debug(
+                f"Failed to read @{addr=} ({n_bytes=}) on {motor_id=} ({n_try=}): "
+                + self.packet_handler.getTxRxResult(comm)
+            )
+
+        return value, comm, error
+
     def sync_read(
         self,
         data_name: str,
@@ -735,6 +796,8 @@ class MotorsBus(abc.ABC):
             raise DeviceNotConnectedError(
                 f"{self.__class__.__name__}('{self.port}') is not connected. You need to run `{self.__class__.__name__}.connect()`."
             )
+
+        self._assert_protocol_is_compatible("sync_read")
 
         names = self._get_names_list(motors)
         ids = [self.motors[name].id for name in names]

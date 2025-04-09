@@ -102,6 +102,7 @@ class FeetechMotorsBus(MotorsBus):
         super().__init__(port, motors, calibration)
         import scservo_sdk as scs
 
+        self.protocol_version = protocol_version
         self.port_handler = scs.PortHandler(self.port)
         # HACK: monkeypatch
         self.port_handler.setPacketTimeout = patch_setPacketTimeout.__get__(
@@ -112,6 +113,12 @@ class FeetechMotorsBus(MotorsBus):
         self.sync_writer = scs.GroupSyncWrite(self.port_handler, self.packet_handler, 0, 0)
         self._comm_success = scs.COMM_SUCCESS
         self._no_error = 0x00
+
+    def _assert_protocol_is_compatible(self, instruction_name: str) -> None:
+        if instruction_name == "sync_read" and self.protocol_version == 1:
+            raise NotImplementedError(
+                "'Sync Read' is not available with Feetech motors using Protocol 1. Use 'Read' instead."
+            )
 
     def configure_motors(self) -> None:
         # By default, Feetech motors have a 500µs delay response time (corresponding to a value of 250 on the
