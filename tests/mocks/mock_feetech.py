@@ -12,23 +12,23 @@ from .mock_serial_patch import WaitableStub
 
 # https://files.waveshare.com/upload/2/27/Communication_Protocol_User_Manual-EN%28191218-0923%29.pdf
 INSTRUCTION_TYPES = {
-    "Ping": 0x01,	        # Checks whether the Packet has arrived at a device with the same ID as the specified packet ID
-    "Read": 0x02,	        # Read data from the Device
-    "Write": 0x03,	        # Write data to the Device
-    "Reg_Write": 0x04,	    # Register the Instruction Packet in standby status; Packet can later be executed using the Action command
-    "Action": 0x05,	        # Executes a Packet that was registered beforehand using Reg Write
-    "Factory_Reset": 0x06,  # Resets the Control Table to its initial factory default settings
-    "Sync_Read": 0x82,	           # Read data from multiple devices with the same Address with the same length at once
-    "Sync_Write": 0x83,	    # Write data to multiple devices with the same Address with the same length at once
+    "Read": scs.INST_PING,              # Read data from the Device
+    "Ping": scs.INST_READ,              # Checks whether the Packet has arrived at a device with the same ID as the specified packet ID
+    "Write": scs.INST_WRITE,            # Write data to the Device
+    "Reg_Write": scs.INST_REG_WRITE,    # Register the Instruction Packet in standby status; Packet can later be executed using the Action command
+    "Action": scs.INST_ACTION,          # Executes a Packet that was registered beforehand using Reg Write
+    "Factory_Reset": 0x06,              # Resets the Control Table to its initial factory default settings
+    "Sync_Write": scs.INST_SYNC_WRITE,  # Write data to multiple devices with the same Address with the same length at once
+    "Sync_Read": scs.INST_SYNC_READ,    # Read data from multiple devices with the same Address with the same length at once
 }  # fmt: skip
 
 ERROR_TYPE = {
     "Success": 0x00,
-    "Voltage": 0x01,
-    "Angle": 0x02,
-    "Overheat": 0x04,
-    "Overele": 0x08,
-    "Overload": 0x20,
+    "Voltage": scs.ERRBIT_VOLTAGE,
+    "Angle": scs.ERRBIT_ANGLE,
+    "Overheat": scs.ERRBIT_OVERHEAT,
+    "Overele": scs.ERRBIT_OVERELE,
+    "Overload": scs.ERRBIT_OVERLOAD,
 }
 
 

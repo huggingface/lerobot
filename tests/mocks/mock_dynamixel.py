@@ -47,37 +47,37 @@ DXL_CRC_TABLE = [
 
 # https://emanual.robotis.com/docs/en/dxl/protocol2/#instruction
 INSTRUCTION_TYPES = {
-    "Ping": 0x01,	               # Checks whether the Packet has arrived at a device with the same ID as the specified packet ID
-    "Read": 0x02,	               # Read data from the Device
-    "Write": 0x03,	               # Write data to the Device
-    "Reg_Write": 0x04,	           # Register the Instruction Packet in standby status; Packet can later be executed using the Action command
-    "Action": 0x05,	               # Executes a Packet that was registered beforehand using Reg Write
-    "Factory_Reset": 0x06,	       # Resets the Control Table to its initial factory default settings
-    "Reboot": 0x08,	               # Reboot the Device
-    "Clear": 0x10,	               # Reset certain information stored in memory
-    "Control_Table_Backup": 0x20,  # Store current Control Table status data to a Backup or to restore backup EEPROM data.
-    "Status": 0x55,	               # Return packet sent following the execution of an Instruction Packet
-    "Sync_Read": 0x82,	           # Read data from multiple devices with the same Address with the same length at once
-    "Sync_Write": 0x83,	           # Write data to multiple devices with the same Address with the same length at once
-    "Fast_Sync_Read": 0x8A,	       # Read data from multiple devices with the same Address with the same length at once
-    "Bulk_Read": 0x92,	           # Read data from multiple devices with different Addresses with different lengths at once
-    "Bulk_Write": 0x93,	           # Write data to multiple devices with different Addresses with different lengths at once
-    "Fast_Bulk_Read": 0x9A,	       # Read data from multiple devices with different Addresses with different lengths at once
+    "Ping": dxl.INST_PING,                    # Checks whether the Packet has arrived at a device with the same ID as the specified packet ID
+    "Read": dxl.INST_READ,                    # Read data from the Device
+    "Write": dxl.INST_WRITE,                  # Write data to the Device
+    "Reg_Write": dxl.INST_REG_WRITE,          # Register the Instruction Packet in standby status; Packet can later be executed using the Action command
+    "Action": dxl.INST_ACTION,                # Executes a Packet that was registered beforehand using Reg Write
+    "Factory_Reset": dxl.INST_FACTORY_RESET,  # Resets the Control Table to its initial factory default settings
+    "Reboot": dxl.INST_REBOOT,                # Reboot the Device
+    "Clear": dxl.INST_CLEAR,                  # Reset certain information stored in memory
+    "Control_Table_Backup": 0x20,             # Store current Control Table status data to a Backup or to restore backup EEPROM data.
+    "Status": dxl.INST_STATUS,                # Return packet sent following the execution of an Instruction Packet
+    "Sync_Read": dxl.INST_SYNC_READ,          # Read data from multiple devices with the same Address with the same length at once
+    "Sync_Write": dxl.INST_SYNC_WRITE,        # Write data to multiple devices with the same Address with the same length at once
+    "Fast_Sync_Read": 0x8A,                   # Read data from multiple devices with the same Address with the same length at once
+    "Bulk_Read": dxl.INST_BULK_READ,          # Read data from multiple devices with different Addresses with different lengths at once
+    "Bulk_Write": dxl.INST_BULK_WRITE,        # Write data to multiple devices with different Addresses with different lengths at once
+    "Fast_Bulk_Read": 0x9A,                   # Read data from multiple devices with different Addresses with different lengths at once
 }  # fmt: skip
 
 # https://emanual.robotis.com/docs/en/dxl/protocol2/#error
 ERROR_TYPE = {
-    "Success": 0x00, 	        # No error
-    "Result_Fail": 0x01, 	    # Failed to process the sent Instruction Packet
-    "Instruction_Error": 0x02,  # An undefined Instruction has been usedAction has been used without Reg Write
-    "CRC_Error": 0x03, 	        # The CRC of the sent Packet does not match the expected value
-    "Data_Range_Error": 0x04,   # Data to be written to the specified Address is outside the range of the minimum/maximum value
-    "Data_Length_Error": 0x05,  # Attempted to write Data that is shorter than the required data length of the specified Address
-                                #     (ex: when you attempt to only use 2 bytes of a register that has been defined as 4 bytes)
-    "Data_Limit_Error": 0x06,   # Data to be written to the specified Address is outside of the configured Limit value
-    "Access_Error": 0x07,	    # Attempted to write a value to an Address that is Read Only or has not been defined
-                                # Attempted to read a value from an Address that is Write Only or has not been defined
-                                # Attempted to write a value to an EEPROM register while Torque was Enabled.
+    "Success": 0x00,                              # No error
+    "Result_Fail": dxl.ERRNUM_RESULT_FAIL,        # Failed to process the sent Instruction Packet
+    "Instruction_Error": dxl.ERRNUM_INSTRUCTION,  # An undefined Instruction has been usedAction has been used without Reg Write
+    "CRC_Error": dxl.ERRNUM_CRC,                  # The CRC of the sent Packet does not match the expected value
+    "Data_Range_Error": dxl.ERRNUM_DATA_RANGE,    # Data to be written to the specified Address is outside the range of the minimum/maximum value
+    "Data_Length_Error": dxl.ERRNUM_DATA_LENGTH,  # Attempted to write Data that is shorter than the required data length of the specified Address
+                                                  #     (ex: when you attempt to only use 2 bytes of a register that has been defined as 4 bytes)
+    "Data_Limit_Error": dxl.ERRNUM_DATA_LIMIT,    # Data to be written to the specified Address is outside of the configured Limit value
+    "Access_Error": dxl.ERRNUM_ACCESS,	          # Attempted to write a value to an Address that is Read Only or has not been defined
+                                                  # Attempted to read a value from an Address that is Write Only or has not been defined
+                                                  # Attempted to write a value to an EEPROM register while Torque was Enabled.
 }  # fmt: skip
 
 
