@@ -63,7 +63,6 @@ class SACPolicy(
         else:
             self.normalize_inputs = nn.Identity()
 
-
         if config.dataset_stats is not None:
             output_normalization_params = _convert_normalization_params_to_tensor(config.dataset_stats)
 
