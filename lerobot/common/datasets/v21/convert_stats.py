@@ -16,6 +16,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 from tqdm import tqdm
+from multiprocessing import cpu_count
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from lerobot.common.datasets.compute_stats import aggregate_stats, get_feature_stats, sample_indices
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
@@ -30,7 +32,7 @@ def sample_episode_video_frames(dataset: LeRobotDataset, episode_index: int, ft_
     return video_frames[ft_key].numpy()
 
 
-def convert_episode_stats(dataset: LeRobotDataset, ep_idx: int):
+def convert_episode_stats(dataset: LeRobotDataset, ep_idx: int, is_parallel: bool = False):
     ep_start_idx = dataset.episode_data_index["from"][ep_idx]
     ep_end_idx = dataset.episode_data_index["to"][ep_idx]
     ep_data = dataset.hf_dataset.select(range(ep_start_idx, ep_end_idx))
@@ -52,7 +54,10 @@ def convert_episode_stats(dataset: LeRobotDataset, ep_idx: int):
                 k: v if k == "count" else np.squeeze(v, axis=0) for k, v in ep_stats[key].items()
             }
 
-    dataset.meta.episodes_stats[ep_idx] = ep_stats
+    if not is_parallel:
+        dataset.meta.episodes_stats[ep_idx] = ep_stats
+    
+    return ep_stats, ep_idx
 
 
 def convert_stats(dataset: LeRobotDataset, num_workers: int = 0):
@@ -74,6 +79,31 @@ def convert_stats(dataset: LeRobotDataset, num_workers: int = 0):
     for ep_idx in tqdm(range(total_episodes)):
         write_episode_stats(ep_idx, dataset.meta.episodes_stats[ep_idx], dataset.root)
 
+
+def convert_stats_parallel(dataset: LeRobotDataset, num_workers: int = 0):
+    """Convert stats in parallel using multiple thread."""
+    assert dataset.episodes is None
+    print("Computing episodes stats")
+    total_episodes = dataset.meta.total_episodes
+    futures = []
+    
+    max_workers = min(cpu_count(), num_workers)
+    if num_workers > 0:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            for ep_idx in range(total_episodes):
+                futures.append(
+                    executor.submit(convert_episode_stats, dataset, ep_idx, True)
+                )
+            for future in tqdm(as_completed(futures), total=total_episodes, desc="Converting episodes stats"):
+                ep_stats, ep_data = future.result()
+                dataset.meta.episodes_stats[ep_idx] = ep_data
+    else:
+        for ep_idx in tqdm(range(total_episodes)):
+            convert_episode_stats(dataset, ep_idx)
+
+    for ep_idx in tqdm(range(total_episodes)):
+        write_episode_stats(ep_idx, dataset.meta.episodes_stats[ep_idx], dataset.root)
+        
 
 def check_aggregate_stats(
     dataset: LeRobotDataset,

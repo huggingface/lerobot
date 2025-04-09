@@ -38,7 +38,7 @@ from huggingface_hub import HfApi
 
 from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset
 from lerobot.common.datasets.utils import EPISODES_STATS_PATH, STATS_PATH, load_stats, write_info
-from lerobot.common.datasets.v21.convert_stats import check_aggregate_stats, convert_stats
+from lerobot.common.datasets.v21.convert_stats import check_aggregate_stats, convert_stats, convert_stats_parallel
 
 V20 = "v2.0"
 V21 = "v2.1"
@@ -57,14 +57,15 @@ def convert_dataset(
     repo_id: str,
     branch: str | None = None,
     num_workers: int = 4,
+    video_backend: str = "pyav",
 ):
     with SuppressWarnings():
-        dataset = LeRobotDataset(repo_id, revision=V20, force_cache_sync=True)
+        dataset = LeRobotDataset(repo_id, revision=V20, force_cache_sync=True, video_backend=video_backend)
 
     if (dataset.root / EPISODES_STATS_PATH).is_file():
         (dataset.root / EPISODES_STATS_PATH).unlink()
 
-    convert_stats(dataset, num_workers=num_workers)
+    convert_stats_parallel(dataset, num_workers=num_workers)
     ref_stats = load_stats(dataset.root)
     check_aggregate_stats(dataset, ref_stats)
 
