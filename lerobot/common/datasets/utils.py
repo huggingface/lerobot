@@ -260,7 +260,7 @@ def load_image_as_numpy(
         img_array /= 255.0
     return img_array
 
-def load_audio(fpath: str | Path) -> np.ndarray:
+def load_audio_from_path(fpath: str | Path) -> np.ndarray:
     audio_data, _ = read(fpath, dtype="float32")
     return audio_data
 
