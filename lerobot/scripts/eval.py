@@ -66,7 +66,7 @@ from torch import Tensor, nn
 from tqdm import trange
 
 from lerobot.common.envs.factory import make_env
-from lerobot.common.envs.utils import preprocess_observation
+from lerobot.common.envs.utils import add_envs_task, check_env_attributes_and_types, preprocess_observation
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.policies.utils import get_device_from_parameters
@@ -124,7 +124,6 @@ def rollout(
 
     # Reset the policy and environments.
     policy.reset()
-
     observation, info = env.reset(seed=seeds)
     if render_callback is not None:
         render_callback(env)
@@ -145,6 +144,7 @@ def rollout(
         disable=inside_slurm(),  # we dont want progress bar when we use slurm, since it clutters the logs
         leave=False,
     )
+    check_env_attributes_and_types(env)
     while not np.all(done):
         # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
         observation = preprocess_observation(observation)
@@ -154,6 +154,10 @@ def rollout(
         observation = {
             key: observation[key].to(device, non_blocking=device.type == "cuda") for key in observation
         }
+
+        # Infer "task" from attributes of environments.
+        # TODO: works with SyncVectorEnv but not AsyncVectorEnv
+        observation = add_envs_task(env, observation)
 
         with torch.inference_mode():
             action = policy.select_action(observation)
