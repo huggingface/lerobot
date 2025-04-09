@@ -722,9 +722,7 @@ class MotorsBus(abc.ABC):
         return model_number
 
     @abc.abstractmethod
-    def broadcast_ping(
-        self, num_retry: int = 0, raise_on_error: bool = False
-    ) -> dict[int, list[int, str]] | None:
+    def broadcast_ping(self, num_retry: int = 0, raise_on_error: bool = False) -> dict[int, int] | None:
         pass
 
     def read(
