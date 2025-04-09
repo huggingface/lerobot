@@ -38,7 +38,10 @@ from huggingface_hub import HfApi
 
 from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset
 from lerobot.common.datasets.utils import EPISODES_STATS_PATH, STATS_PATH, load_stats, write_info
-from lerobot.common.datasets.v21.convert_stats import check_aggregate_stats, convert_stats, convert_stats_parallel
+from lerobot.common.datasets.v21.convert_stats import (
+    check_aggregate_stats,
+    convert_stats_parallel,
+)
 
 V20 = "v2.0"
 V21 = "v2.1"

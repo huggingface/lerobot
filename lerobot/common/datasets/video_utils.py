@@ -257,11 +257,11 @@ def decode_video_frames_decord(
     frame_ts: np.ndarray = vr.get_frame_timestamp(range(num_frames))
     indices = np.abs(frame_ts[:, :1] - timestamps).argmin(axis=0)
     frames = vr.get_batch(indices)
-    
+
     frames_tensor = torch.tensor(frames.asnumpy()).type(torch.float32).permute(0, 3, 1, 2) / 255
     return frames_tensor
 
-    
+
 def encode_video_frames(
     imgs_dir: Path | str,
     video_path: Path | str,

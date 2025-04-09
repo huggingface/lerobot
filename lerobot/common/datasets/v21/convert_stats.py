@@ -13,11 +13,10 @@
 # limitations under the License.
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from multiprocessing import cpu_count
 
 import numpy as np
 from tqdm import tqdm
-from multiprocessing import cpu_count
-from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from lerobot.common.datasets.compute_stats import aggregate_stats, get_feature_stats, sample_indices
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
@@ -56,7 +55,7 @@ def convert_episode_stats(dataset: LeRobotDataset, ep_idx: int, is_parallel: boo
 
     if not is_parallel:
         dataset.meta.episodes_stats[ep_idx] = ep_stats
-    
+
     return ep_stats, ep_idx
 
 
@@ -86,14 +85,12 @@ def convert_stats_parallel(dataset: LeRobotDataset, num_workers: int = 0):
     print("Computing episodes stats")
     total_episodes = dataset.meta.total_episodes
     futures = []
-    
+
     max_workers = min(cpu_count(), num_workers)
     if num_workers > 0:
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             for ep_idx in range(total_episodes):
-                futures.append(
-                    executor.submit(convert_episode_stats, dataset, ep_idx, True)
-                )
+                futures.append(executor.submit(convert_episode_stats, dataset, ep_idx, True))
             for future in tqdm(as_completed(futures), total=total_episodes, desc="Converting episodes stats"):
                 ep_stats, ep_data = future.result()
                 dataset.meta.episodes_stats[ep_idx] = ep_data
@@ -103,7 +100,7 @@ def convert_stats_parallel(dataset: LeRobotDataset, num_workers: int = 0):
 
     for ep_idx in tqdm(range(total_episodes)):
         write_episode_stats(ep_idx, dataset.meta.episodes_stats[ep_idx], dataset.root)
-        
+
 
 def check_aggregate_stats(
     dataset: LeRobotDataset,
