@@ -1,0 +1,360 @@
+{
+    "output_dir": null,
+    "job_name": "default",
+    "resume": false,
+    "seed": 1000,
+    "num_workers": 4,
+    "batch_size": 256,
+    "steps": 100000,
+    "log_freq": 100,
+    "save_checkpoint": true,
+    "save_freq": 5000,
+    "wandb": {
+        "enable": true,
+        "project": "so100_real",
+        "disable_artifact": true
+    },
+    "dataset": {
+        "repo_id": "aractingi/pick_lift_cube_two_cameras_gripper_penalty",
+        "use_imagenet_stats": false
+    },
+    "policy": {
+        "type": "sac",
+        "n_obs_steps": 1,
+        "normalization_mapping": {
+            "VISUAL": "MEAN_STD",
+            "STATE": "MIN_MAX",
+            "ENV": "MIN_MAX",
+            "ACTION": "MIN_MAX"
+        },
+        "input_features": {
+            "observation.images.side": {
+                "type": "VISUAL",
+                "shape": [
+                    3,
+                    128,
+                    128
+                ]
+            },
+            "observation.images.front": {
+                "type": "VISUAL",
+                "shape": [
+                    3,
+                    128,
+                    128
+                ]
+            },
+            "observation.state": {
+                "type": "STATE",
+                "shape": [
+                    15
+                ]
+            }
+        },
+        "output_features": {
+            "action": {
+                "type": "ACTION",
+                "shape": [
+                    4
+                ]
+            }
+        },
+        "device": "cuda",
+        "use_amp": false,
+        "dataset_stats": {
+            "observation.images.side": {
+                "mean": [
+                    0.485,
+                    0.456,
+                    0.406
+                ],
+                "std": [
+                    0.229,
+                    0.224,
+                    0.225
+                ]
+            },
+            "observation.images.front": {
+                "mean": [
+                    0.485,
+                    0.456,
+                    0.406
+                ],
+                "std": [
+                    0.229,
+                    0.224,
+                    0.225
+                ]
+            },
+            "observation.state": {
+                "min": [
+                    -10.0,
+                    95.0,
+                    85.0,
+                    70.0,
+                    -110.0,
+                    0.0,
+                    -100.0,
+                    -100.0,
+                    -100.0,
+                    -100.0,
+                    -100.0,
+                    -100.0,
+                    0.20,
+                    -0.02,
+                    0.035
+                ],
+                "max": [
+                    10.0,
+                    120.0,
+                    100.0,
+                    90.0,
+                    -70.0,
+                    25.0,
+                    100.0,
+                    100.0,
+                    100.0,
+                    100.0,
+                    100.0,
+                    100.0,
+                    0.24,
+                    0.02,
+                    0.10
+                ]
+            },
+            "action": {
+                "min": [
+                    -0.03,
+                    -0.03,
+                    -0.03,
+                    0.0
+
+                ],
+                "max": [
+                    0.03,
+                    0.03,
+                    0.03,
+                    2.0
+                ]
+            }
+        },
+        "num_discrete_actions": null,
+        "camera_number": 2,
+        "storage_device": "cpu",
+        "vision_encoder_name": "helper2424/resnet10",
+        "freeze_vision_encoder": true,
+        "image_encoder_hidden_dim": 32,
+        "shared_encoder": true,
+        "online_steps": 1000000,
+        "online_env_seed": 10000,
+        "online_buffer_capacity": 50000,
+        "offline_buffer_capacity": 20000,
+        "online_step_before_learning": 100,
+        "policy_update_freq": 1,
+        "discount": 0.97,
+        "temperature_init": 0.01,
+        "num_critics": 2,
+        "num_subsample_critics": null,
+        "critic_lr": 0.0003,
+        "actor_lr": 0.0003,
+        "temperature_lr": 0.0003,
+        "critic_target_update_weight": 0.005,
+        "utd_ratio": 2,
+        "state_encoder_hidden_dim": 256,
+        "latent_dim": 256,
+        "target_entropy": null,
+        "use_backup_entropy": true,
+        "async_prefetch": false,
+        "grad_clip_norm": 40.0,
+        "critic_network_kwargs": {
+            "hidden_dims": [
+                256,
+                256
+            ],
+            "activate_final": true,
+            "final_activation": null
+        },
+        "actor_network_kwargs": {
+            "hidden_dims": [
+                256,
+                256
+            ],
+            "activate_final": true
+        },
+        "policy_kwargs": {
+            "use_tanh_squash": true,
+            "log_std_min": -5,
+            "log_std_max": 2,
+            "init_final": 0.05
+        },
+        "actor_learner_config": {
+            "learner_host": "127.0.0.1",
+            "learner_port": 50051,
+            "policy_parameters_push_frequency": 4
+        },
+        "concurrency": {
+            "actor": "threads",
+            "learner": "threads"
+        }
+    },
+    "env": {
+        "type": "gym_manipulator",
+        "robot": {
+            "type": "so100",
+            "leader_arms": {},
+            "follower_arms": {
+                "main": {
+                    "type": "feetech",
+                    "port": "/dev/ttyACM0",
+                    "motors": {
+                        "shoulder_pan": [
+                            1,
+                            "sts3215"
+                        ],
+                        "shoulder_lift": [
+                            2,
+                            "sts3215"
+                        ],
+                        "elbow_flex": [
+                            3,
+                            "sts3215"
+                        ],
+                        "wrist_flex": [
+                            4,
+                            "sts3215"
+                        ],
+                        "wrist_roll": [
+                            5,
+                            "sts3215"
+                        ],
+                        "gripper": [
+                            6,
+                            "sts3215"
+                        ]
+                    }
+                }
+            },
+            "cameras": {
+                "side": {
+                    "type": "opencv",
+                    "camera_index": 2,
+                    "height": 480,
+                    "width": 640,
+                    "fps": 15
+                },
+                "front": {
+                    "type": "opencv",
+                    "camera_index": 8,
+                    "height": 480,
+                    "width": 640,
+                    "fps": 15
+                }
+            }
+        },
+        "wrapper": {
+            "display_cameras": false,
+            "use_relative_joint_positions": true,
+            "add_joint_velocity_to_observation": true,
+            "add_ee_pose_to_observation": true,
+            "crop_params_dict": {
+                "observation.images.side": [
+                    180,
+                    207,
+                    180,
+                    200
+            ],
+                "observation.images.front": [
+                    180,
+                    250,
+                    120,
+                    150
+            ]
+            },
+            "resize_size": [
+                128,
+                128
+            ],
+            "control_time_s": 10.0,
+            "use_gripper": true,
+            "gripper_quantization_threshold": null,
+            "gripper_penalty": -0.05,
+            "gripper_penalty_in_reward": true,
+            "open_gripper_on_reset": false,
+            "fixed_reset_joint_positions": [
+                -0.0,
+                105.0,
+                90.0,
+                80.0,
+                -90.0,
+                20.0
+            ],
+            "reset_time_s": 2.5,
+            "joint_masking_action_space": null,
+            "ee_action_space_params": {
+                "x_step_size": 0.03,
+                "y_step_size": 0.03,
+                "z_step_size": 0.03,
+                "bounds": {
+                    "max": [
+                        0.23,
+                        0.01,
+                        0.12862044
+                    ],
+                    "min": [
+                        0.2110096,
+                        -0.01,
+                        0.0433196
+                    ]
+                },
+                "use_gamepad": true
+            }
+        },
+        "name": "real_robot",
+        "mode": null,
+        "repo_id": null,
+        "dataset_root": null,
+        "task": "",
+        "num_episodes": 15,
+        "episode": 0,
+        "pretrained_policy_name_or_path": null,
+        "device": "cuda",
+        "push_to_hub": true,
+        "fps": 10,
+        "features": {
+            "observation.images.side": {
+                "type": "VISUAL",
+                "shape": [
+                    3,
+                    128,
+                    128
+                ]
+            },
+            "observation.images.front": {
+                "type": "VISUAL",
+                "shape": [
+                    3,
+                    128,
+                    128
+                ]
+            },
+            "observation.state": {
+                "type": "STATE",
+                "shape": [
+                    15
+                ]
+            },
+            "action": {
+                "type": "ACTION",
+                "shape": [
+                    4
+                ]
+            }
+        },
+        "features_map": {},
+        "reward_classifier": {
+            "pretrained_path": null,
+            "config_path": null
+        }
+    }
+
+}

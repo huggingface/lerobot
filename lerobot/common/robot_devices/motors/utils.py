@@ -45,6 +45,10 @@ def make_motors_buses_from_configs(
             from lerobot.common.robot_devices.motors.feetech import FeetechMotorsBus
 
             motors_buses[key] = FeetechMotorsBus(cfg)
+        
+        elif cfg.type == "piper":
+
+            motors_buses[key] = PiperMotorsBus(cfg)
 
         else:
             raise ValueError(f"The motor type '{cfg.type}' is not valid.")

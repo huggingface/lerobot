@@ -168,13 +168,25 @@ class ManipulatorRobot:
     ):
         self.config = config
         self.robot_type = self.config.type
-        self.calibration_dir = Path(self.config.calibration_dir)
-        self.leader_arms = make_motors_buses_from_configs(self.config.leader_arms)
-        self.follower_arms = make_motors_buses_from_configs(self.config.follower_arms)
-        self.cameras = make_cameras_from_configs(self.config.cameras)
+        if self.config.calibration_dir is not None:
+            self.calibration_dir = Path(self.config.calibration_dir)
+        else:
+            self.calibration_dir = None
+        if hasattr(self.config, 'leader_arms') and self.config.leader_arms:
+            self.leader_arms = make_motors_buses_from_configs(self.config.leader_arms)
+        else:
+            self.leader_arms = None
+        if hasattr(self.config, 'follower_arms') and self.config.follower_arms:
+            self.follower_arms = make_motors_buses_from_configs(self.config.follower_arms)
+        else:
+            self.follower_arms = None
+        if hasattr(self.config, 'cameras') and self.config.cameras:
+            self.cameras = make_cameras_from_configs(self.config.cameras)
+        else:
+            self.cameras = None
         self.is_connected = False
         self.logs = {}
-
+  
     def get_motor_names(self, arm: dict[str, MotorsBus]) -> list:
         return [f"{arm}_{motor}" for arm, bus in arm.items() for motor in bus.motors]
 

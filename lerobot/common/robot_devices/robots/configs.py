@@ -27,6 +27,7 @@ from lerobot.common.robot_devices.motors.configs import (
     DynamixelMotorsBusConfig,
     FeetechMotorsBusConfig,
     MotorsBusConfig,
+    PiperMotorsBusConfig,
 )
 
 
@@ -607,6 +608,40 @@ class LeKiwiRobotConfig(RobotConfig):
             "speed_down": "f",
             # quit teleop
             "quit": "q",
+        }
+    )
+
+    mock: bool = False
+
+@RobotConfig.register_subclass("piper")
+@dataclass
+class PiperRobotConfig(RobotConfig):
+    # `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
+    # Set this to a positive scalar to have the same value for all motors, or a list that is the same length as
+    # the number of motors in your follower arms.
+    max_relative_target: int | None = None
+    calibration_dir: str | None = None
+    joint_position_relative_bounds: dict[str, list[float]] | None = field(
+        default_factory=lambda: {
+            "max": [0.26, 0.001, 0.18],
+            "min": [0.17, -0.05, 0.16]
+        }
+    )
+    fps: int = 10
+    cameras: dict[str, CameraConfig] = field(
+        default_factory=lambda: {
+            "wrist": OpenCVCameraConfig(
+                camera_index=8,
+                fps=30,
+                width=640,
+                height=480,
+            ),
+            "front": IntelRealSenseCameraConfig(
+                name="Intel RealSense D415",
+                fps=30,
+                width=640,
+                height=480,
+            ),
         }
     )
 

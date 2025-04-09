@@ -23,6 +23,7 @@ from lerobot.common.robot_devices.robots.configs import (
     MossRobotConfig,
     RobotConfig,
     So100RobotConfig,
+    PiperRobotConfig,
     StretchRobotConfig,
 )
 
@@ -58,6 +59,8 @@ def make_robot_config(robot_type: str, **kwargs) -> RobotConfig:
         return MossRobotConfig(**kwargs)
     elif robot_type == "so100":
         return So100RobotConfig(**kwargs)
+    elif robot_type == "piper":
+        return PiperRobotConfig(**kwargs)
     elif robot_type == "stretch":
         return StretchRobotConfig(**kwargs)
     elif robot_type == "lekiwi":
@@ -77,7 +80,11 @@ def make_robot_from_config(config: RobotConfig):
         )
 
         return MobileManipulator(config)
-    else:
+    elif isinstance(config, PiperRobotConfig):
+        from lerobot.common.robot_devices.robots.piper import PiperRobot
+
+        return PiperRobot(config)
+    elif isinstance(config, StretchRobotConfig):
         from lerobot.common.robot_devices.robots.stretch import StretchRobot
 
         return StretchRobot(config)
