@@ -103,11 +103,6 @@ When using `miniconda`, install `ffmpeg` in your environment:
 conda install ffmpeg -c conda-forge
 ```
 
-> **NOTE:** This usually installs `ffmpeg 7.X` for your platform (check the version installed with `ffmpeg -encoders | grep libsvtav1`). If it isn't `ffmpeg 7.X` or lacks `libsvtav1` support, you can explicitly install `ffmpeg 7.X` using:
-```
-conda install ffmpeg=7.1.1 -c conda-forge
-```
-
 Install 🤗 LeRobot:
 ```bash
 pip install -e .
