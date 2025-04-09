@@ -51,6 +51,14 @@ def run_camera_capture(cameras, images_lock, latest_images_dict, stop_event):
             latest_images_dict.update(local_dict)
         time.sleep(0.01)
 
+def run_microphone_capture(microphones, audio_lock, latest_audio_dict, stop_event):
+    while not stop_event.is_set():
+        local_dict = {}
+        for name, microphone in microphones.items():
+            audio_readings = microphone.read()
+            local_dict[name] = audio_readings
+        with audio_lock:
+            latest_audio_dict.update(local_dict)
 
 def calibrate_follower_arm(motors_bus, calib_dir_str):
     """
@@ -94,12 +102,18 @@ def run_lekiwi(robot_config):
     """
     # Import helper functions and classes
     from lerobot.common.robot_devices.cameras.utils import make_cameras_from_configs
+    from lerobot.common.robot_devices.microphones.utils import make_microphones_from_configs
     from lerobot.common.robot_devices.motors.feetech import FeetechMotorsBus, TorqueMode
 
     # Initialize cameras from the robot configuration.
     cameras = make_cameras_from_configs(robot_config.cameras)
     for cam in cameras.values():
         cam.connect()
+
+    # Initialize microphones from the robot configuration.
+    microphones = make_microphones_from_configs(robot_config.microphones)
+    for microphone in microphones.values():
+        microphone.connect()
 
     # Initialize the motors bus using the follower arm configuration.
     motor_config = robot_config.follower_arms.get("main")
@@ -133,6 +147,18 @@ def run_lekiwi(robot_config):
         target=run_camera_capture, args=(cameras, images_lock, latest_images_dict, stop_event), daemon=True
     )
     cam_thread.start()
+
+    # Start the microphone recording and capture thread.
+    #TODO(CarolinePascal) : Leverage multi-core processing with a multiprocessing.Process instead !
+    latest_audio_dict = {}
+    audio_lock = threading.Lock()
+    audio_stop_event = threading.Event()
+    microphone_thread = threading.Thread(
+        target=run_microphone_capture, args=(microphones, audio_lock, latest_audio_dict, audio_stop_event), daemon=True
+    )
+    for microphone in microphones.values():
+        microphone.start_recording()
+    microphone_thread.start()
 
     last_cmd_time = time.time()
     print("LeKiwi robot server started. Waiting for commands...")
@@ -198,9 +224,14 @@ def run_lekiwi(robot_config):
             with images_lock:
                 images_dict_copy = dict(latest_images_dict)
 
+            # Get the latest audio data.
+            with audio_lock:
+                audio_dict_copy = dict(latest_audio_dict)
+
             # Build the observation dictionary.
             observation = {
                 "images": images_dict_copy,
+                "audio": audio_dict_copy,   #TODO(CarolinePascal) : This is a nasty way to do it, sorry.
                 "present_speed": current_velocity,
                 "follower_arm_state": follower_arm_state,
             }
@@ -217,6 +248,9 @@ def run_lekiwi(robot_config):
     finally:
         stop_event.set()
         cam_thread.join()
+        microphone_thread.join()
+        for microphone in microphones.values():
+            microphone.stop_recording()
         robot.stop()
         motors_bus.disconnect()
         cmd_socket.close()

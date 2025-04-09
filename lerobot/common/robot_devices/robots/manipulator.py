@@ -211,7 +211,7 @@ class ManipulatorRobot:
                 "dtype": "audio",
                 "shape": (len(mic.channels),),
                 "names": "channels",
-                "info" : None,
+                "info" : {"sample_rate": mic.sample_rate},
             }
         return mic_ft
 
