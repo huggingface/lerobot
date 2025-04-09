@@ -93,7 +93,8 @@ import numpy as np
 import torch
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.robot_devices.control_utils import (
+from lerobot.common.robots.utils import Robot, make_robot
+from lerobot.common.utils.control_utils import (
     init_keyboard_listener,
     init_policy,
     is_headless,
@@ -103,8 +104,7 @@ from lerobot.common.robot_devices.control_utils import (
     sanity_check_dataset_robot_compatibility,
     stop_recording,
 )
-from lerobot.common.robot_devices.robots.utils import Robot, make_robot
-from lerobot.common.robot_devices.utils import busy_wait
+from lerobot.common.utils.robot_utils import busy_wait
 from lerobot.common.utils.utils import init_hydra_config, init_logging, log_say
 
 raise NotImplementedError("This script is currently deactivated")

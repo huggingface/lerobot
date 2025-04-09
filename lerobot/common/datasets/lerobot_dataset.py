@@ -72,7 +72,7 @@ from lerobot.common.datasets.video_utils import (
     get_safe_default_codec,
     get_video_info,
 )
-from lerobot.common.robot_devices.robots.utils import Robot
+from lerobot.common.robots.utils import Robot
 
 CODEBASE_VERSION = "v2.1"
 
