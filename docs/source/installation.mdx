@@ -1,0 +1,47 @@
+# Installation
+
+TODO(pepijn): Compare installation method description and other descriptions with transformers/datasets docs
+
+Download our source code:
+```bash
+git clone https://github.com/huggingface/lerobot.git
+cd lerobot
+```
+
+Create a virtual environment with Python 3.10, e.g. with [`miniconda`](https://docs.anaconda.com/free/miniconda/index.html):
+```bash
+conda create -y -n lerobot python=3.10
+```
+
+Then activate your conda environment, you have to do this each time you open a shell to use lerobot:
+```bash
+conda activate lerobot
+```
+
+When using `miniconda`, if you don't have `ffmpeg` in your environment:
+```bash
+conda install ffmpeg
+```
+
+Install 🤗 LeRobot:
+```bash
+pip install --no-binary=av -e .
+```
+
+> [!NOTE] If you encounter build errors, you may need to install additional dependencies (`cmake`, `build-essential`, and `ffmpeg libs`). On Linux, run:
+> `sudo apt-get install cmake build-essential python-dev pkg-config libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev libswscale-dev libswresample-dev libavfilter-dev pkg-config`. For other systems, see: [Compiling PyAV](https://pyav.org/docs/develop/overview/installation.html#bring-your-own-ffmpeg)
+
+For simulations, 🤗 LeRobot comes with gymnasium environments that can be installed as extras:
+- [aloha](https://github.com/huggingface/gym-aloha)
+- [xarm](https://github.com/huggingface/gym-xarm)
+- [pusht](https://github.com/huggingface/gym-pusht)
+
+For instance, to install 🤗 LeRobot with aloha and pusht, use:
+```bash
+pip install --no-binary=av -e ".[aloha, pusht]"
+```
+
+To use [Weights and Biases](https://docs.wandb.ai/quickstart) for experiment tracking, log in with
+```bash
+wandb login
+```
