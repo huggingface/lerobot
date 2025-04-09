@@ -5,7 +5,7 @@ import pandas as pd
 import tqdm
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
-from lerobot.common.datasets.utils import write_episode, write_episode_stats, write_info, write_task
+from lerobot.common.datasets.utils import write_episode, legacy_write_episode_stats, write_info, legacy_write_task
 from lerobot.common.utils.utils import init_logging
 
 
@@ -136,11 +136,11 @@ def aggregate_datasets(repo_ids: list[str], aggr_repo_id: str, aggr_root=None):
 
     # create a new episode_stats jsonl with updated episode_index using write_episode_stats
     for episode_index, episode_stats in aggr_meta.episodes_stats.items():
-        write_episode_stats(episode_index, episode_stats, aggr_meta.root)
+        legacy_write_episode_stats(episode_index, episode_stats, aggr_meta.root)
 
     # create a new task jsonl with updated episode_index using write_task
     for task_index, task in aggr_meta.tasks.items():
-        write_task(task_index, task, aggr_meta.root)
+        legacy_write_task(task_index, task, aggr_meta.root)
 
     write_info(aggr_meta.info, aggr_meta.root)
 

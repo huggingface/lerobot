@@ -5,11 +5,12 @@ import pytest
 from huggingface_hub.utils import filter_repo_objects
 
 from lerobot.common.datasets.utils import (
-    EPISODES_PATH,
-    EPISODES_STATS_PATH,
+    DEFAULT_DATA_PATH,
+    DEFAULT_EPISODES_PATH,
+    DEFAULT_EPISODES_STATS_PATH,
+    DEFAULT_TASKS_PATH,
     INFO_PATH,
-    STATS_PATH,
-    TASKS_PATH,
+    LEGACY_STATS_PATH,
 )
 from tests.fixtures.constants import LEROBOT_TEST_DIR
 
@@ -17,17 +18,17 @@ from tests.fixtures.constants import LEROBOT_TEST_DIR
 @pytest.fixture(scope="session")
 def mock_snapshot_download_factory(
     info_factory,
-    info_path,
+    create_info,
     stats_factory,
-    stats_path,
+    create_stats,
     episodes_stats_factory,
-    episodes_stats_path,
+    create_episodes_stats,
     tasks_factory,
-    tasks_path,
+    create_tasks,
     episodes_factory,
-    episode_path,
-    single_episode_parquet_path,
+    create_episodes,
     hf_dataset_factory,
+    create_hf_dataset,
 ):
     """
     This factory allows to patch snapshot_download such that when called, it will create expected files rather
@@ -37,9 +38,9 @@ def mock_snapshot_download_factory(
     def _mock_snapshot_download_func(
         info: dict | None = None,
         stats: dict | None = None,
-        episodes_stats: list[dict] | None = None,
-        tasks: list[dict] | None = None,
-        episodes: list[dict] | None = None,
+        episodes_stats: datasets.Dataset | None = None,
+        tasks: datasets.Dataset | None = None,
+        episodes: datasets.Dataset | None = None,
         hf_dataset: datasets.Dataset | None = None,
     ):
         if not info:
@@ -59,14 +60,6 @@ def mock_snapshot_download_factory(
         if not hf_dataset:
             hf_dataset = hf_dataset_factory(tasks=tasks, episodes=episodes, fps=info["fps"])
 
-        def _extract_episode_index_from_path(fpath: str) -> int:
-            path = Path(fpath)
-            if path.suffix == ".parquet" and path.stem.startswith("episode_"):
-                episode_index = int(path.stem[len("episode_") :])  # 'episode_000000' -> 0
-                return episode_index
-            else:
-                return None
-
         def _mock_snapshot_download(
             repo_id: str,
             local_dir: str | Path | None = None,
@@ -79,40 +72,55 @@ def mock_snapshot_download_factory(
                 local_dir = LEROBOT_TEST_DIR
 
             # List all possible files
-            all_files = []
-            meta_files = [INFO_PATH, STATS_PATH, EPISODES_STATS_PATH, TASKS_PATH, EPISODES_PATH]
-            all_files.extend(meta_files)
-
-            data_files = []
-            for episode_dict in episodes.values():
-                ep_idx = episode_dict["episode_index"]
-                ep_chunk = ep_idx // info["chunks_size"]
-                data_path = info["data_path"].format(episode_chunk=ep_chunk, episode_index=ep_idx)
-                data_files.append(data_path)
-            all_files.extend(data_files)
+            all_files = [
+                INFO_PATH,
+                LEGACY_STATS_PATH,
+                # TODO(rcadene)
+                DEFAULT_TASKS_PATH.format(chunk_index=0, file_index=0),
+                DEFAULT_EPISODES_STATS_PATH.format(chunk_index=0, file_index=0),
+                DEFAULT_EPISODES_PATH.format(chunk_index=0, file_index=0),
+                DEFAULT_DATA_PATH.format(chunk_index=0, file_index=0),
+            ]
 
             allowed_files = filter_repo_objects(
                 all_files, allow_patterns=allow_patterns, ignore_patterns=ignore_patterns
             )
 
-            # Create allowed files
+            has_info = False
+            has_tasks = False
+            has_episodes = False
+            has_episodes_stats = False
+            has_stats = False
+            has_data = False
             for rel_path in allowed_files:
-                if rel_path.startswith("data/"):
-                    episode_index = _extract_episode_index_from_path(rel_path)
-                    if episode_index is not None:
-                        _ = single_episode_parquet_path(local_dir, episode_index, hf_dataset, info)
-                if rel_path == INFO_PATH:
-                    _ = info_path(local_dir, info)
-                elif rel_path == STATS_PATH:
-                    _ = stats_path(local_dir, stats)
-                elif rel_path == EPISODES_STATS_PATH:
-                    _ = episodes_stats_path(local_dir, episodes_stats)
-                elif rel_path == TASKS_PATH:
-                    _ = tasks_path(local_dir, tasks)
-                elif rel_path == EPISODES_PATH:
-                    _ = episode_path(local_dir, episodes)
+                if rel_path.startswith("meta/info.json"):
+                    has_info = True
+                elif rel_path.startswith("meta/stats"):
+                    has_stats = True
+                elif rel_path.startswith("meta/tasks"):
+                    has_tasks = True
+                elif rel_path.startswith("meta/episodes_stats"):
+                    has_episodes_stats = True
+                elif rel_path.startswith("meta/episodes"):
+                    has_episodes = True
+                elif rel_path.startswith("data/"):
+                    has_data = True
                 else:
-                    pass
+                    raise ValueError(f"{rel_path} not supported.")
+
+            if has_info:
+                create_info(local_dir, info)
+            if has_stats:
+                create_stats(local_dir, stats)
+            if has_tasks:
+                create_tasks(local_dir, tasks)
+            if has_episodes:
+                create_episodes(local_dir, episodes)
+            if has_episodes_stats:
+                create_episodes_stats(local_dir, episodes_stats)
+            if has_data:
+                create_hf_dataset(local_dir, hf_dataset)
+
             return str(local_dir)
 
         return _mock_snapshot_download

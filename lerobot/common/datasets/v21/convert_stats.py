@@ -5,7 +5,7 @@ from tqdm import tqdm
 
 from lerobot.common.datasets.compute_stats import aggregate_stats, get_feature_stats, sample_indices
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.datasets.utils import write_episode_stats
+from lerobot.common.datasets.utils import legacy_write_episode_stats
 
 
 def sample_episode_video_frames(dataset: LeRobotDataset, episode_index: int, ft_key: str) -> np.ndarray:
@@ -58,7 +58,7 @@ def convert_stats(dataset: LeRobotDataset, num_workers: int = 0):
             convert_episode_stats(dataset, ep_idx)
 
     for ep_idx in tqdm(range(total_episodes)):
-        write_episode_stats(ep_idx, dataset.meta.episodes_stats[ep_idx], dataset.root)
+        legacy_write_episode_stats(ep_idx, dataset.meta.episodes_stats[ep_idx], dataset.root)
 
 
 def check_aggregate_stats(

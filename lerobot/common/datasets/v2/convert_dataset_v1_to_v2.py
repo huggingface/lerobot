@@ -121,12 +121,12 @@ from safetensors.torch import load_file
 
 from lerobot.common.datasets.utils import (
     DEFAULT_CHUNK_SIZE,
-    DEFAULT_PARQUET_PATH,
+    DEFAULT_DATA_PATH,
     DEFAULT_VIDEO_PATH,
-    EPISODES_PATH,
+    LEGACY_EPISODES_PATH,
     INFO_PATH,
-    STATS_PATH,
-    TASKS_PATH,
+    LEGACY_STATS_PATH,
+    LEGACY_TASKS_PATH,
     create_branch,
     create_lerobot_dataset_card,
     flatten_dict,
@@ -188,7 +188,7 @@ def convert_stats_to_json(v1_dir: Path, v2_dir: Path) -> None:
     serialized_stats = {key: value.tolist() for key, value in stats.items()}
     serialized_stats = unflatten_dict(serialized_stats)
 
-    json_path = v2_dir / STATS_PATH
+    json_path = v2_dir / LEGACY_STATS_PATH
     json_path.parent.mkdir(exist_ok=True, parents=True)
     with open(json_path, "w") as f:
         json.dump(serialized_stats, f, indent=4)
@@ -291,12 +291,12 @@ def split_parquet_by_episodes(
     for ep_chunk in range(total_chunks):
         ep_chunk_start = DEFAULT_CHUNK_SIZE * ep_chunk
         ep_chunk_end = min(DEFAULT_CHUNK_SIZE * (ep_chunk + 1), total_episodes)
-        chunk_dir = "/".join(DEFAULT_PARQUET_PATH.split("/")[:-1]).format(episode_chunk=ep_chunk)
+        chunk_dir = "/".join(DEFAULT_DATA_PATH.split("/")[:-1]).format(episode_chunk=ep_chunk)
         (output_dir / chunk_dir).mkdir(parents=True, exist_ok=True)
         for ep_idx in range(ep_chunk_start, ep_chunk_end):
             ep_table = table.filter(pc.equal(table["episode_index"], ep_idx))
             episode_lengths.insert(ep_idx, len(ep_table))
-            output_file = output_dir / DEFAULT_PARQUET_PATH.format(
+            output_file = output_dir / DEFAULT_DATA_PATH.format(
                 episode_chunk=ep_chunk, episode_index=ep_idx
             )
             pq.write_table(ep_table, output_file)
@@ -496,7 +496,7 @@ def convert_dataset(
 
     assert set(tasks) == {task for ep_tasks in tasks_by_episodes.values() for task in ep_tasks}
     tasks = [{"task_index": task_idx, "task": task} for task_idx, task in enumerate(tasks)]
-    write_jsonlines(tasks, v20_dir / TASKS_PATH)
+    write_jsonlines(tasks, v20_dir / LEGACY_TASKS_PATH)
     features["task_index"] = {
         "dtype": "int64",
         "shape": (1,),
@@ -546,7 +546,7 @@ def convert_dataset(
         {"episode_index": ep_idx, "tasks": tasks_by_episodes[ep_idx], "length": episode_lengths[ep_idx]}
         for ep_idx in episode_indices
     ]
-    write_jsonlines(episodes, v20_dir / EPISODES_PATH)
+    write_jsonlines(episodes, v20_dir / LEGACY_EPISODES_PATH)
 
     # Assemble metadata v2.0
     metadata_v2_0 = {
@@ -560,7 +560,7 @@ def convert_dataset(
         "chunks_size": DEFAULT_CHUNK_SIZE,
         "fps": metadata_v1["fps"],
         "splits": {"train": f"0:{total_episodes}"},
-        "data_path": DEFAULT_PARQUET_PATH,
+        "data_path": DEFAULT_DATA_PATH,
         "video_path": DEFAULT_VIDEO_PATH if video_keys else None,
         "features": features,
     }

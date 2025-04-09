@@ -26,7 +26,7 @@ from datatrove.pipeline.base import PipelineStep
 from examples.port_datasets.droid_rlds.port_droid import DROID_SHARDS
 from lerobot.common.datasets.aggregate import validate_all_metadata
 from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
-from lerobot.common.datasets.utils import write_episode, write_episode_stats, write_info, write_task
+from lerobot.common.datasets.utils import write_episode, legacy_write_episode_stats, write_info, legacy_write_task
 from lerobot.common.utils.utils import init_logging
 
 
@@ -124,11 +124,11 @@ class AggregateDatasets(PipelineStep):
         for episode_index, episode_stats in tqdm.tqdm(
             aggr_meta.episodes_stats.items(), desc="Write episodes stats"
         ):
-            write_episode_stats(episode_index, episode_stats, aggr_meta.root)
+            legacy_write_episode_stats(episode_index, episode_stats, aggr_meta.root)
 
         # create a new task jsonl with updated episode_index using write_task
         for task_index, task in tqdm.tqdm(aggr_meta.tasks.items(), desc="Write tasks"):
-            write_task(task_index, task, aggr_meta.root)
+            legacy_write_task(task_index, task, aggr_meta.root)
 
         write_info(aggr_meta.info, aggr_meta.root)
 
