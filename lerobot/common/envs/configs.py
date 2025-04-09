@@ -202,10 +202,9 @@ class EnvWrapperConfig:
     ee_action_space_params: Optional[EEActionSpaceConfig] = None
     use_gripper: bool = False
     gripper_quantization_threshold: float | None = 0.8
-    gripper_penalty: float = 0.0 
+    gripper_penalty: float = 0.0
     gripper_penalty_in_reward: bool = False
     open_gripper_on_reset: bool = False
-
 
 
 @EnvConfig.register_subclass(name="gym_manipulator")
