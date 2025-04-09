@@ -368,8 +368,6 @@ def replay(
         start_episode_t = time.perf_counter()
 
         action = actions[idx]["action"]
-        # if replay_delta_actions:
-        #     action = action + current_joint_positions
         robot.send_action(action)
 
         dt_s = time.perf_counter() - start_episode_t
