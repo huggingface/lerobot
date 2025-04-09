@@ -23,6 +23,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar
 
+import decord
+import numpy as np
 import pyarrow as pa
 import torch
 import torchvision
@@ -66,6 +68,8 @@ def decode_video_frames(
         return decode_video_frames_torchcodec(video_path, timestamps, tolerance_s)
     elif backend in ["pyav", "video_reader"]:
         return decode_video_frames_torchvision(video_path, timestamps, tolerance_s, backend)
+    elif backend == "decord":
+        return decode_video_frames_decord(video_path, timestamps)
     else:
         raise ValueError(f"Unsupported video backend: {backend}")
 
@@ -241,6 +245,21 @@ def decode_video_frames_torchcodec(
 
     assert len(timestamps) == len(closest_frames)
     return closest_frames
+
+
+def decode_video_frames_decord(
+    video_path: Path | str,
+    timestamps: list[float],
+) -> torch.Tensor:
+    video_path = str(video_path)
+    vr = decord.VideoReader(video_path)
+    num_frames = len(vr)
+    frame_ts: np.ndarray = vr.get_frame_timestamp(range(num_frames))
+    indices = np.abs(frame_ts[:, :1] - timestamps).argmin(axis=0)
+    frames = vr.get_batch(indices)
+
+    frames_tensor = torch.tensor(frames.asnumpy()).type(torch.float32).permute(0, 3, 1, 2) / 255
+    return frames_tensor
 
 
 def encode_video_frames(
