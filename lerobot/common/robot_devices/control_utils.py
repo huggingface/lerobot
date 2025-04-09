@@ -252,7 +252,7 @@ def control_loop(
     timestamp = 0
     start_episode_t = time.perf_counter()
 
-    if dataset is not None:
+    if dataset is not None and not robot.robot_type.startswith("lekiwi"):   #For now, LeKiwi only supports frame audio recording (which may lead to audio chunks loss, extended post-processing, increased memory usage)
         for microphone_key, microphone in robot.microphones.items():
             #Start recording both in file writing and data reading mode
             dataset.add_microphone_recording(microphone, microphone_key)

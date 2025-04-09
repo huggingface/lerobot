@@ -80,6 +80,7 @@ from lerobot.common.datasets.video_utils import (
 )
 from lerobot.common.robot_devices.robots.utils import Robot
 from lerobot.common.robot_devices.microphones.utils import Microphone
+import soundfile as sf
 
 CODEBASE_VERSION = "v2.1"
 
@@ -324,7 +325,7 @@ class LeRobotDatasetMetadata:
         been encoded the same way. Also, this means it assumes the first episode exists.
         """
         for key in set(self.audio_keys) - set(self.audio_camera_keys_mapping.keys()):
-            if not self.features[key].get("info", None):
+            if not self.features[key].get("info", None) or (len(self.features[key]["info"]) == 1 and "sample_rate" in self.features[key]["info"]):
                 audio_path = self.root / self.get_compressed_audio_file_path(0, key)
                 self.info["features"][key]["info"] = get_audio_info(audio_path)
 
@@ -910,11 +911,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 self._save_image(frame[key], img_path)
                 self.episode_buffer[key].append(str(img_path))
             elif self.features[key]["dtype"] == "audio":
-                if frame_index == 0:
-                    audio_path = self._get_raw_audio_file_path(
-                        episode_index=self.episode_buffer["episode_index"], audio_key=key
-                    )
-                    self.episode_buffer[key].append(str(audio_path))
+                if self.meta.robot_type.startswith("lekiwi"):
+                    self.episode_buffer[key].append(frame[key])
+                else:
+                    if frame_index == 0:
+                        audio_path = self._get_raw_audio_file_path(
+                            episode_index=self.episode_buffer["episode_index"], audio_key=key
+                        )
+                        self.episode_buffer[key].append(str(audio_path))
             else:
                 self.episode_buffer[key].append(frame[key])
 
@@ -966,12 +970,23 @@ class LeRobotDataset(torch.utils.data.Dataset):
         for key, ft in self.features.items():
             # index, episode_index, task_index are already processed above, and image and video
             # are processed separately by storing image path and frame info as meta data
-            if key in ["index", "episode_index", "task_index"] or ft["dtype"] in ["image", "video", "audio"]:
+            if key in ["index", "episode_index", "task_index"] or ft["dtype"] in ["image", "video"]:
+                continue
+            elif ft["dtype"] == "audio":
+                if self.meta.robot_type.startswith("lekiwi"):
+                    episode_buffer[key] = np.concatenate(episode_buffer[key], axis=0)
                 continue
             episode_buffer[key] = np.stack(episode_buffer[key])
 
         self._wait_image_writer()
         self._save_episode_table(episode_buffer, episode_index)
+
+        if self.meta.robot_type.startswith("lekiwi"):
+            for key in self.meta.audio_keys:
+                audio_path = self._get_raw_audio_file_path(episode_index=self.episode_buffer["episode_index"][0], audio_key=key)
+                with sf.SoundFile(audio_path, mode='w', samplerate=self.meta.features[key]["info"]["sample_rate"], channels=self.meta.features[key]["shape"][0]) as file:
+                    file.write(episode_buffer[key])
+
         ep_stats = compute_episode_stats(episode_buffer, self.features)
 
         if len(self.meta.video_keys) > 0:
