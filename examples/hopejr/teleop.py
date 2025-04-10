@@ -49,7 +49,7 @@ def main(
 
     #calibrate hand
     hand_calibration = robot.get_hand_calibration()
-    glove = HomonculusGlove(serial_port = "/dev/ttyACM1")
+    glove = HomonculusGlove(serial_port = "/dev/ttyACM2")
 
     if calibrate_glove:
         glove.run_calibration()

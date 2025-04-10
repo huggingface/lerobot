@@ -101,3 +101,11 @@ theres clearly some lag, and its probably because of an out of range issue
     # print(robot.hand_bus.find_motor_indices())
     # exit()
 
+
+
+maybe divide the 3.3 by 2 and use that as a reference 
+
+https://jlcpcb.com/partdetail/23831236-OPA340UA_UMW/C22365307
+
+
+-90 is good for the op amp

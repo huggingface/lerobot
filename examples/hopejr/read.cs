@@ -3,8 +3,8 @@
 // Define multiplexer input pins
 #define S0 5
 #define S1 6
-#define S2 7
-#define S3 8
+#define S2 8
+#define S3 7
 #define SENSOR_INPUT 4
 
 #define SENSOR_COUNT 16
@@ -13,9 +13,9 @@ int rawVals[SENSOR_COUNT];
 
 void measureRawValues() {
   for (uint8_t i = 0; i < SENSOR_COUNT; i++) {
-    digitalWrite(S0, i & 0b1);
-    digitalWrite(S1, i >> 1 & 0b1);
-    digitalWrite(S2, i >> 2 & 0b1);
+    digitalWrite(S0, (i & 0b1) ^ 0b1);;
+    digitalWrite(S1, (i >> 1 & 0b1) ^ 0b1);;
+    digitalWrite(S2, (i >> 2 & 0b1) ^ 0b1);;
     digitalWrite(S3, i >> 3 & 0b1);
     delay(1);
     
@@ -33,8 +33,6 @@ void printRawValues() {
 
 void setup() {
   Serial.begin(115200);
-  analogReadResolution(12);
-  analogSetAttenuation(ADC_11db);;  // ~0.0–1.5V range
 
   pinMode(S0, OUTPUT);
   pinMode(S1, OUTPUT);
