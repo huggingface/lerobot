@@ -199,5 +199,5 @@ MODEL_NUMBER_TABLE = {
     "sts3215": 777,
     "sts3250": None,
     "sm8512bl": None,
-    "scs0009": None,
+    "scs0009": 1284,
 }

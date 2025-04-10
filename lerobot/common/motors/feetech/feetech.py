@@ -139,15 +139,15 @@ class FeetechMotorsBus(MotorsBus):
 
         return half_turn_homings
 
-    def _disable_torque(self, motors: list[NameOrID]) -> None:
-        for motor in motors:
-            self.write("Torque_Enable", motor, TorqueMode.DISABLED.value)
-            self.write("Lock", motor, 0)
+    def disable_torque(self, motors: str | list[str] | None = None) -> None:
+        for name in self._get_names_list(motors):
+            self.write("Torque_Enable", name, TorqueMode.DISABLED.value)
+            self.write("Lock", name, 0)
 
-    def _enable_torque(self, motors: list[NameOrID]) -> None:
-        for motor in motors:
-            self.write("Torque_Enable", motor, TorqueMode.ENABLED.value)
-            self.write("Lock", motor, 1)
+    def enable_torque(self, motors: str | list[str] | None = None) -> None:
+        for name in self._get_names_list(motors):
+            self.write("Torque_Enable", name, TorqueMode.ENABLED.value)
+            self.write("Lock", name, 1)
 
     def _encode_sign(self, data_name: str, ids_values: dict[int, int]) -> dict[int, int]:
         for id_ in ids_values:
@@ -170,18 +170,7 @@ class FeetechMotorsBus(MotorsBus):
         return ids_values
 
     @staticmethod
-    def _split_int_to_bytes(value: int, n_bytes: int) -> list[int]:
-        # Validate input
-        if value < 0:
-            raise ValueError(f"Negative values are not allowed: {value}")
-
-        max_value = {1: 0xFF, 2: 0xFFFF, 4: 0xFFFFFFFF}.get(n_bytes)
-        if max_value is None:
-            raise NotImplementedError(f"Unsupported byte size: {n_bytes}. Expected [1, 2, 4].")
-
-        if value > max_value:
-            raise ValueError(f"Value {value} exceeds the maximum for {n_bytes} bytes ({max_value}).")
-
+    def _split_into_byte_chunks(value: int, n_bytes: int) -> list[int]:
         import scservo_sdk as scs
 
         if n_bytes == 1:
@@ -197,7 +186,23 @@ class FeetechMotorsBus(MotorsBus):
             ]
         return data
 
-    def _broadcast_ping(self) -> tuple[dict[int, int], int]:
+    def _broadcast_ping_p1(self, known_motors_only: bool = True, num_retry: int = 0) -> dict[int, int]:
+        if known_motors_only:
+            ids = self.ids
+        else:
+            import scservo_sdk as scs
+
+            ids = range(scs.MAX_ID + 1)
+
+        ids_models = {}
+        for id_ in ids:
+            model_number = self.ping(id_, num_retry)
+            if model_number is not None:
+                ids_models[id_] = model_number
+
+        return ids_models
+
+    def _broadcast_ping_p0(self) -> tuple[dict[int, int], int]:
         import scservo_sdk as scs
 
         data_list = {}
@@ -251,7 +256,7 @@ class FeetechMotorsBus(MotorsBus):
                 for idx in range(2, status_length - 1):  # except header & checksum
                     checksum += rxpacket[idx]
 
-                checksum = scs.SCS_LOBYTE(~checksum)
+                checksum = ~checksum & 0xFF
                 if rxpacket[status_length - 1] == checksum:
                     result = scs.COMM_SUCCESS
                     data_list[rxpacket[scs.PKT_ID]] = rxpacket[scs.PKT_ERROR]
@@ -272,24 +277,31 @@ class FeetechMotorsBus(MotorsBus):
                 rx_length = rx_length - idx
 
     def broadcast_ping(self, num_retry: int = 0, raise_on_error: bool = False) -> dict[int, int] | None:
-        for n_try in range(1 + num_retry):
-            ids_status, comm = self._broadcast_ping()
-            if self._is_comm_success(comm):
-                break
-            logger.debug(f"Broadcast ping failed on port '{self.port}' ({n_try=})")
-            logger.debug(self.packet_handler.getTxRxResult(comm))
+        if self.protocol_version == 0:
+            for n_try in range(1 + num_retry):
+                ids_status, comm = self._broadcast_ping_p0()
+                if self._is_comm_success(comm):
+                    break
+                logger.debug(f"Broadcast ping failed on port '{self.port}' ({n_try=})")
+                logger.debug(self.packet_handler.getTxRxResult(comm))
 
-        if not self._is_comm_success(comm):
-            if raise_on_error:
-                raise ConnectionError(self.packet_handler.getTxRxResult(comm))
-            return
+            if not self._is_comm_success(comm):
+                if raise_on_error:
+                    raise ConnectionError(self.packet_handler.getTxRxResult(comm))
+                return
 
-        ids_errors = {id_: status for id_, status in ids_status.items() if self._is_error(status)}
-        if ids_errors:
-            display_dict = {id_: self.packet_handler.getRxPacketError(err) for id_, err in ids_errors.items()}
-            logger.error(f"Some motors found returned an error status:\n{pformat(display_dict, indent=4)}")
+            ids_errors = {id_: status for id_, status in ids_status.items() if self._is_error(status)}
+            if ids_errors:
+                display_dict = {
+                    id_: self.packet_handler.getRxPacketError(err) for id_, err in ids_errors.items()
+                }
+                logger.error(
+                    f"Some motors found returned an error status:\n{pformat(display_dict, indent=4)}"
+                )
 
-        return self._get_model_number(list(ids_status), raise_on_error)
+            return self._get_model_number(list(ids_status), raise_on_error)
+        else:
+            return self._broadcast_ping_p1(num_retry=num_retry)
 
     def _get_firmware_version(self, motor_ids: list[int], raise_on_error: bool = False) -> dict[int, int]:
         # comm, major = self._sync_read(*FIRMWARE_MAJOR_VERSION, motor_ids)
@@ -328,11 +340,20 @@ class FeetechMotorsBus(MotorsBus):
         #     return
 
         # return {id_: f"{major[id_]}.{minor[id_]}" for id_ in motor_ids}
+        if self.protocol_version == 1:
+            model_numbers = {}
+            for id_ in motor_ids:
+                model_nb, comm, error = self._read(*MODEL_NUMBER, id_)
+                if self._is_comm_success(comm) and not self._is_error(error):
+                    model_numbers[id_] = model_nb
+                elif raise_on_error:
+                    raise Exception  # FIX
 
-        comm, model_numbers = self._sync_read(*MODEL_NUMBER, motor_ids)
-        if not self._is_comm_success(comm):
-            if raise_on_error:
-                raise ConnectionError(self.packet_handler.getTxRxResult(comm))
-            return
+        else:
+            comm, model_numbers = self._sync_read(*MODEL_NUMBER, motor_ids)
+            if not self._is_comm_success(comm):
+                if raise_on_error:
+                    raise ConnectionError(self.packet_handler.getTxRxResult(comm))
+                return
 
         return model_numbers

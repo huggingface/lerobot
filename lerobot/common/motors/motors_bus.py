@@ -445,34 +445,12 @@ class MotorsBus(abc.ABC):
     def configure_motors(self) -> None:
         pass
 
-    def disable_torque(self, motors: NameOrID | list[NameOrID] | None = None) -> None:
-        pass
-        if motors is None:
-            motors = self.names
-        elif isinstance(motors, (str, int)):
-            motors = [motors]
-        elif not isinstance(motors, list):
-            raise TypeError(motors)
-
-        self._disable_torque(motors)
-
-    def enable_torque(self, motors: NameOrID | list[NameOrID] | None = None) -> None:
-        pass
-        if motors is None:
-            motors = self.names
-        elif isinstance(motors, (str, int)):
-            motors = [motors]
-        elif not isinstance(motors, list):
-            raise TypeError(motors)
-
-        self._enable_torque(motors)
-
     @abc.abstractmethod
-    def _enable_torque(self, motors: list[NameOrID]) -> None:
+    def disable_torque(self, motors: str | list[str] | None = None) -> None:
         pass
 
     @abc.abstractmethod
-    def _disable_torque(self, motors: list[NameOrID]) -> None:
+    def enable_torque(self, motors: str | list[str] | None = None) -> None:
         pass
 
     def set_timeout(self, timeout_ms: int | None = None):
@@ -620,6 +598,8 @@ class MotorsBus(abc.ABC):
         return mins, maxes
 
     def _normalize(self, data_name: str, ids_values: dict[int, int]) -> dict[int, float]:
+        if not self.calibration:
+            raise RuntimeError(f"{self} has no calibration registered.")
         normalized_values = {}
         for id_, val in ids_values.items():
             name = self._id_to_name(id_)
@@ -662,11 +642,10 @@ class MotorsBus(abc.ABC):
     def _decode_sign(self, data_name: str, ids_values: dict[int, int]) -> dict[int, int]:
         pass
 
-    @staticmethod
-    @abc.abstractmethod
-    def _split_int_to_bytes(value: int, n_bytes: int) -> list[int]:
+    def _serialize_data(self, value: int, n_bytes: int) -> list[int]:
         """
-        Splits an unsigned integer into a list of bytes in little-endian order.
+        Converts an unsigned integer value into a list of byte-sized integers to be sent via a communication
+        protocol. Depending on the protocol, split values can be in big-endian or little-endian order.
 
         This function extracts the individual bytes of an integer based on the
         specified number of bytes (`n_bytes`). The output is a list of integers,
@@ -678,7 +657,8 @@ class MotorsBus(abc.ABC):
         Args:
             value (int): The unsigned integer to be converted into a byte list. Must be within
                 the valid range for the specified `n_bytes`.
-            n_bytes (int): The number of bytes to use for conversion. Supported values:
+            n_bytes (int): The number of bytes to use for conversion. Supported values for both Feetech and
+                Dynamixel:
                 - 1 (for values 0 to 255)
                 - 2 (for values 0 to 65,535)
                 - 4 (for values 0 to 4,294,967,295)
@@ -690,7 +670,7 @@ class MotorsBus(abc.ABC):
         Returns:
             list[int]: A list of integers, each representing a byte in **little-endian order**.
 
-        Examples:
+        Examples (for a little-endian protocol):
             >>> split_int_bytes(0x12, 1)
             [18]
             >>> split_int_bytes(0x1234, 2)
@@ -698,6 +678,22 @@ class MotorsBus(abc.ABC):
             >>> split_int_bytes(0x12345678, 4)
             [120, 86, 52, 18]  # 0x12345678 → 0x78 0x56 0x34 0x12
         """
+        if value < 0:
+            raise ValueError(f"Negative values are not allowed: {value}")
+
+        max_value = {1: 0xFF, 2: 0xFFFF, 4: 0xFFFFFFFF}.get(n_bytes)
+        if max_value is None:
+            raise NotImplementedError(f"Unsupported byte size: {n_bytes}. Expected [1, 2, 4].")
+
+        if value > max_value:
+            raise ValueError(f"Value {value} exceeds the maximum for {n_bytes} bytes ({max_value}).")
+
+        return self._split_into_byte_chunks(value, n_bytes)
+
+    @staticmethod
+    @abc.abstractmethod
+    def _split_into_byte_chunks(value: int, n_bytes: int) -> list[int]:
+        """Convert an integer into a list of byte-sized integers."""
         pass
 
     def ping(self, motor: NameOrID, num_retry: int = 0, raise_on_error: bool = False) -> int | None:
@@ -814,7 +810,7 @@ class MotorsBus(abc.ABC):
     def _write(
         self, addr: int, n_bytes: int, motor_id: int, value: int, num_retry: int = 0
     ) -> tuple[int, int]:
-        data = self._split_int_to_bytes(value, n_bytes)
+        data = self._serialize_data(value, n_bytes)
         for n_try in range(1 + num_retry):
             comm, error = self.packet_handler.writeTxRx(self.port_handler, motor_id, addr, n_bytes, data)
             if self._is_comm_success(comm):
@@ -953,7 +949,7 @@ class MotorsBus(abc.ABC):
         self.sync_writer.start_address = addr
         self.sync_writer.data_length = n_bytes
         for id_, value in ids_values.items():
-            data = self._split_int_to_bytes(value, n_bytes)
+            data = self._serialize_data(value, n_bytes)
             self.sync_writer.addParam(id_, data)
 
     def disconnect(self, disable_torque: bool = True) -> None:

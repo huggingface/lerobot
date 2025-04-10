@@ -125,13 +125,13 @@ class DynamixelMotorsBus(MotorsBus):
         for id_ in self.ids:
             self.write("Return_Delay_Time", id_, 0)
 
-    def _disable_torque(self, motors: list[NameOrID]) -> None:
-        for motor in motors:
-            self.write("Torque_Enable", motor, TorqueMode.DISABLED.value)
+    def disable_torque(self, motors: str | list[str] | None = None) -> None:
+        for name in self._get_names_list(motors):
+            self.write("Torque_Enable", name, TorqueMode.DISABLED.value)
 
-    def _enable_torque(self, motors: list[NameOrID]) -> None:
-        for motor in motors:
-            self.write("Torque_Enable", motor, TorqueMode.ENABLED.value)
+    def enable_torque(self, motors: str | list[str] | None = None) -> None:
+        for name in self._get_names_list(motors):
+            self.write("Torque_Enable", name, TorqueMode.ENABLED.value)
 
     def _encode_sign(self, data_name: str, ids_values: dict[int, int]) -> dict[int, int]:
         for id_ in ids_values:
@@ -167,22 +167,9 @@ class DynamixelMotorsBus(MotorsBus):
         return half_turn_homings
 
     @staticmethod
-    def _split_int_to_bytes(value: int, n_bytes: int) -> list[int]:
-        # Validate input
-        if value < 0:
-            raise ValueError(f"Negative values are not allowed: {value}")
-
-        max_value = {1: 0xFF, 2: 0xFFFF, 4: 0xFFFFFFFF}.get(n_bytes)
-        if max_value is None:
-            raise NotImplementedError(f"Unsupported byte size: {n_bytes}. Expected [1, 2, 4].")
-
-        if value > max_value:
-            raise ValueError(f"Value {value} exceeds the maximum for {n_bytes} bytes ({max_value}).")
-
+    def _split_into_byte_chunks(value: int, n_bytes: int) -> list[int]:
         import dynamixel_sdk as dxl
 
-        # Note: No need to convert back into unsigned int, since this byte preprocessing
-        # already handles it for us.
         if n_bytes == 1:
             data = [value]
         elif n_bytes == 2:
