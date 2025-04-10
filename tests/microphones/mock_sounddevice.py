@@ -11,26 +11,29 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import time
 from functools import cache
-
-from tests.fixtures.constants import DUMMY_AUDIO_CHANNELS, DEFAULT_SAMPLE_RATE
+from threading import Event, Thread
 
 import numpy as np
+
 from lerobot.common.utils.utils import capture_timestamp_utc
-from threading import Thread, Event
-import time
+from tests.fixtures.constants import DEFAULT_SAMPLE_RATE, DUMMY_AUDIO_CHANNELS
+
 
 @cache
 def _generate_sound(duration: float, sample_rate: int, channels: int):
     return np.random.uniform(-1, 1, size=(int(duration * sample_rate), channels)).astype(np.float32)
 
+
 def query_devices(query_index: int):
     return {
-            "name": "Mock Sound Device",
-            "index": query_index,
-            "max_input_channels": DUMMY_AUDIO_CHANNELS,
-            "default_samplerate": DEFAULT_SAMPLE_RATE,
+        "name": "Mock Sound Device",
+        "index": query_index,
+        "max_input_channels": DUMMY_AUDIO_CHANNELS,
+        "default_samplerate": DEFAULT_SAMPLE_RATE,
     }
+
 
 class InputStream:
     def __init__(self, *args, **kwargs):
@@ -49,7 +52,12 @@ class InputStream:
             while not self.callback_thread_stop_event.is_set():
                 # Simulate audio data acquisition
                 time.sleep(0.01)
-                self._audio_callback(_generate_sound(0.01, DEFAULT_SAMPLE_RATE, DUMMY_AUDIO_CHANNELS), 0.01*DEFAULT_SAMPLE_RATE, capture_timestamp_utc(), None)
+                self._audio_callback(
+                    _generate_sound(0.01, DEFAULT_SAMPLE_RATE, DUMMY_AUDIO_CHANNELS),
+                    0.01 * DEFAULT_SAMPLE_RATE,
+                    capture_timestamp_utc(),
+                    None,
+                )
 
     def start(self):
         self.callback_thread_stop_event = Event()
@@ -62,7 +70,7 @@ class InputStream:
     @property
     def active(self):
         return self._is_active
-    
+
     def stop(self):
         if self.callback_thread_stop_event is not None:
             self.callback_thread_stop_event.set()
@@ -78,5 +86,3 @@ class InputStream:
     def __del__(self):
         if self._is_active:
             self.stop()
-
-

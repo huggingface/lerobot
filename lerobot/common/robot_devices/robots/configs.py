@@ -23,12 +23,12 @@ from lerobot.common.robot_devices.cameras.configs import (
     IntelRealSenseCameraConfig,
     OpenCVCameraConfig,
 )
+from lerobot.common.robot_devices.microphones.configs import MicrophoneConfig
 from lerobot.common.robot_devices.motors.configs import (
     DynamixelMotorsBusConfig,
     FeetechMotorsBusConfig,
     MotorsBusConfig,
 )
-from lerobot.common.robot_devices.microphones.configs import MicrophoneConfig
 
 
 @dataclass
