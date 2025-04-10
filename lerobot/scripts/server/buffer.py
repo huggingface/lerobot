@@ -198,6 +198,9 @@ class ReplayBuffer:
             optimize_memory (bool): If True, optimizes memory by not storing duplicate next_states when
                 they can be derived from states. This is useful for large datasets where next_state[i] = state[i+1].
         """
+        if capacity <= 0:
+            raise ValueError("Capacity must be greater than 0.")
+
         self.capacity = capacity
         self.device = device
         self.storage_device = storage_device
