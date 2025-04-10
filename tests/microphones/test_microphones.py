@@ -32,19 +32,26 @@ pytest -sx 'tests/microphones/test_microphones.py::test_microphone[microphone-Tr
 ```
 """
 
-import numpy as np
 import time
+
+import numpy as np
 import pytest
 from soundfile import read
 
-from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError, RobotDeviceNotRecordingError, RobotDeviceAlreadyRecordingError
+from lerobot.common.robot_devices.utils import (
+    RobotDeviceAlreadyConnectedError,
+    RobotDeviceAlreadyRecordingError,
+    RobotDeviceNotConnectedError,
+    RobotDeviceNotRecordingError,
+)
 from tests.utils import TEST_MICROPHONE_TYPES, make_microphone, require_microphone
 
-#Maximum recording tie difference between two consecutive audio recordings of the same duration.
-#Set to 0.02 seconds as twice the default size of sounddvice callback buffer (i.e. we tolerate the loss of one buffer).
+# Maximum recording tie difference between two consecutive audio recordings of the same duration.
+# Set to 0.02 seconds as twice the default size of sounddvice callback buffer (i.e. we tolerate the loss of one buffer).
 MAX_RECORDING_TIME_DIFFERENCE = 0.02
 
 DUMMY_RECORDING = "test_recording.wav"
+
 
 @pytest.mark.parametrize("microphone_type, mock", TEST_MICROPHONE_TYPES)
 @require_microphone
@@ -92,7 +99,7 @@ def test_microphone(tmp_path, request, microphone_type, mock):
     fpath = tmp_path / DUMMY_RECORDING
     microphone.start_recording(fpath)
     assert microphone.is_recording
-    
+
     # Test start_recording twice raises an error
     with pytest.raises(RobotDeviceAlreadyRecordingError):
         microphone.start_recording()
@@ -126,10 +133,13 @@ def test_microphone(tmp_path, request, microphone_type, mock):
 
     error_msg = (
         "Recording time difference between read() and stop_recording()",
-        (len(audio_chunk) - len(recorded_audio))/MAX_RECORDING_TIME_DIFFERENCE,
+        (len(audio_chunk) - len(recorded_audio)) / MAX_RECORDING_TIME_DIFFERENCE,
     )
     np.testing.assert_allclose(
-        len(audio_chunk), len(recorded_audio), atol=recorded_sample_rate*MAX_RECORDING_TIME_DIFFERENCE, err_msg=error_msg
+        len(audio_chunk),
+        len(recorded_audio),
+        atol=recorded_sample_rate * MAX_RECORDING_TIME_DIFFERENCE,
+        err_msg=error_msg,
     )
 
     # Test disconnecting

@@ -33,9 +33,8 @@ from datasets.table import embed_table_storage
 from huggingface_hub import DatasetCard, DatasetCardData, HfApi
 from huggingface_hub.errors import RevisionNotFoundError
 from PIL import Image as PILImage
-from torchvision import transforms
-
 from soundfile import read
+from torchvision import transforms
 
 from lerobot.common.datasets.backward_compatibility import (
     V21_MESSAGE,
@@ -260,9 +259,11 @@ def load_image_as_numpy(
         img_array /= 255.0
     return img_array
 
+
 def load_audio_from_path(fpath: str | Path) -> np.ndarray:
     audio_data, _ = read(fpath, dtype="float32")
     return audio_data
+
 
 def hf_transform_to_torch(items_dict: dict[torch.Tensor | None]):
     """Get a transform function that convert items from Hugging Face dataset (pyarrow)
@@ -731,7 +732,7 @@ def validate_features_presence(
 ):
     error_message = ""
     missing_features = expected_features - actual_features
-    missing_features =  {feature for feature in missing_features if "observation.audio" not in feature}
+    missing_features = {feature for feature in missing_features if "observation.audio" not in feature}
     extra_features = actual_features - (expected_features | optional_features)
 
     if missing_features or extra_features:
@@ -793,17 +794,23 @@ def validate_feature_image_or_video(name: str, expected_shape: list[str], value:
 
     return error_message
 
+
 def validate_feature_audio(name: str, expected_shape: list[str], value: np.ndarray):
     error_message = ""
     if isinstance(value, np.ndarray):
         actual_shape = value.shape
         c = expected_shape
-        if len(actual_shape) != 2 or (actual_shape[-1] != c[-1] and actual_shape[0] != c[0]): #The number of frames might be different
-            error_message += f"The feature '{name}' of shape '{actual_shape}' does not have the expected shape '{(c,)}'.\n"
+        if len(actual_shape) != 2 or (
+            actual_shape[-1] != c[-1] and actual_shape[0] != c[0]
+        ):  # The number of frames might be different
+            error_message += (
+                f"The feature '{name}' of shape '{actual_shape}' does not have the expected shape '{(c,)}'.\n"
+            )
     else:
         error_message += f"The feature '{name}' is expected to be of type 'np.ndarray', but type '{type(value)}' provided instead.\n"
 
     return error_message
+
 
 def validate_feature_string(name: str, value: str):
     if not isinstance(value, str):

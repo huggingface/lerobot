@@ -25,12 +25,11 @@ from typing import Any, ClassVar
 
 import pyarrow as pa
 import torch
-import torchvision
 import torchaudio
+import torchvision
 from datasets.features.features import register_feature
-from PIL import Image
-
 from numpy import ceil
+from PIL import Image
 
 
 def get_safe_default_codec():
@@ -41,6 +40,7 @@ def get_safe_default_codec():
             "'torchcodec' is not available in your platform, falling back to 'pyav' as a default decoder"
         )
         return "pyav"
+
 
 def decode_audio(
     audio_path: Path | str,
@@ -68,30 +68,30 @@ def decode_audio(
     else:
         raise ValueError(f"Unsupported video backend: {backend}")
 
+
 def decode_audio_torchvision(
     audio_path: Path | str,
-    timestamps: list[float],   
-    duration: float,   
+    timestamps: list[float],
+    duration: float,
     log_loaded_timestamps: bool = False,
 ) -> torch.Tensor:
-    
-    #TODO(CarolinePascal) : add channels selection
+    # TODO(CarolinePascal) : add channels selection
     audio_path = str(audio_path)
 
     reader = torchaudio.io.StreamReader(src=audio_path)
     audio_sample_rate = reader.get_src_stream_info(reader.default_audio_stream).sample_rate
 
-    #TODO(CarolinePascal) : sort timestamps ?
+    # TODO(CarolinePascal) : sort timestamps ?
 
     reader.add_basic_audio_stream(
-        frames_per_chunk = int(ceil(duration * audio_sample_rate)),    #Too much is better than not enough
-        buffer_chunk_size = -1, #No dropping frames
-        format = "fltp",    #Format as float32
+        frames_per_chunk=int(ceil(duration * audio_sample_rate)),  # Too much is better than not enough
+        buffer_chunk_size=-1,  # No dropping frames
+        format="fltp",  # Format as float32
     )
 
     audio_chunks = []
     for ts in timestamps:
-        reader.seek(ts) #Default to closest audio sample
+        reader.seek(ts)  # Default to closest audio sample
         status = reader.fill_buffer()
         if status != 0:
             logging.warning("Audio stream reached end of recording before decoding desired timestamps.")
@@ -99,15 +99,18 @@ def decode_audio_torchvision(
         current_audio_chunk = reader.pop_chunks()[0]
 
         if log_loaded_timestamps:
-            logging.info(f"audio chunk loaded at starting timestamp={current_audio_chunk["pts"]:.4f} with duration={len(current_audio_chunk) / audio_sample_rate:.4f}")
-        
+            logging.info(
+                f"audio chunk loaded at starting timestamp={current_audio_chunk['pts']:.4f} with duration={len(current_audio_chunk) / audio_sample_rate:.4f}"
+            )
+
         audio_chunks.append(current_audio_chunk)
 
     audio_chunks = torch.stack(audio_chunks)
 
     assert len(timestamps) == len(audio_chunks)
     return audio_chunks
-    
+
+
 def decode_video_frames(
     video_path: Path | str,
     timestamps: list[float],
@@ -136,6 +139,7 @@ def decode_video_frames(
         return decode_video_frames_torchvision(video_path, timestamps, tolerance_s, backend)
     else:
         raise ValueError(f"Unsupported video backend: {backend}")
+
 
 def decode_video_frames_torchvision(
     video_path: Path | str,
@@ -234,6 +238,7 @@ def decode_video_frames_torchvision(
     assert len(timestamps) == len(closest_frames)
     return closest_frames
 
+
 def decode_video_frames_torchcodec(
     video_path: Path | str,
     timestamps: list[float],
@@ -308,6 +313,7 @@ def decode_video_frames_torchcodec(
     assert len(timestamps) == len(closest_frames)
     return closest_frames
 
+
 def encode_audio(
     input_path: Path | str,
     output_path: Path | str,
@@ -344,6 +350,7 @@ def encode_audio(
             f"Try running the command manually to debug: `{''.join(ffmpeg_cmd)}`"
         )
 
+
 def encode_video_frames(
     imgs_dir: Path | str,
     video_path: Path | str,
@@ -353,7 +360,7 @@ def encode_video_frames(
     pix_fmt: str = "yuv420p",
     g: int | None = 2,
     crf: int | None = 30,
-    acodec: str = "aac",    #TODO(CarolinePascal) : investigate Fraunhofer FDK AAC (libfdk_aac) codec and and constant (file size control) /variable (quality control) bitrate options
+    acodec: str = "aac",  # TODO(CarolinePascal) : investigate Fraunhofer FDK AAC (libfdk_aac) codec and and constant (file size control) /variable (quality control) bitrate options
     fast_decode: int = 0,
     log_level: str | None = "error",
     overwrite: bool = False,
@@ -375,16 +382,18 @@ def encode_video_frames(
     if audio_path is not None:
         audio_path = Path(audio_path)
         audio_path.parent.mkdir(parents=True, exist_ok=True)
-        ffmpeg_audio_args.update(OrderedDict(
-            [
-                ("-i", str(audio_path)),
-            ]
-        ))
+        ffmpeg_audio_args.update(
+            OrderedDict(
+                [
+                    ("-i", str(audio_path)),
+                ]
+            )
+        )
 
     ffmpeg_encoding_args = OrderedDict(
         [
             ("-pix_fmt", pix_fmt),
-            ("-vcodec", vcodec),    
+            ("-vcodec", vcodec),
         ]
     )
     if g is not None:
@@ -398,7 +407,7 @@ def encode_video_frames(
 
     if audio_path is not None:
         ffmpeg_encoding_args["-acodec"] = acodec
-    
+
     if log_level is not None:
         ffmpeg_encoding_args["-loglevel"] = str(log_level)
 
@@ -486,6 +495,7 @@ def get_audio_info(video_path: Path | str) -> dict:
         "audio.bit_depth": audio_stream_info.get("bit_depth", None),
         "audio.channel_layout": audio_stream_info.get("channel_layout", None),
     }
+
 
 def get_video_info(video_path: Path | str) -> dict:
     ffprobe_video_cmd = [

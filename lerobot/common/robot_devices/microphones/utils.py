@@ -16,12 +16,14 @@ from typing import Protocol
 
 from lerobot.common.robot_devices.microphones.configs import MicrophoneConfig, MicrophoneConfigBase
 
+
 # Defines a microphone type
 class Microphone(Protocol):
     def connect(self): ...
     def disconnect(self): ...
-    def start_recording(self, output_file : str | None = None, multiprocessing : bool | None = False): ...
+    def start_recording(self, output_file: str | None = None, multiprocessing: bool | None = False): ...
     def stop_recording(self): ...
+
 
 def make_microphones_from_configs(microphone_configs: dict[str, MicrophoneConfigBase]) -> list[Microphone]:
     microphones = {}
@@ -29,15 +31,18 @@ def make_microphones_from_configs(microphone_configs: dict[str, MicrophoneConfig
     for key, cfg in microphone_configs.items():
         if cfg.type == "microphone":
             from lerobot.common.robot_devices.microphones.microphone import Microphone
+
             microphones[key] = Microphone(cfg)
         else:
             raise ValueError(f"The microphone type '{cfg.type}' is not valid.")
 
     return microphones
 
+
 def make_microphone(microphone_type, **kwargs) -> Microphone:
     if microphone_type == "microphone":
         from lerobot.common.robot_devices.microphones.microphone import Microphone
+
         return Microphone(MicrophoneConfig(**kwargs))
     else:
         raise ValueError(f"The microphone type '{microphone_type}' is not valid.")

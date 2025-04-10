@@ -143,7 +143,7 @@ def test_robot(tmp_path, request, robot_type, mock):
     robot.send_action(action["action"])
 
     # Test disconnecting
-    robot.disconnect()  #Also handles microphone recording stop, life is beautiful
+    robot.disconnect()  # Also handles microphone recording stop, life is beautiful
     assert not robot.is_connected
     for name in robot.follower_arms:
         assert not robot.follower_arms[name].is_connected

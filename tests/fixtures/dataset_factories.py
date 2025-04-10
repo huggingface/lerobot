@@ -26,10 +26,10 @@ import torch
 from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset, LeRobotDatasetMetadata
 from lerobot.common.datasets.utils import (
     DEFAULT_CHUNK_SIZE,
+    DEFAULT_COMPRESSED_AUDIO_PATH,
     DEFAULT_FEATURES,
     DEFAULT_PARQUET_PATH,
     DEFAULT_VIDEO_PATH,
-    DEFAULT_COMPRESSED_AUDIO_PATH,
     get_hf_features_from_features,
     hf_transform_to_torch,
 )

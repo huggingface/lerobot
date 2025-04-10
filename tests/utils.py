@@ -22,13 +22,13 @@ from pathlib import Path
 import pytest
 import torch
 
-from lerobot import available_cameras, available_motors, available_robots, available_microphones
+from lerobot import available_cameras, available_microphones, available_motors, available_robots
 from lerobot.common.robot_devices.cameras.utils import Camera
 from lerobot.common.robot_devices.cameras.utils import make_camera as make_camera_device
-from lerobot.common.robot_devices.motors.utils import MotorsBus
-from lerobot.common.robot_devices.motors.utils import make_motors_bus as make_motors_bus_device
 from lerobot.common.robot_devices.microphones.utils import Microphone
 from lerobot.common.robot_devices.microphones.utils import make_microphone as make_microphone_device
+from lerobot.common.robot_devices.motors.utils import MotorsBus
+from lerobot.common.robot_devices.motors.utils import make_motors_bus as make_motors_bus_device
 from lerobot.common.utils.import_utils import is_package_available
 
 DEVICE = os.environ.get("LEROBOT_TEST_DEVICE", "cuda") if torch.cuda.is_available() else "cpu"
@@ -261,6 +261,7 @@ def require_camera(func):
 
     return wrapper
 
+
 def require_microphone(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
@@ -282,6 +283,7 @@ def require_microphone(func):
         return func(*args, **kwargs)
 
     return wrapper
+
 
 def require_motor(func):
     @wraps(func)
@@ -344,12 +346,14 @@ def make_camera(camera_type: str, **kwargs) -> Camera:
     else:
         raise ValueError(f"The camera type '{camera_type}' is not valid.")
 
+
 def make_microphone(microphone_type: str, **kwargs) -> Microphone:
     if microphone_type == "microphone":
         microphone_index = kwargs.pop("microphone_index", MICROPHONE_INDEX)
         return make_microphone_device(microphone_type, microphone_index=microphone_index, **kwargs)
     else:
         raise ValueError(f"The microphone type '{microphone_type}' is not valid.")
+
 
 # TODO(rcadene, aliberts): remove this dark pattern that overrides
 def make_motors_bus(motor_type: str, **kwargs) -> MotorsBus:

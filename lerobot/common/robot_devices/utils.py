@@ -69,10 +69,12 @@ class RobotDeviceNotRecordingError(Exception):
     """Exception raised when the robot device is not recording."""
 
     def __init__(
-        self, message="This robot device is not recording. Try calling `robot_device.start_recording()` first."
+        self,
+        message="This robot device is not recording. Try calling `robot_device.start_recording()` first.",
     ):
         self.message = message
         super().__init__(self.message)
+
 
 class RobotDeviceAlreadyRecordingError(Exception):
     """Exception raised when the robot device is already recording."""

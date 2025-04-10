@@ -51,6 +51,7 @@ def run_camera_capture(cameras, images_lock, latest_images_dict, stop_event):
             latest_images_dict.update(local_dict)
         time.sleep(0.01)
 
+
 def run_microphone_capture(microphones, audio_lock, latest_audio_dict, stop_event):
     while not stop_event.is_set():
         local_dict = {}
@@ -59,6 +60,7 @@ def run_microphone_capture(microphones, audio_lock, latest_audio_dict, stop_even
             local_dict[name] = audio_readings
         with audio_lock:
             latest_audio_dict.update(local_dict)
+
 
 def calibrate_follower_arm(motors_bus, calib_dir_str):
     """
@@ -149,12 +151,14 @@ def run_lekiwi(robot_config):
     cam_thread.start()
 
     # Start the microphone recording and capture thread.
-    #TODO(CarolinePascal) : Leverage multi-core processing with a multiprocessing.Process instead !
+    # TODO(CarolinePascal) : Leverage multi-core processing with a multiprocessing.Process instead !
     latest_audio_dict = {}
     audio_lock = threading.Lock()
     audio_stop_event = threading.Event()
     microphone_thread = threading.Thread(
-        target=run_microphone_capture, args=(microphones, audio_lock, latest_audio_dict, audio_stop_event), daemon=True
+        target=run_microphone_capture,
+        args=(microphones, audio_lock, latest_audio_dict, audio_stop_event),
+        daemon=True,
     )
     for microphone in microphones.values():
         microphone.start_recording()
@@ -231,7 +235,7 @@ def run_lekiwi(robot_config):
             # Build the observation dictionary.
             observation = {
                 "images": images_dict_copy,
-                "audio": audio_dict_copy,   #TODO(CarolinePascal) : This is a nasty way to do it, sorry.
+                "audio": audio_dict_copy,  # TODO(CarolinePascal) : This is a nasty way to do it, sorry.
                 "present_speed": current_velocity,
                 "follower_arm_state": follower_arm_state,
             }
