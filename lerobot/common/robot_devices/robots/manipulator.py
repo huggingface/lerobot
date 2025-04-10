@@ -201,7 +201,7 @@ class ManipulatorRobot:
                 "names": state_names,
             },
         }
-    
+
     @property
     def microphone_features(self) -> dict:
         mic_ft = {}
@@ -211,7 +211,7 @@ class ManipulatorRobot:
                 "dtype": "audio",
                 "shape": (len(mic.channels),),
                 "names": "channels",
-                "info" : {"sample_rate": mic.sample_rate},
+                "info": {"sample_rate": mic.sample_rate},
             }
         return mic_ft
 
@@ -226,11 +226,11 @@ class ManipulatorRobot:
     @property
     def num_cameras(self):
         return len(self.cameras)
-    
+
     @property
     def has_microphone(self):
         return len(self.microphones) > 0
-    
+
     @property
     def num_microphones(self):
         return len(self.microphones)

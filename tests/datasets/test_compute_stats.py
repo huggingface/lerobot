@@ -25,9 +25,9 @@ from lerobot.common.datasets.compute_stats import (
     compute_episode_stats,
     estimate_num_samples,
     get_feature_stats,
-    sample_images,
-    sample_audio_from_path,
     sample_audio_from_data,
+    sample_audio_from_path,
+    sample_images,
     sample_indices,
 )
 
@@ -35,8 +35,10 @@ from lerobot.common.datasets.compute_stats import (
 def mock_load_image_as_numpy(path, dtype, channel_first):
     return np.ones((3, 32, 32), dtype=dtype) if channel_first else np.ones((32, 32, 3), dtype=dtype)
 
+
 def mock_load_audio(path):
-    return np.ones((16000,2), dtype=np.float32)
+    return np.ones((16000, 2), dtype=np.float32)
+
 
 @pytest.fixture
 def sample_array():
@@ -74,6 +76,7 @@ def test_sample_images(mock_load):
     assert images.dtype == np.uint8
     assert len(images) == estimate_num_samples(100)
 
+
 @patch("lerobot.common.datasets.compute_stats.load_audio_from_path", side_effect=mock_load_audio)
 def test_sample_audio_from_path(mock_load):
     audio_path = "audio.wav"
@@ -83,6 +86,7 @@ def test_sample_audio_from_path(mock_load):
     assert audio_samples.dtype == np.float32
     assert len(audio_samples) == estimate_num_samples(16000)
 
+
 def test_sample_audio_from_data(mock_load):
     audio_data = np.ones((16000, 2), dtype=np.float32)
     audio_samples = sample_audio_from_data(audio_data)
@@ -91,6 +95,7 @@ def test_sample_audio_from_data(mock_load):
     assert audio_samples.dtype == np.float32
     assert len(audio_samples) == estimate_num_samples(16000)
 
+
 def test_get_feature_stats_images():
     data = np.random.rand(100, 3, 32, 32)
     stats = get_feature_stats(data, axis=(0, 2, 3), keepdims=True)
@@ -98,12 +103,14 @@ def test_get_feature_stats_images():
     np.testing.assert_equal(stats["count"], np.array([100]))
     assert stats["min"].shape == stats["max"].shape == stats["mean"].shape == stats["std"].shape
 
+
 def test_get_feature_stats_audio():
-    data = np.random.uniform(-1, 1, (16000,2))
+    data = np.random.uniform(-1, 1, (16000, 2))
     stats = get_feature_stats(data, axis=0, keepdims=True)
     assert "min" in stats and "max" in stats and "mean" in stats and "std" in stats and "count" in stats
     np.testing.assert_equal(stats["count"], np.array([16000]))
     assert stats["min"].shape == stats["max"].shape == stats["mean"].shape == stats["std"].shape
+
 
 def test_get_feature_stats_axis_0_keepdims(sample_array):
     expected = {
@@ -172,10 +179,11 @@ def test_compute_episode_stats():
         "observation.state": {"dtype": "numeric"},
     }
 
-    with patch(
-        "lerobot.common.datasets.compute_stats.load_image_as_numpy", side_effect=mock_load_image_as_numpy
-    ), patch(
-        "lerobot.common.datasets.compute_stats.load_audio_from_path", side_effect=mock_load_audio
+    with (
+        patch(
+            "lerobot.common.datasets.compute_stats.load_image_as_numpy", side_effect=mock_load_image_as_numpy
+        ),
+        patch("lerobot.common.datasets.compute_stats.load_audio_from_path", side_effect=mock_load_audio),
     ):
         stats = compute_episode_stats(episode_data, features)
 

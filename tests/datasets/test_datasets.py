@@ -16,6 +16,7 @@
 import json
 import logging
 import re
+import time
 from copy import deepcopy
 from itertools import chain
 from pathlib import Path
@@ -35,6 +36,7 @@ from lerobot.common.datasets.lerobot_dataset import (
     MultiLeRobotDataset,
 )
 from lerobot.common.datasets.utils import (
+    DEFAULT_AUDIO_CHUNK_DURATION,
     create_branch,
     flatten_dict,
     unflatten_dict,
@@ -44,12 +46,9 @@ from lerobot.common.policies.factory import make_policy_config
 from lerobot.common.robot_devices.robots.utils import make_robot
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
-from tests.fixtures.constants import DUMMY_CHW, DUMMY_HWC, DUMMY_REPO_ID, DUMMY_AUDIO_CHANNELS
-from tests.utils import require_x86_64_kernel
+from tests.fixtures.constants import DUMMY_AUDIO_CHANNELS, DUMMY_CHW, DUMMY_HWC, DUMMY_REPO_ID
+from tests.utils import make_microphone, require_x86_64_kernel
 
-from tests.utils import make_microphone
-import time
-from lerobot.common.datasets.utils import DEFAULT_AUDIO_CHUNK_DURATION
 
 @pytest.fixture
 def image_dataset(tmp_path, empty_lerobot_dataset_factory):
@@ -66,6 +65,7 @@ def image_dataset(tmp_path, empty_lerobot_dataset_factory):
     }
     return empty_lerobot_dataset_factory(root=tmp_path / "test", features=features)
 
+
 @pytest.fixture
 def audio_dataset(tmp_path, empty_lerobot_dataset_factory):
     features = {
@@ -78,6 +78,7 @@ def audio_dataset(tmp_path, empty_lerobot_dataset_factory):
         }
     }
     return empty_lerobot_dataset_factory(root=tmp_path / "test", features=features)
+
 
 def test_same_attributes_defined(tmp_path, lerobot_dataset_factory):
     """
@@ -336,6 +337,7 @@ def test_image_array_to_pil_image_wrong_range_float_0_255():
     with pytest.raises(ValueError):
         image_array_to_pil_image(image)
 
+
 def test_add_frame_audio(audio_dataset):
     dataset = audio_dataset
 
@@ -349,7 +351,10 @@ def test_add_frame_audio(audio_dataset):
 
     dataset.save_episode()
 
-    assert dataset[0]["observation.audio.microphone"].shape == torch.Size((int(DEFAULT_AUDIO_CHUNK_DURATION*microphone.sample_rate),DUMMY_AUDIO_CHANNELS))
+    assert dataset[0]["observation.audio.microphone"].shape == torch.Size(
+        (int(DEFAULT_AUDIO_CHUNK_DURATION * microphone.sample_rate), DUMMY_AUDIO_CHANNELS)
+    )
+
 
 # TODO(aliberts):
 # - [ ] test various attributes & state from init and create
