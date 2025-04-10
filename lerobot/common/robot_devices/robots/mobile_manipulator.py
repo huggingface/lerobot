@@ -163,7 +163,7 @@ class MobileManipulator:
                 "names": combined_names,
             },
         }
-    
+
     @property
     def microphone_features(self) -> dict:
         mic_ft = {}
@@ -173,7 +173,7 @@ class MobileManipulator:
                 "dtype": "audio",
                 "shape": (len(mic.channels),),
                 "names": "channels",
-                "info" : {"sample_rate": mic.sample_rate},
+                "info": {"sample_rate": mic.sample_rate},
             }
         return mic_ft
 
@@ -188,11 +188,11 @@ class MobileManipulator:
     @property
     def num_cameras(self):
         return len(self.cameras)
-    
+
     @property
     def has_microphone(self):
         return len(self.microphones) > 0
-    
+
     @property
     def num_microphones(self):
         return len(self.microphones)
@@ -512,7 +512,7 @@ class MobileManipulator:
                 # Create silence using the microphone's configured channels
                 frame = np.zeros((1, len(microphone.channels)), dtype=np.float32)
             obs_dict[f"observation.audio.{microphone_name}"] = torch.from_numpy(frame)
-            
+
         return obs_dict
 
     def send_action(self, action: torch.Tensor) -> torch.Tensor:

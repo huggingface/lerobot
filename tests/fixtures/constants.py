@@ -29,7 +29,12 @@ DUMMY_MOTOR_FEATURES = {
     },
 }
 DUMMY_CAMERA_FEATURES = {
-    "laptop": {"shape": (480, 640, 3), "names": ["height", "width", "channels"], "info": None, "audio": "laptop"},
+    "laptop": {
+        "shape": (480, 640, 3),
+        "names": ["height", "width", "channels"],
+        "info": None,
+        "audio": "laptop",
+    },
     "phone": {"shape": (480, 640, 3), "names": ["height", "width", "channels"], "info": None},
 }
 DEFAULT_FPS = 30
