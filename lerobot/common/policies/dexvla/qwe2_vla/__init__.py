@@ -1,4 +1,6 @@
-# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#!/usr/bin/env python
+
+# Copyright 2025 DexVLA Team and The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,9 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .act.configuration_act import ACTConfig as ACTConfig
-from .dexvla.configuration_dexvla import DexVLAConfig as DexVLAConfig
-from .diffusion.configuration_diffusion import DiffusionConfig as DiffusionConfig
-from .pi0.configuration_pi0 import PI0Config as PI0Config
-from .tdmpc.configuration_tdmpc import TDMPCConfig as TDMPCConfig
-from .vqbet.configuration_vqbet import VQBeTConfig as VQBeTConfig
+from transformers import AutoConfig, AutoModelForCausalLM
+
+from .configuration_qwen2_vla import Qwen2VLAConfig
+from .modeling_qwen2_vla import Qwen2VLForConditionalGenerationForVLA
+
+
+def register_qwen2_vla():
+    AutoConfig.register("qwen2_vla", Qwen2VLAConfig)
+    AutoModelForCausalLM.register(Qwen2VLAConfig, Qwen2VLForConditionalGenerationForVLA)
