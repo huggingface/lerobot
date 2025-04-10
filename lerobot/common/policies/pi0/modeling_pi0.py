@@ -325,7 +325,8 @@ class PI0Policy(PreTrainedPolicy):
             loss_dict["losses_after_in_ep_bound"] = losses.clone()
 
         # Remove padding
-        losses = losses[:, :, : self.config.max_action_dim]
+        original_action_dim = self.config.action_feature.shape[0]
+        losses = losses[:, :, :original_action_dim]
         loss_dict["losses_after_rm_padding"] = losses.clone()
 
         # For backward pass
