@@ -1292,13 +1292,21 @@ def merge_datasets(
 
 
 if __name__ == "__main__":
-    # Define source folders and output folder
-    source_folders = ["/path/to/put_plastic_to_box/", "/path/to/put_metal_to_box/", "/path/to/Find_blue_box"]
-
-    output_folder = "/data1/realman/lerobot_merged_test/"
-
-    # 设置默认FPS
-    default_fps = 20
-
-    # Merge the datasets
-    merge_datasets(source_folders, output_folder, max_dim=32, default_fps=default_fps)
+    # Set up argument parser
+    parser = argparse.ArgumentParser(description='Merge datasets from multiple sources.')
+    
+    # Add arguments
+    parser.add_argument('--sources', nargs='+', required=True,
+                        help='List of source folder paths')
+    parser.add_argument('--output', required=True,
+                        help='Output folder path')
+    parser.add_argument('--max_dim', type=int, default=32,
+                        help='Maximum dimension (default: 32)')
+    parser.add_argument('--fps', type=int, default=20,
+                        help='Your datasets FPS (default: 20)')
+    
+    # Parse arguments
+    args = parser.parse_args()
+    
+    # Use parsed arguments
+    merge_datasets(args.sources, args.output, max_dim=args.max_dim, default_fps=args.fps)
