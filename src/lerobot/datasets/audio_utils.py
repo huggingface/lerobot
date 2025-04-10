@@ -70,23 +70,23 @@ def decode_audio_torchaudio(
     log_loaded_timestamps: bool = False,
 ) -> torch.Tensor:
 
-    #TODO(CarolinePascal) : add channels selection
+    # TODO(CarolinePascal) : add channels selection
     audio_path = str(audio_path)
 
     reader = torchaudio.io.StreamReader(src=audio_path)
     audio_sample_rate = reader.get_src_stream_info(reader.default_audio_stream).sample_rate
 
-    #TODO(CarolinePascal) : sort timestamps ?
+    # TODO(CarolinePascal) : sort timestamps ?
 
     reader.add_basic_audio_stream(
-        frames_per_chunk = int(ceil(duration * audio_sample_rate)),    #Too much is better than not enough
-        buffer_chunk_size = -1, #No dropping frames
-        format = "fltp",    #Format as float32
+        frames_per_chunk=int(ceil(duration * audio_sample_rate)),    # Too much is better than not enough
+        buffer_chunk_size=-1, # No dropping frames
+        format="fltp",    # Format as float32
     )
 
     audio_chunks = []
     for ts in timestamps:
-        reader.seek(ts) #Default to closest audio sample
+        reader.seek(ts) # Default to closest audio sample
         status = reader.fill_buffer()
         if status != 0:
             logging.warning("Audio stream reached end of recording before decoding desired timestamps.")

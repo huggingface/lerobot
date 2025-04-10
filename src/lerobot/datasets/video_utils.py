@@ -362,6 +362,7 @@ with warnings.catch_warnings():
     # to make VideoFrame available in HuggingFace `datasets`
     register_feature(VideoFrame, "VideoFrame")
 
+
 def get_video_info(video_path: Path | str) -> dict:
     # Set logging level
     logging.getLogger("libav").setLevel(av.logging.ERROR)

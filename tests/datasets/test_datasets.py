@@ -16,6 +16,7 @@
 import json
 import logging
 import re
+import time
 from copy import deepcopy
 from itertools import chain
 from pathlib import Path
@@ -62,6 +63,7 @@ def image_dataset(tmp_path, empty_lerobot_dataset_factory):
     }
     return empty_lerobot_dataset_factory(root=tmp_path / "test", features=features)
 
+
 @pytest.fixture
 def audio_dataset(tmp_path, empty_lerobot_dataset_factory):
     features = {
@@ -74,6 +76,7 @@ def audio_dataset(tmp_path, empty_lerobot_dataset_factory):
         }
     }
     return empty_lerobot_dataset_factory(root=tmp_path / "test", features=features)
+
 
 def test_same_attributes_defined(tmp_path, lerobot_dataset_factory):
     """
