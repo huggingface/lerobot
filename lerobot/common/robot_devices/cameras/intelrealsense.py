@@ -265,6 +265,8 @@ class IntelRealSenseCamera:
         elif config.rotation == 180:
             self.rotation = cv2.ROTATE_180
 
+        self.microphone = None  # No microphones on realsense cameras, sorry
+
     def find_serial_number_from_name(self, name):
         camera_infos = find_cameras()
         camera_names = [cam["name"] for cam in camera_infos]
