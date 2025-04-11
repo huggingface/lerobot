@@ -167,14 +167,14 @@ class DynamixelMotorsBus(MotorsBus):
         return half_turn_homings
 
     @staticmethod
-    def _split_into_byte_chunks(value: int, n_bytes: int) -> list[int]:
+    def _split_into_byte_chunks(value: int, length: int) -> list[int]:
         import dynamixel_sdk as dxl
 
-        if n_bytes == 1:
+        if length == 1:
             data = [value]
-        elif n_bytes == 2:
+        elif length == 2:
             data = [dxl.DXL_LOBYTE(value), dxl.DXL_HIBYTE(value)]
-        elif n_bytes == 4:
+        elif length == 4:
             data = [
                 dxl.DXL_LOBYTE(dxl.DXL_LOWORD(value)),
                 dxl.DXL_HIBYTE(dxl.DXL_LOWORD(value)),

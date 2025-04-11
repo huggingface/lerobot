@@ -237,7 +237,7 @@ class MockInstructionPacket(MockDynamixelPacketv2):
             +2 is for the length bytes,
             +2 is for the CRC at the end.
         """
-        data = DynamixelMotorsBus._split_int_to_bytes(value, data_length)
+        data = DynamixelMotorsBus._split_into_byte_chunks(value, data_length)
         params = [
             dxl.DXL_LOBYTE(start_address),
             dxl.DXL_HIBYTE(start_address),
@@ -315,7 +315,7 @@ class MockInstructionPacket(MockDynamixelPacketv2):
         """
         data = []
         for id_, value in ids_values.items():
-            split_value = DynamixelMotorsBus._split_int_to_bytes(value, data_length)
+            split_value = DynamixelMotorsBus._split_into_byte_chunks(value, data_length)
             data += [id_, *split_value]
         params = [
             dxl.DXL_LOBYTE(start_address),
@@ -389,7 +389,7 @@ class MockStatusPacket(MockDynamixelPacketv2):
         Returns:
             bytes: The raw 'Present_Position' status packet ready to be sent through serial.
         """
-        params = DynamixelMotorsBus._split_int_to_bytes(value, param_length)
+        params = DynamixelMotorsBus._split_into_byte_chunks(value, param_length)
         length = param_length + 4
         return cls.build(dxl_id, params=params, length=length)
 

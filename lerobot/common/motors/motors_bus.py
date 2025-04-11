@@ -642,57 +642,31 @@ class MotorsBus(abc.ABC):
     def _decode_sign(self, data_name: str, ids_values: dict[int, int]) -> dict[int, int]:
         pass
 
-    def _serialize_data(self, value: int, n_bytes: int) -> list[int]:
+    def _serialize_data(self, value: int, length: int) -> list[int]:
         """
         Converts an unsigned integer value into a list of byte-sized integers to be sent via a communication
         protocol. Depending on the protocol, split values can be in big-endian or little-endian order.
 
-        This function extracts the individual bytes of an integer based on the
-        specified number of bytes (`n_bytes`). The output is a list of integers,
-        each representing a byte (0-255).
-
-        **Byte order:** The function returns bytes in **little-endian format**,
-        meaning the least significant byte (LSB) comes first.
-
-        Args:
-            value (int): The unsigned integer to be converted into a byte list. Must be within
-                the valid range for the specified `n_bytes`.
-            n_bytes (int): The number of bytes to use for conversion. Supported values for both Feetech and
-                Dynamixel:
-                - 1 (for values 0 to 255)
-                - 2 (for values 0 to 65,535)
-                - 4 (for values 0 to 4,294,967,295)
-
-        Raises:
-            ValueError: If `value` is negative or exceeds the maximum allowed for `n_bytes`.
-            NotImplementedError: If `n_bytes` is not 1, 2, or 4.
-
-        Returns:
-            list[int]: A list of integers, each representing a byte in **little-endian order**.
-
-        Examples (for a little-endian protocol):
-            >>> split_int_bytes(0x12, 1)
-            [18]
-            >>> split_int_bytes(0x1234, 2)
-            [52, 18]  # 0x1234 → 0x34 0x12 (little-endian)
-            >>> split_int_bytes(0x12345678, 4)
-            [120, 86, 52, 18]  # 0x12345678 → 0x78 0x56 0x34 0x12
+        Supported data length for both Feetech and Dynamixel:
+            - 1 (for values 0 to 255)
+            - 2 (for values 0 to 65,535)
+            - 4 (for values 0 to 4,294,967,295)
         """
         if value < 0:
             raise ValueError(f"Negative values are not allowed: {value}")
 
-        max_value = {1: 0xFF, 2: 0xFFFF, 4: 0xFFFFFFFF}.get(n_bytes)
+        max_value = {1: 0xFF, 2: 0xFFFF, 4: 0xFFFFFFFF}.get(length)
         if max_value is None:
-            raise NotImplementedError(f"Unsupported byte size: {n_bytes}. Expected [1, 2, 4].")
+            raise NotImplementedError(f"Unsupported byte size: {length}. Expected [1, 2, 4].")
 
         if value > max_value:
-            raise ValueError(f"Value {value} exceeds the maximum for {n_bytes} bytes ({max_value}).")
+            raise ValueError(f"Value {value} exceeds the maximum for {length} bytes ({max_value}).")
 
-        return self._split_into_byte_chunks(value, n_bytes)
+        return self._split_into_byte_chunks(value, length)
 
     @staticmethod
     @abc.abstractmethod
-    def _split_into_byte_chunks(value: int, n_bytes: int) -> list[int]:
+    def _split_into_byte_chunks(value: int, length: int) -> list[int]:
         """Convert an integer into a list of byte-sized integers."""
         pass
 
@@ -736,9 +710,9 @@ class MotorsBus(abc.ABC):
 
         id_ = self.motors[motor].id
         model = self.motors[motor].model
-        addr, n_bytes = get_address(self.model_ctrl_table, model, data_name)
+        addr, length = get_address(self.model_ctrl_table, model, data_name)
 
-        value, comm, error = self._read(addr, n_bytes, id_, num_retry=num_retry)
+        value, comm, error = self._read(addr, length, id_, num_retry=num_retry)
         if not self._is_comm_success(comm):
             raise ConnectionError(
                 f"Failed to read '{data_name}' on {id_=} after {num_retry + 1} tries."
@@ -757,22 +731,22 @@ class MotorsBus(abc.ABC):
 
         return id_value[id_]
 
-    def _read(self, addr: int, n_bytes: int, motor_id: int, num_retry: int = 0) -> tuple[int, int]:
-        if n_bytes == 1:
+    def _read(self, address: int, length: int, motor_id: int, num_retry: int = 0) -> tuple[int, int]:
+        if length == 1:
             read_fn = self.packet_handler.read1ByteTxRx
-        elif n_bytes == 2:
+        elif length == 2:
             read_fn = self.packet_handler.read2ByteTxRx
-        elif n_bytes == 4:
+        elif length == 4:
             read_fn = self.packet_handler.read4ByteTxRx
         else:
-            raise ValueError(n_bytes)
+            raise ValueError(length)
 
         for n_try in range(1 + num_retry):
-            value, comm, error = read_fn(self.port_handler, motor_id, addr)
+            value, comm, error = read_fn(self.port_handler, motor_id, address)
             if self._is_comm_success(comm):
                 break
             logger.debug(
-                f"Failed to read @{addr=} ({n_bytes=}) on {motor_id=} ({n_try=}): "
+                f"Failed to read @{address=} ({length=}) on {motor_id=} ({n_try=}): "
                 + self.packet_handler.getTxRxResult(comm)
             )
 
@@ -788,14 +762,14 @@ class MotorsBus(abc.ABC):
 
         id_ = self.motors[motor].id
         model = self.motors[motor].model
-        addr, n_bytes = get_address(self.model_ctrl_table, model, data_name)
+        addr, length = get_address(self.model_ctrl_table, model, data_name)
 
         if normalize and data_name in self.normalized_data:
             value = self._unnormalize(data_name, {id_: value})[id_]
 
         value = self._encode_sign(data_name, {id_: value})[id_]
 
-        comm, error = self._write(addr, n_bytes, id_, value, num_retry=num_retry)
+        comm, error = self._write(addr, length, id_, value, num_retry=num_retry)
         if not self._is_comm_success(comm):
             raise ConnectionError(
                 f"Failed to write '{data_name}' on {id_=} with '{value}' after {num_retry + 1} tries."
@@ -808,15 +782,15 @@ class MotorsBus(abc.ABC):
             )
 
     def _write(
-        self, addr: int, n_bytes: int, motor_id: int, value: int, num_retry: int = 0
+        self, addr: int, length: int, motor_id: int, value: int, num_retry: int = 0
     ) -> tuple[int, int]:
-        data = self._serialize_data(value, n_bytes)
+        data = self._serialize_data(value, length)
         for n_try in range(1 + num_retry):
-            comm, error = self.packet_handler.writeTxRx(self.port_handler, motor_id, addr, n_bytes, data)
+            comm, error = self.packet_handler.writeTxRx(self.port_handler, motor_id, addr, length, data)
             if self._is_comm_success(comm):
                 break
             logger.debug(
-                f"Failed to sync write @{addr=} ({n_bytes=}) on id={motor_id} with {value=} ({n_try=}): "
+                f"Failed to sync write @{addr=} ({length=}) on id={motor_id} with {value=} ({n_try=}): "
                 + self.packet_handler.getTxRxResult(comm)
             )
 
@@ -845,9 +819,9 @@ class MotorsBus(abc.ABC):
             assert_same_address(self.model_ctrl_table, models, data_name)
 
         model = next(iter(models))
-        addr, n_bytes = get_address(self.model_ctrl_table, model, data_name)
+        addr, length = get_address(self.model_ctrl_table, model, data_name)
 
-        comm, ids_values = self._sync_read(addr, n_bytes, ids, num_retry=num_retry)
+        comm, ids_values = self._sync_read(addr, length, ids, num_retry=num_retry)
         if not self._is_comm_success(comm):
             raise ConnectionError(
                 f"Failed to sync read '{data_name}' on {ids=} after {num_retry + 1} tries."
@@ -862,25 +836,25 @@ class MotorsBus(abc.ABC):
         return {self._id_to_name(id_): value for id_, value in ids_values.items()}
 
     def _sync_read(
-        self, addr: int, n_bytes: int, motor_ids: list[int], num_retry: int = 0
+        self, addr: int, length: int, motor_ids: list[int], num_retry: int = 0
     ) -> tuple[int, dict[int, int]]:
-        self._setup_sync_reader(motor_ids, addr, n_bytes)
+        self._setup_sync_reader(motor_ids, addr, length)
         for n_try in range(1 + num_retry):
             comm = self.sync_reader.txRxPacket()
             if self._is_comm_success(comm):
                 break
             logger.debug(
-                f"Failed to sync read @{addr=} ({n_bytes=}) on {motor_ids=} ({n_try=}): "
+                f"Failed to sync read @{addr=} ({length=}) on {motor_ids=} ({n_try=}): "
                 + self.packet_handler.getTxRxResult(comm)
             )
 
-        values = {id_: self.sync_reader.getData(id_, addr, n_bytes) for id_ in motor_ids}
+        values = {id_: self.sync_reader.getData(id_, addr, length) for id_ in motor_ids}
         return comm, values
 
-    def _setup_sync_reader(self, motor_ids: list[int], addr: int, n_bytes: int) -> None:
+    def _setup_sync_reader(self, motor_ids: list[int], addr: int, length: int) -> None:
         self.sync_reader.clearParam()
         self.sync_reader.start_address = addr
-        self.sync_reader.data_length = n_bytes
+        self.sync_reader.data_length = length
         for id_ in motor_ids:
             self.sync_reader.addParam(id_)
 
@@ -888,15 +862,15 @@ class MotorsBus(abc.ABC):
     # Would have to handle the logic of checking if a packet has been sent previously though but doable.
     # This could be at the cost of increase latency between the moment the data is produced by the motors and
     # the moment it is used by a policy.
-    # def _async_read(self, motor_ids: list[int], address: int, n_bytes: int):
-    #     if self.sync_reader.start_address != address or self.sync_reader.data_length != n_bytes or ...:
-    #         self._setup_sync_reader(motor_ids, address, n_bytes)
+    # def _async_read(self, motor_ids: list[int], address: int, length: int):
+    #     if self.sync_reader.start_address != address or self.sync_reader.data_length != length or ...:
+    #         self._setup_sync_reader(motor_ids, address, length)
     #     else:
     #         self.sync_reader.rxPacket()
     #         self.sync_reader.txPacket()
 
     #     for id_ in motor_ids:
-    #         value = self.sync_reader.getData(id_, address, n_bytes)
+    #         value = self.sync_reader.getData(id_, address, length)
 
     def sync_write(
         self,
@@ -917,39 +891,39 @@ class MotorsBus(abc.ABC):
             assert_same_address(self.model_ctrl_table, models, data_name)
 
         model = next(iter(models))
-        addr, n_bytes = get_address(self.model_ctrl_table, model, data_name)
+        addr, length = get_address(self.model_ctrl_table, model, data_name)
 
         if normalize and data_name in self.normalized_data:
             ids_values = self._unnormalize(data_name, ids_values)
 
         ids_values = self._encode_sign(data_name, ids_values)
 
-        comm = self._sync_write(addr, n_bytes, ids_values, num_retry=num_retry)
+        comm = self._sync_write(addr, length, ids_values, num_retry=num_retry)
         if not self._is_comm_success(comm):
             raise ConnectionError(
                 f"Failed to sync write '{data_name}' with {ids_values=} after {num_retry + 1} tries."
                 f"\n{self.packet_handler.getTxRxResult(comm)}"
             )
 
-    def _sync_write(self, addr: int, n_bytes: int, ids_values: dict[int, int], num_retry: int = 0) -> int:
-        self._setup_sync_writer(ids_values, addr, n_bytes)
+    def _sync_write(self, addr: int, length: int, ids_values: dict[int, int], num_retry: int = 0) -> int:
+        self._setup_sync_writer(ids_values, addr, length)
         for n_try in range(1 + num_retry):
             comm = self.sync_writer.txPacket()
             if self._is_comm_success(comm):
                 break
             logger.debug(
-                f"Failed to sync write @{addr=} ({n_bytes=}) with {ids_values=} ({n_try=}): "
+                f"Failed to sync write @{addr=} ({length=}) with {ids_values=} ({n_try=}): "
                 + self.packet_handler.getTxRxResult(comm)
             )
 
         return comm
 
-    def _setup_sync_writer(self, ids_values: dict[int, int], addr: int, n_bytes: int) -> None:
+    def _setup_sync_writer(self, ids_values: dict[int, int], addr: int, length: int) -> None:
         self.sync_writer.clearParam()
         self.sync_writer.start_address = addr
-        self.sync_writer.data_length = n_bytes
+        self.sync_writer.data_length = length
         for id_, value in ids_values.items():
-            data = self._serialize_data(value, n_bytes)
+            data = self._serialize_data(value, length)
             self.sync_writer.addParam(id_, data)
 
     def disconnect(self, disable_torque: bool = True) -> None:

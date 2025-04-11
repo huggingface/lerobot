@@ -170,14 +170,14 @@ class FeetechMotorsBus(MotorsBus):
         return ids_values
 
     @staticmethod
-    def _split_into_byte_chunks(value: int, n_bytes: int) -> list[int]:
+    def _split_into_byte_chunks(value: int, length: int) -> list[int]:
         import scservo_sdk as scs
 
-        if n_bytes == 1:
+        if length == 1:
             data = [value]
-        elif n_bytes == 2:
+        elif length == 2:
             data = [scs.SCS_LOBYTE(value), scs.SCS_HIBYTE(value)]
-        elif n_bytes == 4:
+        elif length == 4:
             data = [
                 scs.SCS_LOBYTE(scs.SCS_LOWORD(value)),
                 scs.SCS_HIBYTE(scs.SCS_LOWORD(value)),

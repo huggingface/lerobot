@@ -62,7 +62,7 @@ def test_autouse_patch():
 
 
 @pytest.mark.parametrize(
-    "value, n_bytes, expected",
+    "value, length, expected",
     [
         (0x12,       1, [0x12]),
         (0x1234,     2, [0x34, 0x12]),
@@ -86,24 +86,24 @@ def test_autouse_patch():
         "max four bytes",
     ],
 )  # fmt: skip
-def test_split_int_to_bytes(value, n_bytes, expected):
-    assert DynamixelMotorsBus._split_int_to_bytes(value, n_bytes) == expected
+def test_serialize_data(value, length, expected):
+    assert DynamixelMotorsBus._serialize_data(value, length) == expected
 
 
-def test_split_int_to_bytes_invalid_n_bytes():
+def test_serialize_data_invalid_length():
     with pytest.raises(NotImplementedError):
-        DynamixelMotorsBus._split_int_to_bytes(100, 3)
+        DynamixelMotorsBus._serialize_data(100, 3)
 
 
-def test_split_int_to_bytes_negative_numbers():
+def test_serialize_data_negative_numbers():
     with pytest.raises(ValueError):
-        neg = DynamixelMotorsBus._split_int_to_bytes(-1, 1)
+        neg = DynamixelMotorsBus._serialize_data(-1, 1)
         print(neg)
 
 
-def test_split_int_to_bytes_large_number():
+def test_serialize_data_large_number():
     with pytest.raises(ValueError):
-        DynamixelMotorsBus._split_int_to_bytes(2**32, 4)  # 4-byte max is 0xFFFFFFFF
+        DynamixelMotorsBus._serialize_data(2**32, 4)  # 4-byte max is 0xFFFFFFFF
 
 
 def test_abc_implementation(dummy_motors):
