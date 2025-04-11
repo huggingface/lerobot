@@ -15,7 +15,6 @@
 # limitations under the License.
 import functools
 import io
-import os
 import pickle
 from typing import Any, Callable, Optional, Sequence, TypedDict
 
@@ -33,7 +32,7 @@ class Transition(TypedDict):
     next_state: dict[str, torch.Tensor]
     done: bool
     truncated: bool
-    complementary_info: dict[str, Any] = None
+    complementary_info: dict[str, torch.Tensor | float | int] | None = None
 
 
 class BatchTransition(TypedDict):
@@ -43,41 +42,45 @@ class BatchTransition(TypedDict):
     next_state: dict[str, torch.Tensor]
     done: torch.Tensor
     truncated: torch.Tensor
+    complementary_info: dict[str, torch.Tensor | float | int] | None = None
 
 
 def move_transition_to_device(transition: Transition, device: str = "cpu") -> Transition:
-    # Move state tensors to CPU
     device = torch.device(device)
+    non_blocking = device.type == "cuda"
+
+    # Move state tensors to device
     transition["state"] = {
-        key: val.to(device, non_blocking=device.type == "cuda") for key, val in transition["state"].items()
+        key: val.to(device, non_blocking=non_blocking) for key, val in transition["state"].items()
     }
 
-    # Move action to CPU
-    transition["action"] = transition["action"].to(device, non_blocking=device.type == "cuda")
+    # Move action to device
+    transition["action"] = transition["action"].to(device, non_blocking=non_blocking)
 
-    # No need to move reward or done, as they are float and bool
-
-    # No need to move reward or done, as they are float and bool
+    # Move reward and done if they are tensors
     if isinstance(transition["reward"], torch.Tensor):
-        transition["reward"] = transition["reward"].to(device=device, non_blocking=device.type == "cuda")
+        transition["reward"] = transition["reward"].to(device, non_blocking=non_blocking)
 
     if isinstance(transition["done"], torch.Tensor):
-        transition["done"] = transition["done"].to(device, non_blocking=device.type == "cuda")
+        transition["done"] = transition["done"].to(device, non_blocking=non_blocking)
 
     if isinstance(transition["truncated"], torch.Tensor):
-        transition["truncated"] = transition["truncated"].to(device, non_blocking=device.type == "cuda")
+        transition["truncated"] = transition["truncated"].to(device, non_blocking=non_blocking)
 
-    # Move next_state tensors to CPU
+    # Move next_state tensors to device
     transition["next_state"] = {
-        key: val.to(device, non_blocking=device.type == "cuda")
-        for key, val in transition["next_state"].items()
+        key: val.to(device, non_blocking=non_blocking) for key, val in transition["next_state"].items()
     }
 
-    # If complementary_info is present, move its tensors to CPU
-    # if transition["complementary_info"] is not None:
-    #     transition["complementary_info"] = {
-    #         key: val.to(device, non_blocking=True) for key, val in transition["complementary_info"].items()
-    #     }
+    # Move complementary_info tensors if present
+    if transition.get("complementary_info") is not None:
+        for key, val in transition["complementary_info"].items():
+            if isinstance(val, torch.Tensor):
+                transition["complementary_info"][key] = val.to(device, non_blocking=non_blocking)
+            elif isinstance(val, (int, float, bool)):
+                transition["complementary_info"][key] = torch.tensor(val, device=device)
+            else:
+                raise ValueError(f"Unsupported type {type(val)} for complementary_info[{key}]")
     return transition
 
 
@@ -217,7 +220,12 @@ class ReplayBuffer:
             self.image_augmentation_function = torch.compile(base_function)
         self.use_drq = use_drq
 
-    def _initialize_storage(self, state: dict[str, torch.Tensor], action: torch.Tensor):
+    def _initialize_storage(
+        self,
+        state: dict[str, torch.Tensor],
+        action: torch.Tensor,
+        complementary_info: Optional[dict[str, torch.Tensor]] = None,
+    ):
         """Initialize the storage tensors based on the first transition."""
         # Determine shapes from the first transition
         state_shapes = {key: val.squeeze(0).shape for key, val in state.items()}
@@ -244,6 +252,27 @@ class ReplayBuffer:
 
         self.dones = torch.empty((self.capacity,), dtype=torch.bool, device=self.storage_device)
         self.truncateds = torch.empty((self.capacity,), dtype=torch.bool, device=self.storage_device)
+
+        # Initialize storage for complementary_info
+        self.has_complementary_info = complementary_info is not None
+        self.complementary_info_keys = []
+        self.complementary_info = {}
+
+        if self.has_complementary_info:
+            self.complementary_info_keys = list(complementary_info.keys())
+            # Pre-allocate tensors for each key in complementary_info
+            for key, value in complementary_info.items():
+                if isinstance(value, torch.Tensor):
+                    value_shape = value.squeeze(0).shape
+                    self.complementary_info[key] = torch.empty(
+                        (self.capacity, *value_shape), device=self.storage_device
+                    )
+                elif isinstance(value, (int, float)):
+                    # Handle scalar values similar to reward
+                    self.complementary_info[key] = torch.empty((self.capacity,), device=self.storage_device)
+                else:
+                    raise ValueError(f"Unsupported type {type(value)} for complementary_info[{key}]")
+
         self.initialized = True
 
     def __len__(self):
@@ -262,7 +291,7 @@ class ReplayBuffer:
         """Saves a transition, ensuring tensors are stored on the designated storage device."""
         # Initialize storage if this is the first transition
         if not self.initialized:
-            self._initialize_storage(state=state, action=action)
+            self._initialize_storage(state=state, action=action, complementary_info=complementary_info)
 
         # Store the transition in pre-allocated tensors
         for key in self.states:
@@ -276,6 +305,17 @@ class ReplayBuffer:
         self.rewards[self.position] = reward
         self.dones[self.position] = done
         self.truncateds[self.position] = truncated
+
+        # Handle complementary_info if provided and storage is initialized
+        if complementary_info is not None and self.has_complementary_info:
+            # Store the complementary_info
+            for key in self.complementary_info_keys:
+                if key in complementary_info:
+                    value = complementary_info[key]
+                    if isinstance(value, torch.Tensor):
+                        self.complementary_info[key][self.position].copy_(value.squeeze(dim=0))
+                    elif isinstance(value, (int, float)):
+                        self.complementary_info[key][self.position] = value
 
         self.position = (self.position + 1) % self.capacity
         self.size = min(self.size + 1, self.capacity)
@@ -335,6 +375,13 @@ class ReplayBuffer:
         batch_dones = self.dones[idx].to(self.device).float()
         batch_truncateds = self.truncateds[idx].to(self.device).float()
 
+        # Sample complementary_info if available
+        batch_complementary_info = None
+        if self.has_complementary_info:
+            batch_complementary_info = {}
+            for key in self.complementary_info_keys:
+                batch_complementary_info[key] = self.complementary_info[key][idx].to(self.device)
+
         return BatchTransition(
             state=batch_state,
             action=batch_actions,
@@ -342,7 +389,111 @@ class ReplayBuffer:
             next_state=batch_next_state,
             done=batch_dones,
             truncated=batch_truncateds,
+            complementary_info=batch_complementary_info,
         )
+
+    def get_iterator(
+        self,
+        batch_size: int,
+        async_prefetch: bool = True,
+        queue_size: int = 2,
+    ):
+        """
+        Creates an infinite iterator that yields batches of transitions.
+        Will automatically restart when internal iterator is exhausted.
+
+        Args:
+            batch_size (int): Size of batches to sample
+            async_prefetch (bool): Whether to use asynchronous prefetching with threads (default: True)
+            queue_size (int): Number of batches to prefetch (default: 2)
+
+        Yields:
+            BatchTransition: Batched transitions
+        """
+        while True:  # Create an infinite loop
+            if async_prefetch:
+                # Get the standard iterator
+                iterator = self._get_async_iterator(queue_size=queue_size, batch_size=batch_size)
+            else:
+                iterator = self._get_naive_iterator(batch_size=batch_size, queue_size=queue_size)
+
+            # Yield all items from the iterator
+            try:
+                yield from iterator
+            except StopIteration:
+                # Just continue the outer loop to create a new iterator
+                pass
+
+    def _get_async_iterator(self, batch_size: int, queue_size: int = 2):
+        """
+        Creates an iterator that prefetches batches in a background thread.
+
+        Args:
+            queue_size (int): Number of batches to prefetch (default: 2)
+            batch_size (int): Size of batches to sample (default: 128)
+
+        Yields:
+            BatchTransition: Prefetched batch transitions
+        """
+        import queue
+        import threading
+
+        # Use thread-safe queue
+        data_queue = queue.Queue(maxsize=queue_size)
+        running = [True]  # Use list to allow modification in nested function
+
+        def prefetch_worker():
+            while running[0]:
+                try:
+                    # Sample data and add to queue
+                    data = self.sample(batch_size)
+                    data_queue.put(data, block=True, timeout=0.5)
+                except queue.Full:
+                    continue
+                except Exception as e:
+                    print(f"Prefetch error: {e}")
+                    break
+
+        # Start prefetching thread
+        thread = threading.Thread(target=prefetch_worker, daemon=True)
+        thread.start()
+
+        try:
+            while running[0]:
+                try:
+                    yield data_queue.get(block=True, timeout=0.5)
+                except queue.Empty:
+                    if not thread.is_alive():
+                        break
+        finally:
+            # Clean up
+            running[0] = False
+            thread.join(timeout=1.0)
+
+    def _get_naive_iterator(self, batch_size: int, queue_size: int = 2):
+        """
+        Creates a simple non-threaded iterator that yields batches.
+
+        Args:
+            batch_size (int): Size of batches to sample
+            queue_size (int): Number of initial batches to prefetch
+
+        Yields:
+            BatchTransition: Batch transitions
+        """
+        import collections
+
+        queue = collections.deque()
+
+        def enqueue(n):
+            for _ in range(n):
+                data = self.sample(batch_size)
+                queue.append(data)
+
+        enqueue(queue_size)
+        while queue:
+            yield queue.popleft()
+            enqueue(1)
 
     @classmethod
     def from_lerobot_dataset(
@@ -352,7 +503,6 @@ class ReplayBuffer:
         state_keys: Optional[Sequence[str]] = None,
         capacity: Optional[int] = None,
         action_mask: Optional[Sequence[int]] = None,
-        action_delta: Optional[float] = None,
         image_augmentation_function: Optional[Callable] = None,
         use_drq: bool = True,
         storage_device: str = "cpu",
@@ -367,7 +517,6 @@ class ReplayBuffer:
             state_keys (Optional[Sequence[str]]): The list of keys that appear in `state` and `next_state`.
             capacity (Optional[int]): Buffer capacity. If None, uses dataset length.
             action_mask (Optional[Sequence[int]]): Indices of action dimensions to keep.
-            action_delta (Optional[float]): Factor to divide actions by.
             image_augmentation_function (Optional[Callable]): Function for image augmentation.
                 If None, uses default random shift with pad=4.
             use_drq (bool): Whether to use DrQ image augmentation when sampling.
@@ -412,10 +561,19 @@ class ReplayBuffer:
                 else:
                     first_action = first_action[:, action_mask]
 
-            if action_delta is not None:
-                first_action = first_action / action_delta
+            # Get complementary info if available
+            first_complementary_info = None
+            if (
+                "complementary_info" in first_transition
+                and first_transition["complementary_info"] is not None
+            ):
+                first_complementary_info = {
+                    k: v.to(device) for k, v in first_transition["complementary_info"].items()
+                }
 
-            replay_buffer._initialize_storage(state=first_state, action=first_action)
+            replay_buffer._initialize_storage(
+                state=first_state, action=first_action, complementary_info=first_complementary_info
+            )
 
         # Fill the buffer with all transitions
         for data in list_transition:
@@ -433,9 +591,6 @@ class ReplayBuffer:
                 else:
                     action = action[:, action_mask]
 
-            if action_delta is not None:
-                action = action / action_delta
-
             replay_buffer.add(
                 state=data["state"],
                 action=action,
@@ -443,6 +598,7 @@ class ReplayBuffer:
                 next_state=data["next_state"],
                 done=data["done"],
                 truncated=False,  # NOTE: Truncation are not supported yet in lerobot dataset
+                complementary_info=data.get("complementary_info", None),
             )
 
         return replay_buffer
@@ -484,6 +640,15 @@ class ReplayBuffer:
             f_info = guess_feature_info(t=sample_val, name=key)
             features[key] = f_info
 
+        # Add complementary_info keys if available
+        if self.has_complementary_info:
+            for key in self.complementary_info_keys:
+                sample_val = self.complementary_info[key][0]
+                if isinstance(sample_val, torch.Tensor) and sample_val.ndim == 0:
+                    sample_val = sample_val.unsqueeze(0)
+                f_info = guess_feature_info(t=sample_val, name=f"complementary_info.{key}")
+                features[f"complementary_info.{key}"] = f_info
+
         # Create an empty LeRobotDataset
         lerobot_dataset = LeRobotDataset.create(
             repo_id=repo_id,
@@ -516,6 +681,19 @@ class ReplayBuffer:
             frame_dict["action"] = self.actions[actual_idx].cpu()
             frame_dict["next.reward"] = torch.tensor([self.rewards[actual_idx]], dtype=torch.float32).cpu()
             frame_dict["next.done"] = torch.tensor([self.dones[actual_idx]], dtype=torch.bool).cpu()
+
+            # Add complementary_info if available
+            if self.has_complementary_info:
+                for key in self.complementary_info_keys:
+                    val = self.complementary_info[key][actual_idx]
+                    # Convert tensors to CPU
+                    if isinstance(val, torch.Tensor):
+                        if val.ndim == 0:
+                            val = val.unsqueeze(0)
+                        frame_dict[f"complementary_info.{key}"] = val.cpu()
+                    # Non-tensor values can be used directly
+                    else:
+                        frame_dict[f"complementary_info.{key}"] = val
 
             # Add task field which is required by LeRobotDataset
             frame_dict["task"] = task_name
@@ -583,6 +761,10 @@ class ReplayBuffer:
         sample = dataset[0]
         has_done_key = "next.done" in sample
 
+        # Check for complementary_info keys
+        complementary_info_keys = [key for key in sample if key.startswith("complementary_info.")]
+        has_complementary_info = len(complementary_info_keys) > 0
+
         # If not, we need to infer it from episode boundaries
         if not has_done_key:
             print("'next.done' key not found in dataset. Inferring from episode boundaries...")
@@ -632,6 +814,22 @@ class ReplayBuffer:
                         next_state_data[key] = val.unsqueeze(0)  # Add batch dimension
                     next_state = next_state_data
 
+            # ----- 5) Complementary info (if available) -----
+            complementary_info = None
+            if has_complementary_info:
+                complementary_info = {}
+                for key in complementary_info_keys:
+                    # Strip the "complementary_info." prefix to get the actual key
+                    clean_key = key[len("complementary_info.") :]
+                    val = current_sample[key]
+                    # Handle tensor and non-tensor values differently
+                    if isinstance(val, torch.Tensor):
+                        complementary_info[clean_key] = val.unsqueeze(0)  # Add batch dimension
+                    else:
+                        # TODO: (azouitine) Check if it's necessary to convert to tensor
+                        # For non-tensor values, use directly
+                        complementary_info[clean_key] = val
+
             # ----- Construct the Transition -----
             transition = Transition(
                 state=current_state,
@@ -640,6 +838,7 @@ class ReplayBuffer:
                 next_state=next_state,
                 done=done,
                 truncated=truncated,
+                complementary_info=complementary_info,
             )
             transitions.append(transition)
 
@@ -647,12 +846,13 @@ class ReplayBuffer:
 
 
 # Utility function to guess shapes/dtypes from a tensor
-def guess_feature_info(t: torch.Tensor, name: str):
+def guess_feature_info(t, name: str):
     """
-    Return a dictionary with the 'dtype' and 'shape' for a given tensor or array.
+    Return a dictionary with the 'dtype' and 'shape' for a given tensor or scalar value.
     If it looks like a 3D (C,H,W) shape, we might consider it an 'image'.
-    Otherwise default to 'float32' for numeric. You can customize as needed.
+    Otherwise default to appropriate dtype for numeric.
     """
+
     shape = tuple(t.shape)
     # Basic guess: if we have exactly 3 dims and shape[0] in {1, 3}, guess 'image'
     if len(shape) == 3 and shape[0] in [1, 3]:
@@ -672,32 +872,33 @@ def concatenate_batch_transitions(
     left_batch_transitions: BatchTransition, right_batch_transition: BatchTransition
 ) -> BatchTransition:
     """NOTE: Be careful it change the left_batch_transitions in place"""
+    # Concatenate state fields
     left_batch_transitions["state"] = {
         key: torch.cat(
-            [
-                left_batch_transitions["state"][key],
-                right_batch_transition["state"][key],
-            ],
+            [left_batch_transitions["state"][key], right_batch_transition["state"][key]],
             dim=0,
         )
         for key in left_batch_transitions["state"]
     }
+
+    # Concatenate basic fields
     left_batch_transitions["action"] = torch.cat(
         [left_batch_transitions["action"], right_batch_transition["action"]], dim=0
     )
     left_batch_transitions["reward"] = torch.cat(
         [left_batch_transitions["reward"], right_batch_transition["reward"]], dim=0
     )
+
+    # Concatenate next_state fields
     left_batch_transitions["next_state"] = {
         key: torch.cat(
-            [
-                left_batch_transitions["next_state"][key],
-                right_batch_transition["next_state"][key],
-            ],
+            [left_batch_transitions["next_state"][key], right_batch_transition["next_state"][key]],
             dim=0,
         )
         for key in left_batch_transitions["next_state"]
     }
+
+    # Concatenate done and truncated fields
     left_batch_transitions["done"] = torch.cat(
         [left_batch_transitions["done"], right_batch_transition["done"]], dim=0
     )
@@ -705,479 +906,114 @@ def concatenate_batch_transitions(
         [left_batch_transitions["truncated"], right_batch_transition["truncated"]],
         dim=0,
     )
+
+    # Handle complementary_info
+    left_info = left_batch_transitions.get("complementary_info")
+    right_info = right_batch_transition.get("complementary_info")
+
+    # Only process if right_info exists
+    if right_info is not None:
+        # Initialize left complementary_info if needed
+        if left_info is None:
+            left_batch_transitions["complementary_info"] = right_info
+        else:
+            # Concatenate each field
+            for key in right_info:
+                if key in left_info:
+                    left_info[key] = torch.cat([left_info[key], right_info[key]], dim=0)
+                else:
+                    left_info[key] = right_info[key]
+
     return left_batch_transitions
 
 
 if __name__ == "__main__":
-    from tempfile import TemporaryDirectory
 
-    # ===== Test 1: Create and use a synthetic ReplayBuffer =====
-    print("Testing synthetic ReplayBuffer...")
+    def test_load_dataset_with_complementary_info():
+        """
+        Test loading a dataset with complementary_info into a ReplayBuffer.
+        The dataset 'aractingi/pick_lift_cube_two_cameras_gripper_penalty' contains
+        gripper_penalty values in complementary_info.
+        """
+        import time
 
-    # Create sample data dimensions
-    batch_size = 32
-    state_dims = {"observation.image": (3, 84, 84), "observation.state": (10,)}
-    action_dim = (6,)
+        from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 
-    # Create a buffer
-    buffer = ReplayBuffer(
-        capacity=1000,
-        device="cpu",
-        state_keys=list(state_dims.keys()),
-        use_drq=True,
-        storage_device="cpu",
-    )
-
-    # Add some random transitions
-    for i in range(100):
-        # Create dummy transition data
-        state = {
-            "observation.image": torch.rand(1, 3, 84, 84),
-            "observation.state": torch.rand(1, 10),
-        }
-        action = torch.rand(1, 6)
-        reward = 0.5
-        next_state = {
-            "observation.image": torch.rand(1, 3, 84, 84),
-            "observation.state": torch.rand(1, 10),
-        }
-        done = False if i < 99 else True
-        truncated = False
-
-        buffer.add(
-            state=state,
-            action=action,
-            reward=reward,
-            next_state=next_state,
-            done=done,
-            truncated=truncated,
+        print("Loading dataset with complementary info...")
+        # Load a small subset of the dataset (first episode)
+        dataset = LeRobotDataset(
+            repo_id="aractingi/pick_lift_cube_two_cameras_gripper_penalty",
         )
 
-    # Test sampling
-    batch = buffer.sample(batch_size)
-    print(f"Buffer size: {len(buffer)}")
-    print(
-        f"Sampled batch state shapes: {batch['state']['observation.image'].shape}, {batch['state']['observation.state'].shape}"
-    )
-    print(f"Sampled batch action shape: {batch['action'].shape}")
-    print(f"Sampled batch reward shape: {batch['reward'].shape}")
-    print(f"Sampled batch done shape: {batch['done'].shape}")
-    print(f"Sampled batch truncated shape: {batch['truncated'].shape}")
-
-    # ===== Test for state-action-reward alignment =====
-    print("\nTesting state-action-reward alignment...")
-
-    # Create a buffer with controlled transitions where we know the relationships
-    aligned_buffer = ReplayBuffer(
-        capacity=100, device="cpu", state_keys=["state_value"], storage_device="cpu"
-    )
-
-    # Create transitions with known relationships
-    # - Each state has a unique signature value
-    # - Action is 2x the state signature
-    # - Reward is 3x the state signature
-    # - Next state is signature + 0.01 (unless at episode end)
-    for i in range(100):
-        # Create a state with a signature value that encodes the transition number
-        signature = float(i) / 100.0
-        state = {"state_value": torch.tensor([[signature]]).float()}
-
-        # Action is 2x the signature
-        action = torch.tensor([[2.0 * signature]]).float()
-
-        # Reward is 3x the signature
-        reward = 3.0 * signature
-
-        # Next state is signature + 0.01, unless end of episode
-        # End episode every 10 steps
-        is_end = (i + 1) % 10 == 0
-
-        if is_end:
-            # At episode boundaries, next_state repeats current state (as per your implementation)
-            next_state = {"state_value": torch.tensor([[signature]]).float()}
-            done = True
-        else:
-            # Within episodes, next_state has signature + 0.01
-            next_signature = float(i + 1) / 100.0
-            next_state = {"state_value": torch.tensor([[next_signature]]).float()}
-            done = False
-
-        aligned_buffer.add(state, action, reward, next_state, done, False)
-
-    # Sample from this buffer
-    aligned_batch = aligned_buffer.sample(50)
-
-    # Verify alignments in sampled batch
-    correct_relationships = 0
-    total_checks = 0
-
-    # For each transition in the batch
-    for i in range(50):
-        # Extract signature from state
-        state_sig = aligned_batch["state"]["state_value"][i].item()
-
-        # Check action is 2x signature (within reasonable precision)
-        action_val = aligned_batch["action"][i].item()
-        action_check = abs(action_val - 2.0 * state_sig) < 1e-4
-
-        # Check reward is 3x signature (within reasonable precision)
-        reward_val = aligned_batch["reward"][i].item()
-        reward_check = abs(reward_val - 3.0 * state_sig) < 1e-4
-
-        # Check next_state relationship matches our pattern
-        next_state_sig = aligned_batch["next_state"]["state_value"][i].item()
-        is_done = aligned_batch["done"][i].item() > 0.5
-
-        # Calculate expected next_state value based on done flag
-        if is_done:
-            # For episodes that end, next_state should equal state
-            next_state_check = abs(next_state_sig - state_sig) < 1e-4
-        else:
-            # For continuing episodes, check if next_state is approximately state + 0.01
-            # We need to be careful because we don't know the original index
-            # So we check if the increment is roughly 0.01
-            next_state_check = (
-                abs(next_state_sig - state_sig - 0.01) < 1e-4 or abs(next_state_sig - state_sig) < 1e-4
-            )
-
-        # Count correct relationships
-        if action_check:
-            correct_relationships += 1
-        if reward_check:
-            correct_relationships += 1
-        if next_state_check:
-            correct_relationships += 1
-
-        total_checks += 3
-
-    alignment_accuracy = 100.0 * correct_relationships / total_checks
-    print(f"State-action-reward-next_state alignment accuracy: {alignment_accuracy:.2f}%")
-    if alignment_accuracy > 99.0:
-        print("✅ All relationships verified! Buffer maintains correct temporal relationships.")
-    else:
-        print("⚠️ Some relationships don't match expected patterns. Buffer may have alignment issues.")
-
-        # Print some debug information about failures
-        print("\nDebug information for failed checks:")
-        for i in range(5):  # Print first 5 transitions for debugging
-            state_sig = aligned_batch["state"]["state_value"][i].item()
-            action_val = aligned_batch["action"][i].item()
-            reward_val = aligned_batch["reward"][i].item()
-            next_state_sig = aligned_batch["next_state"]["state_value"][i].item()
-            is_done = aligned_batch["done"][i].item() > 0.5
-
-            print(f"Transition {i}:")
-            print(f"  State: {state_sig:.6f}")
-            print(f"  Action: {action_val:.6f} (expected: {2.0 * state_sig:.6f})")
-            print(f"  Reward: {reward_val:.6f} (expected: {3.0 * state_sig:.6f})")
-            print(f"  Done: {is_done}")
-            print(f"  Next state: {next_state_sig:.6f}")
-
-            # Calculate expected next state
-            if is_done:
-                expected_next = state_sig
-            else:
-                # This approximation might not be perfect
-                state_idx = round(state_sig * 100)
-                expected_next = (state_idx + 1) / 100.0
-
-            print(f"  Expected next state: {expected_next:.6f}")
-            print()
-
-    # ===== Test 2: Convert to LeRobotDataset and back =====
-    with TemporaryDirectory() as temp_dir:
-        print("\nTesting conversion to LeRobotDataset and back...")
-        # Convert buffer to dataset
-        repo_id = "test/replay_buffer_conversion"
-        # Create a subdirectory to avoid the "directory exists" error
-        dataset_dir = os.path.join(temp_dir, "dataset1")
-        dataset = buffer.to_lerobot_dataset(repo_id=repo_id, root=dataset_dir)
-
-        print(f"Dataset created with {len(dataset)} frames")
+        print(f"Dataset loaded with {len(dataset)} frames")
         print(f"Dataset features: {list(dataset.features.keys())}")
 
-        # Check a random sample from the dataset
+        # Check if dataset has complementary_info.gripper_penalty
         sample = dataset[0]
-        print(
-            f"Dataset sample types: {[(k, type(v)) for k, v in sample.items() if k.startswith('observation')]}"
+        complementary_info_keys = [key for key in sample if key.startswith("complementary_info")]
+        print(f"Complementary info keys: {complementary_info_keys}")
+
+        if "complementary_info.gripper_penalty" in sample:
+            print(f"Found gripper_penalty: {sample['complementary_info.gripper_penalty']}")
+
+        # Extract state keys for the buffer
+        state_keys = []
+        for key in sample:
+            if key.startswith("observation"):
+                state_keys.append(key)
+
+        print(f"Using state keys: {state_keys}")
+
+        # Create a replay buffer from the dataset
+        start_time = time.time()
+        buffer = ReplayBuffer.from_lerobot_dataset(
+            lerobot_dataset=dataset, state_keys=state_keys, use_drq=True, optimize_memory=False
         )
+        load_time = time.time() - start_time
+        print(f"Loaded dataset into buffer in {load_time:.2f} seconds")
+        print(f"Buffer size: {len(buffer)}")
 
-        # Convert dataset back to buffer
-        reconverted_buffer = ReplayBuffer.from_lerobot_dataset(
-            dataset, state_keys=list(state_dims.keys()), device="cpu"
-        )
+        # Check if complementary_info was transferred correctly
+        print("Sampling from buffer to check complementary_info...")
+        batch = buffer.sample(batch_size=4)
 
-        print(f"Reconverted buffer size: {len(reconverted_buffer)}")
-
-        # Sample from the reconverted buffer
-        reconverted_batch = reconverted_buffer.sample(batch_size)
-        print(
-            f"Reconverted batch state shapes: {reconverted_batch['state']['observation.image'].shape}, {reconverted_batch['state']['observation.state'].shape}"
-        )
-
-        # Verify consistency before and after conversion
-        original_states = batch["state"]["observation.image"].mean().item()
-        reconverted_states = reconverted_batch["state"]["observation.image"].mean().item()
-        print(f"Original buffer state mean: {original_states:.4f}")
-        print(f"Reconverted buffer state mean: {reconverted_states:.4f}")
-
-        if abs(original_states - reconverted_states) < 1.0:
-            print("Values are reasonably similar - conversion works as expected")
+        if batch["complementary_info"] is not None:
+            print("Complementary info in batch:")
+            for key, value in batch["complementary_info"].items():
+                print(f"  {key}: {type(value)}, shape: {value.shape if hasattr(value, 'shape') else 'N/A'}")
+                if key == "gripper_penalty":
+                    print(f"  Sample gripper_penalty values: {value[:5]}")
         else:
-            print("WARNING: Significant difference between original and reconverted values")
+            print("No complementary_info found in batch")
 
-    print("\nAll previous tests completed!")
-
-    # ===== Test for memory optimization =====
-    print("\n===== Testing Memory Optimization =====")
-
-    # Create two buffers, one with memory optimization and one without
-    standard_buffer = ReplayBuffer(
-        capacity=1000,
-        device="cpu",
-        state_keys=["observation.image", "observation.state"],
-        storage_device="cpu",
-        optimize_memory=False,
-        use_drq=True,
-    )
-
-    optimized_buffer = ReplayBuffer(
-        capacity=1000,
-        device="cpu",
-        state_keys=["observation.image", "observation.state"],
-        storage_device="cpu",
-        optimize_memory=True,
-        use_drq=True,
-    )
-
-    # Generate sample data with larger state dimensions for better memory impact
-    print("Generating test data...")
-    num_episodes = 10
-    steps_per_episode = 50
-    total_steps = num_episodes * steps_per_episode
-
-    for episode in range(num_episodes):
-        for step in range(steps_per_episode):
-            # Index in the overall sequence
-            i = episode * steps_per_episode + step
-
-            # Create state with identifiable values
-            img = torch.ones((3, 84, 84)) * (i / total_steps)
-            state_vec = torch.ones((10,)) * (i / total_steps)
-
-            state = {
-                "observation.image": img.unsqueeze(0),
-                "observation.state": state_vec.unsqueeze(0),
-            }
-
-            # Create next state (i+1 or same as current if last in episode)
-            is_last_step = step == steps_per_episode - 1
-
-            if is_last_step:
-                # At episode end, next state = current state
-                next_img = img.clone()
-                next_state_vec = state_vec.clone()
-                done = True
-                truncated = False
-            else:
-                # Within episode, next state has incremented value
-                next_val = (i + 1) / total_steps
-                next_img = torch.ones((3, 84, 84)) * next_val
-                next_state_vec = torch.ones((10,)) * next_val
-                done = False
-                truncated = False
-
-            next_state = {
-                "observation.image": next_img.unsqueeze(0),
-                "observation.state": next_state_vec.unsqueeze(0),
-            }
-
-            # Action and reward
-            action = torch.tensor([[i / total_steps]])
-            reward = float(i / total_steps)
-
-            # Add to both buffers
-            standard_buffer.add(state, action, reward, next_state, done, truncated)
-            optimized_buffer.add(state, action, reward, next_state, done, truncated)
-
-    # Verify episode boundaries with our simplified approach
-    print("\nVerifying simplified memory optimization...")
-
-    # Test with a new buffer with a small sequence
-    test_buffer = ReplayBuffer(
-        capacity=20,
-        device="cpu",
-        state_keys=["value"],
-        storage_device="cpu",
-        optimize_memory=True,
-        use_drq=False,
-    )
-
-    # Add a simple sequence with known episode boundaries
-    for i in range(20):
-        val = float(i)
-        state = {"value": torch.tensor([[val]]).float()}
-        next_val = float(i + 1) if i % 5 != 4 else val  # Episode ends every 5 steps
-        next_state = {"value": torch.tensor([[next_val]]).float()}
-
-        # Set done=True at every 5th step
-        done = (i % 5) == 4
-        action = torch.tensor([[0.0]])
-        reward = 1.0
-        truncated = False
-
-        test_buffer.add(state, action, reward, next_state, done, truncated)
-
-    # Get sequential batch for verification
-    sequential_batch_size = test_buffer.size
-    all_indices = torch.arange(sequential_batch_size, device=test_buffer.storage_device)
-
-    # Get state tensors
-    batch_state = {"value": test_buffer.states["value"][all_indices].to(test_buffer.device)}
-
-    # Get next_state using memory-optimized approach (simply index+1)
-    next_indices = (all_indices + 1) % test_buffer.capacity
-    batch_next_state = {"value": test_buffer.states["value"][next_indices].to(test_buffer.device)}
-
-    # Get other tensors
-    batch_dones = test_buffer.dones[all_indices].to(test_buffer.device)
-
-    # Print sequential values
-    print("State, Next State, Done (Sequential values with simplified optimization):")
-    state_values = batch_state["value"].squeeze().tolist()
-    next_values = batch_next_state["value"].squeeze().tolist()
-    done_flags = batch_dones.tolist()
-
-    # Print all values
-    for i in range(len(state_values)):
-        print(f"  {state_values[i]:.1f} → {next_values[i]:.1f}, Done: {done_flags[i]}")
-
-    # Explain the memory optimization tradeoff
-    print("\nWith simplified memory optimization:")
-    print("- We always use the next state in the buffer (index+1) as next_state")
-    print("- For terminal states, this means using the first state of the next episode")
-    print("- This is a common tradeoff in RL implementations for memory efficiency")
-    print("- Since we track done flags, the algorithm can handle these transitions correctly")
-
-    # Test random sampling
-    print("\nVerifying random sampling with simplified memory optimization...")
-    random_samples = test_buffer.sample(20)  # Sample all transitions
-
-    # Extract values
-    random_state_values = random_samples["state"]["value"].squeeze().tolist()
-    random_next_values = random_samples["next_state"]["value"].squeeze().tolist()
-    random_done_flags = random_samples["done"].bool().tolist()
-
-    # Print a few samples
-    print("Random samples - State, Next State, Done (First 10):")
-    for i in range(10):
-        print(f"  {random_state_values[i]:.1f} → {random_next_values[i]:.1f}, Done: {random_done_flags[i]}")
-
-    # Calculate memory savings
-    # Assume optimized_buffer and standard_buffer have already been initialized and filled
-    std_mem = (
-        sum(
-            standard_buffer.states[key].nelement() * standard_buffer.states[key].element_size()
-            for key in standard_buffer.states
+        # Now convert the buffer back to a LeRobotDataset
+        print("\nConverting buffer back to LeRobotDataset...")
+        start_time = time.time()
+        new_dataset = buffer.to_lerobot_dataset(
+            repo_id="test_dataset_from_buffer",
+            fps=dataset.fps,
+            root="./test_dataset_from_buffer",
+            task_name="test_conversion",
         )
-        * 2
-    )
-    opt_mem = sum(
-        optimized_buffer.states[key].nelement() * optimized_buffer.states[key].element_size()
-        for key in optimized_buffer.states
-    )
+        convert_time = time.time() - start_time
+        print(f"Converted buffer to dataset in {convert_time:.2f} seconds")
+        print(f"New dataset size: {len(new_dataset)} frames")
 
-    savings_percent = (std_mem - opt_mem) / std_mem * 100
+        # Check if complementary_info was preserved
+        new_sample = new_dataset[0]
+        new_complementary_info_keys = [key for key in new_sample if key.startswith("complementary_info")]
+        print(f"New dataset complementary info keys: {new_complementary_info_keys}")
 
-    print("\nMemory optimization result:")
-    print(f"- Standard buffer state memory: {std_mem / (1024 * 1024):.2f} MB")
-    print(f"- Optimized buffer state memory: {opt_mem / (1024 * 1024):.2f} MB")
-    print(f"- Memory savings for state tensors: {savings_percent:.1f}%")
+        if "complementary_info.gripper_penalty" in new_sample:
+            print(f"Found gripper_penalty in new dataset: {new_sample['complementary_info.gripper_penalty']}")
 
-    print("\nAll memory optimization tests completed!")
+        # Compare original and new datasets
+        print("\nComparing original and new datasets:")
+        print(f"Original dataset frames: {len(dataset)}, New dataset frames: {len(new_dataset)}")
+        print(f"Original features: {list(dataset.features.keys())}")
+        print(f"New features: {list(new_dataset.features.keys())}")
 
-    # # ===== Test real dataset conversion =====
-    # print("\n===== Testing Real LeRobotDataset Conversion =====")
-    # try:
-    #     # Try to use a real dataset if available
-    #     dataset_name = "AdilZtn/Maniskill-Pushcube-demonstration-small"
-    #     dataset = LeRobotDataset(repo_id=dataset_name)
+        return buffer, dataset, new_dataset
 
-    #     # Print available keys to debug
-    #     sample = dataset[0]
-    #     print("Available keys in dataset:", list(sample.keys()))
-
-    #     # Check for required keys
-    #     if "action" not in sample or "next.reward" not in sample:
-    #         print("Dataset missing essential keys. Cannot convert.")
-    #         raise ValueError("Missing required keys in dataset")
-
-    #     # Auto-detect appropriate state keys
-    #     image_keys = []
-    #     state_keys = []
-    #     for k, v in sample.items():
-    #         # Skip metadata keys and action/reward keys
-    #         if k in {
-    #             "index",
-    #             "episode_index",
-    #             "frame_index",
-    #             "timestamp",
-    #             "task_index",
-    #             "action",
-    #             "next.reward",
-    #             "next.done",
-    #         }:
-    #             continue
-
-    #         # Infer key type from tensor shape
-    #         if isinstance(v, torch.Tensor):
-    #             if len(v.shape) == 3 and (v.shape[0] == 3 or v.shape[0] == 1):
-    #                 # Likely an image (channels, height, width)
-    #                 image_keys.append(k)
-    #             else:
-    #                 # Likely state or other vector
-    #                 state_keys.append(k)
-
-    #     print(f"Detected image keys: {image_keys}")
-    #     print(f"Detected state keys: {state_keys}")
-
-    #     if not image_keys and not state_keys:
-    #         print("No usable keys found in dataset, skipping further tests")
-    #         raise ValueError("No usable keys found in dataset")
-
-    #     # Test with standard and memory-optimized buffers
-    #     for optimize_memory in [False, True]:
-    #         buffer_type = "Standard" if not optimize_memory else "Memory-optimized"
-    #         print(f"\nTesting {buffer_type} buffer with real dataset...")
-
-    #         # Convert to ReplayBuffer with detected keys
-    #         replay_buffer = ReplayBuffer.from_lerobot_dataset(
-    #             lerobot_dataset=dataset,
-    #             state_keys=image_keys + state_keys,
-    #             device="cpu",
-    #             optimize_memory=optimize_memory,
-    #         )
-    #         print(f"Loaded {len(replay_buffer)} transitions from {dataset_name}")
-
-    #         # Test sampling
-    #         real_batch = replay_buffer.sample(32)
-    #         print(f"Sampled batch from real dataset ({buffer_type}), state shapes:")
-    #         for key in real_batch["state"]:
-    #             print(f"  {key}: {real_batch['state'][key].shape}")
-
-    #         # Convert back to LeRobotDataset
-    #         with TemporaryDirectory() as temp_dir:
-    #             dataset_name = f"test/real_dataset_converted_{buffer_type}"
-    #             replay_buffer_converted = replay_buffer.to_lerobot_dataset(
-    #                 repo_id=dataset_name,
-    #                 root=os.path.join(temp_dir, f"dataset_{buffer_type}"),
-    #             )
-    #             print(
-    #                 f"Successfully converted back to LeRobotDataset with {len(replay_buffer_converted)} frames"
-    #             )
-
-    # except Exception as e:
-    #     print(f"Real dataset test failed: {e}")
-    #     print("This is expected if running offline or if the dataset is not available.")
-
-    # print("\nAll tests completed!")
+    # Run the test
+    test_load_dataset_with_complementary_info()

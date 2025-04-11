@@ -1,5 +1,3 @@
-import logging
-import time
 from typing import Any
 
 import einops
@@ -10,7 +8,6 @@ from mani_skill.utils.wrappers.record import RecordEpisode
 from mani_skill.vector.wrappers.gymnasium import ManiSkillVectorEnv
 
 from lerobot.common.envs.configs import ManiskillEnvConfig
-from lerobot.configs import parser
 
 
 def preprocess_maniskill_observation(
@@ -153,6 +150,27 @@ class TimeLimitWrapper(gym.Wrapper):
         return super().reset(seed=seed, options=options)
 
 
+class ManiskillMockGripperWrapper(gym.Wrapper):
+    def __init__(self, env, nb_discrete_actions: int = 3):
+        super().__init__(env)
+        new_shape = env.action_space[0].shape[0] + 1
+        new_low = np.concatenate([env.action_space[0].low, [0]])
+        new_high = np.concatenate([env.action_space[0].high, [nb_discrete_actions - 1]])
+        action_space_agent = gym.spaces.Box(low=new_low, high=new_high, shape=(new_shape,))
+        self.action_space = gym.spaces.Tuple((action_space_agent, env.action_space[1]))
+
+    def step(self, action):
+        if isinstance(action, tuple):
+            action_agent, telop_action = action
+        else:
+            telop_action = 0
+            action_agent = action
+        real_action = action_agent[:-1]
+        final_action = (real_action, telop_action)
+        obs, reward, terminated, truncated, info = self.env.step(final_action)
+        return obs, reward, terminated, truncated, info
+
+
 def make_maniskill(
     cfg: ManiskillEnvConfig,
     n_envs: int | None = None,
@@ -197,40 +215,42 @@ def make_maniskill(
     env = ManiSkillCompat(env)
     env = ManiSkillActionWrapper(env)
     env = ManiSkillMultiplyActionWrapper(env, multiply_factor=0.03)  # Scale actions for better control
+    if cfg.mock_gripper:
+        env = ManiskillMockGripperWrapper(env, nb_discrete_actions=3)
 
     return env
 
 
-@parser.wrap()
-def main(cfg: ManiskillEnvConfig):
-    """Main function to run the ManiSkill environment."""
-    # Create the ManiSkill environment
-    env = make_maniskill(cfg, n_envs=1)
+# @parser.wrap()
+# def main(cfg: TrainPipelineConfig):
+#     """Main function to run the ManiSkill environment."""
+#     # Create the ManiSkill environment
+#     env = make_maniskill(cfg.env, n_envs=1)
 
-    # Reset the environment
-    obs, info = env.reset()
+#     # Reset the environment
+#     obs, info = env.reset()
 
-    # Run a simple interaction loop
-    sum_reward = 0
-    for i in range(100):
-        # Sample a random action
-        action = env.action_space.sample()
+#     # Run a simple interaction loop
+#     sum_reward = 0
+#     for i in range(100):
+#         # Sample a random action
+#         action = env.action_space.sample()
 
-        # Step the environment
-        start_time = time.perf_counter()
-        obs, reward, terminated, truncated, info = env.step(action)
-        step_time = time.perf_counter() - start_time
-        sum_reward += reward
-        # Log information
+#         # Step the environment
+#         start_time = time.perf_counter()
+#         obs, reward, terminated, truncated, info = env.step(action)
+#         step_time = time.perf_counter() - start_time
+#         sum_reward += reward
+#         # Log information
 
-        # Reset if episode terminated
-        if terminated or truncated:
-            logging.info(f"Step {i}, reward: {sum_reward}, step time: {step_time}s")
-            sum_reward = 0
-            obs, info = env.reset()
+#         # Reset if episode terminated
+#         if terminated or truncated:
+#             logging.info(f"Step {i}, reward: {sum_reward}, step time: {step_time}s")
+#             sum_reward = 0
+#             obs, info = env.reset()
 
-    # Close the environment
-    env.close()
+#     # Close the environment
+#     env.close()
 
 
 # if __name__ == "__main__":
