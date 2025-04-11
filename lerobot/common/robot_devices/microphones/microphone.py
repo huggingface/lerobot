@@ -214,7 +214,7 @@ class Microphone:
                 )
         else:
             self.channels = np.arange(1, actual_microphone["max_input_channels"] + 1)
-        
+
         # Get channels index instead of number for slicing
         self.channels_index = np.array(self.channels) - 1
 
