@@ -7,6 +7,6 @@
 - sections:
   - local: assemble_so101
     title: Assemble SO-101
-  - local: use_so101
-    title: Use SO-101 with LeRobot
+  - local: getting_started_real_world_robot
+    title: Getting Started with Real-World Robots
   title: "Tutorials"

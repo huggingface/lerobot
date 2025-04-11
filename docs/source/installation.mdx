@@ -1,6 +1,35 @@
 # Installation
 
-TODO(pepijn): Compare installation method description and other descriptions with transformers/datasets docs
+## Miniconda
+
+First install [Miniconda](https://docs.anaconda.com/miniconda/install/#quick-command-line-install)
+
+Now restart the shell by running:
+<hfoptions id="shell_restart">
+<hfoption id="Windows">
+```bash
+`source ~/.bashrc`
+```
+</hfoption>
+<hfoption id="Mac">
+```bash
+`source ~/.bash_profile`
+```
+</hfoption>
+<hfoption id="zshell">
+```bash
+`source ~/.zshrc`
+```
+</hfoption>
+</hfoptions>
+
+> [!TIP]
+> We use the Command Prompt (cmd) quite a lot. If you are not comfortable using the cmd or want to brush up using the command line you can have a look here: [Command line crash course](https://developer.mozilla.org/en-US/docs/Learn_web_development/Getting_started/Environment_setup/Command_line)
+
+
+## Install LeRobot
+
+TODO(pepijn): Check these steps
 
 Download our source code:
 ```bash
@@ -8,7 +37,7 @@ git clone https://github.com/huggingface/lerobot.git
 cd lerobot
 ```
 
-Create a virtual environment with Python 3.10, e.g. with [`miniconda`](https://docs.anaconda.com/free/miniconda/index.html):
+Create a virtual environment with Python 3.10, using [`miniconda`](https://docs.anaconda.com/free/miniconda/index.html):
 ```bash
 conda create -y -n lerobot python=3.10
 ```
@@ -18,19 +47,25 @@ Then activate your conda environment, you have to do this each time you open a s
 conda activate lerobot
 ```
 
-When using `miniconda`, if you don't have `ffmpeg` in your environment:
+Install `ffmpeg` if you don't have it in your environment:
 ```bash
 conda install ffmpeg
 ```
 
 Install 🤗 LeRobot:
 ```bash
-pip install --no-binary=av -e .
+cd lerobot && pip install --no-binary=av -e ".[feetech]"
 ```
 
-> [!NOTE] If you encounter build errors, you may need to install additional dependencies (`cmake`, `build-essential`, and `ffmpeg libs`). On Linux, run:
-> `sudo apt-get install cmake build-essential python-dev pkg-config libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev libswscale-dev libswresample-dev libavfilter-dev pkg-config`. For other systems, see: [Compiling PyAV](https://pyav.org/docs/develop/overview/installation.html#bring-your-own-ffmpeg)
+## Troubleshooting
+If you encounter build errors, you may need to install additional dependencies: `cmake`, `build-essential`, and `ffmpeg libs`.
+To install these for linux run:
+```bash
+sudo apt-get install cmake build-essential python-dev pkg-config libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev libswscale-dev libswresample-dev libavfilter-dev pkg-config
+```
+For other systems, see: [Compiling PyAV](https://pyav.org/docs/develop/overview/installation.html#bring-your-own-ffmpeg)
 
+## Sim
 For simulations, 🤗 LeRobot comes with gymnasium environments that can be installed as extras:
 - [aloha](https://github.com/huggingface/gym-aloha)
 - [xarm](https://github.com/huggingface/gym-xarm)
@@ -41,6 +76,7 @@ For instance, to install 🤗 LeRobot with aloha and pusht, use:
 pip install --no-binary=av -e ".[aloha, pusht]"
 ```
 
+## W&B
 To use [Weights and Biases](https://docs.wandb.ai/quickstart) for experiment tracking, log in with
 ```bash
 wandb login
