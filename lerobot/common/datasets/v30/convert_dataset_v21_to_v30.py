@@ -18,13 +18,13 @@ python lerobot/common/datasets/v30/convert_dataset_v21_to_v30.py \
 """
 
 import argparse
-import logging
 from pathlib import Path
-import sys
 
+import pandas as pd
+import pyarrow.parquet as pq
+import tqdm
 from datasets import Dataset
 from huggingface_hub import snapshot_download
-import tqdm
 
 from lerobot.common.constants import HF_LEROBOT_HOME
 from lerobot.common.datasets.utils import (
@@ -39,18 +39,13 @@ from lerobot.common.datasets.utils import (
     get_video_size_in_mb,
     legacy_load_episodes,
     legacy_load_episodes_stats,
-    load_info,
     legacy_load_tasks,
+    load_info,
     update_chunk_file_indices,
     write_episodes,
-    write_episodes_stats,
     write_info,
     write_tasks,
 )
-import subprocess
-import tempfile
-import pandas as pd
-import pyarrow.parquet as pq
 
 V21 = "v2.1"
 
@@ -97,32 +92,31 @@ meta/info.json
 -------------------------
 """
 
+
 def get_parquet_file_size_in_mb(parquet_path):
     metadata = pq.read_metadata(parquet_path)
     uncompressed_size = metadata.num_rows * metadata.row_group(0).total_byte_size
-    return uncompressed_size / (1024 ** 2)
+    return uncompressed_size / (1024**2)
 
 
+# def generate_flat_ep_stats(episodes_stats):
+#     for ep_idx, ep_stats in episodes_stats.items():
+#         flat_ep_stats = flatten_dict(ep_stats)
+#         flat_ep_stats["episode_index"] = ep_idx
+#         yield flat_ep_stats
 
-def generate_flat_ep_stats(episodes_stats):
-    for ep_idx, ep_stats in episodes_stats.items():
-        flat_ep_stats = flatten_dict(ep_stats)
-        flat_ep_stats["episode_index"] = ep_idx
-        yield flat_ep_stats
+# def convert_episodes_stats(root, new_root):
+#     episodes_stats = legacy_load_episodes_stats(root)
+#     ds_episodes_stats = Dataset.from_generator(lambda: generate_flat_ep_stats(episodes_stats))
+#     write_episodes_stats(ds_episodes_stats, new_root)
 
-def convert_episodes_stats(root, new_root):
-    episodes_stats = legacy_load_episodes_stats(root)
-    ds_episodes_stats = Dataset.from_generator(lambda: generate_flat_ep_stats(episodes_stats))
-    write_episodes_stats(ds_episodes_stats, new_root)
-
-def generate_task_dict(tasks):
-    for task_index, task in tasks.items():
-        yield {"task_index": task_index, "task": task}
 
 def convert_tasks(root, new_root):
     tasks, _ = legacy_load_tasks(root)
-    ds_tasks = Dataset.from_generator(lambda: generate_task_dict(tasks))
-    write_tasks(ds_tasks, new_root)
+    task_indices = tasks.keys()
+    task_strings = tasks.values()
+    df_tasks = pd.DataFrame({"task_index": task_indices}, index=task_strings)
+    write_tasks(df_tasks, new_root)
 
 
 def concat_data_files(paths_to_cat, new_root, chunk_idx, file_idx):
@@ -138,17 +132,15 @@ def concat_data_files(paths_to_cat, new_root, chunk_idx, file_idx):
 
 def convert_data(root, new_root):
     data_dir = root / "data"
+    ep_paths = sorted(data_dir.glob("*/*.parquet"))
 
-    ep_paths = [path for path in data_dir.glob("*/*.parquet")]
-    ep_paths = sorted(ep_paths)
-
-    episodes_metadata = []
     ep_idx = 0
     chunk_idx = 0
     file_idx = 0
     size_in_mb = 0
     num_frames = 0
     paths_to_cat = []
+    episodes_metadata = []
     for ep_path in ep_paths:
         ep_size_in_mb = get_parquet_file_size_in_mb(ep_path)
         ep_num_frames = get_parquet_num_frames(ep_path)
@@ -184,7 +176,6 @@ def convert_data(root, new_root):
     return episodes_metadata
 
 
-
 def get_video_keys(root):
     info = load_info(root)
     features = info["features"]
@@ -204,11 +195,11 @@ def convert_videos(root: Path, new_root: Path):
     for camera in video_keys:
         eps_metadata = convert_videos_of_camera(root, new_root, camera)
         eps_metadata_per_cam.append(eps_metadata)
-    
+
     num_eps_per_cam = [len(eps_cam_map) for eps_cam_map in eps_metadata_per_cam]
     if len(set(num_eps_per_cam)) != 1:
         raise ValueError(f"All cams dont have same number of episodes ({num_eps_per_cam}).")
-    
+
     episods_metadata = []
     num_cameras = len(video_keys)
     num_episodes = num_eps_per_cam[0]
@@ -223,23 +214,22 @@ def convert_videos(root: Path, new_root: Path):
         for cam_idx in range(num_cameras):
             ep_dict.update(eps_metadata_per_cam[cam_idx][ep_idx])
         episods_metadata.append(ep_dict)
-            
+
     return episods_metadata
 
 
 def convert_videos_of_camera(root: Path, new_root: Path, video_key):
     # Access old paths to mp4
     videos_dir = root / "videos"
-    ep_paths = [path for path in videos_dir.glob(f"*/{video_key}/*.mp4")]
-    ep_paths = sorted(ep_paths)
+    ep_paths = sorted(videos_dir.glob(f"*/{video_key}/*.mp4"))
 
-    episodes_metadata = []
     ep_idx = 0
     chunk_idx = 0
     file_idx = 0
     size_in_mb = 0
     duration_in_s = 0.0
     paths_to_cat = []
+    episodes_metadata = []
     for ep_path in tqdm.tqdm(ep_paths, desc=f"convert videos of {video_key}"):
         ep_size_in_mb = get_video_size_in_mb(ep_path)
         ep_duration_in_s = get_video_duration_in_s(ep_path)
@@ -274,29 +264,52 @@ def convert_videos_of_camera(root: Path, new_root: Path, video_key):
 
     return episodes_metadata
 
-def generate_episode_dict(episodes, episodes_data, episodes_videos):
-    for ep, ep_data, ep_video in zip(episodes.values(), episodes_data, episodes_videos):
-        ep_idx = ep["episode_index"]
-        ep_idx_data = ep_data["episode_index"]
+
+def generate_episode_metadata_dict(
+    episodes_legacy_metadata, episodes_metadata, episodes_videos, episodes_stats
+):
+    for ep_legacy_metadata, ep_metadata, ep_video, ep_stats, ep_idx_stats in zip(
+        episodes_legacy_metadata.values(),
+        episodes_metadata,
+        episodes_videos,
+        episodes_stats.values(),
+        episodes_stats.keys(),
+        strict=False,
+    ):
+        ep_idx = ep_legacy_metadata["episode_index"]
+        ep_idx_data = ep_metadata["episode_index"]
         ep_idx_video = ep_video["episode_index"]
 
-        if len(set([ep_idx, ep_idx_data, ep_idx_video])) != 1:
-            raise ValueError(f"Number of episodes is not the same ({ep_idx=},{ep_idx_data=},{ep_idx_video=}).")
+        if len({ep_idx, ep_idx_data, ep_idx_video, ep_idx_stats}) != 1:
+            raise ValueError(
+                f"Number of episodes is not the same ({ep_idx=},{ep_idx_data=},{ep_idx_video=},{ep_idx_stats=})."
+            )
 
-        ep_dict = {**ep_data, **ep_video, **ep}
+        ep_dict = {**ep_metadata, **ep_video, **ep_legacy_metadata, **flatten_dict({"stats": ep_stats})}
+        ep_dict["meta/episodes/chunk_index"] = 0
+        ep_dict["meta/episodes/file_index"] = 0
         yield ep_dict
 
-def convert_episodes(root, new_root, episodes_data, episodes_videos):
-    episodes = legacy_load_episodes(root)
 
-    num_eps = len(episodes)
-    num_eps_data = len(episodes_data)
-    num_eps_video = len(episodes_videos)
-    if len(set([num_eps, num_eps_data, num_eps_video])) != 1:
-        raise ValueError(f"Number of episodes is not the same ({num_eps=},{num_eps_data=},{num_eps_video=}).")
+def convert_episodes_metadata(root, new_root, episodes_metadata, episodes_video_metadata):
+    episodes_legacy_metadata = legacy_load_episodes(root)
+    episodes_stats = legacy_load_episodes_stats(root)
 
-    ds_episodes = Dataset.from_generator(lambda: generate_episode_dict(episodes, episodes_data, episodes_videos))
+    num_eps = len(episodes_legacy_metadata)
+    num_eps_metadata = len(episodes_metadata)
+    num_eps_video_metadata = len(episodes_video_metadata)
+    if len({num_eps, num_eps_metadata, num_eps_video_metadata}) != 1:
+        raise ValueError(
+            f"Number of episodes is not the same ({num_eps=},{num_eps_metadata=},{num_eps_video_metadata=})."
+        )
+
+    ds_episodes = Dataset.from_generator(
+        lambda: generate_episode_metadata_dict(
+            episodes_legacy_metadata, episodes_metadata, episodes_video_metadata, episodes_stats
+        )
+    )
     write_episodes(ds_episodes, new_root)
+
 
 def convert_info(root, new_root):
     info = load_info(root)
@@ -315,6 +328,7 @@ def convert_info(root, new_root):
         info["features"][key]["fps"] = info["fps"]
     write_info(info, new_root)
 
+
 def convert_dataset(
     repo_id: str,
     branch: str | None = None,
@@ -331,11 +345,11 @@ def convert_dataset(
     )
 
     convert_info(root, new_root)
-    convert_episodes_stats(root, new_root)
-    convert_tasks(root, new_root)    
-    episodes_data_mapping = convert_data(root, new_root)
-    episodes_videos_mapping = convert_videos(root, new_root)
-    convert_episodes(root, new_root, episodes_data_mapping, episodes_videos_mapping)
+    convert_tasks(root, new_root)
+    episodes_metadata = convert_data(root, new_root)
+    episodes_videos_metadata = convert_videos(root, new_root)
+    convert_episodes_metadata(root, new_root, episodes_metadata, episodes_videos_metadata)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
