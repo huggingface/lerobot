@@ -186,7 +186,9 @@ class FeetechMotorsBus(MotorsBus):
             ]
         return data
 
-    def _broadcast_ping_p1(self, known_motors_only: bool = True, num_retry: int = 0) -> dict[int, int]:
+    def _broadcast_ping_p1(
+        self, known_motors_only: bool = True, n_motors: int | None = None, num_retry: int = 0
+    ) -> dict[int, int]:
         if known_motors_only:
             ids = self.ids
         else:
@@ -195,10 +197,14 @@ class FeetechMotorsBus(MotorsBus):
             ids = range(scs.MAX_ID + 1)
 
         ids_models = {}
+        motors_found = 0
         for id_ in ids:
             model_number = self.ping(id_, num_retry)
             if model_number is not None:
                 ids_models[id_] = model_number
+                motors_found += 1
+                if motors_found >= n_motors:
+                    break
 
         return ids_models
 
