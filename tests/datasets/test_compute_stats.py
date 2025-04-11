@@ -87,7 +87,7 @@ def test_sample_audio_from_path(mock_load):
     assert len(audio_samples) == estimate_num_samples(16000)
 
 
-def test_sample_audio_from_data(mock_load):
+def test_sample_audio_from_data():
     audio_data = np.ones((16000, 2), dtype=np.float32)
     audio_samples = sample_audio_from_data(audio_data)
     assert isinstance(audio_samples, np.ndarray)

@@ -63,12 +63,12 @@ def decode_audio(
     if backend == "torchcodec":
         raise NotImplementedError("torchcodec is not yet supported for audio decoding")
     elif backend == "ffmpeg":
-        return decode_audio_torchvision(audio_path, timestamps, duration)
+        return decode_audio_torchaudio(audio_path, timestamps, duration)
     else:
         raise ValueError(f"Unsupported video backend: {backend}")
 
 
-def decode_audio_torchvision(
+def decode_audio_torchaudio(
     audio_path: Path | str,
     timestamps: list[float],
     duration: float,
