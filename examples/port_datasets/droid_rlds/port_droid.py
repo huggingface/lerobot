@@ -83,7 +83,7 @@ DROID_FEATURES = {
         "dtype": "float32",
         "shape": (7,),
         "names": {
-            "axes": ["x", "y", "z", "roll", "pitch", "yaw"],
+            "axes": ["joint_0", "joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6"],
         },
     },
     # Add this new feature to follow LeRobot standard of using joint position + gripper
