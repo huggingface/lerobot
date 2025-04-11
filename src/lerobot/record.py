@@ -223,7 +223,7 @@ def record_loop(
     if policy is not None:
         policy.reset()
 
-    if dataset is not None and not robot.name == "lekiwi":
+    if dataset is not None and not robot.name == "lekiwi":  # For now, LeKiwi only supports frame audio recording (which may lead to audio chunks loss, extended post-processing, increased memory usage)
         for microphone_key, microphone in robot.microphones.items():
             dataset.add_microphone_recording(microphone, microphone_key)
     else:
