@@ -286,6 +286,7 @@ class LeRobotDatasetMetadata:
 
         self.info["splits"] = {"train": f"0:{self.info['total_episodes']}"}
         self.info["total_videos"] += len(self.video_keys)
+        self.info["total_audio"] += len(self.audio_keys)
 
         write_info(self.info, self.root)
 
@@ -375,6 +376,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         revision: str | None = None,
         force_cache_sync: bool = False,
         download_videos: bool = True,
+        download_audio: bool = True,
         video_backend: str | None = None,
         audio_backend: str | None = None,
         batch_encoding_size: int = 1,
@@ -408,7 +410,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 - tasks contains the prompts for each task of the dataset, which can be used for
                   task-conditioned training.
             - hf_dataset (from datasets.Dataset), which will read any values from parquet files.
-            - videos (optional) from which frames are loaded to be synchronous with data from parquet files.
+            - videos (optional) from which frames are loaded to be synchronous with data from parquet files and audio.
+            - audio (optional) from which audio is loaded to be synchronous with data from parquet files and videos.
 
         A typical LeRobotDataset looks like this from its root path:
         .
@@ -491,9 +494,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
             download_videos (bool, optional): Flag to download the videos. Note that when set to True but the
                 video files are already present on local disk, they won't be downloaded again. Defaults to
                 True.
+            download_audio (bool, optional): Flag to download the audio. Defaults to True.
             video_backend (str | None, optional): Video backend to use for decoding videos. Defaults to torchcodec when available int the platform; otherwise, defaults to 'pyav'.
                 You can also use the 'pyav' decoder used by Torchvision, which used to be the default option, or 'video_reader' which is another decoder of Torchvision.
-            audio_backend (str | None, optional): Audio backend to use for decoding audio. Defaults to 'ffmpeg'.
+            audio_backend (str | None, optional): Audio backend to use for decoding audio. Defaults to 'ffmpeg' decoder used by 'torchaudio'.
             batch_encoding_size (int, optional): Number of episodes to accumulate before batch encoding videos.
                 Set to 1 for immediate encoding (default), or higher for batched encoding. Defaults to 1.
         """
@@ -536,8 +540,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         except (AssertionError, FileNotFoundError, NotADirectoryError):
             self.revision = get_safe_version(self.repo_id, self.revision)
             self.download_episodes(
-                download_videos
-            )  # Sould load audio as well #TODO(CarolinePascal): separate audio from video
+                download_videos, 
+                download_audio
+            )
             self.hf_dataset = self.load_hf_dataset()
 
         self.episode_data_index = get_episode_data_index(self.meta.episodes, self.episodes)
@@ -560,6 +565,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         license: str | None = "apache-2.0",
         tag_version: bool = True,
         push_videos: bool = True,
+        push_audio: bool = True,
         private: bool = False,
         allow_patterns: list[str] | str | None = None,
         upload_large_folder: bool = False,
@@ -567,7 +573,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
     ) -> None:
         ignore_patterns = ["images/"]
         if not push_videos:
-            ignore_patterns.append("videos/")
+            ignore_patterns.append("videos/") 
+        if not push_audio:
+            ignore_patterns.append("audio/")
 
         hub_api = HfApi()
         hub_api.create_repo(
@@ -623,7 +631,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             ignore_patterns=ignore_patterns,
         )
 
-    def download_episodes(self, download_videos: bool = True) -> None:
+    def download_episodes(self, download_videos: bool = True, download_audio: bool = True) -> None:
         """Downloads the dataset from the given 'repo_id' at the provided version. If 'episodes' is given, this
         will only download those episodes (selected by their episode_index). If 'episodes' is None, the whole
         dataset will be downloaded. Thanks to the behavior of snapshot_download, if the files are already present
@@ -632,7 +640,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # TODO(rcadene, aliberts): implement faster transfer
         # https://huggingface.co/docs/huggingface_hub/en/guides/download#faster-downloads
         files = None
-        ignore_patterns = None if download_videos else "videos/"
+        ignore_patterns = []
+        if not download_videos:
+            ignore_patterns.append("videos/")
+        if not download_audio:
+            ignore_patterns.append("audio/")
         if self.episodes is not None:
             files = self.get_episodes_file_paths()
 
@@ -648,6 +660,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 for ep_idx in episodes
             ]
             fpaths += video_files
+
+        if len(self.meta.audio_keys) > 0:
+            audio_files = [
+                str(self.meta.get_compressed_audio_file_path(ep_idx, audio_key))
+                for audio_key in self.meta.audio_keys
+                for ep_idx in episodes
+            ]
+            fpaths += audio_files
 
         return fpaths
 
@@ -750,7 +770,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return {
             key: torch.stack(self.hf_dataset.select(q_idx)[key])
             for key, q_idx in query_indices.items()
-            if key not in self.meta.video_keys
+            if key not in self.meta.video_keys and key not in self.meta.audio_keys
         }
 
     def _query_videos(self, query_timestamps: dict[str, list[float]], ep_idx: int) -> dict[str, torch.Tensor]:
