@@ -207,22 +207,22 @@ class Microphone:
         else:
             self.sample_rate = int(actual_microphone["default_samplerate"])
 
-        if self.channels is not None:
+        if self.channels is not None and len(self.channels) > 0:
             if any(c > actual_microphone["max_input_channels"] for c in self.channels):
                 raise OSError(
                     f"Some of the provided channels {self.channels} are outside the maximum channel range of the microphone {actual_microphone['max_input_channels']}."
                 )
         else:
             self.channels = np.arange(1, actual_microphone["max_input_channels"] + 1)
-
+        
         # Get channels index instead of number for slicing
-        self.channels = np.array(self.channels) - 1
+        self.channels_index = np.array(self.channels) - 1
 
         # Create the audio stream
         self.stream = sd.InputStream(
             device=self.microphone_index,
             samplerate=self.sample_rate,
-            channels=max(self.channels) + 1,
+            channels=max(self.channels),
             dtype="float32",
             callback=self._audio_callback,
         )
@@ -240,8 +240,8 @@ class Microphone:
         # Slicing makes copy unnecessary
         # Two separate queues are necessary because .get() also pops the data from the queue
         if self.is_writing:
-            self.record_queue.put(indata[:, self.channels])
-        self.read_queue.put(indata[:, self.channels])
+            self.record_queue.put(indata[:, self.channels_index])
+        self.read_queue.put(indata[:, self.channels_index])
 
     @staticmethod
     def _record_loop(queue, event: Event, sample_rate: int, channels: list[int], output_file: Path) -> None:
@@ -253,7 +253,7 @@ class Microphone:
             output_file,
             mode="x",
             samplerate=sample_rate,
-            channels=max(channels) + 1,
+            channels=max(channels),
             subtype=sf.default_subtype(output_file.suffix[1:]),
         ) as file:
             while not event.is_set():
@@ -370,7 +370,7 @@ class Microphone:
         if self.stream.active:
             self.stream.stop()  # Wait for all buffers to be processed
             # Remark : stream.abort() flushes the buffers !
-            self.is_recording = False
+        self.is_recording = False
 
         if self.record_thread is not None:
             self.record_queue.join()
@@ -378,7 +378,7 @@ class Microphone:
             self.record_thread.join()
             self.record_thread = None
             self.record_stop_event = None
-            self.is_writing = False
+        self.is_writing = False
 
     def disconnect(self) -> None:
         """
