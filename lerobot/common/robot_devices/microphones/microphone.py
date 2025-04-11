@@ -44,6 +44,10 @@ from lerobot.common.utils.utils import capture_timestamp_utc
 
 
 def find_microphones(raise_when_empty=False, mock=False) -> list[dict]:
+    """
+    Finds and lists all microphones compatible with sounddevice (and the underlying PortAudio library).
+    Most microphones and sound cards are compatible, across all OS (Linux, Mac, Windows).
+    """
     microphones = []
 
     if mock:
@@ -72,6 +76,11 @@ def find_microphones(raise_when_empty=False, mock=False) -> list[dict]:
 def record_audio_from_microphones(
     output_dir: Path, microphone_ids: list[int] | None = None, record_time_s: float = 2.0
 ):
+    """
+    Records audio from all the channels of the specified microphones for the specified duration.
+    If no microphone ids are provided, all available microphones will be used.
+    """
+
     if microphone_ids is None or len(microphone_ids) == 0:
         microphones = find_microphones()
         microphone_ids = [m["index"] for m in microphones]
@@ -112,7 +121,7 @@ def record_audio_from_microphones(
 
 class Microphone:
     """
-    The Microphone class handles all microphones compatible with sounddevice (and the underlying PortAudio library). Most microphones and sound cards are compatible, accross all OS (Linux, Mac, Windows).
+    The Microphone class handles all microphones compatible with sounddevice (and the underlying PortAudio library). Most microphones and sound cards are compatible, across all OS (Linux, Mac, Windows).
 
     A Microphone instance requires the sounddevice index of the microphone, which may be obtained using `python -m sounddevice`. It also requires the recording sample rate as well as the list of recorded channels.
 
@@ -146,11 +155,11 @@ class Microphone:
         # Input audio stream
         self.stream = None
 
-        # Thread-safe concurrent queue to store the recorded/read audio
+        # Thread/Process-safe concurrent queue to store the recorded/read audio
         self.record_queue = None
         self.read_queue = None
 
-        # Thread to handle data reading and file writing in a separate thread (safely)
+        # Thread/Process to handle data reading and file writing in a separate thread/process (safely)
         self.record_thread = None
         self.record_stop_event = None
 
@@ -160,6 +169,9 @@ class Microphone:
         self.is_writing = False
 
     def connect(self) -> None:
+        """
+        Connects the microphone and checks if the requested acquisition parameters are compatible with the microphone.
+        """
         if self.is_connected:
             raise RobotDeviceAlreadyConnectedError(
                 f"Microphone {self.microphone_index} is already connected."
@@ -214,15 +226,18 @@ class Microphone:
             dtype="float32",
             callback=self._audio_callback,
         )
-        # Remark : the blocksize parameter could be passed to the stream to ensure that audio_callback always recieve same length buffers.
-        # However, this may lead to additionnal latency. We thus stick to blocksize=0 which means that audio_callback will recieve varying length buffers, but with no addtional latency.
+        # Remark : the blocksize parameter could be passed to the stream to ensure that audio_callback always receive same length buffers.
+        # However, this may lead to additional latency. We thus stick to blocksize=0 which means that audio_callback will receive varying length buffers, but with no additional latency.
 
         self.is_connected = True
 
     def _audio_callback(self, indata, frames, time, status) -> None:
+        """
+        Low-level sounddevice callback.
+        """
         if status:
             logging.warning(status)
-        # Slicing makes copy unecessary
+        # Slicing makes copy unnecessary
         # Two separate queues are necessary because .get() also pops the data from the queue
         if self.is_writing:
             self.record_queue.put(indata[:, self.channels])
@@ -230,6 +245,9 @@ class Microphone:
 
     @staticmethod
     def _record_loop(queue, event: Event, sample_rate: int, channels: list[int], output_file: Path) -> None:
+        """
+        Thread/Process-safe loop to write audio data into a file.
+        """
         # Can only be run on a single process/thread for file writing safety
         with sf.SoundFile(
             output_file,
@@ -249,9 +267,7 @@ class Microphone:
 
     def _read(self) -> np.ndarray:
         """
-        Gets audio data from the queue and coverts it to a numpy array.
-        -> PROS : Inherently thread safe, no need to lock the queue, lightweight CPU usage
-        -> CONS : Reading duration does not scale well with the number of channels and reading duration
+        Thread/Process-safe callback to read available audio data
         """
         audio_readings = np.empty((0, len(self.channels)))
 
@@ -266,6 +282,9 @@ class Microphone:
         return audio_readings
 
     def read(self) -> np.ndarray:
+        """
+        Reads the last audio chunk recorded by the microphone, e.g. all samples recorded since the last read or since the beginning of the recording.
+        """
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(f"Microphone {self.microphone_index} is not connected.")
         if not self.is_recording:
@@ -284,6 +303,9 @@ class Microphone:
         return audio_readings
 
     def start_recording(self, output_file: str | None = None, multiprocessing: bool | None = False) -> None:
+        """
+        Starts the recording of the microphone. If output_file is provided, the audio will be written to this file.
+        """
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(f"Microphone {self.microphone_index} is not connected.")
         if self.is_recording:
@@ -337,6 +359,9 @@ class Microphone:
         self.stream.start()
 
     def stop_recording(self) -> None:
+        """
+        Stops the recording of the microphones.
+        """
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(f"Microphone {self.microphone_index} is not connected.")
         if not self.is_recording:
@@ -356,6 +381,9 @@ class Microphone:
             self.is_writing = False
 
     def disconnect(self) -> None:
+        """
+        Disconnects the microphone and stops the recording.
+        """
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(f"Microphone {self.microphone_index} is not connected.")
 
@@ -385,7 +413,7 @@ if __name__ == "__main__":
         "--output-dir",
         type=Path,
         default="outputs/audio_from_microphones",
-        help="Set directory to save an audio snipet for each microphone.",
+        help="Set directory to save an audio snippet for each microphone.",
     )
     parser.add_argument(
         "--record-time-s",
