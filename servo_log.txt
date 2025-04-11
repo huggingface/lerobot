@@ -1,0 +1,174 @@
+Logging parameters for servo: shoulder_pitch
+Duration: 2s, Interval: 0.1s
+==================================================
+Timestamp: 0.000
+Present_Current = [19]
+Protection_Current = [310]
+Over_Current_Protection_Time = [50]
+Present_Temperature = [37]
+Present_Voltage = [123]
+Present_Load = [123]
+Present_Position = [1803]
+--------------------------------------------------
+Timestamp: 0.105
+Present_Current = [51]
+Protection_Current = [310]
+Over_Current_Protection_Time = [50]
+Present_Temperature = [37]
+Present_Voltage = [121]
+Present_Load = [207]
+Present_Position = [1742]
+--------------------------------------------------
+Timestamp: 0.211
+Present_Current = [130]
+Protection_Current = [310]
+Over_Current_Protection_Time = [50]
+Present_Temperature = [37]
+Present_Voltage = [120]
+Present_Load = [363]
+Present_Position = [1668]
+--------------------------------------------------
+Timestamp: 0.316
+Present_Current = [192]
+Protection_Current = [310]
+Over_Current_Protection_Time = [50]
+Present_Temperature = [37]
+Present_Voltage = [120]
+Present_Load = [471]
+Present_Position = [1564]
+--------------------------------------------------
+Timestamp: 0.422
+Present_Current = [177]
+Protection_Current = [310]
+Over_Current_Protection_Time = [50]
+Present_Temperature = [37]
+Present_Voltage = [120]
+Present_Load = [503]
+Present_Position = [1428]
+--------------------------------------------------
+Timestamp: 0.528
+Present_Current = [294]
+Protection_Current = [310]
+Over_Current_Protection_Time = [50]
+Present_Temperature = [37]
+Present_Voltage = [118]
+Present_Load = [615]
+Present_Position = [1282]
+--------------------------------------------------
+Timestamp: 0.633
+Present_Current = [360]
+Protection_Current = [310]
+Over_Current_Protection_Time = [50]
+Present_Temperature = [37]
+Present_Voltage = [118]
+Present_Load = [671]
+Present_Position = [1141]
+--------------------------------------------------
+Timestamp: 0.739
+Present_Current = [360]
+Protection_Current = [310]
+Over_Current_Protection_Time = [50]
+Present_Temperature = [37]
+Present_Voltage = [118]
+Present_Load = [639]
+Present_Position = [1012]
+--------------------------------------------------
+Timestamp: 0.845
+Present_Current = [348]
+Protection_Current = [310]
+Over_Current_Protection_Time = [50]
+Present_Temperature = [37]
+Present_Voltage = [118]
+Present_Load = [615]
+Present_Position = [907]
+--------------------------------------------------
+Timestamp: 0.951
+Present_Current = [407]
+Protection_Current = [310]
+Over_Current_Protection_Time = [50]
+Present_Temperature = [37]
+Present_Voltage = [118]
+Present_Load = [643]
+Present_Position = [830]
+--------------------------------------------------
+Timestamp: 1.057
+Present_Current = [479]
+Protection_Current = [310]
+Over_Current_Protection_Time = [50]
+Present_Temperature = [38]
+Present_Voltage = [117]
+Present_Load = [679]
+Present_Position = [776]
+--------------------------------------------------
+Timestamp: 1.163
+Present_Current = [0]
+Protection_Current = [310]
+Over_Current_Protection_Time = [50]
+Present_Temperature = [37]
+Present_Voltage = [122]
+Present_Load = [0]
+Present_Position = [947]
+--------------------------------------------------
+Timestamp: 1.269
+Present_Current = [0]
+Protection_Current = [310]
+Over_Current_Protection_Time = [50]
+Present_Temperature = [37]
+Present_Voltage = [122]
+Present_Load = [0]
+Present_Position = [1136]
+--------------------------------------------------
+Timestamp: 1.375
+Present_Current = [0]
+Protection_Current = [310]
+Over_Current_Protection_Time = [50]
+Present_Temperature = [37]
+Present_Voltage = [122]
+Present_Load = [0]
+Present_Position = [1438]
+--------------------------------------------------
+Timestamp: 1.481
+Present_Current = [0]
+Protection_Current = [310]
+Over_Current_Protection_Time = [50]
+Present_Temperature = [37]
+Present_Voltage = [122]
+Present_Load = [0]
+Present_Position = [1782]
+--------------------------------------------------
+Timestamp: 1.587
+Present_Current = [0]
+Protection_Current = [310]
+Over_Current_Protection_Time = [50]
+Present_Temperature = [37]
+Present_Voltage = [122]
+Present_Load = [0]
+Present_Position = [1949]
+--------------------------------------------------
+Timestamp: 1.693
+Present_Current = [0]
+Protection_Current = [310]
+Over_Current_Protection_Time = [50]
+Present_Temperature = [37]
+Present_Voltage = [122]
+Present_Load = [0]
+Present_Position = [2042]
+--------------------------------------------------
+Timestamp: 1.799
+Present_Current = [0]
+Protection_Current = [310]
+Over_Current_Protection_Time = [50]
+Present_Temperature = [37]
+Present_Voltage = [122]
+Present_Load = [0]
+Present_Position = [2049]
+--------------------------------------------------
+Timestamp: 1.906
+Present_Current = [0]
+Protection_Current = [310]
+Over_Current_Protection_Time = [50]
+Present_Temperature = [37]
+Present_Voltage = [122]
+Present_Load = [0]
+Present_Position = [1997]
+--------------------------------------------------

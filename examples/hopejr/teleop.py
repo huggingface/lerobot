@@ -23,45 +23,45 @@ def main(
     
 
     robot.connect_hand()
-    #robot.connect_arm() 
+    robot.connect_arm() 
     #read pos
     print(robot.hand_bus.read("Present_Position"))
-    #print(robot.arm_bus.read("Present_Position", "shoulder_pitch"))
-    #print(robot.arm_bus.read("Present_Position",["shoulder_yaw","shoulder_roll","elbow_flex","wrist_roll","wrist_yaw","wrist_pitch"]))
-
-    #for i in range(10):
-    #    time.sleep(0.1)
-    #    robot.apply_arm_config('examples/hopejr/settings/config.yaml')
+    print(robot.arm_bus.read("Present_Position", "shoulder_pitch"))
+    print(robot.arm_bus.read("Present_Position",["shoulder_yaw","shoulder_roll","elbow_flex","wrist_roll","wrist_yaw","wrist_pitch"]))
+    #robot.arm_bus.write("Goal_Position", robot.arm_calib_dict["start_pos"][0]*1 +robot.arm_calib_dict["end_pos"][0]*0, ["wrist_roll"])
+    for i in range(10):
+        time.sleep(0.1)
+        robot.apply_arm_config('examples/hopejr/settings/config.yaml')
 
     # #calibrate arm
-    #arm_calibration = robot.get_arm_calibration()
-    #exoskeleton = HomonculusArm(serial_port="/dev/ttyACM2")
-    #robot.arm_bus.write("Goal_Position", robot.arm_calib_dict["start_pos"][0]*0.7 + robot.arm_calib_dict["end_pos"][0]*0.3, ["shoulder_pitch"])
-    
-    #if calibrate_exoskeleton:   
-    #    exoskeleton.run_calibration(robot)
+    arm_calibration = robot.get_arm_calibration()
+    exoskeleton = HomonculusArm(serial_port="/dev/ttyACM2")
 
-    #file_path = "examples/hopejr/settings/arm_calib.pkl"
-    #with open(file_path, "rb") as f:
-    #   calib_dict = pickle.load(f)
-    #print("Loaded dictionary:", calib_dict)
-    #exoskeleton.set_calibration(calib_dict)
+    
+    if calibrate_exoskeleton:   
+        exoskeleton.run_calibration(robot)
+
+    file_path = "examples/hopejr/settings/arm_calib.pkl"
+    with open(file_path, "rb") as f:
+       calib_dict = pickle.load(f)
+    print("Loaded dictionary:", calib_dict)
+    exoskeleton.set_calibration(calib_dict)
 
     #calibrate hand
     hand_calibration = robot.get_hand_calibration()
-    glove = HomonculusGlove(serial_port = "/dev/ttyACM2")
+    glove = HomonculusGlove(serial_port = "/dev/ttyACM0")
 
     if calibrate_glove:
-        glove.run_calibration()
+         glove.run_calibration()
         
     file_path = "examples/hopejr/settings/hand_calib.pkl"
     with open(file_path, "rb") as f:
-         calib_dict = pickle.load(f)
+          calib_dict = pickle.load(f)
     print("Loaded dictionary:", calib_dict)
     glove.set_calibration(calib_dict)
 
     robot.hand_bus.set_calibration(hand_calibration)
-    #robot.arm_bus.set_calibration(arm_calibration)
+    robot.arm_bus.set_calibration(arm_calibration)
 
     # Initialize Pygame
     # pygame.init()
@@ -96,23 +96,30 @@ def main(
     #         hand_components.append({"pos": (x, y + i * 50), "value": 0})
 
     for i in range(1000000000000000):
-            # robot.apply_arm_config('examples/hopejr/settings//config.yaml')
-            # robot.arm_bus.write("Acceleration", 50, "shoulder_yaw")
-            # joint_names = ["shoulder_pitch", "shoulder_yaw", "shoulder_roll", "elbow_flex", "wrist_roll", "wrist_yaw", "wrist_pitch"]
-            # joint_values = exoskeleton.read_running_average(motor_names=joint_names, linearize=True)
+            robot.apply_arm_config('examples/hopejr/settings/config.yaml')
+            #robot.arm_bus.write("Acceleration", 50, "shoulder_yaw")
+            joint_names = ["shoulder_pitch", "shoulder_yaw", "shoulder_roll", "elbow_flex", "wrist_roll", "wrist_yaw", "wrist_pitch"]
+            #only wrist roll
+            #joint_names = ["shoulder_pitch"]
+            joint_values = exoskeleton.read(motor_names=joint_names)
 
-            # joint_values = joint_values.round().astype(int)
-            # joint_dict = {k: v for k, v in zip(joint_names, joint_values, strict=False)}
+            #joint_values = joint_values.round().astype(int)
+            joint_dict = {k: v for k, v in zip(joint_names, joint_values, strict=False)}
 
-            # motor_values = []
-            # motor_names = []
-            # motor_names += ["shoulder_pitch", "shoulder_yaw", "shoulder_roll", "elbow_flex", "wrist_roll", "wrist_yaw", "wrist_pitch"]
-            # motor_values += [joint_dict[name]-30 for name in motor_names]
+            motor_values = []
+            motor_names = []
+            motor_names += ["shoulder_pitch", "shoulder_yaw", "shoulder_roll", "elbow_flex", "wrist_roll", "wrist_yaw", "wrist_pitch"]
+            #motor_names += ["shoulder_pitch"]
+            motor_values += [joint_dict[name] for name in motor_names]
+            #remove 50 from shoulder_roll
+            #motor_values += [joint_dict[name] for name in motor_names]
 
-            # motor_values = np.array(motor_values)
-            # motor_values = np.clip(motor_values, 0, 100)
-            # if not freeze_arm:
-            #     robot.arm_bus.write("Goal_Position", motor_values, motor_names)
+            motor_values = np.array(motor_values)
+            motor_values = np.clip(motor_values, 0, 100)
+
+            print(motor_names, motor_values)
+            if not freeze_arm:
+                robot.arm_bus.write("Goal_Position", motor_values, motor_names)
 
             if not freeze_fingers:#include hand
                 hand_joint_names = []

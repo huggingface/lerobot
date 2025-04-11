@@ -10,6 +10,6 @@ robot:
     Protective_Torque: 1
     Maximum_Acceleration: 100
     Torque_Enable: 1
-    Acceleration: 100
+    Acceleration: 30
   hand_bus:
     Acceleration: 100

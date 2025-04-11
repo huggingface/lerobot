@@ -32,29 +32,29 @@ class HopeJuniorRobot:
         motors = {
             # Thumb
             "thumb_basel_rotation": [1, "scs0009"],
-            "thumb_mcp": [2, "scs0009"],
-            "thumb_pip": [3, "scs0009"],
-            "thumb_dip": [4, "scs0009"],
+            "thumb_mcp": [3, "scs0009"],
+            "thumb_pip": [4, "scs0009"],
+            "thumb_dip": [13, "scs0009"],
 
             # Index
             "index_thumb_side": [5, "scs0009"],
             "index_pinky_side": [6, "scs0009"],
-            "index_flexor": [7, "scs0009"],
+            "index_flexor": [16, "scs0009"],
 
             # Middle
             "middle_thumb_side": [8, "scs0009"],
             "middle_pinky_side": [9, "scs0009"],
-            "middle_flexor": [10, "scs0009"],
+            "middle_flexor": [2, "scs0009"],
 
             # Ring
             "ring_thumb_side": [11, "scs0009"],
             "ring_pinky_side": [12, "scs0009"],
-            "ring_flexor": [13, "scs0009"],
+            "ring_flexor": [7, "scs0009"],
 
             # Pinky
             "pinky_thumb_side": [14, "scs0009"],
             "pinky_pinky_side": [15, "scs0009"],
-            "pinky_flexor": [16, "scs0009"],
+            "pinky_flexor": [10, "scs0009"],
         },
             protocol_version=1,#1
             group_sync_read=False,
@@ -83,48 +83,48 @@ class HopeJuniorRobot:
         
         start_pos = [
             750,  # thumb_basel_rotation
-            1000,  # thumb_mcp
-            500,  # thumb_pip
-            950,  # thumb_dip
+            100,  # thumb_mcp
+            700,  # thumb_pip
+            100,  # thumb_dip
 
-            150,  # index_thumb_side
+            800,  # index_thumb_side
             950,  # index_pinky_side
-            500,  # index_flexor
+            0,  # index_flexor
 
             250,  # middle_thumb_side
             850,  # middle_pinky_side
-            1000,  # middle_flexor
+            0,  # middle_flexor
 
             850,  # ring_thumb_side
             900,  # ring_pinky_side
-            600,  # ring_flexor
+            0,  # ring_flexor
 
             00,  # pinky_thumb_side
             950,  # pinky_pinky_side
-            150,  # pinky_flexor
+            0,  # pinky_flexor
         ]
 
         end_pos = [
             start_pos[0] - 550,  # thumb_basel_rotation
-            start_pos[1] - 350,  # thumb_mcp
-            start_pos[2] + 500,  # thumb_pip
-            start_pos[3] - 550,  # thumb_dip
+            start_pos[1] + 400,  # thumb_mcp
+            start_pos[2] + 300,  # thumb_pip
+            start_pos[3] + 200,  # thumb_dip
 
-            start_pos[4] + 350,  # index_thumb_side
+            start_pos[4] - 700,  # index_thumb_side
             start_pos[5] - 300,  # index_pinky_side
-            start_pos[6] + 500,  # index_flexor
+            start_pos[6] + 600,  # index_flexor
 
-            start_pos[7] + 400,  # middle_thumb_side
+            start_pos[7] + 700,  # middle_thumb_side
             start_pos[8] - 400,  # middle_pinky_side
-            start_pos[9] - 650,  # middle_flexor
+            start_pos[9] + 600,  # middle_flexor
 
-            start_pos[10] - 400,  # ring_thumb_side
+            start_pos[10] - 600,  # ring_thumb_side
             start_pos[11] - 400,  # ring_pinky_side
-            start_pos[12] + 400,  # ring_flexor
+            start_pos[12] + 600,  # ring_flexor
 
-            start_pos[13] + 500,  # pinky_thumb_side
-            start_pos[14] - 350,  # pinky_pinky_side
-            start_pos[15] + 450,  # pinky_flexor
+            start_pos[13] + 400,  # pinky_thumb_side
+            start_pos[14] - 450,  # pinky_pinky_side
+            start_pos[15] + 600,  # pinky_flexor
         ]
 
 
@@ -148,23 +148,23 @@ class HopeJuniorRobot:
         drive_mode = [0] * len(self.arm_bus.motor_names)
 
         start_pos = [
-            1600,   # shoulder_up
-            2450,  # shoulder_forward
-            1700,  # shoulder_roll
-            1150,  # bend_elbow
+            1800,   # shoulder_up
+            2800,  # shoulder_forward
+            1800,  # shoulder_roll
+            1200,  # bend_elbow
             700,  # wrist_roll
             1850,  # wrist_yaw
             1700,  # wrist_pitch
         ]
 
         end_pos = [
-            3100,  # shoulder_up
+            2800,  # shoulder_up
             3150,  # shoulder_forward
             400,  #shoulder_roll
-            2800,  # bend_elbow
-            2600,  # wrist_roll
+            2300,  # bend_elbow
+            2300,  # wrist_roll
             2150,  # wrist_yaw
-            2400,  # wrist_pitch
+            2300,  # wrist_pitch
         ]
 
         calib_modes = [CalibrationMode.LINEAR.name] * len(self.arm_bus.motor_names)

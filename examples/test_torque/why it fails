@@ -1,0 +1,16 @@
+
+First check that kicks in is current:
+Protection_Current (310) amperes or sth
+Present_Current, compared against protection crrent
+Over_Current_Protection_Time, how long until you shut it down
+
+make a quick update about this 
+
+variables of interest are 
+Max_Torque_Limit = 1000, 
+Present_Load = 1000-something, which triggered the overload torque mechanism
+Overload_Torque = 80, how much of the max torque limit do we allow?
+Protection_Time = 200, after how long do we set Torque_Enable to 1? *not true lol
+Protective_Torque = 20, after we trigger the safety mechanism, how much torque do we allow the motor to have?
+
+theres actually no temperature or voltage check that the feetechs perform, the only two are current and torque, which works like i said above
