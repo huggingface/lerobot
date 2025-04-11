@@ -246,6 +246,7 @@ def sample_images(image_paths: list[str]) -> np.ndarray:
 
 
 def sample_audio_from_path(audio_path: str) -> np.ndarray:
+    """Samples audio data from an audio recording stored in a WAV file."""
     data = load_audio_from_path(audio_path)
     sampled_indices = sample_indices(len(data))
 
@@ -253,6 +254,7 @@ def sample_audio_from_path(audio_path: str) -> np.ndarray:
 
 
 def sample_audio_from_data(data: np.ndarray) -> np.ndarray:
+    """Samples audio data from an audio recording stored in a numpy array."""
     sampled_indices = sample_indices(len(data))
     return data[sampled_indices]
 
@@ -527,7 +529,7 @@ def compute_episode_stats(
         elif features[key]["dtype"] == "audio":
             try:
                 ep_ft_array = sample_audio_from_path(data[0])
-            except TypeError:  # Should only be triggered for LeKiwi robot
+            except TypeError:  # Should only be triggered for LeKiwi robot, for which audio is stored chunk by chunk in a visual frame-like manner
                 ep_ft_array = sample_audio_from_data(data)
             axes_to_reduce = 0
             keepdims = True

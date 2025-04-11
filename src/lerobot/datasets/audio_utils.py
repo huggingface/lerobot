@@ -46,12 +46,12 @@ def decode_audio(
     Decodes audio using the specified backend.
     Args:
         audio_path (Path): Path to the audio file.
-        timestamps (list[float]): List of timestamps to extract frames.
-        tolerance_s (float): Allowed deviation in seconds for frame retrieval.
+        timestamps (list[float]): List of (starting) timestamps to extract audio chunks.
+        duration (float): Duration of the audio chunks in seconds.
         backend (str, optional): Backend to use for decoding. Defaults to "torchaudio".
 
     Returns:
-        torch.Tensor: Decoded frames.
+        torch.Tensor: Decoded audio chunks.
 
     Currently supports torchaudio.
     """
