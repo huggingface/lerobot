@@ -150,7 +150,7 @@ MODEL_RESOLUTION = {
     "scs_series": 1024,
     "sts3215": 4096,
     "sts3250": 4096,
-    "sm8512bl": 4096,
+    "sm8512bl": 65536,
     "scs0009": 1024,
 }
 
@@ -198,6 +198,6 @@ SCAN_BAUDRATES = [
 MODEL_NUMBER_TABLE = {
     "sts3215": 777,
     "sts3250": None,
-    "sm8512bl": None,
+    "sm8512bl": 11272,
     "scs0009": 1284,
 }
