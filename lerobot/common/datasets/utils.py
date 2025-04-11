@@ -452,6 +452,7 @@ def create_empty_dataset_info(
         "total_frames": 0,
         "total_tasks": 0,
         "total_videos": 0,
+        "total_audio": 0,
         "total_chunks": 0,
         "chunks_size": DEFAULT_CHUNK_SIZE,
         "fps": fps,
