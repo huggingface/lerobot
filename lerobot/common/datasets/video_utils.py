@@ -25,8 +25,10 @@ from typing import Any, ClassVar
 
 import pyarrow as pa
 import torch
+import torchaudio
 import torchvision
 from datasets.features.features import register_feature
+from numpy import ceil
 from PIL import Image
 
 
@@ -38,6 +40,74 @@ def get_safe_default_codec():
             "'torchcodec' is not available in your platform, falling back to 'pyav' as a default decoder"
         )
         return "pyav"
+
+
+def decode_audio(
+    audio_path: Path | str,
+    timestamps: list[float],
+    duration: float,
+    backend: str | None = "ffmpeg",
+) -> torch.Tensor:
+    """
+    Decodes audio using the specified backend.
+    Args:
+        audio_path (Path): Path to the audio file.
+        timestamps (list[float]): List of (starting) timestamps to extract audio chunks.
+        duration (float): Duration of the audio chunks in seconds.
+        backend (str, optional): Backend to use for decoding. Defaults to "ffmpeg".
+
+    Returns:
+        torch.Tensor: Decoded audio chunks.
+
+    Currently supports ffmpeg.
+    """
+    if backend == "torchcodec":
+        raise NotImplementedError("torchcodec is not yet supported for audio decoding")
+    elif backend == "ffmpeg":
+        return decode_audio_torchaudio(audio_path, timestamps, duration)
+    else:
+        raise ValueError(f"Unsupported video backend: {backend}")
+
+
+def decode_audio_torchaudio(
+    audio_path: Path | str,
+    timestamps: list[float],
+    duration: float,
+    log_loaded_timestamps: bool = False,
+) -> torch.Tensor:
+    # TODO(CarolinePascal) : add channels selection
+    audio_path = str(audio_path)
+
+    reader = torchaudio.io.StreamReader(src=audio_path)
+    audio_sample_rate = reader.get_src_stream_info(reader.default_audio_stream).sample_rate
+
+    # TODO(CarolinePascal) : sort timestamps ?
+    reader.add_basic_audio_stream(
+        frames_per_chunk=int(ceil(duration * audio_sample_rate)),  # Too much is better than not enough
+        buffer_chunk_size=-1,  # No dropping frames
+        format="fltp",  # Format as float32
+    )
+
+    audio_chunks = []
+    for ts in timestamps:
+        reader.seek(ts)  # Default to closest audio sample
+        status = reader.fill_buffer()
+        if status != 0:
+            logging.warning("Audio stream reached end of recording before decoding desired timestamps.")
+
+        current_audio_chunk = reader.pop_chunks()[0]
+
+        if log_loaded_timestamps:
+            logging.info(
+                f"audio chunk loaded at starting timestamp={current_audio_chunk['pts']:.4f} with duration={len(current_audio_chunk) / audio_sample_rate:.4f}"
+            )
+
+        audio_chunks.append(current_audio_chunk)
+
+    audio_chunks = torch.stack(audio_chunks)
+
+    assert len(timestamps) == len(audio_chunks)
+    return audio_chunks
 
 
 def decode_video_frames(
@@ -243,14 +313,53 @@ def decode_video_frames_torchcodec(
     return closest_frames
 
 
+def encode_audio(
+    input_path: Path | str,
+    output_path: Path | str,
+    codec: str = "aac",  # TODO(CarolinePascal) : investigate Fraunhofer FDK AAC (libfdk_aac) codec and and constant (file size control) /variable (quality control) bitrate options
+    log_level: str | None = "error",
+    overwrite: bool = False,
+) -> None:
+    """Encodes an audio file using ffmpeg."""
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    ffmpeg_args = OrderedDict(
+        [
+            ("-i", str(input_path)),
+            ("-acodec", codec),
+        ]
+    )
+
+    if log_level is not None:
+        ffmpeg_args["-loglevel"] = str(log_level)
+
+    ffmpeg_args = [item for pair in ffmpeg_args.items() for item in pair]
+    if overwrite:
+        ffmpeg_args.append("-y")
+
+    ffmpeg_cmd = ["ffmpeg"] + ffmpeg_args + [str(output_path)]
+
+    # redirect stdin to subprocess.DEVNULL to prevent reading random keyboard inputs from terminal
+    subprocess.run(ffmpeg_cmd, check=True, stdin=subprocess.DEVNULL)
+
+    if not output_path.exists():
+        raise OSError(
+            f"Audio encoding did not work. File not found: {output_path}. "
+            f"Try running the command manually to debug: `{''.join(ffmpeg_cmd)}`"
+        )
+
+
 def encode_video_frames(
     imgs_dir: Path | str,
     video_path: Path | str,
     fps: int,
+    audio_path: Path | str | None = None,
     vcodec: str = "libsvtav1",
     pix_fmt: str = "yuv420p",
     g: int | None = 2,
     crf: int | None = 30,
+    acodec: str = "aac",  # TODO(CarolinePascal) : investigate Fraunhofer FDK AAC (libfdk_aac) codec and and constant (file size control) /variable (quality control) bitrate options
     fast_decode: int = 0,
     log_level: str | None = "error",
     overwrite: bool = False,
@@ -260,35 +369,55 @@ def encode_video_frames(
     imgs_dir = Path(imgs_dir)
     video_path.parent.mkdir(parents=True, exist_ok=True)
 
-    ffmpeg_args = OrderedDict(
+    ffmpeg_video_args = OrderedDict(
         [
             ("-f", "image2"),
             ("-r", str(fps)),
-            ("-i", str(imgs_dir / "frame_%06d.png")),
-            ("-vcodec", vcodec),
-            ("-pix_fmt", pix_fmt),
+            ("-i", str(Path(imgs_dir) / "frame_%06d.png")),
         ]
     )
 
+    ffmpeg_audio_args = OrderedDict()
+    if audio_path is not None:
+        audio_path = Path(audio_path)
+        audio_path.parent.mkdir(parents=True, exist_ok=True)
+        ffmpeg_audio_args.update(
+            OrderedDict(
+                [
+                    ("-i", str(audio_path)),
+                ]
+            )
+        )
+
+    ffmpeg_encoding_args = OrderedDict(
+        [
+            ("-pix_fmt", pix_fmt),
+            ("-vcodec", vcodec),
+        ]
+    )
     if g is not None:
-        ffmpeg_args["-g"] = str(g)
-
+        ffmpeg_encoding_args["-g"] = str(g)
     if crf is not None:
-        ffmpeg_args["-crf"] = str(crf)
-
+        ffmpeg_encoding_args["-crf"] = str(crf)
     if fast_decode:
         key = "-svtav1-params" if vcodec == "libsvtav1" else "-tune"
         value = f"fast-decode={fast_decode}" if vcodec == "libsvtav1" else "fastdecode"
-        ffmpeg_args[key] = value
+        ffmpeg_encoding_args[key] = value
+
+    if audio_path is not None:
+        ffmpeg_encoding_args["-acodec"] = acodec
 
     if log_level is not None:
-        ffmpeg_args["-loglevel"] = str(log_level)
+        ffmpeg_encoding_args["-loglevel"] = str(log_level)
 
-    ffmpeg_args = [item for pair in ffmpeg_args.items() for item in pair]
+    ffmpeg_args = [item for pair in ffmpeg_video_args.items() for item in pair]
+    ffmpeg_args += [item for pair in ffmpeg_audio_args.items() for item in pair]
+    ffmpeg_args += [item for pair in ffmpeg_encoding_args.items() for item in pair]
     if overwrite:
         ffmpeg_args.append("-y")
 
     ffmpeg_cmd = ["ffmpeg"] + ffmpeg_args + [str(video_path)]
+
     # redirect stdin to subprocess.DEVNULL to prevent reading random keyboard inputs from terminal
     subprocess.run(ffmpeg_cmd, check=True, stdin=subprocess.DEVNULL)
 

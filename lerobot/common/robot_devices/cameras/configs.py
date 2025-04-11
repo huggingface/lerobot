@@ -48,6 +48,8 @@ class OpenCVCameraConfig(CameraConfig):
     rotation: int | None = None
     mock: bool = False
 
+    microphone: str | None = None
+
     def __post_init__(self):
         if self.color_mode not in ["rgb", "bgr"]:
             raise ValueError(

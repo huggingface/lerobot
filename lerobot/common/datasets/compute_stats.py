@@ -15,7 +15,7 @@
 # limitations under the License.
 import numpy as np
 
-from lerobot.common.datasets.utils import load_image_as_numpy
+from lerobot.common.datasets.utils import load_audio_from_path, load_image_as_numpy
 
 
 def estimate_num_samples(
@@ -72,6 +72,20 @@ def sample_images(image_paths: list[str]) -> np.ndarray:
     return images
 
 
+def sample_audio_from_path(audio_path: str) -> np.ndarray:
+    """Samples audio data from an audio recording stored in a WAV file."""
+    data = load_audio_from_path(audio_path)
+    sampled_indices = sample_indices(len(data))
+
+    return data[sampled_indices]
+
+
+def sample_audio_from_data(data: np.ndarray) -> np.ndarray:
+    """Samples audio data from an audio recording stored in a numpy array."""
+    sampled_indices = sample_indices(len(data))
+    return data[sampled_indices]
+
+
 def get_feature_stats(array: np.ndarray, axis: tuple, keepdims: bool) -> dict[str, np.ndarray]:
     return {
         "min": np.min(array, axis=axis, keepdims=keepdims),
@@ -90,6 +104,13 @@ def compute_episode_stats(episode_data: dict[str, list[str] | np.ndarray], featu
         elif features[key]["dtype"] in ["image", "video"]:
             ep_ft_array = sample_images(data)  # data is a list of image paths
             axes_to_reduce = (0, 2, 3)  # keep channel dim
+            keepdims = True
+        elif features[key]["dtype"] == "audio":
+            try:
+                ep_ft_array = sample_audio_from_path(data[0])
+            except TypeError:  # Should only be triggered for LeKiwi robot, for which audio is stored chunk by chunk in a visual frame-like manner
+                ep_ft_array = sample_audio_from_data(data)
+            axes_to_reduce = 0
             keepdims = True
         else:
             ep_ft_array = data  # data is already a np.ndarray
