@@ -379,7 +379,7 @@ def control_robot(cfg: ControlPipelineConfig):
     elif isinstance(cfg.control, ReplayControlConfig):
         replay(robot, cfg.control)
     elif isinstance(cfg.control, RemoteRobotConfig):
-        from lerobot.common.robots.lekiwi.lekiwi_remote import run_lekiwi
+        from lerobot.common.robots.lekiwi.old_lekiwi_remote import run_lekiwi
 
         run_lekiwi(cfg.robot)
 

@@ -21,7 +21,7 @@ def main():
         i += 1
 
     keyboard.disconnect()
-    logging.info("Finished LeKiwiRobot cleanly")
+    logging.info("Finished LeKiwi cleanly")
 
 
 if __name__ == "__main__":
