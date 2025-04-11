@@ -1282,9 +1282,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 self._save_image(frame[key], img_path, compress_level)
                 self.episode_buffer[key].append(str(img_path))
             elif self.features[key]["dtype"] == "audio":
-                if self.meta.robot_type == "lekiwi":
+                if (
+                    self.meta.robot_type == "lekiwi"
+                ):  # Raw data storage should only be triggered for LeKiwi robot, for which audio is stored chunk by chunk in a visual frame-like manner
                     self.episode_buffer[key].append(frame[key])
-                else:
+                else:  # Otherwise, only the audio file path is stored in the episode buffer
                     if frame_index == 0:
                         audio_path = self._get_raw_audio_file_path(
                             episode_index=self.episode_buffer["episode_index"], audio_key=key
@@ -1297,7 +1299,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
     def add_microphone_recording(self, microphone: Microphone, microphone_key: str) -> None:
         """
-        This function will start recording audio from the microphone and save it to disk.
+        Starts recording audio data provided by the microphone and directly writes it in a .wav file.
         """
 
         audio_dir = self._get_raw_audio_file_path(
@@ -1356,7 +1358,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
             if key in ["index", "episode_index", "task_index"] or ft["dtype"] in ["image", "video"]:
                 continue
             elif ft["dtype"] == "audio":
-                if self.meta.robot_type == "lekiwi":
+                if (
+                    self.meta.robot_type == "lekiwi"
+                ):  # Raw data storage should only be triggered for LeKiwi robot, for which audio is stored chunk by chunk in a visual frame-like manner
                     episode_buffer[key] = np.concatenate(episode_buffer[key], axis=0)
                 continue
             episode_buffer[key] = np.stack(episode_buffer[key])
