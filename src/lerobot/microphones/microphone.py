@@ -64,6 +64,11 @@ def find_microphones(raise_when_empty=False) -> list[dict]:
 def record_audio_from_microphones(
     output_dir: Path, microphone_ids: list[int] | None = None, record_time_s: float = 2.0
 ):
+    """
+    Records audio from all the channels of the specified microphones for the specified duration.
+    If no microphone ids are provided, all available microphones will be used.
+    """
+
     if microphone_ids is None or len(microphone_ids) == 0:
         microphones = find_microphones()
         microphone_ids = [m["index"] for m in microphones]
@@ -138,11 +143,11 @@ class Microphone:
         # Input audio stream
         self.stream = None
 
-        # Thread-safe concurrent queue to store the recorded/read audio
+        # Thread/Process-safe concurrent queue to store the recorded/read audio
         self.record_queue = None
         self.read_queue = None
 
-        # Thread to handle data reading and file writing in a separate thread (safely)
+        # Thread/Process to handle data reading and file writing in a separate thread/process (safely)
         self.record_thread = None
         self.record_stop_event = None
 
@@ -152,6 +157,9 @@ class Microphone:
         self.is_writing = False
 
     def connect(self) -> None:
+        """
+        Connects the microphone and checks if the requested acquisition parameters are compatible with the microphone.
+        """
         if self.is_connected:
             raise DeviceAlreadyConnectedError(f"Microphone {self.microphone_index} is already connected.")
 
@@ -205,6 +213,9 @@ class Microphone:
         self.is_connected = True
 
     def _audio_callback(self, indata, frames, time, status) -> None:
+        """
+        Low-level sounddevice callback.
+        """
         if status:
             logging.warning(status)
         # Slicing makes copy unnecessary
@@ -215,6 +226,9 @@ class Microphone:
 
     @staticmethod
     def _record_loop(queue, event: Event, sample_rate: int, channels: list[int], output_file: Path) -> None:
+        """
+        Thread/Process-safe loop to write audio data into a file.
+        """
         # Can only be run on a single process/thread for file writing safety
         with sf.SoundFile(
             output_file,
@@ -234,9 +248,7 @@ class Microphone:
 
     def _read(self) -> np.ndarray:
         """
-        Gets audio data from the queue and coverts it to a numpy array.
-        -> PROS : Inherently thread safe, no need to lock the queue, lightweight CPU usage
-        -> CONS : Reading duration does not scale well with the number of channels and reading duration
+        Thread/Process-safe callback to read available audio data
         """
         audio_readings = np.empty((0, len(self.channels)))
 
@@ -251,6 +263,9 @@ class Microphone:
         return audio_readings
 
     def read(self) -> np.ndarray:
+        """
+        Reads the last audio chunk recorded by the microphone, e.g. all samples recorded since the last read or since the beginning of the recording.
+        """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"Microphone {self.microphone_index} is not connected.")
         if not self.stream.active:
@@ -269,6 +284,9 @@ class Microphone:
         return audio_readings
 
     def start_recording(self, output_file: str | None = None, multiprocessing: bool | None = False) -> None:
+        """
+        Starts the recording of the microphone. If output_file is provided, the audio will be written to this file.
+        """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"Microphone {self.microphone_index} is not connected.")
         if self.is_recording:
@@ -320,6 +338,9 @@ class Microphone:
         self.stream.start()
 
     def stop_recording(self) -> None:
+        """
+        Stops the recording of the microphones.
+        """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"Microphone {self.microphone_index} is not connected.")
         if not self.is_recording:
@@ -341,6 +362,9 @@ class Microphone:
         self.logs["stop_timestamp"] = capture_timestamp_utc()
 
     def disconnect(self) -> None:
+        """
+        Disconnects the microphone and stops the recording.
+        """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"Microphone {self.microphone_index} is not connected.")
 
