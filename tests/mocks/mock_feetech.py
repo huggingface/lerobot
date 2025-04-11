@@ -5,8 +5,8 @@ import scservo_sdk as scs
 import serial
 from mock_serial import MockSerial
 
-from lerobot.common.motors.feetech import STS_SMS_SERIES_CONTROL_TABLE, FeetechMotorsBus
-from lerobot.common.motors.feetech.feetech import patch_setPacketTimeout
+from lerobot.common.motors.feetech import STS_SMS_SERIES_CONTROL_TABLE
+from lerobot.common.motors.feetech.feetech import _split_into_byte_chunks, patch_setPacketTimeout
 
 from .mock_serial_patch import WaitableStub
 
@@ -139,7 +139,7 @@ class MockInstructionPacket(MockFeetechPacket):
             +1 is for the length bytes,
             +1 is for the checksum at the end.
         """
-        data = FeetechMotorsBus._split_into_byte_chunks(value, data_length)
+        data = _split_into_byte_chunks(value, data_length)
         params = [start_address, *data]
         length = data_length + 3
         return cls.build(scs_id=scs_id, params=params, length=length, instruct_type="Write")
@@ -201,7 +201,7 @@ class MockInstructionPacket(MockFeetechPacket):
         """
         data = []
         for id_, value in ids_values.items():
-            split_value = FeetechMotorsBus._split_into_byte_chunks(value, data_length)
+            split_value = _split_into_byte_chunks(value, data_length)
             data += [id_, *split_value]
         params = [start_address, data_length, *data]
         length = len(ids_values) * (1 + data_length) + 4
@@ -258,7 +258,7 @@ class MockStatusPacket(MockFeetechPacket):
         Returns:
             bytes: The raw 'Sync Read' status packet ready to be sent through serial.
         """
-        params = FeetechMotorsBus._split_into_byte_chunks(value, param_length)
+        params = _split_into_byte_chunks(value, param_length)
         length = param_length + 2
         return cls.build(scs_id, params=params, length=length)
 

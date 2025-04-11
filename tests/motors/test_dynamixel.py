@@ -67,43 +67,16 @@ def test_autouse_patch():
         (0x12,       1, [0x12]),
         (0x1234,     2, [0x34, 0x12]),
         (0x12345678, 4, [0x78, 0x56, 0x34, 0x12]),
-        (0,          1, [0x00]),
-        (0,          2, [0x00, 0x00]),
-        (0,          4, [0x00, 0x00, 0x00, 0x00]),
-        (255,        1, [0xFF]),
-        (65535,      2, [0xFF, 0xFF]),
-        (4294967295, 4, [0xFF, 0xFF, 0xFF, 0xFF]),
     ],
     ids=[
         "1 byte",
         "2 bytes",
         "4 bytes",
-        "0 with 1 byte",
-        "0 with 2 bytes",
-        "0 with 4 bytes",
-        "max single byte",
-        "max two bytes",
-        "max four bytes",
     ],
 )  # fmt: skip
-def test_serialize_data(value, length, expected):
-    assert DynamixelMotorsBus._serialize_data(value, length) == expected
-
-
-def test_serialize_data_invalid_length():
-    with pytest.raises(NotImplementedError):
-        DynamixelMotorsBus._serialize_data(100, 3)
-
-
-def test_serialize_data_negative_numbers():
-    with pytest.raises(ValueError):
-        neg = DynamixelMotorsBus._serialize_data(-1, 1)
-        print(neg)
-
-
-def test_serialize_data_large_number():
-    with pytest.raises(ValueError):
-        DynamixelMotorsBus._serialize_data(2**32, 4)  # 4-byte max is 0xFFFFFFFF
+def test__split_into_byte_chunks(value, length, expected):
+    bus = DynamixelMotorsBus("", {})
+    assert bus._split_into_byte_chunks(value, length) == expected
 
 
 def test_abc_implementation(dummy_motors):

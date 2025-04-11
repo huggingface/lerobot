@@ -64,6 +64,23 @@ class TorqueMode(Enum):
     DISABLED = 0
 
 
+def _split_into_byte_chunks(value: int, length: int) -> list[int]:
+    import scservo_sdk as scs
+
+    if length == 1:
+        data = [value]
+    elif length == 2:
+        data = [scs.SCS_LOBYTE(value), scs.SCS_HIBYTE(value)]
+    elif length == 4:
+        data = [
+            scs.SCS_LOBYTE(scs.SCS_LOWORD(value)),
+            scs.SCS_HIBYTE(scs.SCS_LOWORD(value)),
+            scs.SCS_LOBYTE(scs.SCS_HIWORD(value)),
+            scs.SCS_HIBYTE(scs.SCS_HIWORD(value)),
+        ]
+    return data
+
+
 def patch_setPacketTimeout(self, packet_length):  # noqa: N802
     """
     HACK: This patches the PortHandler behavior to set the correct packet timeouts.
@@ -169,22 +186,8 @@ class FeetechMotorsBus(MotorsBus):
 
         return ids_values
 
-    @staticmethod
-    def _split_into_byte_chunks(value: int, length: int) -> list[int]:
-        import scservo_sdk as scs
-
-        if length == 1:
-            data = [value]
-        elif length == 2:
-            data = [scs.SCS_LOBYTE(value), scs.SCS_HIBYTE(value)]
-        elif length == 4:
-            data = [
-                scs.SCS_LOBYTE(scs.SCS_LOWORD(value)),
-                scs.SCS_HIBYTE(scs.SCS_LOWORD(value)),
-                scs.SCS_LOBYTE(scs.SCS_HIWORD(value)),
-                scs.SCS_HIBYTE(scs.SCS_HIWORD(value)),
-            ]
-        return data
+    def _split_into_byte_chunks(self, value: int, length: int) -> list[int]:
+        return _split_into_byte_chunks(value, length)
 
     def _broadcast_ping_p1(
         self, known_motors_only: bool = True, n_motors: int | None = None, num_retry: int = 0

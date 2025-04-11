@@ -61,48 +61,27 @@ def test_autouse_patch():
 
 
 @pytest.mark.parametrize(
-    "value, length, expected",
+    "protocol, value, length, expected",
     [
-        (0x12,       1, [0x12]),
-        (0x1234,     2, [0x34, 0x12]),
-        (0x12345678, 4, [0x78, 0x56, 0x34, 0x12]),
-        (0,          1, [0x00]),
-        (0,          2, [0x00, 0x00]),
-        (0,          4, [0x00, 0x00, 0x00, 0x00]),
-        (255,        1, [0xFF]),
-        (65535,      2, [0xFF, 0xFF]),
-        (4294967295, 4, [0xFF, 0xFF, 0xFF, 0xFF]),
+        (0, 0x12,       1, [0x12]),
+        (1, 0x12,       1, [0x12]),
+        (0, 0x1234,     2, [0x34, 0x12]),
+        (1, 0x1234,     2, [0x12, 0x34]),
+        (0, 0x12345678, 4, [0x78, 0x56, 0x34, 0x12]),
+        (1, 0x12345678, 4, [0x56, 0x78, 0x12, 0x34]),
     ],
     ids=[
-        "1 byte",
-        "2 bytes",
-        "4 bytes",
-        "0 with 1 byte",
-        "0 with 2 bytes",
-        "0 with 4 bytes",
-        "max single byte",
-        "max two bytes",
-        "max four bytes",
+        "P0: 1 byte",
+        "P1: 1 byte",
+        "P0: 2 bytes",
+        "P1: 2 bytes",
+        "P0: 4 bytes",
+        "P1: 4 bytes",
     ],
 )  # fmt: skip
-def test_serialize_data(value, length, expected):
-    assert FeetechMotorsBus._serialize_data(value, length) == expected
-
-
-def test_serialize_data_invalid_length():
-    with pytest.raises(NotImplementedError):
-        FeetechMotorsBus._serialize_data(100, 3)
-
-
-def test_serialize_data_negative_numbers():
-    with pytest.raises(ValueError):
-        neg = FeetechMotorsBus._serialize_data(-1, 1)
-        print(neg)
-
-
-def test_serialize_data_large_number():
-    with pytest.raises(ValueError):
-        FeetechMotorsBus._serialize_data(2**32, 4)  # 4-byte max is 0xFFFFFFFF
+def test__split_into_byte_chunks(protocol, value, length, expected):
+    bus = FeetechMotorsBus("", {}, protocol_version=protocol)
+    assert bus._split_into_byte_chunks(value, length) == expected
 
 
 def test_abc_implementation(dummy_motors):

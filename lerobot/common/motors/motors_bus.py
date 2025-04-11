@@ -664,9 +664,8 @@ class MotorsBus(abc.ABC):
 
         return self._split_into_byte_chunks(value, length)
 
-    @staticmethod
     @abc.abstractmethod
-    def _split_into_byte_chunks(value: int, length: int) -> list[int]:
+    def _split_into_byte_chunks(self, value: int, length: int) -> list[int]:
         """Convert an integer into a list of byte-sized integers."""
         pass
 

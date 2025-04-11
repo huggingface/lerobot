@@ -84,6 +84,23 @@ class TorqueMode(Enum):
     DISABLED = 0
 
 
+def _split_into_byte_chunks(value: int, length: int) -> list[int]:
+    import dynamixel_sdk as dxl
+
+    if length == 1:
+        data = [value]
+    elif length == 2:
+        data = [dxl.DXL_LOBYTE(value), dxl.DXL_HIBYTE(value)]
+    elif length == 4:
+        data = [
+            dxl.DXL_LOBYTE(dxl.DXL_LOWORD(value)),
+            dxl.DXL_HIBYTE(dxl.DXL_LOWORD(value)),
+            dxl.DXL_LOBYTE(dxl.DXL_HIWORD(value)),
+            dxl.DXL_HIBYTE(dxl.DXL_HIWORD(value)),
+        ]
+    return data
+
+
 class DynamixelMotorsBus(MotorsBus):
     """
     The Dynamixel implementation for a MotorsBus. It relies on the python dynamixel sdk to communicate with
@@ -166,22 +183,8 @@ class DynamixelMotorsBus(MotorsBus):
 
         return half_turn_homings
 
-    @staticmethod
-    def _split_into_byte_chunks(value: int, length: int) -> list[int]:
-        import dynamixel_sdk as dxl
-
-        if length == 1:
-            data = [value]
-        elif length == 2:
-            data = [dxl.DXL_LOBYTE(value), dxl.DXL_HIBYTE(value)]
-        elif length == 4:
-            data = [
-                dxl.DXL_LOBYTE(dxl.DXL_LOWORD(value)),
-                dxl.DXL_HIBYTE(dxl.DXL_LOWORD(value)),
-                dxl.DXL_LOBYTE(dxl.DXL_HIWORD(value)),
-                dxl.DXL_HIBYTE(dxl.DXL_HIWORD(value)),
-            ]
-        return data
+    def _split_into_byte_chunks(self, value: int, length: int) -> list[int]:
+        return _split_into_byte_chunks(value, length)
 
     def broadcast_ping(self, num_retry: int = 0, raise_on_error: bool = False) -> dict[int, int] | None:
         for n_try in range(1 + num_retry):
