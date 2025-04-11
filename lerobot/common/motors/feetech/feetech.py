@@ -310,20 +310,6 @@ class FeetechMotorsBus(MotorsBus):
             return self._broadcast_ping_p1(num_retry=num_retry)
 
     def _get_firmware_version(self, motor_ids: list[int], raise_on_error: bool = False) -> dict[int, int]:
-        # comm, major = self._sync_read(*FIRMWARE_MAJOR_VERSION, motor_ids)
-        # if not self._is_comm_success(comm):
-        #     if raise_on_error:
-        #         raise ConnectionError(self.packet_handler.getTxRxResult(comm))
-        #     return
-
-        # comm, minor = self._sync_read(*FIRMWARE_MINOR_VERSION, motor_ids)
-        # if not self._is_comm_success(comm):
-        #     if raise_on_error:
-        #         raise ConnectionError(self.packet_handler.getTxRxResult(comm))
-        #     return
-
-        # return {id_: f"{major[id_]}.{minor[id_]}" for id_ in motor_ids}
-
         comm, firmware_versions = self._sync_read(*FIRMWARE_VERSION, motor_ids)
         if not self._is_comm_success(comm):
             if raise_on_error:
@@ -333,19 +319,6 @@ class FeetechMotorsBus(MotorsBus):
         return firmware_versions
 
     def _get_model_number(self, motor_ids: list[int], raise_on_error: bool = False) -> dict[int, int]:
-        # comm, major = self._sync_read(*MODEL_MAJOR_VERSION, motor_ids)
-        # if not self._is_comm_success(comm):
-        #     if raise_on_error:
-        #         raise ConnectionError(self.packet_handler.getTxRxResult(comm))
-        #     return
-
-        # comm, minor = self._sync_read(*MODEL_MINOR_VERSION, motor_ids)
-        # if not self._is_comm_success(comm):
-        #     if raise_on_error:
-        #         raise ConnectionError(self.packet_handler.getTxRxResult(comm))
-        #     return
-
-        # return {id_: f"{major[id_]}.{minor[id_]}" for id_ in motor_ids}
         if self.protocol_version == 1:
             model_numbers = {}
             for id_ in motor_ids:
