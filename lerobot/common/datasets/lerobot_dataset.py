@@ -964,8 +964,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 self._save_image(frame[key], img_path)
                 self.episode_buffer[key].append(str(img_path))
             elif self.features[key]["dtype"] == "audio":
-                if self.meta.robot_type.startswith(
-                    "lekiwi"
+                if (
+                    self.meta.robot_type is not None and self.meta.robot_type.startswith("lekiwi")
                 ):  # Rw data storage should only be triggered for LeKiwi robot, for which audio is stored chunk by chunk in a visual frame-like manner
                     self.episode_buffer[key].append(frame[key])
                 else:  # Otherwise, only the audio file path is stored in the episode buffer
@@ -1034,8 +1034,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
             if key in ["index", "episode_index", "task_index"] or ft["dtype"] in ["image", "video"]:
                 continue
             elif ft["dtype"] == "audio":
-                if self.meta.robot_type.startswith(
-                    "lekiwi"
+                if (
+                    self.meta.robot_type is not None and self.meta.robot_type.startswith("lekiwi")
                 ):  # Raw data storage should only be triggered for LeKiwi robot, for which audio is stored chunk by chunk in a visual frame-like manner
                     episode_buffer[key] = np.concatenate(episode_buffer[key], axis=0)
                 continue
@@ -1044,8 +1044,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self._wait_image_writer()
         self._save_episode_table(episode_buffer, episode_index)
 
-        if self.meta.robot_type.startswith(
-            "lekiwi"
+        if (
+            self.meta.robot_type is not None and self.meta.robot_type.startswith("lekiwi")
         ):  # Raw data storage should only be triggered for LeKiwi robot, for which audio is stored chunk by chunk in a visual frame-like manner
             for key in self.meta.audio_keys:
                 audio_path = self._get_raw_audio_file_path(
