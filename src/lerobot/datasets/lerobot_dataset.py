@@ -1181,7 +1181,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
             if output_audio_path.is_file():
                 # Skip if video is already encoded. Could be the case when resuming data recording.
                 continue
-
             encode_audio(input_audio_path, output_audio_path, overwrite=True)
             input_audio_path.unlink()  # Remove raw audio file after encoding
 
