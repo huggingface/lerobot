@@ -150,6 +150,7 @@ class LeRobotDatasetMetadata:
         return Path(fpath)
 
     def get_compressed_audio_file_path(self, episode_index: int, audio_key: str) -> Path:
+        """Returns the path of the compressed (i.e. encoded) audio file."""
         episode_chunk = self.get_episode_chunk(episode_index)
         fpath = self.audio_path.format(
             episode_chunk=episode_chunk, audio_key=audio_key, episode_index=episode_index
@@ -206,7 +207,7 @@ class LeRobotDatasetMetadata:
 
     @property
     def audio_keys(self) -> list[str]:
-        """Keys to access audio modalities (wether they are linked to a camera or not)."""
+        """Keys to access audio modalities (whether they are linked to a camera or not)."""
         return [key for key, ft in self.features.items() if ft["dtype"] == "audio"]
 
     @property
@@ -223,7 +224,7 @@ class LeRobotDatasetMetadata:
     def linked_audio_keys(self) -> list[str]:
         """Keys to access audio modalities linked to a camera."""
         return [key for key in self.audio_keys if key in self.audio_camera_keys_mapping]
-    
+
     @property
     def unlinked_audio_keys(self) -> list[str]:
         """Keys to access audio modalities not linked to a camera."""
@@ -342,9 +343,10 @@ class LeRobotDatasetMetadata:
         been encoded the same way. Also, this means it assumes the first episode exists.
         """
         for key in self.unlinked_audio_keys:
-            if not self.features[key].get("info", None) or (
-                len(self.features[key]["info"]) == 1 and "sample_rate" in self.features[key]["info"]
-            ):  #Overwrite if info is empty or only contains sample rate (necessary to correctly save audio files recorded by LeKiwi)
+            if (
+                not self.features[key].get("info", None)
+                or (len(self.features[key]["info"]) == 1 and "sample_rate" in self.features[key]["info"])
+            ):  # Overwrite if info is empty or only contains sample rate (necessary to correctly save audio files recorded by LeKiwi)
                 audio_path = self.root / self.get_compressed_audio_file_path(0, key)
                 self.info["features"][key]["info"] = get_audio_info(audio_path)
 
@@ -568,9 +570,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         except (AssertionError, FileNotFoundError, NotADirectoryError):
             self.revision = get_safe_version(self.repo_id, self.revision)
             self.download_episodes(
-                download_videos, 
-                download_audio
-            ) #Audio embedded in video files (.mp4) will be downloaded if download_videos is set to True, regardless of the value of download_audio
+                download_videos, download_audio
+            )  # Audio embedded in video files (.mp4) will be downloaded if download_videos is set to True, regardless of the value of download_audio
             self.hf_dataset = self.load_hf_dataset()
 
         self.episode_data_index = get_episode_data_index(self.meta.episodes, self.episodes)
@@ -580,6 +581,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         episode_indices = torch.stack(self.hf_dataset["episode_index"]).numpy()
         ep_data_index_np = {k: t.numpy() for k, t in self.episode_data_index.items()}
         check_timestamps_sync(timestamps, episode_indices, ep_data_index_np, self.fps, self.tolerance_s)
+
+        # TODO(CarolinePascal) : add check for audio duration with respect to video duration and episode duration.
 
         # Setup delta_indices
         if self.delta_timestamps is not None:
@@ -601,7 +604,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
     ) -> None:
         ignore_patterns = ["images/"]
         if not push_videos:
-            ignore_patterns.append("videos/")   #Audio embedded in video files (.mp4) will be automatically pushed if videos are pushed 
+            ignore_patterns.append(
+                "videos/"
+            )  # Audio embedded in video files (.mp4) will be automatically pushed if videos are pushed
         if not push_audio:
             ignore_patterns.append("audio/")
 
@@ -670,7 +675,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         files = None
         ignore_patterns = []
         if not download_videos:
-            ignore_patterns.append("videos/")   #Audio embedded in video files (.mp4) will be automatically downloaded if videos are downloaded
+            ignore_patterns.append(
+                "videos/"
+            )  # Audio embedded in video files (.mp4) will be automatically downloaded if videos are downloaded
         if not download_audio:
             ignore_patterns.append("audio/")
         if self.episodes is not None:
@@ -785,7 +792,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         query_indices: dict[str, list[int]] | None = None,
     ) -> dict[str, list[float]]:
         query_timestamps = {}
-        for key in self.meta.audio_keys:    #Standalone audio and audio embedded in video as well !
+        for key in self.meta.audio_keys:  # Standalone audio and audio embedded in video as well !
             if query_indices is not None and key in query_indices:
                 timestamps = self.hf_dataset.select(query_indices[key])["timestamp"]
                 query_timestamps[key] = torch.stack(timestamps).tolist()
@@ -821,12 +828,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
     ) -> dict[str, torch.Tensor]:
         item = {}
         for audio_key, query_ts in query_timestamps.items():
-            #Audio stored with video in a single .mp4 file
+            # Audio stored with video in a single .mp4 file
             if audio_key in self.meta.linked_audio_keys:
                 audio_path = self.root / self.meta.get_video_file_path(
                     ep_idx, self.meta.audio_camera_keys_mapping[audio_key]
                 )
-            #Audio stored alone in a separate .m4a file
+            # Audio stored alone in a separate .m4a file
             else:
                 audio_path = self.root / self.meta.get_compressed_audio_file_path(ep_idx, audio_key)
             audio_chunk = decode_audio(audio_path, query_ts, query_duration, self.audio_backend)
@@ -957,9 +964,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 self._save_image(frame[key], img_path)
                 self.episode_buffer[key].append(str(img_path))
             elif self.features[key]["dtype"] == "audio":
-                if self.meta.robot_type.startswith("lekiwi"):
+                if self.meta.robot_type.startswith(
+                    "lekiwi"
+                ):  # Rw data storage should only be triggered for LeKiwi robot, for which audio is stored chunk by chunk in a visual frame-like manner
                     self.episode_buffer[key].append(frame[key])
-                else:
+                else:  # Otherwise, only the audio file path is stored in the episode buffer
                     if frame_index == 0:
                         audio_path = self._get_raw_audio_file_path(
                             episode_index=self.episode_buffer["episode_index"], audio_key=key
@@ -972,7 +981,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
     def add_microphone_recording(self, microphone: Microphone, microphone_key: str) -> None:
         """
-        This function will start recording audio from the microphone and save it to disk.
+        Starts recording audio data provided by the microphone and directly writes it in a .wav file.
         """
 
         audio_dir = self._get_raw_audio_file_path(
@@ -1025,7 +1034,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
             if key in ["index", "episode_index", "task_index"] or ft["dtype"] in ["image", "video"]:
                 continue
             elif ft["dtype"] == "audio":
-                if self.meta.robot_type.startswith("lekiwi"):
+                if self.meta.robot_type.startswith(
+                    "lekiwi"
+                ):  # Raw data storage should only be triggered for LeKiwi robot, for which audio is stored chunk by chunk in a visual frame-like manner
                     episode_buffer[key] = np.concatenate(episode_buffer[key], axis=0)
                 continue
             episode_buffer[key] = np.stack(episode_buffer[key])
@@ -1033,7 +1044,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self._wait_image_writer()
         self._save_episode_table(episode_buffer, episode_index)
 
-        if self.meta.robot_type.startswith("lekiwi"):
+        if self.meta.robot_type.startswith(
+            "lekiwi"
+        ):  # Raw data storage should only be triggered for LeKiwi robot, for which audio is stored chunk by chunk in a visual frame-like manner
             for key in self.meta.audio_keys:
                 audio_path = self._get_raw_audio_file_path(
                     episode_index=self.episode_buffer["episode_index"][0], audio_key=key
@@ -1053,7 +1066,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             for key in self.meta.video_keys:
                 episode_buffer[key] = video_paths[key]
 
-        if len(self.meta.unlinked_audio_keys) > 0:  #Linked audio is already encoded in the video files
+        if len(self.meta.unlinked_audio_keys) > 0:  # Linked audio is already encoded in the video files
             _ = self.encode_episode_audio(episode_index)
 
         # `meta.save_episode` be executed after encoding the videos
@@ -1080,7 +1093,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if img_dir.is_dir():
             shutil.rmtree(self.root / "images")
 
-        # delete raw audio
+        # delete raw audio files
         raw_audio_files = list(self.root.rglob("*.wav"))
         for raw_audio_file in raw_audio_files:
             raw_audio_file.unlink()
