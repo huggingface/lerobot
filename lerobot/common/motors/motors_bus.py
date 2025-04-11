@@ -600,6 +600,7 @@ class MotorsBus(abc.ABC):
     def _normalize(self, data_name: str, ids_values: dict[int, int]) -> dict[int, float]:
         if not self.calibration:
             raise RuntimeError(f"{self} has no calibration registered.")
+
         normalized_values = {}
         for id_, val in ids_values.items():
             name = self._id_to_name(id_)
@@ -617,6 +618,9 @@ class MotorsBus(abc.ABC):
         return normalized_values
 
     def _unnormalize(self, data_name: str, ids_values: dict[int, float]) -> dict[int, int]:
+        if not self.calibration:
+            raise RuntimeError(f"{self} has no calibration registered.")
+
         unnormalized_values = {}
         for id_, val in ids_values.items():
             name = self._id_to_name(id_)
