@@ -381,7 +381,7 @@ class MobileManipulator:
                     if frame_candidate is not None:
                         frames[cam_name] = frame_candidate
 
-            # Recieve audio
+            # Receive audio
             for microphone_name, audio_data in audio_dict.items():
                 if audio_data:
                     frames[microphone_name] = audio_data

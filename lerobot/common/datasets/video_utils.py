@@ -51,14 +51,14 @@ def decode_audio(
     Decodes audio using the specified backend.
     Args:
         audio_path (Path): Path to the audio file.
-        timestamps (list[float]): List of timestamps to extract frames.
-        tolerance_s (float): Allowed deviation in seconds for frame retrieval.
-        backend (str, optional): Backend to use for decoding. Defaults to "pyav".
+        timestamps (list[float]): List of (starting) timestamps to extract audio chunks.
+        duration (float): Duration of the audio chunks in seconds.
+        backend (str, optional): Backend to use for decoding. Defaults to "ffmpeg".
 
     Returns:
-        torch.Tensor: Decoded frames.
+        torch.Tensor: Decoded audio chunks.
 
-    Currently supports pyav.
+    Currently supports ffmpeg.
     """
     if backend == "torchcodec":
         raise NotImplementedError("torchcodec is not yet supported for audio decoding")
@@ -81,7 +81,6 @@ def decode_audio_torchvision(
     audio_sample_rate = reader.get_src_stream_info(reader.default_audio_stream).sample_rate
 
     # TODO(CarolinePascal) : sort timestamps ?
-
     reader.add_basic_audio_stream(
         frames_per_chunk=int(ceil(duration * audio_sample_rate)),  # Too much is better than not enough
         buffer_chunk_size=-1,  # No dropping frames
@@ -316,7 +315,7 @@ def decode_video_frames_torchcodec(
 def encode_audio(
     input_path: Path | str,
     output_path: Path | str,
-    codec: str = "aac",
+    codec: str = "aac",  # TODO(CarolinePascal) : investigate Fraunhofer FDK AAC (libfdk_aac) codec and and constant (file size control) /variable (quality control) bitrate options
     log_level: str | None = "error",
     overwrite: bool = False,
 ) -> None:
@@ -345,7 +344,7 @@ def encode_audio(
 
     if not output_path.exists():
         raise OSError(
-            f"Video encoding did not work. File not found: {output_path}. "
+            f"Audio encoding did not work. File not found: {output_path}. "
             f"Try running the command manually to debug: `{''.join(ffmpeg_cmd)}`"
         )
 
