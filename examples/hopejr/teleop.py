@@ -35,7 +35,7 @@ def main(
 
     # #calibrate arm
     arm_calibration = robot.get_arm_calibration()
-    exoskeleton = HomonculusArm(serial_port="/dev/ttyACM2")
+    exoskeleton = HomonculusArm(serial_port="/dev/tty.usbmodem1201")
 
     
     if calibrate_exoskeleton:   
@@ -49,7 +49,7 @@ def main(
 
     #calibrate hand
     hand_calibration = robot.get_hand_calibration()
-    glove = HomonculusGlove(serial_port = "/dev/ttyACM0")
+    glove = HomonculusGlove(serial_port = "/dev/tty.usbmodem1101")
 
     if calibrate_glove:
          glove.run_calibration()

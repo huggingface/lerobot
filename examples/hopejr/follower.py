@@ -6,8 +6,8 @@ import yaml
 
 class HopeJuniorRobot:
     def __init__(self):
-        self.arm_port = "/dev/ttyUSB0"
-        self.hand_port = "/dev/ttyACM1"
+        self.arm_port = "/dev/tty.usbserial-140"
+        self.hand_port = "/dev/tty.usbmodem58760436961"
         self.arm_bus = FeetechMotorsBus(
             port = self.arm_port,
             motors={
