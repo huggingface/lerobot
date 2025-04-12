@@ -20,12 +20,12 @@ from lerobot.common.robot_devices.robots.utils import make_robot_from_config
 from lerobot.common.utils.utils import log_say
 from lerobot.configs import parser
 from lerobot.scripts.server.kinematics import RobotKinematics
-# import cv2
+import cv2
 
 # # Make sure that the UI gets initialized before PyAV (av) gets imported by torchvision
 # # This solves the hanging issue with cv2.imshow on Ubuntu
-# cv2.namedWindow("i")
-# cv2.destroyAllWindows()
+cv2.namedWindow("i")
+cv2.destroyAllWindows()
 logging.basicConfig(level=logging.INFO)
 MAX_GRIPPER_COMMAND = 25
 

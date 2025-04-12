@@ -5,13 +5,13 @@
         "calibration_dir": null,
         "fps": 10,
         "joint_position_relative_bounds": {
-            "max": [0.26, 0.001, 0.18],
-            "min": [0.17,  -0.05, 0.16]
+            "max": [0.315, 0.03, 0.261],
+            "min": [0.25,  -0.045, 0.16]
         }
     },
     "wrapper": {
         "gripper_penalty": -0.02,
-        "display_cameras": false,
+        "display_cameras": true,
         "use_relative_joint_positions": true,
         "add_joint_velocity_to_observation": false,
         "add_ee_pose_to_observation": false,
@@ -36,7 +36,7 @@
         "control_time_s": 30.0,
         "use_gripper": false,
         "fixed_reset_joint_positions": [
-            0.171642, -0.028, 0.165, 0.179831, 0.010918, 0.173467, 0.0
+            0.200337, 0.020786, 0.289284, 0.179831, 0.010918, 0.173467, 0.0
         ],
         "reset_time_s": 2.0,
         "joint_masking_action_space": null
@@ -46,7 +46,7 @@
     "repo_id": "KeWangRobotics/piper_pick_cube_gamepad_1",
     "dataset_root": null,
     "task": "",
-    "num_episodes": 30,
+    "num_episodes": 20,
     "episode": 0,
     "pretrained_policy_name_or_path": null,
     "device": "cpu",

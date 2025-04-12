@@ -7,7 +7,7 @@ import cv2
 
 # Make sure that the UI gets initialized before PyAV (av) gets imported by torchvision
 # This solves the hanging issue with cv2.imshow on Ubuntu
-cv2.namedWindow("i")
+cv2.namedWindow("Select ROI")
 cv2.destroyAllWindows()
 
 # import torch.nn.functional as F  # noqa: N812
@@ -252,7 +252,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     local_files_only = args.root is not None
-    dataset = LeRobotDataset(repo_id=args.repo_id, root=args.root, local_files_only=local_files_only)
+    # local_files_only = False
+    dataset = LeRobotDataset(repo_id=args.repo_id, root=args.root)#, local_files_only=local_files_only)
 
     images = get_image_from_lerobot_dataset(dataset)
     images = {k: v.cpu().permute(1, 2, 0).numpy() for k, v in images.items()}

@@ -114,7 +114,8 @@ class PiperRobot(ManipulatorRobot):
         self.piper.GripperCtrl(0,1000,0x01, 0)
         self.state_scaling_factor = 1e6 
         # self.default_pos = [0.200337, 0.020786, 0.289284, 0.179831, 0.010918, 0.173467, 0.0]
-        self.default_pos = [0.171642, -0.028, 0.165, 0.179831, 0.010918, 0.173467, 0.0]
+        self.default_pos = [0.258972, 0.00789, 0.26005, 0.179831, 0.010918, 0.173467, 0.0]
+        # self.default_pos = [0.171642, -0.028, 0.165, 0.179831, 0.010918, 0.173467, 0.0]
         self.joint_position_relative_bounds = self.config.joint_position_relative_bounds if self.config.joint_position_relative_bounds is not None else None
         self.previous_ee_position = np.array([0.0, 0.0, 0.0])
         self.current_state = np.array([0.0, 0.0, 0.0, 0.0])
@@ -418,9 +419,9 @@ class PiperRobot(ManipulatorRobot):
         if self.teleop is not None:
             self.teleop.close()
 
-        # if len(self.cameras) > 0:
-        #     for cam in self.cameras.values():
-        #         cam.disconnect()
+        if len(self.cameras) > 0:
+            for cam in self.cameras.values():
+                cam.disconnect()
 
         self.is_connected = False
 
