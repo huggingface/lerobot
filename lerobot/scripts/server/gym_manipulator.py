@@ -24,8 +24,8 @@ import cv2
 
 # # Make sure that the UI gets initialized before PyAV (av) gets imported by torchvision
 # # This solves the hanging issue with cv2.imshow on Ubuntu
-cv2.namedWindow("i")
-cv2.destroyAllWindows()
+# cv2.namedWindow("i")
+# cv2.destroyAllWindows()
 logging.basicConfig(level=logging.INFO)
 MAX_GRIPPER_COMMAND = 25
 
@@ -232,6 +232,7 @@ class HILSerlRobotEnv(gym.Env):
         policy_action, intervention_bool = action
         teleop_action = None
         self.current_joint_positions = self.robot.get_state()["state"][:3]
+        is_intervention, is_success = self.robot.get_intervention_start()
         if isinstance(policy_action, torch.Tensor):
             policy_action = policy_action.cpu().numpy()
             policy_action = np.clip(policy_action, self.action_space[0].low, self.action_space[0].high)
@@ -281,7 +282,10 @@ class HILSerlRobotEnv(gym.Env):
 
         if self.display_cameras:
             self.render()
-
+            
+        if is_success:
+            reward = 1
+            terminated = True
         self.current_step += 1
 
         reward = 0.0

@@ -11,27 +11,27 @@
     },
     "wrapper": {
         "gripper_penalty": -0.02,
-        "display_cameras": true,
+        "display_cameras": false,
         "use_relative_joint_positions": true,
         "add_joint_velocity_to_observation": false,
         "add_ee_pose_to_observation": false,
         "crop_params_dict": {
             "observation.images.front": [
-                0,
-                0,
-                128,
-                128
+                249,
+                126,
+                443,
+                344
             ],
             "observation.images.wrist": [
-                0,
-                0,
-                128,
-                128
+                130,
+                85,
+                480,
+                535
             ]
         },
         "resize_size": [
-            128,
-            128
+            480,
+            640
         ],
         "control_time_s": 30.0,
         "use_gripper": false,
