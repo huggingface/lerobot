@@ -24,13 +24,8 @@ from termcolor import colored
 from torch.amp import GradScaler
 from torch.optim import Optimizer
 
-<<<<<<< HEAD
 from lerobot.common.datasets.factory import make_dataset
-=======
-from lerobot.common.datasets.factory import make_dataset, resolve_delta_timestamps
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset, MultiLeRobotDataset
-from lerobot.common.datasets.online_buffer import OnlineBuffer, compute_sampler_weights
->>>>>>> 1c9d53c1 (fix: support multi repo datasets for training)
+from lerobot.common.datasets.lerobot_dataset import MultiLeRobotDataset
 from lerobot.common.datasets.sampler import EpisodeAwareSampler
 from lerobot.common.datasets.utils import cycle
 from lerobot.common.envs.factory import make_env
