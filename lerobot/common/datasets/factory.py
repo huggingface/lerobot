@@ -81,8 +81,8 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
     image_transforms = (
         ImageTransforms(cfg.dataset.image_transforms) if cfg.dataset.image_transforms.enable else None
     )
-    if cfg.dataset.repo_id.startswith('['):
-        datasets = cfg.dataset.repo_id.strip('[]').split(',')
+    if cfg.dataset.repo_id.startswith("["):
+        datasets = cfg.dataset.repo_id.strip("[]").split(",")
         datasets = [x.strip() for x in datasets]
         delta_timestamps = {}
         for ds in datasets:
@@ -98,7 +98,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
         )
         logging.info(
             "Multiple datasets were provided. Applied the following index mapping to the provided datasets: "
-            f"{pformat(dataset.repo_id_to_index , indent=2)}"
+            f"{pformat(dataset.repo_id_to_index, indent=2)}"
         )
     else:
         ds_meta = LeRobotDatasetMetadata(cfg.dataset.repo_id)

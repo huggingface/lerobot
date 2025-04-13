@@ -49,8 +49,8 @@ def cfg_to_group(cfg: TrainPipelineConfig, return_list: bool = False) -> list[st
     """Return a group name for logging. Optionally returns group name as list."""
     # TODO: these were used to support multirepodataset in the past - think how they could be supported in new way?
     dataset_tag = cfg.dataset.repo_id
-    if dataset_tag.startswith('['):
-        tags = dataset_tag.strip('[]').split(',')
+    if dataset_tag.startswith("["):
+        tags = dataset_tag.strip("[]").split(",")
         dataset_tag = f"{tags[0].strip()}_and_more"
     lst = [
         f"policy:{cfg.policy.type}",
