@@ -258,7 +258,7 @@ def record(
     # 3. place the cameras windows on screen
     enable_teleoperation = policy is None
     log_say("Warmup record", play_sounds)
-    warmup_record(robot, events, enable_teleoperation, warmup_time_s, display_cameras, fps)
+    # warmup_record(robot, events, enable_teleoperation, warmup_time_s, display_cameras, fps)
 
     if has_method(robot, "teleop_safety_stop"):
         robot.teleop_safety_stop()

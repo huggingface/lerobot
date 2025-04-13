@@ -404,9 +404,7 @@ class OpenCVCamera:
 
         h, w, _ = color_image.shape
         if h != self.height or w != self.width:
-            raise OSError(
-                f"Can't capture color image with expected height and width ({self.height} x {self.width}). ({h} x {w}) returned instead."
-            )
+            color_image = cv2.resize(color_image, (640, 480))
 
         if self.rotation is not None:
             color_image = cv2.rotate(color_image, self.rotation)
