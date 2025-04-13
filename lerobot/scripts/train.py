@@ -262,8 +262,6 @@ def train(cfg: TrainPipelineConfig):
         metadatas = []
         for ds in dataset._datasets:
             metadatas.append(ds.meta)
-        x = merge_lerobot_datasets_metadata(metadatas)
-        # ds_meta.stats = x["stats"]
         ds_meta.stats = dataset.stats
     else:
         ds_meta = dataset.meta
