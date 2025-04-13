@@ -23,6 +23,9 @@ Follow this [README](https://github.com/SIGRobotics-UIUC/LeKiwi). It contains th
 
 Before assembling, you will first need to configure your motors. To this end, we provide a nice script, so let's first install LeRobot. After configuration, we will also guide you through assembly.
 
+### Wired version
+If you have the **wired** LeKiwi version you can skip the installation of the Raspberry Pi and setting up SSH. You can also run all commands directly on your PC for both the LeKiwi scripts and the leader arm scripts for teleoperating.
+
 ## B. Install software on Pi
 Now we have to setup the remote PC that will run on the LeKiwi Robot. This is normally a Raspberry Pi, but can be any PC that can run on 5V and has enough usb ports (2 or more) for the cameras and motor control board.
 
@@ -64,7 +67,13 @@ conda activate lerobot
 git clone https://github.com/huggingface/lerobot.git ~/lerobot
 ```
 
-#### 5. Install LeRobot with dependencies for the feetech motors:
+#### 5. Install ffmpeg in your environment:
+When using `miniconda`, install `ffmpeg` in your environment:
+```bash
+conda install ffmpeg -c conda-forge
+```
+
+#### 6. Install LeRobot with dependencies for the feetech motors:
 ```bash
 cd ~/lerobot && pip install -e ".[feetech]"
 ```
@@ -105,17 +114,17 @@ conda activate lerobot
 git clone https://github.com/huggingface/lerobot.git ~/lerobot
 ```
 
-#### 5. Install LeRobot with dependencies for the feetech motors:
+#### 5. Install ffmpeg in your environment:
+When using `miniconda`, install `ffmpeg` in your environment:
+```bash
+conda install ffmpeg -c conda-forge
+```
+
+#### 6. Install LeRobot with dependencies for the feetech motors:
 ```bash
 cd ~/lerobot && pip install -e ".[feetech]"
 ```
 
-*EXTRA: For Linux only (not Mac)*: install extra dependencies for recording datasets:
-```bash
-conda install -y -c conda-forge ffmpeg
-pip uninstall -y opencv-python
-conda install -y -c conda-forge "opencv>=4.10.0"
-```
 Great :hugs:! You are now done installing LeRobot and we can begin assembling the SO100 arms and Mobile base :robot:.
 Every time you now want to use LeRobot you can go to the `~/lerobot` folder where we installed LeRobot and run one of the commands.
 
@@ -246,6 +255,110 @@ class LeKiwiRobotConfig(RobotConfig):
         }
     )
 
+    teleop_keys: dict[str, str] = field(
+        default_factory=lambda: {
+            # Movement
+            "forward": "w",
+            "backward": "s",
+            "left": "a",
+            "right": "d",
+            "rotate_left": "z",
+            "rotate_right": "x",
+            # Speed control
+            "speed_up": "r",
+            "speed_down": "f",
+            # quit teleop
+            "quit": "q",
+        }
+    )
+
+    mock: bool = False
+```
+
+## Wired version
+
+For the wired LeKiwi version your configured IP address should refer to your own laptop (127.0.0.1), because leader arm and LeKiwi are in this case connected to own laptop. Below and example configuration for this wired setup:
+```python
+@RobotConfig.register_subclass("lekiwi")
+@dataclass
+class LeKiwiRobotConfig(RobotConfig):
+    # `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
+    # Set this to a positive scalar to have the same value for all motors, or a list that is the same length as
+    # the number of motors in your follower arms.
+    max_relative_target: int | None = None
+
+    # Network Configuration
+    ip: str = "127.0.0.1"
+    port: int = 5555
+    video_port: int = 5556
+
+    cameras: dict[str, CameraConfig] = field(
+        default_factory=lambda: {
+            "front": OpenCVCameraConfig(
+                camera_index=0, fps=30, width=640, height=480, rotation=90
+            ),
+            "wrist": OpenCVCameraConfig(
+                camera_index=1, fps=30, width=640, height=480, rotation=180
+            ),
+        }
+    )
+
+    calibration_dir: str = ".cache/calibration/lekiwi"
+
+    leader_arms: dict[str, MotorsBusConfig] = field(
+        default_factory=lambda: {
+            "main": FeetechMotorsBusConfig(
+                port="/dev/tty.usbmodem585A0077581",
+                motors={
+                    # name: (index, model)
+                    "shoulder_pan": [1, "sts3215"],
+                    "shoulder_lift": [2, "sts3215"],
+                    "elbow_flex": [3, "sts3215"],
+                    "wrist_flex": [4, "sts3215"],
+                    "wrist_roll": [5, "sts3215"],
+                    "gripper": [6, "sts3215"],
+                },
+            ),
+        }
+    )
+
+    follower_arms: dict[str, MotorsBusConfig] = field(
+        default_factory=lambda: {
+            "main": FeetechMotorsBusConfig(
+                port="/dev/tty.usbmodem58760431061",
+                motors={
+                    # name: (index, model)
+                    "shoulder_pan": [1, "sts3215"],
+                    "shoulder_lift": [2, "sts3215"],
+                    "elbow_flex": [3, "sts3215"],
+                    "wrist_flex": [4, "sts3215"],
+                    "wrist_roll": [5, "sts3215"],
+                    "gripper": [6, "sts3215"],
+                    "left_wheel": (7, "sts3215"),
+                    "back_wheel": (8, "sts3215"),
+                    "right_wheel": (9, "sts3215"),
+                },
+            ),
+        }
+    )
+
+    teleop_keys: dict[str, str] = field(
+        default_factory=lambda: {
+            # Movement
+            "forward": "w",
+            "backward": "s",
+            "left": "a",
+            "right": "d",
+            "rotate_left": "z",
+            "rotate_right": "x",
+            # Speed control
+            "speed_up": "r",
+            "speed_down": "f",
+            # quit teleop
+            "quit": "q",
+        }
+    )
+
     mock: bool = False
 ```
 
@@ -259,8 +372,8 @@ Now we have to calibrate the leader arm and the follower arm. The wheel motors d
 
 You will need to move the follower arm to these positions sequentially:
 
-| 1. Zero position | 2. Rotated position | 3. Rest position |
-|---|---|---|
+| 1. Zero position                                                                                                                                                  | 2. Rotated position                                                                                                                                                        | 3. Rest position                                                                                                                                                  |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | <img src="../media/lekiwi/mobile_calib_zero.webp?raw=true" alt="SO-100 follower arm zero position" title="SO-100 follower arm zero position" style="width:100%;"> | <img src="../media/lekiwi/mobile_calib_rotated.webp?raw=true" alt="SO-100 follower arm rotated position" title="SO-100 follower arm rotated position" style="width:100%;"> | <img src="../media/lekiwi/mobile_calib_rest.webp?raw=true" alt="SO-100 follower arm rest position" title="SO-100 follower arm rest position" style="width:100%;"> |
 
 Make sure the arm is connected to the Raspberry Pi and run this script (on the Raspberry Pi) to launch manual calibration:
@@ -272,11 +385,14 @@ python lerobot/scripts/control_robot.py \
   --control.arms='["main_follower"]'
 ```
 
+### Wired version
+If you have the **wired** LeKiwi version please run all commands including this calibration command on your laptop.
+
 ### Calibrate leader arm
 Then to calibrate the leader arm (which is attached to the laptop/pc). You will need to move the leader arm to these positions sequentially:
 
-| 1. Zero position | 2. Rotated position | 3. Rest position |
-|---|---|---|
+| 1. Zero position                                                                                                                                       | 2. Rotated position                                                                                                                                             | 3. Rest position                                                                                                                                       |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | <img src="../media/so100/leader_zero.webp?raw=true" alt="SO-100 leader arm zero position" title="SO-100 leader arm zero position" style="width:100%;"> | <img src="../media/so100/leader_rotated.webp?raw=true" alt="SO-100 leader arm rotated position" title="SO-100 leader arm rotated position" style="width:100%;"> | <img src="../media/so100/leader_rest.webp?raw=true" alt="SO-100 leader arm rest position" title="SO-100 leader arm rest position" style="width:100%;"> |
 
 Run this script (on your laptop/pc) to launch manual calibration:
@@ -289,6 +405,10 @@ python lerobot/scripts/control_robot.py \
 ```
 
 # F. Teleoperate
+
+> [!TIP]
+> If you're using a Mac, you might need to give Terminal permission to access your keyboard. Go to System Preferences > Security & Privacy > Input Monitoring and check the box for Terminal.
+
 To teleoperate SSH into your Raspberry Pi, and run `conda activate lerobot` and this script:
 ```bash
 python lerobot/scripts/control_robot.py \
@@ -304,27 +424,32 @@ python lerobot/scripts/control_robot.py \
   --control.fps=30
 ```
 
+> **NOTE:** To visualize the data, enable `--control.display_data=true`. This streams the data using `rerun`. For the `--control.type=remote_robot` you will also need to set `--control.viewer_ip` and `--control.viewer_port`
+
 You should see on your laptop something like this: ```[INFO] Connected to remote robot at tcp://172.17.133.91:5555 and video stream at tcp://172.17.133.91:5556.``` Now you can move the leader arm and use the keyboard (w,a,s,d) to drive forward, left, backwards, right. And use (z,x) to turn left or turn right. You can use (r,f) to increase and decrease the speed of the mobile robot. There are three speed modes, see the table below:
 | Speed Mode | Linear Speed (m/s) | Rotation Speed (deg/s) |
-|------------|-------------------|-----------------------|
-| Fast      | 0.4               | 90                    |
-| Medium    | 0.25              | 60                    |
-| Slow      | 0.1               | 30                    |
+| ---------- | ------------------ | ---------------------- |
+| Fast       | 0.4                | 90                     |
+| Medium     | 0.25               | 60                     |
+| Slow       | 0.1                | 30                     |
 
 
-| Key  | Action                         |
-|------|--------------------------------|
-| W    | Move forward                   |
-| A    | Move left                       |
-| S    | Move backward                   |
-| D    | Move right                      |
-| Z    | Turn left                       |
-| X    | Turn right                      |
-| R    | Increase speed                  |
-| F    | Decrease speed                  |
+| Key | Action         |
+| --- | -------------- |
+| W   | Move forward   |
+| A   | Move left      |
+| S   | Move backward  |
+| D   | Move right     |
+| Z   | Turn left      |
+| X   | Turn right     |
+| R   | Increase speed |
+| F   | Decrease speed |
 
 > [!TIP]
 >  If you use a different keyboard you can change the keys for each command in the [`LeKiwiRobotConfig`](../lerobot/common/robot_devices/robots/configs.py).
+
+### Wired version
+If you have the **wired** LeKiwi version please run all commands including both these teleoperation commands on your laptop.
 
 ## Troubleshoot communication
 
@@ -364,6 +489,13 @@ Make sure the configuration file on both your laptop/pc and the Raspberry Pi is 
 # G. Record a dataset
 Once you're familiar with teleoperation, you can record your first dataset with LeKiwi.
 
+To start the program on LeKiwi, SSH into your Raspberry Pi, and run `conda activate lerobot` and this script:
+```bash
+python lerobot/scripts/control_robot.py \
+  --robot.type=lekiwi \
+  --control.type=remote_robot
+```
+
 If you want to use the Hugging Face hub features for uploading your dataset and you haven't previously done it, make sure you've logged in using a write-access token, which can be generated from the [Hugging Face settings](https://huggingface.co/settings/tokens):
 ```bash
 huggingface-cli login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
@@ -374,8 +506,7 @@ Store your Hugging Face repository name in a variable to run these commands:
 HF_USER=$(huggingface-cli whoami | head -n 1)
 echo $HF_USER
 ```
-
-Record 2 episodes and upload your dataset to the hub:
+On your laptop then run this command to record 2 episodes and upload your dataset to the hub:
 ```bash
 python lerobot/scripts/control_robot.py \
   --robot.type=lekiwi \
@@ -392,6 +523,9 @@ python lerobot/scripts/control_robot.py \
 ```
 
 Note: You can resume recording by adding `--control.resume=true`.
+
+### Wired version
+If you have the **wired** LeKiwi version please run all commands including both these record dataset commands on your laptop.
 
 # H. Visualize a dataset
 
@@ -427,14 +561,14 @@ python lerobot/scripts/train.py \
   --policy.type=act \
   --output_dir=outputs/train/act_lekiwi_test \
   --job_name=act_lekiwi_test \
-  --device=cuda \
+  --policy.device=cuda \
   --wandb.enable=true
 ```
 
 Let's explain it:
 1. We provided the dataset as argument with `--dataset.repo_id=${HF_USER}/lekiwi_test`.
 2. We provided the policy with `policy.type=act`. This loads configurations from [`configuration_act.py`](../lerobot/common/policies/act/configuration_act.py). Importantly, this policy will automatically adapt to the number of motor sates, motor actions and cameras of your robot (e.g. `laptop` and `phone`) which have been saved in your dataset.
-4. We provided `device=cuda` since we are training on a Nvidia GPU, but you could use `device=mps` to train on Apple silicon.
+4. We provided `policy.device=cuda` since we are training on a Nvidia GPU, but you could use `policy.device=mps` to train on Apple silicon.
 5. We provided `wandb.enable=true` to use [Weights and Biases](https://docs.wandb.ai/quickstart) for visualizing training plots. This is optional but if you use it, make sure you are logged in by running `wandb login`.
 
 Training should take several hours. You will find checkpoints in `outputs/train/act_lekiwi_test/checkpoints`.
