@@ -22,12 +22,8 @@ class RobotClient:
             print("Connected to policy server server")
             self.running = True
             
-            # Start action receiving thread
-            self.action_thread = threading.Thread(target=self.receive_actions)
-            self.action_thread.daemon = True
-            self.action_thread.start()
-            
             return True
+
         except grpc.RpcError as e:
             print(f"Failed to connect to policy server: {e}")
             return False
@@ -59,71 +55,59 @@ class RobotClient:
         except grpc.RpcError as e:
             print(f"Error sending observation: {e}")
             return False
-            
-    
+
     def receive_actions(self):
         """Receive actions from the policy server"""
         while self.running:
             try:
                 # Use StreamActions to get a stream of actions from the server
                 for action in self.stub.StreamActions(async_inference_pb2.Empty()):
-                    if self.action_callback:
-                        # Convert bytes back to data (assuming numpy array)
-                        action_data = np.frombuffer(action.data)
-                        self.action_callback(
-                            action_data, 
-                            action.transfer_state
-                        )
-                    else:
-                        print(
-                            "Received action: ",
-                            f"state={action.transfer_state}, ",
-                            f"data size={len(action.data)} bytes"
-                        )
-            
+                    action_data = np.frombuffer(action.data, dtype=np.float32)
+                    print(
+                        "Received action: ",
+                        f"state={action.transfer_state}, ",
+                        f"data={action_data}, ",
+                        f"data size={len(action.data)} bytes"
+                    )
+
             except grpc.RpcError as e:
                 print(f"Error receiving actions: {e}")
                 time.sleep(1)  # Avoid tight loop on error
-    
-    def register_action_callback(self, callback):
-        """Register a callback for when actions are received"""
-        self.action_callback = callback
-    
+
 
 def example_usage():
     # Example of how to use the RobotClient
     client = RobotClient()
     
     if client.start():
-        # Define a callback for received actions
-        def on_action(action_data, transfer_state):
-            print(f"Action received: state={transfer_state}, data={action_data[:10]}...")
+        # Creating & starting a thread for receiving actions
+        action_thread = threading.Thread(target=client.receive_actions)
+        action_thread.daemon = True
+        action_thread.start()
         
-        client.register_action_callback(on_action)
-        
-        # Send some example observations
-        for i in range(10):
-            # Create dummy observation data
-            observation = np.arange(10, dtype=np.float32)
-            
-            # Send it to the policy server
-            if i == 0:
-                state = async_inference_pb2.TRANSFER_BEGIN
-            elif i == 9:
-                state = async_inference_pb2.TRANSFER_END
-            else:
-                state = async_inference_pb2.TRANSFER_MIDDLE
-                
-            client.send_observation(observation, state)
-            print(f"Sent observation {i+1}/10")
-            time.sleep(0.5)
-        
-        # Keep the main thread alive to receive actions
         try:
+            # Send observations to the server in the main thread
+            for i in range(10):
+                observation = np.random.randint(0, 10, size=10).astype(np.float32)
+                
+                if i == 0:
+                    state = async_inference_pb2.TRANSFER_BEGIN
+                elif i == 9:
+                    state = async_inference_pb2.TRANSFER_END
+                else:
+                    state = async_inference_pb2.TRANSFER_MIDDLE
+                
+                client.send_observation(observation, state)
+                time.sleep(1)
+
+
+            # Keep the main thread alive to continue receiving actions
             while True:
                 time.sleep(1)
+                
         except KeyboardInterrupt:
             pass
+        
         finally:
             client.stop()
 
