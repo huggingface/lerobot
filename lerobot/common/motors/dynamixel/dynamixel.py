@@ -143,11 +143,11 @@ class DynamixelMotorsBus(MotorsBus):
             self.write("Return_Delay_Time", id_, 0)
 
     def disable_torque(self, motors: str | list[str] | None = None) -> None:
-        for name in self._get_names_list(motors):
+        for name in self._get_motors_list(motors):
             self.write("Torque_Enable", name, TorqueMode.DISABLED.value)
 
     def enable_torque(self, motors: str | list[str] | None = None) -> None:
-        for name in self._get_names_list(motors):
+        for name in self._get_motors_list(motors):
             self.write("Torque_Enable", name, TorqueMode.ENABLED.value)
 
     def _encode_sign(self, data_name: str, ids_values: dict[int, int]) -> dict[int, int]:
