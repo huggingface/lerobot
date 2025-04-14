@@ -235,8 +235,8 @@ def episodes_factory(tasks_factory, stats_factory):
         }
         if video_keys is not None:
             for video_key in video_keys:
-                d[f"{video_key}/chunk_index"] = []
-                d[f"{video_key}/file_index"] = []
+                d[f"videos/{video_key}/chunk_index"] = []
+                d[f"videos/{video_key}/file_index"] = []
 
         for stats_key in flatten_dict({"stats": stats_factory(features)}):
             d[stats_key] = []
@@ -261,8 +261,8 @@ def episodes_factory(tasks_factory, stats_factory):
 
             if video_keys is not None:
                 for video_key in video_keys:
-                    d[f"{video_key}/chunk_index"].append(0)
-                    d[f"{video_key}/file_index"].append(0)
+                    d[f"videos/{video_key}/chunk_index"].append(0)
+                    d[f"videos/{video_key}/file_index"].append(0)
 
             # Add stats columns like "stats/action/max"
             for stats_key, stats in flatten_dict({"stats": stats_factory(features)}).items():

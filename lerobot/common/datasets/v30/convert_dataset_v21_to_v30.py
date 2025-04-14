@@ -235,10 +235,10 @@ def convert_videos_of_camera(root: Path, new_root: Path, video_key):
         ep_duration_in_s = get_video_duration_in_s(ep_path)
         ep_metadata = {
             "episode_index": ep_idx,
-            f"{video_key}/chunk_index": chunk_idx,
-            f"{video_key}/file_index": file_idx,
-            f"{video_key}/from_timestamp": duration_in_s,
-            f"{video_key}/to_timestamp": duration_in_s + ep_duration_in_s,
+            f"videos/{video_key}/chunk_index": chunk_idx,
+            f"videos/{video_key}/file_index": file_idx,
+            f"videos/{video_key}/from_timestamp": duration_in_s,
+            f"videos/{video_key}/to_timestamp": duration_in_s + ep_duration_in_s,
         }
         size_in_mb += ep_size_in_mb
         duration_in_s += ep_duration_in_s

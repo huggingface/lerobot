@@ -17,6 +17,7 @@ import contextlib
 import importlib.resources
 import json
 import logging
+import shutil
 import subprocess
 import tempfile
 from collections.abc import Iterator
@@ -155,17 +156,15 @@ def get_video_size_in_mb(mp4_path: Path):
     return file_size_mb
 
 
-def concat_video_files(paths_to_cat, new_root, video_key, chunk_idx, file_idx):
+def concat_video_files(paths_to_cat, root, video_key, chunk_idx, file_idx):
+    tmp_dir = Path(tempfile.mkdtemp(dir=root))
     # Create a text file with the list of files to concatenate
-    with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt") as f:
-        temp_file_path = f.name
+    path_concat_video_files = tmp_dir / "concat_video_files.txt"
+    with open(path_concat_video_files, "w") as f:
         for ep_path in paths_to_cat:
             f.write(f"file '{str(ep_path)}'\n")
 
-    output_path = new_root / DEFAULT_VIDEO_PATH.format(
-        video_key=video_key, chunk_index=chunk_idx, file_index=file_idx
-    )
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    path_tmp_output = tmp_dir / "tmp_output.mp4"
     command = [
         "ffmpeg",
         "-y",
@@ -174,13 +173,19 @@ def concat_video_files(paths_to_cat, new_root, video_key, chunk_idx, file_idx):
         "-safe",
         "0",
         "-i",
-        str(temp_file_path),
+        str(path_concat_video_files),
         "-c",
         "copy",
-        str(output_path),
+        str(path_tmp_output),
     ]
     subprocess.run(command, check=True)
-    Path(temp_file_path).unlink()
+
+    output_path = root / DEFAULT_VIDEO_PATH.format(
+        video_key=video_key, chunk_index=chunk_idx, file_index=file_idx
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(path_tmp_output), str(output_path))
+    shutil.rmtree(str(tmp_dir))
 
 
 def get_video_duration_in_s(mp4_file: Path):
@@ -192,7 +197,7 @@ def get_video_duration_in_s(mp4_file: Path):
         "format=duration",
         "-of",
         "default=noprint_wrappers=1:nokey=1",
-        mp4_file,
+        str(mp4_file),
     ]
     result = subprocess.run(
         command,
