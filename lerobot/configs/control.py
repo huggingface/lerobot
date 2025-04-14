@@ -41,7 +41,7 @@ class TeleoperateControlConfig(ControlConfig):
     fps: int | None = None
     teleop_time_s: float | None = None
     # Display all cameras on screen
-    display_cameras: bool = True
+    display_data: bool = False
 
 
 @ControlConfig.register_subclass("record")
@@ -82,7 +82,7 @@ class RecordControlConfig(ControlConfig):
     # Not enough threads might cause low camera fps.
     num_image_writer_threads_per_camera: int = 4
     # Display all cameras on screen
-    display_cameras: bool = True
+    display_data: bool = False
     # Use vocal synthesis to read events.
     play_sounds: bool = True
     # Resume recording on an existing dataset.
@@ -116,6 +116,11 @@ class ReplayControlConfig(ControlConfig):
 @dataclass
 class RemoteRobotConfig(ControlConfig):
     log_interval: int = 100
+    # Display all cameras on screen
+    display_data: bool = False
+    # Rerun configuration for remote robot (https://ref.rerun.io/docs/python/0.22.1/common/initialization_functions/#rerun.connect_tcp)
+    viewer_ip: str | None = None
+    viewer_port: str | None = None
 
 
 @dataclass
