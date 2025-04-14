@@ -43,7 +43,7 @@
     },
     "name": "piper_real",
     "mode": "record",
-    "repo_id": "KeWangRobotics/piper_pick_cube_gamepad_1",
+    "repo_id": "KeWangRobotics/piper_pick_cube_gamepad_2",
     "dataset_root": null,
     "task": "",
     "num_episodes": 20,
@@ -72,13 +72,13 @@
         "observation.state": {
             "type": "STATE",
             "shape": [
-                19
+                7
             ]
         },
         "action": {
             "type": "ACTION",
             "shape": [
-                3
+                4
             ]
         }
     },

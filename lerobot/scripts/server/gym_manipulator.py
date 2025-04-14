@@ -78,7 +78,7 @@ class HILSerlRobotEnv(gym.Env):
 
         self.use_delta_action_space = use_delta_action_space
         # TODO(Ke): make this a parameter
-        self.delta = 0.01
+        self.delta = 0.03
         self.current_joint_positions = self.robot.get_state()["state"][:3]
 
         # Retrieve the size of the joint position interval bound.
@@ -282,7 +282,7 @@ class HILSerlRobotEnv(gym.Env):
 
         if self.display_cameras:
             self.render()
-            
+
         if is_success:
             reward = 1
             terminated = True
