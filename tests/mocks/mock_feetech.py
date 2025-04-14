@@ -5,7 +5,6 @@ import scservo_sdk as scs
 import serial
 from mock_serial import MockSerial
 
-from lerobot.common.motors.feetech import STS_SMS_SERIES_CONTROL_TABLE
 from lerobot.common.motors.feetech.feetech import _split_into_byte_chunks, patch_setPacketTimeout
 
 from .mock_serial_patch import WaitableStub
@@ -277,8 +276,6 @@ class MockMotors(MockSerial):
     This class will simulate physical motors by responding with valid status packets upon receiving some
     instruction packets. It is meant to test MotorsBus classes.
     """
-
-    ctrl_table = STS_SMS_SERIES_CONTROL_TABLE
 
     def __init__(self):
         super().__init__()

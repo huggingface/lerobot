@@ -5,7 +5,6 @@ import dynamixel_sdk as dxl
 import serial
 from mock_serial.mock_serial import MockSerial
 
-from lerobot.common.motors.dynamixel import X_SERIES_CONTROL_TABLE
 from lerobot.common.motors.dynamixel.dynamixel import _split_into_byte_chunks
 
 from .mock_serial_patch import WaitableStub
@@ -424,8 +423,6 @@ class MockMotors(MockSerial):
     This class will simulate physical motors by responding with valid status packets upon receiving some
     instruction packets. It is meant to test MotorsBus classes.
     """
-
-    ctrl_table = X_SERIES_CONTROL_TABLE
 
     def __init__(self):
         super().__init__()
