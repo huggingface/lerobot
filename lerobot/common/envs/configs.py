@@ -154,3 +154,36 @@ class XarmEnv(EnvConfig):
             "visualization_height": self.visualization_height,
             "max_episode_steps": self.episode_length,
         }
+
+@EnvConfig.register_subclass("genesis")
+@dataclass
+class GenesisEnv(EnvConfig):
+    task: str = "GenesisCube-v0"
+    fps: int = 60
+    episode_length: int = 200
+    obs_type: str = "pixels_agent_pos"
+    render_mode: str = "rgb_array"
+    enable_pixels: bool = True
+
+    features: dict[str, PolicyFeature] = field(
+        default_factory=lambda: {
+            "action": PolicyFeature(type=FeatureType.ACTION, shape=(9,)),
+            "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(20,)),
+            "pixels": PolicyFeature(type=FeatureType.VISUAL, shape=(960, 1280, 3)),
+        }
+    )
+
+    features_map: dict[str, str] = field(
+        default_factory=lambda: {
+            "action": "action",
+            "observation.state": "observation.state",
+            "pixels": "observation.images.laptop",
+        }
+    )
+
+    @property
+    def gym_kwargs(self) -> dict:
+        return {
+            "task": "cube",
+            "enable_pixels": self.enable_pixels,
+        }
