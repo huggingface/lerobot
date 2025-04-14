@@ -31,16 +31,15 @@ conda create -y -n lerobot python=3.10 && conda activate lerobot
 git clone https://github.com/huggingface/lerobot.git ~/lerobot
 ```
 
-5. Install LeRobot with dependencies for the feetech motors:
+5. Install ffmpeg in your environment:
+When using `miniconda`, install `ffmpeg` in your environment:
 ```bash
-cd ~/lerobot && pip install -e ".[feetech]"
+conda install ffmpeg -c conda-forge
 ```
 
-For Linux only (not Mac), install extra dependencies for recording datasets:
+6. Install LeRobot with dependencies for the feetech motors:
 ```bash
-conda install -y -c conda-forge ffmpeg
-pip uninstall -y opencv-python
-conda install -y -c conda-forge "opencv>=4.10.0"
+cd ~/lerobot && pip install -e ".[feetech]"
 ```
 
 ## Configure the motors
@@ -219,6 +218,9 @@ python lerobot/scripts/control_robot.py \
 
 **Teleop with displaying cameras**
 Follow [this guide to setup your cameras](https://github.com/huggingface/lerobot/blob/main/examples/7_get_started_with_real_robot.md#c-add-your-cameras-with-opencvcamera). Then you will be able to display the cameras on your computer while you are teleoperating by running the following code. This is useful to prepare your setup before recording your first dataset.
+
+> **NOTE:** To visualize the data, enable `--control.display_data=true`. This streams the data using `rerun`.
+
 ```bash
 python lerobot/scripts/control_robot.py \
   --robot.type=moss \

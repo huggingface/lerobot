@@ -46,13 +46,6 @@ Using `uv`:
 uv sync --extra "dynamixel"
 ```
 
-/!\ For Linux only, ffmpeg and opencv requires conda install for now. Run this exact sequence of commands:
-```bash
-conda install -c conda-forge ffmpeg
-pip uninstall opencv-python
-conda install -c conda-forge "opencv>=4.10.0"
-```
-
 You are now ready to plug the 5V power supply to the motor bus of the leader arm (the smaller one) since all its motors only require 5V.
 
 Then plug the 12V power supply to the motor bus of the follower arm. It has two motors that need 12V, and the rest will be powered with 5V through the voltage convertor.
@@ -62,6 +55,9 @@ Finally, connect both arms to your computer via USB. Note that the USB doesn't p
 Now you are ready to configure your motors for the first time, as detailed in the sections below. In the upcoming sections, you'll learn about our classes and functions by running some python code in an interactive session, or by copy-pasting it in a python file.
 
 If you have already configured your motors the first time, you can streamline the process by directly running the teleoperate script (which is detailed further in the tutorial):
+
+> **NOTE:** To visualize the data, enable `--control.display_data=true`. This streams the data using `rerun`.
+
 ```bash
 python lerobot/scripts/control_robot.py \
   --robot.type=koch \
@@ -291,6 +287,11 @@ Steps:
    - Rewire the arms in their final configuration and power both of them.
    - Scan for devices. All 12 motors should appear.
    - Select the motors one by one and move the arm. Check that the graphical indicator near the top right shows the movement.
+
+** There is a common issue with the Dynamixel XL430-W250 motors where the motors become undiscoverable after upgrading their firmware from Mac and Windows Dynamixel Wizard2 applications.  When this occurs, it is required to do a firmware recovery (Select `DYNAMIXEL Firmware Recovery` and follow the prompts).   There are two known workarounds to conduct this firmware reset:
+  1) Install the Dynamixel Wizard on a linux machine and complete the firmware recovery
+  2) Use the Dynamixel U2D2 in order to perform the reset with Windows or Mac.  This U2D2 can be purchased [here](https://www.robotis.us/u2d2/).
+  For either solution, open DYNAMIXEL Wizard 2.0 and select the appropriate port. You will likely be unable to see the motor in the GUI at this time. Select `Firmware Recovery`, carefully choose the correct model, and wait for the process to complete. Finally, re-scan to confirm the firmware recovery was successful.
 
 **Read and Write with DynamixelMotorsBus**
 
@@ -829,16 +830,11 @@ It contains:
 - `dtRphone:33.84 (29.5hz)` which is the delta time of capturing an image from the phone camera in the thread running asynchronously.
 
 Troubleshooting:
-- On Linux, if you encounter a hanging issue when using cameras, uninstall opencv and re-install it with conda:
-```bash
-pip uninstall opencv-python
-conda install -c conda-forge opencv=4.10.0
-```
 - On Linux, if you encounter any issue during video encoding with `ffmpeg: unknown encoder libsvtav1`, you can:
-  - install with conda-forge by running `conda install -c conda-forge ffmpeg` (it should be compiled with `libsvtav1`),
-  - or, install [Homebrew](https://brew.sh) and run `brew install ffmpeg` (it should be compiled with `libsvtav1`),
-  - or, install [ffmpeg build dependencies](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#GettheDependencies) and [compile ffmpeg from source with libsvtav1](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#libsvtav1),
-  - and, make sure you use the corresponding ffmpeg binary to your install with `which ffmpeg`.
+   - install with conda-forge by running `conda install -c conda-forge ffmpeg` (it should be compiled with `libsvtav1`),
+> **NOTE:** This usually installs `ffmpeg 7.X` for your platform (check the version installed with `ffmpeg -encoders | grep libsvtav1`). If it isn't `ffmpeg 7.X` or lacks `libsvtav1` support, you can explicitly install `ffmpeg 7.X` using: `conda install ffmpeg=7.1.1 -c conda-forge`
+   - or, install [ffmpeg build dependencies](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#GettheDependencies) and [compile ffmpeg from source with libsvtav1](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#libsvtav1),
+   - and, make sure you use the corresponding ffmpeg binary to your install with `which ffmpeg`.
 - On Linux, if the left and right arrow keys and escape key don't have any effect during data recording, make sure you've set the `$DISPLAY` environment variable. See [pynput limitations](https://pynput.readthedocs.io/en/latest/limitations.html#linux).
 
 At the end of data recording, your dataset will be uploaded on your Hugging Face page (e.g. https://huggingface.co/datasets/cadene/koch_test) that you can obtain by running:
