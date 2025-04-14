@@ -136,6 +136,9 @@ class DynamixelMotorsBus(MotorsBus):
     def _assert_protocol_is_compatible(self, instruction_name: str) -> None:
         pass
 
+    def _handshake(self) -> None:
+        self._assert_motors_exist()
+
     def configure_motors(self) -> None:
         # By default, Dynamixel motors have a 500µs delay response time (corresponding to a value of 250 on
         # the 'Return_Delay_Time' address). We ensure this is reduced to the minimum of 2µs (value of 0).

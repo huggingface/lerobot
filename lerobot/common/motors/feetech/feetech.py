@@ -22,6 +22,7 @@ from lerobot.common.utils.encoding_utils import decode_sign_magnitude, encode_si
 from ..motors_bus import Motor, MotorCalibration, MotorsBus, NameOrID, Value
 from .tables import (
     FIRMWARE_MAJOR_VERSION,
+    FIRMWARE_MINOR_VERSION,
     MODEL_BAUDRATE_TABLE,
     MODEL_CONTROL_TABLE,
     MODEL_ENCODING_TABLE,
@@ -149,6 +150,18 @@ class FeetechMotorsBus(MotorsBus):
             raise NotImplementedError(
                 "'Broadcast Ping' is not available with Feetech motors using Protocol 1. Use 'Ping' sequentially instead."
             )
+
+    def _assert_same_firmware(self) -> None:
+        firmware_versions = self._read_firmware_version(self.ids)
+        if len(set(firmware_versions.values())) != 1:
+            raise RuntimeError(
+                "Some Motors use different firmware versions. Update their firmware first using Feetech's software. "
+                "Visit https://www.feetechrc.com/software."
+            )
+
+    def _handshake(self) -> None:
+        self._assert_motors_exist()
+        self._assert_same_firmware()
 
     def configure_motors(self) -> None:
         # By default, Feetech motors have a 500µs delay response time (corresponding to a value of 250 on the
@@ -317,9 +330,9 @@ class FeetechMotorsBus(MotorsBus):
             display_dict = {id_: self.packet_handler.getRxPacketError(err) for id_, err in ids_errors.items()}
             logger.error(f"Some motors found returned an error status:\n{pformat(display_dict, indent=4)}")
 
-        return self._get_model_number(list(ids_status), raise_on_error)
+        return self._read_model_number(list(ids_status), raise_on_error)
 
-    def _get_firmware_version(self, motor_ids: list[int], raise_on_error: bool = False) -> dict[int, str]:
+    def _read_firmware_version(self, motor_ids: list[int], raise_on_error: bool = False) -> dict[int, str]:
         firmware_versions = {}
         for id_ in motor_ids:
             firm_ver_major, comm, error = self._read(
@@ -329,7 +342,7 @@ class FeetechMotorsBus(MotorsBus):
                 return
 
             firm_ver_minor, comm, error = self._read(
-                *FIRMWARE_MAJOR_VERSION, id_, raise_on_error=raise_on_error
+                *FIRMWARE_MINOR_VERSION, id_, raise_on_error=raise_on_error
             )
             if not self._is_comm_success(comm) or self._is_error(error):
                 return
@@ -338,7 +351,7 @@ class FeetechMotorsBus(MotorsBus):
 
         return firmware_versions
 
-    def _get_model_number(self, motor_ids: list[int], raise_on_error: bool = False) -> dict[int, int]:
+    def _read_model_number(self, motor_ids: list[int], raise_on_error: bool = False) -> dict[int, int]:
         model_numbers = {}
         for id_ in motor_ids:
             model_nb, comm, error = self._read(*MODEL_NUMBER, id_, raise_on_error=raise_on_error)

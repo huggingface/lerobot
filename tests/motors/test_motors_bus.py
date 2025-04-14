@@ -227,7 +227,7 @@ def test__serialize_data_large_number():
 )
 def test_read(data_name, id_, value, dummy_motors):
     bus = MockMotorsBus("/dev/dummy-port", dummy_motors)
-    bus.connect(assert_motors_exist=False)
+    bus.connect(handshake=False)
     addr, length = DUMMY_CTRL_TABLE_2[data_name]
 
     with (
@@ -261,7 +261,7 @@ def test_read(data_name, id_, value, dummy_motors):
 )
 def test_write(data_name, id_, value, dummy_motors):
     bus = MockMotorsBus("/dev/dummy-port", dummy_motors)
-    bus.connect(assert_motors_exist=False)
+    bus.connect(handshake=False)
     addr, length = DUMMY_CTRL_TABLE_2[data_name]
 
     with (
@@ -296,7 +296,7 @@ def test_write(data_name, id_, value, dummy_motors):
 )
 def test_sync_read_by_str(data_name, id_, value, dummy_motors):
     bus = MockMotorsBus("/dev/dummy-port", dummy_motors)
-    bus.connect(assert_motors_exist=False)
+    bus.connect(handshake=False)
     addr, length = DUMMY_CTRL_TABLE_2[data_name]
     ids = [id_]
     expected_value = {f"dummy_{id_}": value}
@@ -333,7 +333,7 @@ def test_sync_read_by_str(data_name, id_, value, dummy_motors):
 )
 def test_sync_read_by_list(data_name, ids_values, dummy_motors):
     bus = MockMotorsBus("/dev/dummy-port", dummy_motors)
-    bus.connect(assert_motors_exist=False)
+    bus.connect(handshake=False)
     addr, length = DUMMY_CTRL_TABLE_2[data_name]
     ids = list(ids_values)
     expected_values = {f"dummy_{id_}": val for id_, val in ids_values.items()}
@@ -370,7 +370,7 @@ def test_sync_read_by_list(data_name, ids_values, dummy_motors):
 )
 def test_sync_read_by_none(data_name, ids_values, dummy_motors):
     bus = MockMotorsBus("/dev/dummy-port", dummy_motors)
-    bus.connect(assert_motors_exist=False)
+    bus.connect(handshake=False)
     addr, length = DUMMY_CTRL_TABLE_2[data_name]
     ids = list(ids_values)
     expected_values = {f"dummy_{id_}": val for id_, val in ids_values.items()}
@@ -406,7 +406,7 @@ def test_sync_read_by_none(data_name, ids_values, dummy_motors):
 )
 def test_sync_write_by_single_value(data_name, value, dummy_motors):
     bus = MockMotorsBus("/dev/dummy-port", dummy_motors)
-    bus.connect(assert_motors_exist=False)
+    bus.connect(handshake=False)
     addr, length = DUMMY_CTRL_TABLE_2[data_name]
     ids_values = {m.id: value for m in dummy_motors.values()}
 
@@ -441,7 +441,7 @@ def test_sync_write_by_single_value(data_name, value, dummy_motors):
 )
 def test_sync_write_by_value_dict(data_name, ids_values, dummy_motors):
     bus = MockMotorsBus("/dev/dummy-port", dummy_motors)
-    bus.connect(assert_motors_exist=False)
+    bus.connect(handshake=False)
     addr, length = DUMMY_CTRL_TABLE_2[data_name]
     values = {f"dummy_{id_}": val for id_, val in ids_values.items()}
 

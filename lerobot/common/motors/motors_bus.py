@@ -377,9 +377,13 @@ class MotorsBus(abc.ABC):
 
     def _assert_motors_exist(self) -> None:
         # TODO(aliberts): collect all wrong ids/models and display them at once
-        found_models = self.broadcast_ping()
+        found_models = {}
+        for id_ in self.ids:
+            model_nb = self.ping(id_)
+            if model_nb is not None:
+                found_models[id_] = model_nb
         expected_models = {m.id: self.model_number_table[m.model] for m in self.motors.values()}
-        if not found_models or set(found_models) != set(self.ids):
+        if set(found_models) != set(self.ids):
             raise RuntimeError(
                 f"{self.__class__.__name__} is supposed to have these motors: ({{id: model_nb}})"
                 f"\n{pformat(expected_models, indent=4, sort_dicts=False)}\n"
@@ -403,7 +407,7 @@ class MotorsBus(abc.ABC):
     def is_connected(self) -> bool:
         return self.port_handler.is_open
 
-    def connect(self, assert_motors_exist: bool = True) -> None:
+    def connect(self, handshake: bool = True) -> None:
         if self.is_connected:
             raise DeviceAlreadyConnectedError(
                 f"{self.__class__.__name__}('{self.port}') is already connected. Do not call `{self.__class__.__name__}.connect()` twice."
@@ -412,8 +416,8 @@ class MotorsBus(abc.ABC):
         try:
             if not self.port_handler.openPort():
                 raise OSError(f"Failed to open port '{self.port}'.")
-            elif assert_motors_exist:
-                self._assert_motors_exist()
+            elif handshake:
+                self._handshake()
         except (FileNotFoundError, OSError, serial.SerialException) as e:
             raise ConnectionError(
                 f"\nCould not connect on port '{self.port}'. Make sure you are using the correct port."
@@ -422,6 +426,10 @@ class MotorsBus(abc.ABC):
 
         self.set_timeout()
         logger.debug(f"{self.__class__.__name__} connected.")
+
+    @abc.abstractmethod
+    def _handshake(self) -> None:
+        pass
 
     @classmethod
     def scan_port(cls, port: str, *args, **kwargs) -> dict[int, list[int]]:
@@ -690,7 +698,7 @@ class MotorsBus(abc.ABC):
                 return
         if self._is_error(error):
             if raise_on_error:
-                raise RuntimeError(self.packet_handler.getTxRxResult(comm))
+                raise RuntimeError(self.packet_handler.getRxPacketError(error))
             else:
                 return
 

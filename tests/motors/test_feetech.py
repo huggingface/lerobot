@@ -101,7 +101,7 @@ def test_ping(id_, mock_motors, dummy_motors):
         port=mock_motors.port,
         motors=dummy_motors,
     )
-    bus.connect(assert_motors_exist=False)
+    bus.connect(handshake=False)
 
     ping_model_nb = bus.ping(id_)
 
@@ -125,7 +125,7 @@ def test_broadcast_ping(mock_motors, dummy_motors):
         port=mock_motors.port,
         motors=dummy_motors,
     )
-    bus.connect(assert_motors_exist=False)
+    bus.connect(handshake=False)
 
     ping_model_nbs = bus.broadcast_ping()
 
@@ -148,7 +148,7 @@ def test__read(addr, length, id_, value, mock_motors, dummy_motors):
         port=mock_motors.port,
         motors=dummy_motors,
     )
-    bus.connect(assert_motors_exist=False)
+    bus.connect(handshake=False)
 
     read_value, _, _ = bus._read(addr, length, id_)
 
@@ -164,7 +164,7 @@ def test__read_error(raise_on_error, mock_motors, dummy_motors):
         port=mock_motors.port,
         motors=dummy_motors,
     )
-    bus.connect(assert_motors_exist=False)
+    bus.connect(handshake=False)
 
     if raise_on_error:
         with pytest.raises(RuntimeError, match=re.escape("[RxPacketError] Input voltage error!")):
@@ -184,7 +184,7 @@ def test__read_comm(raise_on_error, mock_motors, dummy_motors):
         port=mock_motors.port,
         motors=dummy_motors,
     )
-    bus.connect(assert_motors_exist=False)
+    bus.connect(handshake=False)
 
     if raise_on_error:
         with pytest.raises(ConnectionError, match=re.escape("[TxRxResult] There is no status packet!")):
@@ -210,7 +210,7 @@ def test__write(addr, length, id_, value, mock_motors, dummy_motors):
         port=mock_motors.port,
         motors=dummy_motors,
     )
-    bus.connect(assert_motors_exist=False)
+    bus.connect(handshake=False)
 
     comm, error = bus._write(addr, length, id_, value)
 
@@ -224,7 +224,7 @@ def test__write_error(raise_on_error, mock_motors, dummy_motors):
     addr, length, id_, value, error = (10, 4, 1, 1337, scs.ERRBIT_VOLTAGE)
     stub = mock_motors.build_write_stub(addr, length, id_, value, error=error)
     bus = FeetechMotorsBus(port=mock_motors.port, motors=dummy_motors)
-    bus.connect(assert_motors_exist=False)
+    bus.connect(handshake=False)
 
     if raise_on_error:
         with pytest.raises(RuntimeError, match=re.escape("[RxPacketError] Input voltage error!")):
@@ -241,7 +241,7 @@ def test__write_comm(raise_on_error, mock_motors, dummy_motors):
     addr, length, id_, value = (10, 4, 1, 1337)
     stub = mock_motors.build_write_stub(addr, length, id_, value, reply=False)
     bus = FeetechMotorsBus(port=mock_motors.port, motors=dummy_motors)
-    bus.connect(assert_motors_exist=False)
+    bus.connect(handshake=False)
 
     if raise_on_error:
         with pytest.raises(ConnectionError, match=re.escape("[TxRxResult] There is no status packet!")):
@@ -265,7 +265,7 @@ def test__write_comm(raise_on_error, mock_motors, dummy_motors):
 def test__sync_read(addr, length, ids_values, mock_motors, dummy_motors):
     stub = mock_motors.build_sync_read_stub(addr, length, ids_values)
     bus = FeetechMotorsBus(port=mock_motors.port, motors=dummy_motors)
-    bus.connect(assert_motors_exist=False)
+    bus.connect(handshake=False)
 
     read_values, _ = bus._sync_read(addr, length, list(ids_values))
 
@@ -278,7 +278,7 @@ def test__sync_read_comm(raise_on_error, mock_motors, dummy_motors):
     addr, length, ids_values = (10, 4, {1: 1337})
     stub = mock_motors.build_sync_read_stub(addr, length, ids_values, reply=False)
     bus = FeetechMotorsBus(port=mock_motors.port, motors=dummy_motors)
-    bus.connect(assert_motors_exist=False)
+    bus.connect(handshake=False)
 
     if raise_on_error:
         with pytest.raises(ConnectionError, match=re.escape("[TxRxResult] There is no status packet!")):
@@ -302,7 +302,7 @@ def test__sync_read_comm(raise_on_error, mock_motors, dummy_motors):
 def test__sync_write(addr, length, ids_values, mock_motors, dummy_motors):
     stub = mock_motors.build_sync_write_stub(addr, length, ids_values)
     bus = FeetechMotorsBus(port=mock_motors.port, motors=dummy_motors)
-    bus.connect(assert_motors_exist=False)
+    bus.connect(handshake=False)
 
     comm = bus._sync_write(addr, length, ids_values)
 
@@ -324,7 +324,7 @@ def test_is_calibrated(mock_motors, dummy_motors, dummy_calibration):
         motors=dummy_motors,
         calibration=dummy_calibration,
     )
-    bus.connect(assert_motors_exist=False)
+    bus.connect(handshake=False)
 
     is_calibrated = bus.is_calibrated
 
@@ -350,7 +350,7 @@ def test_reset_calibration(mock_motors, dummy_motors):
         )
 
     bus = FeetechMotorsBus(port=mock_motors.port, motors=dummy_motors)
-    bus.connect(assert_motors_exist=False)
+    bus.connect(handshake=False)
 
     bus.reset_calibration()
 
@@ -386,7 +386,7 @@ def test_set_half_turn_homings(mock_motors, dummy_motors):
         write_homing_stubs.append(stub)
 
     bus = FeetechMotorsBus(port=mock_motors.port, motors=dummy_motors)
-    bus.connect(assert_motors_exist=False)
+    bus.connect(handshake=False)
     bus.reset_calibration = MagicMock()
 
     bus.set_half_turn_homings()
@@ -417,7 +417,7 @@ def test_record_ranges_of_motion(mock_motors, dummy_motors):
     )
     with patch("lerobot.common.motors.motors_bus.enter_pressed", side_effect=[False, True]):
         bus = FeetechMotorsBus(port=mock_motors.port, motors=dummy_motors)
-        bus.connect(assert_motors_exist=False)
+        bus.connect(handshake=False)
 
         mins, maxes = bus.record_ranges_of_motion(display_values=False)
 
