@@ -21,12 +21,13 @@ from lerobot.common.utils.encoding_utils import decode_sign_magnitude, encode_si
 
 from ..motors_bus import Motor, MotorCalibration, MotorsBus, NameOrID, Value
 from .tables import (
-    FIRMWARE_VERSION,
+    FIRMWARE_MAJOR_VERSION,
     MODEL_BAUDRATE_TABLE,
     MODEL_CONTROL_TABLE,
     MODEL_ENCODING_TABLE,
     MODEL_NUMBER,
     MODEL_NUMBER_TABLE,
+    MODEL_PROTOCOL,
     MODEL_RESOLUTION,
     SCAN_BAUDRATES,
 )
@@ -117,9 +118,10 @@ class FeetechMotorsBus(MotorsBus):
         protocol_version: int = DEFAULT_PROTOCOL_VERSION,
     ):
         super().__init__(port, motors, calibration)
+        self.protocol_version = protocol_version
+        self._assert_same_protocol()
         import scservo_sdk as scs
 
-        self.protocol_version = protocol_version
         self.port_handler = scs.PortHandler(self.port)
         # HACK: monkeypatch
         self.port_handler.setPacketTimeout = patch_setPacketTimeout.__get__(
@@ -131,10 +133,21 @@ class FeetechMotorsBus(MotorsBus):
         self._comm_success = scs.COMM_SUCCESS
         self._no_error = 0x00
 
+        if any(MODEL_PROTOCOL[model] != self.protocol_version for model in self.models):
+            raise ValueError(f"Some motors are incompatible with protocol_version={self.protocol_version}")
+
+    def _assert_same_protocol(self) -> None:
+        if any(MODEL_PROTOCOL[model] != self.protocol_version for model in self.models):
+            raise RuntimeError("Some motors use an incompatible protocol.")
+
     def _assert_protocol_is_compatible(self, instruction_name: str) -> None:
         if instruction_name == "sync_read" and self.protocol_version == 1:
             raise NotImplementedError(
-                "'Sync Read' is not available with Feetech motors using Protocol 1. Use 'Read' instead."
+                "'Sync Read' is not available with Feetech motors using Protocol 1. Use 'Read' sequentially instead."
+            )
+        if instruction_name == "broadcast_ping" and self.protocol_version == 1:
+            raise NotImplementedError(
+                "'Broadcast Ping' is not available with Feetech motors using Protocol 1. Use 'Ping' sequentially instead."
             )
 
     def configure_motors(self) -> None:
@@ -157,12 +170,12 @@ class FeetechMotorsBus(MotorsBus):
         return half_turn_homings
 
     def disable_torque(self, motors: str | list[str] | None = None) -> None:
-        for name in self._get_names_list(motors):
+        for name in self._get_motors_list(motors):
             self.write("Torque_Enable", name, TorqueMode.DISABLED.value)
             self.write("Lock", name, 0)
 
     def enable_torque(self, motors: str | list[str] | None = None) -> None:
-        for name in self._get_names_list(motors):
+        for name in self._get_motors_list(motors):
             self.write("Torque_Enable", name, TorqueMode.ENABLED.value)
             self.write("Lock", name, 1)
 
@@ -286,56 +299,52 @@ class FeetechMotorsBus(MotorsBus):
                 rx_length = rx_length - idx
 
     def broadcast_ping(self, num_retry: int = 0, raise_on_error: bool = False) -> dict[int, int] | None:
-        if self.protocol_version == 0:
-            for n_try in range(1 + num_retry):
-                ids_status, comm = self._broadcast_ping_p0()
-                if self._is_comm_success(comm):
-                    break
-                logger.debug(f"Broadcast ping failed on port '{self.port}' ({n_try=})")
-                logger.debug(self.packet_handler.getTxRxResult(comm))
+        self._assert_protocol_is_compatible("broadcast_ping")
+        for n_try in range(1 + num_retry):
+            ids_status, comm = self._broadcast_ping_p0()
+            if self._is_comm_success(comm):
+                break
+            logger.debug(f"Broadcast ping failed on port '{self.port}' ({n_try=})")
+            logger.debug(self.packet_handler.getTxRxResult(comm))
 
-            if not self._is_comm_success(comm):
-                if raise_on_error:
-                    raise ConnectionError(self.packet_handler.getTxRxResult(comm))
-                return
-
-            ids_errors = {id_: status for id_, status in ids_status.items() if self._is_error(status)}
-            if ids_errors:
-                display_dict = {
-                    id_: self.packet_handler.getRxPacketError(err) for id_, err in ids_errors.items()
-                }
-                logger.error(
-                    f"Some motors found returned an error status:\n{pformat(display_dict, indent=4)}"
-                )
-
-            return self._get_model_number(list(ids_status), raise_on_error)
-        else:
-            return self._broadcast_ping_p1(num_retry=num_retry)
-
-    def _get_firmware_version(self, motor_ids: list[int], raise_on_error: bool = False) -> dict[int, int]:
-        comm, firmware_versions = self._sync_read(*FIRMWARE_VERSION, motor_ids)
         if not self._is_comm_success(comm):
             if raise_on_error:
                 raise ConnectionError(self.packet_handler.getTxRxResult(comm))
             return
 
+        ids_errors = {id_: status for id_, status in ids_status.items() if self._is_error(status)}
+        if ids_errors:
+            display_dict = {id_: self.packet_handler.getRxPacketError(err) for id_, err in ids_errors.items()}
+            logger.error(f"Some motors found returned an error status:\n{pformat(display_dict, indent=4)}")
+
+        return self._get_model_number(list(ids_status), raise_on_error)
+
+    def _get_firmware_version(self, motor_ids: list[int], raise_on_error: bool = False) -> dict[int, str]:
+        firmware_versions = {}
+        for id_ in motor_ids:
+            firm_ver_major, comm, error = self._read(
+                *FIRMWARE_MAJOR_VERSION, id_, raise_on_error=raise_on_error
+            )
+            if not self._is_comm_success(comm) or self._is_error(error):
+                return
+
+            firm_ver_minor, comm, error = self._read(
+                *FIRMWARE_MAJOR_VERSION, id_, raise_on_error=raise_on_error
+            )
+            if not self._is_comm_success(comm) or self._is_error(error):
+                return
+
+            firmware_versions[id_] = f"{firm_ver_major}.{firm_ver_minor}"
+
         return firmware_versions
 
     def _get_model_number(self, motor_ids: list[int], raise_on_error: bool = False) -> dict[int, int]:
-        if self.protocol_version == 1:
-            model_numbers = {}
-            for id_ in motor_ids:
-                model_nb, comm, error = self._read(*MODEL_NUMBER, id_)
-                if self._is_comm_success(comm) and not self._is_error(error):
-                    model_numbers[id_] = model_nb
-                elif raise_on_error:
-                    raise Exception  # FIX
-
-        else:
-            comm, model_numbers = self._sync_read(*MODEL_NUMBER, motor_ids)
-            if not self._is_comm_success(comm):
-                if raise_on_error:
-                    raise ConnectionError(self.packet_handler.getTxRxResult(comm))
+        model_numbers = {}
+        for id_ in motor_ids:
+            model_nb, comm, error = self._read(*MODEL_NUMBER, id_, raise_on_error=raise_on_error)
+            if not self._is_comm_success(comm) or self._is_error(error):
                 return
+
+            model_numbers[id_] = model_nb
 
         return model_numbers

@@ -283,6 +283,8 @@ class MotorsBus(abc.ABC):
         self._id_to_name_dict = {m.id: name for name, m in self.motors.items()}
         self._model_nb_to_model_dict = {v: k for k, v in self.model_number_table.items()}
 
+        self._validate_motors()
+
     def __len__(self):
         return len(self.motors)
 
@@ -341,7 +343,7 @@ class MotorsBus(abc.ABC):
         else:
             raise TypeError(f"'{motor}' should be int, str.")
 
-    def _get_names_list(self, motors: str | list[str] | None) -> list[str]:
+    def _get_motors_list(self, motors: str | list[str] | None) -> list[str]:
         if motors is None:
             return self.names
         elif isinstance(motors, str):
@@ -422,8 +424,8 @@ class MotorsBus(abc.ABC):
         logger.debug(f"{self.__class__.__name__} connected.")
 
     @classmethod
-    def scan_port(cls, port: str) -> dict[int, list[int]]:
-        bus = cls(port, {})
+    def scan_port(cls, port: str, *args, **kwargs) -> dict[int, list[int]]:
+        bus = cls(port, {}, *args, **kwargs)
         try:
             bus.port_handler.openPort()
         except (FileNotFoundError, OSError, serial.SerialException) as e:
@@ -715,17 +717,8 @@ class MotorsBus(abc.ABC):
         model = self.motors[motor].model
         addr, length = get_address(self.model_ctrl_table, model, data_name)
 
-        value, comm, error = self._read(addr, length, id_, num_retry=num_retry)
-        if not self._is_comm_success(comm):
-            raise ConnectionError(
-                f"Failed to read '{data_name}' on {id_=} after {num_retry + 1} tries."
-                f"{self.packet_handler.getTxRxResult(comm)}"
-            )
-        elif self._is_error(error):
-            raise RuntimeError(
-                f"Failed to read '{data_name}' on {id_=} after {num_retry + 1} tries."
-                f"\n{self.packet_handler.getRxPacketError(error)}"
-            )
+        err_msg = f"Failed to read '{data_name}' on {id_=} after {num_retry + 1} tries."
+        value, _, _ = self._read(addr, length, id_, num_retry=num_retry, raise_on_error=True, err_msg=err_msg)
 
         id_value = self._decode_sign(data_name, {id_: value})
 
@@ -734,7 +727,16 @@ class MotorsBus(abc.ABC):
 
         return id_value[id_]
 
-    def _read(self, address: int, length: int, motor_id: int, num_retry: int = 0) -> tuple[int, int]:
+    def _read(
+        self,
+        address: int,
+        length: int,
+        motor_id: int,
+        *,
+        num_retry: int = 0,
+        raise_on_error: bool = True,
+        err_msg: str = "",
+    ) -> tuple[int, int]:
         if length == 1:
             read_fn = self.packet_handler.read1ByteTxRx
         elif length == 2:
@@ -752,6 +754,11 @@ class MotorsBus(abc.ABC):
                 f"Failed to read @{address=} ({length=}) on {motor_id=} ({n_try=}): "
                 + self.packet_handler.getTxRxResult(comm)
             )
+
+        if not self._is_comm_success(comm) and raise_on_error:
+            raise ConnectionError(f"{err_msg} {self.packet_handler.getTxRxResult(comm)}")
+        elif self._is_error(error) and raise_on_error:
+            raise RuntimeError(f"{err_msg} {self.packet_handler.getRxPacketError(error)}")
 
         return value, comm, error
 
@@ -772,20 +779,19 @@ class MotorsBus(abc.ABC):
 
         value = self._encode_sign(data_name, {id_: value})[id_]
 
-        comm, error = self._write(addr, length, id_, value, num_retry=num_retry)
-        if not self._is_comm_success(comm):
-            raise ConnectionError(
-                f"Failed to write '{data_name}' on {id_=} with '{value}' after {num_retry + 1} tries."
-                f"\n{self.packet_handler.getTxRxResult(comm)}"
-            )
-        elif self._is_error(error):
-            raise RuntimeError(
-                f"Failed to write '{data_name}' on {id_=} with '{value}' after {num_retry + 1} tries."
-                f"\n{self.packet_handler.getRxPacketError(error)}"
-            )
+        err_msg = f"Failed to write '{data_name}' on {id_=} with '{value}' after {num_retry + 1} tries."
+        self._write(addr, length, id_, value, num_retry=num_retry, raise_on_error=True, err_msg=err_msg)
 
     def _write(
-        self, addr: int, length: int, motor_id: int, value: int, num_retry: int = 0
+        self,
+        addr: int,
+        length: int,
+        motor_id: int,
+        value: int,
+        *,
+        num_retry: int = 0,
+        raise_on_error: bool = True,
+        err_msg: str = "",
     ) -> tuple[int, int]:
         data = self._serialize_data(value, length)
         for n_try in range(1 + num_retry):
@@ -796,6 +802,11 @@ class MotorsBus(abc.ABC):
                 f"Failed to sync write @{addr=} ({length=}) on id={motor_id} with {value=} ({n_try=}): "
                 + self.packet_handler.getTxRxResult(comm)
             )
+
+        if not self._is_comm_success(comm) and raise_on_error:
+            raise ConnectionError(f"{err_msg} {self.packet_handler.getTxRxResult(comm)}")
+        elif self._is_error(error) and raise_on_error:
+            raise RuntimeError(f"{err_msg} {self.packet_handler.getRxPacketError(error)}")
 
         return comm, error
 
@@ -814,7 +825,7 @@ class MotorsBus(abc.ABC):
 
         self._assert_protocol_is_compatible("sync_read")
 
-        names = self._get_names_list(motors)
+        names = self._get_motors_list(motors)
         ids = [self.motors[name].id for name in names]
         models = [self.motors[name].model for name in names]
 
@@ -824,12 +835,10 @@ class MotorsBus(abc.ABC):
         model = next(iter(models))
         addr, length = get_address(self.model_ctrl_table, model, data_name)
 
-        comm, ids_values = self._sync_read(addr, length, ids, num_retry=num_retry)
-        if not self._is_comm_success(comm):
-            raise ConnectionError(
-                f"Failed to sync read '{data_name}' on {ids=} after {num_retry + 1} tries."
-                f"{self.packet_handler.getTxRxResult(comm)}"
-            )
+        err_msg = f"Failed to sync read '{data_name}' on {ids=} after {num_retry + 1} tries."
+        ids_values, _ = self._sync_read(
+            addr, length, ids, num_retry=num_retry, raise_on_error=True, err_msg=err_msg
+        )
 
         ids_values = self._decode_sign(data_name, ids_values)
 
@@ -839,8 +848,15 @@ class MotorsBus(abc.ABC):
         return {self._id_to_name(id_): value for id_, value in ids_values.items()}
 
     def _sync_read(
-        self, addr: int, length: int, motor_ids: list[int], num_retry: int = 0
-    ) -> tuple[int, dict[int, int]]:
+        self,
+        addr: int,
+        length: int,
+        motor_ids: list[int],
+        *,
+        num_retry: int = 0,
+        raise_on_error: bool = True,
+        err_msg: str = "",
+    ) -> tuple[dict[int, int], int]:
         self._setup_sync_reader(motor_ids, addr, length)
         for n_try in range(1 + num_retry):
             comm = self.sync_reader.txRxPacket()
@@ -851,8 +867,11 @@ class MotorsBus(abc.ABC):
                 + self.packet_handler.getTxRxResult(comm)
             )
 
+        if not self._is_comm_success(comm) and raise_on_error:
+            raise ConnectionError(f"{err_msg} {self.packet_handler.getTxRxResult(comm)}")
+
         values = {id_: self.sync_reader.getData(id_, addr, length) for id_ in motor_ids}
-        return comm, values
+        return values, comm
 
     def _setup_sync_reader(self, motor_ids: list[int], addr: int, length: int) -> None:
         self.sync_reader.clearParam()
@@ -901,14 +920,18 @@ class MotorsBus(abc.ABC):
 
         ids_values = self._encode_sign(data_name, ids_values)
 
-        comm = self._sync_write(addr, length, ids_values, num_retry=num_retry)
-        if not self._is_comm_success(comm):
-            raise ConnectionError(
-                f"Failed to sync write '{data_name}' with {ids_values=} after {num_retry + 1} tries."
-                f"\n{self.packet_handler.getTxRxResult(comm)}"
-            )
+        err_msg = f"Failed to sync write '{data_name}' with {ids_values=} after {num_retry + 1} tries."
+        self._sync_write(addr, length, ids_values, num_retry=num_retry, raise_on_error=True, err_msg=err_msg)
 
-    def _sync_write(self, addr: int, length: int, ids_values: dict[int, int], num_retry: int = 0) -> int:
+    def _sync_write(
+        self,
+        addr: int,
+        length: int,
+        ids_values: dict[int, int],
+        num_retry: int = 0,
+        raise_on_error: bool = True,
+        err_msg: str = "",
+    ) -> int:
         self._setup_sync_writer(ids_values, addr, length)
         for n_try in range(1 + num_retry):
             comm = self.sync_writer.txPacket()
@@ -918,6 +941,9 @@ class MotorsBus(abc.ABC):
                 f"Failed to sync write @{addr=} ({length=}) with {ids_values=} ({n_try=}): "
                 + self.packet_handler.getTxRxResult(comm)
             )
+
+        if not self._is_comm_success(comm) and raise_on_error:
+            raise ConnectionError(f"{err_msg} {self.packet_handler.getTxRxResult(comm)}")
 
         return comm
 

@@ -1,9 +1,5 @@
 FIRMWARE_MAJOR_VERSION = (0, 1)
 FIRMWARE_MINOR_VERSION = (1, 1)
-MODEL_MAJOR_VERSION = (3, 1)
-MODEL_MINOR_VERSION = (4, 1)
-
-FIRMWARE_VERSION = (0, 2)
 MODEL_NUMBER = (3, 2)
 
 # See this link for STS3215 Memory Table:
@@ -11,12 +7,9 @@ MODEL_NUMBER = (3, 2)
 # data_name: (address, size_byte)
 STS_SMS_SERIES_CONTROL_TABLE = {
     # EPROM
-    "Firmware_Version": FIRMWARE_VERSION,  # read-only
+    "Firmware_Major_Version": FIRMWARE_MAJOR_VERSION,  # read-only
+    "Firmware_Minor_Version": FIRMWARE_MINOR_VERSION,  # read-only
     "Model_Number": MODEL_NUMBER,  # read-only
-    # "Firmware_Major_Version": FIRMWARE_MAJOR_VERSION,  # read-only
-    # "Firmware_Minor_Version": FIRMWARE_MINOR_VERSION,  # read-only
-    # "Model_Major_Version": MODEL_MAJOR_VERSION,  # read-only
-    # "Model_Minor_Version": MODEL_MINOR_VERSION,
     "ID": (5, 1),
     "Baud_Rate": (6, 1),
     "Return_Delay_Time": (7, 1),
@@ -68,12 +61,9 @@ STS_SMS_SERIES_CONTROL_TABLE = {
 
 SCS_SERIES_CONTROL_TABLE = {
     # EPROM
-    "Firmware_Version": FIRMWARE_VERSION,  # read-only
+    "Firmware_Major_Version": FIRMWARE_MAJOR_VERSION,  # read-only
+    "Firmware_Minor_Version": FIRMWARE_MINOR_VERSION,  # read-only
     "Model_Number": MODEL_NUMBER,  # read-only
-    # "Firmware_Major_Version": FIRMWARE_MAJOR_VERSION,  # read-only
-    # "Firmware_Minor_Version": FIRMWARE_MINOR_VERSION,  # read-only
-    # "Model_Major_Version": MODEL_MAJOR_VERSION,  # read-only
-    # "Model_Minor_Version": MODEL_MINOR_VERSION,
     "ID": (5, 1),
     "Baud_Rate": (6, 1),
     "Return_Delay": (7, 1),
@@ -194,10 +184,19 @@ SCAN_BAUDRATES = [
     1_000_000,
 ]
 
-# {model: model_number}  TODO
 MODEL_NUMBER_TABLE = {
     "sts3215": 777,
-    "sts3250": None,
+    "sts3250": 2825,
     "sm8512bl": 11272,
     "scs0009": 1284,
+}
+
+MODEL_PROTOCOL = {
+    "sts_series": 0,
+    "sms_series": 0,
+    "scs_series": 1,
+    "sts3215": 0,
+    "sts3250": 0,
+    "sm8512bl": 0,
+    "scs0009": 1,
 }
