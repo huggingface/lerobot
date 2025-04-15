@@ -139,11 +139,7 @@ class Classifier(PreTrainedPolicy):
 
     def extract_images_and_labels(self, batch: Dict[str, Tensor]) -> Tuple[list, Tensor]:
         """Extract image tensors and label tensors from batch."""
-        # Find image keys in input features
-        image_keys = [key for key in self.config.input_features if key.startswith(OBS_IMAGE)]
-
-        # Extract the images and labels
-        images = [batch[key] for key in image_keys]
+        images = [batch[key] for key in self.config.input_features if key.startswith(OBS_IMAGE)]
         labels = batch["next.reward"]
 
         return images, labels
@@ -197,17 +193,15 @@ class Classifier(PreTrainedPolicy):
 
         return loss, output_dict
 
-    def predict_reward(self, batch, threshold=0.6):
+    def predict_reward(self, batch, threshold=0.5):
         """Legacy method for compatibility."""
-        images, _ = self.extract_images_and_labels(batch)
+        images = [batch[key] for key in self.config.input_features if key.startswith(OBS_IMAGE)]
         if self.config.num_classes == 2:
             probs = self.predict(images).probabilities
             logging.debug(f"Predicted reward images: {probs}")
             return (probs > threshold).float()
         else:
             return torch.argmax(self.predict(images).probabilities, dim=1)
-
-    # Methods required by PreTrainedPolicy abstract class
 
     def get_optim_params(self) -> dict:
         """Return optimizer parameters for the policy."""
@@ -217,21 +211,16 @@ class Classifier(PreTrainedPolicy):
             "weight_decay": getattr(self.config, "weight_decay", 0.01),
         }
 
-    def reset(self):
-        """Reset any stateful components (required by PreTrainedPolicy)."""
-        # Classifier doesn't have stateful components that need resetting
-        pass
-
     def select_action(self, batch: Dict[str, Tensor]) -> Tensor:
-        """Return action (class prediction) based on input observation."""
-        images, _ = self.extract_images_and_labels(batch)
+        """
+        This method is required by PreTrainedPolicy but not used for reward classifiers.
+        The reward classifier is not an actor and does not select actions.
+        """
+        raise NotImplementedError("Reward classifiers do not select actions")
 
-        with torch.no_grad():
-            outputs = self.predict(images)
-
-            if self.config.num_classes == 2:
-                # For binary classification return 0 or 1
-                return (outputs.probabilities > 0.5).float()
-            else:
-                # For multi-class return the predicted class
-                return torch.argmax(outputs.probabilities, dim=1)
+    def reset(self):
+        """
+        This method is required by PreTrainedPolicy but not used for reward classifiers.
+        The reward classifier is not an actor and does not select actions.
+        """
+        pass

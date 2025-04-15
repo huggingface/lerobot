@@ -225,12 +225,7 @@ class HILSerlRobotEnvConfig(EnvConfig):
     device: str = "cuda"
     push_to_hub: bool = True
     pretrained_policy_name_or_path: Optional[str] = None
-    reward_classifier: dict[str, str | None] = field(
-        default_factory=lambda: {
-            "pretrained_path": None,
-            "config_path": None,
-        }
-    )
+    reward_classifier_pretrained_path: Optional[str] = None
 
     def gym_kwargs(self) -> dict:
         return {}
@@ -271,12 +266,7 @@ class ManiskillEnvConfig(EnvConfig):
             "observation.state": OBS_ROBOT,
         }
     )
-    reward_classifier: dict[str, str | None] = field(
-        default_factory=lambda: {
-            "pretrained_path": None,
-            "config_path": None,
-        }
-    )
+    reward_classifier_pretrained_path: Optional[str] = None
 
     @property
     def gym_kwargs(self) -> dict:

@@ -20,10 +20,13 @@ class ClassifierConfig(PreTrainedConfig):
     model_type: str = "cnn"  # "transformer" or "cnn"
     num_cameras: int = 2
     learning_rate: float = 1e-4
-    normalization_mode = None
-    # output_features: Dict[str, PolicyFeature] = field(
-    #     default_factory=lambda: {"next.reward": PolicyFeature(type=FeatureType.REWARD, shape=(1,))}
-    # )
+    weight_decay: float = 0.01
+    grad_clip_norm: float = 1.0
+    normalization_mapping: dict[str, NormalizationMode] = field(
+        default_factory=lambda: {
+            "VISUAL": NormalizationMode.MEAN_STD,
+        }
+    )
 
     @property
     def observation_delta_indices(self) -> List | None:
@@ -40,8 +43,8 @@ class ClassifierConfig(PreTrainedConfig):
     def get_optimizer_preset(self) -> OptimizerConfig:
         return AdamWConfig(
             lr=self.learning_rate,
-            weight_decay=0.01,
-            grad_clip_norm=1.0,
+            weight_decay=self.weight_decay,
+            grad_clip_norm=self.grad_clip_norm,
         )
 
     def get_scheduler_preset(self) -> LRSchedulerConfig | None:
@@ -49,5 +52,8 @@ class ClassifierConfig(PreTrainedConfig):
 
     def validate_features(self) -> None:
         """Validate feature configurations."""
-        # Classifier doesn't need specific feature validation
-        pass
+        has_image = any(key.startswith("observation.image") for key in self.input_features)
+        if not has_image:
+            raise ValueError(
+                "You must provide an image observation (key starting with 'observation.image') in the input features"
+            )
