@@ -86,6 +86,7 @@ class SACConfig(PreTrainedConfig):
         image_encoder_hidden_dim: Hidden dimension size for the image encoder.
         shared_encoder: Whether to use a shared encoder for actor and critic.
         num_discrete_actions: Number of discrete actions, eg for gripper actions.
+        image_embedding_pooling_dim: Dimension of the image embedding pooling.
         concurrency: Configuration for concurrency settings.
         actor_learner: Configuration for actor-learner architecture.
         online_steps: Number of steps for online training.
@@ -147,6 +148,7 @@ class SACConfig(PreTrainedConfig):
     image_encoder_hidden_dim: int = 32
     shared_encoder: bool = True
     num_discrete_actions: int | None = None
+    image_embedding_pooling_dim: int = 8
 
     # Training parameter
     online_steps: int = 1000000
