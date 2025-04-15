@@ -16,8 +16,9 @@
 
 import logging
 import os
-import pickle
+import pickle  # nosec
 import threading
+import time
 from collections import deque
 from enum import Enum
 
@@ -44,7 +45,7 @@ class CalibrationMode(Enum):
 
 class HomonculusArm(Teleoperator):
     config_class = HomonculusArmConfig
-    name = "homonculus_arml"
+    name = "homonculus_arm"
 
     def __init__(self, config: HomonculusArmConfig):
         self.config = config
@@ -197,7 +198,7 @@ class HomonculusArm(Teleoperator):
         return smoothed_vals
 
     def read_kalman_filter(
-        self, Q: float = 1.0, R: float = 100.0, motor_names: list[str] | None = None
+        self, process_noise: float = 1.0, measurement_noise: float = 100.0, motors: list[str] | None = None
     ) -> np.ndarray:
         """
         Return a Kalman-filtered reading for each requested joint.
@@ -211,45 +212,50 @@ class HomonculusArm(Teleoperator):
              x = x_pred + K * (Z - x_pred)
              P = (1 - K) * P_pred
 
-        :param Q: Process noise. Larger Q means the estimate can change more freely.
-        :param R: Measurement noise. Larger R means we trust our sensor less.
-        :param motor_names: If not specified, all joints are filtered.
-        :return: Kalman-filtered positions as a numpy array.
-        """
-        if motor_names is None:
-            motor_names = self.joint_names
+        Args:
+            process_noise (float, optional): Process noise (Q). Larger Q means the estimate can change more
+                freely. Defaults to 1.0.
+            measurement_noise (float, optional): Measurement noise (R). Larger R means we trust our sensor
+                less. Defaults to 100.0.
+            motors (list[str] | None, optional): If None, all joints are filtered. Defaults to None.
 
-        current_vals = np.array([self.last_d[name] for name in motor_names], dtype=np.float32)
+        Returns:
+            np.ndarray: Kalman-filtered positions.
+        """
+        if motors is None:
+            motors = self.joint_names
+
+        current_vals = np.array([self.last_d[name] for name in motors], dtype=np.float32)
         filtered_vals = np.zeros_like(current_vals)
 
-        for i, name in enumerate(motor_names):
+        for i, name in enumerate(motors):
             # Retrieve the filter state for this joint
             x = self.kalman_state[name]["x"]
-            P = self.kalman_state[name]["P"]
-            Z = current_vals[i]
+            p = self.kalman_state[name]["P"]
+            z = current_vals[i]
 
             # If this is the first reading, initialize
-            if x is None or P is None:
-                x = Z
-                P = 1.0  # or some large initial uncertainty
+            if x is None or p is None:
+                x = z
+                p = 1.0  # or some large initial uncertainty
 
             # 1) Predict step
             x_pred = x  # no velocity model, so x_pred = x
-            P_pred = P + Q
+            p_pred = p + process_noise
 
             # 2) Update step
-            K = P_pred / (P_pred + R)  # Kalman gain
-            x_new = x_pred + K * (Z - x_pred)  # new state estimate
-            P_new = (1 - K) * P_pred  # new covariance
+            kalman_gain = p_pred / (p_pred + measurement_noise)  # Kalman gain
+            x_new = x_pred + kalman_gain * (z - x_pred)  # new state estimate
+            p_new = (1 - kalman_gain) * p_pred  # new covariance
 
             # Save back
             self.kalman_state[name]["x"] = x_new
-            self.kalman_state[name]["P"] = P_new
+            self.kalman_state[name]["P"] = p_new
 
             filtered_vals[i] = x_new
 
         if self.calibration is not None:
-            filtered_vals = self.apply_calibration(filtered_vals, motor_names)
+            filtered_vals = self.apply_calibration(filtered_vals, motors)
 
         return filtered_vals
 
@@ -377,7 +383,7 @@ class HomonculusArm(Teleoperator):
 
         if not os.path.exists(file_path):
             with open(file_path, "wb") as f:
-                pickle.dump(calib_dict, f)
+                pickle.dump(calib_dict, f)  # TODO(aliberts): use json
             print(f"Dictionary saved to {file_path}")
 
         self.set_calibration(calib_dict)

@@ -65,6 +65,8 @@ class HopeJrHand(Robot):
                 "pinky_pinky_side": Motor(15, "scs0009", MotorNormMode.RANGE_M100_100),
                 "pinky_flexor": Motor(16, "scs0009", MotorNormMode.RANGE_M100_100),
             },
+            calibration=self.calibration,
+            protocol_version=1,
         )
         self.cameras = make_cameras_from_configs(config.cameras)
 
@@ -150,10 +152,9 @@ class HopeJrHand(Robot):
         print("Calibration saved to", self.calibration_fpath)
 
     def configure(self) -> None:
-        self.hand.disable_torque()
-        self.hand.configure_motors()
-        # TODO
-        self.hand.enable_torque()
+        with self.hand.torque_disabled():
+            self.hand.configure_motors()
+            # TODO
 
     def get_observation(self) -> dict[str, Any]:
         if not self.is_connected:

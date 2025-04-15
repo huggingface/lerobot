@@ -16,8 +16,9 @@
 
 import logging
 import os
-import pickle
+import pickle  # nosec
 import threading
+import time
 from collections import deque
 from enum import Enum
 
@@ -289,7 +290,7 @@ class HomonculusGlove(Teleoperator):
 
         if not os.path.exists(file_path):
             with open(file_path, "wb") as f:
-                pickle.dump(calib_dict, f)
+                pickle.dump(calib_dict, f)  # TODO(aliberts): use json
             print(f"Dictionary saved to {file_path}")
 
         # return calib_dict

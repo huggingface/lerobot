@@ -52,6 +52,7 @@ class HopeJrArm(Robot):
                 "wrist_yaw": Motor(6, "sts3215", MotorNormMode.RANGE_M100_100),
                 "wrist_pitch": Motor(7, "sts3215", MotorNormMode.RANGE_M100_100),
             },
+            calibration=self.calibration,
         )
         self.cameras = make_cameras_from_configs(config.cameras)
 
@@ -141,10 +142,9 @@ class HopeJrArm(Robot):
         print("Calibration saved to", self.calibration_fpath)
 
     def configure(self) -> None:
-        self.arm.disable_torque()
-        self.arm.configure_motors()
-        # TODO
-        self.arm.enable_torque()
+        with self.arm.torque_disabled():
+            self.arm.configure_motors()
+            # TODO
 
     def get_observation(self) -> dict[str, Any]:
         if not self.is_connected:
