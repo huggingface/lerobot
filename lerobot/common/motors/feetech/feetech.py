@@ -164,10 +164,14 @@ class FeetechMotorsBus(MotorsBus):
         self._assert_same_firmware()
 
     def configure_motors(self) -> None:
-        # By default, Feetech motors have a 500µs delay response time (corresponding to a value of 250 on the
-        # 'Return_Delay' address). We ensure this is reduced to the minimum of 2µs (value of 0).
-        for id_ in self.ids:
-            self.write("Return_Delay_Time", id_, 0)
+        for motor in self.motors:
+            # By default, Feetech motors have a 500µs delay response time (corresponding to a value of 250 on
+            # the 'Return_Delay_Time' address). We ensure this is reduced to the minimum of 2µs (value of 0).
+            self.write("Return_Delay_Time", motor, 0)
+            # Set 'Maximum_Acceleration' to 254 to speedup acceleration and deceleration of the motors.
+            # Note: this address is not in the official STS3215 Memory Table
+            self.write("Maximum_Acceleration", motor, 254)
+            self.write("Acceleration", motor, 254)
 
     def _get_half_turn_homings(self, positions: dict[NameOrID, Value]) -> dict[NameOrID, Value]:
         """
@@ -182,15 +186,15 @@ class FeetechMotorsBus(MotorsBus):
 
         return half_turn_homings
 
-    def disable_torque(self, motors: str | list[str] | None = None) -> None:
+    def disable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
         for name in self._get_motors_list(motors):
-            self.write("Torque_Enable", name, TorqueMode.DISABLED.value)
-            self.write("Lock", name, 0)
+            self.write("Torque_Enable", name, TorqueMode.DISABLED.value, num_retry=num_retry)
+            self.write("Lock", name, 0, num_retry=num_retry)
 
-    def enable_torque(self, motors: str | list[str] | None = None) -> None:
+    def enable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
         for name in self._get_motors_list(motors):
-            self.write("Torque_Enable", name, TorqueMode.ENABLED.value)
-            self.write("Lock", name, 1)
+            self.write("Torque_Enable", name, TorqueMode.ENABLED.value, num_retry=num_retry)
+            self.write("Lock", name, 1, num_retry=num_retry)
 
     def _encode_sign(self, data_name: str, ids_values: dict[int, int]) -> dict[int, int]:
         for id_ in ids_values:

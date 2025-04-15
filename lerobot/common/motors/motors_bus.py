@@ -456,11 +456,11 @@ class MotorsBus(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def disable_torque(self, motors: str | list[str] | None = None) -> None:
+    def disable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
         pass
 
     @abc.abstractmethod
-    def enable_torque(self, motors: str | list[str] | None = None) -> None:
+    def enable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
         pass
 
     def set_timeout(self, timeout_ms: int | None = None):
@@ -972,7 +972,7 @@ class MotorsBus(abc.ABC):
         if disable_torque:
             self.port_handler.clearPort()
             self.port_handler.is_using = False
-            self.disable_torque()
+            self.disable_torque(num_retry=5)
 
         self.port_handler.closePort()
         logger.debug(f"{self.__class__.__name__} disconnected.")

@@ -142,16 +142,16 @@ class DynamixelMotorsBus(MotorsBus):
     def configure_motors(self) -> None:
         # By default, Dynamixel motors have a 500µs delay response time (corresponding to a value of 250 on
         # the 'Return_Delay_Time' address). We ensure this is reduced to the minimum of 2µs (value of 0).
-        for id_ in self.ids:
-            self.write("Return_Delay_Time", id_, 0)
+        for motor in self.motors:
+            self.write("Return_Delay_Time", motor, 0)
 
-    def disable_torque(self, motors: str | list[str] | None = None) -> None:
+    def disable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
         for name in self._get_motors_list(motors):
-            self.write("Torque_Enable", name, TorqueMode.DISABLED.value)
+            self.write("Torque_Enable", name, TorqueMode.DISABLED.value, num_retry=num_retry)
 
-    def enable_torque(self, motors: str | list[str] | None = None) -> None:
+    def enable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
         for name in self._get_motors_list(motors):
-            self.write("Torque_Enable", name, TorqueMode.ENABLED.value)
+            self.write("Torque_Enable", name, TorqueMode.ENABLED.value, num_retry=num_retry)
 
     def _encode_sign(self, data_name: str, ids_values: dict[int, int]) -> dict[int, int]:
         for id_ in ids_values:
