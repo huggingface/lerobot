@@ -756,7 +756,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             download_audio (bool, optional): Flag to download the audio. Defaults to True.
             video_backend (str | None, optional): Video backend to use for decoding videos. Defaults to torchcodec when available int the platform; otherwise, defaults to 'pyav'.
                 You can also use the 'pyav' decoder used by Torchvision, which used to be the default option, or 'video_reader' which is another decoder of Torchvision.
-            audio_backend (str | None, optional): Audio backend to use for decoding audio. Defaults to 'ffmpeg' decoder used by 'torchaudio'.
+            audio_backend (str | None, optional): Audio backend to use for decoding audio. Defaults to 'torchaudio'.
             batch_encoding_size (int, optional): Number of episodes to accumulate before batch encoding videos.
                 Set to 1 for immediate encoding (default), or higher for batched encoding. Defaults to 1.
             vcodec (str, optional): Video codec for encoding videos during recording. Options: 'h264', 'hevc',
@@ -775,7 +775,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.revision = revision if revision else CODEBASE_VERSION
         self.video_backend = video_backend if video_backend else get_safe_default_codec()
         self.audio_backend = (
-            audio_backend if audio_backend else "ffmpeg"
+            audio_backend if audio_backend else "trochaudio"
         )  # Waiting for torchcodec release #TODO(CarolinePascal)
         self.delta_indices = None
         self.batch_encoding_size = batch_encoding_size
@@ -1945,7 +1945,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj._recorded_frames = 0
         obj._writer_closed_for_reading = False
         obj.audio_backend = (
-            audio_backend if audio_backend is not None else "ffmpeg"
+            audio_backend if audio_backend is not None else "trochaudio"
         )  # Waiting for torchcodec release #TODO(CarolinePascal)
         return obj
 
