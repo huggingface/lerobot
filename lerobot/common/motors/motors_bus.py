@@ -21,6 +21,7 @@
 
 import abc
 import logging
+from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
 from functools import cached_property
@@ -283,6 +284,8 @@ class MotorsBus(abc.ABC):
         self._id_to_name_dict = {m.id: name for name, m in self.motors.items()}
         self._model_nb_to_model_dict = {v: k for k, v in self.model_number_table.items()}
 
+        self._validate_motors()
+
     def __len__(self):
         return len(self.motors)
 
@@ -341,7 +344,7 @@ class MotorsBus(abc.ABC):
         else:
             raise TypeError(f"'{motor}' should be int, str.")
 
-    def _get_names_list(self, motors: str | list[str] | None) -> list[str]:
+    def _get_motors_list(self, motors: str | list[str] | None) -> list[str]:
         if motors is None:
             return self.names
         elif isinstance(motors, str):
@@ -375,9 +378,13 @@ class MotorsBus(abc.ABC):
 
     def _assert_motors_exist(self) -> None:
         # TODO(aliberts): collect all wrong ids/models and display them at once
-        found_models = self.broadcast_ping()
+        found_models = {}
+        for id_ in self.ids:
+            model_nb = self.ping(id_)
+            if model_nb is not None:
+                found_models[id_] = model_nb
         expected_models = {m.id: self.model_number_table[m.model] for m in self.motors.values()}
-        if not found_models or set(found_models) != set(self.ids):
+        if set(found_models) != set(self.ids):
             raise RuntimeError(
                 f"{self.__class__.__name__} is supposed to have these motors: ({{id: model_nb}})"
                 f"\n{pformat(expected_models, indent=4, sort_dicts=False)}\n"
@@ -393,11 +400,15 @@ class MotorsBus(abc.ABC):
                     "was found instead for that id."
                 )
 
+    @abc.abstractmethod
+    def _assert_protocol_is_compatible(self, instruction_name: str) -> None:
+        pass
+
     @property
     def is_connected(self) -> bool:
         return self.port_handler.is_open
 
-    def connect(self, assert_motors_exist: bool = True) -> None:
+    def connect(self, handshake: bool = True) -> None:
         if self.is_connected:
             raise DeviceAlreadyConnectedError(
                 f"{self.__class__.__name__}('{self.port}') is already connected. Do not call `{self.__class__.__name__}.connect()` twice."
@@ -406,8 +417,8 @@ class MotorsBus(abc.ABC):
         try:
             if not self.port_handler.openPort():
                 raise OSError(f"Failed to open port '{self.port}'.")
-            elif assert_motors_exist:
-                self._assert_motors_exist()
+            elif handshake:
+                self._handshake()
         except (FileNotFoundError, OSError, serial.SerialException) as e:
             raise ConnectionError(
                 f"\nCould not connect on port '{self.port}'. Make sure you are using the correct port."
@@ -417,9 +428,13 @@ class MotorsBus(abc.ABC):
         self.set_timeout()
         logger.debug(f"{self.__class__.__name__} connected.")
 
+    @abc.abstractmethod
+    def _handshake(self) -> None:
+        pass
+
     @classmethod
-    def scan_port(cls, port: str) -> dict[int, list[int]]:
-        bus = cls(port, {})
+    def scan_port(cls, port: str, *args, **kwargs) -> dict[int, list[int]]:
+        bus = cls(port, {}, *args, **kwargs)
         try:
             bus.port_handler.openPort()
         except (FileNotFoundError, OSError, serial.SerialException) as e:
@@ -441,35 +456,21 @@ class MotorsBus(abc.ABC):
     def configure_motors(self) -> None:
         pass
 
-    def disable_torque(self, motors: NameOrID | list[NameOrID] | None = None) -> None:
-        pass
-        if motors is None:
-            motors = self.names
-        elif isinstance(motors, (str, int)):
-            motors = [motors]
-        elif not isinstance(motors, list):
-            raise TypeError(motors)
-
-        self._disable_torque(motors)
-
-    def enable_torque(self, motors: NameOrID | list[NameOrID] | None = None) -> None:
-        pass
-        if motors is None:
-            motors = self.names
-        elif isinstance(motors, (str, int)):
-            motors = [motors]
-        elif not isinstance(motors, list):
-            raise TypeError(motors)
-
-        self._enable_torque(motors)
-
     @abc.abstractmethod
-    def _enable_torque(self, motors: list[NameOrID]) -> None:
+    def disable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
         pass
 
     @abc.abstractmethod
-    def _disable_torque(self, motors: list[NameOrID]) -> None:
+    def enable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
         pass
+
+    @contextmanager
+    def torque_disabled(self):
+        self.disable_torque()
+        try:
+            yield
+        finally:
+            self.enable_torque()
 
     def set_timeout(self, timeout_ms: int | None = None):
         timeout_ms = timeout_ms if timeout_ms is not None else self.default_timeout
@@ -616,6 +617,9 @@ class MotorsBus(abc.ABC):
         return mins, maxes
 
     def _normalize(self, data_name: str, ids_values: dict[int, int]) -> dict[int, float]:
+        if not self.calibration:
+            raise RuntimeError(f"{self} has no calibration registered.")
+
         normalized_values = {}
         for id_, val in ids_values.items():
             name = self._id_to_name(id_)
@@ -633,6 +637,9 @@ class MotorsBus(abc.ABC):
         return normalized_values
 
     def _unnormalize(self, data_name: str, ids_values: dict[int, float]) -> dict[int, int]:
+        if not self.calibration:
+            raise RuntimeError(f"{self} has no calibration registered.")
+
         unnormalized_values = {}
         for id_, val in ids_values.items():
             name = self._id_to_name(id_)
@@ -658,42 +665,31 @@ class MotorsBus(abc.ABC):
     def _decode_sign(self, data_name: str, ids_values: dict[int, int]) -> dict[int, int]:
         pass
 
-    @staticmethod
+    def _serialize_data(self, value: int, length: int) -> list[int]:
+        """
+        Converts an unsigned integer value into a list of byte-sized integers to be sent via a communication
+        protocol. Depending on the protocol, split values can be in big-endian or little-endian order.
+
+        Supported data length for both Feetech and Dynamixel:
+            - 1 (for values 0 to 255)
+            - 2 (for values 0 to 65,535)
+            - 4 (for values 0 to 4,294,967,295)
+        """
+        if value < 0:
+            raise ValueError(f"Negative values are not allowed: {value}")
+
+        max_value = {1: 0xFF, 2: 0xFFFF, 4: 0xFFFFFFFF}.get(length)
+        if max_value is None:
+            raise NotImplementedError(f"Unsupported byte size: {length}. Expected [1, 2, 4].")
+
+        if value > max_value:
+            raise ValueError(f"Value {value} exceeds the maximum for {length} bytes ({max_value}).")
+
+        return self._split_into_byte_chunks(value, length)
+
     @abc.abstractmethod
-    def _split_int_to_bytes(value: int, n_bytes: int) -> list[int]:
-        """
-        Splits an unsigned integer into a list of bytes in little-endian order.
-
-        This function extracts the individual bytes of an integer based on the
-        specified number of bytes (`n_bytes`). The output is a list of integers,
-        each representing a byte (0-255).
-
-        **Byte order:** The function returns bytes in **little-endian format**,
-        meaning the least significant byte (LSB) comes first.
-
-        Args:
-            value (int): The unsigned integer to be converted into a byte list. Must be within
-                the valid range for the specified `n_bytes`.
-            n_bytes (int): The number of bytes to use for conversion. Supported values:
-                - 1 (for values 0 to 255)
-                - 2 (for values 0 to 65,535)
-                - 4 (for values 0 to 4,294,967,295)
-
-        Raises:
-            ValueError: If `value` is negative or exceeds the maximum allowed for `n_bytes`.
-            NotImplementedError: If `n_bytes` is not 1, 2, or 4.
-
-        Returns:
-            list[int]: A list of integers, each representing a byte in **little-endian order**.
-
-        Examples:
-            >>> split_int_bytes(0x12, 1)
-            [18]
-            >>> split_int_bytes(0x1234, 2)
-            [52, 18]  # 0x1234 → 0x34 0x12 (little-endian)
-            >>> split_int_bytes(0x12345678, 4)
-            [120, 86, 52, 18]  # 0x12345678 → 0x78 0x56 0x34 0x12
-        """
+    def _split_into_byte_chunks(self, value: int, length: int) -> list[int]:
+        """Convert an integer into a list of byte-sized integers."""
         pass
 
     def ping(self, motor: NameOrID, num_retry: int = 0, raise_on_error: bool = False) -> int | None:
@@ -711,17 +707,125 @@ class MotorsBus(abc.ABC):
                 return
         if self._is_error(error):
             if raise_on_error:
-                raise RuntimeError(self.packet_handler.getTxRxResult(comm))
+                raise RuntimeError(self.packet_handler.getRxPacketError(error))
             else:
                 return
 
         return model_number
 
     @abc.abstractmethod
-    def broadcast_ping(
-        self, num_retry: int = 0, raise_on_error: bool = False
-    ) -> dict[int, list[int, str]] | None:
+    def broadcast_ping(self, num_retry: int = 0, raise_on_error: bool = False) -> dict[int, int] | None:
         pass
+
+    def read(
+        self,
+        data_name: str,
+        motor: str,
+        *,
+        normalize: bool = True,
+        num_retry: int = 0,
+    ) -> Value:
+        if not self.is_connected:
+            raise DeviceNotConnectedError(
+                f"{self.__class__.__name__}('{self.port}') is not connected. You need to run `{self.__class__.__name__}.connect()`."
+            )
+
+        id_ = self.motors[motor].id
+        model = self.motors[motor].model
+        addr, length = get_address(self.model_ctrl_table, model, data_name)
+
+        err_msg = f"Failed to read '{data_name}' on {id_=} after {num_retry + 1} tries."
+        value, _, _ = self._read(addr, length, id_, num_retry=num_retry, raise_on_error=True, err_msg=err_msg)
+
+        id_value = self._decode_sign(data_name, {id_: value})
+
+        if normalize and data_name in self.normalized_data:
+            id_value = self._normalize(data_name, id_value)
+
+        return id_value[id_]
+
+    def _read(
+        self,
+        address: int,
+        length: int,
+        motor_id: int,
+        *,
+        num_retry: int = 0,
+        raise_on_error: bool = True,
+        err_msg: str = "",
+    ) -> tuple[int, int]:
+        if length == 1:
+            read_fn = self.packet_handler.read1ByteTxRx
+        elif length == 2:
+            read_fn = self.packet_handler.read2ByteTxRx
+        elif length == 4:
+            read_fn = self.packet_handler.read4ByteTxRx
+        else:
+            raise ValueError(length)
+
+        for n_try in range(1 + num_retry):
+            value, comm, error = read_fn(self.port_handler, motor_id, address)
+            if self._is_comm_success(comm):
+                break
+            logger.debug(
+                f"Failed to read @{address=} ({length=}) on {motor_id=} ({n_try=}): "
+                + self.packet_handler.getTxRxResult(comm)
+            )
+
+        if not self._is_comm_success(comm) and raise_on_error:
+            raise ConnectionError(f"{err_msg} {self.packet_handler.getTxRxResult(comm)}")
+        elif self._is_error(error) and raise_on_error:
+            raise RuntimeError(f"{err_msg} {self.packet_handler.getRxPacketError(error)}")
+
+        return value, comm, error
+
+    def write(
+        self, data_name: str, motor: str, value: Value, *, normalize: bool = True, num_retry: int = 0
+    ) -> None:
+        if not self.is_connected:
+            raise DeviceNotConnectedError(
+                f"{self.__class__.__name__}('{self.port}') is not connected. You need to run `{self.__class__.__name__}.connect()`."
+            )
+
+        id_ = self.motors[motor].id
+        model = self.motors[motor].model
+        addr, length = get_address(self.model_ctrl_table, model, data_name)
+
+        if normalize and data_name in self.normalized_data:
+            value = self._unnormalize(data_name, {id_: value})[id_]
+
+        value = self._encode_sign(data_name, {id_: value})[id_]
+
+        err_msg = f"Failed to write '{data_name}' on {id_=} with '{value}' after {num_retry + 1} tries."
+        self._write(addr, length, id_, value, num_retry=num_retry, raise_on_error=True, err_msg=err_msg)
+
+    def _write(
+        self,
+        addr: int,
+        length: int,
+        motor_id: int,
+        value: int,
+        *,
+        num_retry: int = 0,
+        raise_on_error: bool = True,
+        err_msg: str = "",
+    ) -> tuple[int, int]:
+        data = self._serialize_data(value, length)
+        for n_try in range(1 + num_retry):
+            comm, error = self.packet_handler.writeTxRx(self.port_handler, motor_id, addr, length, data)
+            if self._is_comm_success(comm):
+                break
+            logger.debug(
+                f"Failed to sync write @{addr=} ({length=}) on id={motor_id} with {value=} ({n_try=}): "
+                + self.packet_handler.getTxRxResult(comm)
+            )
+
+        if not self._is_comm_success(comm) and raise_on_error:
+            raise ConnectionError(f"{err_msg} {self.packet_handler.getTxRxResult(comm)}")
+        elif self._is_error(error) and raise_on_error:
+            raise RuntimeError(f"{err_msg} {self.packet_handler.getRxPacketError(error)}")
+
+        return comm, error
 
     def sync_read(
         self,
@@ -736,7 +840,9 @@ class MotorsBus(abc.ABC):
                 f"{self.__class__.__name__}('{self.port}') is not connected. You need to run `{self.__class__.__name__}.connect()`."
             )
 
-        names = self._get_names_list(motors)
+        self._assert_protocol_is_compatible("sync_read")
+
+        names = self._get_motors_list(motors)
         ids = [self.motors[name].id for name in names]
         models = [self.motors[name].model for name in names]
 
@@ -744,14 +850,12 @@ class MotorsBus(abc.ABC):
             assert_same_address(self.model_ctrl_table, models, data_name)
 
         model = next(iter(models))
-        addr, n_bytes = get_address(self.model_ctrl_table, model, data_name)
+        addr, length = get_address(self.model_ctrl_table, model, data_name)
 
-        comm, ids_values = self._sync_read(addr, n_bytes, ids, num_retry=num_retry)
-        if not self._is_comm_success(comm):
-            raise ConnectionError(
-                f"Failed to sync read '{data_name}' on {ids=} after {num_retry + 1} tries."
-                f"{self.packet_handler.getTxRxResult(comm)}"
-            )
+        err_msg = f"Failed to sync read '{data_name}' on {ids=} after {num_retry + 1} tries."
+        ids_values, _ = self._sync_read(
+            addr, length, ids, num_retry=num_retry, raise_on_error=True, err_msg=err_msg
+        )
 
         ids_values = self._decode_sign(data_name, ids_values)
 
@@ -761,25 +865,35 @@ class MotorsBus(abc.ABC):
         return {self._id_to_name(id_): value for id_, value in ids_values.items()}
 
     def _sync_read(
-        self, addr: int, n_bytes: int, motor_ids: list[int], num_retry: int = 0
-    ) -> tuple[int, dict[int, int]]:
-        self._setup_sync_reader(motor_ids, addr, n_bytes)
+        self,
+        addr: int,
+        length: int,
+        motor_ids: list[int],
+        *,
+        num_retry: int = 0,
+        raise_on_error: bool = True,
+        err_msg: str = "",
+    ) -> tuple[dict[int, int], int]:
+        self._setup_sync_reader(motor_ids, addr, length)
         for n_try in range(1 + num_retry):
             comm = self.sync_reader.txRxPacket()
             if self._is_comm_success(comm):
                 break
             logger.debug(
-                f"Failed to sync read @{addr=} ({n_bytes=}) on {motor_ids=} ({n_try=}): "
+                f"Failed to sync read @{addr=} ({length=}) on {motor_ids=} ({n_try=}): "
                 + self.packet_handler.getTxRxResult(comm)
             )
 
-        values = {id_: self.sync_reader.getData(id_, addr, n_bytes) for id_ in motor_ids}
-        return comm, values
+        if not self._is_comm_success(comm) and raise_on_error:
+            raise ConnectionError(f"{err_msg} {self.packet_handler.getTxRxResult(comm)}")
 
-    def _setup_sync_reader(self, motor_ids: list[int], addr: int, n_bytes: int) -> None:
+        values = {id_: self.sync_reader.getData(id_, addr, length) for id_ in motor_ids}
+        return values, comm
+
+    def _setup_sync_reader(self, motor_ids: list[int], addr: int, length: int) -> None:
         self.sync_reader.clearParam()
         self.sync_reader.start_address = addr
-        self.sync_reader.data_length = n_bytes
+        self.sync_reader.data_length = length
         for id_ in motor_ids:
             self.sync_reader.addParam(id_)
 
@@ -787,15 +901,15 @@ class MotorsBus(abc.ABC):
     # Would have to handle the logic of checking if a packet has been sent previously though but doable.
     # This could be at the cost of increase latency between the moment the data is produced by the motors and
     # the moment it is used by a policy.
-    # def _async_read(self, motor_ids: list[int], address: int, n_bytes: int):
-    #     if self.sync_reader.start_address != address or self.sync_reader.data_length != n_bytes or ...:
-    #         self._setup_sync_reader(motor_ids, address, n_bytes)
+    # def _async_read(self, motor_ids: list[int], address: int, length: int):
+    #     if self.sync_reader.start_address != address or self.sync_reader.data_length != length or ...:
+    #         self._setup_sync_reader(motor_ids, address, length)
     #     else:
     #         self.sync_reader.rxPacket()
     #         self.sync_reader.txPacket()
 
     #     for id_ in motor_ids:
-    #         value = self.sync_reader.getData(id_, address, n_bytes)
+    #         value = self.sync_reader.getData(id_, address, length)
 
     def sync_write(
         self,
@@ -816,84 +930,47 @@ class MotorsBus(abc.ABC):
             assert_same_address(self.model_ctrl_table, models, data_name)
 
         model = next(iter(models))
-        addr, n_bytes = get_address(self.model_ctrl_table, model, data_name)
+        addr, length = get_address(self.model_ctrl_table, model, data_name)
 
         if normalize and data_name in self.normalized_data:
             ids_values = self._unnormalize(data_name, ids_values)
 
         ids_values = self._encode_sign(data_name, ids_values)
 
-        comm = self._sync_write(addr, n_bytes, ids_values, num_retry=num_retry)
-        if not self._is_comm_success(comm):
-            raise ConnectionError(
-                f"Failed to sync write '{data_name}' with {ids_values=} after {num_retry + 1} tries."
-                f"\n{self.packet_handler.getTxRxResult(comm)}"
-            )
+        err_msg = f"Failed to sync write '{data_name}' with {ids_values=} after {num_retry + 1} tries."
+        self._sync_write(addr, length, ids_values, num_retry=num_retry, raise_on_error=True, err_msg=err_msg)
 
-    def _sync_write(self, addr: int, n_bytes: int, ids_values: dict[int, int], num_retry: int = 0) -> int:
-        self._setup_sync_writer(ids_values, addr, n_bytes)
+    def _sync_write(
+        self,
+        addr: int,
+        length: int,
+        ids_values: dict[int, int],
+        num_retry: int = 0,
+        raise_on_error: bool = True,
+        err_msg: str = "",
+    ) -> int:
+        self._setup_sync_writer(ids_values, addr, length)
         for n_try in range(1 + num_retry):
             comm = self.sync_writer.txPacket()
             if self._is_comm_success(comm):
                 break
             logger.debug(
-                f"Failed to sync write @{addr=} ({n_bytes=}) with {ids_values=} ({n_try=}): "
+                f"Failed to sync write @{addr=} ({length=}) with {ids_values=} ({n_try=}): "
                 + self.packet_handler.getTxRxResult(comm)
             )
+
+        if not self._is_comm_success(comm) and raise_on_error:
+            raise ConnectionError(f"{err_msg} {self.packet_handler.getTxRxResult(comm)}")
 
         return comm
 
-    def _setup_sync_writer(self, ids_values: dict[int, int], addr: int, n_bytes: int) -> None:
+    def _setup_sync_writer(self, ids_values: dict[int, int], addr: int, length: int) -> None:
         self.sync_writer.clearParam()
         self.sync_writer.start_address = addr
-        self.sync_writer.data_length = n_bytes
+        self.sync_writer.data_length = length
         for id_, value in ids_values.items():
-            data = self._split_int_to_bytes(value, n_bytes)
+            data = self._serialize_data(value, length)
             self.sync_writer.addParam(id_, data)
-
-    def write(
-        self, data_name: str, motor: str, value: Value, *, normalize: bool = True, num_retry: int = 0
-    ) -> None:
-        if not self.is_connected:
-            raise DeviceNotConnectedError(
-                f"{self.__class__.__name__}('{self.port}') is not connected. You need to run `{self.__class__.__name__}.connect()`."
-            )
-
-        id_ = self.motors[motor].id
-        model = self.motors[motor].model
-        addr, n_bytes = get_address(self.model_ctrl_table, model, data_name)
-
-        if normalize and data_name in self.normalized_data:
-            value = self._unnormalize(data_name, {id_: value})[id_]
-
-        value = self._encode_sign(data_name, {id_: value})[id_]
-
-        comm, error = self._write(addr, n_bytes, id_, value, num_retry=num_retry)
-        if not self._is_comm_success(comm):
-            raise ConnectionError(
-                f"Failed to write '{data_name}' on {id_=} with '{value}' after {num_retry + 1} tries."
-                f"\n{self.packet_handler.getTxRxResult(comm)}"
-            )
-        elif self._is_error(error):
-            raise RuntimeError(
-                f"Failed to write '{data_name}' on {id_=} with '{value}' after {num_retry + 1} tries."
-                f"\n{self.packet_handler.getRxPacketError(error)}"
-            )
-
-    def _write(
-        self, addr: int, n_bytes: int, motor_id: int, value: int, num_retry: int = 0
-    ) -> tuple[int, int]:
-        data = self._split_int_to_bytes(value, n_bytes)
-        for n_try in range(1 + num_retry):
-            comm, error = self.packet_handler.writeTxRx(self.port_handler, motor_id, addr, n_bytes, data)
-            if self._is_comm_success(comm):
-                break
-            logger.debug(
-                f"Failed to sync write @{addr=} ({n_bytes=}) on id={motor_id} with {value=} ({n_try=}): "
-                + self.packet_handler.getTxRxResult(comm)
-            )
-
-        return comm, error
 
     def disconnect(self, disable_torque: bool = True) -> None:
         if not self.is_connected:
@@ -904,7 +981,7 @@ class MotorsBus(abc.ABC):
         if disable_torque:
             self.port_handler.clearPort()
             self.port_handler.is_using = False
-            self.disable_torque()
+            self.disable_torque(num_retry=5)
 
         self.port_handler.closePort()
         logger.debug(f"{self.__class__.__name__} disconnected.")

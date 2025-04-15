@@ -146,29 +146,28 @@ class KochFollower(Robot):
         logger.info(f"Calibration saved to {self.calibration_fpath}")
 
     def configure(self) -> None:
-        self.arm.disable_torque()
-        self.arm.configure_motors()
-        # Use 'extended position mode' for all motors except gripper, because in joint mode the servos
-        # can't rotate more than 360 degrees (from 0 to 4095) And some mistake can happen while
-        # assembling the arm, you could end up with a servo with a position 0 or 4095 at a crucial
-        # point
-        for name in self.arm.names:
-            if name != "gripper":
-                self.arm.write("Operating_Mode", name, OperatingMode.EXTENDED_POSITION.value)
+        with self.arm.torque_disabled():
+            self.arm.configure_motors()
+            # Use 'extended position mode' for all motors except gripper, because in joint mode the servos
+            # can't rotate more than 360 degrees (from 0 to 4095) And some mistake can happen while assembling
+            # the arm, you could end up with a servo with a position 0 or 4095 at a crucial point
+            for name in self.arm.names:
+                if name != "gripper":
+                    self.arm.write("Operating_Mode", name, OperatingMode.EXTENDED_POSITION.value)
 
-        # Use 'position control current based' for gripper to be limited by the limit of the current.
-        # For the follower gripper, it means it can grasp an object without forcing too much even tho,
-        # its goal position is a complete grasp (both gripper fingers are ordered to join and reach a touch).
-        # For the leader gripper, it means we can use it as a physical trigger, since we can force with our finger
-        # to make it move, and it will move back to its original target position when we release the force.
-        self.arm.write("Operating_Mode", "gripper", OperatingMode.CURRENT_POSITION.value)
+            # Use 'position control current based' for gripper to be limited by the limit of the current. For
+            # the follower gripper, it means it can grasp an object without forcing too much even tho, its
+            # goal position is a complete grasp (both gripper fingers are ordered to join and reach a touch).
+            # For the leader gripper, it means we can use it as a physical trigger, since we can force with
+            # our finger to make it move, and it will move back to its original target position when we
+            # release the force.
+            self.arm.write("Operating_Mode", "gripper", OperatingMode.CURRENT_POSITION.value)
 
-        # Set better PID values to close the gap between recorded states and actions
-        # TODO(rcadene): Implement an automatic procedure to set optimal PID values for each motor
-        self.arm.write("Position_P_Gain", "elbow_flex", 1500)
-        self.arm.write("Position_I_Gain", "elbow_flex", 0)
-        self.arm.write("Position_D_Gain", "elbow_flex", 600)
-        self.arm.enable_torque()
+            # Set better PID values to close the gap between recorded states and actions
+            # TODO(rcadene): Implement an automatic procedure to set optimal PID values for each motor
+            self.arm.write("Position_P_Gain", "elbow_flex", 1500)
+            self.arm.write("Position_I_Gain", "elbow_flex", 0)
+            self.arm.write("Position_D_Gain", "elbow_flex", 600)
 
     def get_observation(self) -> dict[str, Any]:
         if not self.is_connected:

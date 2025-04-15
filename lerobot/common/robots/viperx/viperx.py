@@ -141,32 +141,31 @@ class ViperX(Robot):
         logger.info(f"Calibration saved to {self.calibration_fpath}")
 
     def configure(self) -> None:
-        self.arm.disable_torque()
-        self.arm.configure_motors()
+        with self.arm.torque_disabled():
+            self.arm.configure_motors()
 
-        # Set secondary/shadow ID for shoulder and elbow. These joints have two motors.
-        # As a result, if only one of them is required to move to a certain position,
-        # the other will follow. This is to avoid breaking the motors.
-        self.arm.write("Secondary_ID", "shoulder_shadow", 2)
-        self.arm.write("Secondary_ID", "elbow_shadow", 4)
+            # Set secondary/shadow ID for shoulder and elbow. These joints have two motors.
+            # As a result, if only one of them is required to move to a certain position,
+            # the other will follow. This is to avoid breaking the motors.
+            self.arm.write("Secondary_ID", "shoulder_shadow", 2)
+            self.arm.write("Secondary_ID", "elbow_shadow", 4)
 
-        # Set a velocity limit of 131 as advised by Trossen Robotics
-        # TODO(aliberts): remove as it's actually useless in position control
-        self.arm.write("Velocity_Limit", 131)
+            # Set a velocity limit of 131 as advised by Trossen Robotics
+            # TODO(aliberts): remove as it's actually useless in position control
+            self.arm.write("Velocity_Limit", 131)
 
-        # Use 'extended position mode' for all motors except gripper, because in joint mode the servos can't
-        # rotate more than 360 degrees (from 0 to 4095) And some mistake can happen while assembling the arm,
-        # you could end up with a servo with a position 0 or 4095 at a crucial point. See:
-        # https://emanual.robotis.com/docs/en/dxl/x/x_series/#operating-mode11
-        for name in self.arm.names:
-            if name != "gripper":
-                self.arm.write("Operating_Mode", name, OperatingMode.EXTENDED_POSITION.value)
+            # Use 'extended position mode' for all motors except gripper, because in joint mode the servos
+            # can't rotate more than 360 degrees (from 0 to 4095) And some mistake can happen while assembling
+            # the arm, you could end up with a servo with a position 0 or 4095 at a crucial point.
+            # See: https://emanual.robotis.com/docs/en/dxl/x/x_series/#operating-mode11
+            for name in self.arm.names:
+                if name != "gripper":
+                    self.arm.write("Operating_Mode", name, OperatingMode.EXTENDED_POSITION.value)
 
-        # Use 'position control current based' for follower gripper to be limited by the limit of the current.
-        # It can grasp an object without forcing too much even tho, it's goal position is a complete grasp
-        # (both gripper fingers are ordered to join and reach a touch).
-        self.arm.write("Operating_Mode", "gripper", OperatingMode.CURRENT_POSITION.value)
-        self.arm.enable_torque()
+            # Use 'position control current based' for follower gripper to be limited by the limit of the
+            # current. It can grasp an object without forcing too much even tho, it's goal position is a
+            # complete grasp (both gripper fingers are ordered to join and reach a touch).
+            self.arm.write("Operating_Mode", "gripper", OperatingMode.CURRENT_POSITION.value)
 
     def get_observation(self) -> dict[str, Any]:
         """The returned observations do not have a batch dimension."""

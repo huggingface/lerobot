@@ -21,17 +21,19 @@ from lerobot.common.utils.encoding_utils import decode_sign_magnitude, encode_si
 
 from ..motors_bus import Motor, MotorCalibration, MotorsBus, NameOrID, Value
 from .tables import (
-    FIRMWARE_VERSION,
+    FIRMWARE_MAJOR_VERSION,
+    FIRMWARE_MINOR_VERSION,
     MODEL_BAUDRATE_TABLE,
     MODEL_CONTROL_TABLE,
     MODEL_ENCODING_TABLE,
     MODEL_NUMBER,
     MODEL_NUMBER_TABLE,
+    MODEL_PROTOCOL,
     MODEL_RESOLUTION,
     SCAN_BAUDRATES,
 )
 
-PROTOCOL_VERSION = 0
+DEFAULT_PROTOCOL_VERSION = 0
 BAUDRATE = 1_000_000
 DEFAULT_TIMEOUT_MS = 1000
 
@@ -62,6 +64,23 @@ class DriveMode(Enum):
 class TorqueMode(Enum):
     ENABLED = 1
     DISABLED = 0
+
+
+def _split_into_byte_chunks(value: int, length: int) -> list[int]:
+    import scservo_sdk as scs
+
+    if length == 1:
+        data = [value]
+    elif length == 2:
+        data = [scs.SCS_LOBYTE(value), scs.SCS_HIBYTE(value)]
+    elif length == 4:
+        data = [
+            scs.SCS_LOBYTE(scs.SCS_LOWORD(value)),
+            scs.SCS_HIBYTE(scs.SCS_LOWORD(value)),
+            scs.SCS_LOBYTE(scs.SCS_HIWORD(value)),
+            scs.SCS_HIBYTE(scs.SCS_HIWORD(value)),
+        ]
+    return data
 
 
 def patch_setPacketTimeout(self, packet_length):  # noqa: N802
@@ -97,8 +116,11 @@ class FeetechMotorsBus(MotorsBus):
         port: str,
         motors: dict[str, Motor],
         calibration: dict[str, MotorCalibration] | None = None,
+        protocol_version: int = DEFAULT_PROTOCOL_VERSION,
     ):
         super().__init__(port, motors, calibration)
+        self.protocol_version = protocol_version
+        self._assert_same_protocol()
         import scservo_sdk as scs
 
         self.port_handler = scs.PortHandler(self.port)
@@ -106,17 +128,50 @@ class FeetechMotorsBus(MotorsBus):
         self.port_handler.setPacketTimeout = patch_setPacketTimeout.__get__(
             self.port_handler, scs.PortHandler
         )
-        self.packet_handler = scs.PacketHandler(PROTOCOL_VERSION)
+        self.packet_handler = scs.PacketHandler(protocol_version)
         self.sync_reader = scs.GroupSyncRead(self.port_handler, self.packet_handler, 0, 0)
         self.sync_writer = scs.GroupSyncWrite(self.port_handler, self.packet_handler, 0, 0)
         self._comm_success = scs.COMM_SUCCESS
         self._no_error = 0x00
 
+        if any(MODEL_PROTOCOL[model] != self.protocol_version for model in self.models):
+            raise ValueError(f"Some motors are incompatible with protocol_version={self.protocol_version}")
+
+    def _assert_same_protocol(self) -> None:
+        if any(MODEL_PROTOCOL[model] != self.protocol_version for model in self.models):
+            raise RuntimeError("Some motors use an incompatible protocol.")
+
+    def _assert_protocol_is_compatible(self, instruction_name: str) -> None:
+        if instruction_name == "sync_read" and self.protocol_version == 1:
+            raise NotImplementedError(
+                "'Sync Read' is not available with Feetech motors using Protocol 1. Use 'Read' sequentially instead."
+            )
+        if instruction_name == "broadcast_ping" and self.protocol_version == 1:
+            raise NotImplementedError(
+                "'Broadcast Ping' is not available with Feetech motors using Protocol 1. Use 'Ping' sequentially instead."
+            )
+
+    def _assert_same_firmware(self) -> None:
+        firmware_versions = self._read_firmware_version(self.ids)
+        if len(set(firmware_versions.values())) != 1:
+            raise RuntimeError(
+                "Some Motors use different firmware versions. Update their firmware first using Feetech's software. "
+                "Visit https://www.feetechrc.com/software."
+            )
+
+    def _handshake(self) -> None:
+        self._assert_motors_exist()
+        self._assert_same_firmware()
+
     def configure_motors(self) -> None:
-        # By default, Feetech motors have a 500µs delay response time (corresponding to a value of 250 on the
-        # 'Return_Delay' address). We ensure this is reduced to the minimum of 2µs (value of 0).
-        for id_ in self.ids:
-            self.write("Return_Delay_Time", id_, 0)
+        for motor in self.motors:
+            # By default, Feetech motors have a 500µs delay response time (corresponding to a value of 250 on
+            # the 'Return_Delay_Time' address). We ensure this is reduced to the minimum of 2µs (value of 0).
+            self.write("Return_Delay_Time", motor, 0)
+            # Set 'Maximum_Acceleration' to 254 to speedup acceleration and deceleration of the motors.
+            # Note: this address is not in the official STS3215 Memory Table
+            self.write("Maximum_Acceleration", motor, 254)
+            self.write("Acceleration", motor, 254)
 
     def _get_half_turn_homings(self, positions: dict[NameOrID, Value]) -> dict[NameOrID, Value]:
         """
@@ -131,15 +186,15 @@ class FeetechMotorsBus(MotorsBus):
 
         return half_turn_homings
 
-    def _disable_torque(self, motors: list[NameOrID]) -> None:
-        for motor in motors:
-            self.write("Torque_Enable", motor, TorqueMode.DISABLED.value)
-            self.write("Lock", motor, 0)
+    def disable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
+        for name in self._get_motors_list(motors):
+            self.write("Torque_Enable", name, TorqueMode.DISABLED.value, num_retry=num_retry)
+            self.write("Lock", name, 0, num_retry=num_retry)
 
-    def _enable_torque(self, motors: list[NameOrID]) -> None:
-        for motor in motors:
-            self.write("Torque_Enable", motor, TorqueMode.ENABLED.value)
-            self.write("Lock", motor, 1)
+    def enable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
+        for name in self._get_motors_list(motors):
+            self.write("Torque_Enable", name, TorqueMode.ENABLED.value, num_retry=num_retry)
+            self.write("Lock", name, 1, num_retry=num_retry)
 
     def _encode_sign(self, data_name: str, ids_values: dict[int, int]) -> dict[int, int]:
         for id_ in ids_values:
@@ -161,35 +216,32 @@ class FeetechMotorsBus(MotorsBus):
 
         return ids_values
 
-    @staticmethod
-    def _split_int_to_bytes(value: int, n_bytes: int) -> list[int]:
-        # Validate input
-        if value < 0:
-            raise ValueError(f"Negative values are not allowed: {value}")
+    def _split_into_byte_chunks(self, value: int, length: int) -> list[int]:
+        return _split_into_byte_chunks(value, length)
 
-        max_value = {1: 0xFF, 2: 0xFFFF, 4: 0xFFFFFFFF}.get(n_bytes)
-        if max_value is None:
-            raise NotImplementedError(f"Unsupported byte size: {n_bytes}. Expected [1, 2, 4].")
+    def _broadcast_ping_p1(
+        self, known_motors_only: bool = True, n_motors: int | None = None, num_retry: int = 0
+    ) -> dict[int, int]:
+        if known_motors_only:
+            ids = self.ids
+        else:
+            import scservo_sdk as scs
 
-        if value > max_value:
-            raise ValueError(f"Value {value} exceeds the maximum for {n_bytes} bytes ({max_value}).")
+            ids = range(scs.MAX_ID + 1)
 
-        import scservo_sdk as scs
+        ids_models = {}
+        motors_found = 0
+        for id_ in ids:
+            model_number = self.ping(id_, num_retry)
+            if model_number is not None:
+                ids_models[id_] = model_number
+                motors_found += 1
+                if motors_found >= n_motors:
+                    break
 
-        if n_bytes == 1:
-            data = [value]
-        elif n_bytes == 2:
-            data = [scs.SCS_LOBYTE(value), scs.SCS_HIBYTE(value)]
-        elif n_bytes == 4:
-            data = [
-                scs.SCS_LOBYTE(scs.SCS_LOWORD(value)),
-                scs.SCS_HIBYTE(scs.SCS_LOWORD(value)),
-                scs.SCS_LOBYTE(scs.SCS_HIWORD(value)),
-                scs.SCS_HIBYTE(scs.SCS_HIWORD(value)),
-            ]
-        return data
+        return ids_models
 
-    def _broadcast_ping(self) -> tuple[dict[int, int], int]:
+    def _broadcast_ping_p0(self) -> tuple[dict[int, int], int]:
         import scservo_sdk as scs
 
         data_list = {}
@@ -243,7 +295,7 @@ class FeetechMotorsBus(MotorsBus):
                 for idx in range(2, status_length - 1):  # except header & checksum
                     checksum += rxpacket[idx]
 
-                checksum = scs.SCS_LOBYTE(~checksum)
+                checksum = ~checksum & 0xFF
                 if rxpacket[status_length - 1] == checksum:
                     result = scs.COMM_SUCCESS
                     data_list[rxpacket[scs.PKT_ID]] = rxpacket[scs.PKT_ERROR]
@@ -264,8 +316,9 @@ class FeetechMotorsBus(MotorsBus):
                 rx_length = rx_length - idx
 
     def broadcast_ping(self, num_retry: int = 0, raise_on_error: bool = False) -> dict[int, int] | None:
+        self._assert_protocol_is_compatible("broadcast_ping")
         for n_try in range(1 + num_retry):
-            ids_status, comm = self._broadcast_ping()
+            ids_status, comm = self._broadcast_ping_p0()
             if self._is_comm_success(comm):
                 break
             logger.debug(f"Broadcast ping failed on port '{self.port}' ({n_try=})")
@@ -281,50 +334,34 @@ class FeetechMotorsBus(MotorsBus):
             display_dict = {id_: self.packet_handler.getRxPacketError(err) for id_, err in ids_errors.items()}
             logger.error(f"Some motors found returned an error status:\n{pformat(display_dict, indent=4)}")
 
-        return self._get_model_number(list(ids_status), raise_on_error)
+        return self._read_model_number(list(ids_status), raise_on_error)
 
-    def _get_firmware_version(self, motor_ids: list[int], raise_on_error: bool = False) -> dict[int, int]:
-        # comm, major = self._sync_read(*FIRMWARE_MAJOR_VERSION, motor_ids)
-        # if not self._is_comm_success(comm):
-        #     if raise_on_error:
-        #         raise ConnectionError(self.packet_handler.getTxRxResult(comm))
-        #     return
+    def _read_firmware_version(self, motor_ids: list[int], raise_on_error: bool = False) -> dict[int, str]:
+        firmware_versions = {}
+        for id_ in motor_ids:
+            firm_ver_major, comm, error = self._read(
+                *FIRMWARE_MAJOR_VERSION, id_, raise_on_error=raise_on_error
+            )
+            if not self._is_comm_success(comm) or self._is_error(error):
+                return
 
-        # comm, minor = self._sync_read(*FIRMWARE_MINOR_VERSION, motor_ids)
-        # if not self._is_comm_success(comm):
-        #     if raise_on_error:
-        #         raise ConnectionError(self.packet_handler.getTxRxResult(comm))
-        #     return
+            firm_ver_minor, comm, error = self._read(
+                *FIRMWARE_MINOR_VERSION, id_, raise_on_error=raise_on_error
+            )
+            if not self._is_comm_success(comm) or self._is_error(error):
+                return
 
-        # return {id_: f"{major[id_]}.{minor[id_]}" for id_ in motor_ids}
-
-        comm, firmware_versions = self._sync_read(*FIRMWARE_VERSION, motor_ids)
-        if not self._is_comm_success(comm):
-            if raise_on_error:
-                raise ConnectionError(self.packet_handler.getTxRxResult(comm))
-            return
+            firmware_versions[id_] = f"{firm_ver_major}.{firm_ver_minor}"
 
         return firmware_versions
 
-    def _get_model_number(self, motor_ids: list[int], raise_on_error: bool = False) -> dict[int, int]:
-        # comm, major = self._sync_read(*MODEL_MAJOR_VERSION, motor_ids)
-        # if not self._is_comm_success(comm):
-        #     if raise_on_error:
-        #         raise ConnectionError(self.packet_handler.getTxRxResult(comm))
-        #     return
+    def _read_model_number(self, motor_ids: list[int], raise_on_error: bool = False) -> dict[int, int]:
+        model_numbers = {}
+        for id_ in motor_ids:
+            model_nb, comm, error = self._read(*MODEL_NUMBER, id_, raise_on_error=raise_on_error)
+            if not self._is_comm_success(comm) or self._is_error(error):
+                return
 
-        # comm, minor = self._sync_read(*MODEL_MINOR_VERSION, motor_ids)
-        # if not self._is_comm_success(comm):
-        #     if raise_on_error:
-        #         raise ConnectionError(self.packet_handler.getTxRxResult(comm))
-        #     return
-
-        # return {id_: f"{major[id_]}.{minor[id_]}" for id_ in motor_ids}
-
-        comm, model_numbers = self._sync_read(*MODEL_NUMBER, motor_ids)
-        if not self._is_comm_success(comm):
-            if raise_on_error:
-                raise ConnectionError(self.packet_handler.getTxRxResult(comm))
-            return
+            model_numbers[id_] = model_nb
 
         return model_numbers

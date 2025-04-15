@@ -84,6 +84,23 @@ class TorqueMode(Enum):
     DISABLED = 0
 
 
+def _split_into_byte_chunks(value: int, length: int) -> list[int]:
+    import dynamixel_sdk as dxl
+
+    if length == 1:
+        data = [value]
+    elif length == 2:
+        data = [dxl.DXL_LOBYTE(value), dxl.DXL_HIBYTE(value)]
+    elif length == 4:
+        data = [
+            dxl.DXL_LOBYTE(dxl.DXL_LOWORD(value)),
+            dxl.DXL_HIBYTE(dxl.DXL_LOWORD(value)),
+            dxl.DXL_LOBYTE(dxl.DXL_HIWORD(value)),
+            dxl.DXL_HIBYTE(dxl.DXL_HIWORD(value)),
+        ]
+    return data
+
+
 class DynamixelMotorsBus(MotorsBus):
     """
     The Dynamixel implementation for a MotorsBus. It relies on the python dynamixel sdk to communicate with
@@ -116,19 +133,25 @@ class DynamixelMotorsBus(MotorsBus):
         self._comm_success = dxl.COMM_SUCCESS
         self._no_error = 0x00
 
+    def _assert_protocol_is_compatible(self, instruction_name: str) -> None:
+        pass
+
+    def _handshake(self) -> None:
+        self._assert_motors_exist()
+
     def configure_motors(self) -> None:
         # By default, Dynamixel motors have a 500µs delay response time (corresponding to a value of 250 on
         # the 'Return_Delay_Time' address). We ensure this is reduced to the minimum of 2µs (value of 0).
-        for id_ in self.ids:
-            self.write("Return_Delay_Time", id_, 0)
+        for motor in self.motors:
+            self.write("Return_Delay_Time", motor, 0)
 
-    def _disable_torque(self, motors: list[NameOrID]) -> None:
-        for motor in motors:
-            self.write("Torque_Enable", motor, TorqueMode.DISABLED.value)
+    def disable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
+        for name in self._get_motors_list(motors):
+            self.write("Torque_Enable", name, TorqueMode.DISABLED.value, num_retry=num_retry)
 
-    def _enable_torque(self, motors: list[NameOrID]) -> None:
-        for motor in motors:
-            self.write("Torque_Enable", motor, TorqueMode.ENABLED.value)
+    def enable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
+        for name in self._get_motors_list(motors):
+            self.write("Torque_Enable", name, TorqueMode.ENABLED.value, num_retry=num_retry)
 
     def _encode_sign(self, data_name: str, ids_values: dict[int, int]) -> dict[int, int]:
         for id_ in ids_values:
@@ -163,35 +186,8 @@ class DynamixelMotorsBus(MotorsBus):
 
         return half_turn_homings
 
-    @staticmethod
-    def _split_int_to_bytes(value: int, n_bytes: int) -> list[int]:
-        # Validate input
-        if value < 0:
-            raise ValueError(f"Negative values are not allowed: {value}")
-
-        max_value = {1: 0xFF, 2: 0xFFFF, 4: 0xFFFFFFFF}.get(n_bytes)
-        if max_value is None:
-            raise NotImplementedError(f"Unsupported byte size: {n_bytes}. Expected [1, 2, 4].")
-
-        if value > max_value:
-            raise ValueError(f"Value {value} exceeds the maximum for {n_bytes} bytes ({max_value}).")
-
-        import dynamixel_sdk as dxl
-
-        # Note: No need to convert back into unsigned int, since this byte preprocessing
-        # already handles it for us.
-        if n_bytes == 1:
-            data = [value]
-        elif n_bytes == 2:
-            data = [dxl.DXL_LOBYTE(value), dxl.DXL_HIBYTE(value)]
-        elif n_bytes == 4:
-            data = [
-                dxl.DXL_LOBYTE(dxl.DXL_LOWORD(value)),
-                dxl.DXL_HIBYTE(dxl.DXL_LOWORD(value)),
-                dxl.DXL_LOBYTE(dxl.DXL_HIWORD(value)),
-                dxl.DXL_HIBYTE(dxl.DXL_HIWORD(value)),
-            ]
-        return data
+    def _split_into_byte_chunks(self, value: int, length: int) -> list[int]:
+        return _split_into_byte_chunks(value, length)
 
     def broadcast_ping(self, num_retry: int = 0, raise_on_error: bool = False) -> dict[int, int] | None:
         for n_try in range(1 + num_retry):

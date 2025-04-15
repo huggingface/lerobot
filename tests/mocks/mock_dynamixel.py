@@ -5,7 +5,7 @@ import dynamixel_sdk as dxl
 import serial
 from mock_serial.mock_serial import MockSerial
 
-from lerobot.common.motors.dynamixel import X_SERIES_CONTROL_TABLE, DynamixelMotorsBus
+from lerobot.common.motors.dynamixel.dynamixel import _split_into_byte_chunks
 
 from .mock_serial_patch import WaitableStub
 
@@ -44,41 +44,6 @@ DXL_CRC_TABLE = [
     0x0220, 0x8225, 0x822F, 0x022A, 0x823B, 0x023E, 0x0234, 0x8231,
     0x8213, 0x0216, 0x021C, 0x8219, 0x0208, 0x820D, 0x8207, 0x0202
 ]  # fmt: skip
-
-# https://emanual.robotis.com/docs/en/dxl/protocol2/#instruction
-INSTRUCTION_TYPES = {
-    "Ping": 0x01,	               # Checks whether the Packet has arrived at a device with the same ID as the specified packet ID
-    "Read": 0x02,	               # Read data from the Device
-    "Write": 0x03,	               # Write data to the Device
-    "Reg_Write": 0x04,	           # Register the Instruction Packet in standby status; Packet can later be executed using the Action command
-    "Action": 0x05,	               # Executes a Packet that was registered beforehand using Reg Write
-    "Factory_Reset": 0x06,	       # Resets the Control Table to its initial factory default settings
-    "Reboot": 0x08,	               # Reboot the Device
-    "Clear": 0x10,	               # Reset certain information stored in memory
-    "Control_Table_Backup": 0x20,  # Store current Control Table status data to a Backup or to restore backup EEPROM data.
-    "Status": 0x55,	               # Return packet sent following the execution of an Instruction Packet
-    "Sync_Read": 0x82,	           # Read data from multiple devices with the same Address with the same length at once
-    "Sync_Write": 0x83,	           # Write data to multiple devices with the same Address with the same length at once
-    "Fast_Sync_Read": 0x8A,	       # Read data from multiple devices with the same Address with the same length at once
-    "Bulk_Read": 0x92,	           # Read data from multiple devices with different Addresses with different lengths at once
-    "Bulk_Write": 0x93,	           # Write data to multiple devices with different Addresses with different lengths at once
-    "Fast_Bulk_Read": 0x9A,	       # Read data from multiple devices with different Addresses with different lengths at once
-}  # fmt: skip
-
-# https://emanual.robotis.com/docs/en/dxl/protocol2/#error
-ERROR_TYPE = {
-    "Success": 0x00, 	        # No error
-    "Result_Fail": 0x01, 	    # Failed to process the sent Instruction Packet
-    "Instruction_Error": 0x02,  # An undefined Instruction has been usedAction has been used without Reg Write
-    "CRC_Error": 0x03, 	        # The CRC of the sent Packet does not match the expected value
-    "Data_Range_Error": 0x04,   # Data to be written to the specified Address is outside the range of the minimum/maximum value
-    "Data_Length_Error": 0x05,  # Attempted to write Data that is shorter than the required data length of the specified Address
-                                #     (ex: when you attempt to only use 2 bytes of a register that has been defined as 4 bytes)
-    "Data_Limit_Error": 0x06,   # Data to be written to the specified Address is outside of the configured Limit value
-    "Access_Error": 0x07,	    # Attempted to write a value to an Address that is Read Only or has not been defined
-                                # Attempted to read a value from an Address that is Write Only or has not been defined
-                                # Attempted to write a value to an EEPROM register while Torque was Enabled.
-}  # fmt: skip
 
 
 class MockDynamixelPacketv2(abc.ABC):
@@ -186,14 +151,14 @@ class MockInstructionPacket(MockDynamixelPacketv2):
     """
 
     @classmethod
-    def _build(cls, dxl_id: int, params: list[int], length: int, instruct_type: str) -> list[int]:
-        instruct_value = INSTRUCTION_TYPES[instruct_type]
+    def _build(cls, dxl_id: int, params: list[int], length: int, instruction: int) -> list[int]:
+        length = len(params) + 3
         return [
             0xFF, 0xFF, 0xFD, 0x00,  # header
             dxl_id,                  # servo id
             dxl.DXL_LOBYTE(length),  # length_l
             dxl.DXL_HIBYTE(length),  # length_h
-            instruct_value,          # instruction type
+            instruction,             # instruction type
             *params,                 # data bytes
             0x00, 0x00               # placeholder for CRC
         ]  # fmt: skip
@@ -209,8 +174,73 @@ class MockInstructionPacket(MockDynamixelPacketv2):
 
         No parameters required.
         """
-        params, length = [], 3
-        return cls.build(dxl_id=dxl_id, params=params, length=length, instruct_type="Ping")
+        return cls.build(dxl_id=dxl_id, params=[], length=3, instruction=dxl.INST_PING)
+
+    @classmethod
+    def read(
+        cls,
+        dxl_id: int,
+        start_address: int,
+        data_length: int,
+    ) -> bytes:
+        """
+        Builds a "Read" instruction.
+        https://emanual.robotis.com/docs/en/dxl/protocol2/#read-0x02
+
+        The parameters for Read (Protocol 2.0) are:
+            param[0]   = start_address L
+            param[1]   = start_address H
+            param[2]   = data_length L
+            param[3]   = data_length H
+
+        And 'length' = data_length + 5, where:
+            +1 is for instruction byte,
+            +2 is for the length bytes,
+            +2 is for the CRC at the end.
+        """
+        params = [
+            dxl.DXL_LOBYTE(start_address),
+            dxl.DXL_HIBYTE(start_address),
+            dxl.DXL_LOBYTE(data_length),
+            dxl.DXL_HIBYTE(data_length),
+        ]
+        length = len(params) + 3
+        # length = data_length + 5
+        return cls.build(dxl_id=dxl_id, params=params, length=length, instruction=dxl.INST_READ)
+
+    @classmethod
+    def write(
+        cls,
+        dxl_id: int,
+        value: int,
+        start_address: int,
+        data_length: int,
+    ) -> bytes:
+        """
+        Builds a "Write" instruction.
+        https://emanual.robotis.com/docs/en/dxl/protocol2/#write-0x03
+
+        The parameters for Write (Protocol 2.0) are:
+            param[0]   = start_address L
+            param[1]   = start_address H
+            param[2]   = 1st Byte
+            param[3]   = 2nd Byte
+            ...
+            param[1+X] = X-th Byte
+
+        And 'length' = data_length + 5, where:
+            +1 is for instruction byte,
+            +2 is for the length bytes,
+            +2 is for the CRC at the end.
+        """
+        data = _split_into_byte_chunks(value, data_length)
+        params = [
+            dxl.DXL_LOBYTE(start_address),
+            dxl.DXL_HIBYTE(start_address),
+            *data,
+        ]
+        length = data_length + 5
+        return cls.build(dxl_id=dxl_id, params=params, length=length, instruction=dxl.INST_WRITE)
 
     @classmethod
     def sync_read(
@@ -244,7 +274,9 @@ class MockInstructionPacket(MockDynamixelPacketv2):
             *dxl_ids,
         ]
         length = len(dxl_ids) + 7
-        return cls.build(dxl_id=dxl.BROADCAST_ID, params=params, length=length, instruct_type="Sync_Read")
+        return cls.build(
+            dxl_id=dxl.BROADCAST_ID, params=params, length=length, instruction=dxl.INST_SYNC_READ
+        )
 
     @classmethod
     def sync_write(
@@ -281,7 +313,7 @@ class MockInstructionPacket(MockDynamixelPacketv2):
         """
         data = []
         for id_, value in ids_values.items():
-            split_value = DynamixelMotorsBus._split_int_to_bytes(value, data_length)
+            split_value = _split_into_byte_chunks(value, data_length)
             data += [id_, *split_value]
         params = [
             dxl.DXL_LOBYTE(start_address),
@@ -291,41 +323,9 @@ class MockInstructionPacket(MockDynamixelPacketv2):
             *data,
         ]
         length = len(ids_values) * (1 + data_length) + 7
-        return cls.build(dxl_id=dxl.BROADCAST_ID, params=params, length=length, instruct_type="Sync_Write")
-
-    @classmethod
-    def write(
-        cls,
-        dxl_id: int,
-        value: int,
-        start_address: int,
-        data_length: int,
-    ) -> bytes:
-        """
-        Builds a "Write" instruction.
-        https://emanual.robotis.com/docs/en/dxl/protocol2/#write-0x03
-
-        The parameters for Write (Protocol 2.0) are:
-            param[0]   = start_address L
-            param[1]   = start_address H
-            param[2]   = 1st Byte
-            param[3]   = 2nd Byte
-            ...
-            param[1+X] = X-th Byte
-
-        And 'length' = data_length + 5, where:
-            +1 is for instruction byte,
-            +2 is for the length bytes,
-            +2 is for the CRC at the end.
-        """
-        data = DynamixelMotorsBus._split_int_to_bytes(value, data_length)
-        params = [
-            dxl.DXL_LOBYTE(start_address),
-            dxl.DXL_HIBYTE(start_address),
-            *data,
-        ]
-        length = data_length + 5
-        return cls.build(dxl_id=dxl_id, params=params, length=length, instruct_type="Write")
+        return cls.build(
+            dxl_id=dxl.BROADCAST_ID, params=params, length=length, instruction=dxl.INST_SYNC_WRITE
+        )
 
 
 class MockStatusPacket(MockDynamixelPacketv2):
@@ -341,21 +341,20 @@ class MockStatusPacket(MockDynamixelPacketv2):
     """
 
     @classmethod
-    def _build(cls, dxl_id: int, params: list[int], length: int, error: str = "Success") -> list[int]:
-        err_byte = ERROR_TYPE[error]
+    def _build(cls, dxl_id: int, params: list[int], length: int, error: int = 0) -> list[int]:
         return [
             0xFF, 0xFF, 0xFD, 0x00,  # header
             dxl_id,                  # servo id
             dxl.DXL_LOBYTE(length),  # length_l
             dxl.DXL_HIBYTE(length),  # length_h
             0x55,                    # instruction = 'status'
-            err_byte,                # error
+            error,                   # error
             *params,                 # data bytes
             0x00, 0x00               # placeholder for CRC
         ]  # fmt: skip
 
     @classmethod
-    def ping(cls, dxl_id: int, model_nb: int = 1190, firm_ver: int = 50) -> bytes:
+    def ping(cls, dxl_id: int, model_nb: int = 1190, firm_ver: int = 50, error: int = 0) -> bytes:
         """
         Builds a 'Ping' status packet.
         https://emanual.robotis.com/docs/en/dxl/protocol2/#ping-0x01
@@ -372,10 +371,10 @@ class MockStatusPacket(MockDynamixelPacketv2):
         """
         params = [dxl.DXL_LOBYTE(model_nb), dxl.DXL_HIBYTE(model_nb), firm_ver]
         length = 7
-        return cls.build(dxl_id, params=params, length=length)
+        return cls.build(dxl_id, params=params, length=length, error=error)
 
     @classmethod
-    def read(cls, dxl_id: int, value: int, param_length: int) -> bytes:
+    def read(cls, dxl_id: int, value: int, param_length: int, error: int = 0) -> bytes:
         """
         Builds a 'Read' status packet (also works for 'Sync Read')
         https://emanual.robotis.com/docs/en/dxl/protocol2/#read-0x02
@@ -389,9 +388,9 @@ class MockStatusPacket(MockDynamixelPacketv2):
         Returns:
             bytes: The raw 'Present_Position' status packet ready to be sent through serial.
         """
-        params = DynamixelMotorsBus._split_int_to_bytes(value, param_length)
+        params = _split_into_byte_chunks(value, param_length)
         length = param_length + 4
-        return cls.build(dxl_id, params=params, length=length)
+        return cls.build(dxl_id, params=params, length=length, error=error)
 
 
 class MockPortHandler(dxl.PortHandler):
@@ -425,8 +424,6 @@ class MockMotors(MockSerial):
     instruction packets. It is meant to test MotorsBus classes.
     """
 
-    ctrl_table = X_SERIES_CONTROL_TABLE
-
     def __init__(self):
         super().__init__()
 
@@ -455,10 +452,10 @@ class MockMotors(MockSerial):
         return stub_name
 
     def build_ping_stub(
-        self, dxl_id: int, model_nb: int, firm_ver: int = 50, num_invalid_try: int = 0
+        self, dxl_id: int, model_nb: int, firm_ver: int = 50, num_invalid_try: int = 0, error: int = 0
     ) -> str:
         ping_request = MockInstructionPacket.ping(dxl_id)
-        return_packet = MockStatusPacket.ping(dxl_id, model_nb, firm_ver)
+        return_packet = MockStatusPacket.ping(dxl_id, model_nb, firm_ver, error)
         ping_response = self._build_send_fn(return_packet, num_invalid_try)
         stub_name = f"Ping_{dxl_id}"
         self.stub(
@@ -468,14 +465,63 @@ class MockMotors(MockSerial):
         )
         return stub_name
 
-    def build_sync_read_stub(
-        self, data_name: str, ids_values: dict[int, int] | None = None, num_invalid_try: int = 0
+    def build_read_stub(
+        self,
+        address: int,
+        length: int,
+        dxl_id: int,
+        value: int,
+        reply: bool = True,
+        error: int = 0,
+        num_invalid_try: int = 0,
     ) -> str:
-        address, length = self.ctrl_table[data_name]
+        read_request = MockInstructionPacket.read(dxl_id, address, length)
+        return_packet = MockStatusPacket.read(dxl_id, value, length, error) if reply else b""
+        read_response = self._build_send_fn(return_packet, num_invalid_try)
+        stub_name = f"Read_{address}_{length}_{dxl_id}_{value}_{error}"
+        self.stub(
+            name=stub_name,
+            receive_bytes=read_request,
+            send_fn=read_response,
+        )
+        return stub_name
+
+    def build_write_stub(
+        self,
+        address: int,
+        length: int,
+        dxl_id: int,
+        value: int,
+        reply: bool = True,
+        error: int = 0,
+        num_invalid_try: int = 0,
+    ) -> str:
+        sync_read_request = MockInstructionPacket.write(dxl_id, value, address, length)
+        return_packet = MockStatusPacket.build(dxl_id, params=[], length=4, error=error) if reply else b""
+        stub_name = f"Write_{address}_{length}_{dxl_id}"
+        self.stub(
+            name=stub_name,
+            receive_bytes=sync_read_request,
+            send_fn=self._build_send_fn(return_packet, num_invalid_try),
+        )
+        return stub_name
+
+    def build_sync_read_stub(
+        self,
+        address: int,
+        length: int,
+        ids_values: dict[int, int],
+        reply: bool = True,
+        num_invalid_try: int = 0,
+    ) -> str:
         sync_read_request = MockInstructionPacket.sync_read(list(ids_values), address, length)
-        return_packets = b"".join(MockStatusPacket.read(id_, pos, length) for id_, pos in ids_values.items())
+        return_packets = (
+            b"".join(MockStatusPacket.read(id_, pos, length) for id_, pos in ids_values.items())
+            if reply
+            else b""
+        )
         sync_read_response = self._build_send_fn(return_packets, num_invalid_try)
-        stub_name = f"Sync_Read_{data_name}_" + "_".join([str(id_) for id_ in ids_values])
+        stub_name = f"Sync_Read_{address}_{length}_" + "_".join([str(id_) for id_ in ids_values])
         self.stub(
             name=stub_name,
             receive_bytes=sync_read_request,
@@ -484,11 +530,10 @@ class MockMotors(MockSerial):
         return stub_name
 
     def build_sequential_sync_read_stub(
-        self, data_name: str, ids_values: dict[int, list[int]] | None = None
+        self, address: int, length: int, ids_values: dict[int, list[int]] | None = None
     ) -> str:
         sequence_length = len(next(iter(ids_values.values())))
         assert all(len(positions) == sequence_length for positions in ids_values.values())
-        address, length = self.ctrl_table[data_name]
         sync_read_request = MockInstructionPacket.sync_read(list(ids_values), address, length)
         sequential_packets = []
         for count in range(sequence_length):
@@ -498,7 +543,7 @@ class MockMotors(MockSerial):
             sequential_packets.append(return_packets)
 
         sync_read_response = self._build_sequential_send_fn(sequential_packets)
-        stub_name = f"Seq_Sync_Read_{data_name}_" + "_".join([str(id_) for id_ in ids_values])
+        stub_name = f"Seq_Sync_Read_{address}_{length}_" + "_".join([str(id_) for id_ in ids_values])
         self.stub(
             name=stub_name,
             receive_bytes=sync_read_request,
@@ -507,29 +552,14 @@ class MockMotors(MockSerial):
         return stub_name
 
     def build_sync_write_stub(
-        self, data_name: str, ids_values: dict[int, int] | None = None, num_invalid_try: int = 0
+        self, address: int, length: int, ids_values: dict[int, int], num_invalid_try: int = 0
     ) -> str:
-        address, length = self.ctrl_table[data_name]
         sync_read_request = MockInstructionPacket.sync_write(ids_values, address, length)
-        stub_name = f"Sync_Write_{data_name}_" + "_".join([str(id_) for id_ in ids_values])
+        stub_name = f"Sync_Write_{address}_{length}_" + "_".join([str(id_) for id_ in ids_values])
         self.stub(
             name=stub_name,
             receive_bytes=sync_read_request,
             send_fn=self._build_send_fn(b"", num_invalid_try),
-        )
-        return stub_name
-
-    def build_write_stub(
-        self, data_name: str, dxl_id: int, value: int, error: str = "Success", num_invalid_try: int = 0
-    ) -> str:
-        address, length = self.ctrl_table[data_name]
-        sync_read_request = MockInstructionPacket.write(dxl_id, value, address, length)
-        return_packet = MockStatusPacket.build(dxl_id, params=[], length=4, error=error)
-        stub_name = f"Write_{data_name}_{dxl_id}"
-        self.stub(
-            name=stub_name,
-            receive_bytes=sync_read_request,
-            send_fn=self._build_send_fn(return_packet, num_invalid_try),
         )
         return stub_name
 
