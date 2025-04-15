@@ -21,6 +21,7 @@ from pathlib import Path
 
 import torch
 import torchaudio
+import torchcodec
 from numpy import ceil
 
 
@@ -28,7 +29,7 @@ def decode_audio(
     audio_path: Path | str,
     timestamps: list[float],
     duration: float,
-    backend: str | None = "ffmpeg",
+    backend: str | None = "torchaudio",
 ) -> torch.Tensor:
     """
     Decodes audio using the specified backend.
@@ -36,7 +37,7 @@ def decode_audio(
         audio_path (Path): Path to the audio file.
         timestamps (list[float]): List of (starting) timestamps to extract audio chunks.
         duration (float): Duration of the audio chunks in seconds.
-        backend (str, optional): Backend to use for decoding. Defaults to "ffmpeg".
+        backend (str, optional): Backend to use for decoding. Defaults to "torchaudio".
 
     Returns:
         torch.Tensor: Decoded audio chunks.
@@ -44,11 +45,40 @@ def decode_audio(
     Currently supports ffmpeg.
     """
     if backend == "torchcodec":
-        raise NotImplementedError("torchcodec is not yet supported for audio decoding")
-    elif backend == "ffmpeg":
+        #   return decode_audio_torchcodec(audio_path, timestamps, duration)    #TODO(CarolinePascal): uncomment this line at next torchcodec release
+        raise ValueError("torchcodec backend is not available yet.")
+    elif backend == "torchaudio":
         return decode_audio_torchaudio(audio_path, timestamps, duration)
     else:
         raise ValueError(f"Unsupported video backend: {backend}")
+
+
+def decode_audio_torchcodec(
+    audio_path: Path | str,
+    timestamps: list[float],
+    duration: float,
+    log_loaded_timestamps: bool = False,
+) -> torch.Tensor:
+    # TODO(CarolinePascal) : add channels selection
+    audio_decoder = torchcodec.decoders.AudioDecoder(audio_path)
+
+    audio_chunks = []
+    for ts in timestamps:
+        current_audio_chunk = audio_decoder.get_samples_played_in_range(
+            start_seconds=ts, stop_seconds=ts + duration
+        )
+
+        if log_loaded_timestamps:
+            logging.info(
+                f"audio chunk loaded at starting timestamp={current_audio_chunk.pts_seconds:.4f} with duration={current_audio_chunk.duration_seconds:.4f}"
+            )
+
+        audio_chunks.append(current_audio_chunk.data)
+
+    audio_chunks = torch.stack(audio_chunks)
+
+    assert len(timestamps) == len(audio_chunks)
+    return audio_chunks
 
 
 def decode_audio_torchaudio(
