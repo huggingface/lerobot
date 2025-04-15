@@ -1,0 +1,42 @@
+<mujoco model="2f85 scene">
+
+  <!-- Add some fluid viscosity to prevent the hanging box from jiggling forever -->
+  <option viscosity="0.1"/>
+
+  <include file="2f85.xml"/>
+
+  <statistic center="0 0 0.05" extent="0.3"/>
+
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0"/>
+    <rgba haze="0.15 0.25 0.35 1"/>
+    <global azimuth="60" elevation="-20"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3"
+      markrgb="0.8 0.8 0.8" width="300" height="300"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.2"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0 0 1"/>
+    <light pos="0 -0.2 1" dir="0 0.2 -0.8" directional="true"/>
+    <geom name="floor" size="0 0 0.05" type="plane" material="groundplane"/>
+    <site size="0.002" pos="0 0 0.2" name="anchor"/>
+    <body name="object" pos="0 0 0.15">
+      <freejoint/>
+      <geom type="box" size="0.015 0.015 0.015" rgba=".5 .7 .5 1" friction=".5" priority="1"/>
+      <site size="0.002" pos="0.015 0.015 0.015" name="hook"/>
+    </body>
+  </worldbody>
+
+  <tendon>
+    <spatial limited="true" range="0 0.02" width="0.001">
+      <site site="hook"/>
+      <site site="anchor"/>
+    </spatial>
+  </tendon>
+
+</mujoco>
