@@ -281,8 +281,6 @@ class OpenCVCamera:
         elif config.rotation == 180:
             self.rotation = cv2.ROTATE_180
 
-        self.microphone = config.microphone
-
     def connect(self):
         if self.is_connected:
             raise RobotDeviceAlreadyConnectedError(f"OpenCVCamera({self.camera_index}) is already connected.")

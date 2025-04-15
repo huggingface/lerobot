@@ -549,7 +549,6 @@ class So100RobotConfig(ManipulatorRobotConfig):
                 fps=30,
                 width=640,
                 height=480,
-                microphone="laptop",
             ),
             "phone": OpenCVCameraConfig(
                 camera_index=1,
