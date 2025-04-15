@@ -94,7 +94,7 @@ def predict_action(observation, policy, device, use_amp):
     observation = copy(observation)
     with (
         torch.inference_mode(),
-        torch.autocast(device_type=device.type) if device.type == "cuda" and use_amp else nullcontext(),
+        torch.autocast(device_type=device),
     ):
         # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
         for name in observation:
@@ -165,7 +165,8 @@ def init_policy(pretrained_policy_name_or_path, policy_overrides):
     policy = make_policy(hydra_cfg=hydra_cfg, pretrained_policy_name_or_path=pretrained_policy_path)
 
     # Check device is available
-    device = get_safe_torch_device(hydra_cfg.device, log=True)
+    #device = get_safe_torch_device(hydra_cfg.device, log=True)
+    device="mps"
     use_amp = hydra_cfg.use_amp
     policy_fps = hydra_cfg.env.fps
 

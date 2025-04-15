@@ -737,7 +737,7 @@ class Tac_Man:
 class HopeJrRobot:
     robot_type = "hopejr"
     def __init__(self, cameras=None):
-        self.arm_port = "/dev/tty.usbserial-140"
+        self.arm_port = "/dev/tty.usbmodem585A0082361"
         self.hand_port = "/dev/tty.usbmodem58760436961"
         self.cameras = {}
         config = OpenCVCameraConfig(fps=60, width=1920, height=1080)
@@ -805,11 +805,11 @@ class HopeJrRobot:
         self.glove = None
 
     def apply_arm_config(self, config_file):
-        with open(config_file, "r") as file:
-            config = yaml.safe_load(file)
-        for param, value in config.get("robot", {}).get("arm_bus", {}).items():
-            self.arm_bus.write(param, value)
-
+        #with open(config_file, "r") as file:
+        #    config = yaml.safe_load(file)
+        #for param, value in config.get("robot", {}).get("arm_bus", {}).items():
+        #    self.arm_bus.write(param, value)
+        return
     def apply_hand_config(config_file, robot):
         with open(config_file, "r") as file:
             config = yaml.safe_load(file)
@@ -924,12 +924,16 @@ class HopeJrRobot:
         self.hand_bus.connect()
         #read pos
         print(self.hand_bus.read("Present_Position"))
-        print(self.arm_bus.read("Present_Position", "shoulder_pitch"))
-        print(self.arm_bus.read("Present_Position",["shoulder_yaw","shoulder_roll","elbow_flex","wrist_roll","wrist_yaw","wrist_pitch"]))
+        #move arm elbow to half way
+        self.arm_bus.write("Goal_Position", 2000, "elbow_flex")
+        self.arm_bus.write("Goal_Position", 700, "wrist_roll")        
+        self.arm_bus.write("Goal_Position", 1150, "shoulder_roll")
+        #print(self.arm_bus.read("Present_Position", "shoulder_pitch"))
+        #print(self.arm_bus.read("Present_Position",["shoulder_yaw","shoulder_roll","elbow_flex","wrist_roll","wrist_yaw","wrist_pitch"]))
         #robot.arm_bus.write("Goal_Position", robot.arm_calib_dict["start_pos"][0]*1 +robot.arm_calib_dict["end_pos"][0]*0, ["wrist_roll"])
         for i in range(10):
             time.sleep(0.1)
-            self.apply_arm_config('examples/hopejr/settings/config.yaml')
+            #self.apply_arm_config('examples/hopejr/settings/config.yaml')
 
         # #calibrate arm
         arm_calibration = self.get_arm_calibration()
@@ -948,7 +952,7 @@ class HopeJrRobot:
         #calibrate hand
         hand_calibration = self.get_hand_calibration()
         self.glove = HomonculusGlove(serial_port = "/dev/tty.usbmodem1101")
-        calibrate_glove = True
+        calibrate_glove = False
         if calibrate_glove:
             self.glove.run_calibration()
             
@@ -959,7 +963,7 @@ class HopeJrRobot:
         self.glove.set_calibration(calib_dict)
 
         self.hand_bus.set_calibration(hand_calibration)
-        self.arm_bus.set_calibration(arm_calibration)
+        #self.arm_bus.set_calibration(arm_calibration)
 
         for camera in self.cameras.values():
             camera.connect()
@@ -1088,4 +1092,105 @@ class HopeJrRobot:
             self.is_connected = False
     
     def capture_observation(self): 
-        return
+        self.apply_arm_config('examples/hopejr/settings/config.yaml')
+        #robot.arm_bus.write("Acceleration", 50, "shoulder_yaw")
+        joint_names = ["shoulder_pitch", "shoulder_yaw", "shoulder_roll", "elbow_flex", "wrist_roll", "wrist_yaw", "wrist_pitch"]
+        #only wrist roll
+        #joint_names = ["shoulder_pitch"]
+        joint_values = self.exoskeleton.read(motor_names=joint_names)
+
+        #joint_values = joint_values.round().astype(int)
+        joint_dict = {k: v for k, v in zip(joint_names, joint_values, strict=False)}
+
+        motor_values = []
+        motor_names = []
+        motor_names += ["shoulder_pitch", "shoulder_yaw", "shoulder_roll", "elbow_flex", "wrist_roll", "wrist_yaw", "wrist_pitch"]
+        #motor_names += ["shoulder_pitch"]
+        motor_values += [joint_dict[name] for name in motor_names]
+        #remove 50 from shoulder_roll
+        #motor_values += [joint_dict[name] for name in motor_names]
+
+        motor_values = np.array(motor_values)
+        motor_values = np.clip(motor_values, 0, 100)
+
+        print(motor_names, motor_values)
+        freeze_fingers = False
+        if not freeze_fingers:#include hand
+            hand_joint_names = []
+            hand_joint_names += ["thumb_3", "thumb_2", "thumb_1", "thumb_0"]#, "thumb_3"]
+            hand_joint_names += ["index_0", "index_1", "index_2"]
+            hand_joint_names += ["middle_0", "middle_1", "middle_2"]
+            hand_joint_names += ["ring_0", "ring_1", "ring_2"]
+            hand_joint_names += ["pinky_0", "pinky_1", "pinky_2"]
+            hand_joint_values = self.glove.read(hand_joint_names)
+            hand_joint_values = hand_joint_values.round( ).astype(int)
+            hand_joint_dict = {k: v for k, v in zip(hand_joint_names, hand_joint_values, strict=False)}
+
+            hand_motor_values = []
+            hand_motor_names = []
+
+            # Thumb
+            hand_motor_names += ["thumb_basel_rotation", "thumb_mcp", "thumb_pip", "thumb_dip"]#, "thumb_MCP"]
+            hand_motor_values += [
+                hand_joint_dict["thumb_3"],
+                hand_joint_dict["thumb_2"],
+                hand_joint_dict["thumb_1"],
+                hand_joint_dict["thumb_0"]
+            ]
+
+            # # Index finger
+            index_splay = 0.1
+            hand_motor_names += ["index_flexor", "index_pinky_side", "index_thumb_side"]
+            hand_motor_values += [
+                hand_joint_dict["index_2"],
+                (100 - hand_joint_dict["index_0"]) * index_splay + hand_joint_dict["index_1"] * (1 - index_splay),
+                hand_joint_dict["index_0"] * index_splay + hand_joint_dict["index_1"] * (1 - index_splay),
+            ]
+
+            # Middle finger
+            middle_splay = 0.1
+            hand_motor_names += ["middle_flexor", "middle_pinky_side", "middle_thumb_side"]
+            hand_motor_values += [
+                hand_joint_dict["middle_2"],
+                hand_joint_dict["middle_0"] * middle_splay + hand_joint_dict["middle_1"] * (1 - middle_splay),
+                (100 - hand_joint_dict["middle_0"]) * middle_splay + hand_joint_dict["middle_1"] * (1 - middle_splay),
+            ]
+
+            # # Ring finger
+            ring_splay = 0.1
+            hand_motor_names += ["ring_flexor", "ring_pinky_side", "ring_thumb_side"]
+            hand_motor_values += [
+                hand_joint_dict["ring_2"],
+                (100 - hand_joint_dict["ring_0"]) * ring_splay + hand_joint_dict["ring_1"] * (1 - ring_splay),
+                hand_joint_dict["ring_0"] * ring_splay + hand_joint_dict["ring_1"] * (1 - ring_splay),
+            ]
+
+            # # Pinky finger
+            pinky_splay = -.1
+            hand_motor_names += ["pinky_flexor", "pinky_pinky_side", "pinky_thumb_side"]
+            hand_motor_values += [
+                hand_joint_dict["pinky_2"],
+                hand_joint_dict["pinky_0"] * pinky_splay + hand_joint_dict["pinky_1"] * (1 - pinky_splay),
+                (100 - hand_joint_dict["pinky_0"]) * pinky_splay + hand_joint_dict["pinky_1"] * (1 - pinky_splay),
+                ]
+
+            hand_motor_values = np.array(hand_motor_values)
+            hand_motor_values = np.clip(hand_motor_values, 0, 100)
+
+        all_pos = np.concatenate((motor_values, hand_motor_values))
+        all_pos = torch.tensor(all_pos, dtype=torch.float32)
+        obs = {"observation.state": all_pos}
+
+        # Capture images from cameras
+        images = {}
+        for name in self.cameras:
+            before_camread_t = time.perf_counter()
+            images[name] = self.cameras[name].async_read()
+            images[name] = torch.from_numpy(images[name])
+            # self.logs[f"read_camera_{name}_dt_s"] = self.cameras[name].logs["delta_timestamp_s"]
+            # self.logs[f"async_read_camera_{name}_dt_s"] = time.perf_counter() - before_camread_t
+
+        for name in self.cameras:
+            obs[f"observation.images.{name}"] = images[name]
+
+        return obs

@@ -225,7 +225,8 @@ def record(
     # Load pretrained policy
     if pretrained_policy_name_or_path is not None:
         policy, policy_fps, device, use_amp = init_policy(pretrained_policy_name_or_path, policy_overrides)
-
+        device="mps"
+        policy.to(device)
         if fps is None:
             fps = policy_fps
             logging.warning(f"No fps provided, so using the fps from policy config ({policy_fps}).")
@@ -508,6 +509,7 @@ if __name__ == "__main__":
     del kwargs["mode"]
     del kwargs["robot_path"]
     del kwargs["robot_overrides"]
+
 
     robot_cfg = init_hydra_config(robot_path, robot_overrides)
     robot = make_robot(robot_cfg)
