@@ -527,7 +527,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             download_audio (bool, optional): Flag to download the audio (see download_videos). Defaults to True.
             video_backend (str | None, optional): Video backend to use for decoding videos. Defaults to torchcodec when available int the platform; otherwise, defaults to 'pyav'.
                 You can also use the 'pyav' decoder used by Torchvision, which used to be the default option, or 'video_reader' which is another decoder of Torchvision.
-            audio_backend (str | None, optional): Audio backend to use for decoding audio. Defaults to 'ffmpeg' decoder used by 'torchaudio'.
+            audio_backend (str | None, optional): Audio backend to use for decoding audio. Defaults to 'torchaudio'.
         """
         super().__init__()
         self.repo_id = repo_id
@@ -539,7 +539,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.revision = revision if revision else CODEBASE_VERSION
         self.video_backend = video_backend if video_backend else get_safe_default_codec()
         self.audio_backend = (
-            audio_backend if audio_backend else "ffmpeg"
+            audio_backend if audio_backend else "trochaudio"
         )  # Waiting for torchcodec release #TODO(CarolinePascal)
         self.delta_indices = None
 
@@ -1229,7 +1229,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.episode_data_index = None
         obj.video_backend = video_backend if video_backend is not None else get_safe_default_codec()
         obj.audio_backend = (
-            audio_backend if audio_backend is not None else "ffmpeg"
+            audio_backend if audio_backend is not None else "trochaudio"
         )  # Waiting for torchcodec release #TODO(CarolinePascal)
         return obj
 
