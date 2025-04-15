@@ -20,6 +20,7 @@ from pathlib import Path
 import av
 import torch
 import torchaudio
+import torchcodec
 from numpy import ceil
 
 CHANNELS_LAYOUTS_MAPPING = {
@@ -56,11 +57,40 @@ def decode_audio(
     Currently supports torchaudio.
     """
     if backend == "torchcodec":
-        raise NotImplementedError("torchcodec is not yet supported for audio decoding")
+        #   return decode_audio_torchcodec(audio_path, timestamps, duration)    #TODO(CarolinePascal): uncomment this line at next torchcodec release
+        raise ValueError("torchcodec backend is not available yet.")
     elif backend == "torchaudio":
         return decode_audio_torchaudio(audio_path, timestamps, duration)
     else:
         raise ValueError(f"Unsupported video backend: {backend}")
+
+
+def decode_audio_torchcodec(
+    audio_path: Path | str,
+    timestamps: list[float],
+    duration: float,
+    log_loaded_timestamps: bool = False,
+) -> torch.Tensor:
+    # TODO(CarolinePascal) : add channels selection
+    audio_decoder = torchcodec.decoders.AudioDecoder(audio_path)
+
+    audio_chunks = []
+    for ts in timestamps:
+        current_audio_chunk = audio_decoder.get_samples_played_in_range(
+            start_seconds=ts, stop_seconds=ts + duration
+        )
+
+        if log_loaded_timestamps:
+            logging.info(
+                f"audio chunk loaded at starting timestamp={current_audio_chunk.pts_seconds:.4f} with duration={current_audio_chunk.duration_seconds:.4f}"
+            )
+
+        audio_chunks.append(current_audio_chunk.data)
+
+    audio_chunks = torch.stack(audio_chunks)
+
+    assert len(timestamps) == len(audio_chunks)
+    return audio_chunks
 
 
 def decode_audio_torchaudio(
