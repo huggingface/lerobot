@@ -32,6 +32,11 @@ from huggingface_hub.constants import REPOCARD_NAME
 from huggingface_hub.errors import RevisionNotFoundError
 
 from lerobot.common.constants import HF_LEROBOT_HOME
+from lerobot.common.datasets.audio_utils import (
+    decode_audio,
+    encode_audio,
+    get_audio_info,
+)
 from lerobot.common.datasets.compute_stats import aggregate_stats, compute_episode_stats
 from lerobot.common.datasets.image_writer import AsyncImageWriter, write_image
 from lerobot.common.datasets.utils import (
@@ -70,11 +75,8 @@ from lerobot.common.datasets.utils import (
 )
 from lerobot.common.datasets.video_utils import (
     VideoFrame,
-    decode_audio,
     decode_video_frames,
-    encode_audio,
     encode_video_frames,
-    get_audio_info,
     get_safe_default_codec,
     get_video_info,
 )
@@ -207,28 +209,8 @@ class LeRobotDatasetMetadata:
 
     @property
     def audio_keys(self) -> list[str]:
-        """Keys to access audio modalities (whether they are linked to a camera or not)."""
+        """Keys to access audio modalities."""
         return [key for key, ft in self.features.items() if ft["dtype"] == "audio"]
-
-    @property
-    def audio_camera_keys_mapping(self) -> dict[str, str]:
-        """Mapping between camera keys and audio keys when both are linked."""
-        return {
-            self.features[camera_key]["audio"]: camera_key
-            for camera_key in self.camera_keys
-            if self.features[camera_key]["audio"] is not None
-            and self.features[camera_key]["dtype"] == "video"
-        }
-
-    @property
-    def linked_audio_keys(self) -> list[str]:
-        """Keys to access audio modalities linked to a camera."""
-        return [key for key in self.audio_keys if key in self.audio_camera_keys_mapping]
-
-    @property
-    def unlinked_audio_keys(self) -> list[str]:
-        """Keys to access audio modalities not linked to a camera."""
-        return [key for key in self.audio_keys if key not in self.audio_camera_keys_mapping]
 
     @property
     def names(self) -> dict[str, list | dict]:
@@ -310,7 +292,7 @@ class LeRobotDatasetMetadata:
             self.update_video_info()
 
         self.info["total_audio"] += len(self.audio_keys)
-        if len(self.unlinked_audio_keys) > 0:
+        if len(self.audio_keys) > 0:
             self.update_audio_info()
 
         write_info(self.info, self.root)
@@ -342,7 +324,7 @@ class LeRobotDatasetMetadata:
         Warning: this function writes info from first episode audio, implicitly assuming that all audio have
         been encoded the same way. Also, this means it assumes the first episode exists.
         """
-        for key in self.unlinked_audio_keys:
+        for key in self.audio_keys:
             if (
                 not self.features[key].get("info", None)
                 or (len(self.features[key]["info"]) == 1 and "sample_rate" in self.features[key]["info"])
@@ -480,17 +462,31 @@ class LeRobotDataset(torch.utils.data.Dataset):
         │   ├── info.json
         │   ├── stats.json
         │   └── tasks.jsonl
-        └── videos
+        ├── videos
+        │   ├── chunk-000
+        │   │   ├── observation.images.laptop
+        │   │   │   ├── episode_000000.mp4
+        │   │   │   ├── episode_000001.mp4
+        │   │   │   ├── episode_000002.mp4
+        │   │   │   └── ...
+        │   │   ├── observation.images.phone
+        │   │   │   ├── episode_000000.mp4
+        │   │   │   ├── episode_000001.mp4
+        │   │   │   ├── episode_000002.mp4
+        │   │   │   └── ...
+        │   ├── chunk-001
+        │   └── ...
+        └── audio
             ├── chunk-000
-            │   ├── observation.images.laptop
-            │   │   ├── episode_000000.mp4
-            │   │   ├── episode_000001.mp4
-            │   │   ├── episode_000002.mp4
+            │   ├── observation.audio.laptop
+            │   │   ├── episode_000000.m4a
+            │   │   ├── episode_000001.m4a
+            │   │   ├── episode_000002.m4a
             │   │   └── ...
-            │   ├── observation.images.phone
-            │   │   ├── episode_000000.mp4
-            │   │   ├── episode_000001.mp4
-            │   │   ├── episode_000002.mp4
+            │   ├── observation.audio.phone
+            │   │   ├── episode_000000.m4a
+            │   │   ├── episode_000001.m4a
+            │   │   ├── episode_000002.m4a
             │   │   └── ...
             ├── chunk-001
             └── ...
@@ -569,9 +565,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             self.hf_dataset = self.load_hf_dataset()
         except (AssertionError, FileNotFoundError, NotADirectoryError):
             self.revision = get_safe_version(self.repo_id, self.revision)
-            self.download_episodes(
-                download_videos, download_audio
-            )  # Audio embedded in video files (.mp4) will be downloaded if download_videos is set to True, regardless of the value of download_audio
+            self.download_episodes(download_videos, download_audio)
             self.hf_dataset = self.load_hf_dataset()
 
         self.episode_data_index = get_episode_data_index(self.meta.episodes, self.episodes)
@@ -582,7 +576,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         ep_data_index_np = {k: t.numpy() for k, t in self.episode_data_index.items()}
         check_timestamps_sync(timestamps, episode_indices, ep_data_index_np, self.fps, self.tolerance_s)
 
-        # TODO(CarolinePascal) : add check for audio duration with respect to video duration and episode duration.
+        # TODO(CarolinePascal) : add check for audio duration with respect to episode duration BUT this will be CPU expensive if there are many episodes !
 
         # Setup delta_indices
         if self.delta_timestamps is not None:
@@ -604,9 +598,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
     ) -> None:
         ignore_patterns = ["images/"]
         if not push_videos:
-            ignore_patterns.append(
-                "videos/"
-            )  # Audio embedded in video files (.mp4) will be automatically pushed if videos are pushed
+            ignore_patterns.append("videos/")
         if not push_audio:
             ignore_patterns.append("audio/")
 
@@ -675,9 +667,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         files = None
         ignore_patterns = []
         if not download_videos:
-            ignore_patterns.append(
-                "videos/"
-            )  # Audio embedded in video files (.mp4) will be automatically downloaded if videos are downloaded
+            ignore_patterns.append("videos/")
         if not download_audio:
             ignore_patterns.append("audio/")
         if self.episodes is not None:
@@ -696,10 +686,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
             ]
             fpaths += video_files
 
-        if len(self.meta.unlinked_audio_keys) > 0:
+        if len(self.meta.audio_keys) > 0:
             audio_files = [
                 str(self.meta.get_compressed_audio_file_path(ep_idx, audio_key))
-                for audio_key in self.meta.unlinked_audio_keys
+                for audio_key in self.meta.audio_keys
                 for ep_idx in episodes
             ]
             fpaths += audio_files
@@ -792,7 +782,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         query_indices: dict[str, list[int]] | None = None,
     ) -> dict[str, list[float]]:
         query_timestamps = {}
-        for key in self.meta.audio_keys:  # Standalone audio and audio embedded in video as well !
+        for key in self.meta.audio_keys:
             if query_indices is not None and key in query_indices:
                 timestamps = self.hf_dataset.select(query_indices[key])["timestamp"]
                 query_timestamps[key] = torch.stack(timestamps).tolist()
@@ -828,14 +818,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
     ) -> dict[str, torch.Tensor]:
         item = {}
         for audio_key, query_ts in query_timestamps.items():
-            # Audio stored with video in a single .mp4 file
-            if audio_key in self.meta.linked_audio_keys:
-                audio_path = self.root / self.meta.get_video_file_path(
-                    ep_idx, self.meta.audio_camera_keys_mapping[audio_key]
-                )
-            # Audio stored alone in a separate .m4a file
-            else:
-                audio_path = self.root / self.meta.get_compressed_audio_file_path(ep_idx, audio_key)
+            audio_path = self.root / self.meta.get_compressed_audio_file_path(ep_idx, audio_key)
             audio_chunk = decode_audio(audio_path, query_ts, query_duration, self.audio_backend)
             item[audio_key] = audio_chunk.squeeze(0)
         return item
@@ -966,7 +949,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             elif self.features[key]["dtype"] == "audio":
                 if (
                     self.meta.robot_type is not None and self.meta.robot_type.startswith("lekiwi")
-                ):  # Rw data storage should only be triggered for LeKiwi robot, for which audio is stored chunk by chunk in a visual frame-like manner
+                ):  # Raw data storage should only be triggered for LeKiwi robot, for which audio is stored chunk by chunk in a visual frame-like manner
                     self.episode_buffer[key].append(frame[key])
                 else:  # Otherwise, only the audio file path is stored in the episode buffer
                     if frame_index == 0:
@@ -1062,12 +1045,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         ep_stats = compute_episode_stats(episode_buffer, self.features)
 
         if len(self.meta.video_keys) > 0:
-            video_paths = self.encode_episode_videos(episode_index)
-            for key in self.meta.video_keys:
-                episode_buffer[key] = video_paths[key]
+            self.encode_episode_videos(episode_index)
 
-        if len(self.meta.unlinked_audio_keys) > 0:  # Linked audio is already encoded in the video files
-            _ = self.encode_episode_audio(episode_index)
+        if len(self.meta.audio_keys) > 0:
+            self.encode_episode_audio(episode_index)
 
         # `meta.save_episode` be executed after encoding the videos
         self.meta.save_episode(episode_index, episode_length, episode_tasks, ep_stats)
@@ -1177,12 +1158,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 episode_index=episode_index, image_key=video_key, frame_index=0
             ).parent
 
-            audio_path = None
-            if self.meta.features[video_key]["audio"] is not None:
-                audio_key = self.meta.features[video_key]["audio"]
-                audio_path = self._get_raw_audio_file_path(episode_index, audio_key)
-
-            encode_video_frames(img_dir, video_path, self.fps, audio_path=audio_path, overwrite=True)
+            encode_video_frames(img_dir, video_path, self.fps, overwrite=True)
 
         return video_paths
 
@@ -1193,7 +1169,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         since video encoding with ffmpeg is already using multithreading.
         """
         audio_paths = {}
-        for audio_key in self.meta.unlinked_audio_keys:
+        for audio_key in self.meta.audio_keys:
             input_audio_path = self.root / self._get_raw_audio_file_path(episode_index, audio_key)
             output_audio_path = self.root / self.meta.get_compressed_audio_file_path(episode_index, audio_key)
 

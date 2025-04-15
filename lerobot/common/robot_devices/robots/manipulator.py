@@ -181,7 +181,6 @@ class ManipulatorRobot:
                 "shape": (cam.height, cam.width, cam.channels),
                 "names": ["height", "width", "channels"],
                 "info": None,
-                "audio": "observation.audio." + cam.microphone if cam.microphone is not None else None,
             }
         return cam_ft
 
@@ -211,7 +210,9 @@ class ManipulatorRobot:
                 "dtype": "audio",
                 "shape": (len(mic.channels),),
                 "names": "channels",
-                "info": {"sample_rate": mic.sample_rate},
+                "info": {
+                    "sample_rate": mic.sample_rate
+                },  # we need to store the sample rate here in the case of audio chunks recording (for LeKiwi), as it will not be available anymore when writing the audio file
             }
         return mic_ft
 
