@@ -144,17 +144,15 @@ class SO100Follower(Robot):
         print("Calibration saved to", self.calibration_fpath)
 
     def configure(self) -> None:
-        self.arm.disable_torque()
-        self.arm.configure_motors()
-        for name in self.arm.names:
-            self.arm.write("Operating_Mode", name, OperatingMode.POSITION.value)
-            # Set P_Coefficient to lower value to avoid shakiness (Default is 32)
-            self.arm.write("P_Coefficient", name, 16)
-            # Set I_Coefficient and D_Coefficient to default value 0 and 32
-            self.arm.write("I_Coefficient", name, 0)
-            self.arm.write("D_Coefficient", name, 32)
-
-        self.arm.enable_torque()
+        with self.arm.torque_disabled():
+            self.arm.configure_motors()
+            for name in self.arm.names:
+                self.arm.write("Operating_Mode", name, OperatingMode.POSITION.value)
+                # Set P_Coefficient to lower value to avoid shakiness (Default is 32)
+                self.arm.write("P_Coefficient", name, 16)
+                # Set I_Coefficient and D_Coefficient to default value 0 and 32
+                self.arm.write("I_Coefficient", name, 0)
+                self.arm.write("D_Coefficient", name, 32)
 
     def get_observation(self) -> dict[str, Any]:
         if not self.is_connected:

@@ -21,6 +21,7 @@
 
 import abc
 import logging
+from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
 from functools import cached_property
@@ -462,6 +463,14 @@ class MotorsBus(abc.ABC):
     @abc.abstractmethod
     def enable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
         pass
+
+    @contextmanager
+    def torque_disabled(self):
+        self.disable_torque()
+        try:
+            yield
+        finally:
+            self.enable_torque()
 
     def set_timeout(self, timeout_ms: int | None = None):
         timeout_ms = timeout_ms if timeout_ms is not None else self.default_timeout
