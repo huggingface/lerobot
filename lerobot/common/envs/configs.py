@@ -192,6 +192,7 @@ class EnvWrapperConfig:
     display_cameras: bool = False
     use_relative_joint_positions: bool = True
     add_joint_velocity_to_observation: bool = False
+    add_current_to_observation: bool = False
     add_ee_pose_to_observation: bool = False
     crop_params_dict: Optional[Dict[str, Tuple[int, int, int, int]]] = None
     resize_size: Optional[Tuple[int, int]] = None
