@@ -9,7 +9,7 @@ class Camera(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def read(self, temporary_color: str | None = None) -> np.ndarray:
+    def read(self, temporary_color_mode: str | None = None) -> np.ndarray:
         pass
 
     @abc.abstractmethod

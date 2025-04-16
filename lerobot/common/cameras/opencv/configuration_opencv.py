@@ -24,7 +24,6 @@ class OpenCVCameraConfig(CameraConfig):
     color_mode: str = "rgb"
     channels: int | None = None
     rotation: int | None = None
-    mock: bool = False
 
     def __post_init__(self):
         if self.color_mode not in ["rgb", "bgr"]:

@@ -24,7 +24,6 @@ import shutil
 import threading
 import time
 from pathlib import Path
-from threading import Thread
 
 import numpy as np
 from PIL import Image
@@ -36,6 +35,7 @@ from lerobot.common.utils.robot_utils import (
 from lerobot.common.utils.utils import capture_timestamp_utc
 
 from ..camera import Camera
+from ..interface_camera_sdk import IOpenCVSDK, OpenCVSDKAdapter
 from .configuration_opencv import OpenCVCameraConfig
 
 # The maximum opencv device index depends on your operating system. For instance,
@@ -46,12 +46,17 @@ from .configuration_opencv import OpenCVCameraConfig
 MAX_OPENCV_INDEX = 60
 
 
-def find_cameras(raise_when_empty=False, max_index_search_range=MAX_OPENCV_INDEX, mock=False) -> list[dict]:
+def find_cameras(
+    raise_when_empty=False, max_index_search_range=MAX_OPENCV_INDEX, cv2_sdk: IOpenCVSDK = None
+) -> list[dict]:
+    if cv2_sdk is None:
+        cv2_sdk = OpenCVSDKAdapter()
+
     cameras = []
     if platform.system() == "Linux":
         print("Linux detected. Finding available camera indices through scanning '/dev/video*' ports")
         possible_ports = [str(port) for port in Path("/dev").glob("video*")]
-        ports = _find_cameras(possible_ports, mock=mock)
+        ports = _find_cameras(possible_ports, cv2_sdk=cv2_sdk)
         for port in ports:
             cameras.append(
                 {
@@ -65,7 +70,7 @@ def find_cameras(raise_when_empty=False, max_index_search_range=MAX_OPENCV_INDEX
             f"scanning all indices from 0 to {MAX_OPENCV_INDEX}"
         )
         possible_indices = range(max_index_search_range)
-        indices = _find_cameras(possible_indices, mock=mock)
+        indices = _find_cameras(possible_indices, cv2_sdk=cv2_sdk)
         for index in indices:
             cameras.append(
                 {
@@ -78,16 +83,14 @@ def find_cameras(raise_when_empty=False, max_index_search_range=MAX_OPENCV_INDEX
 
 
 def _find_cameras(
-    possible_camera_ids: list[int | str], raise_when_empty=False, mock=False
+    possible_camera_ids: list[int | str], raise_when_empty=False, cv2_sdk: IOpenCVSDK = None
 ) -> list[int | str]:
-    if mock:
-        import tests.cameras.mock_cv2 as cv2
-    else:
-        import cv2
+    if cv2_sdk is None:
+        cv2_sdk = OpenCVSDKAdapter()
 
     camera_ids = []
     for camera_idx in possible_camera_ids:
-        camera = cv2.VideoCapture(camera_idx)
+        camera = cv2_sdk.VideoCapture(camera_idx)
         is_open = camera.isOpened()
         camera.release()
 
@@ -128,21 +131,24 @@ def save_images_from_cameras(
     width=None,
     height=None,
     record_time_s=2,
-    mock=False,
+    cv2_sdk: IOpenCVSDK = None,
 ):
     """
     Initializes all the cameras and saves images to the directory. Useful to visually identify the camera
     associated to a given camera index.
     """
+    if cv2_sdk is None:
+        cv2_sdk = OpenCVSDKAdapter()
+
     if camera_ids is None or len(camera_ids) == 0:
-        camera_infos = find_cameras(mock=mock)
+        camera_infos = find_cameras(cv2_sdk=cv2_sdk)
         camera_ids = [cam["index"] for cam in camera_infos]
 
     print("Connecting cameras")
     cameras = []
     for cam_idx in camera_ids:
-        config = OpenCVCameraConfig(camera_index=cam_idx, fps=fps, width=width, height=height, mock=mock)
-        camera = OpenCVCamera(config)
+        config = OpenCVCameraConfig(camera_index=cam_idx, fps=fps, width=width, height=height)
+        camera = OpenCVCamera(config, cv2_sdk=cv2_sdk)
         camera.connect()
         print(
             f"OpenCVCamera({camera.camera_index}, fps={camera.fps}, width={camera.capture_width}, "
@@ -229,10 +235,15 @@ class OpenCVCamera(Camera):
     ```
     """
 
-    def __init__(self, config: OpenCVCameraConfig):
+    def __init__(self, config: OpenCVCameraConfig, cv2_sdk: IOpenCVSDK = None):
         self.config = config
         self.camera_index = config.camera_index
         self.port = None
+
+        if cv2_sdk is None:
+            cv2_sdk = OpenCVSDKAdapter()
+
+        self.cv2_sdk = cv2_sdk
 
         # Linux uses ports for connecting to cameras
         if platform.system() == "Linux":
@@ -260,7 +271,6 @@ class OpenCVCamera(Camera):
         self.fps = config.fps
         self.channels = config.channels
         self.color_mode = config.color_mode
-        self.mock = config.mock
 
         self.camera = None
         self.is_connected = False
@@ -269,46 +279,38 @@ class OpenCVCamera(Camera):
         self.color_image = None
         self.logs = {}
 
-        if self.mock:
-            import tests.cameras.mock_cv2 as cv2
-        else:
-            import cv2
-
         self.rotation = None
         if config.rotation == -90:
-            self.rotation = cv2.ROTATE_90_COUNTERCLOCKWISE
+            self.rotation = cv2_sdk.ROTATE_90_COUNTERCLOCKWISE
         elif config.rotation == 90:
-            self.rotation = cv2.ROTATE_90_CLOCKWISE
+            self.rotation = cv2_sdk.ROTATE_90_CLOCKWISE
         elif config.rotation == 180:
-            self.rotation = cv2.ROTATE_180
+            self.rotation = cv2_sdk.ROTATE_180
 
     def connect(self):
         if self.is_connected:
             raise DeviceAlreadyConnectedError(f"OpenCVCamera({self.camera_index}) is already connected.")
 
-        if self.mock:
-            import tests.cameras.mock_cv2 as cv2
-        else:
-            import cv2
+        cv2_sdk = self.cv2_sdk
 
-            # Use 1 thread to avoid blocking the main thread. Especially useful during data collection
-            # when other threads are used to save the images.
-            cv2.setNumThreads(1)
+        # Use 1 thread to avoid blocking the main thread. Especially useful during data collection
+        # when other threads are used to save the images.
+        cv2_sdk.setNumThreads(1)
 
         backend = (
-            cv2.CAP_V4L2
+            cv2_sdk.CAP_V4L2
             if platform.system() == "Linux"
-            else cv2.CAP_DSHOW
+            else cv2_sdk.CAP_DSHOW
             if platform.system() == "Windows"
-            else cv2.CAP_AVFOUNDATION
+            else cv2_sdk.CAP_AVFOUNDATION
             if platform.system() == "Darwin"
-            else cv2.CAP_ANY
+            else cv2_sdk.CAP_ANY
         )
 
         camera_idx = f"/dev/video{self.camera_index}" if platform.system() == "Linux" else self.camera_index
         # First create a temporary camera trying to access `camera_index`,
         # and verify it is a valid camera by calling `isOpened`.
-        tmp_camera = cv2.VideoCapture(camera_idx, backend)
+        tmp_camera = cv2_sdk.VideoCapture(camera_idx, backend)
         is_camera_open = tmp_camera.isOpened()
         # Release camera to make it accessible for `find_camera_indices`
         tmp_camera.release()
@@ -318,7 +320,7 @@ class OpenCVCamera(Camera):
         # valid cameras.
         if not is_camera_open:
             # Verify that the provided `camera_index` is valid before printing the traceback
-            cameras_info = find_cameras()
+            cameras_info = find_cameras(cv2_sdk=cv2_sdk)
             available_cam_ids = [cam["index"] for cam in cameras_info]
             if self.camera_index not in available_cam_ids:
                 raise ValueError(
@@ -331,18 +333,18 @@ class OpenCVCamera(Camera):
         # Secondly, create the camera that will be used downstream.
         # Note: For some unknown reason, calling `isOpened` blocks the camera which then
         # needs to be re-created.
-        self.camera = cv2.VideoCapture(camera_idx, backend)
+        self.camera = cv2_sdk.VideoCapture(camera_idx, backend)
 
         if self.fps is not None:
-            self.camera.set(cv2.CAP_PROP_FPS, self.fps)
+            self.camera.set(cv2_sdk.CAP_PROP_FPS, self.fps)
         if self.capture_width is not None:
-            self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, self.capture_width)
+            self.camera.set(cv2_sdk.CAP_PROP_FRAME_WIDTH, self.capture_width)
         if self.capture_height is not None:
-            self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, self.capture_height)
+            self.camera.set(cv2_sdk.CAP_PROP_FRAME_HEIGHT, self.capture_height)
 
-        actual_fps = self.camera.get(cv2.CAP_PROP_FPS)
-        actual_width = self.camera.get(cv2.CAP_PROP_FRAME_WIDTH)
-        actual_height = self.camera.get(cv2.CAP_PROP_FRAME_HEIGHT)
+        actual_fps = self.camera.get(cv2_sdk.CAP_PROP_FPS)
+        actual_width = self.camera.get(cv2_sdk.CAP_PROP_FRAME_WIDTH)
+        actual_height = self.camera.get(cv2_sdk.CAP_PROP_FRAME_HEIGHT)
 
         # Using `math.isclose` since actual fps can be a float (e.g. 29.9 instead of 30)
         if self.fps is not None and not math.isclose(self.fps, actual_fps, rel_tol=1e-3):
@@ -380,6 +382,8 @@ class OpenCVCamera(Camera):
                 f"OpenCVCamera({self.camera_index}) is not connected. Try running `camera.connect()` first."
             )
 
+        cv2_sdk = self.cv2_sdk
+
         start_time = time.perf_counter()
 
         ret, color_image = self.camera.read()
@@ -398,12 +402,7 @@ class OpenCVCamera(Camera):
         # However, Deep Learning framework such as LeRobot uses RGB format as default to train neural networks,
         # so we convert the image color from BGR to RGB.
         if requested_color_mode == "rgb":
-            if self.mock:
-                import tests.cameras.mock_cv2 as cv2
-            else:
-                import cv2
-
-            color_image = cv2.cvtColor(color_image, cv2.COLOR_BGR2RGB)
+            color_image = cv2_sdk.cvtColor(color_image, cv2_sdk.COLOR_BGR2RGB)
 
         h, w, _ = color_image.shape
         if h != self.capture_height or w != self.capture_width:
@@ -412,7 +411,7 @@ class OpenCVCamera(Camera):
             )
 
         if self.rotation is not None:
-            color_image = cv2.rotate(color_image, self.rotation)
+            color_image = cv2_sdk.rotate(color_image, self.rotation)
 
         # log the number of seconds it took to read the image
         self.logs["delta_timestamp_s"] = time.perf_counter() - start_time
@@ -439,7 +438,7 @@ class OpenCVCamera(Camera):
 
         if self.thread is None:
             self.stop_event = threading.Event()
-            self.thread = Thread(target=self.read_loop, args=())
+            self.thread = threading.Thread(target=self.read_loop, args=())
             self.thread.daemon = True
             self.thread.start()
 
