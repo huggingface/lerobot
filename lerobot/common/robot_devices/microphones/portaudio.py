@@ -251,10 +251,11 @@ class PortAudioMicrophone:
         # Can only be run on a single process/thread for file writing safety
         with sf.SoundFile(
             output_file,
-            mode="x",
+            mode="w",
             samplerate=sample_rate,
             channels=max(channels),
-            subtype=sf.default_subtype(output_file.suffix[1:]),
+            format="WAV",
+            subtype="FLOAT",    # By default, a much lower quality WAV file is created !
         ) as file:
             while not event.is_set():
                 try:
