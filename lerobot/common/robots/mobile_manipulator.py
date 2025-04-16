@@ -684,7 +684,7 @@ class LeKiwi:
         """
         Reads the raw speeds for all wheels. Returns a dictionary with motor names:
         """
-        raw_speeds = self.motor_bus.read("Present_Speed", self.motor_ids)
+        raw_speeds = self.motor_bus.read("Present_Velocity", self.motor_ids)
         return {
             "left_wheel": int(raw_speeds[0]),
             "back_wheel": int(raw_speeds[1]),
@@ -696,9 +696,9 @@ class LeKiwi:
         Sends raw velocity commands (16-bit encoded values) directly to the motor bus.
         The order of speeds must correspond to self.motor_ids.
         """
-        self.motor_bus.write("Goal_Speed", command_speeds, self.motor_ids)
+        self.motor_bus.write("Goal_Velocity", command_speeds, self.motor_ids)
 
     def stop(self):
         """Stops the robot by setting all motor speeds to zero."""
-        self.motor_bus.write("Goal_Speed", [0, 0, 0], self.motor_ids)
+        self.motor_bus.write("Goal_Velocity", [0, 0, 0], self.motor_ids)
         print("Motors stopped.")
