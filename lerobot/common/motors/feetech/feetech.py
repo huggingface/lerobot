@@ -173,6 +173,43 @@ class FeetechMotorsBus(MotorsBus):
             self.write("Maximum_Acceleration", motor, 254)
             self.write("Acceleration", motor, 254)
 
+    def read_calibration(self) -> dict[str, MotorCalibration]:
+        if self.protocol_version == 0:
+            offsets = self.sync_read("Homing_Offset", normalize=False)
+            mins = self.sync_read("Min_Position_Limit", normalize=False)
+            maxes = self.sync_read("Max_Position_Limit", normalize=False)
+            drive_modes = dict.fromkeys(self.motors, 0)
+        else:
+            offsets, mins, maxes, drive_modes = {}, {}, {}, {}
+            for motor in self.motors:
+                offsets[motor] = 0
+                mins[motor] = self.read("Min_Position_Limit", motor, normalize=False)
+                maxes[motor] = self.read("Max_Position_Limit", motor, normalize=False)
+                drive_modes[motor] = 0
+
+        # TODO(aliberts): add set/get_drive_mode?
+
+        calibration = {}
+        for name, motor in self.motors.items():
+            calibration[name] = MotorCalibration(
+                id=motor.id,
+                drive_mode=drive_modes[name],
+                homing_offset=offsets[name],
+                range_min=mins[name],
+                range_max=maxes[name],
+            )
+
+        return calibration
+
+    def write_calibration(self, calibration_dict: dict[str, MotorCalibration]) -> None:
+        for motor, calibration in calibration_dict.items():
+            if self.protocol_version == 0:
+                self.write("Homing_Offset", motor, calibration.homing_offset)
+            self.write("Min_Position_Limit", motor, calibration.range_min)
+            self.write("Max_Position_Limit", motor, calibration.range_max)
+
+        self.calibration = calibration_dict
+
     def _get_half_turn_homings(self, positions: dict[NameOrID, Value]) -> dict[NameOrID, Value]:
         """
         On Feetech Motors:

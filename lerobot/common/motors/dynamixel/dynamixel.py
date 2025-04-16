@@ -145,6 +145,32 @@ class DynamixelMotorsBus(MotorsBus):
         for motor in self.motors:
             self.write("Return_Delay_Time", motor, 0)
 
+    def read_calibration(self) -> dict[str, MotorCalibration]:
+        offsets = self.sync_read("Homing_Offset", normalize=False)
+        mins = self.sync_read("Min_Position_Limit", normalize=False)
+        maxes = self.sync_read("Max_Position_Limit", normalize=False)
+        drive_modes = self.sync_read("Drive_Mode", normalize=False)
+
+        calibration = {}
+        for name, motor in self.motors.items():
+            calibration[name] = MotorCalibration(
+                id=motor.id,
+                drive_mode=drive_modes[name],
+                homing_offset=offsets[name],
+                range_min=mins[name],
+                range_max=maxes[name],
+            )
+
+        return calibration
+
+    def write_calibration(self, calibration_dict: dict[str, MotorCalibration]) -> None:
+        for motor, calibration in calibration_dict.items():
+            self.write("Homing_Offset", motor, calibration.homing_offset)
+            self.write("Min_Position_Limit", motor, calibration.range_min)
+            self.write("Max_Position_Limit", motor, calibration.range_max)
+
+        self.calibration = calibration_dict
+
     def disable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
         for name in self._get_motors_list(motors):
             self.write("Torque_Enable", name, TorqueMode.DISABLED.value, num_retry=num_retry)
