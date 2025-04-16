@@ -12,19 +12,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .configs import MicrophoneConfig
-from .microphone import Microphone
-
-
-def make_microphones_from_configs(microphone_configs: dict[str, MicrophoneConfig]) -> dict[str, Microphone]:
-    microphones = {}
-
-    for key, cfg in microphone_configs.items():
-        if cfg.type == "portaudio":
-            from .portaudio import PortAudioMicrophone
-
-            microphones[key] = PortAudioMicrophone(cfg)
-        else:
-            raise ValueError(f"The microphone type '{cfg.type}' is not valid.")
-
-    return microphones
+from .configuration_portaudio import PortAudioMicrophoneConfig
+from .microphone_portaudio import PortAudioMicrophone
