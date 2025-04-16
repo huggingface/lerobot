@@ -341,17 +341,17 @@ def test_image_array_to_pil_image_wrong_range_float_0_255():
 def test_add_frame_audio(audio_dataset):
     dataset = audio_dataset
 
-    microphone = make_microphone(microphone_type="microphone", mock=True)
+    microphone = make_microphone(microphone_type="portaudio", mock=True)
     microphone.connect()
 
-    dataset.add_microphone_recording(microphone, "microphone")
+    dataset.add_microphone_recording(microphone, "microphone_key")
     time.sleep(1.0)
     dataset.add_frame({"observation.audio.microphone": microphone.read(), "task": "Dummy task"})
     microphone.stop_recording()
 
     dataset.save_episode()
 
-    assert dataset[0]["observation.audio.microphone"].shape == torch.Size(
+    assert dataset[0]["observation.audio.microphone_key"].shape == torch.Size(
         (int(DEFAULT_AUDIO_CHUNK_DURATION * microphone.sample_rate), DUMMY_AUDIO_CHANNELS)
     )
 

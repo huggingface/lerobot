@@ -348,7 +348,7 @@ def make_camera(camera_type: str, **kwargs) -> Camera:
 
 
 def make_microphone(microphone_type: str, **kwargs) -> Microphone:
-    if microphone_type == "microphone":
+    if microphone_type == "portaudio":
         microphone_index = kwargs.pop("microphone_index", MICROPHONE_INDEX)
         return make_microphone_device(microphone_type, microphone_index=microphone_index, **kwargs)
     else:
