@@ -1066,11 +1066,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
             shutil.rmtree(self.root / "images")
 
         # delete raw audio files
-        raw_audio_files = list(self.root.rglob("*.wav"))
-        for raw_audio_file in raw_audio_files:
-            raw_audio_file.unlink()
-            if len(list(raw_audio_file.parent.iterdir())) == 0:
-                raw_audio_file.parent.rmdir()
+        img_dir = self.root / "raw_audio"
+        if img_dir.is_dir():
+            shutil.rmtree(self.root / "raw_audio")
 
         if not episode_data:  # Reset the buffer
             self.episode_buffer = self.create_episode_buffer()
