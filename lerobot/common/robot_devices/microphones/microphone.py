@@ -302,7 +302,12 @@ class Microphone:
 
         return audio_readings
 
-    def start_recording(self, output_file: str | None = None, multiprocessing: bool | None = False) -> None:
+    def start_recording(
+        self,
+        output_file: str | None = None,
+        multiprocessing: bool | None = False,
+        overwrite: bool | None = True,
+    ) -> None:
         """
         Starts the recording of the microphone. If output_file is provided, the audio will be written to this file.
         """
@@ -323,8 +328,15 @@ class Microphone:
         # Write recordings into a file if output_file is provided
         if output_file is not None:
             output_file = Path(output_file)
+            output_file.parent.mkdir(parents=True, exist_ok=True)
+
             if output_file.exists():
-                output_file.unlink()
+                if overwrite:
+                    output_file.unlink()
+                else:
+                    raise FileExistsError(
+                        f"Output file {output_file} already exists. Set overwrite to True to overwrite it."
+                    )
 
             if multiprocessing:
                 self.record_stop_event = process_Event()

@@ -967,17 +967,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         Starts recording audio data provided by the microphone and directly writes it in a .wav file.
         """
 
-        audio_dir = self._get_raw_audio_file_path(
-            self.num_episodes, "observation.audio." + microphone_key
-        ).parent
-        if not audio_dir.is_dir():
-            audio_dir.mkdir(parents=True, exist_ok=True)
-
-        microphone.start_recording(
-            output_file=self._get_raw_audio_file_path(
-                self.num_episodes, "observation.audio." + microphone_key
-            )
-        )
+        audio_file = self._get_raw_audio_file_path(self.num_episodes, "observation.audio." + microphone_key)
+        microphone.start_recording(output_file=audio_file)
 
     def save_episode(self, episode_data: dict | None = None) -> None:
         """
