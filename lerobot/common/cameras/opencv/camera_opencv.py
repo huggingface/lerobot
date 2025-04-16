@@ -287,17 +287,11 @@ class OpenCVCamera(Camera):
         )
 
         camera_idx = f"/dev/video{self.camera_index}" if platform.system() == "Linux" else self.camera_index
-        # First create a temporary camera trying to access `camera_index`,
-        # and verify it is a valid camera by calling `isOpened`.
-        tmp_camera = cv2.VideoCapture(camera_idx, backend)
-        is_camera_open = tmp_camera.isOpened()
-        # Release camera to make it accessible for `find_camera_indices`
-        tmp_camera.release()
-        del tmp_camera
 
-        # If the camera doesn't work, display the camera indices corresponding to
-        # valid cameras.
-        if not is_camera_open:
+        self.camera = cv2.VideoCapture(camera_idx, backend)
+
+        if not self.camera.isOpened():
+            self.camera.release()  # Release the failed attempt
             # Verify that the provided `camera_index` is valid before printing the traceback
             cameras_info = find_cameras()
             available_cam_ids = [cam["index"] for cam in cameras_info]
@@ -308,11 +302,6 @@ class OpenCVCamera(Camera):
                 )
 
             raise OSError(f"Can't access OpenCVCamera({camera_idx}).")
-
-        # Secondly, create the camera that will be used downstream.
-        # Note: For some unknown reason, calling `isOpened` blocks the camera which then
-        # needs to be re-created.
-        self.camera = cv2.VideoCapture(camera_idx, backend)
 
         if self.fps is not None:
             self.camera.set(cv2.CAP_PROP_FPS, self.fps)
