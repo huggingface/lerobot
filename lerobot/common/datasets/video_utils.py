@@ -247,7 +247,7 @@ def encode_video_frames(
     imgs_dir: Path | str,
     video_path: Path | str,
     fps: int,
-    vcodec: str = "libx264",    #undo
+    vcodec: str = "libx264",  # undo
     pix_fmt: str = "yuv420p",
     g: int | None = 2,
     crf: int | None = 30,

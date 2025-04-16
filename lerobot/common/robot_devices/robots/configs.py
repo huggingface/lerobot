@@ -493,7 +493,7 @@ class So100RobotConfig(ManipulatorRobotConfig):
                 fps=30,
                 width=640,
                 height=360,
-            )
+            ),
         }
     )
 
@@ -559,7 +559,7 @@ class LeKiwiRobotConfig(RobotConfig):
             ),
             "mobile": OpenCVCameraConfig(
                 camera_index="/dev/video0", fps=30, width=320, height=240, rotation=90
-            )
+            ),
         }
     )
 
@@ -696,7 +696,7 @@ class So100AlohaRobotConfig(ManipulatorRobotConfig):
                     "wrist_roll": [5, "sts3215"],
                     "gripper": [6, "sts3215"],
                 },
-            )
+            ),
         }
     )
 
@@ -719,9 +719,8 @@ class So100AlohaRobotConfig(ManipulatorRobotConfig):
                 fps=30,
                 width=640,
                 height=360,
-            )
+            ),
         }
     )
 
     mock: bool = False
-
