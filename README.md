@@ -178,6 +178,7 @@ Under the hood, the `LeRobotDataset` format makes use of several ways to seriali
 Here are the important details and internal structure organization of a typical `LeRobotDataset` instantiated with `dataset = LeRobotDataset("lerobot/aloha_static_coffee")`. The exact features will change from dataset to dataset but not the main aspects:
 
 ```
+TODO: IMPROVE
 dataset attributes:
   ├ hf_dataset: a Hugging Face dataset (backed by Arrow/parquet). Typical features example:
   │  ├ observation.images.cam_high (VideoFrame):
@@ -190,7 +191,7 @@ dataset attributes:
   │  ├ timestamp (float32): timestamp in the episode
   │  ├ next.done (bool): indicates the end of en episode ; True for the last frame in each episode
   │  └ index (int64): general index in the whole dataset
-  ├ episode_data_index: contains 2 tensors with the start and end indices of each episode
+  ├ meta: contains 2 tensors with the start and end indices of each episode
   │  ├ from (1D int64 tensor): first frame index for each episode — shape (num episodes,) starts with 0
   │  └ to: (1D int64 tensor): last frame index for each episode — shape (num episodes,)
   ├ stats: a dictionary of statistics (max, mean, min, std) for each feature in the dataset, for instance

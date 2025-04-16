@@ -21,7 +21,6 @@ import shutil
 import subprocess
 import tempfile
 from collections.abc import Iterator
-from itertools import accumulate
 from pathlib import Path
 from pprint import pformat
 from types import SimpleNamespace
@@ -56,23 +55,23 @@ DEFAULT_FILE_SIZE_IN_MB = 500.0  # Max size per file
 
 # Keep legacy for `convert_dataset_v21_to_v30.py`
 LEGACY_EPISODES_PATH = "meta/episodes.jsonl"
-LEGACY_STATS_PATH = "meta/stats.json"
 LEGACY_EPISODES_STATS_PATH = "meta/episodes_stats.jsonl"
 LEGACY_TASKS_PATH = "meta/tasks.jsonl"
 LEGACY_DEFAULT_VIDEO_PATH = "videos/chunk-{episode_chunk:03d}/{video_key}/episode_{episode_index:06d}.mp4"
 LEGACY_DEFAULT_PARQUET_PATH = "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet"
 
-# TODO
-DEFAULT_IMAGE_PATH = "images/{image_key}/episode_{episode_index:06d}/frame_{frame_index:06d}.png"
+DEFAULT_IMAGE_PATH = "images/{image_key}/episode-{episode_index:06d}/frame-{frame_index:06d}.png"
+
+INFO_PATH = "meta/info.json"
+STATS_PATH = "meta/stats.json"
 
 EPISODES_DIR = "meta/episodes"
 DATA_DIR = "data"
 VIDEO_DIR = "videos"
 
-INFO_PATH = "meta/info.json"
 CHUNK_FILE_PATTERN = "chunk-{chunk_index:03d}/file-{file_index:03d}"
-DEFAULT_EPISODES_PATH = EPISODES_DIR + "/" + CHUNK_FILE_PATTERN + ".parquet"
 DEFAULT_TASKS_PATH = "meta/tasks.parquet"
+DEFAULT_EPISODES_PATH = EPISODES_DIR + "/" + CHUNK_FILE_PATTERN + ".parquet"
 DEFAULT_DATA_PATH = DATA_DIR + "/" + CHUNK_FILE_PATTERN + ".parquet"
 DEFAULT_VIDEO_PATH = VIDEO_DIR + "/{video_key}/" + CHUNK_FILE_PATTERN + ".mp4"
 
@@ -93,6 +92,12 @@ DEFAULT_FEATURES = {
     "index": {"dtype": "int64", "shape": (1,), "names": None},
     "task_index": {"dtype": "int64", "shape": (1,), "names": None},
 }
+
+
+def get_parquet_file_size_in_mb(parquet_path):
+    metadata = pq.read_metadata(parquet_path)
+    uncompressed_size = metadata.num_rows * metadata.row_group(0).total_byte_size
+    return uncompressed_size / (1024**2)
 
 
 def get_hf_dataset_size_in_mb(hf_ds: Dataset) -> int:
@@ -317,7 +322,7 @@ def load_info(local_dir: Path) -> dict:
 
 def write_stats(stats: dict, local_dir: Path):
     serialized_stats = serialize_dict(stats)
-    write_json(serialized_stats, local_dir / LEGACY_STATS_PATH)
+    write_json(serialized_stats, local_dir / STATS_PATH)
 
 
 def cast_stats_to_numpy(stats) -> dict[str, dict[str, np.ndarray]]:
@@ -326,9 +331,9 @@ def cast_stats_to_numpy(stats) -> dict[str, dict[str, np.ndarray]]:
 
 
 def load_stats(local_dir: Path) -> dict[str, dict[str, np.ndarray]]:
-    if not (local_dir / LEGACY_STATS_PATH).exists():
+    if not (local_dir / STATS_PATH).exists():
         return None
-    stats = load_json(local_dir / LEGACY_STATS_PATH)
+    stats = load_json(local_dir / STATS_PATH)
     return cast_stats_to_numpy(stats)
 
 
@@ -374,13 +379,6 @@ def write_episode(episode: dict, local_dir: Path):
 def write_episodes(episodes: Dataset, local_dir: Path):
     if get_hf_dataset_size_in_mb(episodes) > DEFAULT_FILE_SIZE_IN_MB:
         raise NotImplementedError("Contact a maintainer.")
-
-    def add_chunk_file_indices(row):
-        row["chunk_index"] = 0
-        row["file_index"] = 0
-        return row
-
-    episodes = episodes.map(add_chunk_file_indices)
 
     fpath = local_dir / DEFAULT_EPISODES_PATH.format(chunk_index=0, file_index=0)
     fpath.parent.mkdir(parents=True, exist_ok=True)
@@ -639,20 +637,6 @@ def create_empty_dataset_info(
         "data_path": DEFAULT_DATA_PATH,
         "video_path": DEFAULT_VIDEO_PATH if use_videos else None,
         "features": features,
-    }
-
-
-def get_episode_data_index(
-    episode_dicts: dict[dict], episodes: list[int] | None = None
-) -> dict[str, torch.Tensor]:
-    episode_lengths = {ep_idx: ep_dict["length"] for ep_idx, ep_dict in episode_dicts.items()}
-    if episodes is not None:
-        episode_lengths = {ep_idx: episode_lengths[ep_idx] for ep_idx in episodes}
-
-    cumulative_lengths = list(accumulate(episode_lengths.values()))
-    return {
-        "from": torch.LongTensor([0] + cumulative_lengths[:-1]),
-        "to": torch.LongTensor(cumulative_lengths),
     }
 
 

@@ -123,10 +123,10 @@ from lerobot.common.datasets.utils import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_DATA_PATH,
     DEFAULT_VIDEO_PATH,
-    LEGACY_EPISODES_PATH,
     INFO_PATH,
-    LEGACY_STATS_PATH,
+    LEGACY_EPISODES_PATH,
     LEGACY_TASKS_PATH,
+    STATS_PATH,
     create_branch,
     create_lerobot_dataset_card,
     flatten_dict,
@@ -188,7 +188,7 @@ def convert_stats_to_json(v1_dir: Path, v2_dir: Path) -> None:
     serialized_stats = {key: value.tolist() for key, value in stats.items()}
     serialized_stats = unflatten_dict(serialized_stats)
 
-    json_path = v2_dir / LEGACY_STATS_PATH
+    json_path = v2_dir / STATS_PATH
     json_path.parent.mkdir(exist_ok=True, parents=True)
     with open(json_path, "w") as f:
         json.dump(serialized_stats, f, indent=4)
@@ -296,9 +296,7 @@ def split_parquet_by_episodes(
         for ep_idx in range(ep_chunk_start, ep_chunk_end):
             ep_table = table.filter(pc.equal(table["episode_index"], ep_idx))
             episode_lengths.insert(ep_idx, len(ep_table))
-            output_file = output_dir / DEFAULT_DATA_PATH.format(
-                episode_chunk=ep_chunk, episode_index=ep_idx
-            )
+            output_file = output_dir / DEFAULT_DATA_PATH.format(episode_chunk=ep_chunk, episode_index=ep_idx)
             pq.write_table(ep_table, output_file)
 
     return episode_lengths

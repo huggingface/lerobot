@@ -18,15 +18,16 @@ python lerobot/common/datasets/v30/convert_dataset_v21_to_v30.py \
 """
 
 import argparse
+import shutil
 from pathlib import Path
 
 import pandas as pd
-import pyarrow.parquet as pq
 import tqdm
 from datasets import Dataset
-from huggingface_hub import snapshot_download
+from huggingface_hub import HfApi, snapshot_download
 
 from lerobot.common.constants import HF_LEROBOT_HOME
+from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset
 from lerobot.common.datasets.utils import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_DATA_PATH,
@@ -34,6 +35,7 @@ from lerobot.common.datasets.utils import (
     DEFAULT_VIDEO_PATH,
     concat_video_files,
     flatten_dict,
+    get_parquet_file_size_in_mb,
     get_parquet_num_frames,
     get_video_duration_in_s,
     get_video_size_in_mb,
@@ -93,12 +95,6 @@ meta/info.json
 """
 
 
-def get_parquet_file_size_in_mb(parquet_path):
-    metadata = pq.read_metadata(parquet_path)
-    uncompressed_size = metadata.num_rows * metadata.row_group(0).total_byte_size
-    return uncompressed_size / (1024**2)
-
-
 # def generate_flat_ep_stats(episodes_stats):
 #     for ep_idx, ep_stats in episodes_stats.items():
 #         flat_ep_stats = flatten_dict(ep_stats)
@@ -148,8 +144,8 @@ def convert_data(root, new_root):
             "episode_index": ep_idx,
             "data/chunk_index": chunk_idx,
             "data/file_index": file_idx,
-            "data/from_index": num_frames,
-            "data/to_index": num_frames + ep_num_frames,
+            "dataset_from_index": num_frames,
+            "dataset_to_index": num_frames + ep_num_frames,
         }
         size_in_mb += ep_size_in_mb
         num_frames += ep_num_frames
@@ -337,6 +333,9 @@ def convert_dataset(
     root = HF_LEROBOT_HOME / repo_id
     new_root = HF_LEROBOT_HOME / f"{repo_id}_v30"
 
+    if new_root.is_dir():
+        shutil.rmtree(new_root)
+
     snapshot_download(
         repo_id,
         repo_type="dataset",
@@ -349,6 +348,24 @@ def convert_dataset(
     episodes_metadata = convert_data(root, new_root)
     episodes_videos_metadata = convert_videos(root, new_root)
     convert_episodes_metadata(root, new_root, episodes_metadata, episodes_videos_metadata)
+
+    shutil.move(str(root), str(root) + "_old")
+    shutil.move(str(new_root), str(root))
+
+    # TODO(racdene)
+    if False:
+        hub_api = HfApi()
+        hub_api.delete_tag(repo_id, tag=CODEBASE_VERSION, revision=branch, repo_type="dataset")
+        hub_api.delete_files(
+            delete_patterns=["data/chunk*/episode_*", "meta/*.jsonl", "videos/chunk*"],
+            repo_id=repo_id,
+            revision=branch,
+            repo_type="dataset",
+        )
+
+        hub_api.create_tag(repo_id, tag=CODEBASE_VERSION, revision=branch, repo_type="dataset")
+
+    LeRobotDataset(repo_id).push_to_hub()
 
 
 if __name__ == "__main__":

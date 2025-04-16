@@ -108,7 +108,8 @@ def save_decoded_frames(
 
 
 def save_first_episode(imgs_dir: Path, dataset: LeRobotDataset) -> None:
-    ep_num_images = dataset.episode_data_index["to"][0].item()
+    episode_index = 0
+    ep_num_images = dataset.meta.episodes["length"][episode_index]
     if imgs_dir.exists() and len(list(imgs_dir.glob("frame_*.png"))) == ep_num_images:
         return
 
@@ -265,7 +266,8 @@ def benchmark_encoding_decoding(
             overwrite=True,
         )
 
-    ep_num_images = dataset.episode_data_index["to"][0].item()
+    episode_index = 0
+    ep_num_images = dataset.meta.episodes["length"][episode_index]
     width, height = tuple(dataset[0][dataset.meta.camera_keys[0]].shape[-2:])
     num_pixels = width * height
     video_size_bytes = video_path.stat().st_size

@@ -10,7 +10,7 @@ from lerobot.common.datasets.utils import (
     DEFAULT_EPISODES_PATH,
     DEFAULT_TASKS_PATH,
     INFO_PATH,
-    LEGACY_STATS_PATH,
+    STATS_PATH,
 )
 from tests.fixtures.constants import LEROBOT_TEST_DIR
 
@@ -70,7 +70,7 @@ def mock_snapshot_download_factory(
             # List all possible files
             all_files = [
                 INFO_PATH,
-                LEGACY_STATS_PATH,
+                STATS_PATH,
                 # TODO(rcadene): remove naive chunk 0 file 0 ?
                 DEFAULT_TASKS_PATH.format(chunk_index=0, file_index=0),
                 DEFAULT_EPISODES_PATH.format(chunk_index=0, file_index=0),

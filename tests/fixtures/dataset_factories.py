@@ -230,6 +230,8 @@ def episodes_factory(tasks_factory, stats_factory):
             "meta/episodes/file_index": [],
             "data/chunk_index": [],
             "data/file_index": [],
+            "dataset_from_index": [],
+            "dataset_to_index": [],
             "tasks": [],
             "length": [],
         }
@@ -241,6 +243,7 @@ def episodes_factory(tasks_factory, stats_factory):
         for stats_key in flatten_dict({"stats": stats_factory(features)}):
             d[stats_key] = []
 
+        num_frames = 0
         remaining_tasks = list(tasks.index)
         for ep_idx in range(total_episodes):
             num_tasks_in_episode = random.randint(1, min(3, num_tasks_available)) if multi_task else 1
@@ -256,6 +259,8 @@ def episodes_factory(tasks_factory, stats_factory):
             d["meta/episodes/file_index"].append(0)
             d["data/chunk_index"].append(0)
             d["data/file_index"].append(0)
+            d["dataset_from_index"].append(num_frames)
+            d["dataset_to_index"].append(num_frames + lengths[ep_idx])
             d["tasks"].append(episode_tasks)
             d["length"].append(lengths[ep_idx])
 
@@ -267,6 +272,8 @@ def episodes_factory(tasks_factory, stats_factory):
             # Add stats columns like "stats/action/max"
             for stats_key, stats in flatten_dict({"stats": stats_factory(features)}).items():
                 d[stats_key].append(stats)
+
+            num_frames += lengths[ep_idx]
 
         return Dataset.from_dict(d)
 
@@ -283,10 +290,10 @@ def hf_dataset_factory(features_factory, tasks_factory, episodes_factory, img_ar
     ) -> datasets.Dataset:
         if tasks is None:
             tasks = tasks_factory()
-        if episodes is None:
-            episodes = episodes_factory()
         if features is None:
             features = features_factory()
+        if episodes is None:
+            episodes = episodes_factory(features)
 
         timestamp_col = np.array([], dtype=np.float32)
         frame_index_col = np.array([], dtype=np.int64)

@@ -68,7 +68,11 @@ def dummy_dataset_metadata(lerobot_dataset_metadata_factory, info_factory, tmp_p
         },
     }
     info = info_factory(
-        total_episodes=1, total_frames=1, camera_features=camera_features, motor_features=motor_features
+        total_episodes=1,
+        total_frames=1,
+        total_tasks=1,
+        camera_features=camera_features,
+        motor_features=motor_features,
     )
     ds_meta = lerobot_dataset_metadata_factory(root=tmp_path / "init", info=info)
     return ds_meta

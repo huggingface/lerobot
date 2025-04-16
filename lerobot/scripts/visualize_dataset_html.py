@@ -259,8 +259,8 @@ def get_episode_data(dataset: LeRobotDataset | IterableNamespace, episode_index)
     selected_columns.insert(0, "timestamp")
 
     if isinstance(dataset, LeRobotDataset):
-        from_idx = dataset.episode_data_index["from"][episode_index]
-        to_idx = dataset.episode_data_index["to"][episode_index]
+        from_idx = dataset.meta.episodes["dataset_from_index"][episode_index]
+        to_idx = dataset.meta.episodes["dataset_to_index"][episode_index]
         data = (
             dataset.hf_dataset.select(range(from_idx, to_idx))
             .select_columns(selected_columns)
@@ -296,7 +296,7 @@ def get_episode_data(dataset: LeRobotDataset | IterableNamespace, episode_index)
 
 def get_episode_video_paths(dataset: LeRobotDataset, ep_index: int) -> list[str]:
     # get first frame of episode (hack to get video_path of the episode)
-    first_frame_idx = dataset.episode_data_index["from"][ep_index].item()
+    first_frame_idx = dataset.meta.episodes["dataset_from_index"][ep_index]
     return [
         dataset.hf_dataset.select_columns(key)[first_frame_idx][key]["path"]
         for key in dataset.meta.video_keys
@@ -309,7 +309,7 @@ def get_episode_language_instruction(dataset: LeRobotDataset, ep_index: int) -> 
         return None
 
     # get first frame index
-    first_frame_idx = dataset.episode_data_index["from"][ep_index].item()
+    first_frame_idx = dataset.meta.episodes["dataset_from_index"][ep_index]
 
     language_instruction = dataset.hf_dataset[first_frame_idx]["language_instruction"]
     # TODO (michel-aractingi) hack to get the sentence, some strings in openx are badly stored

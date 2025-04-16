@@ -79,8 +79,8 @@ from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 
 class EpisodeSampler(torch.utils.data.Sampler):
     def __init__(self, dataset: LeRobotDataset, episode_index: int):
-        from_idx = dataset.episode_data_index["from"][episode_index].item()
-        to_idx = dataset.episode_data_index["to"][episode_index].item()
+        from_idx = dataset.meta.episodes["dataset_from_index"][episode_index].item()
+        to_idx = dataset.meta.episodes["dataset_to_index"][episode_index].item()
         self.frame_ids = range(from_idx, to_idx)
 
     def __iter__(self) -> Iterator:

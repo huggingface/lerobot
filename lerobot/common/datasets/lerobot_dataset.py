@@ -51,6 +51,7 @@ from lerobot.common.datasets.utils import (
     get_features_from_robot,
     get_hf_dataset_size_in_mb,
     get_hf_features_from_features,
+    get_parquet_file_size_in_mb,
     get_parquet_num_frames,
     get_safe_version,
     get_video_duration_in_s,
@@ -59,15 +60,16 @@ from lerobot.common.datasets.utils import (
     load_episodes,
     load_info,
     load_nested_dataset,
+    load_stats,
     load_tasks,
     update_chunk_file_indices,
     validate_episode_buffer,
     validate_frame,
     write_info,
     write_json,
+    write_stats,
     write_tasks,
 )
-from lerobot.common.datasets.v30.convert_dataset_v21_to_v30 import get_parquet_file_size_in_mb
 from lerobot.common.datasets.video_utils import (
     VideoFrame,
     decode_video_frames_torchvision,
@@ -111,8 +113,7 @@ class LeRobotDatasetMetadata:
         check_version_compatibility(self.repo_id, self._version, CODEBASE_VERSION)
         self.tasks = load_tasks(self.root)
         self.episodes = load_episodes(self.root)
-        # TODO(rcadene): https://huggingface.slack.com/archives/C02V51Q3800/p1743517952388249?thread_ts=1742896075.499119&cid=C02V51Q3800
-        # self.stats = aggregate_stats(list(self.episodes_stats.values()))
+        self.stats = load_stats(self.root)
 
     def pull_from_repo(
         self,
@@ -272,10 +273,17 @@ class LeRobotDatasetMetadata:
             chunk_idx, file_idx = 0, 0
             df["meta/episodes/chunk_index"] = [chunk_idx]
             df["meta/episodes/file_index"] = [file_idx]
+            df["dataset_from_index"] = [0]
+            df["dataset_to_index"] = [len(df)]
         else:
             # Retrieve information from the latest parquet file
             latest_ep = self.episodes.with_format(
-                columns=["meta/episodes/chunk_index", "meta/episodes/file_index"]
+                columns=[
+                    "meta/episodes/chunk_index",
+                    "meta/episodes/file_index",
+                    "dataset_from_index",
+                    "dataset_to_index",
+                ]
             )[-1]
             chunk_idx, file_idx = (
                 latest_ep["meta/episodes/chunk_index"],
@@ -285,16 +293,18 @@ class LeRobotDatasetMetadata:
             latest_path = self.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
             latest_size_in_mb = get_parquet_file_size_in_mb(latest_path)
 
-            # Determine if a new parquet file is needed
             if latest_size_in_mb + ep_size_in_mb >= self.files_size_in_mb:
                 # Size limit is reached, prepare new parquet file
                 chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, self.meta.chunks_size)
-                df["meta/episodes/chunk_index"] = [chunk_idx]
-                df["meta/episodes/file_index"] = [file_idx]
-            else:
-                # Update the existing parquet file with new row
-                df["meta/episodes/chunk_index"] = [chunk_idx]
-                df["meta/episodes/file_index"] = [file_idx]
+
+            # Update the existing pandas dataframe with new row
+            df["meta/episodes/chunk_index"] = [chunk_idx]
+            df["meta/episodes/file_index"] = [file_idx]
+            df["dataset_from_index"] = [latest_ep["dataset_to_index"]]
+            df["dataset_to_index"] = [latest_ep["dataset_to_index"] + len(df)]
+
+            if latest_size_in_mb + ep_size_in_mb < self.files_size_in_mb:
+                # Size limit wasnt reached, concatenate latest dataframe with new one
                 latest_df = pd.read_parquet(latest_path)
                 df = pd.concat([latest_df, df], ignore_index=True)
 
@@ -333,8 +343,8 @@ class LeRobotDatasetMetadata:
             self.update_video_info()
         write_info(self.info, self.root)
 
-        self.stats = aggregate_stats([self.stats, episode_stats]) if self.stats else episode_stats
-        # TODO: write stats
+        self.stats = aggregate_stats([self.stats, episode_stats]) if self.stats is not None else episode_stats
+        write_stats(self.stats, self.root)
 
     def update_video_info(self) -> None:
         """
@@ -401,8 +411,7 @@ class LeRobotDatasetMetadata:
 
         obj.tasks = None
         obj.episodes = None
-        # TODO(rcadene) stats
-        obj.stats = {}
+        obj.stats = None
         obj.info = create_empty_dataset_info(CODEBASE_VERSION, fps, robot_type, features, use_videos)
         if len(obj.video_keys) > 0 and not use_videos:
             raise ValueError()
