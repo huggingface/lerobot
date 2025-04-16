@@ -14,7 +14,7 @@
 
 from typing import Protocol
 
-from lerobot.common.robot_devices.microphones.configs import MicrophoneConfig, MicrophoneConfigBase
+from lerobot.common.robot_devices.microphones.configs import MicrophoneConfig, PortAudioMicrophoneConfig
 
 
 # Defines a microphone type
@@ -30,14 +30,14 @@ class Microphone(Protocol):
     def stop_recording(self): ...
 
 
-def make_microphones_from_configs(microphone_configs: dict[str, MicrophoneConfigBase]) -> list[Microphone]:
+def make_microphones_from_configs(microphone_configs: dict[str, MicrophoneConfig]) -> list[Microphone]:
     microphones = {}
 
     for key, cfg in microphone_configs.items():
-        if cfg.type == "microphone":
-            from lerobot.common.robot_devices.microphones.microphone import Microphone
+        if cfg.type == "portaudio":
+            from lerobot.common.robot_devices.microphones.portaudio import PortAudioMicrophone
 
-            microphones[key] = Microphone(cfg)
+            microphones[key] = PortAudioMicrophone(cfg)
         else:
             raise ValueError(f"The microphone type '{cfg.type}' is not valid.")
 
@@ -45,9 +45,10 @@ def make_microphones_from_configs(microphone_configs: dict[str, MicrophoneConfig
 
 
 def make_microphone(microphone_type, **kwargs) -> Microphone:
-    if microphone_type == "microphone":
-        from lerobot.common.robot_devices.microphones.microphone import Microphone
+    if microphone_type == "portaudio":
+        from lerobot.common.robot_devices.microphones.portaudio import PortAudioMicrophone
 
-        return Microphone(MicrophoneConfig(**kwargs))
+        config = PortAudioMicrophoneConfig(**kwargs)
+        return PortAudioMicrophone(config)
     else:
         raise ValueError(f"The microphone type '{microphone_type}' is not valid.")

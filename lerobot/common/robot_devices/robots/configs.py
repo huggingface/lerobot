@@ -23,7 +23,7 @@ from lerobot.common.robot_devices.cameras.configs import (
     IntelRealSenseCameraConfig,
     OpenCVCameraConfig,
 )
-from lerobot.common.robot_devices.microphones.configs import MicrophoneConfig
+from lerobot.common.robot_devices.microphones.configs import MicrophoneConfig, PortAudioMicrophoneConfig
 from lerobot.common.robot_devices.motors.configs import (
     DynamixelMotorsBusConfig,
     FeetechMotorsBusConfig,
@@ -561,12 +561,12 @@ class So100RobotConfig(ManipulatorRobotConfig):
 
     microphones: dict[str, MicrophoneConfig] = field(
         default_factory=lambda: {
-            "laptop": MicrophoneConfig(
+            "laptop": PortAudioMicrophoneConfig(
                 microphone_index=0,
                 sample_rate=48000,
                 channels=[1],
             ),
-            "headset": MicrophoneConfig(
+            "headset": PortAudioMicrophoneConfig(
                 microphone_index=1,
                 sample_rate=44100,
                 channels=[1],

@@ -19,15 +19,15 @@ import draccus
 
 
 @dataclass
-class MicrophoneConfigBase(draccus.ChoiceRegistry, abc.ABC):
+class MicrophoneConfig(draccus.ChoiceRegistry, abc.ABC):
     @property
     def type(self) -> str:
         return self.get_choice_name(self.__class__)
 
 
-@MicrophoneConfigBase.register_subclass("microphone")
+@MicrophoneConfig.register_subclass("portaudio")
 @dataclass
-class MicrophoneConfig(MicrophoneConfigBase):
+class PortAudioMicrophoneConfig(MicrophoneConfig):
     """
     Dataclass for microphone configuration.
     """
