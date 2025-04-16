@@ -48,6 +48,7 @@ class HomonculusGlove(Teleoperator):
     name = "homonculus_glove"
 
     def __init__(self, config: HomonculusGloveConfig):
+        super().__init__(config)
         self.config = config
         self.serial = serial.Serial(config.port, config.baud_rate, timeout=1)
         self.buffer_size = config.buffer_size
@@ -99,7 +100,8 @@ class HomonculusGlove(Teleoperator):
         if self.is_connected:
             raise DeviceAlreadyConnectedError(f"{self} already connected")
 
-        self.serial.open()
+        if not self.serial.is_open:
+            self.serial.open()
         self.thread.start()
         self.configure()
         logger.info(f"{self} connected.")
@@ -145,8 +147,6 @@ class HomonculusGlove(Teleoperator):
         # Get raw (last) values
         values = np.array([self.last_d[k] for k in motor_names])
 
-        print(values)
-
         # Apply calibration if available
         if self.calibration is not None:
             values = self.apply_calibration(values, motor_names)
@@ -164,7 +164,7 @@ class HomonculusGlove(Teleoperator):
         # Gather averaged readings from buffers
         smoothed_vals = []
         for name in motor_names:
-            buf = self.joint_buffer[name]
+            buf = self.joints_buffer[name]
             if len(buf) == 0:
                 # If no data has been read yet, fall back to last_d
                 smoothed_vals.append(self.last_d[name])
@@ -219,10 +219,10 @@ class HomonculusGlove(Teleoperator):
 
                 # Also push these new values into the rolling buffers
                 for joint_name, joint_val in d.items():
-                    self.joint_buffer[joint_name].append(joint_val)
+                    self.joints_buffer[joint_name].append(joint_val)
 
     def run_calibration(self):
-        print("\nMove arm to open position")
+        print("\nMove hand to open position")
         input("Press Enter to continue...")
         open_pos_list = []
         for _ in range(100):
@@ -236,7 +236,7 @@ class HomonculusGlove(Teleoperator):
         print(f"{max_open_pos=}")
         print(f"{min_open_pos=}")
 
-        print("\nMove arm to closed position")
+        print("\nMove hand to closed position")
         input("Press Enter to continue...")
         closed_pos_list = []
         for _ in range(100):

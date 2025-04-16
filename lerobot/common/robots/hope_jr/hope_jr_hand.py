@@ -164,7 +164,8 @@ class HopeJrHand(Robot):
 
         # Read hand position
         start = time.perf_counter()
-        obs_dict[OBS_STATE] = self.hand.sync_read("Present_Position")
+        for motor in self.hand.motors:
+            obs_dict[f"{OBS_STATE}.{motor}"] = self.hand.read("Present_Position", motor, normalize=False)
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
 
