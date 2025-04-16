@@ -272,7 +272,8 @@ def control_loop(
 
             image_keys = [key for key in observation if "image" in key]
             for key in image_keys:
-                rr.log(key, rr.Image(observation[key].numpy()), static=True)
+                cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
+            cv2.waitKey(1)
 
         if fps is not None:
             dt_s = time.perf_counter() - start_loop_t

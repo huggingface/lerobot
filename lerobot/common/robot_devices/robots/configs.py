@@ -105,7 +105,7 @@ class AlohaRobotConfig(ManipulatorRobotConfig):
         default_factory=lambda: {
             "left": DynamixelMotorsBusConfig(
                 # window_x
-                port="/dev/ttyDXL_leader_left",
+                port="/dev/ttyACM3",
                 motors={
                     # name: (index, model)
                     "waist": [1, "xm430-w350"],
@@ -121,7 +121,7 @@ class AlohaRobotConfig(ManipulatorRobotConfig):
             ),
             "right": DynamixelMotorsBusConfig(
                 # window_x
-                port="/dev/ttyDXL_leader_right",
+                port="/dev/ttyACM0",
                 motors={
                     # name: (index, model)
                     "waist": [1, "xm430-w350"],
@@ -141,7 +141,7 @@ class AlohaRobotConfig(ManipulatorRobotConfig):
     follower_arms: dict[str, MotorsBusConfig] = field(
         default_factory=lambda: {
             "left": DynamixelMotorsBusConfig(
-                port="/dev/ttyDXL_follower_left",
+                port="/dev/ttyACM2",
                 motors={
                     # name: (index, model)
                     "waist": [1, "xm540-w270"],
@@ -156,7 +156,7 @@ class AlohaRobotConfig(ManipulatorRobotConfig):
                 },
             ),
             "right": DynamixelMotorsBusConfig(
-                port="/dev/ttyDXL_follower_right",
+                port="/dev/ttyACM1",
                 motors={
                     # name: (index, model)
                     "waist": [1, "xm540-w270"],
@@ -443,7 +443,7 @@ class So100RobotConfig(ManipulatorRobotConfig):
     leader_arms: dict[str, MotorsBusConfig] = field(
         default_factory=lambda: {
             "main": FeetechMotorsBusConfig(
-                port="/dev/tty.usbmodem58760431091",
+                port="/dev/ttyACM0",
                 motors={
                     # name: (index, model)
                     "shoulder_pan": [1, "sts3215"],
@@ -460,7 +460,7 @@ class So100RobotConfig(ManipulatorRobotConfig):
     follower_arms: dict[str, MotorsBusConfig] = field(
         default_factory=lambda: {
             "main": FeetechMotorsBusConfig(
-                port="/dev/tty.usbmodem585A0076891",
+                port="/dev/ttyACM1",
                 motors={
                     # name: (index, model)
                     "shoulder_pan": [1, "sts3215"],
@@ -476,18 +476,24 @@ class So100RobotConfig(ManipulatorRobotConfig):
 
     cameras: dict[str, CameraConfig] = field(
         default_factory=lambda: {
-            "laptop": OpenCVCameraConfig(
+            "front": OpenCVCameraConfig(
                 camera_index=0,
                 fps=30,
-                width=640,
-                height=480,
+                width=320,
+                height=240,
             ),
-            "phone": OpenCVCameraConfig(
-                camera_index=1,
+            "mobile": OpenCVCameraConfig(
+                camera_index=4,
+                fps=30,
+                width=320,
+                height=240,
+            ),
+            "overhead": OpenCVCameraConfig(
+                camera_index=6,
                 fps=30,
                 width=640,
-                height=480,
-            ),
+                height=360,
+            )
         }
     )
 
@@ -546,11 +552,14 @@ class LeKiwiRobotConfig(RobotConfig):
     cameras: dict[str, CameraConfig] = field(
         default_factory=lambda: {
             "front": OpenCVCameraConfig(
-                camera_index="/dev/video0", fps=30, width=640, height=480, rotation=90
+                camera_index="/dev/video0", fps=30, width=320, height=240, rotation=90
             ),
-            "wrist": OpenCVCameraConfig(
-                camera_index="/dev/video2", fps=30, width=640, height=480, rotation=180
+            "overhead": OpenCVCameraConfig(
+                camera_index="/dev/video2", fps=30, width=640, height=360, rotation=180
             ),
+            "mobile": OpenCVCameraConfig(
+                camera_index="/dev/video0", fps=30, width=320, height=240, rotation=90
+            )
         }
     )
 
@@ -611,3 +620,108 @@ class LeKiwiRobotConfig(RobotConfig):
     )
 
     mock: bool = False
+
+
+@RobotConfig.register_subclass("so100_aloha")
+@dataclass
+class So100AlohaRobotConfig(ManipulatorRobotConfig):
+    # Specific to Aloha, LeRobot comes with default calibration files. Assuming the motors have been
+    # properly assembled, no manual calibration step is expected. If you need to run manual calibration,
+    # simply update this path to ".cache/calibration/aloha"
+    calibration_dir: str = ".cache/calibration/aloha_default"
+
+    # /!\ FOR SAFETY, READ THIS /!\
+    # `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
+    # Set this to a positive scalar to have the same value for all motors, or a list that is the same length as
+    # the number of motors in your follower arms.
+    # For Aloha, for every goal position request, motor rotations are capped at 5 degrees by default.
+    # When you feel more confident with teleoperation or running the policy, you can extend
+    # this safety limit and even removing it by setting it to `null`.
+    # Also, everything is expected to work safely out-of-the-box, but we highly advise to
+    # first try to teleoperate the grippers only (by commenting out the rest of the motors in this yaml),
+    # then to gradually add more motors (by uncommenting), until you can teleoperate both arms fully
+    max_relative_target: int | None = 5
+
+    leader_arms: dict[str, MotorsBusConfig] = field(
+        default_factory=lambda: {
+            "left": FeetechMotorsBusConfig(
+                port="/dev/ttyACM3",
+                motors={
+                    # name: (index, model)
+                    "shoulder_pan": [1, "sts3215"],
+                    "shoulder_lift": [2, "sts3215"],
+                    "elbow_flex": [3, "sts3215"],
+                    "wrist_flex": [4, "sts3215"],
+                    "wrist_roll": [5, "sts3215"],
+                    "gripper": [6, "sts3215"],
+                },
+            ),
+            "right": FeetechMotorsBusConfig(
+                port="/dev/ttyACM0",
+                motors={
+                    # name: (index, model)
+                    "shoulder_pan": [1, "sts3215"],
+                    "shoulder_lift": [2, "sts3215"],
+                    "elbow_flex": [3, "sts3215"],
+                    "wrist_flex": [4, "sts3215"],
+                    "wrist_roll": [5, "sts3215"],
+                    "gripper": [6, "sts3215"],
+                },
+            ),
+        }
+    )
+
+    follower_arms: dict[str, MotorsBusConfig] = field(
+        default_factory=lambda: {
+            "left": FeetechMotorsBusConfig(
+                port="/dev/ttyACM2",
+                motors={
+                    # name: (index, model)
+                    "shoulder_pan": [1, "sts3215"],
+                    "shoulder_lift": [2, "sts3215"],
+                    "elbow_flex": [3, "sts3215"],
+                    "wrist_flex": [4, "sts3215"],
+                    "wrist_roll": [5, "sts3215"],
+                    "gripper": [6, "sts3215"],
+                },
+            ),
+            "right": FeetechMotorsBusConfig(
+                port="/dev/ttyACM1",
+                motors={
+                    # name: (index, model)
+                    "shoulder_pan": [1, "sts3215"],
+                    "shoulder_lift": [2, "sts3215"],
+                    "elbow_flex": [3, "sts3215"],
+                    "wrist_flex": [4, "sts3215"],
+                    "wrist_roll": [5, "sts3215"],
+                    "gripper": [6, "sts3215"],
+                },
+            )
+        }
+    )
+
+    cameras: dict[str, CameraConfig] = field(
+        default_factory=lambda: {
+            "front": OpenCVCameraConfig(
+                camera_index=0,
+                fps=30,
+                width=320,
+                height=240,
+            ),
+            "mobile": OpenCVCameraConfig(
+                camera_index=4,
+                fps=30,
+                width=320,
+                height=240,
+            ),
+            "overhead": OpenCVCameraConfig(
+                camera_index=6,
+                fps=30,
+                width=640,
+                height=360,
+            )
+        }
+    )
+
+    mock: bool = False
+
