@@ -33,7 +33,7 @@ from threading import Event as thread_Event
 import numpy as np
 import soundfile as sf
 
-from lerobot.common.robot_devices.microphones.configs import MicrophoneConfig
+from lerobot.common.robot_devices.microphones.configs import PortAudioMicrophoneConfig
 from lerobot.common.robot_devices.utils import (
     RobotDeviceAlreadyConnectedError,
     RobotDeviceAlreadyRecordingError,
@@ -87,8 +87,8 @@ def record_audio_from_microphones(
 
     microphones = []
     for microphone_id in microphone_ids:
-        config = MicrophoneConfig(microphone_index=microphone_id)
-        microphone = Microphone(config)
+        config = PortAudioMicrophoneConfig(microphone_index=microphone_id)
+        microphone = PortAudioMicrophone(config)
         microphone.connect()
         print(
             f"Recording audio from microphone {microphone_id} for {record_time_s} seconds at {microphone.sample_rate} Hz."
@@ -119,18 +119,18 @@ def record_audio_from_microphones(
     print(f"Images have been saved to {output_dir}")
 
 
-class Microphone:
+class PortAudioMicrophone:
     """
-    The Microphone class handles all microphones compatible with sounddevice (and the underlying PortAudio library). Most microphones and sound cards are compatible, across all OS (Linux, Mac, Windows).
+    The PortAudioMicrophone class handles all microphones compatible with sounddevice (and the underlying PortAudio library). Most microphones and sound cards are compatible, across all OS (Linux, Mac, Windows).
 
-    A Microphone instance requires the sounddevice index of the microphone, which may be obtained using `python -m sounddevice`. It also requires the recording sample rate as well as the list of recorded channels.
+    A PortAudioMicrophone instance requires the sounddevice index of the microphone, which may be obtained using `python -m sounddevice`. It also requires the recording sample rate as well as the list of recorded channels.
 
     Example of usage:
     ```python
-    from lerobot.common.robot_devices.microphones.configs import MicrophoneConfig
+    from lerobot.common.robot_devices.microphones.configs import PortAudioMicrophoneConfig
 
-    config = MicrophoneConfig(microphone_index=0, sample_rate=16000, channels=[1])
-    microphone = Microphone(config)
+    config = PortAudioMicrophoneConfig(microphone_index=0, sample_rate=16000, channels=[1])
+    microphone = PortAudioMicrophone(config)
 
     microphone.connect()
     microphone.start_recording("some/output/file.wav")
@@ -142,7 +142,7 @@ class Microphone:
     ```
     """
 
-    def __init__(self, config: MicrophoneConfig):
+    def __init__(self, config: PortAudioMicrophoneConfig):
         self.config = config
         self.microphone_index = config.microphone_index
 
@@ -341,7 +341,7 @@ class Microphone:
             if multiprocessing:
                 self.record_stop_event = process_Event()
                 self.record_thread = Process(
-                    target=Microphone._record_loop,
+                    target=PortAudioMicrophone._record_loop,
                     args=(
                         self.record_queue,
                         self.record_stop_event,
@@ -353,7 +353,7 @@ class Microphone:
             else:
                 self.record_stop_event = thread_Event()
                 self.record_thread = Thread(
-                    target=Microphone._record_loop,
+                    target=PortAudioMicrophone._record_loop,
                     args=(
                         self.record_queue,
                         self.record_stop_event,
@@ -412,14 +412,14 @@ class Microphone:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Records audio using `Microphone` for all microphones connected to the computer, or a selected subset."
+        description="Records audio using `PortAudioMicrophone` for all microphones connected to the computer, or a selected subset."
     )
     parser.add_argument(
         "--microphone-ids",
         type=int,
         nargs="*",
         default=None,
-        help="List of microphones indices used to instantiate the `Microphone`. If not provided, find and use all available microphones indices.",
+        help="List of microphones indices used to instantiate the `PortAudioMicrophone`. If not provided, find and use all available microphones indices.",
     )
     parser.add_argument(
         "--output-dir",

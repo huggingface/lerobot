@@ -192,7 +192,7 @@ available_cameras = [
 
 # lists all available microphones from `lerobot/common/robot_devices/microphones`
 available_microphones = [
-    "microphone",
+    "portaudio",
 ]
 
 # lists all available motors from `lerobot/common/robot_devices/motors`
