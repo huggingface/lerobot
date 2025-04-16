@@ -19,9 +19,10 @@ def make_microphones_from_configs(microphone_configs: dict[str, MicrophoneConfig
     microphones = {}
 
     for key, cfg in microphone_configs.items():
-        if cfg.type == "microphone":
-            from .microphone import Microphone
-            microphones[key] = Microphone(cfg)
+        if cfg.type == "portaudio":
+            from .portaudio import PortAudioMicrophone
+
+            microphones[key] = PortAudioMicrophone(cfg)
         else:
             raise ValueError(f"The microphone type '{cfg.type}' is not valid.")
 
