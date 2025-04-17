@@ -80,7 +80,7 @@ from lerobot.common.datasets.video_utils import (
     get_safe_default_codec,
     get_video_info,
 )
-from lerobot.common.robot_devices.microphones.utils import Microphone
+from lerobot.common.robot_devices.microphones.utils import Microphone, async_microphones_start_recording
 from lerobot.common.robot_devices.robots.utils import Robot
 
 CODEBASE_VERSION = "v2.1"
@@ -962,13 +962,26 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         self.episode_buffer["size"] += 1
 
-    def add_microphone_recording(self, microphone: Microphone, microphone_key: str) -> None:
+    def add_microphone_recording(self, microphone_key: str, microphone: Microphone) -> None:
         """
         Starts recording audio data provided by the microphone and directly writes it in a .wav file.
         """
 
         audio_file = self._get_raw_audio_file_path(self.num_episodes, "observation.audio." + microphone_key)
         microphone.start_recording(output_file=audio_file)
+
+    def add_microphones_recordings(self, microphones: dict[str, Microphone]) -> None:
+        """
+        Starts recording audio data provided by multiple microphones and directly writes it in appropriate .wav files.
+        """
+
+        output_files = []
+        for microphone_key in microphones:
+            output_files.append(
+                self._get_raw_audio_file_path(self.num_episodes, "observation.audio." + microphone_key)
+            )
+
+        async_microphones_start_recording(microphones, output_files)
 
     def save_episode(self, episode_data: dict | None = None) -> None:
         """

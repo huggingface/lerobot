@@ -344,7 +344,7 @@ def test_add_frame_audio(audio_dataset):
     microphone = make_microphone(microphone_type="portaudio", mock=True)
     microphone.connect()
 
-    dataset.add_microphone_recording(microphone, "microphone_key")
+    dataset.add_microphone_recording("microphone_key", microphone)
     time.sleep(1.0)
     dataset.add_frame({"observation.audio.microphone": microphone.read(), "task": "Dummy task"})
     microphone.stop_recording()

@@ -239,9 +239,10 @@ class PortAudioMicrophone:
             logging.warning(status)
         # Slicing makes copy unnecessary
         # Two separate queues are necessary because .get() also pops the data from the queue
+        # Remark: this also ensures that file-recorded data and chunk-audio data are the same.
         if self.is_writing:
-            self.record_queue.put(indata[:, self.channels_index])
-        self.read_queue.put(indata[:, self.channels_index])
+            self.record_queue.put_nowait(indata[:, self.channels_index])
+        self.read_queue.put_nowait(indata[:, self.channels_index])
 
     @staticmethod
     def _record_loop(queue, event: Event, sample_rate: int, channels: list[int], output_file: Path) -> None:
@@ -255,13 +256,13 @@ class PortAudioMicrophone:
             samplerate=sample_rate,
             channels=max(channels),
             format="WAV",
-            subtype="FLOAT",    # By default, a much lower quality WAV file is created !
+            subtype="FLOAT",  # By default, a much lower quality WAV file is created !
         ) as file:
             while not event.is_set():
                 try:
                     file.write(
-                        queue.get(timeout=0.02)
-                    )  # Timeout set as twice the usual sounddevice buffer size
+                        queue.get(timeout=0.01)
+                    )  # Timeout set as the usual sounddevice buffer size. get_nowait is not possible here as it saturates the thread.
                     queue.task_done()
                 except Empty:
                     continue
@@ -311,6 +312,7 @@ class PortAudioMicrophone:
     ) -> None:
         """
         Starts the recording of the microphone. If output_file is provided, the audio will be written to this file.
+        Remark: multiprocessing is implemented, but does not work well with sounddevice (launching delays, tricky memory sharing, sounddevice streams are not picklable (even with dill #pathos), etc.).
         """
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(f"Microphone {self.microphone_index} is not connected.")
