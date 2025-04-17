@@ -115,7 +115,6 @@ def main():
         base_action = keyboard.get_action()
         action = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
 
-
         action_sent = robot.send_action(action)
         observation = robot.get_observation()
 
