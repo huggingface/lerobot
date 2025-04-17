@@ -457,4 +457,3 @@ class LeKiwiClient(Robot):
         self.zmq_cmd_socket.close()
         self.zmq_context.term()
         self._is_connected = False
-
