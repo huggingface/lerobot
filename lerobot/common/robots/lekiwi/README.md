@@ -1,5 +1,3 @@
-# TODO(Steven): Update README
-
 # Using the [LeKiwi](https://github.com/SIGRobotics-UIUC/LeKiwi) Robot with LeRobot
 
 ## Table of Contents

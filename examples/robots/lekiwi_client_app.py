@@ -115,10 +115,6 @@ def main():
         base_action = keyboard.get_action()
         action = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
 
-        # TODO(Steven): Deal with policy action space
-        # robot.set_mode(RobotMode.AUTO)
-        # policy_action = policy.get_action() # This might be in body frame, key space or smt else
-        # robot.send_action(policy_action)
 
         action_sent = robot.send_action(action)
         observation = robot.get_observation()

@@ -79,12 +79,6 @@ class KeyboardTeleop(Teleoperator):
         pass
 
     def connect(self) -> None:
-        # TODO(Steven): Consider early return instead of raising a warning
-        # if self._is_connected:
-        #     logging.warning(
-        #         "Keyboard is already connected. Do not run `robot.connect()` twice."
-        #     )
-        #     return self._is_connected
         if self._is_connected:
             raise DeviceAlreadyConnectedError(
                 "Keyboard is already connected. Do not run `robot.connect()` twice."

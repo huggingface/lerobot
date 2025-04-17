@@ -65,9 +65,9 @@ def make_robot_from_config(config: RobotConfig):
 
         return ManipulatorRobot(config)
     elif isinstance(config, LeKiwiConfig):
-        # TODO(Steven): Change when we decide what to do with these scripts
-        # from lerobot.common.robots.mobile_manipulator import MobileManipulator
-        # return MobileManipulator(config)
+        from lerobot.common.robots.lekiwi import LeKiwiClient
+
+        return LeKiwiClient(config)
         ...
     else:
         from lerobot.common.robots.stretch3.robot_stretch3 import Stretch3Robot

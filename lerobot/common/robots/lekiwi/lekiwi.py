@@ -48,7 +48,6 @@ class LeKiwi(Robot):
     def __init__(self, config: LeKiwiConfig):
         super().__init__(config)
         self.config = config
-        self.id = config.id
         self.bus = FeetechMotorsBus(
             port=self.config.port,
             motors={
@@ -134,7 +133,6 @@ class LeKiwi(Robot):
         # should we use for this
         # homing_offsets.update({k,None???} for k in self.base_motors)
 
-        # TODO(Steven): Might be worth to do this also in other robots but it should be added in the docs
         full_turn_motor = [
             motor for motor in motors if any(keyword in motor for keyword in ["wheel", "wrist"])
         ]
@@ -167,7 +165,8 @@ class LeKiwi(Robot):
         # Set-up arm actuators (position mode)
         # We assume that at connection time, arm is in a rest position,
         # and torque can be safely disabled to run calibration.
-        self.bus.disable_torque(self.arm_motors)
+        self.bus.disable_torque()
+        self.bus.configure_motors()
         for name in self.arm_motors:
             self.bus.write("Operating_Mode", name, OperatingMode.POSITION.value)
             # Set P_Coefficient to lower value to avoid shakiness (Default is 32)
@@ -175,10 +174,6 @@ class LeKiwi(Robot):
             # Set I_Coefficient and D_Coefficient to default value 0 and 32
             self.bus.write("I_Coefficient", name, 0)
             self.bus.write("D_Coefficient", name, 32)
-            # Set Maximum_Acceleration to 254 to speedup acceleration and deceleration of
-            # the motors. Note: this configuration is not in the official STS3215 Memory Table
-            self.bus.write("Maximum_Acceleration", name, 254)
-            self.bus.write("Acceleration", name, 254)
 
         for name in self.base_motors:
             self.bus.write("Operating_Mode", name, OperatingMode.VELOCITY.value)

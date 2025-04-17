@@ -24,4 +24,3 @@ from ..config import TeleoperatorConfig
 class SO100LeaderConfig(TeleoperatorConfig):
     # Port to connect to the arm
     port: str
-    id = "so100"
