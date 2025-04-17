@@ -96,7 +96,7 @@ class SO100Leader(Teleoperator):
 
         full_turn_motor = "wrist_roll"
         unknown_range_motors = [name for name in self.arm.names if name != full_turn_motor]
-        logger.info(
+        print(
             f"Move all joints except '{full_turn_motor}' sequentially through their "
             "entire ranges of motion.\nRecording positions. Press ENTER to stop..."
         )

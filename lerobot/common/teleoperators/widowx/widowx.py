@@ -99,7 +99,7 @@ class WidowX(Teleoperator):
 
         full_turn_motors = ["shoulder_pan", "wrist_roll"]
         unknown_range_motors = [name for name in self.arm.names if name not in full_turn_motors]
-        logger.info(
+        print(
             f"Move all joints except {full_turn_motors} sequentially through their "
             "entire ranges of motion.\nRecording positions. Press ENTER to stop..."
         )
