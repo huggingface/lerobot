@@ -117,7 +117,7 @@ class KochFollower(Robot):
         for name in self.arm.names:
             self.arm.write("Operating_Mode", name, OperatingMode.EXTENDED_POSITION.value)
 
-        input("Move robot to the middle of its range of motion and press ENTER....")
+        input(f"Move {self} to the middle of its range of motion and press ENTER....")
         homing_offsets = self.arm.set_half_turn_homings()
 
         full_turn_motors = ["shoulder_pan", "wrist_roll"]
@@ -168,6 +168,12 @@ class KochFollower(Robot):
             self.arm.write("Position_P_Gain", "elbow_flex", 1500)
             self.arm.write("Position_I_Gain", "elbow_flex", 0)
             self.arm.write("Position_D_Gain", "elbow_flex", 600)
+
+    def setup_motors(self) -> None:
+        for motor in reversed(self.arm.motors):
+            input(f"Connect the controller board to the '{motor}' motor only and press enter.")
+            self.arm.setup_motor(motor)
+            print(f"'{motor}' motor id set to {self.arm.motors[motor].id}")
 
     def get_observation(self) -> dict[str, Any]:
         if not self.is_connected:

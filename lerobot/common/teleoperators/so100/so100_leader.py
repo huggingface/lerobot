@@ -91,7 +91,7 @@ class SO100Leader(Teleoperator):
         for name in self.arm.names:
             self.arm.write("Operating_Mode", name, OperatingMode.POSITION.value)
 
-        input("Move robot to the middle of its range of motion and press ENTER....")
+        input(f"Move {self} to the middle of its range of motion and press ENTER....")
         homing_offsets = self.arm.set_half_turn_homings()
 
         full_turn_motor = "wrist_roll"
@@ -123,6 +123,12 @@ class SO100Leader(Teleoperator):
         self.arm.configure_motors()
         for name in self.arm.names:
             self.arm.write("Operating_Mode", name, OperatingMode.POSITION.value)
+
+    def setup_motors(self) -> None:
+        for motor in reversed(self.arm.motors):
+            input(f"Connect the controller board to the '{motor}' motor only and press enter.")
+            self.arm.setup_motor(motor)
+            print(f"'{motor}' motor id set to {self.arm.motors[motor].id}")
 
     def get_action(self) -> dict[str, float]:
         start = time.perf_counter()

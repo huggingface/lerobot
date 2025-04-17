@@ -19,7 +19,7 @@ from pprint import pformat
 
 from lerobot.common.utils.encoding_utils import decode_sign_magnitude, encode_sign_magnitude
 
-from ..motors_bus import Motor, MotorCalibration, MotorsBus, NameOrID, Value
+from ..motors_bus import Motor, MotorCalibration, MotorsBus, NameOrID, Value, get_address
 from .tables import (
     FIRMWARE_MAJOR_VERSION,
     FIRMWARE_MINOR_VERSION,
@@ -279,6 +279,12 @@ class FeetechMotorsBus(MotorsBus):
         for name in self._get_motors_list(motors):
             self.write("Torque_Enable", name, TorqueMode.DISABLED.value, num_retry=num_retry)
             self.write("Lock", name, 0, num_retry=num_retry)
+
+    def _disable_torque(self, motor_id: int, model: str, num_retry: int = 0) -> None:
+        addr, length = get_address(self.model_ctrl_table, model, "Torque_Enable")
+        self._write(addr, length, motor_id, TorqueMode.DISABLED.value, num_retry=num_retry)
+        addr, length = get_address(self.model_ctrl_table, model, "Lock")
+        self._write(addr, length, motor_id, 0, num_retry=num_retry)
 
     def enable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
         for name in self._get_motors_list(motors):

@@ -464,13 +464,14 @@ class MotorsBus(abc.ABC):
         model = self.motors[motor].model
         target_id = self.motors[motor].id
         self.set_baudrate(initial_baudrate)
+        self._disable_torque(initial_id, model)
 
         # Set ID
-        addr, length = get_address(self.model_ctrl_table, "ID", model)
+        addr, length = get_address(self.model_ctrl_table, model, "ID")
         self._write(addr, length, initial_id, target_id)
 
         # Set Baudrate
-        addr, length = get_address(self.model_ctrl_table, "Baud_Rate", model)
+        addr, length = get_address(self.model_ctrl_table, model, "Baud_Rate")
         baudrate_value = self.model_baudrate_table[model][self.default_baudrate]
         self._write(addr, length, target_id, baudrate_value)
 
@@ -485,7 +486,11 @@ class MotorsBus(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def disable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
+    def disable_torque(self, motors: int | str | list[str] | None = None, num_retry: int = 0) -> None:
+        pass
+
+    @abc.abstractmethod
+    def _disable_torque(self, motor: int, model: str, num_retry: int = 0) -> None:
         pass
 
     @abc.abstractmethod
