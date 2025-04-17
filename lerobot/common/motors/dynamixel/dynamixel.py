@@ -35,7 +35,7 @@ from .tables import (
 )
 
 PROTOCOL_VERSION = 2.0
-BAUDRATE = 1_000_000
+DEFAULT_BAUDRATE = 1_000_000
 DEFAULT_TIMEOUT_MS = 1000
 
 NORMALIZED_DATA = ["Goal_Position", "Present_Position"]
@@ -109,6 +109,7 @@ class DynamixelMotorsBus(MotorsBus):
     """
 
     available_baudrates = deepcopy(AVAILABLE_BAUDRATES)
+    default_baudrate = DEFAULT_BAUDRATE
     default_timeout = DEFAULT_TIMEOUT_MS
     model_baudrate_table = deepcopy(MODEL_BAUDRATE_TABLE)
     model_ctrl_table = deepcopy(MODEL_CONTROL_TABLE)
@@ -138,6 +139,28 @@ class DynamixelMotorsBus(MotorsBus):
 
     def _handshake(self) -> None:
         self._assert_motors_exist()
+
+    def _find_single_motor(self, motor: str, initial_baudrate: int | None) -> tuple[int, int]:
+        model = self.motors[motor].model
+        search_baudrates = (
+            [initial_baudrate] if initial_baudrate is not None else self.model_baudrate_table[model]
+        )
+
+        for baudrate in search_baudrates:
+            self.set_baudrate(baudrate)
+            id_model = self.broadcast_ping()
+            if id_model:
+                found_id, found_model = next(iter(id_model.items()))
+                expected_model_nb = self.model_number_table[model]
+                if found_model != expected_model_nb:
+                    raise RuntimeError(
+                        f"Found one motor on {baudrate=} with id={found_id} but it has a "
+                        f"model number '{found_model}' different than the one expected: '{expected_model_nb}' "
+                        f"Make sure you are connected only connected to the '{motor}' motor (model '{model}')."
+                    )
+                return baudrate, found_id
+
+        raise RuntimeError(f"Motor '{motor}' (model '{model}') was not found. Make sure it is connected.")
 
     def configure_motors(self) -> None:
         # By default, Dynamixel motors have a 500µs delay response time (corresponding to a value of 250 on

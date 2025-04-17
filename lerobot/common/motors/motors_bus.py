@@ -255,6 +255,7 @@ class MotorsBus(abc.ABC):
     """
 
     available_baudrates: list[int]
+    default_baudrate: int
     default_timeout: int
     model_baudrate_table: dict[str, dict]
     model_ctrl_table: dict[str, dict]
@@ -414,6 +415,11 @@ class MotorsBus(abc.ABC):
                 f"{self.__class__.__name__}('{self.port}') is already connected. Do not call `{self.__class__.__name__}.connect()` twice."
             )
 
+        self._connect(handshake)
+        self.set_timeout()
+        logger.debug(f"{self.__class__.__name__} connected.")
+
+    def _connect(self, handshake: bool = True) -> None:
         try:
             if not self.port_handler.openPort():
                 raise OSError(f"Failed to open port '{self.port}'.")
@@ -425,9 +431,6 @@ class MotorsBus(abc.ABC):
                 "\nTry running `python lerobot/scripts/find_motors_bus_port.py`\n"
             ) from e
 
-        self.set_timeout()
-        logger.debug(f"{self.__class__.__name__} connected.")
-
     @abc.abstractmethod
     def _handshake(self) -> None:
         pass
@@ -435,13 +438,7 @@ class MotorsBus(abc.ABC):
     @classmethod
     def scan_port(cls, port: str, *args, **kwargs) -> dict[int, list[int]]:
         bus = cls(port, {}, *args, **kwargs)
-        try:
-            bus.port_handler.openPort()
-        except (FileNotFoundError, OSError, serial.SerialException) as e:
-            raise ConnectionError(
-                f"Could not connect to port '{port}'. Make sure you are using the correct port."
-                "\nTry running `python lerobot/scripts/find_motors_bus_port.py`\n"
-            ) from e
+        bus._connect(handshake=False)
         baudrate_ids = {}
         for baudrate in tqdm(bus.available_baudrates, desc="Scanning port"):
             bus.set_baudrate(baudrate)
@@ -451,6 +448,37 @@ class MotorsBus(abc.ABC):
                 baudrate_ids[baudrate] = list(ids_models)
 
         return baudrate_ids
+
+    def setup_motor(
+        self, motor: str, initial_baudrate: int | None = None, initial_id: int | None = None
+    ) -> None:
+        if not self.is_connected:
+            self._connect(handshake=False)
+
+        if initial_baudrate is None:
+            initial_baudrate, initial_id = self._find_single_motor(motor)
+
+        if initial_id is None:
+            _, initial_id = self._find_single_motor(motor, initial_baudrate)
+
+        model = self.motors[motor].model
+        target_id = self.motors[motor].id
+        self.set_baudrate(initial_baudrate)
+
+        # Set ID
+        addr, length = get_address(self.model_ctrl_table, "ID", model)
+        self._write(addr, length, initial_id, target_id)
+
+        # Set Baudrate
+        addr, length = get_address(self.model_ctrl_table, "Baud_Rate", model)
+        baudrate_value = self.model_baudrate_table[model][self.default_baudrate]
+        self._write(addr, length, target_id, baudrate_value)
+
+        self.set_baudrate(self.default_baudrate)
+
+    @abc.abstractmethod
+    def _find_single_motor(self, motor: str, initial_baudrate: int | None) -> tuple[int, int]:
+        pass
 
     @abc.abstractmethod
     def configure_motors(self) -> None:

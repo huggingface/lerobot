@@ -57,13 +57,13 @@ X_SERIES_CONTROL_TABLE = {
 
 # https://emanual.robotis.com/docs/en/dxl/x/{MODEL}/#baud-rate8
 X_SERIES_BAUDRATE_TABLE = {
-    0: 9_600,
-    1: 57_600,
-    2: 115_200,
-    3: 1_000_000,
-    4: 2_000_000,
-    5: 3_000_000,
-    6: 4_000_000,
+    9_600: 0,
+    57_600: 1,
+    115_200: 2,
+    1_000_000: 3,
+    2_000_000: 4,
+    3_000_000: 5,
+    4_000_000: 6,
 }
 
 # {data_name: size_byte}
