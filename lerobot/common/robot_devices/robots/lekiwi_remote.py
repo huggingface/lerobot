@@ -21,6 +21,7 @@ from pathlib import Path
 import cv2
 import zmq
 
+from lerobot.common.robot_devices.microphones.utils import async_microphones_read
 from lerobot.common.robot_devices.robots.mobile_manipulator import LeKiwi
 
 
@@ -54,10 +55,7 @@ def run_camera_capture(cameras, images_lock, latest_images_dict, stop_event):
 
 def run_microphone_capture(microphones, audio_lock, latest_audio_dict, stop_event):
     while not stop_event.is_set():
-        local_dict = {}
-        for name, microphone in microphones.items():
-            audio_readings = microphone.read()
-            local_dict[name] = audio_readings
+        local_dict = async_microphones_read(microphones)
         with audio_lock:
             latest_audio_dict.update(local_dict)
 

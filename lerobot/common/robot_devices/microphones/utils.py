@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from queue import Queue
+from threading import Thread
 from typing import Protocol
 
 from lerobot.common.robot_devices.microphones.configs import MicrophoneConfig, PortAudioMicrophoneConfig
@@ -28,6 +30,7 @@ class Microphone(Protocol):
         overwrite: bool | None = True,
     ): ...
     def stop_recording(self): ...
+    def read(self): ...
 
 
 def make_microphones_from_configs(microphone_configs: dict[str, MicrophoneConfig]) -> list[Microphone]:
@@ -52,3 +55,70 @@ def make_microphone(microphone_type, **kwargs) -> Microphone:
         return PortAudioMicrophone(config)
     else:
         raise ValueError(f"The microphone type '{microphone_type}' is not valid.")
+
+
+def async_microphones_start_recording(
+    microphones: dict[str, Microphone],
+    output_files: list[str | None] | None,
+    multiprocessing: bool = False,
+    overwrite: bool = True,
+):
+    """
+    Starts recording on multiple microphones asynchronously to avoid delays
+    """
+
+    start_recording_threads = []
+    if output_files is None:
+        output_files = [None] * len(microphones)
+
+    for microphone, output_file in zip(microphones.values(), output_files, strict=False):
+        start_recording_threads.append(
+            Thread(target=microphone.start_recording, args=(output_file, multiprocessing, overwrite))
+        )
+
+    for thread in start_recording_threads:
+        thread.start()
+    for thread in start_recording_threads:
+        thread.join()
+
+
+def async_microphones_stop_recording(microphones: dict[str, Microphone]):
+    """
+    Stops recording on multiple microphones asynchronously to avoid delays
+    """
+
+    stop_recording_threads = []
+
+    for microphone in microphones.values():
+        stop_recording_threads.append(Thread(target=microphone.stop_recording))
+
+    for thread in stop_recording_threads:
+        thread.start()
+    for thread in stop_recording_threads:
+        thread.join()
+
+
+def async_microphones_read(microphones: dict[str, Microphone]):
+    """
+    Reads from multiple microphones asynchronously to avoid delays
+    """
+
+    read_threads = []
+    read_queue = Queue()
+
+    for microphone_key, microphone in microphones.items():
+        read_threads.append(
+            Thread(
+                target=lambda microphone, output, microphone_key: output.put_nowait(
+                    {microphone_key: microphone.read()}
+                ),
+                args=(microphone, read_queue, microphone_key),
+            )
+        )
+
+    for thread in read_threads:
+        thread.start()
+    for thread in read_threads:
+        thread.join()
+
+    return dict(kv for d in read_queue.queue for kv in d.items())
