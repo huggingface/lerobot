@@ -1,3 +1,17 @@
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import enum
 import logging
 import math
@@ -8,6 +22,7 @@ from copy import deepcopy
 import numpy as np
 import tqdm
 
+from lerobot.common.robot_devices.motors.configs import DynamixelMotorsBusConfig
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
 from lerobot.common.utils.utils import capture_timestamp_utc
 
@@ -241,7 +256,7 @@ class DriveMode(enum.Enum):
 class CalibrationMode(enum.Enum):
     # Joints with rotational motions are expressed in degrees in nominal range of [-180, 180]
     DEGREE = 0
-    # Joints with linear motions (like gripper of Aloha) are experessed in nominal range of [0, 100]
+    # Joints with linear motions (like gripper of Aloha) are expressed in nominal range of [0, 100]
     LINEAR = 1
 
 
@@ -252,7 +267,6 @@ class JointOutOfRangeError(Exception):
 
 
 class DynamixelMotorsBus:
-    # TODO(rcadene): Add a script to find the motor indices without DynamixelWizzard2
     """
     The DynamixelMotorsBus class allows to efficiently read and write to the attached motors. It relies on
     the python dynamixel sdk to communicate with the motors. For more info, see the [Dynamixel SDK Documentation](https://emanual.robotis.com/docs/en/software/dynamixel/dynamixel_sdk/sample_code/python_read_write_protocol_2_0/#python-read-write-protocol-20).
@@ -274,10 +288,11 @@ class DynamixelMotorsBus:
     motor_index = 6
     motor_model = "xl330-m288"
 
-    motors_bus = DynamixelMotorsBus(
+    config = DynamixelMotorsBusConfig(
         port="/dev/tty.usbmodem575E0031751",
         motors={motor_name: (motor_index, motor_model)},
     )
+    motors_bus = DynamixelMotorsBus(config)
     motors_bus.connect()
 
     position = motors_bus.read("Present_Position")
@@ -293,23 +308,14 @@ class DynamixelMotorsBus:
 
     def __init__(
         self,
-        port: str,
-        motors: dict[str, tuple[int, str]],
-        extra_model_control_table: dict[str, list[tuple]] | None = None,
-        extra_model_resolution: dict[str, int] | None = None,
-        mock=False,
+        config: DynamixelMotorsBusConfig,
     ):
-        self.port = port
-        self.motors = motors
-        self.mock = mock
+        self.port = config.port
+        self.motors = config.motors
+        self.mock = config.mock
 
         self.model_ctrl_table = deepcopy(MODEL_CONTROL_TABLE)
-        if extra_model_control_table:
-            self.model_ctrl_table.update(extra_model_control_table)
-
         self.model_resolution = deepcopy(MODEL_RESOLUTION)
-        if extra_model_resolution:
-            self.model_resolution.update(extra_model_resolution)
 
         self.port_handler = None
         self.packet_handler = None
@@ -326,7 +332,7 @@ class DynamixelMotorsBus:
             )
 
         if self.mock:
-            import tests.mock_dynamixel_sdk as dxl
+            import tests.motors.mock_dynamixel_sdk as dxl
         else:
             import dynamixel_sdk as dxl
 
@@ -350,7 +356,7 @@ class DynamixelMotorsBus:
 
     def reconnect(self):
         if self.mock:
-            import tests.mock_dynamixel_sdk as dxl
+            import tests.motors.mock_dynamixel_sdk as dxl
         else:
             import dynamixel_sdk as dxl
 
@@ -618,7 +624,7 @@ class DynamixelMotorsBus:
                 # 0-centered resolution range (e.g. [-2048, 2048] for resolution=4096)
                 values[i] = values[i] / HALF_TURN_DEGREE * (resolution // 2)
 
-                # Substract the homing offsets to come back to actual motor range of values
+                # Subtract the homing offsets to come back to actual motor range of values
                 # which can be arbitrary.
                 values[i] -= homing_offset
 
@@ -640,7 +646,7 @@ class DynamixelMotorsBus:
 
     def read_with_motor_ids(self, motor_models, motor_ids, data_name, num_retry=NUM_READ_RETRY):
         if self.mock:
-            import tests.mock_dynamixel_sdk as dxl
+            import tests.motors.mock_dynamixel_sdk as dxl
         else:
             import dynamixel_sdk as dxl
 
@@ -685,7 +691,7 @@ class DynamixelMotorsBus:
         start_time = time.perf_counter()
 
         if self.mock:
-            import tests.mock_dynamixel_sdk as dxl
+            import tests.motors.mock_dynamixel_sdk as dxl
         else:
             import dynamixel_sdk as dxl
 
@@ -751,7 +757,7 @@ class DynamixelMotorsBus:
 
     def write_with_motor_ids(self, motor_models, motor_ids, data_name, values, num_retry=NUM_WRITE_RETRY):
         if self.mock:
-            import tests.mock_dynamixel_sdk as dxl
+            import tests.motors.mock_dynamixel_sdk as dxl
         else:
             import dynamixel_sdk as dxl
 
@@ -787,7 +793,7 @@ class DynamixelMotorsBus:
         start_time = time.perf_counter()
 
         if self.mock:
-            import tests.mock_dynamixel_sdk as dxl
+            import tests.motors.mock_dynamixel_sdk as dxl
         else:
             import dynamixel_sdk as dxl
 

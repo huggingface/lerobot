@@ -1,3 +1,17 @@
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import enum
 import logging
 import math
@@ -8,6 +22,7 @@ from copy import deepcopy
 import numpy as np
 import tqdm
 
+from lerobot.common.robot_devices.motors.configs import FeetechMotorsBusConfig
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
 from lerobot.common.utils.utils import capture_timestamp_utc
 
@@ -220,7 +235,7 @@ class DriveMode(enum.Enum):
 class CalibrationMode(enum.Enum):
     # Joints with rotational motions are expressed in degrees in nominal range of [-180, 180]
     DEGREE = 0
-    # Joints with linear motions (like gripper of Aloha) are experessed in nominal range of [0, 100]
+    # Joints with linear motions (like gripper of Aloha) are expressed in nominal range of [0, 100]
     LINEAR = 1
 
 
@@ -252,10 +267,11 @@ class FeetechMotorsBus:
     motor_index = 6
     motor_model = "sts3215"
 
-    motors_bus = FeetechMotorsBus(
+    config = FeetechMotorsBusConfig(
         port="/dev/tty.usbmodem575E0031751",
         motors={motor_name: (motor_index, motor_model)},
     )
+    motors_bus = FeetechMotorsBus(config)
     motors_bus.connect()
 
     position = motors_bus.read("Present_Position")
@@ -271,23 +287,14 @@ class FeetechMotorsBus:
 
     def __init__(
         self,
-        port: str,
-        motors: dict[str, tuple[int, str]],
-        extra_model_control_table: dict[str, list[tuple]] | None = None,
-        extra_model_resolution: dict[str, int] | None = None,
-        mock=False,
+        config: FeetechMotorsBusConfig,
     ):
-        self.port = port
-        self.motors = motors
-        self.mock = mock
+        self.port = config.port
+        self.motors = config.motors
+        self.mock = config.mock
 
         self.model_ctrl_table = deepcopy(MODEL_CONTROL_TABLE)
-        if extra_model_control_table:
-            self.model_ctrl_table.update(extra_model_control_table)
-
         self.model_resolution = deepcopy(MODEL_RESOLUTION)
-        if extra_model_resolution:
-            self.model_resolution.update(extra_model_resolution)
 
         self.port_handler = None
         self.packet_handler = None
@@ -306,7 +313,7 @@ class FeetechMotorsBus:
             )
 
         if self.mock:
-            import tests.mock_scservo_sdk as scs
+            import tests.motors.mock_scservo_sdk as scs
         else:
             import scservo_sdk as scs
 
@@ -330,7 +337,7 @@ class FeetechMotorsBus:
 
     def reconnect(self):
         if self.mock:
-            import tests.mock_scservo_sdk as scs
+            import tests.motors.mock_scservo_sdk as scs
         else:
             import scservo_sdk as scs
 
@@ -598,7 +605,7 @@ class FeetechMotorsBus:
                 # 0-centered resolution range (e.g. [-2048, 2048] for resolution=4096)
                 values[i] = values[i] / HALF_TURN_DEGREE * (resolution // 2)
 
-                # Substract the homing offsets to come back to actual motor range of values
+                # Subtract the homing offsets to come back to actual motor range of values
                 # which can be arbitrary.
                 values[i] -= homing_offset
 
@@ -639,7 +646,7 @@ class FeetechMotorsBus:
                 track["prev"][idx] = values[i]
                 continue
 
-            # Detect a full rotation occured
+            # Detect a full rotation occurred
             if abs(track["prev"][idx] - values[i]) > 2048:
                 # Position went below 0 and got reset to 4095
                 if track["prev"][idx] < values[i]:
@@ -657,7 +664,7 @@ class FeetechMotorsBus:
 
     def read_with_motor_ids(self, motor_models, motor_ids, data_name, num_retry=NUM_READ_RETRY):
         if self.mock:
-            import tests.mock_scservo_sdk as scs
+            import tests.motors.mock_scservo_sdk as scs
         else:
             import scservo_sdk as scs
 
@@ -695,7 +702,7 @@ class FeetechMotorsBus:
 
     def read(self, data_name, motor_names: str | list[str] | None = None):
         if self.mock:
-            import tests.mock_scservo_sdk as scs
+            import tests.motors.mock_scservo_sdk as scs
         else:
             import scservo_sdk as scs
 
@@ -724,6 +731,10 @@ class FeetechMotorsBus:
         group_key = get_group_sync_key(data_name, motor_names)
 
         if data_name not in self.group_readers:
+            # Very Important to flush the buffer!
+            self.port_handler.ser.reset_output_buffer()
+            self.port_handler.ser.reset_input_buffer()
+
             # create new group reader
             self.group_readers[group_key] = scs.GroupSyncRead(
                 self.port_handler, self.packet_handler, addr, bytes
@@ -771,7 +782,7 @@ class FeetechMotorsBus:
 
     def write_with_motor_ids(self, motor_models, motor_ids, data_name, values, num_retry=NUM_WRITE_RETRY):
         if self.mock:
-            import tests.mock_scservo_sdk as scs
+            import tests.motors.mock_scservo_sdk as scs
         else:
             import scservo_sdk as scs
 
@@ -807,7 +818,7 @@ class FeetechMotorsBus:
         start_time = time.perf_counter()
 
         if self.mock:
-            import tests.mock_scservo_sdk as scs
+            import tests.motors.mock_scservo_sdk as scs
         else:
             import scservo_sdk as scs
 

@@ -1,3 +1,17 @@
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 This file contains utilities for recording frames from Intel Realsense cameras.
 """
@@ -11,13 +25,13 @@ import threading
 import time
 import traceback
 from collections import Counter
-from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import Thread
 
 import numpy as np
 from PIL import Image
 
+from lerobot.common.robot_devices.cameras.configs import IntelRealSenseCameraConfig
 from lerobot.common.robot_devices.utils import (
     RobotDeviceAlreadyConnectedError,
     RobotDeviceNotConnectedError,
@@ -34,7 +48,7 @@ def find_cameras(raise_when_empty=True, mock=False) -> list[dict]:
     connected to the computer.
     """
     if mock:
-        import tests.mock_pyrealsense2 as rs
+        import tests.cameras.mock_pyrealsense2 as rs
     else:
         import pyrealsense2 as rs
 
@@ -86,7 +100,7 @@ def save_images_from_cameras(
         serial_numbers = [cam["serial_number"] for cam in camera_infos]
 
     if mock:
-        import tests.mock_cv2 as cv2
+        import tests.cameras.mock_cv2 as cv2
     else:
         import cv2
 
@@ -94,10 +108,13 @@ def save_images_from_cameras(
     cameras = []
     for cam_sn in serial_numbers:
         print(f"{cam_sn=}")
-        camera = IntelRealSenseCamera(cam_sn, fps=fps, width=width, height=height, mock=mock)
+        config = IntelRealSenseCameraConfig(
+            serial_number=cam_sn, fps=fps, width=width, height=height, mock=mock
+        )
+        camera = IntelRealSenseCamera(config)
         camera.connect()
         print(
-            f"IntelRealSenseCamera({camera.serial_number}, fps={camera.fps}, width={camera.width}, height={camera.height}, color_mode={camera.color_mode})"
+            f"IntelRealSenseCamera({camera.serial_number}, fps={camera.fps}, width={camera.capture_width}, height={camera.capture_height}, color_mode={camera.color_mode})"
         )
         cameras.append(camera)
 
@@ -149,51 +166,6 @@ def save_images_from_cameras(
             camera.disconnect()
 
 
-@dataclass
-class IntelRealSenseCameraConfig:
-    """
-    Example of tested options for Intel Real Sense D405:
-
-    ```python
-    IntelRealSenseCameraConfig(30, 640, 480)
-    IntelRealSenseCameraConfig(60, 640, 480)
-    IntelRealSenseCameraConfig(90, 640, 480)
-    IntelRealSenseCameraConfig(30, 1280, 720)
-    IntelRealSenseCameraConfig(30, 640, 480, use_depth=True)
-    IntelRealSenseCameraConfig(30, 640, 480, rotation=90)
-    ```
-    """
-
-    fps: int | None = None
-    width: int | None = None
-    height: int | None = None
-    color_mode: str = "rgb"
-    channels: int | None = None
-    use_depth: bool = False
-    force_hardware_reset: bool = True
-    rotation: int | None = None
-    mock: bool = False
-
-    def __post_init__(self):
-        if self.color_mode not in ["rgb", "bgr"]:
-            raise ValueError(
-                f"`color_mode` is expected to be 'rgb' or 'bgr', but {self.color_mode} is provided."
-            )
-
-        self.channels = 3
-
-        at_least_one_is_not_none = self.fps is not None or self.width is not None or self.height is not None
-        at_least_one_is_none = self.fps is None or self.width is None or self.height is None
-        if at_least_one_is_not_none and at_least_one_is_none:
-            raise ValueError(
-                "For `fps`, `width` and `height`, either all of them need to be set, or none of them, "
-                f"but {self.fps=}, {self.width=}, {self.height=} were provided."
-            )
-
-        if self.rotation not in [-90, None, 90, 180]:
-            raise ValueError(f"`rotation` must be in [-90, None, 90, 180] (got {self.rotation})")
-
-
 class IntelRealSenseCamera:
     """
     The IntelRealSenseCamera class is similar to OpenCVCamera class but adds additional features for Intel Real Sense cameras:
@@ -209,33 +181,35 @@ class IntelRealSenseCamera:
     When an IntelRealSenseCamera is instantiated, if no specific config is provided, the default fps, width, height and color_mode
     of the given camera will be used.
 
-    Example of usage:
+    Example of instantiating with a serial number:
     ```python
-    # Instantiate with its serial number
-    camera = IntelRealSenseCamera(128422271347)
-    # Or by its name if it's unique
-    camera = IntelRealSenseCamera.init_from_name("Intel RealSense D405")
+    from lerobot.common.robot_devices.cameras.configs import IntelRealSenseCameraConfig
+
+    config = IntelRealSenseCameraConfig(serial_number=128422271347)
+    camera = IntelRealSenseCamera(config)
     camera.connect()
     color_image = camera.read()
     # when done using the camera, consider disconnecting
     camera.disconnect()
     ```
 
+    Example of instantiating with a name if it's unique:
+    ```
+    config = IntelRealSenseCameraConfig(name="Intel RealSense D405")
+    ```
+
     Example of changing default fps, width, height and color_mode:
     ```python
-    camera = IntelRealSenseCamera(serial_number, fps=30, width=1280, height=720)
-    camera = connect()  # applies the settings, might error out if these settings are not compatible with the camera
-
-    camera = IntelRealSenseCamera(serial_number, fps=90, width=640, height=480)
-    camera = connect()
-
-    camera = IntelRealSenseCamera(serial_number, fps=90, width=640, height=480, color_mode="bgr")
-    camera = connect()
+    config = IntelRealSenseCameraConfig(serial_number=128422271347, fps=30, width=1280, height=720)
+    config = IntelRealSenseCameraConfig(serial_number=128422271347, fps=90, width=640, height=480)
+    config = IntelRealSenseCameraConfig(serial_number=128422271347, fps=90, width=640, height=480, color_mode="bgr")
+    # Note: might error out upon `camera.connect()` if these settings are not compatible with the camera
     ```
 
     Example of returning depth:
     ```python
-    camera = IntelRealSenseCamera(serial_number, use_depth=True)
+    config = IntelRealSenseCameraConfig(serial_number=128422271347, use_depth=True)
+    camera = IntelRealSenseCamera(config)
     camera.connect()
     color_image, depth_map = camera.read()
     ```
@@ -243,20 +217,27 @@ class IntelRealSenseCamera:
 
     def __init__(
         self,
-        serial_number: int,
-        config: IntelRealSenseCameraConfig | None = None,
-        **kwargs,
+        config: IntelRealSenseCameraConfig,
     ):
-        if config is None:
-            config = IntelRealSenseCameraConfig()
+        self.config = config
+        if config.name is not None:
+            self.serial_number = self.find_serial_number_from_name(config.name)
+        else:
+            self.serial_number = config.serial_number
 
-        # Overwrite the config arguments using kwargs
-        config = replace(config, **kwargs)
+        # Store the raw (capture) resolution from the config.
+        self.capture_width = config.width
+        self.capture_height = config.height
 
-        self.serial_number = serial_number
+        # If rotated by ±90, swap width and height.
+        if config.rotation in [-90, 90]:
+            self.width = config.height
+            self.height = config.width
+        else:
+            self.width = config.width
+            self.height = config.height
+
         self.fps = config.fps
-        self.width = config.width
-        self.height = config.height
         self.channels = config.channels
         self.color_mode = config.color_mode
         self.use_depth = config.use_depth
@@ -272,11 +253,10 @@ class IntelRealSenseCamera:
         self.logs = {}
 
         if self.mock:
-            import tests.mock_cv2 as cv2
+            import tests.cameras.mock_cv2 as cv2
         else:
             import cv2
 
-        # TODO(alibets): Do we keep original width/height or do we define them after rotation?
         self.rotation = None
         if config.rotation == -90:
             self.rotation = cv2.ROTATE_90_COUNTERCLOCKWISE
@@ -285,8 +265,7 @@ class IntelRealSenseCamera:
         elif config.rotation == 180:
             self.rotation = cv2.ROTATE_180
 
-    @classmethod
-    def init_from_name(cls, name: str, config: IntelRealSenseCameraConfig | None = None, **kwargs):
+    def find_serial_number_from_name(self, name):
         camera_infos = find_cameras()
         camera_names = [cam["name"] for cam in camera_infos]
         this_name_count = Counter(camera_names)[name]
@@ -299,13 +278,7 @@ class IntelRealSenseCamera:
         name_to_serial_dict = {cam["name"]: cam["serial_number"] for cam in camera_infos}
         cam_sn = name_to_serial_dict[name]
 
-        if config is None:
-            config = IntelRealSenseCameraConfig()
-
-        # Overwrite the config arguments using kwargs
-        config = replace(config, **kwargs)
-
-        return cls(serial_number=cam_sn, config=config, **kwargs)
+        return cam_sn
 
     def connect(self):
         if self.is_connected:
@@ -314,22 +287,26 @@ class IntelRealSenseCamera:
             )
 
         if self.mock:
-            import tests.mock_pyrealsense2 as rs
+            import tests.cameras.mock_pyrealsense2 as rs
         else:
             import pyrealsense2 as rs
 
         config = rs.config()
         config.enable_device(str(self.serial_number))
 
-        if self.fps and self.width and self.height:
+        if self.fps and self.capture_width and self.capture_height:
             # TODO(rcadene): can we set rgb8 directly?
-            config.enable_stream(rs.stream.color, self.width, self.height, rs.format.rgb8, self.fps)
+            config.enable_stream(
+                rs.stream.color, self.capture_width, self.capture_height, rs.format.rgb8, self.fps
+            )
         else:
             config.enable_stream(rs.stream.color)
 
         if self.use_depth:
-            if self.fps and self.width and self.height:
-                config.enable_stream(rs.stream.depth, self.width, self.height, rs.format.z16, self.fps)
+            if self.fps and self.capture_width and self.capture_height:
+                config.enable_stream(
+                    rs.stream.depth, self.capture_width, self.capture_height, rs.format.z16, self.fps
+                )
             else:
                 config.enable_stream(rs.stream.depth)
 
@@ -367,18 +344,18 @@ class IntelRealSenseCamera:
             raise OSError(
                 f"Can't set {self.fps=} for IntelRealSenseCamera({self.serial_number}). Actual value is {actual_fps}."
             )
-        if self.width is not None and self.width != actual_width:
+        if self.capture_width is not None and self.capture_width != actual_width:
             raise OSError(
-                f"Can't set {self.width=} for IntelRealSenseCamera({self.serial_number}). Actual value is {actual_width}."
+                f"Can't set {self.capture_width=} for IntelRealSenseCamera({self.serial_number}). Actual value is {actual_width}."
             )
-        if self.height is not None and self.height != actual_height:
+        if self.capture_height is not None and self.capture_height != actual_height:
             raise OSError(
-                f"Can't set {self.height=} for IntelRealSenseCamera({self.serial_number}). Actual value is {actual_height}."
+                f"Can't set {self.capture_height=} for IntelRealSenseCamera({self.serial_number}). Actual value is {actual_height}."
             )
 
         self.fps = round(actual_fps)
-        self.width = round(actual_width)
-        self.height = round(actual_height)
+        self.capture_width = round(actual_width)
+        self.capture_height = round(actual_height)
 
         self.is_connected = True
 
@@ -398,7 +375,7 @@ class IntelRealSenseCamera:
             )
 
         if self.mock:
-            import tests.mock_cv2 as cv2
+            import tests.cameras.mock_cv2 as cv2
         else:
             import cv2
 
@@ -424,7 +401,7 @@ class IntelRealSenseCamera:
             color_image = cv2.cvtColor(color_image, cv2.COLOR_RGB2BGR)
 
         h, w, _ = color_image.shape
-        if h != self.height or w != self.width:
+        if h != self.capture_height or w != self.capture_width:
             raise OSError(
                 f"Can't capture color image with expected height and width ({self.height} x {self.width}). ({h} x {w}) returned instead."
             )
@@ -446,7 +423,7 @@ class IntelRealSenseCamera:
             depth_map = np.asanyarray(depth_frame.get_data())
 
             h, w = depth_map.shape
-            if h != self.height or w != self.width:
+            if h != self.capture_height or w != self.capture_width:
                 raise OSError(
                     f"Can't capture depth map with expected height and width ({self.height} x {self.width}). ({h} x {w}) returned instead."
                 )
