@@ -45,9 +45,6 @@ class Teleoperator(abc.ABC):
     def is_connected(self) -> bool:
         pass
 
-    # TODO(Steven): I think connect() should return a bool, such that the client/application code can check if the device connected successfully
-    # if not device.connect():
-    #    raise DeviceNotConnectedError(f"{device} failed to connect")
     @abc.abstractmethod
     def connect(self) -> None:
         """Connects to the teleoperator."""

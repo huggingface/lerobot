@@ -422,10 +422,11 @@ def control_robot(cfg: ControlPipelineConfig):
     elif isinstance(cfg.control, ReplayControlConfig):
         replay(robot, cfg.control)
     elif isinstance(cfg.control, RemoteRobotConfig):
-        from lerobot.common.robots.lekiwi.old_lekiwi_remote import run_lekiwi
-
-        _init_rerun(control_config=cfg.control, session_name="lerobot_control_loop_remote")
-        run_lekiwi(cfg.robot)
+        ...
+        # TODO(Steven): Change this when we decide what to do with the control_robot script
+        # from lerobot.common.robots.lekiwi.old_lekiwi_remote import run_lekiwi
+        # _init_rerun(control_config=cfg.control, session_name="lerobot_control_loop_remote")
+        # run_lekiwi(cfg.robot)
 
     if robot.is_connected:
         # Disconnect manually to avoid a "Core dump" during process

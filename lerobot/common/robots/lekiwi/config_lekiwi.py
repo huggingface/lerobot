@@ -27,6 +27,8 @@ class RobotMode(enum.Enum):
 
 
 # TODO(Steven): Consider sending config at initial step over a socket
+# However, this isn't practical because anyways we have to configure the
+# socket ports to begin with
 @RobotConfig.register_subclass("lekiwi")
 @dataclass
 class LeKiwiConfig(RobotConfig):
@@ -49,6 +51,10 @@ class LeKiwiConfig(RobotConfig):
             ),
         }
     )
+
+    # Network Configuration
+    port_zmq_cmd: int = 5555
+    port_zmq_observations: int = 5556
 
 
 @RobotConfig.register_subclass("lekiwi_client")

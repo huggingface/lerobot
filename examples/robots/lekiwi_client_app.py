@@ -19,6 +19,7 @@ from lerobot.common.robots.lekiwi.lekiwi_client import LeKiwiClient
 from lerobot.common.teleoperators.keyboard import KeyboardTeleop, KeyboardTeleopConfig
 from lerobot.common.teleoperators.so100 import SO100Leader, SO100LeaderConfig
 
+# TODO(Steven): Check validity of these features
 DUMMY_FEATURES = {
     "observation.state": {
         "dtype": "float64",
@@ -118,6 +119,7 @@ def main():
         # robot.set_mode(RobotMode.AUTO)
         # policy_action = policy.get_action() # This might be in body frame, key space or smt else
         # robot.send_action(policy_action)
+
         action_sent = robot.send_action(action)
         observation = robot.get_observation()
 

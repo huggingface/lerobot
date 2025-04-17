@@ -27,22 +27,17 @@ from lerobot.common.constants import OBS_IMAGES
 from .config_lekiwi import LeKiwiConfig
 from .lekiwi import LeKiwi
 
-# TODO(Steven): Move this to the config file
-# Network Configuration
-PORT_ZMQ_CMD: int = 5555
-PORT_ZMQ_OBSERVATIONS: int = 5556
-
 
 class HostAgent:
-    def __init__(self):
+    def __init__(self, port_zmq_cmd, port_zmq_observations):
         self.zmq_context = zmq.Context()
         self.zmq_cmd_socket = self.zmq_context.socket(zmq.PULL)
         self.zmq_cmd_socket.setsockopt(zmq.CONFLATE, 1)
-        self.zmq_cmd_socket.bind(f"tcp://*:{PORT_ZMQ_CMD}")
+        self.zmq_cmd_socket.bind(f"tcp://*:{port_zmq_cmd}")
 
         self.zmq_observation_socket = self.zmq_context.socket(zmq.PUSH)
         self.zmq_observation_socket.setsockopt(zmq.CONFLATE, 1)
-        self.zmq_observation_socket.bind(f"tcp://*:{PORT_ZMQ_OBSERVATIONS}")
+        self.zmq_observation_socket.bind(f"tcp://*:{port_zmq_observations}")
 
     def disconnect(self):
         self.zmq_observation_socket.close()
@@ -59,7 +54,7 @@ def main():
     robot.connect()
 
     logging.info("Starting HostAgent")
-    remote_agent = HostAgent()
+    remote_agent = HostAgent(robot_config.port_zmq_cmd, robot_config.port_zmq_observations)
 
     last_cmd_time = time.time()
     logging.info("Waiting for commands...")

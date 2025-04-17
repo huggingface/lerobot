@@ -63,12 +63,8 @@ class KeyboardTeleop(Teleoperator):
 
     @property
     def action_feature(self) -> dict:
-        # TODO(Steven): Verify this is correct
-        return {
-            "dtype": "float32",
-            "shape": (len(self.arm),),
-            "names": {"motors": list(self.arm.motors)},
-        }
+        # TODO(Steven): Change this when we agree what should this return
+        ...
 
     @property
     def feedback_feature(self) -> dict:
@@ -83,15 +79,15 @@ class KeyboardTeleop(Teleoperator):
         pass
 
     def connect(self) -> None:
-        # TODO(Steven): Consider instead of raising a warning and then returning the status
+        # TODO(Steven): Consider early return instead of raising a warning
         # if self._is_connected:
         #     logging.warning(
-        #         "ManipulatorRobot is already connected. Do not run `robot.connect()` twice."
+        #         "Keyboard is already connected. Do not run `robot.connect()` twice."
         #     )
         #     return self._is_connected
         if self._is_connected:
             raise DeviceAlreadyConnectedError(
-                "ManipulatorRobot is already connected. Do not run `robot.connect()` twice."
+                "Keyboard is already connected. Do not run `robot.connect()` twice."
             )
 
         if PYNPUT_AVAILABLE:

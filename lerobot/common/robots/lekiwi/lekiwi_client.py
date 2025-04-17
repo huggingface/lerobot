@@ -24,10 +24,9 @@ import zmq
 
 from lerobot.common.constants import OBS_IMAGES, OBS_STATE
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError, InvalidActionError
-from lerobot.common.robots.config import RobotMode
 
 from ..robot import Robot
-from .config_lekiwi import LeKiwiClientConfig
+from .config_lekiwi import LeKiwiClientConfig, RobotMode
 
 
 # TODO(Steven): This doesn't need to inherit from Robot
@@ -81,9 +80,8 @@ class LeKiwiClient(Robot):
 
     @property
     def state_feature(self) -> dict:
-        # TODO(Steven): Get this from the data fetched?
-        # TODO(Steven): Motor names are unknown for the Daemon
-        # Or assume its size/metadata?
+        # TODO(Steven): Get this from the data fetched? Motor names are unknown for the Daemon
+        # For now we assume its size/metadata is known
         return {
             "dtype": "float64",
             "shape": (9,),
@@ -108,9 +106,8 @@ class LeKiwiClient(Robot):
 
     @property
     def camera_features(self) -> dict[str, dict]:
-        # TODO(Steven): Get this from the data fetched?
-        # TODO(Steven): camera names are unknown for the Daemon
-        # Or assume its size/metadata?
+        # TODO(Steven): Get this from the data fetched? Motor names are unknown for the Daemon
+        # For now we assume its size/metadata is known
         # TODO(Steven): Check consistency of image sizes
         cam_ft = {
             "front": {
@@ -128,7 +125,8 @@ class LeKiwiClient(Robot):
 
     @property
     def is_connected(self) -> bool:
-        # TODO(Steven): Check instead the status of the sockets
+        # TODO(Steven): Ideally we could check instead the status of the sockets
+        # I didn't find any API that allows us to do that easily
         return self._is_connected
 
     @property
@@ -138,6 +136,7 @@ class LeKiwiClient(Robot):
     def connect(self) -> None:
         """Establishes ZMQ sockets with the remote mobile robot"""
 
+        # TODO(Steven): Consider instead returning a bool + warn
         if self._is_connected:
             raise DeviceAlreadyConnectedError(
                 "LeKiwi Daemon is already connected. Do not run `robot.connect()` twice."
@@ -174,7 +173,7 @@ class LeKiwiClient(Robot):
             speed_int = -0x8000  # -32768 -> minimum negative value
         return speed_int
 
-    # Copied from robot_lekiwi MobileManipulator class
+    # Copied from robot_lekiwi MobileManipulator class* (before the refactor)
     @staticmethod
     def _raw_to_degps(raw_speed: int) -> float:
         steps_per_deg = 4096.0 / 360.0
@@ -182,7 +181,7 @@ class LeKiwiClient(Robot):
         degps = magnitude / steps_per_deg
         return degps
 
-    # Copied from robot_lekiwi MobileManipulator class
+    # Copied from robot_lekiwi MobileManipulator class* (before the refactor)
     def _body_to_wheel_raw(
         self,
         x_cmd: float,
@@ -285,6 +284,7 @@ class LeKiwiClient(Robot):
 
     # TODO(Steven): This is flaky, for example, if we received a state but failed decoding the image, we will not update any value
     # TODO(Steven): All this function needs to be refactored
+    # Copied from robot_lekiwi MobileManipulator class* (before the refactor)
     def _get_data(self):
         # Copied from robot_lekiwi.py
         """Polls the video socket for up to 15 ms. If data arrives, decode only
@@ -369,7 +369,7 @@ class LeKiwiClient(Robot):
         if not self._is_connected:
             raise DeviceNotConnectedError("LeKiwiClient is not connected. You need to run `robot.connect()`.")
 
-        # TODO(Steven): remove hard-coded cam name
+        # TODO(Steven): remove hard-coded cam names & dims
         # This is needed at init for when there's no comms
         obs_dict = {
             OBS_IMAGES: {"wrist": np.zeros(shape=(480, 640, 3)), "front": np.zeros(shape=(640, 480, 3))}
@@ -377,7 +377,7 @@ class LeKiwiClient(Robot):
 
         frames, present_speed, remote_arm_state_tensor = self._get_data()
         body_state = self._wheel_raw_to_body(present_speed)
-        # TODO(Steven): output isdict[str,Any] and we multiply by 1000.0. This should be more explicit and specify the expected type instead of Any
+        # TODO(Steven): output is dict[str,Any] and we multiply by 1000.0. This should be more explicit and specify the expected type instead of Any
         body_state_mm = {k: v * 1000.0 for k, v in body_state.items()}  # Convert x,y to mm/s
 
         obs_dict[OBS_STATE] = {**remote_arm_state_tensor, **body_state_mm}
@@ -423,7 +423,7 @@ class LeKiwiClient(Robot):
     def configure(self):
         pass
 
-    # TODO(Steven): This assumes this call is always called from a keyboard teleop command
+    # TODO(Steven): This assumes this call is always called with a keyboard as a teleop device. It breaks if we teleop with other device
     # TODO(Steven): Doing this mapping in here adds latecy between send_action and movement from the user perspective.
     # t0: get teleop_cmd
     # t1: send_action(teleop_cmd)
@@ -454,7 +454,7 @@ class LeKiwiClient(Robot):
 
         if self.robot_mode is RobotMode.AUTO:
             # TODO(Steven): Not yet implemented. The policy outputs might need a different conversion
-            raise Exception
+            raise InvalidActionError("Policy output as action input is not yet well defined")
 
         goal_pos = {}
         # TODO(Steven): This assumes teleop mode is always used with keyboard. Tomorrow we could teleop with another device ... ?

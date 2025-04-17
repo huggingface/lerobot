@@ -22,11 +22,10 @@ class Robot(abc.ABC):
     def __init__(self, config: RobotConfig):
         self.robot_type = self.name
         self.id = config.id
-        self.robot_mode = config.robot_mode
         self.calibration_dir = (
             Path(config.calibration_dir)
             if config.calibration_dir
-            else HF_LEROBOT_CALIBRATION / ROBOTS / self.name
+            else Path(HF_LEROBOT_CALIBRATION / ROBOTS / self.name)
         )
         self.calibration_dir.mkdir(parents=True, exist_ok=True)
         self.calibration_fpath = self.calibration_dir / f"{self.id}.json"

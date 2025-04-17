@@ -116,9 +116,6 @@ class LeKiwi(Robot):
     def is_calibrated(self) -> bool:
         return self.bus.is_calibrated
 
-    # TODO(Steven): I think we should extend this to give the user the option of re-calibrate
-    # calibrate(recalibrate: bool = False) -> None:
-    # If true, then we overwrite the previous calibration file with new values
     def calibrate(self) -> None:
         logger.info(f"\nRunning calibration of {self}")
 
@@ -131,9 +128,15 @@ class LeKiwi(Robot):
         input("Move robot to the middle of its range of motion and press ENTER....")
         homing_offsets = self.bus.set_half_turn_homings(motors)
 
+        # TODO(Steven): Previously homig_offsets was called only on self.arm_motors
+        # After a discussion, we said it was better to keep it like this and then
+        # just populate with the rest of motors. However, I don't know which value
+        # should we use for this
+        # homing_offsets.update({k,None???} for k in self.base_motors)
+
         # TODO(Steven): Might be worth to do this also in other robots but it should be added in the docs
         full_turn_motor = [
-            motor for motor in motors if any(keyword in motor for keyword in ["wheel", "gripper"])
+            motor for motor in motors if any(keyword in motor for keyword in ["wheel", "wrist"])
         ]
         unknown_range_motors = [motor for motor in motors if motor not in full_turn_motor]
 
@@ -180,7 +183,7 @@ class LeKiwi(Robot):
         for name in self.base_motors:
             self.bus.write("Operating_Mode", name, OperatingMode.VELOCITY.value)
 
-        self.bus.enable_torque()  # TODO(Steven): Operation has failed with: ConnectionError: Failed to write 'Lock' on id_=6 with '1' after 1 tries. [TxRxResult] Incorrect status packet!
+        self.bus.enable_torque()
 
     def get_observation(self) -> dict[str, Any]:
         if not self.is_connected:
@@ -191,7 +194,7 @@ class LeKiwi(Robot):
         # Read actuators position for arm and vel for base
         start = time.perf_counter()
         arm_pos = self.bus.sync_read("Present_Position", self.arm_motors)
-        base_vel = self.bus.sync_read("Present_Speed", self.base_motors)
+        base_vel = self.bus.sync_read("Present_Velocity", self.base_motors)
         obs_dict[OBS_STATE] = {**arm_pos, **base_vel}
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
@@ -238,12 +241,12 @@ class LeKiwi(Robot):
 
         # Send goal position to the actuators
         self.bus.sync_write("Goal_Position", arm_goal_pos)
-        self.bus.sync_write("Goal_Speed", base_goal_vel)
+        self.bus.sync_write("Goal_Velocity", base_goal_vel)
 
         return {**arm_goal_pos, **base_goal_vel}
 
     def stop_base(self):
-        self.bus.sync_write("Goal_Speed", dict.fromkeys(self.base_motors, 0), num_retry=5)
+        self.bus.sync_write("Goal_Velocity", dict.fromkeys(self.base_motors, 0), num_retry=5)
         logger.info("Base motors stopped")
 
     def disconnect(self):
