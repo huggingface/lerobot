@@ -32,7 +32,10 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import DEFAULT_FEATURES
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.robots import Robot
-
+from lerobot.microphones.utils import (
+    async_microphones_start_recording,
+    async_microphones_stop_recording,
+)
 
 def log_control_info(robot: Robot, dt_s, episode_index=None, frame_index=None, fps=None):
     log_items = []
@@ -183,7 +186,6 @@ def init_keyboard_listener():
     listener.start()
 
     return listener, events
-
 
 def sanity_check_dataset_name(repo_id, policy_cfg):
     _, dataset_name = repo_id.split("/")
