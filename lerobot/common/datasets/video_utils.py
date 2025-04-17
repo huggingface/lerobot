@@ -260,35 +260,39 @@ def encode_video_frames(
     imgs_dir = Path(imgs_dir)
     video_path.parent.mkdir(parents=True, exist_ok=True)
 
-    ffmpeg_args = OrderedDict(
+    ffmpeg_video_args = OrderedDict(
         [
             ("-f", "image2"),
             ("-r", str(fps)),
-            ("-i", str(imgs_dir / "frame_%06d.png")),
-            ("-vcodec", vcodec),
-            ("-pix_fmt", pix_fmt),
+            ("-i", str(Path(imgs_dir) / "frame_%06d.png")),
         ]
     )
 
+    ffmpeg_encoding_args = OrderedDict(
+        [
+            ("-pix_fmt", pix_fmt),
+            ("-vcodec", vcodec),
+        ]
+    )
     if g is not None:
-        ffmpeg_args["-g"] = str(g)
-
+        ffmpeg_encoding_args["-g"] = str(g)
     if crf is not None:
-        ffmpeg_args["-crf"] = str(crf)
-
+        ffmpeg_encoding_args["-crf"] = str(crf)
     if fast_decode:
         key = "-svtav1-params" if vcodec == "libsvtav1" else "-tune"
         value = f"fast-decode={fast_decode}" if vcodec == "libsvtav1" else "fastdecode"
-        ffmpeg_args[key] = value
+        ffmpeg_encoding_args[key] = value
 
     if log_level is not None:
-        ffmpeg_args["-loglevel"] = str(log_level)
+        ffmpeg_encoding_args["-loglevel"] = str(log_level)
 
-    ffmpeg_args = [item for pair in ffmpeg_args.items() for item in pair]
+    ffmpeg_args = [item for pair in ffmpeg_video_args.items() for item in pair]
+    ffmpeg_args += [item for pair in ffmpeg_encoding_args.items() for item in pair]
     if overwrite:
         ffmpeg_args.append("-y")
 
     ffmpeg_cmd = ["ffmpeg"] + ffmpeg_args + [str(video_path)]
+
     # redirect stdin to subprocess.DEVNULL to prevent reading random keyboard inputs from terminal
     subprocess.run(ffmpeg_cmd, check=True, stdin=subprocess.DEVNULL)
 
@@ -331,42 +335,6 @@ with warnings.catch_warnings():
     register_feature(VideoFrame, "VideoFrame")
 
 
-def get_audio_info(video_path: Path | str) -> dict:
-    ffprobe_audio_cmd = [
-        "ffprobe",
-        "-v",
-        "error",
-        "-select_streams",
-        "a:0",
-        "-show_entries",
-        "stream=channels,codec_name,bit_rate,sample_rate,bit_depth,channel_layout,duration",
-        "-of",
-        "json",
-        str(video_path),
-    ]
-    result = subprocess.run(ffprobe_audio_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    if result.returncode != 0:
-        raise RuntimeError(f"Error running ffprobe: {result.stderr}")
-
-    info = json.loads(result.stdout)
-    audio_stream_info = info["streams"][0] if info.get("streams") else None
-    if audio_stream_info is None:
-        return {"has_audio": False}
-
-    # Return the information, defaulting to None if no audio stream is present
-    return {
-        "has_audio": True,
-        "audio.channels": audio_stream_info.get("channels", None),
-        "audio.codec": audio_stream_info.get("codec_name", None),
-        "audio.bit_rate": int(audio_stream_info["bit_rate"]) if audio_stream_info.get("bit_rate") else None,
-        "audio.sample_rate": int(audio_stream_info["sample_rate"])
-        if audio_stream_info.get("sample_rate")
-        else None,
-        "audio.bit_depth": audio_stream_info.get("bit_depth", None),
-        "audio.channel_layout": audio_stream_info.get("channel_layout", None),
-    }
-
-
 def get_video_info(video_path: Path | str) -> dict:
     ffprobe_video_cmd = [
         "ffprobe",
@@ -402,7 +370,6 @@ def get_video_info(video_path: Path | str) -> dict:
         "video.codec": video_stream_info["codec_name"],
         "video.pix_fmt": video_stream_info["pix_fmt"],
         "video.is_depth_map": False,
-        **get_audio_info(video_path),
     }
 
     return video_info

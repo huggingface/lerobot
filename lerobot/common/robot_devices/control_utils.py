@@ -33,6 +33,10 @@ from lerobot.common.datasets.image_writer import safe_stop_image_writer
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.datasets.utils import get_features_from_robot
 from lerobot.common.policies.pretrained import PreTrainedPolicy
+from lerobot.common.robot_devices.microphones.utils import (
+    async_microphones_start_recording,
+    async_microphones_stop_recording,
+)
 from lerobot.common.robot_devices.robots.utils import Robot
 from lerobot.common.robot_devices.utils import busy_wait
 from lerobot.common.utils.utils import get_safe_torch_device, has_method
@@ -78,6 +82,11 @@ def log_control_info(robot: Robot, dt_s, episode_index=None, frame_index=None, f
             if key in robot.logs:
                 log_dt(f"dtR{name}", robot.logs[key])
 
+        for name in robot.microphones:
+            key = f"read_microphone_{name}_dt_s"
+            if key in robot.logs:
+                log_dt(f"dtR{name}", robot.logs[key])
+
     info_str = " ".join(log_items)
     logging.info(info_str)
 
@@ -107,11 +116,15 @@ def predict_action(observation, policy, device, use_amp):
         torch.inference_mode(),
         torch.autocast(device_type=device.type) if device.type == "cuda" and use_amp else nullcontext(),
     ):
-        # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
         for name in observation:
+            # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
             if "image" in name:
                 observation[name] = observation[name].type(torch.float32) / 255
                 observation[name] = observation[name].permute(2, 0, 1).contiguous()
+            # Convert to pytorch format: channel first and float32 in [-1,1] with batch dimension
+            if "audio" in name:
+                observation[name] = observation[name].type(torch.float32)
+                observation[name] = observation[name].permute(1, 0).contiguous()
             observation[name] = observation[name].unsqueeze(0)
             observation[name] = observation[name].to(device)
 
@@ -243,6 +256,16 @@ def control_loop(
 
     timestamp = 0
     start_episode_t = time.perf_counter()
+
+    if (
+        dataset is not None and not robot.robot_type.startswith("lekiwi")
+    ):  # For now, LeKiwi only supports frame audio recording (which may lead to audio chunks loss, extended post-processing, increased memory usage)
+        dataset.add_microphones_recordings(robot.microphones)
+
+    else:
+        # Start recording only in data reading mode
+        async_microphones_start_recording(robot.microphones)
+
     while timestamp < control_time_s:
         start_loop_t = time.perf_counter()
 
@@ -285,6 +308,8 @@ def control_loop(
         if events["exit_early"]:
             events["exit_early"] = False
             break
+
+    async_microphones_stop_recording(robot.microphones)
 
 
 def reset_environment(robot, events, reset_time_s, fps):
