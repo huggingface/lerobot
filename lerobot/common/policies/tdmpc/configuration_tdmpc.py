@@ -16,9 +16,14 @@
 # limitations under the License.
 from dataclasses import dataclass, field
 
+from lerobot.common.optim.optimizers import AdamConfig
+from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs.types import NormalizationMode
 
+
+@PreTrainedConfig.register_subclass("tdmpc")
 @dataclass
-class TDMPCConfig:
+class TDMPCConfig(PreTrainedConfig):
     """Configuration class for TDMPCPolicy.
 
     Defaults are configured for training with xarm_lift_medium_replay providing proprioceptive and single
@@ -71,7 +76,7 @@ class TDMPCConfig:
         n_pi_samples: Number of samples to draw from the policy / world model rollout every CEM iteration. Can
             be zero.
         uncertainty_regularizer_coeff: Coefficient for the uncertainty regularization used when estimating
-            trajectory values (this is the λ coeffiecient in eqn 4 of FOWM).
+            trajectory values (this is the λ coefficient in eqn 4 of FOWM).
         n_elites: The number of elite samples to use for updating the gaussian parameters every CEM iteration.
         elite_weighting_temperature: The temperature to use for softmax weighting (by trajectory value) of the
             elites, when updating the gaussian parameters for CEM.
@@ -102,26 +107,18 @@ class TDMPCConfig:
     """
 
     # Input / output structure.
+    n_obs_steps: int = 1
     n_action_repeats: int = 2
     horizon: int = 5
     n_action_steps: int = 1
 
-    input_shapes: dict[str, list[int]] = field(
+    normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
-            "observation.image": [3, 84, 84],
-            "observation.state": [4],
+            "VISUAL": NormalizationMode.IDENTITY,
+            "STATE": NormalizationMode.IDENTITY,
+            "ENV": NormalizationMode.IDENTITY,
+            "ACTION": NormalizationMode.MIN_MAX,
         }
-    )
-    output_shapes: dict[str, list[int]] = field(
-        default_factory=lambda: {
-            "action": [4],
-        }
-    )
-
-    # Normalization / Unnormalization
-    input_normalization_modes: dict[str, str] | None = None
-    output_normalization_modes: dict[str, str] = field(
-        default_factory=lambda: {"action": "min_max"},
     )
 
     # Architecture / modeling.
@@ -159,31 +156,26 @@ class TDMPCConfig:
     # Target model.
     target_model_momentum: float = 0.995
 
+    # Training presets
+    optimizer_lr: float = 3e-4
+
     def __post_init__(self):
+        super().__post_init__()
+
         """Input validation (not exhaustive)."""
-        # There should only be one image key.
-        image_keys = {k for k in self.input_shapes if k.startswith("observation.image")}
-        if len(image_keys) > 1:
-            raise ValueError(
-                f"{self.__class__.__name__} handles at most one image for now. Got image keys {image_keys}."
-            )
-        if len(image_keys) > 0:
-            image_key = next(iter(image_keys))
-            if self.input_shapes[image_key][-2] != self.input_shapes[image_key][-1]:
-                # TODO(alexander-soare): This limitation is solely because of code in the random shift
-                # augmentation. It should be able to be removed.
-                raise ValueError(
-                    f"Only square images are handled now. Got image shape {self.input_shapes[image_key]}."
-                )
         if self.n_gaussian_samples <= 0:
             raise ValueError(
-                f"The number of guassian samples for CEM should be non-zero. Got `{self.n_gaussian_samples=}`"
+                f"The number of gaussian samples for CEM should be non-zero. Got `{self.n_gaussian_samples=}`"
             )
-        if self.output_normalization_modes != {"action": "min_max"}:
+        if self.normalization_mapping["ACTION"] is not NormalizationMode.MIN_MAX:
             raise ValueError(
                 "TD-MPC assumes the action space dimensions to all be in [-1, 1]. Therefore it is strongly "
                 f"advised that you stick with the default. See {self.__class__.__name__} docstring for more "
                 "information."
+            )
+        if self.n_obs_steps != 1:
+            raise ValueError(
+                f"Multiple observation steps not handled yet. Got `nobs_steps={self.n_obs_steps}`"
             )
         if self.n_action_steps > 1:
             if self.n_action_repeats != 1:
@@ -194,3 +186,35 @@ class TDMPCConfig:
                 raise ValueError("If `n_action_steps > 1`, `use_mpc` must be set to `True`.")
             if self.n_action_steps > self.horizon:
                 raise ValueError("`n_action_steps` must be less than or equal to `horizon`.")
+
+    def get_optimizer_preset(self) -> AdamConfig:
+        return AdamConfig(lr=self.optimizer_lr)
+
+    def get_scheduler_preset(self) -> None:
+        return None
+
+    def validate_features(self) -> None:
+        # There should only be one image key.
+        if len(self.image_features) > 1:
+            raise ValueError(
+                f"{self.__class__.__name__} handles at most one image for now. Got image keys {self.image_features}."
+            )
+
+        if len(self.image_features) > 0:
+            image_ft = next(iter(self.image_features.values()))
+            if image_ft.shape[-2] != image_ft.shape[-1]:
+                # TODO(alexander-soare): This limitation is solely because of code in the random shift
+                # augmentation. It should be able to be removed.
+                raise ValueError(f"Only square images are handled now. Got image shape {image_ft.shape}.")
+
+    @property
+    def observation_delta_indices(self) -> list:
+        return list(range(self.horizon + 1))
+
+    @property
+    def action_delta_indices(self) -> list:
+        return list(range(self.horizon))
+
+    @property
+    def reward_delta_indices(self) -> None:
+        return list(range(self.horizon))

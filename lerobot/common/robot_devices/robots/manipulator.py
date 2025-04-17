@@ -1,3 +1,17 @@
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Contains logic to instantiate a robot, read information from its motors and cameras,
 and send orders to its motors.
 """
@@ -8,15 +22,14 @@ import json
 import logging
 import time
 import warnings
-from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Sequence
 
 import numpy as np
 import torch
 
-from lerobot.common.robot_devices.cameras.utils import Camera
-from lerobot.common.robot_devices.motors.utils import MotorsBus
+from lerobot.common.robot_devices.cameras.utils import make_cameras_from_configs
+from lerobot.common.robot_devices.motors.utils import MotorsBus, make_motors_buses_from_configs
+from lerobot.common.robot_devices.robots.configs import ManipulatorRobotConfig
 from lerobot.common.robot_devices.robots.utils import get_arm_id
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
 
@@ -41,65 +54,26 @@ def ensure_safe_goal_position(
     return safe_goal_pos
 
 
-@dataclass
-class ManipulatorRobotConfig:
-    """
-    Example of usage:
-    ```python
-    ManipulatorRobotConfig()
-    ```
-    """
-
-    # Define all components of the robot
-    robot_type: str = "koch"
-    leader_arms: dict[str, MotorsBus] = field(default_factory=lambda: {})
-    follower_arms: dict[str, MotorsBus] = field(default_factory=lambda: {})
-    cameras: dict[str, Camera] = field(default_factory=lambda: {})
-
-    # Optionally limit the magnitude of the relative positional target vector for safety purposes.
-    # Set this to a positive scalar to have the same value for all motors, or a list that is the same length
-    # as the number of motors in your follower arms (assumes all follower arms have the same number of
-    # motors).
-    max_relative_target: list[float] | float | None = None
-
-    # Optionally set the leader arm in torque mode with the gripper motor set to this angle. This makes it
-    # possible to squeeze the gripper and have it spring back to an open position on its own. If None, the
-    # gripper is not put in torque mode.
-    gripper_open_degree: float | None = None
-
-    def __setattr__(self, prop: str, val):
-        if prop == "max_relative_target" and val is not None and isinstance(val, Sequence):
-            for name in self.follower_arms:
-                if len(self.follower_arms[name].motors) != len(val):
-                    raise ValueError(
-                        f"len(max_relative_target)={len(val)} but the follower arm with name {name} has "
-                        f"{len(self.follower_arms[name].motors)} motors. Please make sure that the "
-                        f"`max_relative_target` list has as many parameters as there are motors per arm. "
-                        "Note: This feature does not yet work with robots where different follower arms have "
-                        "different numbers of motors."
-                    )
-        super().__setattr__(prop, val)
-
-    def __post_init__(self):
-        if self.robot_type not in ["koch", "koch_bimanual", "aloha", "so100", "moss"]:
-            raise ValueError(f"Provided robot type ({self.robot_type}) is not supported.")
-
-
 class ManipulatorRobot:
     # TODO(rcadene): Implement force feedback
     """This class allows to control any manipulator robot of various number of motors.
 
-    Non exaustive list of robots:
+    Non exhaustive list of robots:
     - [Koch v1.0](https://github.com/AlexanderKoch-Koch/low_cost_robot), with and without the wrist-to-elbow expansion, developed
     by Alexander Koch from [Tau Robotics](https://tau-robotics.com)
     - [Koch v1.1](https://github.com/jess-moss/koch-v1-1) developed by Jess Moss
     - [Aloha](https://www.trossenrobotics.com/aloha-kits) developed by Trossen Robotics
 
-    Example of highest frequency teleoperation without camera:
+    Example of instantiation, a pre-defined robot config is required:
+    ```python
+    robot = ManipulatorRobot(KochRobotConfig())
+    ```
+
+    Example of overwriting motors during instantiation:
     ```python
     # Defines how to communicate with the motors of the leader and follower arms
     leader_arms = {
-        "main": DynamixelMotorsBus(
+        "main": DynamixelMotorsBusConfig(
             port="/dev/tty.usbmodem575E0031751",
             motors={
                 # name: (index, model)
@@ -113,7 +87,7 @@ class ManipulatorRobot:
         ),
     }
     follower_arms = {
-        "main": DynamixelMotorsBus(
+        "main": DynamixelMotorsBusConfig(
             port="/dev/tty.usbmodem575E0032081",
             motors={
                 # name: (index, model)
@@ -126,35 +100,11 @@ class ManipulatorRobot:
             },
         ),
     }
-    robot = ManipulatorRobot(
-        robot_type="koch",
-        calibration_dir=".cache/calibration/koch",
-        leader_arms=leader_arms,
-        follower_arms=follower_arms,
-    )
-
-    # Connect motors buses and cameras if any (Required)
-    robot.connect()
-
-    while True:
-        robot.teleop_step()
+    robot_config = KochRobotConfig(leader_arms=leader_arms, follower_arms=follower_arms)
+    robot = ManipulatorRobot(robot_config)
     ```
 
-    Example of highest frequency data collection without camera:
-    ```python
-    # Assumes leader and follower arms have been instantiated already (see first example)
-    robot = ManipulatorRobot(
-        robot_type="koch",
-        calibration_dir=".cache/calibration/koch",
-        leader_arms=leader_arms,
-        follower_arms=follower_arms,
-    )
-    robot.connect()
-    while True:
-        observation, action = robot.teleop_step(record_data=True)
-    ```
-
-    Example of highest frequency data collection with cameras:
+    Example of overwriting cameras during instantiation:
     ```python
     # Defines how to communicate with 2 cameras connected to the computer.
     # Here, the webcam of the laptop and the phone (connected in USB to the laptop)
@@ -164,31 +114,28 @@ class ManipulatorRobot:
         "laptop": OpenCVCamera(camera_index=0, fps=30, width=640, height=480),
         "phone": OpenCVCamera(camera_index=1, fps=30, width=640, height=480),
     }
+    robot = ManipulatorRobot(KochRobotConfig(cameras=cameras))
+    ```
 
-    # Assumes leader and follower arms have been instantiated already (see first example)
-    robot = ManipulatorRobot(
-        robot_type="koch",
-        calibration_dir=".cache/calibration/koch",
-        leader_arms=leader_arms,
-        follower_arms=follower_arms,
-        cameras=cameras,
-    )
+    Once the robot is instantiated, connect motors buses and cameras if any (Required):
+    ```python
     robot.connect()
+    ```
+
+    Example of highest frequency teleoperation, which doesn't require cameras:
+    ```python
+    while True:
+        robot.teleop_step()
+    ```
+
+    Example of highest frequency data collection from motors and cameras (if any):
+    ```python
     while True:
         observation, action = robot.teleop_step(record_data=True)
     ```
 
-    Example of controlling the robot with a policy (without running multiple policies in parallel to ensure highest frequency):
+    Example of controlling the robot with a policy:
     ```python
-    # Assumes leader and follower arms + cameras have been instantiated already (see previous example)
-    robot = ManipulatorRobot(
-        robot_type="koch",
-        calibration_dir=".cache/calibration/koch",
-        leader_arms=leader_arms,
-        follower_arms=follower_arms,
-        cameras=cameras,
-    )
-    robot.connect()
     while True:
         # Uses the follower arms and cameras to capture an observation
         observation = robot.capture_observation()
@@ -209,20 +156,14 @@ class ManipulatorRobot:
 
     def __init__(
         self,
-        config: ManipulatorRobotConfig | None = None,
-        calibration_dir: Path = ".cache/calibration/koch",
-        **kwargs,
+        config: ManipulatorRobotConfig,
     ):
-        if config is None:
-            config = ManipulatorRobotConfig()
-        # Overwrite config arguments using kwargs
-        self.config = replace(config, **kwargs)
-        self.calibration_dir = Path(calibration_dir)
-
-        self.robot_type = self.config.robot_type
-        self.leader_arms = self.config.leader_arms
-        self.follower_arms = self.config.follower_arms
-        self.cameras = self.config.cameras
+        self.config = config
+        self.robot_type = self.config.type
+        self.calibration_dir = Path(self.config.calibration_dir)
+        self.leader_arms = make_motors_buses_from_configs(self.config.leader_arms)
+        self.follower_arms = make_motors_buses_from_configs(self.config.follower_arms)
+        self.cameras = make_cameras_from_configs(self.config.cameras)
         self.is_connected = False
         self.logs = {}
 
@@ -302,7 +243,7 @@ class ManipulatorRobot:
 
         if self.robot_type in ["koch", "koch_bimanual", "aloha"]:
             from lerobot.common.robot_devices.motors.dynamixel import TorqueMode
-        elif self.robot_type in ["so100", "moss"]:
+        elif self.robot_type in ["so100", "moss", "lekiwi"]:
             from lerobot.common.robot_devices.motors.feetech import TorqueMode
 
         # We assume that at connection time, arms are in a rest position, and torque can
@@ -319,7 +260,7 @@ class ManipulatorRobot:
             self.set_koch_robot_preset()
         elif self.robot_type == "aloha":
             self.set_aloha_robot_preset()
-        elif self.robot_type in ["so100", "moss"]:
+        elif self.robot_type in ["so100", "moss", "lekiwi"]:
             self.set_so100_robot_preset()
 
         # Enable torque on all motors of the follower arms
@@ -372,7 +313,7 @@ class ManipulatorRobot:
 
                     calibration = run_arm_calibration(arm, self.robot_type, name, arm_type)
 
-                elif self.robot_type in ["so100", "moss"]:
+                elif self.robot_type in ["so100", "moss", "lekiwi"]:
                     from lerobot.common.robot_devices.robots.feetech_calibration import (
                         run_arm_manual_calibration,
                     )
@@ -421,7 +362,7 @@ class ManipulatorRobot:
             set_operating_mode_(self.follower_arms[name])
 
             # Set better PID values to close the gap between recorded states and actions
-            # TODO(rcadene): Implement an automatic procedure to set optimial PID values for each motor
+            # TODO(rcadene): Implement an automatic procedure to set optimal PID values for each motor
             self.follower_arms[name].write("Position_P_Gain", 1500, "elbow_flex")
             self.follower_arms[name].write("Position_I_Gain", 0, "elbow_flex")
             self.follower_arms[name].write("Position_D_Gain", 600, "elbow_flex")
@@ -533,7 +474,7 @@ class ManipulatorRobot:
             # Used when record_data=True
             follower_goal_pos[name] = goal_pos
 
-            goal_pos = goal_pos.numpy().astype(np.int32)
+            goal_pos = goal_pos.numpy().astype(np.float32)
             self.follower_arms[name].write("Goal_Position", goal_pos)
             self.logs[f"write_follower_{name}_goal_pos_dt_s"] = time.perf_counter() - before_fwrite_t
 
@@ -573,7 +514,7 @@ class ManipulatorRobot:
             self.logs[f"read_camera_{name}_dt_s"] = self.cameras[name].logs["delta_timestamp_s"]
             self.logs[f"async_read_camera_{name}_dt_s"] = time.perf_counter() - before_camread_t
 
-        # Populate output dictionnaries
+        # Populate output dictionaries
         obs_dict, action_dict = {}, {}
         obs_dict["observation.state"] = state
         action_dict["action"] = action
@@ -613,7 +554,7 @@ class ManipulatorRobot:
             self.logs[f"read_camera_{name}_dt_s"] = self.cameras[name].logs["delta_timestamp_s"]
             self.logs[f"async_read_camera_{name}_dt_s"] = time.perf_counter() - before_camread_t
 
-        # Populate output dictionnaries and format to pytorch
+        # Populate output dictionaries and format to pytorch
         obs_dict = {}
         obs_dict["observation.state"] = state
         for name in self.cameras:
@@ -655,7 +596,7 @@ class ManipulatorRobot:
             action_sent.append(goal_pos)
 
             # Send goal position to each follower
-            goal_pos = goal_pos.numpy().astype(np.int32)
+            goal_pos = goal_pos.numpy().astype(np.float32)
             self.follower_arms[name].write("Goal_Position", goal_pos)
 
         return torch.cat(action_sent)

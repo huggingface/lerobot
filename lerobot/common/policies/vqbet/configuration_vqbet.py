@@ -18,9 +18,15 @@
 
 from dataclasses import dataclass, field
 
+from lerobot.common.optim.optimizers import AdamConfig
+from lerobot.common.optim.schedulers import VQBeTSchedulerConfig
+from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs.types import NormalizationMode
 
+
+@PreTrainedConfig.register_subclass("vqbet")
 @dataclass
-class VQBeTConfig:
+class VQBeTConfig(PreTrainedConfig):
     """Configuration class for VQ-BeT.
 
     Defaults are configured for training with PushT providing proprioceptive and single camera observations.
@@ -60,7 +66,7 @@ class VQBeTConfig:
             within the image size. If None, no cropping is done.
         crop_is_random: Whether the crop should be random at training time (it's always a center crop in eval
             mode).
-        pretrained_backbone_weights: Pretrained weights from torchvision to initalize the backbone.
+        pretrained_backbone_weights: Pretrained weights from torchvision to initialize the backbone.
             `None` means no pretrained weights.
         use_group_norm: Whether to replace batch normalization with group normalization in the backbone.
             The group sizes are set to be about 16 (to be precise, feature_dim // 16).
@@ -90,26 +96,13 @@ class VQBeTConfig:
     n_action_pred_token: int = 3
     action_chunk_size: int = 5
 
-    input_shapes: dict[str, list[int]] = field(
+    normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
-            "observation.image": [3, 96, 96],
-            "observation.state": [2],
+            "VISUAL": NormalizationMode.IDENTITY,
+            "STATE": NormalizationMode.MIN_MAX,
+            "ACTION": NormalizationMode.MIN_MAX,
         }
     )
-    output_shapes: dict[str, list[int]] = field(
-        default_factory=lambda: {
-            "action": [2],
-        }
-    )
-
-    # Normalization / Unnormalization
-    input_normalization_modes: dict[str, str] = field(
-        default_factory=lambda: {
-            "observation.image": "mean_std",
-            "observation.state": "min_max",
-        }
-    )
-    output_normalization_modes: dict[str, str] = field(default_factory=lambda: {"action": "min_max"})
 
     # Architecture / modeling.
     # Vision backbone.
@@ -139,29 +132,69 @@ class VQBeTConfig:
     bet_softmax_temperature: float = 0.1
     sequentially_select: bool = False
 
+    # Training presets
+    optimizer_lr: float = 1e-4
+    optimizer_betas: tuple = (0.95, 0.999)
+    optimizer_eps: float = 1e-8
+    optimizer_weight_decay: float = 1e-6
+    optimizer_vqvae_lr: float = 1e-3
+    optimizer_vqvae_weight_decay: float = 1e-4
+    scheduler_warmup_steps: int = 500
+
     def __post_init__(self):
+        super().__post_init__()
+
         """Input validation (not exhaustive)."""
         if not self.vision_backbone.startswith("resnet"):
             raise ValueError(
                 f"`vision_backbone` must be one of the ResNet variants. Got {self.vision_backbone}."
             )
-        image_keys = {k for k in self.input_shapes if k.startswith("observation.image")}
+
+    def get_optimizer_preset(self) -> AdamConfig:
+        return AdamConfig(
+            lr=self.optimizer_lr,
+            betas=self.optimizer_betas,
+            eps=self.optimizer_eps,
+            weight_decay=self.optimizer_weight_decay,
+        )
+
+    def get_scheduler_preset(self) -> VQBeTSchedulerConfig:
+        return VQBeTSchedulerConfig(
+            num_warmup_steps=self.scheduler_warmup_steps,
+            num_vqvae_training_steps=self.n_vqvae_training_steps,
+        )
+
+    def validate_features(self) -> None:
+        # Note: this check was previously performed inside VQBeTRgbEncoder in the form of
+        # assert len(image_keys) == 1
+        if not len(self.image_features) == 1:
+            raise ValueError("You must provide only one image among the inputs.")
+
         if self.crop_shape is not None:
-            for image_key in image_keys:
-                if (
-                    self.crop_shape[0] > self.input_shapes[image_key][1]
-                    or self.crop_shape[1] > self.input_shapes[image_key][2]
-                ):
+            for key, image_ft in self.image_features.items():
+                if self.crop_shape[0] > image_ft.shape[1] or self.crop_shape[1] > image_ft.shape[2]:
                     raise ValueError(
-                        f"`crop_shape` should fit within `input_shapes[{image_key}]`. Got {self.crop_shape} "
-                        f"for `crop_shape` and {self.input_shapes[image_key]} for "
-                        "`input_shapes[{image_key}]`."
+                        f"`crop_shape` should fit within the images shapes. Got {self.crop_shape} "
+                        f"for `crop_shape` and {image_ft.shape} for "
+                        f"`{key}`."
                     )
+
         # Check that all input images have the same shape.
-        first_image_key = next(iter(image_keys))
-        for image_key in image_keys:
-            if self.input_shapes[image_key] != self.input_shapes[first_image_key]:
+        first_image_key, first_image_ft = next(iter(self.image_features.items()))
+        for key, image_ft in self.image_features.items():
+            if image_ft.shape != first_image_ft.shape:
                 raise ValueError(
-                    f"`input_shapes[{image_key}]` does not match `input_shapes[{first_image_key}]`, but we "
-                    "expect all image shapes to match."
+                    f"`{key}` does not match `{first_image_key}`, but we expect all image shapes to match."
                 )
+
+    @property
+    def observation_delta_indices(self) -> list:
+        return list(range(1 - self.n_obs_steps, 1))
+
+    @property
+    def action_delta_indices(self) -> list:
+        return list(range(1 - self.n_obs_steps, self.n_action_pred_token + self.action_chunk_size - 1))
+
+    @property
+    def reward_delta_indices(self) -> None:
+        return None

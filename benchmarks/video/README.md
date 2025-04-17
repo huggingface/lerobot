@@ -21,7 +21,7 @@ How to decode videos?
 
 ## Variables
 **Image content & size**
-We don't expect the same optimal settings for a dataset of images from a simulation, or from real-world in an appartment, or in a factory, or outdoor, or with lots of moving objects in the scene, etc. Similarly, loading times might not vary linearly with the image size (resolution).
+We don't expect the same optimal settings for a dataset of images from a simulation, or from real-world in an apartment, or in a factory, or outdoor, or with lots of moving objects in the scene, etc. Similarly, loading times might not vary linearly with the image size (resolution).
 For these reasons, we run this benchmark on four representative datasets:
 - `lerobot/pusht_image`: (96 x 96 pixels) simulation with simple geometric shapes, fixed camera.
 - `aliberts/aloha_mobile_shrimp_image`: (480 x 640 pixels) real-world indoor, moving camera.
@@ -51,7 +51,7 @@ For a comprehensive list and documentation of these parameters, see the ffmpeg d
 ### Decoding parameters
 **Decoder**
 We tested two video decoding backends from torchvision:
-- `pyav` (default)
+- `pyav`
 - `video_reader` (requires to build torchvision from source)
 
 **Requested timestamps**
@@ -63,7 +63,7 @@ This of course is affected by the `-g` parameter during encoding, which specifie
 
 Note that this differs significantly from a typical use case like watching a movie, in which every frame is loaded sequentially from the beginning to the end and it's acceptable to have big values for `-g`.
 
-Additionally, because some policies might request single timestamps that are a few frames appart, we also have the following scenario:
+Additionally, because some policies might request single timestamps that are a few frames apart, we also have the following scenario:
 - `2_frames_4_space`: 2 frames with 4 consecutive frames of spacing in between (e.g `[t, t + 5 / fps]`),
 
 However, due to how video decoding is implemented with `pyav`, we don't have access to an accurate seek so in practice this scenario is essentially the same as `6_frames` since all 6 frames between `t` and `t + 5 / fps` will be decoded.
@@ -85,8 +85,8 @@ However, due to how video decoding is implemented with `pyav`, we don't have acc
 **Average Structural Similarity Index Measure (higher is better)**
 `avg_ssim` evaluates the perceived quality of images by comparing luminance, contrast, and structure. SSIM values range from -1 to 1, where 1 indicates perfect similarity.
 
-One aspect that can't be measured here with those metrics is the compatibility of the encoding accross platforms, in particular on web browser, for visualization purposes.
-h264, h265 and AV1 are all commonly used codecs and should not be pose an issue. However, the chroma subsampling (`pix_fmt`) format might affect compatibility:
+One aspect that can't be measured here with those metrics is the compatibility of the encoding across platforms, in particular on web browser, for visualization purposes.
+h264, h265 and AV1 are all commonly used codecs and should not pose an issue. However, the chroma subsampling (`pix_fmt`) format might affect compatibility:
 - `yuv420p` is more widely supported across various platforms, including web browsers.
 - `yuv444p` offers higher color fidelity but might not be supported as broadly.
 
@@ -114,9 +114,9 @@ We tried to measure the most impactful parameters for both encoding and decoding
 
 Additional encoding parameters exist that are not included in this benchmark. In particular:
 - `-preset` which allows for selecting encoding presets. This represents a collection of options that will provide a certain encoding speed to compression ratio. By leaving this parameter unspecified, it is considered to be `medium` for libx264 and libx265 and `8` for libsvtav1.
-- `-tune` which allows to optimize the encoding for certains aspects (e.g. film quality, fast decoding, etc.).
+- `-tune` which allows to optimize the encoding for certain aspects (e.g. film quality, fast decoding, etc.).
 
-See the documentation mentioned above for more detailled info on these settings and for a more comprehensive list of other parameters.
+See the documentation mentioned above for more detailed info on these settings and for a more comprehensive list of other parameters.
 
 Similarly on the decoding side, other decoders exist but are not implemented in our current benchmark. To name a few:
 - `torchaudio`

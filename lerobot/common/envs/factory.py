@@ -16,43 +16,54 @@
 import importlib
 
 import gymnasium as gym
-from omegaconf import DictConfig
+
+from lerobot.common.envs.configs import AlohaEnv, EnvConfig, PushtEnv, XarmEnv
 
 
-def make_env(cfg: DictConfig, n_envs: int | None = None) -> gym.vector.VectorEnv | None:
-    """Makes a gym vector environment according to the evaluation config.
+def make_env_config(env_type: str, **kwargs) -> EnvConfig:
+    if env_type == "aloha":
+        return AlohaEnv(**kwargs)
+    elif env_type == "pusht":
+        return PushtEnv(**kwargs)
+    elif env_type == "xarm":
+        return XarmEnv(**kwargs)
+    else:
+        raise ValueError(f"Policy type '{env_type}' is not available.")
 
-    n_envs can be used to override eval.batch_size in the configuration. Must be at least 1.
+
+def make_env(cfg: EnvConfig, n_envs: int = 1, use_async_envs: bool = False) -> gym.vector.VectorEnv | None:
+    """Makes a gym vector environment according to the config.
+
+    Args:
+        cfg (EnvConfig): the config of the environment to instantiate.
+        n_envs (int, optional): The number of parallelized env to return. Defaults to 1.
+        use_async_envs (bool, optional): Whether to return an AsyncVectorEnv or a SyncVectorEnv. Defaults to
+            False.
+
+    Raises:
+        ValueError: if n_envs < 1
+        ModuleNotFoundError: If the requested env package is not installed
+
+    Returns:
+        gym.vector.VectorEnv: The parallelized gym.env instance.
     """
-    if n_envs is not None and n_envs < 1:
+    if n_envs < 1:
         raise ValueError("`n_envs must be at least 1")
 
-    if cfg.env.name == "real_world":
-        return
-
-    package_name = f"gym_{cfg.env.name}"
+    package_name = f"gym_{cfg.type}"
 
     try:
         importlib.import_module(package_name)
     except ModuleNotFoundError as e:
-        print(
-            f"{package_name} is not installed. Please install it with `pip install 'lerobot[{cfg.env.name}]'`"
-        )
+        print(f"{package_name} is not installed. Please install it with `pip install 'lerobot[{cfg.type}]'`")
         raise e
 
-    gym_handle = f"{package_name}/{cfg.env.task}"
-    gym_kwgs = dict(cfg.env.get("gym", {}))
-
-    if cfg.env.get("episode_length"):
-        gym_kwgs["max_episode_steps"] = cfg.env.episode_length
+    gym_handle = f"{package_name}/{cfg.task}"
 
     # batched version of the env that returns an observation of shape (b, c)
-    env_cls = gym.vector.AsyncVectorEnv if cfg.eval.use_async_envs else gym.vector.SyncVectorEnv
+    env_cls = gym.vector.AsyncVectorEnv if use_async_envs else gym.vector.SyncVectorEnv
     env = env_cls(
-        [
-            lambda: gym.make(gym_handle, disable_env_checker=True, **gym_kwgs)
-            for _ in range(n_envs if n_envs is not None else cfg.eval.batch_size)
-        ]
+        [lambda: gym.make(gym_handle, disable_env_checker=True, **cfg.gym_kwargs) for _ in range(n_envs)]
     )
 
     return env

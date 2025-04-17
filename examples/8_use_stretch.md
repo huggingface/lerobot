@@ -43,21 +43,19 @@ conda create -y -n lerobot python=3.10 && conda activate lerobot
 git clone https://github.com/huggingface/lerobot.git ~/lerobot
 ```
 
-6. Install LeRobot with stretch dependencies:
+6. When using `miniconda`, install `ffmpeg` in your environment:
+```bash
+conda install ffmpeg -c conda-forge
+```
+
+7. Install LeRobot with stretch dependencies:
 ```bash
 cd ~/lerobot && pip install -e ".[stretch]"
 ```
 
 > **Note:** If you get this message, you can ignore it: `ERROR: pip's dependency resolver does not currently take into account all the packages that are installed.`
 
-For Linux only (not Mac), install extra dependencies for recording datasets:
-```bash
-conda install -y -c conda-forge ffmpeg
-pip uninstall -y opencv-python
-conda install -y -c conda-forge "opencv>=4.10.0"
-```
-
-7. Run a [system check](https://docs.hello-robot.com/0.3/getting_started/stretch_hardware_overview/#system-check) to make sure your robot is ready:
+8. Run a [system check](https://docs.hello-robot.com/0.3/getting_started/stretch_hardware_overview/#system-check) to make sure your robot is ready:
 ```bash
 stretch_system_check.py
 ```
@@ -92,20 +90,24 @@ Serial Number = stretch-se3-3054
 **Calibrate (Optional)**
 Before operating Stretch, you need to [home](https://docs.hello-robot.com/0.3/getting_started/stretch_hardware_overview/#homing) it first. Be mindful about giving Stretch some space as this procedure will move the robot's arm and gripper. Now run this command:
 ```bash
-python lerobot/scripts/control_robot.py calibrate \
-    --robot-path lerobot/configs/robot/stretch.yaml
+python lerobot/scripts/control_robot.py \
+    --robot.type=stretch \
+    --control.type=calibrate
 ```
 This is equivalent to running `stretch_robot_home.py`
 
-> **Note:** If you run any of the LeRobot scripts below and Stretch is not poperly homed, it will automatically home/calibrate first.
+> **Note:** If you run any of the LeRobot scripts below and Stretch is not properly homed, it will automatically home/calibrate first.
 
 **Teleoperate**
 Before trying teleoperation, you need activate the gamepad controller by pressing the middle button. For more info, see Stretch's [doc](https://docs.hello-robot.com/0.3/getting_started/hello_robot/#gamepad-teleoperation).
 
 Now try out teleoperation (see above documentation to learn about the gamepad controls):
+
+> **NOTE:** To visualize the data, enable `--control.display_data=true`. This streams the data using `rerun`.
 ```bash
-python lerobot/scripts/control_robot.py teleoperate \
-    --robot-path lerobot/configs/robot/stretch.yaml
+python lerobot/scripts/control_robot.py \
+    --robot.type=stretch \
+    --control.type=teleoperate
 ```
 This is essentially the same as running `stretch_gamepad_teleop.py`
 
@@ -125,16 +127,18 @@ echo $HF_USER
 
 Record one episode:
 ```bash
-python lerobot/scripts/control_robot.py record \
-    --robot-path lerobot/configs/robot/stretch.yaml \
-    --fps 20 \
-    --repo-id ${HF_USER}/stretch_test \
-    --tags stretch tutorial \
-    --warmup-time-s 3 \
-    --episode-time-s 40 \
-    --reset-time-s 10 \
-    --num-episodes 1 \
-    --push-to-hub 0
+python lerobot/scripts/control_robot.py \
+  --robot.type=stretch \
+  --control.type=record \
+  --control.fps=30 \
+  --control.single_task="Grasp a lego block and put it in the bin." \
+  --control.repo_id=${HF_USER}/stretch_test \
+  --control.tags='["tutorial"]' \
+  --control.warmup_time_s=5 \
+  --control.episode_time_s=30 \
+  --control.reset_time_s=30 \
+  --control.num_episodes=2 \
+  --control.push_to_hub=true
 ```
 
 > **Note:** If you're using ssh to connect to Stretch and run this script, you won't be able to visualize its cameras feed (though they will still be recording). To see the cameras stream, use [tethered](https://docs.hello-robot.com/0.3/getting_started/connecting_to_stretch/#tethered-setup) or [untethered setup](https://docs.hello-robot.com/0.3/getting_started/connecting_to_stretch/#untethered-setup).
@@ -142,11 +146,12 @@ python lerobot/scripts/control_robot.py record \
 **Replay an episode**
 Now try to replay this episode (make sure the robot's initial position is the same):
 ```bash
-python lerobot/scripts/control_robot.py replay \
-    --robot-path lerobot/configs/robot/stretch.yaml \
-    --fps 20 \
-    --repo-id ${HF_USER}/stretch_test \
-    --episode 0
+python lerobot/scripts/control_robot.py \
+  --robot.type=stretch \
+  --control.type=replay \
+  --control.fps=30 \
+  --control.repo_id=${HF_USER}/stretch_test \
+  --control.episode=0
 ```
 
 Follow [previous tutorial](https://github.com/huggingface/lerobot/blob/main/examples/7_get_started_with_real_robot.md#4-train-a-policy-on-your-data) to train a policy on your data and run inference on your robot. You will need to adapt the code for Stretch.
