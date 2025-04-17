@@ -33,6 +33,10 @@ from lerobot.common.datasets.image_writer import safe_stop_image_writer
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.datasets.utils import get_features_from_robot
 from lerobot.common.policies.pretrained import PreTrainedPolicy
+from lerobot.common.robot_devices.microphones.utils import (
+    async_microphones_start_recording,
+    async_microphones_stop_recording,
+)
 from lerobot.common.robot_devices.robots.utils import Robot
 from lerobot.common.robot_devices.utils import busy_wait
 from lerobot.common.utils.utils import get_safe_torch_device, has_method
@@ -260,13 +264,11 @@ def control_loop(
     if (
         dataset is not None and not robot.robot_type.startswith("lekiwi")
     ):  # For now, LeKiwi only supports frame audio recording (which may lead to audio chunks loss, extended post-processing, increased memory usage)
-        for microphone_key, microphone in robot.microphones.items():
-            # Start recording both in file writing and data reading mode
-            dataset.add_microphone_recording(microphone, microphone_key)
+        dataset.add_microphones_recordings(robot.microphones)
+
     else:
-        for _, microphone in robot.microphones.items():
-            # Start recording only in data reading mode
-            microphone.start_recording()
+        # Start recording only in data reading mode
+        async_microphones_start_recording(robot.microphones)
 
     while timestamp < control_time_s:
         start_loop_t = time.perf_counter()
@@ -313,8 +315,7 @@ def control_loop(
             events["exit_early"] = False
             break
 
-    for _, microphone in robot.microphones.items():
-        microphone.stop_recording()
+    async_microphones_stop_recording(robot.microphones)
 
 
 def reset_environment(robot, events, reset_time_s, fps):
