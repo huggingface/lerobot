@@ -1,3 +1,17 @@
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Contains logic to instantiate a robot, read information from its motors and cameras,
 and send orders to its motors.
 """
@@ -460,7 +474,7 @@ class ManipulatorRobot:
             # Used when record_data=True
             follower_goal_pos[name] = goal_pos
 
-            goal_pos = goal_pos.numpy().astype(np.int32)
+            goal_pos = goal_pos.numpy().astype(np.float32)
             self.follower_arms[name].write("Goal_Position", goal_pos)
             self.logs[f"write_follower_{name}_goal_pos_dt_s"] = time.perf_counter() - before_fwrite_t
 
@@ -582,7 +596,7 @@ class ManipulatorRobot:
             action_sent.append(goal_pos)
 
             # Send goal position to each follower
-            goal_pos = goal_pos.numpy().astype(np.int32)
+            goal_pos = goal_pos.numpy().astype(np.float32)
             self.follower_arms[name].write("Goal_Position", goal_pos)
 
         return torch.cat(action_sent)

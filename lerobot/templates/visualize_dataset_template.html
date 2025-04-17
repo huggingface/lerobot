@@ -224,49 +224,58 @@
                 </p>
             </div>
 
-            <table class="text-sm border-collapse border border-slate-700" x-show="currentFrameData">
-                <thead>
-                    <tr>
-                        <th></th>
-                        <template x-for="(_, colIndex) in Array.from({length: columns.length}, (_, index) => index)">
-                            <th class="border border-slate-700">
-                                <div class="flex gap-x-2 justify-between px-2">
-                                    <input type="checkbox" :checked="isColumnChecked(colIndex)"
-                                        @change="toggleColumn(colIndex)">
-                                    <p x-text="`${columns[colIndex].key}`"></p>
-                                </div>
-                            </th>
-                        </template>
-                    </tr>
-                </thead>
-                <tbody>
-                    <template x-for="(row, rowIndex) in rows">
-                        <tr class="odd:bg-gray-800 even:bg-gray-900">
-                            <td class="border border-slate-700">
-                                <div class="flex gap-x-2 max-w-64 font-semibold px-1 break-all">
-                                    <input type="checkbox" :checked="isRowChecked(rowIndex)"
-                                        @change="toggleRow(rowIndex)">
-                                </div>
-                            </td>
-                            <template x-for="(cell, colIndex) in row">
-                                <td x-show="cell" class="border border-slate-700">
-                                    <div class="flex gap-x-2 justify-between px-2" :class="{ 'hidden': cell.isNull }">
-                                        <div class="flex gap-x-2">
-                                            <input type="checkbox" x-model="cell.checked" @change="updateTableValues()">
-                                            <span x-text="`${!cell.isNull ? cell.label : null}`"></span>
-                                        </div>
-                                        <span class="w-14 text-right" x-text="`${!cell.isNull ? (typeof cell.value === 'number' ? cell.value.toFixed(2) : cell.value) : null}`"
-                                            :style="`color: ${cell.color}`"></span>
+            <div>
+                <table class="text-sm border-collapse border border-slate-700" x-show="currentFrameData">
+                    <thead>
+                        <tr>
+                            <th></th>
+                            <template x-for="(_, colIndex) in Array.from({length: columns.length}, (_, index) => index)">
+                                <th class="border border-slate-700">
+                                    <div class="flex gap-x-2 justify-between px-2">
+                                        <input type="checkbox" :checked="isColumnChecked(colIndex)"
+                                            @change="toggleColumn(colIndex)">
+                                        <p x-text="`${columns[colIndex].key}`"></p>
                                     </div>
-                                </td>
+                                </th>
                             </template>
                         </tr>
-                    </template>
-                </tbody>
-            </table>
+                    </thead>
+                    <tbody>
+                        <template x-for="(row, rowIndex) in rows">
+                            <tr class="odd:bg-gray-800 even:bg-gray-900">
+                                <td class="border border-slate-700">
+                                    <div class="flex gap-x-2 max-w-64 font-semibold px-1 break-all">
+                                        <input type="checkbox" :checked="isRowChecked(rowIndex)"
+                                            @change="toggleRow(rowIndex)">
+                                    </div>
+                                </td>
+                                <template x-for="(cell, colIndex) in row">
+                                    <td x-show="cell" class="border border-slate-700">
+                                        <div class="flex gap-x-2 justify-between px-2" :class="{ 'hidden': cell.isNull }">
+                                            <div class="flex gap-x-2">
+                                                <input type="checkbox" x-model="cell.checked" @change="updateTableValues()">
+                                                <span x-text="`${!cell.isNull ? cell.label : null}`"></span>
+                                            </div>
+                                            <span class="w-14 text-right" x-text="`${!cell.isNull ? (typeof cell.value === 'number' ? cell.value.toFixed(2) : cell.value) : null}`"
+                                                :style="`color: ${cell.color}`"></span>
+                                        </div>
+                                    </td>
+                                </template>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
 
-            <div id="labels" class="hidden">
+                <div id="labels" class="hidden">
+                </div>
+
+                {% if ignored_columns|length > 0 %}
+                <div class="m-2 text-orange-700 max-w-96">
+                    Columns {{ ignored_columns }} are NOT shown since the visualizer currently does not support 2D or 3D data.
+                </div>
+                {% endif %}
             </div>
+
         </div>
     </div>
 

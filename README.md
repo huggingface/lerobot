@@ -23,15 +23,24 @@
 </div>
 
 <h2 align="center">
-    <p><a href="https://github.com/huggingface/lerobot/blob/main/examples/10_use_so100.md">New robot in town: SO-100</a></p>
+    <p><a href="https://github.com/huggingface/lerobot/blob/main/examples/10_use_so100.md">
+        Build Your Own SO-100 Robot!</a></p>
 </h2>
 
 <div align="center">
-    <img src="media/so100/leader_follower.webp?raw=true" alt="SO-100 leader and follower arms" title="SO-100 leader and follower arms" width="50%">
-    <p>We just added a new tutorial on how to build a more affordable robot, at the price of $110 per arm!</p>
-    <p>Teach it new skills by showing it a few moves with just a laptop.</p>
-    <p>Then watch your homemade robot act autonomously 🤯</p>
-    <p>Follow the link to the <a href="https://github.com/huggingface/lerobot/blob/main/examples/10_use_so100.md">full tutorial for SO-100</a>.</p>
+  <img src="media/so100/leader_follower.webp?raw=true" alt="SO-100 leader and follower arms" title="SO-100 leader and follower arms" width="50%">
+
+  <p><strong>Meet the SO-100 – Just $110 per arm!</strong></p>
+  <p>Train it in minutes with a few simple moves on your laptop.</p>
+  <p>Then sit back and watch your creation act autonomously! 🤯</p>
+
+  <p><a href="https://github.com/huggingface/lerobot/blob/main/examples/10_use_so100.md">
+      Get the full SO-100 tutorial here.</a></p>
+
+  <p>Want to take it to the next level? Make your SO-100 mobile by building LeKiwi!</p>
+  <p>Check out the <a href="https://github.com/huggingface/lerobot/blob/main/examples/11_use_lekiwi.md">LeKiwi tutorial</a> and bring your robot to life on wheels.</p>
+
+  <img src="media/lekiwi/kiwi.webp?raw=true" alt="LeKiwi mobile robot" title="LeKiwi mobile robot" width="50%">
 </div>
 
 <br/>
@@ -89,14 +98,25 @@ conda create -y -n lerobot python=3.10
 conda activate lerobot
 ```
 
+When using `miniconda`, install `ffmpeg` in your environment:
+```bash
+conda install ffmpeg -c conda-forge
+```
+
+> **NOTE:** This usually installs `ffmpeg 7.X` for your platform compiled with the `libsvtav1` encoder. If `libsvtav1` is not supported (check supported encoders with `ffmpeg -encoders`), you can:
+>  - _[On any platform]_ Explicitly install `ffmpeg 7.X` using:
+>  ```bash
+>  conda install ffmpeg=7.1.1 -c conda-forge
+>  ```
+>  - _[On Linux only]_ Install [ffmpeg build dependencies](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#GettheDependencies) and [compile ffmpeg from source with libsvtav1](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#libsvtav1), and make sure you use the corresponding ffmpeg binary to your install with `which ffmpeg`.
+
 Install 🤗 LeRobot:
 ```bash
 pip install -e .
 ```
 
-> **NOTE:** Depending on your platform, If you encounter any build errors during this step
-you may need to install `cmake` and `build-essential` for building some of our dependencies.
-On linux: `sudo apt-get install cmake build-essential`
+> **NOTE:** If you encounter build errors, you may need to install additional dependencies (`cmake`, `build-essential`, and `ffmpeg libs`). On Linux, run:
+`sudo apt-get install cmake build-essential python-dev pkg-config libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev libswscale-dev libswresample-dev libavfilter-dev pkg-config`. For other systems, see: [Compiling PyAV](https://pyav.org/docs/develop/overview/installation.html#bring-your-own-ffmpeg)
 
 For simulations, 🤗 LeRobot comes with gymnasium environments that can be installed as extras:
 - [aloha](https://github.com/huggingface/gym-aloha)
@@ -224,8 +244,8 @@ python lerobot/scripts/eval.py \
     --env.type=pusht \
     --eval.batch_size=10 \
     --eval.n_episodes=10 \
-    --use_amp=false \
-    --device=cuda
+    --policy.use_amp=false \
+    --policy.device=cuda
 ```
 
 Note: After training your own policy, you can re-evaluate the checkpoints with:
@@ -376,3 +396,6 @@ Additionally, if you are using any of the particular policy architecture, pretra
   year={2024}
 }
 ```
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=huggingface/lerobot&type=Timeline)](https://star-history.com/#huggingface/lerobot&Timeline)

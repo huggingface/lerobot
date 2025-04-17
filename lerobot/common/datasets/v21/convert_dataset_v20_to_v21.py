@@ -1,3 +1,17 @@
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 This script will help you convert any LeRobot dataset already pushed to the hub from codebase version 2.0 to
 2.1. It will:
@@ -45,7 +59,7 @@ def convert_dataset(
     num_workers: int = 4,
 ):
     with SuppressWarnings():
-        dataset = LeRobotDataset(repo_id, revision=V20, force_cache_sync=True)
+        dataset = LeRobotDataset(repo_id) #, revision=V20) #, force_cache_sync=True)
 
     if (dataset.root / LEGACY_EPISODES_STATS_PATH).is_file():
         (dataset.root / LEGACY_EPISODES_STATS_PATH).unlink()
@@ -57,21 +71,21 @@ def convert_dataset(
     dataset.meta.info["codebase_version"] = CODEBASE_VERSION
     write_info(dataset.meta.info, dataset.root)
 
-    dataset.push_to_hub(branch=branch, tag_version=False, allow_patterns="meta/")
+    #dataset.push_to_hub(branch=branch, tag_version=False, allow_patterns="meta/")
 
     # delete old stats.json file
     if (dataset.root / STATS_PATH).is_file:
         (dataset.root / STATS_PATH).unlink()
 
-    hub_api = HfApi()
-    if hub_api.file_exists(
-        repo_id=dataset.repo_id, filename=STATS_PATH, revision=branch, repo_type="dataset"
-    ):
-        hub_api.delete_file(
-            path_in_repo=STATS_PATH, repo_id=dataset.repo_id, revision=branch, repo_type="dataset"
-        )
+    # hub_api = HfApi()
+    # if hub_api.file_exists(
+    #     repo_id=dataset.repo_id, filename=STATS_PATH, revision=branch, repo_type="dataset"
+    # ):
+    #     hub_api.delete_file(
+    #         path_in_repo=STATS_PATH, repo_id=dataset.repo_id, revision=branch, repo_type="dataset"
+    #     )
 
-    hub_api.create_tag(repo_id, tag=CODEBASE_VERSION, revision=branch, repo_type="dataset")
+    # hub_api.create_tag(repo_id, tag=CODEBASE_VERSION, revision=branch, repo_type="dataset")
 
 
 if __name__ == "__main__":

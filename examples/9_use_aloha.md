@@ -30,16 +30,14 @@ conda create -y -n lerobot python=3.10 && conda activate lerobot
 git clone https://github.com/huggingface/lerobot.git ~/lerobot
 ```
 
-5. Install LeRobot with dependencies for the Aloha motors (dynamixel) and cameras (intelrealsense):
+5. When using `miniconda`, install `ffmpeg` in your environment:
 ```bash
-cd ~/lerobot && pip install -e ".[dynamixel, intelrealsense]"
+conda install ffmpeg -c conda-forge
 ```
 
-For Linux only (not Mac), install extra dependencies for recording datasets:
+6. Install LeRobot with dependencies for the Aloha motors (dynamixel) and cameras (intelrealsense):
 ```bash
-conda install -y -c conda-forge ffmpeg
-pip uninstall -y opencv-python
-conda install -y -c conda-forge "opencv>=4.10.0"
+cd ~/lerobot && pip install -e ".[dynamixel, intelrealsense]"
 ```
 
 ## Teleoperate
@@ -50,6 +48,9 @@ Teleoperation consists in manually operating the leader arms to move the followe
 2. Our code assumes that your robot has been assembled following Trossen Robotics instructions. This allows us to skip calibration, as we use the pre-defined calibration files in `.cache/calibration/aloha_default`. If you replace a motor, make sure you follow the exact instructions from Trossen Robotics.
 
 By running the following code, you can start your first **SAFE** teleoperation:
+
+> **NOTE:** To visualize the data, enable `--control.display_data=true`. This streams the data using `rerun`.
+
 ```bash
 python lerobot/scripts/control_robot.py \
   --robot.type=aloha \
@@ -135,14 +136,14 @@ python lerobot/scripts/train.py \
   --policy.type=act \
   --output_dir=outputs/train/act_aloha_test \
   --job_name=act_aloha_test \
-  --device=cuda \
+  --policy.device=cuda \
   --wandb.enable=true
 ```
 
 Let's explain it:
 1. We provided the dataset as argument with `--dataset.repo_id=${HF_USER}/aloha_test`.
 2. We provided the policy with `policy.type=act`. This loads configurations from [`configuration_act.py`](../lerobot/common/policies/act/configuration_act.py). Importantly, this policy will automatically adapt to the number of motor sates, motor actions and cameras of your robot (e.g. `laptop` and `phone`) which have been saved in your dataset.
-4. We provided `device=cuda` since we are training on a Nvidia GPU, but you could use `device=mps` to train on Apple silicon.
+4. We provided `policy.device=cuda` since we are training on a Nvidia GPU, but you could use `policy.device=mps` to train on Apple silicon.
 5. We provided `wandb.enable=true` to use [Weights and Biases](https://docs.wandb.ai/quickstart) for visualizing training plots. This is optional but if you use it, make sure you are logged in by running `wandb login`.
 
 For more information on the `train` script see the previous tutorial: [`examples/4_train_policy_with_script.md`](../examples/4_train_policy_with_script.md)
