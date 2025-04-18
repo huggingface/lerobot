@@ -233,7 +233,7 @@ class ARX5Robot:
             },
             "observation.eef_6d_pose": {
                 "dtype": "float32",
-                "shape": (6,),
+                "shape": (len(self.follower_arms)*6,),
             },
         }
 
