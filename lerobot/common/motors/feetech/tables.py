@@ -2,6 +2,26 @@ FIRMWARE_MAJOR_VERSION = (0, 1)
 FIRMWARE_MINOR_VERSION = (1, 1)
 MODEL_NUMBER = (3, 2)
 
+# TODO(Steven): Consider doing the following:
+# from enum import Enum
+# class MyControlTableKey(Enum):
+#   ID = "ID"
+#   GOAL_SPEED = "Goal_Speed"
+#   ...
+#
+# MY_CONTROL_TABLE ={
+#   MyControlTableKey.ID.value: (5,1)
+#   MyControlTableKey.GOAL_SPEED.value: (46, 2)
+#   ...
+# }
+# This allows me do to:
+# bus.write(MyControlTableKey.GOAL_SPEED, ...)
+# Instead of:
+# bus.write("Goal_Speed", ...)
+# This is important for two reasons:
+# 1. The linter will tell me if I'm trying to use an invalid key, instead of me realizing when I get the RunTimeError
+# 2. We can change the value of the MyControlTableKey enums without impacting the client code
+
 # data_name: (address, size_byte)
 # http://doc.feetech.cn/#/prodinfodownload?srcType=FT-SMS-STS-emanual-229f4476422d4059abfb1cb0
 STS_SMS_SERIES_CONTROL_TABLE = {

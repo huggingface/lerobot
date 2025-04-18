@@ -49,25 +49,26 @@ def make_robot_config(robot_type: str, **kwargs) -> RobotConfig:
 
         return Stretch3RobotConfig(**kwargs)
     elif robot_type == "lekiwi":
-        from .lekiwi.configuration_lekiwi import LeKiwiRobotConfig
+        from .lekiwi.config_lekiwi import LeKiwiConfig
 
-        return LeKiwiRobotConfig(**kwargs)
+        return LeKiwiConfig(**kwargs)
     else:
         raise ValueError(f"Robot type '{robot_type}' is not available.")
 
 
 def make_robot_from_config(config: RobotConfig):
-    from .lekiwi.configuration_lekiwi import LeKiwiRobotConfig
+    from .lekiwi.config_lekiwi import LeKiwiConfig
     from .manipulator import ManipulatorRobotConfig
 
     if isinstance(config, ManipulatorRobotConfig):
         from lerobot.common.robots.manipulator import ManipulatorRobot
 
         return ManipulatorRobot(config)
-    elif isinstance(config, LeKiwiRobotConfig):
-        from lerobot.common.robots.mobile_manipulator import MobileManipulator
+    elif isinstance(config, LeKiwiConfig):
+        from lerobot.common.robots.lekiwi import LeKiwiClient
 
-        return MobileManipulator(config)
+        return LeKiwiClient(config)
+        ...
     else:
         from lerobot.common.robots.stretch3.robot_stretch3 import Stretch3Robot
 
