@@ -88,14 +88,14 @@ class SO100Leader(Teleoperator):
     def calibrate(self) -> None:
         logger.info(f"\nRunning calibration of {self}")
         self.arm.disable_torque()
-        for name in self.arm.names:
-            self.arm.write("Operating_Mode", name, OperatingMode.POSITION.value)
+        for motor in self.arm.motors:
+            self.arm.write("Operating_Mode", motor, OperatingMode.POSITION.value)
 
         input(f"Move {self} to the middle of its range of motion and press ENTER....")
         homing_offsets = self.arm.set_half_turn_homings()
 
         full_turn_motor = "wrist_roll"
-        unknown_range_motors = [name for name in self.arm.names if name != full_turn_motor]
+        unknown_range_motors = [motor for motor in self.arm.motors if motor != full_turn_motor]
         print(
             f"Move all joints except '{full_turn_motor}' sequentially through their "
             "entire ranges of motion.\nRecording positions. Press ENTER to stop..."
@@ -105,13 +105,13 @@ class SO100Leader(Teleoperator):
         range_maxes[full_turn_motor] = 4095
 
         self.calibration = {}
-        for name, motor in self.arm.motors.items():
-            self.calibration[name] = MotorCalibration(
-                id=motor.id,
+        for motor, m in self.arm.motors.items():
+            self.calibration[motor] = MotorCalibration(
+                id=m.id,
                 drive_mode=0,
-                homing_offset=homing_offsets[name],
-                range_min=range_mins[name],
-                range_max=range_maxes[name],
+                homing_offset=homing_offsets[motor],
+                range_min=range_mins[motor],
+                range_max=range_maxes[motor],
             )
 
         self.arm.write_calibration(self.calibration)
@@ -121,8 +121,8 @@ class SO100Leader(Teleoperator):
     def configure(self) -> None:
         self.arm.disable_torque()
         self.arm.configure_motors()
-        for name in self.arm.names:
-            self.arm.write("Operating_Mode", name, OperatingMode.POSITION.value)
+        for motor in self.arm.motors:
+            self.arm.write("Operating_Mode", motor, OperatingMode.POSITION.value)
 
     def setup_motors(self) -> None:
         for motor in reversed(self.arm.motors):

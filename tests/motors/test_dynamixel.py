@@ -46,13 +46,13 @@ def dummy_calibration(dummy_motors) -> dict[str, MotorCalibration]:
     mins = [43, 27, 145]
     maxes = [1335, 3608, 3999]
     calibration = {}
-    for name, motor in dummy_motors.items():
-        calibration[name] = MotorCalibration(
-            id=motor.id,
-            drive_mode=drive_modes[motor.id - 1],
-            homing_offset=homings[motor.id - 1],
-            range_min=mins[motor.id - 1],
-            range_max=maxes[motor.id - 1],
+    for motor, m in dummy_motors.items():
+        calibration[motor] = MotorCalibration(
+            id=m.id,
+            drive_mode=drive_modes[m.id - 1],
+            homing_offset=homings[m.id - 1],
+            range_min=mins[m.id - 1],
+            range_max=maxes[m.id - 1],
         )
     return calibration
 

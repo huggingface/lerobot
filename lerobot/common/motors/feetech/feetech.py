@@ -243,13 +243,13 @@ class FeetechMotorsBus(MotorsBus):
         # TODO(aliberts): add set/get_drive_mode?
 
         calibration = {}
-        for name, motor in self.motors.items():
-            calibration[name] = MotorCalibration(
-                id=motor.id,
-                drive_mode=drive_modes[name],
-                homing_offset=offsets[name],
-                range_min=mins[name],
-                range_max=maxes[name],
+        for motor, m in self.motors.items():
+            calibration[motor] = MotorCalibration(
+                id=m.id,
+                drive_mode=drive_modes[motor],
+                homing_offset=offsets[motor],
+                range_min=mins[motor],
+                range_max=maxes[motor],
             )
 
         return calibration
@@ -277,9 +277,9 @@ class FeetechMotorsBus(MotorsBus):
         return half_turn_homings
 
     def disable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
-        for name in self._get_motors_list(motors):
-            self.write("Torque_Enable", name, TorqueMode.DISABLED.value, num_retry=num_retry)
-            self.write("Lock", name, 0, num_retry=num_retry)
+        for motor in self._get_motors_list(motors):
+            self.write("Torque_Enable", motor, TorqueMode.DISABLED.value, num_retry=num_retry)
+            self.write("Lock", motor, 0, num_retry=num_retry)
 
     def _disable_torque(self, motor_id: int, model: str, num_retry: int = 0) -> None:
         addr, length = get_address(self.model_ctrl_table, model, "Torque_Enable")
@@ -288,9 +288,9 @@ class FeetechMotorsBus(MotorsBus):
         self._write(addr, length, motor_id, 0, num_retry=num_retry)
 
     def enable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
-        for name in self._get_motors_list(motors):
-            self.write("Torque_Enable", name, TorqueMode.ENABLED.value, num_retry=num_retry)
-            self.write("Lock", name, 1, num_retry=num_retry)
+        for motor in self._get_motors_list(motors):
+            self.write("Torque_Enable", motor, TorqueMode.ENABLED.value, num_retry=num_retry)
+            self.write("Lock", motor, 1, num_retry=num_retry)
 
     def _encode_sign(self, data_name: str, ids_values: dict[int, int]) -> dict[int, int]:
         for id_ in ids_values:

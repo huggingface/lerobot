@@ -109,31 +109,31 @@ class ViperX(Robot):
         raise NotImplementedError  # TODO(aliberts): adapt code below (copied from koch
         logger.info(f"\nRunning calibration of {self}")
         self.arm.disable_torque()
-        for name in self.arm.names:
-            self.arm.write("Operating_Mode", name, OperatingMode.EXTENDED_POSITION.value)
+        for motor in self.arm.motors:
+            self.arm.write("Operating_Mode", motor, OperatingMode.EXTENDED_POSITION.value)
 
         input("Move robot to the middle of its range of motion and press ENTER....")
         homing_offsets = self.arm.set_half_turn_homings()
 
         full_turn_motors = ["shoulder_pan", "wrist_roll"]
-        unknown_range_motors = [name for name in self.arm.names if name not in full_turn_motors]
+        unknown_range_motors = [motor for motor in self.arm.motors if motor not in full_turn_motors]
         print(
             f"Move all joints except {full_turn_motors} sequentially through their entire "
             "ranges of motion.\nRecording positions. Press ENTER to stop..."
         )
         range_mins, range_maxes = self.arm.record_ranges_of_motion(unknown_range_motors)
-        for name in full_turn_motors:
-            range_mins[name] = 0
-            range_maxes[name] = 4095
+        for motor in full_turn_motors:
+            range_mins[motor] = 0
+            range_maxes[motor] = 4095
 
         self.calibration = {}
-        for name, motor in self.arm.motors.items():
-            self.calibration[name] = MotorCalibration(
-                id=motor.id,
+        for motor, m in self.arm.motors.items():
+            self.calibration[motor] = MotorCalibration(
+                id=m.id,
                 drive_mode=0,
-                homing_offset=homing_offsets[name],
-                range_min=range_mins[name],
-                range_max=range_maxes[name],
+                homing_offset=homing_offsets[motor],
+                range_min=range_mins[motor],
+                range_max=range_maxes[motor],
             )
 
         self.arm.write_calibration(self.calibration)
@@ -158,9 +158,9 @@ class ViperX(Robot):
             # can't rotate more than 360 degrees (from 0 to 4095) And some mistake can happen while assembling
             # the arm, you could end up with a servo with a position 0 or 4095 at a crucial point.
             # See: https://emanual.robotis.com/docs/en/dxl/x/x_series/#operating-mode11
-            for name in self.arm.names:
-                if name != "gripper":
-                    self.arm.write("Operating_Mode", name, OperatingMode.EXTENDED_POSITION.value)
+            for motor in self.arm.motors:
+                if motor != "gripper":
+                    self.arm.write("Operating_Mode", motor, OperatingMode.EXTENDED_POSITION.value)
 
             # Use 'position control current based' for follower gripper to be limited by the limit of the
             # current. It can grasp an object without forcing too much even tho, it's goal position is a
