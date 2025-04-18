@@ -55,8 +55,18 @@ class LeKiwiConfig(RobotConfig):
 
 @dataclass
 class LeKiwiHostConfig:
+    # Network Configuration
     port_zmq_cmd: int = 5555
     port_zmq_observations: int = 5556
+
+    # Duration of the application
+    connection_time_s: int = 100
+
+    # Watchdog: stop the robot if no command is received for over 0.5 seconds.
+    watchdog_timeout_s: int = 1
+
+    # If robot jitters decrease the frequency and monitor cpu load with `top` in cmd
+    max_loop_freq_hz: int = 30
 
 
 @RobotConfig.register_subclass("lekiwi_client")

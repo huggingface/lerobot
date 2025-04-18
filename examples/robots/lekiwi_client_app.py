@@ -14,66 +14,11 @@
 
 import logging
 
+from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.robots.lekiwi.config_lekiwi import LeKiwiClientConfig, RobotMode
 from lerobot.common.robots.lekiwi.lekiwi_client import LeKiwiClient
 from lerobot.common.teleoperators.keyboard import KeyboardTeleop, KeyboardTeleopConfig
 from lerobot.common.teleoperators.so100 import SO100Leader, SO100LeaderConfig
-
-# TODO(Steven): Check validity of these features
-DUMMY_FEATURES = {
-    "observation.state": {
-        "dtype": "float64",
-        "shape": (9,),
-        "names": {
-            "motors": [
-                "arm_shoulder_pan",
-                "arm_shoulder_lift",
-                "arm_elbow_flex",
-                "arm_wrist_flex",
-                "arm_wrist_roll",
-                "arm_gripper",
-                "base_left_wheel",
-                "base_right_wheel",
-                "base_back_wheel",
-            ]
-        },
-    },
-    "action": {
-        "dtype": "float64",
-        "shape": (9,),
-        "names": {
-            "motors": [
-                "arm_shoulder_pan",
-                "arm_shoulder_lift",
-                "arm_elbow_flex",
-                "arm_wrist_flex",
-                "arm_wrist_roll",
-                "arm_gripper",
-                "base_left_wheel",
-                "base_right_wheel",
-                "base_back_wheel",
-            ]
-        },
-    },
-    "observation.images.front": {
-        "dtype": "image",
-        "shape": (640, 480, 3),
-        "names": [
-            "width",
-            "height",
-            "channels",
-        ],
-    },
-    "observation.images.wrist": {
-        "dtype": "image",
-        "shape": (480, 640, 3),
-        "names": [
-            "width",
-            "height",
-            "channels",
-        ],
-    },
-}
 
 
 def main():

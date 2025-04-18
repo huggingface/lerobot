@@ -24,7 +24,7 @@ import zmq
 
 from lerobot.common.constants import OBS_IMAGES
 
-from .config_lekiwi import LeKiwiConfig
+from .config_lekiwi import LeKiwiConfig, LeKiwiHostConfig
 from .lekiwi import LeKiwi
 
 
@@ -33,11 +33,15 @@ class LeKiwiHost:
         self.zmq_context = zmq.Context()
         self.zmq_cmd_socket = self.zmq_context.socket(zmq.PULL)
         self.zmq_cmd_socket.setsockopt(zmq.CONFLATE, 1)
-        self.zmq_cmd_socket.bind(f"tcp://*:{port_zmq_cmd}")
+        self.zmq_cmd_socket.bind(f"tcp://*:{config.port_zmq_cmd}")
 
         self.zmq_observation_socket = self.zmq_context.socket(zmq.PUSH)
         self.zmq_observation_socket.setsockopt(zmq.CONFLATE, 1)
-        self.zmq_observation_socket.bind(f"tcp://*:{port_zmq_observations}")
+        self.zmq_observation_socket.bind(f"tcp://*:{config.port_zmq_observations}")
+
+        self.connection_time_s = config.connection_time_s
+        self.watchdog_timeout_s = config.watchdog_timeout_s
+        self.max_loop_freq_hz = config.max_loop_freq_hz
 
     def disconnect(self):
         self.zmq_observation_socket.close()
@@ -63,10 +67,10 @@ def main():
         # Business logic
         start = time.perf_counter()
         duration = 0
-        while duration < 100:
+        while duration < host.connection_time_s:
             loop_start_time = time.time()
             try:
-                msg = remote_agent.zmq_cmd_socket.recv_string(zmq.NOBLOCK)
+                msg = host.zmq_cmd_socket.recv_string(zmq.NOBLOCK)
                 data = dict(json.loads(msg))
                 _action_sent = robot.send_action(data)
                 last_cmd_time = time.time()
@@ -76,9 +80,9 @@ def main():
                 logging.error("Message fetching failed: %s", e)
 
             # TODO(Steven): Check this value
-            # Watchdog: stop the robot if no command is received for over 0.5 seconds.
+
             now = time.time()
-            if now - last_cmd_time > 0.5:
+            if now - last_cmd_time > host.watchdog_timeout_s:
                 robot.stop_base()
 
             last_observation = robot.get_observation()
@@ -94,22 +98,19 @@ def main():
                     last_observation[OBS_IMAGES][cam_key] = ""
 
             # Send the observation to the remote agent
-            remote_agent.zmq_observation_socket.send_string(json.dumps(last_observation))
+            host.zmq_observation_socket.send_string(json.dumps(last_observation))
 
             # Ensure a short sleep to avoid overloading the CPU.
             elapsed = time.time() - loop_start_time
 
-            # TODO(Steven): Check this value
-            time.sleep(
-                max(0.033 - elapsed, 0)
-            )  # If robot jitters increase the sleep and monitor cpu load with `top` in cmd
+            time.sleep(max(1 / host.max_loop_freq_hz - elapsed, 0))
             duration = time.perf_counter() - start
 
     except KeyboardInterrupt:
         print("Shutting down LeKiwi server.")
     finally:
         robot.disconnect()
-        remote_agent.disconnect()
+        host.disconnect()
 
     logging.info("Finished LeKiwi cleanly")
 
