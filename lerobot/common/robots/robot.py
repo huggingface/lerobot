@@ -23,7 +23,7 @@ class Robot(abc.ABC):
         self.robot_type = self.name
         self.id = config.id
         self.calibration_dir = (
-            Path(config.calibration_dir)
+            config.calibration_dir
             if config.calibration_dir
             else Path(HF_LEROBOT_CALIBRATION / ROBOTS / self.name)
         )
