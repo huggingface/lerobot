@@ -184,7 +184,7 @@ def rollout(
         all_actions.append(torch.from_numpy(action))
         all_rewards.append(torch.from_numpy(reward))
         all_dones.append(torch.from_numpy(done))
-        all_successes.append(torch.tensor(successes))
+        all_successes.append(torch.tensor(successes, device="cpu")) # see why it needs to be on cpu
 
         step += 1
         running_success_rate = (
@@ -311,7 +311,11 @@ def eval_policy(
 
         # Make a mask with shape (batch, n_steps) to mask out rollout data after the first done
         # (batch-element-wise). Note the `done_indices + 1` to make sure to keep the data from the done step.
-        mask = (torch.arange(n_steps) <= einops.repeat(done_indices + 1, "b -> b s", s=n_steps)).int()
+        #TODO: (jadechogahri): see better fix for genesis (device mismatch)
+        mask = (
+            torch.arange(n_steps).to(done_indices.device)
+            <= einops.repeat(done_indices + 1, "b -> b s", s=n_steps)
+        ).int()
         # Extend metrics.
         batch_sum_rewards = einops.reduce((rollout_data["reward"] * mask), "b n -> b", "sum")
         sum_rewards.extend(batch_sum_rewards.tolist())

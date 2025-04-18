@@ -168,7 +168,7 @@ class GenesisEnv(EnvConfig):
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
             "action": PolicyFeature(type=FeatureType.ACTION, shape=(9,)),
-            "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(20,)),
+            "agent_pos": PolicyFeature(type=FeatureType.STATE, shape=(20,)),
             "pixels": PolicyFeature(type=FeatureType.VISUAL, shape=(960, 1280, 3)),
         }
     )
@@ -176,7 +176,7 @@ class GenesisEnv(EnvConfig):
     features_map: dict[str, str] = field(
         default_factory=lambda: {
             "action": ACTION,
-            "observation.state": OBS_ROBOT,
+            "agent_pos": OBS_ROBOT,
             "pixels": OBS_IMAGE,
         }
     )
