@@ -28,8 +28,8 @@ from .config_lekiwi import LeKiwiConfig
 from .lekiwi import LeKiwi
 
 
-class HostAgent:
-    def __init__(self, port_zmq_cmd, port_zmq_observations):
+class LeKiwiHost:
+    def __init__(self, config: LeKiwiHostConfig):
         self.zmq_context = zmq.Context()
         self.zmq_cmd_socket = self.zmq_context.socket(zmq.PULL)
         self.zmq_cmd_socket.setsockopt(zmq.CONFLATE, 1)
@@ -54,7 +54,8 @@ def main():
     robot.connect()
 
     logging.info("Starting HostAgent")
-    remote_agent = HostAgent(robot_config.port_zmq_cmd, robot_config.port_zmq_observations)
+    host_config = LeKiwiHostConfig()
+    host = LeKiwiHost(host_config)
 
     last_cmd_time = time.time()
     logging.info("Waiting for commands...")

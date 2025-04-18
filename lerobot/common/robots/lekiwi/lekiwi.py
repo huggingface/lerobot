@@ -125,13 +125,9 @@ class LeKiwi(Robot):
             self.bus.write("Operating_Mode", name, OperatingMode.POSITION.value)
 
         input("Move robot to the middle of its range of motion and press ENTER....")
-        homing_offsets = self.bus.set_half_turn_homings(motors)
+        homing_offsets = self.bus.set_half_turn_homings(self.arm_motors)
 
-        # TODO(Steven): Previously homig_offsets was called only on self.arm_motors
-        # After a discussion, we said it was better to keep it like this and then
-        # just populate with the rest of motors. However, I don't know which value
-        # should we use for this
-        # homing_offsets.update({k,None???} for k in self.base_motors)
+        homing_offsets.update({motor: 0 for motor in self.base_motors})
 
         full_turn_motor = [
             motor for motor in motors if any(keyword in motor for keyword in ["wheel", "wrist"])
