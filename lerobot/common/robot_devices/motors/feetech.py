@@ -313,7 +313,7 @@ class FeetechMotorsBus:
             )
 
         if self.mock:
-            import tests.mock_scservo_sdk as scs
+            import tests.motors.mock_scservo_sdk as scs
         else:
             import scservo_sdk as scs
 
@@ -337,7 +337,7 @@ class FeetechMotorsBus:
 
     def reconnect(self):
         if self.mock:
-            import tests.mock_scservo_sdk as scs
+            import tests.motors.mock_scservo_sdk as scs
         else:
             import scservo_sdk as scs
 
@@ -664,7 +664,7 @@ class FeetechMotorsBus:
 
     def read_with_motor_ids(self, motor_models, motor_ids, data_name, num_retry=NUM_READ_RETRY):
         if self.mock:
-            import tests.mock_scservo_sdk as scs
+            import tests.motors.mock_scservo_sdk as scs
         else:
             import scservo_sdk as scs
 
@@ -702,7 +702,7 @@ class FeetechMotorsBus:
 
     def read(self, data_name, motor_names: str | list[str] | None = None):
         if self.mock:
-            import tests.mock_scservo_sdk as scs
+            import tests.motors.mock_scservo_sdk as scs
         else:
             import scservo_sdk as scs
 
@@ -782,7 +782,7 @@ class FeetechMotorsBus:
 
     def write_with_motor_ids(self, motor_models, motor_ids, data_name, values, num_retry=NUM_WRITE_RETRY):
         if self.mock:
-            import tests.mock_scservo_sdk as scs
+            import tests.motors.mock_scservo_sdk as scs
         else:
             import scservo_sdk as scs
 
@@ -818,7 +818,7 @@ class FeetechMotorsBus:
         start_time = time.perf_counter()
 
         if self.mock:
-            import tests.mock_scservo_sdk as scs
+            import tests.motors.mock_scservo_sdk as scs
         else:
             import scservo_sdk as scs
 

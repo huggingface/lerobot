@@ -196,7 +196,10 @@ def run_server(
                 dataset.meta.get_video_file_path(episode_id, key) for key in dataset.meta.video_keys
             ]
             videos_info = [
-                {"url": url_for("static", filename=video_path), "filename": video_path.parent.name}
+                {
+                    "url": url_for("static", filename=str(video_path).replace("\\", "/")),
+                    "filename": video_path.parent.name,
+                }
                 for video_path in video_paths
             ]
             tasks = dataset.meta.episodes[episode_id]["tasks"]
@@ -439,7 +442,7 @@ def visualize_dataset_html(
         if isinstance(dataset, LeRobotDataset):
             ln_videos_dir = static_dir / "videos"
             if not ln_videos_dir.exists():
-                ln_videos_dir.symlink_to((dataset.root / "videos").resolve())
+                ln_videos_dir.symlink_to((dataset.root / "videos").resolve().as_posix())
 
         if serve:
             run_server(dataset, episodes, host, port, static_dir, template_dir)
@@ -504,16 +507,32 @@ def main():
         help="Delete the output directory if it exists already.",
     )
 
+    parser.add_argument(
+        "--tolerance-s",
+        type=float,
+        default=1e-4,
+        help=(
+            "Tolerance in seconds used to ensure data timestamps respect the dataset fps value"
+            "This is argument passed to the constructor of LeRobotDataset and maps to its tolerance_s constructor argument"
+            "If not given, defaults to 1e-4."
+        ),
+    )
+
     args = parser.parse_args()
     kwargs = vars(args)
     repo_id = kwargs.pop("repo_id")
     load_from_hf_hub = kwargs.pop("load_from_hf_hub")
     root = kwargs.pop("root")
+    tolerance_s = kwargs.pop("tolerance_s")
 
 
     dataset = None
     if repo_id:
-        dataset = LeRobotDataset(repo_id, root=root) if not load_from_hf_hub else get_dataset_info(repo_id)
+        dataset = (
+            LeRobotDataset(repo_id, root=root, tolerance_s=tolerance_s)
+            if not load_from_hf_hub
+            else get_dataset_info(repo_id)
+        )
         
         # test annotation overrider
         from lerobot.common.datasets.annotation_overrider import TaskAnnotationOverrider

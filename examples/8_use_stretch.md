@@ -43,21 +43,19 @@ conda create -y -n lerobot python=3.10 && conda activate lerobot
 git clone https://github.com/huggingface/lerobot.git ~/lerobot
 ```
 
-6. Install LeRobot with stretch dependencies:
+6. When using `miniconda`, install `ffmpeg` in your environment:
+```bash
+conda install ffmpeg -c conda-forge
+```
+
+7. Install LeRobot with stretch dependencies:
 ```bash
 cd ~/lerobot && pip install -e ".[stretch]"
 ```
 
 > **Note:** If you get this message, you can ignore it: `ERROR: pip's dependency resolver does not currently take into account all the packages that are installed.`
 
-For Linux only (not Mac), install extra dependencies for recording datasets:
-```bash
-conda install -y -c conda-forge ffmpeg
-pip uninstall -y opencv-python
-conda install -y -c conda-forge "opencv>=4.10.0"
-```
-
-7. Run a [system check](https://docs.hello-robot.com/0.3/getting_started/stretch_hardware_overview/#system-check) to make sure your robot is ready:
+8. Run a [system check](https://docs.hello-robot.com/0.3/getting_started/stretch_hardware_overview/#system-check) to make sure your robot is ready:
 ```bash
 stretch_system_check.py
 ```
@@ -104,6 +102,8 @@ This is equivalent to running `stretch_robot_home.py`
 Before trying teleoperation, you need activate the gamepad controller by pressing the middle button. For more info, see Stretch's [doc](https://docs.hello-robot.com/0.3/getting_started/hello_robot/#gamepad-teleoperation).
 
 Now try out teleoperation (see above documentation to learn about the gamepad controls):
+
+> **NOTE:** To visualize the data, enable `--control.display_data=true`. This streams the data using `rerun`.
 ```bash
 python lerobot/scripts/control_robot.py \
     --robot.type=stretch \

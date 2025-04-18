@@ -75,7 +75,13 @@ class WandBLogger:
 
         resume = "must" if cfg.resume else None
         try:
-            wandb_run_id = get_wandb_run_id_from_filesystem(self.log_dir) if cfg.resume else None
+            wandb_run_id = (
+                cfg.wandb.run_id
+                if cfg.wandb.run_id
+                else get_wandb_run_id_from_filesystem(self.log_dir)
+                if cfg.resume
+                else None
+            )
         except RuntimeError:
             wandb_run_id = None
             resume = None
@@ -93,6 +99,7 @@ class WandBLogger:
             # TODO(rcadene): split train and eval, and run async eval with job_type="eval"
             job_type="train_eval",
             resume=resume,
+            mode=self.cfg.mode if self.cfg.mode in ["online", "offline", "disabled"] else "online",
         )
         print(colored("Logs will be synced with wandb.", "blue", attrs=["bold"]))
         logging.info(f"Track this run --> {colored(wandb.run.get_url(), 'yellow', attrs=['bold'])}")

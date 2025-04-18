@@ -291,7 +291,7 @@ sudo apt-get install git-lfs
 git lfs install
 ```
 
-Pull artifacts if they're not in [tests/data](tests/data)
+Pull artifacts if they're not in [tests/artifacts](tests/artifacts)
 ```bash
 git lfs pull
 ```

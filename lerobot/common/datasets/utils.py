@@ -247,7 +247,7 @@ def load_safety_violations(local_dir: Path) -> dict:
 def backward_compatible_episodes_stats(
     stats: dict[str, dict[str, np.ndarray]], episodes: list[int]
 ) -> dict[str, dict[str, np.ndarray]]:
-    return {ep_idx: stats for ep_idx in episodes}
+    return dict.fromkeys(episodes, stats)
 
 
 def load_image_as_numpy(

@@ -20,6 +20,7 @@ from lerobot.common import (
     policies,  # noqa: F401
 )
 from lerobot.common.datasets.transforms import ImageTransformsConfig
+from lerobot.common.datasets.video_utils import get_safe_default_codec
 
 
 @dataclass
@@ -35,7 +36,7 @@ class DatasetConfig:
     image_transforms: ImageTransformsConfig = field(default_factory=ImageTransformsConfig)
     revision: str | None = None
     use_imagenet_stats: bool = True
-    video_backend: str = "pyav"
+    video_backend: str = field(default_factory=get_safe_default_codec)
 
 
 @dataclass
@@ -46,6 +47,8 @@ class WandBConfig:
     project: str = "lerobot"
     entity: str | None = None
     notes: str | None = None
+    run_id: str | None = None
+    mode: str | None = None  # Allowed values: 'online', 'offline' 'disabled'. Defaults to 'online'
 
 
 @dataclass

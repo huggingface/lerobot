@@ -18,7 +18,7 @@ training outputs directory. In the latter case, you might want to run examples/3
 
 It requires the installation of the 'gym_pusht' simulation environment. Install it by running:
 ```bash
-pip install -e ".[pusht]"`
+pip install -e ".[pusht]"
 ```
 """
 
