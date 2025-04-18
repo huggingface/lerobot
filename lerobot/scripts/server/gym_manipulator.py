@@ -833,7 +833,7 @@ class GripperPenaltyWrapper(gym.RewardWrapper):
         if self.gripper_penalty_in_reward:
             reward += gripper_penalty
         else:
-            info["gripper_penalty"] = gripper_penalty
+            info["discrete_penalty"] = gripper_penalty
 
         return obs, reward, terminated, truncated, info
 
