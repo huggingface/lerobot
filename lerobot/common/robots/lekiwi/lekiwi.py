@@ -127,7 +127,7 @@ class LeKiwi(Robot):
         input("Move robot to the middle of its range of motion and press ENTER....")
         homing_offsets = self.bus.set_half_turn_homings(self.arm_motors)
 
-        homing_offsets.update({motor: 0 for motor in self.base_motors})
+        homing_offsets.update(dict.fromkeys(self.base_motors, 0))
 
         full_turn_motor = [
             motor for motor in motors if any(keyword in motor for keyword in ["wheel", "wrist"])
