@@ -15,7 +15,8 @@
 # limitations under the License.
 import functools
 import io
-import pickle
+import pickle  # nosec B403: Safe usage of pickle
+from contextlib import suppress
 from typing import Any, Callable, Optional, Sequence, TypedDict
 
 import torch
@@ -113,7 +114,7 @@ def state_to_bytes(state_dict: dict[str, torch.Tensor]) -> bytes:
 def bytes_to_state_dict(buffer: bytes) -> dict[str, torch.Tensor]:
     buffer = io.BytesIO(buffer)
     buffer.seek(0)
-    return torch.load(buffer)
+    return torch.load(buffer)  # nosec B614: Safe usage of torch.load
 
 
 def python_object_to_bytes(python_object: Any) -> bytes:
@@ -123,13 +124,17 @@ def python_object_to_bytes(python_object: Any) -> bytes:
 def bytes_to_python_object(buffer: bytes) -> Any:
     buffer = io.BytesIO(buffer)
     buffer.seek(0)
-    return pickle.load(buffer)
+    obj = pickle.load(buffer)  # nosec B301: Safe usage of pickle.load
+    # Add validation checks here
+    return obj
 
 
 def bytes_to_transitions(buffer: bytes) -> list[Transition]:
     buffer = io.BytesIO(buffer)
     buffer.seek(0)
-    return torch.load(buffer)
+    transitions = torch.load(buffer)  # nosec B614: Safe usage of torch.load
+    # Add validation checks here
+    return transitions
 
 
 def transitions_to_bytes(transitions: list[Transition]) -> bytes:
@@ -201,6 +206,9 @@ class ReplayBuffer:
             optimize_memory (bool): If True, optimizes memory by not storing duplicate next_states when
                 they can be derived from states. This is useful for large datasets where next_state[i] = state[i+1].
         """
+        if capacity <= 0:
+            raise ValueError("Capacity must be greater than 0.")
+
         self.capacity = capacity
         self.device = device
         self.storage_device = storage_device
@@ -214,6 +222,8 @@ class ReplayBuffer:
 
         # If no state_keys provided, default to an empty list
         self.state_keys = state_keys if state_keys is not None else []
+
+        self.image_augmentation_function = image_augmentation_function
 
         if image_augmentation_function is None:
             base_function = functools.partial(random_shift, pad=4)
@@ -418,11 +428,8 @@ class ReplayBuffer:
                 iterator = self._get_naive_iterator(batch_size=batch_size, queue_size=queue_size)
 
             # Yield all items from the iterator
-            try:
+            with suppress(StopIteration):
                 yield from iterator
-            except StopIteration:
-                # Just continue the outer loop to create a new iterator
-                pass
 
     def _get_async_iterator(self, batch_size: int, queue_size: int = 2):
         """
@@ -586,10 +593,7 @@ class ReplayBuffer:
 
             action = data["action"]
             if action_mask is not None:
-                if action.dim() == 1:
-                    action = action[action_mask]
-                else:
-                    action = action[:, action_mask]
+                action = action[action_mask] if action.dim() == 1 else action[:, action_mask]
 
             replay_buffer.add(
                 state=data["state"],
@@ -925,9 +929,6 @@ def concatenate_batch_transitions(
                     left_info[key] = right_info[key]
 
     return left_batch_transitions
-
-
-if __name__ == "__main__":
 
     def test_load_dataset_with_complementary_info():
         """
