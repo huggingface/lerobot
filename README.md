@@ -415,22 +415,12 @@ pip install -e ".[pi0]"
 
 # login wandb and huggingface-cli
 
+wandb login
+huggingface-cli login
 
-#!/bin/bash 
+# Use tmux to run a command
+tmux new -s debug_session
 
-sudo apt update && 
-
-# Install Nvidia Cuda Toolkit 12.5 
-
-wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-ubuntu2204.pin && 
-sudo mv cuda-ubuntu2204.pin /etc/apt/preferences.d/cuda-repository-pin-600 && 
-wget https://developer.download.nvidia.com/compute/cuda/12.5.1/local_installers/cuda-repo-ubuntu2204-12-5-local_12.5.1-555.42.06-1_amd64.deb && 
-sudo dpkg -i cuda-repo-ubuntu2204-12-5-local_12.5.1-555.42.06-1_amd64.deb && 
-sudo cp /var/cuda-repo-ubuntu2204-12-5-local/cuda-*-keyring.gpg /usr/share/keyrings/ && 
-sudo apt-get update && sudo apt-get -y install cuda-toolkit-12-5 && 
-sudo add-apt-repository ppa:graphics-drivers/ppa --yes && sudo apt update && sudo apt install -y nvidia-driver-555 && 
-
-# Install PyTorch 
-
-sudo apt install -y python3-pip && pip3 install torch torchvision torchaudio && export PATH="/home/ubuntu/.local/bin:$PATH" && 
-sudo reboot 
+```
+PYTHONPATH=/home/ubuntu/lerobot:$PYTHONPATH /home/ubuntu/miniforge3/envs/lerobot/bin/python lerobot/scripts/train.py --dataset.repo_id=[villekuosmanen/stack_pepsi_cans,villekuosmanen/fold_teat_towel_desk,villekuosmanen/insert_paper_towel,villekuosmanen/manipulate_glasses,villekuosmanen/measure_cat_food,villekuosmanen/open_close_zipper_bags,villekuosmanen/pack_backpack,villekuosmanen/pack_easter_eggs_into_basket,villekuosmanen/pack_electric_toothbrush,villekuosmanen/pack_toothbrush,villekuosmanen/pair_up_socks,villekuosmanen/sort_coloured_pins,villekuosmanen/dAgger_pack_easter_eggs_into_basket_2.0.1] --policy.path=lerobot/pi0 --output_dir=outputs/train/pi0_general_1.0 --job_name=pi0_general_1.0 --policy.device=cuda --batch_size=24 --eval_freq=-1 --log_freq=20 --save_freq=2000 --steps=80000 --wandb.enable=true
+```
