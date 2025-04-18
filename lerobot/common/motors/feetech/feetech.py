@@ -185,7 +185,7 @@ class FeetechMotorsBus(MotorsBus):
                 if found_model != expected_model_nb:
                     raise RuntimeError(
                         f"Found one motor on {baudrate=} with id={found_id} but it has a "
-                        f"model number '{found_model}' different than the one expected: '{expected_model_nb}' "
+                        f"model number '{found_model}' different than the one expected: '{expected_model_nb}'. "
                         f"Make sure you are connected only connected to the '{motor}' motor (model '{model}')."
                     )
                 return baudrate, found_id
@@ -205,13 +205,14 @@ class FeetechMotorsBus(MotorsBus):
             self.set_baudrate(baudrate)
             for id_ in range(scs.MAX_ID + 1):
                 found_model = self.ping(id_)
-                if found_model is not None and found_model != expected_model_nb:
-                    raise RuntimeError(
-                        f"Found one motor on {baudrate=} with id={id_} but it has a "
-                        f"model number '{found_model}' different than the one expected: '{expected_model_nb}' "
-                        f"Make sure you are connected only connected to the '{motor}' motor (model '{model}')."
-                    )
-                return baudrate, id_
+                if found_model is not None:
+                    if found_model != expected_model_nb:
+                        raise RuntimeError(
+                            f"Found one motor on {baudrate=} with id={id_} but it has a "
+                            f"model number '{found_model}' different than the one expected: '{expected_model_nb}'. "
+                            f"Make sure you are connected only connected to the '{motor}' motor (model '{model}')."
+                        )
+                    return baudrate, id_
 
         raise RuntimeError(f"Motor '{motor}' (model '{model}') was not found. Make sure it is connected.")
 

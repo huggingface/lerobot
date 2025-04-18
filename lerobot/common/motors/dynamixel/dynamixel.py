@@ -155,7 +155,7 @@ class DynamixelMotorsBus(MotorsBus):
                 if found_model != expected_model_nb:
                     raise RuntimeError(
                         f"Found one motor on {baudrate=} with id={found_id} but it has a "
-                        f"model number '{found_model}' different than the one expected: '{expected_model_nb}' "
+                        f"model number '{found_model}' different than the one expected: '{expected_model_nb}'. "
                         f"Make sure you are connected only connected to the '{motor}' motor (model '{model}')."
                     )
                 return baudrate, found_id
