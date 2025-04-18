@@ -179,9 +179,7 @@ def run_server(
             ]
             videos_info = [
                 {
-                    "url": url_for(
-                        "static", filename=str(video_path).replace("\\", "/")
-                    ),
+                    "url": url_for("static", filename=str(video_path).replace("\\", "/")),
                     "filename": video_path.parent.name,
                 }
                 for video_path in video_paths

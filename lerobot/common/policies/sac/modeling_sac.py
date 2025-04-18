@@ -490,7 +490,7 @@ class SACObservationEncoder(nn.Module):
     """Encode image and/or state vector observations."""
 
     def __init__(self, config: SACConfig, input_normalizer: nn.Module) -> None:
-        super(SACObservationEncoder, self).__init__()
+        super().__init__()
         self.config = config
         self.input_normalization = input_normalizer
         self._init_image_layers()

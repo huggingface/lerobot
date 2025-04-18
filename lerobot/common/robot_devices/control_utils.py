@@ -24,8 +24,8 @@ from contextlib import nullcontext
 from copy import copy
 from functools import cache
 
-import rerun as rr
 import numpy as np
+import rerun as rr
 import torch
 from deepdiff import DeepDiff
 from termcolor import colored

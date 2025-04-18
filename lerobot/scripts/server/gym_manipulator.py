@@ -700,7 +700,7 @@ class KeyboardInterfaceWrapper(gym.Wrapper):
         Reset the environment and clear any pending events
         """
         with self.event_lock:
-            self.events = {k: False for k in self.events}
+            self.events = dict.fromkeys(self.events, False)
         return self.env.reset(**kwargs)
 
     def close(self):

@@ -108,9 +108,7 @@ def check_env_attributes_and_types(env: gym.vector.VectorEnv) -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("once", UserWarning)  # Apply filter only in this function
 
-        if not (
-            hasattr(env.envs[0], "task_description") and hasattr(env.envs[0], "task")
-        ):
+        if not (hasattr(env.envs[0], "task_description") and hasattr(env.envs[0], "task")):
             warnings.warn(
                 "The environment does not have 'task_description' and 'task'. Some policies require these features.",
                 UserWarning,
@@ -124,9 +122,7 @@ def check_env_attributes_and_types(env: gym.vector.VectorEnv) -> None:
             )
 
 
-def add_envs_task(
-    env: gym.vector.VectorEnv, observation: dict[str, Any]
-) -> dict[str, Any]:
+def add_envs_task(env: gym.vector.VectorEnv, observation: dict[str, Any]) -> dict[str, Any]:
     """Adds task feature to the observation dict with respect to the first environment attribute."""
     if hasattr(env.envs[0], "task_description"):
         observation["task"] = env.call("task_description")
