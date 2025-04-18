@@ -156,7 +156,7 @@ class SACPolicy(
             **asdict(config.policy_kwargs),
         )
         if config.target_entropy is None:
-            discrete_actions_dim: Literal[1] | Literal[0] = 1 if config.num_discrete_actions is None else 0
+            discrete_actions_dim: Literal[1] | Literal[0] = 1 if config.num_discrete_actions is not None else 0
             config.target_entropy = -np.prod(continuous_action_dim + discrete_actions_dim) / 2  # (-dim(A)/2)
 
         # TODO (azouitine): Handle the case where the temparameter is a fixed
@@ -205,7 +205,7 @@ class SACPolicy(
 
         if self.config.num_discrete_actions is not None:
             discrete_action_value = self.grasp_critic(batch, observations_features)
-            discrete_action = torch.argmax(discrete_action_value, dim=-1, keepdim=True)
+            discrete_action = torch.argmax(discrete_action_value, dim=-1, keepdim=True) - 1
             actions = torch.cat([actions, discrete_action], dim=-1)
 
         return actions
@@ -432,7 +432,7 @@ class SACPolicy(
         # We need to split them before concatenating them in the critic forward
         actions_discrete: Tensor = actions[:, DISCRETE_DIMENSION_INDEX:].clone()
         actions_discrete = torch.round(actions_discrete)
-        actions_discrete = actions_discrete.long()
+        actions_discrete = actions_discrete.long() + 1
 
         gripper_penalties: Tensor | None = None
         if complementary_info is not None:
