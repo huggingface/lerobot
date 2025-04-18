@@ -20,6 +20,7 @@
 
   <worldbody>
     <camera name="front" pos="1.3 0.0 0.7" quat="0.5963678 0.3799282 0.3799282 0.5963678" fovy="45"/>
+    <camera name="side" pos="0.394 -0.909 0.491" quat="0.8258737 0.5638541 -0.0005638 -0.0008258" fovy="45"/>
     <light pos="0 0 3" dir="0 0 -1" diffuse="1 1 1" specular=".3 .3 .3"/>
     <light pos="0 -.5 .4" mode="targetbodycom" target="block" diffuse=".8 .8 .8" specular=".3 .3 .3"/>
     <geom name="floor" size="3 3 0.01" type="plane" material="grid"/>
