@@ -175,9 +175,9 @@ class GenesisEnv(EnvConfig):
 
     features_map: dict[str, str] = field(
         default_factory=lambda: {
-            "action": "action",
-            "observation.state": "observation.state",
-            "pixels": "observation.images.laptop",
+            "action": ACTION,
+            "observation.state": OBS_ROBOT,
+            "pixels": OBS_IMAGE,
         }
     )
 
