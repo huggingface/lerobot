@@ -85,7 +85,7 @@ def convert_dataset(
             path_in_repo=STATS_PATH, repo_id=dataset.repo_id, revision=branch, repo_type="dataset"
         )
 
-    hub_api.create_tag(repo_id, tag=CODEBASE_VERSION, revision=branch, repo_type="dataset")
+    hub_api.create_tag(repo_id, tag=CODEBASE_VERSION, revision=branch, repo_type="dataset", exist_ok=True)
 
 
 if __name__ == "__main__":

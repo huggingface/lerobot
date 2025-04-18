@@ -1,8 +1,7 @@
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 
 dataset = LeRobotDataset(
-    "villekuosmanen/eval_3Feb25",
-    # root="data",
-    # local_files_only=True,
+    "villekuosmanen/pack_easter_eggs_into_basket",
+    root='data/villekuosmanen/pack_easter_eggs_into_basket',
 )
 dataset.push_to_hub()
