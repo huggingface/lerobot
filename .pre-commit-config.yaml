@@ -46,7 +46,7 @@ repos:
     rev: v3.19.1
     hooks:
     -   id: pyupgrade
-
+        exclude: '^(.*_pb2_grpc\.py|.*_pb2\.py$)'
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.11.5
     hooks:

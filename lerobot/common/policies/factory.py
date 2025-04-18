@@ -24,6 +24,7 @@ from lerobot.common.envs.configs import EnvConfig
 from lerobot.common.envs.utils import env_to_policy_features
 from lerobot.common.policies.act.configuration_act import ACTConfig
 from lerobot.common.policies.diffusion.configuration_diffusion import DiffusionConfig
+from lerobot.common.policies.hilserl.classifier.configuration_classifier import ClassifierConfig
 from lerobot.common.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.common.policies.pi0fast.configuration_pi0fast import PI0FASTConfig
 from lerobot.common.policies.pretrained import PreTrainedPolicy
@@ -59,6 +60,14 @@ def get_policy_class(name: str) -> PreTrainedPolicy:
         from lerobot.common.policies.pi0fast.modeling_pi0fast import PI0FASTPolicy
 
         return PI0FASTPolicy
+    elif name == "sac":
+        from lerobot.common.policies.sac.modeling_sac import SACPolicy
+
+        return SACPolicy
+    elif name == "hilserl_classifier":
+        from lerobot.common.policies.hilserl.classifier.modeling_classifier import Classifier
+
+        return Classifier
     else:
         raise NotImplementedError(f"Policy with name {name} is not implemented.")
 
@@ -76,6 +85,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return PI0Config(**kwargs)
     elif policy_type == "pi0fast":
         return PI0FASTConfig(**kwargs)
+    elif policy_type == "hilserl_classifier":
+        return ClassifierConfig(**kwargs)
     else:
         raise ValueError(f"Policy type '{policy_type}' is not available.")
 

@@ -72,7 +72,9 @@ def make_robot_from_config(config: RobotConfig):
 
         return ManipulatorRobot(config)
     elif isinstance(config, LeKiwiRobotConfig):
-        from lerobot.common.robot_devices.robots.mobile_manipulator import MobileManipulator
+        from lerobot.common.robot_devices.robots.mobile_manipulator import (
+            MobileManipulator,
+        )
 
         return MobileManipulator(config)
     else:

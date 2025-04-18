@@ -26,7 +26,9 @@ from lerobot import available_cameras, available_motors, available_robots
 from lerobot.common.robot_devices.cameras.utils import Camera
 from lerobot.common.robot_devices.cameras.utils import make_camera as make_camera_device
 from lerobot.common.robot_devices.motors.utils import MotorsBus
-from lerobot.common.robot_devices.motors.utils import make_motors_bus as make_motors_bus_device
+from lerobot.common.robot_devices.motors.utils import (
+    make_motors_bus as make_motors_bus_device,
+)
 from lerobot.common.utils.import_utils import is_package_available
 
 DEVICE = os.environ.get("LEROBOT_TEST_DEVICE", "cuda") if torch.cuda.is_available() else "cpu"
@@ -285,7 +287,14 @@ def mock_calibration_dir(calibration_dir):
         "start_pos": [1442, 843, 2166, 2849, 1988, 1835],
         "end_pos": [2440, 1869, -1106, -1848, -926, 3235],
         "calib_mode": ["DEGREE", "DEGREE", "DEGREE", "DEGREE", "DEGREE", "LINEAR"],
-        "motor_names": ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"],
+        "motor_names": [
+            "shoulder_pan",
+            "shoulder_lift",
+            "elbow_flex",
+            "wrist_flex",
+            "wrist_roll",
+            "gripper",
+        ],
     }
     Path(str(calibration_dir)).mkdir(parents=True, exist_ok=True)
     with open(calibration_dir / "main_follower.json", "w") as f:

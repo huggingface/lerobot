@@ -193,7 +193,12 @@ class VQBeTConfig(PreTrainedConfig):
 
     @property
     def action_delta_indices(self) -> list:
-        return list(range(1 - self.n_obs_steps, self.n_action_pred_token + self.action_chunk_size - 1))
+        return list(
+            range(
+                1 - self.n_obs_steps,
+                self.n_action_pred_token + self.action_chunk_size - 1,
+            )
+        )
 
     @property
     def reward_delta_indices(self) -> None:
