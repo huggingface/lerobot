@@ -274,9 +274,6 @@ def record(
     # Load pretrained policy
     policy = None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
 
-    # Load pretrained policy
-    policy = None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
-
     if not robot.is_connected:
         robot.connect()
     listener, events = init_keyboard_listener(assign_rewards=cfg.assign_rewards)
@@ -364,14 +361,10 @@ def replay(
 
     log_say("Replaying episode", cfg.play_sounds, blocking=True)
     for idx in range(dataset.num_frames):
-        current_joint_positions = robot.follower_arms["main"].read("Present_Position")
         start_episode_t = time.perf_counter()
 
         action = actions[idx]["action"]
         robot.send_action(action)
-
-        dt_s = time.perf_counter() - start_episode_t
-        busy_wait(1 / cfg.fps - dt_s)
 
         dt_s = time.perf_counter() - start_episode_t
         log_control_info(robot, dt_s, fps=cfg.fps)
