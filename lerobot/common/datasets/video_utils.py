@@ -258,12 +258,7 @@ def encode_video_frames(
     video_path = Path(video_path)
     imgs_dir = Path(imgs_dir)
 
-    if video_path.exists() and not overwrite:
-        raise FileExistsError(
-            f"Video file already exists at {video_path}. Use `overwrite=True` to overwrite it."
-        )
-
-    video_path.parent.mkdir(parents=True, exist_ok=True)
+    video_path.parent.mkdir(parents=True, exist_ok=overwrite)
 
     # Get input frames
     template = "frame_" + ("[0-9]" * 6) + ".png"
@@ -291,12 +286,12 @@ def encode_video_frames(
         logging.getLogger("libav").setLevel(log_level)
 
     # Create and open output file (overwrite by default)
-    with av.open(str(video_path), "w", format="mp4") as output:
+    with av.open(str(video_path), "w") as output:
         output_stream = output.add_stream(vcodec, fps, options=video_options)
 
         # Loop through input frames and encode them
-        for input in input_list:
-            input_image = Image.open(input).convert("RGB")
+        for input_data in input_list:
+            input_image = Image.open(input_data).convert("RGB")
             input_frame = av.VideoFrame.from_image(input_image)
             packet = output_stream.encode(input_frame)
             if packet:
@@ -363,13 +358,13 @@ def get_audio_info(video_path: Path | str) -> dict:
 
         audio_info["audio.channels"] = audio_stream.channels
         audio_info["audio.codec"] = audio_stream.codec.canonical_name
-        audio_info["audio.bit_rate"] = (
-            audio_stream.bit_rate
-        )  # In an ideal loseless case : bit depth x sample rate x channels = bit rate. In an actual compressed case, the bit rate is set according to the compression level : the lower the bit rate, the more compression is applied.
+        # In an ideal loseless case : bit depth x sample rate x channels = bit rate.
+        # In an actual compressed case, the bit rate is set according to the compression level : the lower the bit rate, the more compression is applied.
+        audio_info["audio.bit_rate"] = audio_stream.bit_rate
         audio_info["audio.sample_rate"] = audio_stream.sample_rate  # Number of samples per second
-        audio_info["audio.bit_depth"] = (
-            audio_stream.format.bits
-        )  # In an ideal loseless case : fixed number of bits per sample. In an actual compressed case : variable number of bits per sample (often reduced to match a given depth rate).
+        # In an ideal loseless case : fixed number of bits per sample.
+        # In an actual compressed case : variable number of bits per sample (often reduced to match a given depth rate).
+        audio_info["audio.bit_depth"] = audio_stream.format.bits
         audio_info["audio.channel_layout"] = audio_stream.layout.name
         audio_info["has_audio"] = True
 
