@@ -258,12 +258,12 @@ class GamepadController(InputController):
                 elif event.button == 0:
                     self.episode_end_status = "rerecord_episode"
 
-                # RB button (6) for opening gripper
-                elif event.button == 6:
+                # RB button (10) for opening gripper
+                elif event.button == 10:
                     self.open_gripper_command = True
 
-                # LT button (7) for closing gripper
-                elif event.button == 7:
+                # LT button (9) for closing gripper
+                elif event.button == 9:
                     self.close_gripper_command = True
 
             # Reset episode status on button release
@@ -271,10 +271,10 @@ class GamepadController(InputController):
                 if event.button in [0, 2, 3]:
                     self.episode_end_status = None
 
-                elif event.button == 6:
+                elif event.button == 10:
                     self.open_gripper_command = False
 
-                elif event.button == 7:
+                elif event.button == 9:
                     self.close_gripper_command = False
 
             # Check for RB button (typically button 5) for intervention flag
@@ -294,7 +294,7 @@ class GamepadController(InputController):
             y_input = self.joystick.get_axis(1)  # Up/Down (often inverted)
 
             # Right stick Y (typically axis 3 or 4)
-            z_input = self.joystick.get_axis(3)  # Up/Down for Z
+            z_input = self.joystick.get_axis(4)  # Up/Down for Z
 
             # Apply deadzone to avoid drift
             x_input = 0 if abs(x_input) < self.deadzone else x_input
