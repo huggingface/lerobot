@@ -74,7 +74,7 @@ class LeKiwiClient(Robot):
         # TODO(Steven): Get this from the data fetched? Motor names are unknown for the Daemon
         # For now we assume its size/metadata is known
         return {
-            "dtype": "float64",
+            "dtype": "float32",
             "shape": (9,),
             "names": {
                 "motors": [
@@ -99,7 +99,6 @@ class LeKiwiClient(Robot):
     def camera_features(self) -> dict[str, dict]:
         # TODO(Steven): Get this from the data fetched? Motor names are unknown for the Daemon
         # For now we assume its size/metadata is known
-        # TODO(Steven): Check consistency of image sizes
         cam_ft = {
             "front": {
                 "shape": (480, 640, 3),
@@ -222,7 +221,7 @@ class LeKiwiClient(Robot):
             wheel_degps = wheel_degps * scale
 
         # Convert each wheel’s angular speed (deg/s) to a raw integer.
-        wheel_raw = [LeKiwiClient._degps_to_raw(deg) for deg in wheel_degps]
+        wheel_raw = [self._degps_to_raw(deg) for deg in wheel_degps]
 
         return {"left_wheel": wheel_raw[0], "back_wheel": wheel_raw[1], "right_wheel": wheel_raw[2]}
 
