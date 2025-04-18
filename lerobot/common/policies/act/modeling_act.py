@@ -141,9 +141,8 @@ class ACTPolicy(PreTrainedPolicy):
         # querying the policy.
         if len(self._action_queue) == 0:
             actions, eoe_preds, _ = self.model(batch)
-            actions = actions[:, :self.config.n_action_steps]
-            eoe_preds = eoe_preds[:, :self.config.n_action_steps]
-
+            actions = actions[:, : self.config.n_action_steps]
+            eoe_preds = eoe_preds[:, : self.config.n_action_steps]
 
             # TODO(rcadene): make _forward return output dictionary?
             actions = self.unnormalize_outputs({"action": actions})["action"]
@@ -172,14 +171,11 @@ class ACTPolicy(PreTrainedPolicy):
         eoe_targets = batch["next.done"].unsqueeze(1).expand(-1, eoe_hat.size(1))
         eoe_loss = F.binary_cross_entropy_with_logits(
             eoe_hat.squeeze(-1),  # (batch_size, sequence_length)
-            eoe_targets.float(),          # (batch_size, sequence_length)
-            weight=(~batch["action_is_pad"]).float()
+            eoe_targets.float(),  # (batch_size, sequence_length)
+            weight=(~batch["action_is_pad"]).float(),
         )
 
-        loss_dict = {
-            "l1_loss": l1_loss.item(),
-            "eoe_loss": eoe_loss.item()
-        }
+        loss_dict = {"l1_loss": l1_loss.item(), "eoe_loss": eoe_loss.item()}
         if self.config.use_vae:
             mean_kld = (
                 (-0.5 * (1 + log_sigma_x2_hat - mu_hat.pow(2) - (log_sigma_x2_hat).exp())).sum(-1).mean()

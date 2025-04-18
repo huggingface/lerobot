@@ -29,7 +29,7 @@ from torch import Tensor, nn
 
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.pretrained import PreTrainedPolicy
-from lerobot.common.policies.utils import get_device_from_parameters, get_output_shape, populate_queues
+from lerobot.common.policies.utils import get_device_from_parameters, populate_queues
 from lerobot.common.policies.vqbet.configuration_vqbet import VQBeTConfig
 from lerobot.common.policies.vqbet.vqbet_utils import GPT, ResidualVQ
 

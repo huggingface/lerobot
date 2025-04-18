@@ -1,9 +1,11 @@
 import torch
 
+
 class NoOpRobot:
     """
-   Robot that does nothing. 
+    Robot that does nothing.
     """
+
     cameras = {}
     leader_arms = []
     follower_arms = []
@@ -12,19 +14,19 @@ class NoOpRobot:
     @property
     def has_camera(self):
         return False
-    
+
     @property
     def num_cameras(self):
         return 0
-    
+
     @property
     def camera_features(self) -> dict:
         return {}
-    
+
     @property
     def motor_features(self) -> dict:
         return {}
-    
+
     @property
     def is_connected(self):
         return True

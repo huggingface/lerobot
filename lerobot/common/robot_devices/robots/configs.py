@@ -14,8 +14,8 @@
 
 import abc
 from dataclasses import dataclass, field
-from typing import Sequence
 from enum import Enum
+from typing import Sequence
 
 import draccus
 
@@ -530,6 +530,7 @@ class StretchRobotConfig(RobotConfig):
 
     mock: bool = False
 
+
 @RobotConfig.register_subclass("lekiwi")
 @dataclass
 class LeKiwiRobotConfig(RobotConfig):
@@ -550,10 +551,10 @@ class LeKiwiRobotConfig(RobotConfig):
             ),
             "wrist": OpenCVCameraConfig(
                 camera_index="/dev/video2", fps=30, width=640, height=480, rotation=180
-            )
+            ),
         }
     )
-    
+
     calibration_dir: str = ".cache/calibration/lekiwi"
 
     leader_arms: dict[str, MotorsBusConfig] = field(
@@ -609,10 +610,12 @@ class LeKiwiRobotConfig(RobotConfig):
     )
     mock: bool = False
 
+
 @RobotConfig.register_subclass("no_op")
 @dataclass
 class NoOpRobotConfig(RobotConfig):
     pass
+
 
 class ARXArmModel(Enum):
     """
@@ -620,8 +623,10 @@ class ARXArmModel(Enum):
     The main difference between the two is the type of motor used in the three base joints.
     Ensure you are using the right arm model before starting the robot, as choosing the wrong one can lead to dangerous movements.
     """
+
     X5 = "X5"
     L5 = "L5"
+
 
 # Configs for ARX5 robot
 @dataclass
@@ -630,16 +635,19 @@ class ARX5ArmConfig:
     interface_name: str
     urdf_path: str
 
+
 @dataclass
 class ARX5RobotConfig:
     leader_arms: dict[str, ARX5ArmConfig]
     follower_arms: dict[str, ARX5ArmConfig]
     cameras: dict[str, CameraConfig]
 
+
 @RobotConfig.register_subclass("arx5")
 @dataclass
 class ARX5SingleArmRobotConfig(RobotConfig):
     """Single-armed ARX5 configuration with both leader and follower arms."""
+
     leader_arms: dict[str, ARX5ArmConfig] = field(
         default_factory=lambda: {
             "main": ARX5ArmConfig(
@@ -675,20 +683,22 @@ class ARX5SingleArmRobotConfig(RobotConfig):
         }
     )
 
+
 @RobotConfig.register_subclass("arx5_bimanual")
 @dataclass
 class ARX5BimanualRobotConfig(RobotConfig):
     """Bimanual ARX5 configuration with both leader and follower arms."""
+
     leader_arms: dict[str, ARX5ArmConfig] = field(
         default_factory=lambda: {
             "left": ARX5ArmConfig(
                 model="L5",
-                interface_name="enx5c5310ecc0ec",  
+                interface_name="enx5c5310ecc0ec",
                 urdf_path="lerobot/models/arx5.urdf",
             ),
             "right": ARX5ArmConfig(
                 model="L5",
-                interface_name="enx5c5310ec6299",  
+                interface_name="enx5c5310ec6299",
                 urdf_path="lerobot/models/arx5.urdf",
             ),
         }
@@ -697,12 +707,12 @@ class ARX5BimanualRobotConfig(RobotConfig):
         default_factory=lambda: {
             "left": ARX5ArmConfig(
                 model="L5",
-                interface_name="enx5c5310ecc38c",  
+                interface_name="enx5c5310ecc38c",
                 urdf_path="lerobot/models/arx5.urdf",
             ),
             "right": ARX5ArmConfig(
                 model="L5",
-                interface_name="enx5c5310ecc90b",  
+                interface_name="enx5c5310ecc90b",
                 urdf_path="lerobot/models/arx5.urdf",
             ),
         }
@@ -722,7 +732,7 @@ class ARX5BimanualRobotConfig(RobotConfig):
                 height=480,
             ),
             "right_wrist": OpenCVCameraConfig(
-                camera_index=4,  
+                camera_index=4,
                 fps=30,
                 width=640,
                 height=480,
@@ -730,10 +740,12 @@ class ARX5BimanualRobotConfig(RobotConfig):
         }
     )
 
+
 @RobotConfig.register_subclass("arx5_follow")
 @dataclass
 class ARX5SingleArmFollowOnlyConfig(RobotConfig):
     """Single-armed ARX5 configuration with follower arm only (for inference)."""
+
     leader_arms: dict[str, ARX5ArmConfig] = field(default_factory=dict)
     follower_arms: dict[str, ARX5ArmConfig] = field(
         default_factory=lambda: {
@@ -761,21 +773,23 @@ class ARX5SingleArmFollowOnlyConfig(RobotConfig):
         }
     )
 
+
 @RobotConfig.register_subclass("arx5_bimanual_follow")
 @dataclass
 class ARX5BimanualFollowOnlyConfig(RobotConfig):
     """Bimanual ARX5 configuration with follower arms only (for inference)."""
+
     leader_arms: dict[str, ARX5ArmConfig] = field(default_factory=dict)
     follower_arms: dict[str, ARX5ArmConfig] = field(
         default_factory=lambda: {
             "left": ARX5ArmConfig(
                 model="L5",
-                interface_name="enx5c5310ecc38c",  
+                interface_name="enx5c5310ecc38c",
                 urdf_path="lerobot/models/arx5.urdf",
             ),
             "right": ARX5ArmConfig(
                 model="L5",
-                interface_name="enx5c5310ecc90b",  
+                interface_name="enx5c5310ecc90b",
                 urdf_path="lerobot/models/arx5.urdf",
             ),
         }
@@ -795,7 +809,7 @@ class ARX5BimanualFollowOnlyConfig(RobotConfig):
                 height=480,
             ),
             "right_wrist": OpenCVCameraConfig(
-                camera_index=4,  
+                camera_index=4,
                 fps=30,
                 width=640,
                 height=480,

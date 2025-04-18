@@ -15,18 +15,17 @@
 # limitations under the License.
 import logging
 import time
-import numpy as np
 from contextlib import nullcontext
 from pprint import pformat
-from typing import List, Dict, Any
+from typing import Any
 
 import torch
 from termcolor import colored
 from torch.amp import GradScaler
 from torch.optim import Optimizer
 
-from lerobot.common.datasets.lerobot_dataset import MultiLeRobotDataset, LeRobotDatasetMetadata
 from lerobot.common.datasets.factory import make_dataset
+from lerobot.common.datasets.lerobot_dataset import MultiLeRobotDataset
 from lerobot.common.datasets.sampler import EpisodeAwareSampler
 from lerobot.common.datasets.utils import cycle, dataloader_collate_fn
 from lerobot.common.envs.factory import make_env

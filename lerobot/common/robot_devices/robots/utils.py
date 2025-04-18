@@ -16,6 +16,11 @@ from typing import Protocol
 
 from lerobot.common.robot_devices.robots.configs import (
     AlohaRobotConfig,
+    ARX5BimanualFollowOnlyConfig,
+    ARX5BimanualRobotConfig,
+    ARX5RobotConfig,
+    ARX5SingleArmFollowOnlyConfig,
+    ARX5SingleArmRobotConfig,
     KochBimanualRobotConfig,
     KochRobotConfig,
     LeKiwiRobotConfig,
@@ -24,12 +29,6 @@ from lerobot.common.robot_devices.robots.configs import (
     RobotConfig,
     So100RobotConfig,
     StretchRobotConfig,
-    NoOpRobotConfig,
-    ARX5RobotConfig,
-    ARX5SingleArmRobotConfig,
-    ARX5BimanualRobotConfig,
-    ARX5SingleArmFollowOnlyConfig,
-    ARX5BimanualFollowOnlyConfig,
 )
 
 
@@ -85,36 +84,16 @@ def make_robot_from_config(config: RobotConfig):
         from lerobot.common.robot_devices.robots.manipulator import ManipulatorRobot
 
         return ManipulatorRobot(config)
-    elif isinstance(config, ARX5SingleArmRobotConfig):
+    elif (
+        isinstance(config, ARX5SingleArmRobotConfig)
+        or isinstance(config, ARX5BimanualRobotConfig)
+        or isinstance(config, ARX5SingleArmFollowOnlyConfig)
+        or isinstance(config, ARX5BimanualFollowOnlyConfig)
+    ):
         from lerobot.common.robot_devices.robots.arx5 import ARX5Robot
+
         common_config = ARX5RobotConfig(
-            leader_arms=config.leader_arms,
-            follower_arms=config.follower_arms,
-            cameras=config.cameras
-        )
-        return ARX5Robot(common_config)
-    elif isinstance(config, ARX5BimanualRobotConfig):
-        from lerobot.common.robot_devices.robots.arx5 import ARX5Robot
-        common_config = ARX5RobotConfig(
-            leader_arms=config.leader_arms,
-            follower_arms=config.follower_arms,
-            cameras=config.cameras
-        )
-        return ARX5Robot(common_config)
-    elif isinstance(config, ARX5SingleArmFollowOnlyConfig):
-        from lerobot.common.robot_devices.robots.arx5 import ARX5Robot
-        common_config = ARX5RobotConfig(
-            leader_arms=config.leader_arms,
-            follower_arms=config.follower_arms,
-            cameras=config.cameras
-        )
-        return ARX5Robot(common_config)
-    elif isinstance(config, ARX5BimanualFollowOnlyConfig):
-        from lerobot.common.robot_devices.robots.arx5 import ARX5Robot
-        common_config = ARX5RobotConfig(
-            leader_arms=config.leader_arms,
-            follower_arms=config.follower_arms,
-            cameras=config.cameras
+            leader_arms=config.leader_arms, follower_arms=config.follower_arms, cameras=config.cameras
         )
         return ARX5Robot(common_config)
     elif isinstance(config, LeKiwiRobotConfig):

@@ -14,11 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import logging
-from typing import List
 from pprint import pformat
+from typing import List
 
 import torch
 
+from lerobot.common.constants import HF_LEROBOT_HOME
 from lerobot.common.datasets.lerobot_dataset import (
     LeRobotDataset,
     LeRobotDatasetMetadata,
@@ -27,7 +28,6 @@ from lerobot.common.datasets.lerobot_dataset import (
 from lerobot.common.datasets.transforms import ImageTransforms
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.train import TrainPipelineConfig
-from lerobot.common.constants import HF_LEROBOT_HOME
 
 IMAGENET_STATS = {
     "mean": [[[0.485]], [[0.456]], [[0.406]]],  # (c,1,1)
@@ -66,6 +66,7 @@ def resolve_delta_timestamps(
         delta_timestamps = None
 
     return delta_timestamps
+
 
 def resolve_delta_timestamps_without_config(
     ds_meta: LeRobotDatasetMetadata, action_delta_indices: List, observation_delta_indices: List = None
@@ -115,8 +116,8 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
     image_transforms = (
         ImageTransforms(cfg.dataset.image_transforms) if cfg.dataset.image_transforms.enable else None
     )
-    if cfg.dataset.repo_id.startswith('['):
-        datasets = cfg.dataset.repo_id.strip('[]').split(',')
+    if cfg.dataset.repo_id.startswith("["):
+        datasets = cfg.dataset.repo_id.strip("[]").split(",")
         datasets = [x.strip() for x in datasets]
         delta_timestamps = {}
         for ds in datasets:
@@ -136,7 +137,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
         )
         logging.info(
             "Multiple datasets were provided. Applied the following index mapping to the provided datasets: "
-            f"{pformat(dataset.repo_id_to_index , indent=2)}"
+            f"{pformat(dataset.repo_id_to_index, indent=2)}"
         )
     else:
         ds_meta = LeRobotDatasetMetadata(cfg.dataset.repo_id)
@@ -165,6 +166,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
 
     return dataset
 
+
 def make_dataset_without_config(
     repo_id: str,
     action_delta_indices: List,
@@ -188,8 +190,8 @@ def make_dataset_without_config(
     Returns:
         LeRobotDataset | MultiLeRobotDataset
     """
-    if repo_id.startswith('['):
-        datasets = repo_id.strip('[]').split(',')
+    if repo_id.startswith("["):
+        datasets = repo_id.strip("[]").split(",")
         datasets = [x.strip() for x in datasets]
         delta_timestamps = {}
         for ds in datasets:
@@ -198,7 +200,9 @@ def make_dataset_without_config(
                 root=HF_LEROBOT_HOME / ds,
                 force_cache_sync=force_cache_sync,
             )
-            d_ts = resolve_delta_timestamps_without_config(ds_meta, action_delta_indices, observation_delta_indices)
+            d_ts = resolve_delta_timestamps_without_config(
+                ds_meta, action_delta_indices, observation_delta_indices
+            )
             delta_timestamps[ds] = d_ts
         dataset = MultiLeRobotDataset(
             datasets,
@@ -208,11 +212,13 @@ def make_dataset_without_config(
         )
         logging.info(
             "Multiple datasets were provided. Applied the following index mapping to the provided datasets: "
-            f"{pformat(dataset.repo_id_to_index , indent=2)}"
+            f"{pformat(dataset.repo_id_to_index, indent=2)}"
         )
     else:
         ds_meta = LeRobotDatasetMetadata(repo_id, local_files_only=local_files_only)
-        delta_timestamps = resolve_delta_timestamps_without_config(ds_meta, action_delta_indices, observation_delta_indices)
+        delta_timestamps = resolve_delta_timestamps_without_config(
+            ds_meta, action_delta_indices, observation_delta_indices
+        )
         dataset = LeRobotDataset(
             repo_id,
             root=root,

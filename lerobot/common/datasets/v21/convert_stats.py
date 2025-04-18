@@ -24,7 +24,7 @@ from lerobot.common.datasets.utils import write_episode_stats
 
 def sample_episode_video_frames(dataset: LeRobotDataset, episode_index: int, ft_key: str) -> np.ndarray:
     ep_len = dataset.meta.episodes[episode_index]["length"]
-    
+
     if ep_len == 1:
         # For episodes with length 1, directly get the frame without sampling
         query_timestamps = dataset._get_query_timestamps(0.0, {ft_key: [0]})

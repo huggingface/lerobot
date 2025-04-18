@@ -144,6 +144,7 @@ import rerun as rr
 
 # from safetensors.torch import load_file, save_file
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.common.datasets.utils import load_json
 from lerobot.common.robot_devices.control_configs import (
     CalibrateControlConfig,
     ControlConfig,
@@ -168,7 +169,6 @@ from lerobot.common.robot_devices.control_utils import (
 from lerobot.common.robot_devices.robots.utils import Robot, make_robot_from_config
 from lerobot.common.robot_devices.utils import busy_wait, safe_disconnect
 from lerobot.common.utils.utils import has_method, init_logging, log_say
-from lerobot.common.datasets.utils import load_json
 from lerobot.configs import parser
 
 ########################################################################################
@@ -254,7 +254,7 @@ def record(
     if cfg.resume:
         dataset = LeRobotDataset(
             cfg.repo_id,
-            root=f'{cfg.root}/{cfg.repo_id}',
+            root=f"{cfg.root}/{cfg.repo_id}",
         )
         if len(robot.cameras) > 0:
             dataset.start_image_writer(
@@ -269,7 +269,7 @@ def record(
         dataset = LeRobotDataset.create(
             cfg.repo_id,
             cfg.fps,
-            root=f'{cfg.root}/{cfg.repo_id}',
+            root=f"{cfg.root}/{cfg.repo_id}",
             robot=robot,
             use_videos=cfg.video,
             image_writer_processes=cfg.num_image_writer_processes,
@@ -429,6 +429,7 @@ def control_robot(cfg: ControlPipelineConfig):
 
     if cfg.no_robot:
         from lerobot.common.robot_devices.robots.nooprobot import NoOpRobot
+
         robot = NoOpRobot()
     else:
         robot = make_robot_from_config(cfg.robot)

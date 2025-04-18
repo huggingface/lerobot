@@ -1,6 +1,5 @@
-from dataclasses import dataclass, field, replace
-from enum import Enum
 import time
+from dataclasses import replace
 from typing import Tuple
 
 import arx5_interface as arx5
@@ -8,15 +7,16 @@ import numpy as np
 import torch
 
 from lerobot.common.robot_devices.cameras.utils import make_cameras_from_configs
+from lerobot.common.robot_devices.robots.configs import ARX5ArmConfig, ARX5RobotConfig
 from lerobot.common.robot_devices.utils import (
     RobotDeviceAlreadyConnectedError,
     RobotDeviceNotConnectedError,
     busy_wait,
 )
-from lerobot.common.robot_devices.robots.configs import ARX5ArmConfig, ARX5RobotConfig
 
 DOF = 6
 MOTOR_NAMES = []
+
 
 class ARX5Arm:
     """
@@ -46,10 +46,12 @@ class ARX5Arm:
         controller_config = arx5.ControllerConfigFactory.get_instance().get_config(
             "joint_controller", robot_config.joint_dof
         )
-        controller_config.gravity_compensation = True   # TODO: may be default true
+        controller_config.gravity_compensation = True  # TODO: may be default true
         controller_config.background_send_recv = True
 
-        self.joint_controller = arx5.Arx5JointController(robot_config, controller_config, self.config.interface_name)
+        self.joint_controller = arx5.Arx5JointController(
+            robot_config, controller_config, self.config.interface_name
+        )
         print("joint controller created")
         self.joint_controller.reset_to_home()
         # self.joint_controller.enable_gravity_compensation(self.config.urdf_path)
@@ -80,9 +82,7 @@ class ARX5Arm:
 
     def calibrate(self):
         if not self.is_connected:
-            raise RobotDeviceNotConnectedError(
-                "ARX5Arm is not connected. You need to run `robot.connect()`."
-            )
+            raise RobotDeviceNotConnectedError("ARX5Arm is not connected. You need to run `robot.connect()`.")
         if self.is_master:
             self.joint_controller.set_to_damping()
             gain = self.joint_controller.get_gain()
@@ -100,9 +100,7 @@ class ARX5Arm:
 
     def get_state(self) -> np.ndarray:
         if not self.is_connected:
-            raise RobotDeviceNotConnectedError(
-                "ARX5Arm is not connected. You need to run `robot.connect()`."
-            )
+            raise RobotDeviceNotConnectedError("ARX5Arm is not connected. You need to run `robot.connect()`.")
         joint_state = self.joint_controller.get_joint_state()
         state = np.concatenate([joint_state.pos().copy(), np.array([joint_state.gripper_pos])])
         if self.is_master:
@@ -111,12 +109,10 @@ class ARX5Arm:
         # name = "master" if self.is_master else "puppet"
         # print(f"arm ({name}): {state[-3:-1]}")
         return state
-    
+
     def get_obs(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         if not self.is_connected:
-            raise RobotDeviceNotConnectedError(
-                "ARX5Arm is not connected. You need to run `robot.connect()`."
-            )
+            raise RobotDeviceNotConnectedError("ARX5Arm is not connected. You need to run `robot.connect()`.")
         joint_state = self.joint_controller.get_joint_state()
         pos = np.concatenate([joint_state.pos().copy(), np.array([joint_state.gripper_pos])])
         vel = np.concatenate([joint_state.vel().copy(), np.array([joint_state.gripper_vel])])
@@ -128,12 +124,10 @@ class ARX5Arm:
 
         eef_state = self.joint_controller.get_eef_state()
         return (pos, vel, effort, eef_state.pose_6d().copy())
-    
+
     def send_command(self, action: np.ndarray):
         if not self.is_connected:
-            raise RobotDeviceNotConnectedError(
-                "ARX5Arm is not connected. You need to run `robot.connect()`."
-            )
+            raise RobotDeviceNotConnectedError("ARX5Arm is not connected. You need to run `robot.connect()`.")
         cmd = arx5.JointState(DOF)
         cmd.pos()[0:DOF] = action[0:DOF]
 
@@ -162,10 +156,12 @@ class ARX5Arm:
             dt_s = time.perf_counter() - start_loop_t
             busy_wait(1 / fps - dt_s)
 
+
 class ARX5Robot:
     """
     A class for controlling a robot consisting of one or more ARX arms.
     """
+
     robot_type: str | None = "arx5"
 
     def __init__(
@@ -194,11 +190,11 @@ class ARX5Robot:
     @property
     def has_camera(self):
         return len(self.cameras) > 0
-    
+
     @property
     def num_cameras(self):
         return len(self.cameras)
-    
+
     @property
     def camera_features(self) -> dict:
         cam_ft = {}
@@ -210,7 +206,7 @@ class ARX5Robot:
                 "info": None,
             }
         return cam_ft
-    
+
     @property
     def motor_features(self) -> dict:
         action_space = len(self.follower_arms) * (DOF + 1)
@@ -233,7 +229,7 @@ class ARX5Robot:
             },
             "observation.eef_6d_pose": {
                 "dtype": "float32",
-                "shape": (len(self.follower_arms)*6,),
+                "shape": (len(self.follower_arms) * 6,),
             },
         }
 
@@ -286,14 +282,14 @@ class ARX5Robot:
             raise RobotDeviceNotConnectedError(
                 "ARX5Robot is not connected. You need to run `robot.connect()`."
             )
-        
+
         # Prepare to assign the position of the leader to the follower
         leader_pos = {}
         for name in self.leader_arms:
             before_lread_t = time.perf_counter()
             leader_pos[name] = self.leader_arms[name].get_state()
             self.logs[f"read_leader_{name}_pos_dt_s"] = time.perf_counter() - before_lread_t
-        
+
         follower_goal_pos = {}
         for name in self.leader_arms:
             follower_goal_pos[name] = leader_pos[name]
@@ -303,7 +299,7 @@ class ARX5Robot:
                 before_fwrite_t = time.perf_counter()
 
                 action = leader_pos[name]
-                self.follower_arms[name].send_command(action[0:DOF + 1])
+                self.follower_arms[name].send_command(action[0 : DOF + 1])
 
                 self.logs[f"write_follower_{name}_goal_pos_dt_s"] = time.perf_counter() - before_fwrite_t
 
@@ -422,7 +418,7 @@ class ARX5Robot:
         for name in self.follower_arms:
             if name in self.follower_arms:
                 to_idx = DOF
-                follower_goal_pos[name] = action[from_idx:(from_idx + to_idx + 1)]
+                follower_goal_pos[name] = action[from_idx : (from_idx + to_idx + 1)]
                 from_idx = to_idx + 1
 
         for name in self.follower_arms:
@@ -434,7 +430,7 @@ class ARX5Robot:
         """
         for name, leader_arm in self.leader_arms.items():
             leader_arm.reset()
-            
+
             # capture follower arm's position
             follower_pos = self.follower_arms[name].get_state()
             # print the positions

@@ -169,7 +169,7 @@ def run_server(
             else dataset.total_episodes,
             "fps": dataset.fps,
         }
-        
+
         # Get subtasks for this episode if available
         subtasks = {}
         expanded_subtasks = {}
@@ -178,19 +178,19 @@ def run_server(
             # Create a filter for the dataset to get only this episode
             def filter_func(example):
                 return example["episode_index"] == episode_id
-            
+
             # Apply the filter to the dataset
             episode_data = dataset.hf_dataset.filter(filter_func)
-            
+
             # Extract timestamps and subtasks
             for item in episode_data:
                 if "subtask" in item and item["subtask"] is not None and item["subtask"] != "":
                     subtasks[item["timestamp"].item()] = item["subtask"]
-                
+
                 # Also extract expanded subtasks if available
                 if "expanded_subtasks" in item and item["expanded_subtasks"] is not None:
                     expanded_subtasks[item["timestamp"].item()] = item["expanded_subtasks"]
-        
+
         if isinstance(dataset, LeRobotDataset):
             video_paths = [
                 dataset.meta.get_video_file_path(episode_id, key) for key in dataset.meta.video_keys
@@ -245,34 +245,38 @@ def run_server(
             columns=columns,
             ignored_columns=ignored_columns,
             subtasks=subtasks,
-            expanded_subtasks=expanded_subtasks  # Pass the expanded subtasks to the template
+            expanded_subtasks=expanded_subtasks,  # Pass the expanded subtasks to the template
         )
 
     app.run(host=host, port=port)
 
-def get_frames_by_timestamp_range(self, episode_id: int, start_ts: float, end_ts: float, include_subtasks=True) -> dict:
+
+def get_frames_by_timestamp_range(
+    self, episode_id: int, start_ts: float, end_ts: float, include_subtasks=True
+) -> dict:
     """
-    Select frames from the dataset where episode_index matches episode_id and 
+    Select frames from the dataset where episode_index matches episode_id and
     timestamps are within the specified range.
-    
+
     Args:
         episode_id (int): Episode ID to filter by
         start_ts (float): Start timestamp (inclusive)
         end_ts (float): End timestamp (exclusive)
         include_subtasks (bool): Whether to include subtask annotations
-        
+
     Returns:
         dict: Selected frames with their indices, and subtasks if requested
     """
+
     # Create a filter for the dataset
     def filter_func(example):
         episode_matches = example["episode_index"] == episode_id
         ts_in_range = (example["timestamp"] >= start_ts) & (example["timestamp"] < end_ts)
         return episode_matches & ts_in_range
-    
+
     # Apply the filter to the dataset
     filtered_data = self.hf_dataset.filter(filter_func)
-    
+
     # If subtasks are requested and the subtask column exists
     if include_subtasks and "subtask" in self.hf_dataset.features:
         # Extract timestamps and subtasks
@@ -280,10 +284,11 @@ def get_frames_by_timestamp_range(self, episode_id: int, start_ts: float, end_ts
         for item in filtered_data:
             if item["subtask"] is not None:
                 subtasks[item["timestamp"].item()] = item["subtask"]
-        
+
         return {"frames": filtered_data, "subtasks": subtasks}
-    
+
     return {"frames": filtered_data, "subtasks": {}}
+
 
 def get_ep_csv_fname(episode_id: int):
     ep_csv_fname = f"episode_{episode_id}.csv"
@@ -525,7 +530,6 @@ def main():
     root = kwargs.pop("root")
     tolerance_s = kwargs.pop("tolerance_s")
 
-
     dataset = None
     if repo_id:
         dataset = (
@@ -533,12 +537,12 @@ def main():
             if not load_from_hf_hub
             else get_dataset_info(repo_id)
         )
-        
+
         # test annotation overrider
         from lerobot.common.datasets.annotation_overrider import TaskAnnotationOverrider
+
         overrider = TaskAnnotationOverrider("data/annotation_overrides.json")
         overrider.apply_overrides(dataset)
-        
 
     visualize_dataset_html(dataset, **vars(args))
 
