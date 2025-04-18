@@ -101,7 +101,7 @@ class LeRobotDatasetMetadata:
                 self.revision = get_safe_version(self.repo_id, self.revision)
 
             (self.root / "meta").mkdir(exist_ok=True, parents=True)
-            self.pull_from_repo(allow_patterns="meta/")
+            self.pull_from_repo(allow_patterns="meta/", force_cache_sync=force_cache_sync)
             self.load_metadata()
 
     def load_metadata(self):
@@ -124,15 +124,26 @@ class LeRobotDatasetMetadata:
         self,
         allow_patterns: list[str] | str | None = None,
         ignore_patterns: list[str] | str | None = None,
+        force_cache_sync: bool = False,
     ) -> None:
-        snapshot_download(
-            self.repo_id,
-            repo_type="dataset",
-            revision=self.revision,
-            local_dir=self.root,
-            allow_patterns=allow_patterns,
-            ignore_patterns=ignore_patterns,
-        )
+        if force_cache_sync:
+            snapshot_download(
+                self.repo_id,
+                repo_type="dataset",
+                force_download=True,    # instead of revision (which is implemented by a tag and may be wrong) we force download of most recent main.
+                local_dir=self.root,
+                allow_patterns=allow_patterns,
+                ignore_patterns=ignore_patterns,
+            )
+        else:
+            snapshot_download(
+                self.repo_id,
+                repo_type="dataset",
+                revision=self.revision,
+                local_dir=self.root,
+                allow_patterns=allow_patterns,
+                ignore_patterns=ignore_patterns,
+            )
 
     def load_safety_violations(self):
         try:
@@ -595,15 +606,26 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self,
         allow_patterns: list[str] | str | None = None,
         ignore_patterns: list[str] | str | None = None,
+        force_cache_sync: bool = False,
     ) -> None:
-        snapshot_download(
-            self.repo_id,
-            repo_type="dataset",
-            revision=self.revision,
-            local_dir=self.root,
-            allow_patterns=allow_patterns,
-            ignore_patterns=ignore_patterns,
-        )
+        if force_cache_sync:
+            snapshot_download(
+                self.repo_id,
+                repo_type="dataset",
+                force_download=True,    # instead of revision (which is implemented by a tag and may be wrong) we force download of most recent main.
+                local_dir=self.root,
+                allow_patterns=allow_patterns,
+                ignore_patterns=ignore_patterns,
+            )
+        else:
+            snapshot_download(
+                self.repo_id,
+                repo_type="dataset",
+                revision=self.revision,
+                local_dir=self.root,
+                allow_patterns=allow_patterns,
+                ignore_patterns=ignore_patterns,
+            )
 
     def download_episodes(self, download_videos: bool = True) -> None:
         """Downloads the dataset from the given 'repo_id' at the provided version. If 'episodes' is given, this
@@ -1394,6 +1416,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         tolerances_s: dict | None = None,
         download_videos: bool = True,
         video_backend: str | None = None,
+        force_cache_sync: bool = False,
     ):
         super().__init__()
         self.repo_ids = repo_ids
@@ -1411,6 +1434,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
                 tolerance_s=self.tolerances_s[repo_id],
                 download_videos=download_videos,
                 video_backend=video_backend,
+                force_cache_sync=force_cache_sync,
             )
             for repo_id in repo_ids
         ]
