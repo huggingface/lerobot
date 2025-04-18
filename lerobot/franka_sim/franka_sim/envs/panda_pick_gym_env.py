@@ -133,7 +133,7 @@ class PandaPickCubeGymEnv(MujocoGymEnv):
                     shape=(render_spec.height, render_spec.width, 3),
                     dtype=np.uint8,
                 ),
-                "observation.images.wrist": spaces.Box(
+                "observation.images.side": spaces.Box(
                     low=0,
                     high=255,
                     shape=(render_spec.height, render_spec.width, 3),
@@ -341,12 +341,12 @@ class PandaPickCubeGymEnv(MujocoGymEnv):
         obs["observation.state"] = {}
 
         qpos = self.data.qpos[self.panda_dof_ids].astype(np.float32)
-        gripper_pose = np.array([self._data.ctrl[self.gripper_ctrl_id]], dtype=np.float32)
+        gripper_pose = np.array([self._data.ctrl[self.gripper_ctrl_id] / 255], dtype=np.float32)
         qpos = np.concatenate([qpos, gripper_pose])
         obs["observation.state"] = torch.from_numpy(qpos)
 
-        front, wrist = self.render()
-        obs["observation.images.front"], obs["observation.images.wrist"] = torch.from_numpy(front), torch.from_numpy(wrist)
+        front, side = self.render()
+        obs["observation.images.front"], obs["observation.images.side"] = torch.from_numpy(front), torch.from_numpy(side)
 
         return obs
 
