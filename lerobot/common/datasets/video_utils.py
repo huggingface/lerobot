@@ -266,8 +266,14 @@ def encode_video_frames(
         glob.glob(str(imgs_dir / template)), key=lambda x: int(x.split("_")[-1].split(".")[0])
     )
 
-    # Define video output options
-    video_options = {"pix_fmt": pix_fmt}
+    # Define video output frame size (assuming all input frames are the same size)
+    if len(input_list) == 0:
+        raise FileNotFoundError(f"No images found in {imgs_dir}.")
+    dummy_image = Image.open(input_list[0])
+    width, height = dummy_image.size
+
+    # Define video codec options
+    video_options = {}
 
     if g is not None:
         video_options["g"] = str(g)
@@ -288,6 +294,9 @@ def encode_video_frames(
     # Create and open output file (overwrite by default)
     with av.open(str(video_path), "w") as output:
         output_stream = output.add_stream(vcodec, fps, options=video_options)
+        output_stream.pix_fmt = pix_fmt
+        output_stream.width = width
+        output_stream.height = height
 
         # Loop through input frames and encode them
         for input_data in input_list:
