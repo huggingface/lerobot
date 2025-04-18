@@ -132,13 +132,14 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             delta_timestamps=delta_timestamps,
             image_transforms=image_transforms,
             video_backend=cfg.dataset.video_backend,
+            force_cache_sync=True,
         )
         logging.info(
             "Multiple datasets were provided. Applied the following index mapping to the provided datasets: "
             f"{pformat(dataset.repo_id_to_index , indent=2)}"
         )
     else:
-        ds_meta = LeRobotDatasetMetadata(cfg.dataset.repo_id, local_files_only=cfg.dataset.local_files_only)
+        ds_meta = LeRobotDatasetMetadata(cfg.dataset.repo_id)
         delta_timestamps = resolve_delta_timestamps(cfg.policy, ds_meta)
         dataset = LeRobotDataset(
             cfg.dataset.repo_id,
@@ -148,6 +149,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             image_transforms=image_transforms,
             revision=cfg.dataset.revision,
             video_backend=cfg.dataset.video_backend,
+            force_cache_sync=True,
         )
 
     if cfg.dataset.use_imagenet_stats:
@@ -173,6 +175,7 @@ def make_dataset_without_config(
     revision: str | None = None,
     local_files_only: bool = False,
     use_imagenet_stats: bool = True,
+    force_cache_sync: bool = False,
 ) -> LeRobotDataset | MultiLeRobotDataset:
     """Handles the logic of setting up delta timestamps and image transforms before creating a dataset.
 
@@ -193,6 +196,7 @@ def make_dataset_without_config(
             ds_meta = LeRobotDatasetMetadata(
                 ds,
                 root=HF_LEROBOT_HOME / ds,
+                force_cache_sync=force_cache_sync,
             )
             d_ts = resolve_delta_timestamps_without_config(ds_meta, action_delta_indices, observation_delta_indices)
             delta_timestamps[ds] = d_ts
@@ -200,6 +204,7 @@ def make_dataset_without_config(
             datasets,
             delta_timestamps=delta_timestamps,
             video_backend=video_backend,
+            force_cache_sync=force_cache_sync,
         )
         logging.info(
             "Multiple datasets were provided. Applied the following index mapping to the provided datasets: "
