@@ -24,10 +24,19 @@ from lerobot.common.datasets.utils import write_episode_stats
 
 def sample_episode_video_frames(dataset: LeRobotDataset, episode_index: int, ft_key: str) -> np.ndarray:
     ep_len = dataset.meta.episodes[episode_index]["length"]
-    sampled_indices = sample_indices(ep_len)
-    query_timestamps = dataset._get_query_timestamps(0.0, {ft_key: sampled_indices})
-    video_frames = dataset._query_videos(query_timestamps, episode_index)
-    return video_frames[ft_key].numpy()
+    
+    if ep_len == 1:
+        # For episodes with length 1, directly get the frame without sampling
+        query_timestamps = dataset._get_query_timestamps(0.0, {ft_key: [0]})
+        video_frames = dataset._query_videos(query_timestamps, episode_index)
+        # Add an extra batch dimension to match expected shape (1, C, H, W)
+        return np.expand_dims(video_frames[ft_key].numpy(), axis=0)
+    else:
+        # Normal case with multiple frames
+        sampled_indices = sample_indices(ep_len)
+        query_timestamps = dataset._get_query_timestamps(0.0, {ft_key: sampled_indices})
+        video_frames = dataset._query_videos(query_timestamps, episode_index)
+        return video_frames[ft_key].numpy()
 
 
 def convert_episode_stats(dataset: LeRobotDataset, ep_idx: int):
