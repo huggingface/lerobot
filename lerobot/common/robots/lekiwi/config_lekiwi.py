@@ -52,7 +52,8 @@ class LeKiwiConfig(RobotConfig):
         }
     )
 
-    # Network Configuration
+@dataclass
+class LeKiwiHostConfig:
     port_zmq_cmd: int = 5555
     port_zmq_observations: int = 5556
 

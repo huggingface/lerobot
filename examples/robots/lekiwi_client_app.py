@@ -90,12 +90,11 @@ def main():
 
     logging.info("Creating LeRobot Dataset")
 
-    # # TODO(Steven): Check this creation
-    # dataset = LeRobotDataset.create(
-    #     repo_id="user/lekiwi2",
-    #     fps=10,
-    #     features=DUMMY_FEATURES,
-    # )
+    dataset = LeRobotDataset.create(
+        repo_id="user/lekiwi",
+        fps=10,
+        features=robot.features,
+    )
 
     logging.info("Connecting Teleop Devices")
     leader_arm.connect()
@@ -122,11 +121,11 @@ def main():
         frame.update({"task": "Dummy Task Dataset"})
 
         logging.info("Saved a frame into the dataset")
-        # dataset.add_frame(frame)
+        dataset.add_frame(frame)
         i += 1
 
-    # dataset.save_episode()
-    # dataset.push_to_hub()
+    dataset.save_episode()
+    dataset.push_to_hub()
 
     logging.info("Disconnecting Teleop Devices and LeKiwi Client")
     robot.disconnect()
