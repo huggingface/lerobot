@@ -260,6 +260,13 @@ def encode_video_frames(
 
     video_path.parent.mkdir(parents=True, exist_ok=overwrite)
 
+    # Encoders/pixel formats incompatibility check
+    if vcodec == "libsvtav1" and pix_fmt == "yuv444p":
+        logging.warning(
+            "Incompatible pixel format 'yuv444p' for codec 'libsvtav1', auto-selecting format 'yuv420p'"
+        )
+        pix_fmt = "yuv420p"
+
     # Get input frames
     template = "frame_" + ("[0-9]" * 6) + ".png"
     input_list = sorted(
