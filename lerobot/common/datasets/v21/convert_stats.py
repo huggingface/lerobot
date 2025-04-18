@@ -94,6 +94,8 @@ def check_aggregate_stats(
     agg_stats = aggregate_stats(list(dataset.meta.episodes_stats.values()))
     for key, ft in dataset.features.items():
         # These values might need some fine-tuning
+        if ft["dtype"] == "string" or ft["dtype"] == "list":
+            continue
         if ft["dtype"] == "video":
             # to account for image sub-sampling
             rtol, atol = video_rtol_atol
