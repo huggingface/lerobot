@@ -24,8 +24,8 @@ import shutil
 import threading
 import time
 from pathlib import Path
-from threading import Thread
 
+import cv2
 import numpy as np
 from PIL import Image
 
@@ -46,12 +46,12 @@ from .configuration_opencv import OpenCVCameraConfig
 MAX_OPENCV_INDEX = 60
 
 
-def find_cameras(raise_when_empty=False, max_index_search_range=MAX_OPENCV_INDEX, mock=False) -> list[dict]:
+def find_cameras(raise_when_empty=False, max_index_search_range=MAX_OPENCV_INDEX) -> list[dict]:
     cameras = []
     if platform.system() == "Linux":
         print("Linux detected. Finding available camera indices through scanning '/dev/video*' ports")
         possible_ports = [str(port) for port in Path("/dev").glob("video*")]
-        ports = _find_cameras(possible_ports, mock=mock)
+        ports = _find_cameras(possible_ports)
         for port in ports:
             cameras.append(
                 {
@@ -65,7 +65,7 @@ def find_cameras(raise_when_empty=False, max_index_search_range=MAX_OPENCV_INDEX
             f"scanning all indices from 0 to {MAX_OPENCV_INDEX}"
         )
         possible_indices = range(max_index_search_range)
-        indices = _find_cameras(possible_indices, mock=mock)
+        indices = _find_cameras(possible_indices)
         for index in indices:
             cameras.append(
                 {
@@ -77,14 +77,7 @@ def find_cameras(raise_when_empty=False, max_index_search_range=MAX_OPENCV_INDEX
     return cameras
 
 
-def _find_cameras(
-    possible_camera_ids: list[int | str], raise_when_empty=False, mock=False
-) -> list[int | str]:
-    if mock:
-        import tests.cameras.mock_cv2 as cv2
-    else:
-        import cv2
-
+def _find_cameras(possible_camera_ids: list[int | str], raise_when_empty=False) -> list[int | str]:
     camera_ids = []
     for camera_idx in possible_camera_ids:
         camera = cv2.VideoCapture(camera_idx)
@@ -128,20 +121,19 @@ def save_images_from_cameras(
     width=None,
     height=None,
     record_time_s=2,
-    mock=False,
 ):
     """
     Initializes all the cameras and saves images to the directory. Useful to visually identify the camera
     associated to a given camera index.
     """
     if camera_ids is None or len(camera_ids) == 0:
-        camera_infos = find_cameras(mock=mock)
+        camera_infos = find_cameras()
         camera_ids = [cam["index"] for cam in camera_infos]
 
     print("Connecting cameras")
     cameras = []
     for cam_idx in camera_ids:
-        config = OpenCVCameraConfig(camera_index=cam_idx, fps=fps, width=width, height=height, mock=mock)
+        config = OpenCVCameraConfig(camera_index=cam_idx, fps=fps, width=width, height=height)
         camera = OpenCVCamera(config)
         camera.connect()
         print(
@@ -260,7 +252,6 @@ class OpenCVCamera(Camera):
         self.fps = config.fps
         self.channels = config.channels
         self.color_mode = config.color_mode
-        self.mock = config.mock
 
         self.camera = None
         self.is_connected = False
@@ -268,11 +259,6 @@ class OpenCVCamera(Camera):
         self.stop_event = None
         self.color_image = None
         self.logs = {}
-
-        if self.mock:
-            import tests.cameras.mock_cv2 as cv2
-        else:
-            import cv2
 
         self.rotation = None
         if config.rotation == -90:
@@ -286,14 +272,9 @@ class OpenCVCamera(Camera):
         if self.is_connected:
             raise DeviceAlreadyConnectedError(f"OpenCVCamera({self.camera_index}) is already connected.")
 
-        if self.mock:
-            import tests.cameras.mock_cv2 as cv2
-        else:
-            import cv2
-
-            # Use 1 thread to avoid blocking the main thread. Especially useful during data collection
-            # when other threads are used to save the images.
-            cv2.setNumThreads(1)
+        # Use 1 thread to avoid blocking the main thread. Especially useful during data collection
+        # when other threads are used to save the images.
+        cv2.setNumThreads(1)
 
         backend = (
             cv2.CAP_V4L2
@@ -398,11 +379,6 @@ class OpenCVCamera(Camera):
         # However, Deep Learning framework such as LeRobot uses RGB format as default to train neural networks,
         # so we convert the image color from BGR to RGB.
         if requested_color_mode == "rgb":
-            if self.mock:
-                import tests.cameras.mock_cv2 as cv2
-            else:
-                import cv2
-
             color_image = cv2.cvtColor(color_image, cv2.COLOR_BGR2RGB)
 
         h, w, _ = color_image.shape
@@ -439,7 +415,7 @@ class OpenCVCamera(Camera):
 
         if self.thread is None:
             self.stop_event = threading.Event()
-            self.thread = Thread(target=self.read_loop, args=())
+            self.thread = threading.Thread(target=self.read_loop, args=())
             self.thread.daemon = True
             self.thread.start()
 
