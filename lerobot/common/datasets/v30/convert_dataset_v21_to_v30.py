@@ -20,7 +20,9 @@ python lerobot/common/datasets/v30/convert_dataset_v21_to_v30.py \
 import argparse
 import shutil
 from pathlib import Path
+from typing import Any
 
+import jsonlines
 import pandas as pd
 import tqdm
 from datasets import Dataset
@@ -34,6 +36,7 @@ from lerobot.common.datasets.utils import (
     DEFAULT_DATA_PATH,
     DEFAULT_FILE_SIZE_IN_MB,
     DEFAULT_VIDEO_PATH,
+    cast_stats_to_numpy,
     concat_video_files,
     flatten_dict,
     get_parquet_file_size_in_mb,
@@ -44,12 +47,19 @@ from lerobot.common.datasets.utils import (
     legacy_load_episodes_stats,
     legacy_load_tasks,
     load_info,
+    serialize_dict,
     update_chunk_file_indices,
     write_episodes,
     write_info,
     write_stats,
     write_tasks,
 )
+
+LEGACY_EPISODES_PATH = "meta/episodes.jsonl"
+LEGACY_EPISODES_STATS_PATH = "meta/episodes_stats.jsonl"
+LEGACY_TASKS_PATH = "meta/tasks.jsonl"
+LEGACY_DEFAULT_VIDEO_PATH = "videos/chunk-{episode_chunk:03d}/{video_key}/episode_{episode_index:06d}.mp4"
+LEGACY_DEFAULT_PARQUET_PATH = "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet"
 
 V21 = "v2.1"
 
@@ -97,16 +107,26 @@ meta/info.json
 """
 
 
-# def generate_flat_ep_stats(episodes_stats):
-#     for ep_idx, ep_stats in episodes_stats.items():
-#         flat_ep_stats = flatten_dict(ep_stats)
-#         flat_ep_stats["episode_index"] = ep_idx
-#         yield flat_ep_stats
+def load_jsonlines(fpath: Path) -> list[Any]:
+    with jsonlines.open(fpath, "r") as reader:
+        return list(reader)
 
-# def convert_episodes_stats(root, new_root):
-#     episodes_stats = legacy_load_episodes_stats(root)
-#     ds_episodes_stats = Dataset.from_generator(lambda: generate_flat_ep_stats(episodes_stats))
-#     write_episodes_stats(ds_episodes_stats, new_root)
+def legacy_load_episodes(local_dir: Path) -> dict:
+    episodes = load_jsonlines(local_dir / LEGACY_EPISODES_PATH)
+    return {item["episode_index"]: item for item in sorted(episodes, key=lambda x: x["episode_index"])}
+
+def legacy_load_episodes_stats(local_dir: Path) -> dict:
+    episodes_stats = load_jsonlines(local_dir / LEGACY_EPISODES_STATS_PATH)
+    return {
+        item["episode_index"]: cast_stats_to_numpy(item["stats"])
+        for item in sorted(episodes_stats, key=lambda x: x["episode_index"])
+    }
+
+def legacy_load_tasks(local_dir: Path) -> tuple[dict, dict]:
+    tasks = load_jsonlines(local_dir / LEGACY_TASKS_PATH)
+    tasks = {item["task_index"]: item["task"] for item in sorted(tasks, key=lambda x: x["task_index"])}
+    task_to_task_index = {task: task_index for task_index, task in tasks.items()}
+    return tasks, task_to_task_index
 
 
 def convert_tasks(root, new_root):
