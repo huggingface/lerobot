@@ -1,8 +1,10 @@
 import pytest
 import torch
 from torch import nn
-from lerobot.common.policies.sac.modeling_sac import SACPolicy
+
 from lerobot.common.policies.sac.configuration_sac import SACConfig
+from lerobot.common.policies.sac.modeling_sac import SACPolicy
+
 
 @pytest.fixture
 def sac_policy():
@@ -20,6 +22,7 @@ def sac_policy():
     )
     return SACPolicy(config=config)
 
+
 def test_compute_loss_critic(sac_policy):
     observations = torch.randn(4, 3, 84, 84)
     actions = torch.randn(4, 4)
@@ -27,10 +30,9 @@ def test_compute_loss_critic(sac_policy):
     next_observations = torch.randn(4, 3, 84, 84)
     done = torch.zeros(4)
 
-    loss = sac_policy.compute_loss_critic(
-        observations, actions, rewards, next_observations, done
-    )
+    loss = sac_policy.compute_loss_critic(observations, actions, rewards, next_observations, done)
     assert isinstance(loss, torch.Tensor), "Loss should be a tensor."
+
 
 def test_compute_loss_actor(sac_policy):
     observations = torch.randn(4, 3, 84, 84)
@@ -38,11 +40,13 @@ def test_compute_loss_actor(sac_policy):
     loss = sac_policy.compute_loss_actor(observations)
     assert isinstance(loss, torch.Tensor), "Loss should be a tensor."
 
+
 def test_compute_loss_temperature(sac_policy):
     observations = torch.randn(4, 3, 84, 84)
 
     loss = sac_policy.compute_loss_temperature(observations)
     assert isinstance(loss, torch.Tensor), "Loss should be a tensor."
+
 
 def test_init_normalization(sac_policy):
     dataset_stats = {
@@ -50,4 +54,4 @@ def test_init_normalization(sac_policy):
         "action": {"mean": [0.0], "std": [1.0]},
     }
     sac_policy._init_normalization(dataset_stats)
-    assert isinstance(sac_policy.normalize_inputs, nn.Module), "Normalization should be a module." 
+    assert isinstance(sac_policy.normalize_inputs, nn.Module), "Normalization should be a module."

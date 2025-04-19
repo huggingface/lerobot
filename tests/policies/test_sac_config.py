@@ -15,13 +15,14 @@
 # limitations under the License.
 
 import pytest
+
 from lerobot.common.policies.sac.configuration_sac import (
-    SACConfig,
+    ActorLearnerConfig,
     ActorNetworkConfig,
+    ConcurrencyConfig,
     CriticNetworkConfig,
     PolicyConfig,
-    ActorLearnerConfig,
-    ConcurrencyConfig,
+    SACConfig,
 )
 from lerobot.configs.types import NormalizationMode
 
@@ -66,7 +67,7 @@ def test_get_optimizer_preset():
         temperature_lr=3e-4,
     )
     optimizer_config = config.get_optimizer_preset()
-    
+
     assert optimizer_config.weight_decay == 0.0
     assert optimizer_config.optimizer_groups["actor"]["lr"] == 1e-4
     assert optimizer_config.optimizer_groups["critic"]["lr"] == 2e-4
@@ -91,8 +92,10 @@ def test_validate_features_with_missing_observation():
     config = SACConfig()
     config.input_features = {"wrong_key": {"shape": (10,), "type": "float32"}}
     config.output_features = {"action": {"shape": (3,), "type": "float32"}}
-    
-    with pytest.raises(ValueError, match="You must provide either 'observation.state' or an image observation"):
+
+    with pytest.raises(
+        ValueError, match="You must provide either 'observation.state' or an image observation"
+    ):
         config.validate_features()
 
 
@@ -100,7 +103,7 @@ def test_validate_features_with_missing_action():
     config = SACConfig()
     config.input_features = {"observation.state": {"shape": (10,), "type": "float32"}}
     config.output_features = {"wrong_key": {"shape": (3,), "type": "float32"}}
-    
+
     with pytest.raises(ValueError, match="You must provide 'action' in the output features"):
         config.validate_features()
 
@@ -112,7 +115,7 @@ def test_image_features_property():
         "observation.image_1": {"shape": (3, 224, 224), "type": "float32"},
         "observation.state": {"shape": (10,), "type": "float32"},
     }
-    
+
     expected_image_features = ["observation.image_0", "observation.image_1"]
     assert config.image_features == expected_image_features
 
@@ -126,13 +129,13 @@ def test_delta_indices_properties():
 
 def test_network_configs():
     config = SACConfig()
-    
+
     assert isinstance(config.actor_network_kwargs, ActorNetworkConfig)
     assert isinstance(config.critic_network_kwargs, CriticNetworkConfig)
     assert isinstance(config.policy_kwargs, PolicyConfig)
     assert isinstance(config.actor_learner_config, ActorLearnerConfig)
     assert isinstance(config.concurrency, ConcurrencyConfig)
-    
+
     # Test default network dimensions
     assert config.actor_network_kwargs.hidden_dims == [256, 256]
     assert config.critic_network_kwargs.hidden_dims == [256, 256]
@@ -140,4 +143,4 @@ def test_network_configs():
 
 def test_scheduler_preset():
     config = SACConfig()
-    assert config.get_scheduler_preset() is None 
+    assert config.get_scheduler_preset() is None
