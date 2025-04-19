@@ -81,7 +81,7 @@ The only remaining step is to **compute the corresponding DH table** (see image)
 
 ---
 
-## Example (in `__main__`) 
+## Example (in `__main__`)
 
 - Initializes the `"so100"` robot model.
 - Define a goal pose worldTtool.
