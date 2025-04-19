@@ -27,6 +27,7 @@ from datasets import Dataset
 from huggingface_hub import HfApi, snapshot_download
 
 from lerobot.common.constants import HF_LEROBOT_HOME
+from lerobot.common.datasets.compute_stats import aggregate_stats
 from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset
 from lerobot.common.datasets.utils import (
     DEFAULT_CHUNK_SIZE,
@@ -46,6 +47,7 @@ from lerobot.common.datasets.utils import (
     update_chunk_file_indices,
     write_episodes,
     write_info,
+    write_stats,
     write_tasks,
 )
 
@@ -306,6 +308,9 @@ def convert_episodes_metadata(root, new_root, episodes_metadata, episodes_video_
     )
     write_episodes(ds_episodes, new_root)
 
+    stats = aggregate_stats(list(episodes_stats.values()))
+    write_stats(stats, new_root)
+
 
 def convert_info(root, new_root):
     info = load_info(root)
@@ -330,8 +335,15 @@ def convert_dataset(
     branch: str | None = None,
     num_workers: int = 4,
 ):
+    
+
     root = HF_LEROBOT_HOME / repo_id
+    old_root = HF_LEROBOT_HOME / f"{repo_id}_old"
     new_root = HF_LEROBOT_HOME / f"{repo_id}_v30"
+
+    if old_root.is_dir() and root.is_dir():
+        shutil.rmtree(str(root))
+        shutil.move(str(old_root), str(root))
 
     if new_root.is_dir():
         shutil.rmtree(new_root)
@@ -349,7 +361,7 @@ def convert_dataset(
     episodes_videos_metadata = convert_videos(root, new_root)
     convert_episodes_metadata(root, new_root, episodes_metadata, episodes_videos_metadata)
 
-    shutil.move(str(root), str(root) + "_old")
+    shutil.move(str(root), str(old_root))
     shutil.move(str(new_root), str(root))
 
     # TODO(racdene)
@@ -365,7 +377,7 @@ def convert_dataset(
 
         hub_api.create_tag(repo_id, tag=CODEBASE_VERSION, revision=branch, repo_type="dataset")
 
-    LeRobotDataset(repo_id).push_to_hub()
+    # LeRobotDataset(repo_id).push_to_hub()
 
 
 if __name__ == "__main__":

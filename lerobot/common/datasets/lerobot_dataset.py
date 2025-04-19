@@ -712,8 +712,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
             return get_hf_features_from_features(self.features)
 
     def _get_query_indices(self, idx: int, ep_idx: int) -> tuple[dict[str, list[int | bool]]]:
-        ep_start = self.meta.episodes["data/from_index"][ep_idx]
-        ep_end = self.meta.episodes["data/to_index"][ep_idx]
+        ep_start = self.meta.episodes["dataset_from_index"][ep_idx]
+        ep_end = self.meta.episodes["dataset_to_index"][ep_idx]
         query_indices = {
             key: [max(ep_start, min(ep_end - 1, idx + delta)) for delta in delta_idx]
             for key, delta_idx in self.delta_indices.items()
@@ -1017,8 +1017,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         metadata = {
             "data/chunk_index": chunk_idx,
             "data/file_index": file_idx,
-            "data/from_index": latest_num_frames,
-            "data/to_index": latest_num_frames + ep_num_frames,
+            "dataset_from_index": latest_num_frames,
+            "dataset_to_index": latest_num_frames + ep_num_frames,
         }
         return metadata
 

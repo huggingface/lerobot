@@ -62,6 +62,7 @@ def mock_snapshot_download_factory(
         if episodes is None:
             episodes = episodes_factory(
                 features=info["features"],
+                fps=info["fps"],
                 total_episodes=info["total_episodes"],
                 total_frames=info["total_frames"],
                 tasks=tasks,
@@ -121,6 +122,7 @@ def mock_snapshot_download_factory(
                 create_tasks(local_dir, tasks)
             if has_episodes:
                 create_episodes(local_dir, episodes)
+            # TODO(rcadene): create_videos?
             if has_data:
                 create_hf_dataset(local_dir, hf_dataset)
 

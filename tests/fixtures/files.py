@@ -73,6 +73,7 @@ def create_tasks(tasks_factory):
 def create_episodes(episodes_factory):
     def _create_episodes(dir: Path, episodes: datasets.Dataset | None = None):
         if episodes is None:
+            # TODO(rcadene): add features, fps as arguments
             episodes = episodes_factory()
         write_episodes(episodes, dir)
 
