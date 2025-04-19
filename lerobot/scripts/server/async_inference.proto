@@ -1,3 +1,5 @@
+// fmt: off
+// flake8: noqa
 // !/usr/bin/env python
 
 //  Copyright 2024 The HuggingFace Inc. team.
@@ -37,7 +39,7 @@ enum TransferState {
 
 // Messages
 message Observation {
-  // sent by Robot, to remote Policy 
+  // sent by Robot, to remote Policy
   TransferState transfer_state = 1;
   bytes data = 2;
 }
