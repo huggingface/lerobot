@@ -19,7 +19,7 @@ class Stretch3RobotConfig(RobotConfig):
     cameras: dict[str, CameraConfig] = field(
         default_factory=lambda: {
             "navigation": OpenCVCameraConfig(
-                camera_index="/dev/hello-nav-head-camera",
+                index_or_path="/dev/hello-nav-head-camera",
                 fps=10,
                 width=1280,
                 height=720,

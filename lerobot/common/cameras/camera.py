@@ -4,8 +4,12 @@ import numpy as np
 
 
 class Camera(abc.ABC):
+    @abc.abstractproperty
+    def is_connected(self) -> bool:
+        pass
+
     @abc.abstractmethod
-    def connect(self):
+    def connect(self) -> None:
         pass
 
     @abc.abstractmethod
@@ -17,9 +21,5 @@ class Camera(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def disconnect(self):
+    def disconnect(self) -> None:
         pass
-
-    def __del__(self):
-        if getattr(self, "is_connected", False):
-            self.disconnect()
