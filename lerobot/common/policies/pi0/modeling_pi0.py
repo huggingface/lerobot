@@ -57,7 +57,7 @@ import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 from transformers import AutoTokenizer
 
-from lerobot.common.constants import ACTION, OBS_ROBOT
+from lerobot.common.constants import ACTION, OBS_STATE
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.common.policies.pi0.paligemma_with_expert import (
@@ -261,6 +261,11 @@ class PI0Policy(PreTrainedPolicy):
         return self.parameters()
 
     @torch.no_grad
+    def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
+        """Predict a chunk of actions given environment observations."""
+        raise NotImplementedError("Currently not implemented for PI0")
+
+    @torch.no_grad
     def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
         """Select a single action given environment observations.
 
@@ -271,7 +276,7 @@ class PI0Policy(PreTrainedPolicy):
         self.eval()
 
         if self.config.adapt_to_pi_aloha:
-            batch[OBS_ROBOT] = self._pi_aloha_decode_state(batch[OBS_ROBOT])
+            batch[OBS_STATE] = self._pi_aloha_decode_state(batch[OBS_STATE])
 
         batch = self.normalize_inputs(batch)
 
@@ -303,7 +308,7 @@ class PI0Policy(PreTrainedPolicy):
     def forward(self, batch: dict[str, Tensor], noise=None, time=None) -> tuple[Tensor, dict[str, Tensor]]:
         """Do a full training forward pass to compute the loss"""
         if self.config.adapt_to_pi_aloha:
-            batch[OBS_ROBOT] = self._pi_aloha_decode_state(batch[OBS_ROBOT])
+            batch[OBS_STATE] = self._pi_aloha_decode_state(batch[OBS_STATE])
             batch[ACTION] = self._pi_aloha_encode_actions_inv(batch[ACTION])
 
         batch = self.normalize_inputs(batch)
@@ -357,7 +362,7 @@ class PI0Policy(PreTrainedPolicy):
             if self.config.resize_imgs_with_padding is not None:
                 img = resize_with_pad(img, *self.config.resize_imgs_with_padding, pad_value=0)
 
-            # Normalize from range [0,1] to [-1,1] as expacted by siglip
+            # Normalize from range [0,1] to [-1,1] as expected by siglip
             img = img * 2.0 - 1.0
 
             bsize = img.shape[0]
@@ -380,7 +385,7 @@ class PI0Policy(PreTrainedPolicy):
 
     def prepare_language(self, batch) -> tuple[Tensor, Tensor]:
         """Tokenize the text input"""
-        device = batch[OBS_ROBOT].device
+        device = batch[OBS_STATE].device
         tasks = batch["task"]
 
         # PaliGemma prompt has to end with a new line
@@ -427,7 +432,7 @@ class PI0Policy(PreTrainedPolicy):
 
     def prepare_state(self, batch):
         """Pad state"""
-        state = pad_vector(batch[OBS_ROBOT], self.config.max_state_dim)
+        state = pad_vector(batch[OBS_STATE], self.config.max_state_dim)
         return state
 
     def prepare_action(self, batch):

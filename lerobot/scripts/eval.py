@@ -94,8 +94,8 @@ def rollout(
     data will probably need to be discarded (for environments that aren't the first one to be done).
 
     The return dictionary contains:
-        (optional) "observation": A a dictionary of (batch, sequence + 1, *) tensors mapped to observation
-            keys. NOTE the that this has an extra sequence element relative to the other keys in the
+        (optional) "observation": A dictionary of (batch, sequence + 1, *) tensors mapped to observation
+            keys. NOTE that this has an extra sequence element relative to the other keys in the
             dictionary. This is because an extra observation is included for after the environment is
             terminated or truncated.
         "action": A (batch, sequence, action_dim) tensor of actions applied based on the observations (not
