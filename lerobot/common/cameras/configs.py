@@ -1,7 +1,13 @@
 import abc
 from dataclasses import dataclass
+from enum import Enum
 
 import draccus
+
+
+class ColorMode(Enum):
+    RGB = 0
+    BGR = 1
 
 
 @dataclass
