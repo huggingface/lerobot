@@ -50,7 +50,7 @@ from lerobot.common.utils.utils import is_valid_numpy_dtype_string
 from lerobot.configs.types import FeatureType, PolicyFeature
 
 DEFAULT_CHUNK_SIZE = 1000  # Max number of files per chunk
-DEFAULT_FILE_SIZE_IN_MB = 500.0  # Max size per file
+DEFAULT_FILE_SIZE_IN_MB = 100.0  # Max size per file
 
 INFO_PATH = "meta/info.json"
 STATS_PATH = "meta/stats.json"
@@ -87,8 +87,13 @@ DEFAULT_FEATURES = {
 
 def get_parquet_file_size_in_mb(parquet_path):
     metadata = pq.read_metadata(parquet_path)
-    uncompressed_size = metadata.num_rows * metadata.row_group(0).total_byte_size
-    return uncompressed_size / (1024**2)
+    total_uncompressed_size = 0
+    for row_group in range(metadata.num_row_groups):
+        rg_metadata = metadata.row_group(row_group)
+        for column in range(rg_metadata.num_columns):
+            col_metadata = rg_metadata.column(column)
+            total_uncompressed_size += col_metadata.total_uncompressed_size
+    return total_uncompressed_size / (1024**2)
 
 
 def get_hf_dataset_size_in_mb(hf_ds: Dataset) -> int:

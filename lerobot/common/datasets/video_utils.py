@@ -264,7 +264,7 @@ def encode_video_frames(
         [
             ("-f", "image2"),
             ("-r", str(fps)),
-            ("-i", str(imgs_dir / "frame_%06d.png")),
+            ("-i", str(imgs_dir / "frame-%06d.png")),
             ("-vcodec", vcodec),
             ("-pix_fmt", pix_fmt),
         ]
