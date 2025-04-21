@@ -30,7 +30,7 @@ from huggingface_hub import HfApi, snapshot_download
 
 from lerobot.common.constants import HF_LEROBOT_HOME
 from lerobot.common.datasets.compute_stats import aggregate_stats
-from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset
+from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION
 from lerobot.common.datasets.utils import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_DATA_PATH,
@@ -43,11 +43,7 @@ from lerobot.common.datasets.utils import (
     get_parquet_num_frames,
     get_video_duration_in_s,
     get_video_size_in_mb,
-    legacy_load_episodes,
-    legacy_load_episodes_stats,
-    legacy_load_tasks,
     load_info,
-    serialize_dict,
     update_chunk_file_indices,
     write_episodes,
     write_info,
@@ -111,9 +107,11 @@ def load_jsonlines(fpath: Path) -> list[Any]:
     with jsonlines.open(fpath, "r") as reader:
         return list(reader)
 
+
 def legacy_load_episodes(local_dir: Path) -> dict:
     episodes = load_jsonlines(local_dir / LEGACY_EPISODES_PATH)
     return {item["episode_index"]: item for item in sorted(episodes, key=lambda x: x["episode_index"])}
+
 
 def legacy_load_episodes_stats(local_dir: Path) -> dict:
     episodes_stats = load_jsonlines(local_dir / LEGACY_EPISODES_STATS_PATH)
@@ -121,6 +119,7 @@ def legacy_load_episodes_stats(local_dir: Path) -> dict:
         item["episode_index"]: cast_stats_to_numpy(item["stats"])
         for item in sorted(episodes_stats, key=lambda x: x["episode_index"])
     }
+
 
 def legacy_load_tasks(local_dir: Path) -> tuple[dict, dict]:
     tasks = load_jsonlines(local_dir / LEGACY_TASKS_PATH)
@@ -355,8 +354,6 @@ def convert_dataset(
     branch: str | None = None,
     num_workers: int = 4,
 ):
-    
-
     root = HF_LEROBOT_HOME / repo_id
     old_root = HF_LEROBOT_HOME / f"{repo_id}_old"
     new_root = HF_LEROBOT_HOME / f"{repo_id}_v30"

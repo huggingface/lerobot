@@ -75,7 +75,9 @@ class BackwardCompatibilityError(CompatibilityError):
         elif version.major == 2:
             message = V2_MESSAGE.format(repo_id=repo_id, version=version)
         else:
-            raise NotImplementedError("Contact the maintainer on [Discord](https://discord.com/invite/s3KuuzsPFb).")
+            raise NotImplementedError(
+                "Contact the maintainer on [Discord](https://discord.com/invite/s3KuuzsPFb)."
+            )
         super().__init__(message)
 
 

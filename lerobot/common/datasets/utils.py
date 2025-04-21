@@ -24,7 +24,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from pprint import pformat
 from types import SimpleNamespace
-from typing import Any, Tuple
+from typing import Any
 
 import datasets
 import numpy as np
@@ -47,7 +47,7 @@ from lerobot.common.datasets.backward_compatibility import (
 )
 from lerobot.common.robot_devices.robots.utils import Robot
 from lerobot.common.utils.utils import is_valid_numpy_dtype_string
-from lerobot.configs.types import DictLike, FeatureType, PolicyFeature
+from lerobot.configs.types import FeatureType, PolicyFeature
 
 DEFAULT_CHUNK_SIZE = 1000  # Max number of files per chunk
 DEFAULT_FILE_SIZE_IN_MB = 500.0  # Max size per file
@@ -249,13 +249,16 @@ def load_json(fpath: Path) -> Any:
     with open(fpath) as f:
         return json.load(f)
 
+
 def write_json(data: dict, fpath: Path) -> None:
     fpath.parent.mkdir(exist_ok=True, parents=True)
     with open(fpath, "w") as f:
         json.dump(data, f, indent=4, ensure_ascii=False)
 
+
 def write_info(info: dict, local_dir: Path):
     write_json(info, local_dir / INFO_PATH)
+
 
 def load_info(local_dir: Path) -> dict:
     info = load_json(local_dir / INFO_PATH)
@@ -263,19 +266,23 @@ def load_info(local_dir: Path) -> dict:
         ft["shape"] = tuple(ft["shape"])
     return info
 
+
 def write_stats(stats: dict, local_dir: Path):
     serialized_stats = serialize_dict(stats)
     write_json(serialized_stats, local_dir / STATS_PATH)
 
+
 def cast_stats_to_numpy(stats) -> dict[str, dict[str, np.ndarray]]:
     stats = {key: np.array(value) for key, value in flatten_dict(stats).items()}
     return unflatten_dict(stats)
+
 
 def load_stats(local_dir: Path) -> dict[str, dict[str, np.ndarray]]:
     if not (local_dir / STATS_PATH).exists():
         return None
     stats = load_json(local_dir / STATS_PATH)
     return cast_stats_to_numpy(stats)
+
 
 def write_hf_dataset(hf_dataset: Dataset, local_dir: Path):
     if get_hf_dataset_size_in_mb(hf_dataset) > DEFAULT_FILE_SIZE_IN_MB:
@@ -290,7 +297,6 @@ def write_tasks(tasks: pandas.DataFrame, local_dir: Path):
     path = local_dir / DEFAULT_TASKS_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     tasks.to_parquet(path)
-
 
 
 def load_tasks(local_dir: Path):

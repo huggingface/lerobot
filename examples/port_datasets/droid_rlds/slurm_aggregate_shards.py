@@ -26,7 +26,12 @@ from datatrove.pipeline.base import PipelineStep
 from examples.port_datasets.droid_rlds.port_droid import DROID_SHARDS
 from lerobot.common.datasets.aggregate import validate_all_metadata
 from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
-from lerobot.common.datasets.utils import write_episode, legacy_write_episode_stats, write_info, legacy_write_task
+from lerobot.common.datasets.utils import (
+    legacy_write_episode_stats,
+    legacy_write_task,
+    write_episode,
+    write_info,
+)
 from lerobot.common.utils.utils import init_logging
 
 

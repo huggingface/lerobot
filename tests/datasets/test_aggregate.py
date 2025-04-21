@@ -21,9 +21,9 @@ def test_aggregate_datasets(tmp_path, lerobot_dataset_factory):
         repo_ids=[ds_0.repo_id, ds_1.repo_id],
         roots=[ds_0.root, ds_1.root],
         aggr_repo_id=f"{DUMMY_REPO_ID}_aggr",
-        aggr_root=tmp_path / "test_aggr"
+        aggr_root=tmp_path / "test_aggr",
     )
 
     aggr_ds = LeRobotDataset(f"{DUMMY_REPO_ID}_aggr", root=tmp_path / "test_aggr")
-    for item in aggr_ds:
+    for _ in aggr_ds:
         pass

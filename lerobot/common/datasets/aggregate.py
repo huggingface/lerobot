@@ -1,13 +1,21 @@
 import logging
-from pathlib import Path
 import shutil
+from pathlib import Path
 
 import pandas as pd
 import tqdm
 
 from lerobot.common.datasets.compute_stats import aggregate_stats
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
-from lerobot.common.datasets.utils import DEFAULT_CHUNK_SIZE, DEFAULT_DATA_PATH, DEFAULT_EPISODES_PATH, DEFAULT_VIDEO_PATH, write_episode, legacy_write_episode_stats, write_info, legacy_write_task, write_stats, write_tasks
+from lerobot.common.datasets.utils import (
+    DEFAULT_CHUNK_SIZE,
+    DEFAULT_DATA_PATH,
+    DEFAULT_EPISODES_PATH,
+    DEFAULT_VIDEO_PATH,
+    write_info,
+    write_stats,
+    write_tasks,
+)
 from lerobot.common.utils.utils import init_logging
 
 
@@ -32,13 +40,16 @@ def validate_all_metadata(all_metadata: list[LeRobotDatasetMetadata]):
 
     return fps, robot_type, features
 
+
 def get_update_episode_and_task_func(episode_index_to_add, old_tasks, new_tasks):
     def _update(row):
         row["episode_index"] = row["episode_index"] + episode_index_to_add
         task = old_tasks.iloc[row["task_index"]].name
         row["task_index"] = new_tasks.loc[task].task_index.item()
         return row
+
     return _update
+
 
 def get_update_meta_func(
     meta_chunk_index_to_add,
@@ -55,20 +66,26 @@ def get_update_meta_func(
         row["data/chunk_index"] = row["data/chunk_index"] + data_chunk_index_to_add
         row["data/file_index"] = row["data/file_index"] + data_file_index_to_add
         for key in videos_chunk_index_to_add:
-            row[f"videos/{key}/chunk_index"] = row[f"videos/{key}/chunk_index"] + videos_chunk_index_to_add[key]
+            row[f"videos/{key}/chunk_index"] = (
+                row[f"videos/{key}/chunk_index"] + videos_chunk_index_to_add[key]
+            )
             row[f"videos/{key}/file_index"] = row[f"videos/{key}/file_index"] + videos_file_index_to_add[key]
         row["dataset_from_index"] = row["dataset_from_index"] + frame_index_to_add
         row["dataset_to_index"] = row["dataset_to_index"] + frame_index_to_add
         return row
+
     return _update
 
-def aggregate_datasets(repo_ids: list[str], aggr_repo_id: str, roots: list[Path]=None, aggr_root=None):
+
+def aggregate_datasets(repo_ids: list[str], aggr_repo_id: str, roots: list[Path] = None, aggr_root=None):
     logging.info("Start aggregate_datasets")
 
     if roots is None:
         all_metadata = [LeRobotDatasetMetadata(repo_id) for repo_id in repo_ids]
     else:
-        all_metadata = [LeRobotDatasetMetadata(repo_id, root=root) for repo_id, root in zip(repo_ids, roots)]
+        all_metadata = [
+            LeRobotDatasetMetadata(repo_id, root=root) for repo_id, root in zip(repo_ids, roots, strict=False)
+        ]
 
     fps, robot_type, features = validate_all_metadata(all_metadata)
     video_keys = [key for key in features if features[key]["dtype"] == "video"]
@@ -96,12 +113,18 @@ def aggregate_datasets(repo_ids: list[str], aggr_repo_id: str, roots: list[Path]
     aggr_data_chunk_idx = 0
     aggr_data_file_idx = 0
 
-    aggr_videos_chunk_idx = {key: 0 for key in video_keys}
-    aggr_videos_file_idx = {key: 0 for key in video_keys}
+    aggr_videos_chunk_idx = dict.fromkeys(video_keys, 0)
+    aggr_videos_file_idx = dict.fromkeys(video_keys, 0)
 
     for meta in tqdm.tqdm(all_metadata, desc="Copy data and videos"):
-
-        meta_chunk_file_ids = set([(c,f) for c, f in zip(meta.episodes["meta/episodes/chunk_index"], meta.episodes["meta/episodes/file_index"])])
+        meta_chunk_file_ids = {
+            (c, f)
+            for c, f in zip(
+                meta.episodes["meta/episodes/chunk_index"],
+                meta.episodes["meta/episodes/file_index"],
+                strict=False,
+            )
+        }
         for chunk_idx, file_idx in meta_chunk_file_ids:
             path = meta.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
             df = pd.read_parquet(path)
@@ -115,11 +138,13 @@ def aggregate_datasets(repo_ids: list[str], aggr_repo_id: str, roots: list[Path]
                 num_frames,
             )
             df = df.apply(update_meta_func, axis=1)
-            
-            aggr_path = aggr_root / DEFAULT_EPISODES_PATH.format(chunk_index=aggr_meta_chunk_idx, file_index=aggr_meta_file_idx)
+
+            aggr_path = aggr_root / DEFAULT_EPISODES_PATH.format(
+                chunk_index=aggr_meta_chunk_idx, file_index=aggr_meta_file_idx
+            )
             aggr_path.parent.mkdir(parents=True, exist_ok=True)
             df.to_parquet(aggr_path)
-            
+
             aggr_meta_file_idx += 1
             if aggr_meta_file_idx >= DEFAULT_CHUNK_SIZE:
                 aggr_meta_file_idx = 0
@@ -127,10 +152,23 @@ def aggregate_datasets(repo_ids: list[str], aggr_repo_id: str, roots: list[Path]
 
         # cp videos
         for key in video_keys:
-            video_chunk_file_ids = set([(c,f) for c, f in zip(meta.episodes[f"videos/{key}/chunk_index"], meta.episodes[f"videos/{key}/file_index"])])
+            video_chunk_file_ids = {
+                (c, f)
+                for c, f in zip(
+                    meta.episodes[f"videos/{key}/chunk_index"],
+                    meta.episodes[f"videos/{key}/file_index"],
+                    strict=False,
+                )
+            }
             for chunk_idx, file_idx in video_chunk_file_ids:
-                path = meta.root / DEFAULT_VIDEO_PATH.format(video_key=key, chunk_index=chunk_idx, file_index=file_idx)
-                aggr_path = aggr_root / DEFAULT_VIDEO_PATH.format(video_key=key, chunk_index=aggr_videos_chunk_idx[key], file_index=aggr_videos_file_idx[key])
+                path = meta.root / DEFAULT_VIDEO_PATH.format(
+                    video_key=key, chunk_index=chunk_idx, file_index=file_idx
+                )
+                aggr_path = aggr_root / DEFAULT_VIDEO_PATH.format(
+                    video_key=key,
+                    chunk_index=aggr_videos_chunk_idx[key],
+                    file_index=aggr_videos_file_idx[key],
+                )
                 aggr_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy(str(path), str(aggr_path))
 
@@ -142,14 +180,19 @@ def aggregate_datasets(repo_ids: list[str], aggr_repo_id: str, roots: list[Path]
                     aggr_videos_file_idx[key] = 0
                     aggr_videos_chunk_idx[key] += 1
 
-        data_chunk_file_ids = set([(c,f) for c, f in zip(meta.episodes["data/chunk_index"], meta.episodes["data/file_index"])])
+        data_chunk_file_ids = {
+            (c, f)
+            for c, f in zip(meta.episodes["data/chunk_index"], meta.episodes["data/file_index"], strict=False)
+        }
         for chunk_idx, file_idx in data_chunk_file_ids:
             path = meta.root / DEFAULT_DATA_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
             df = pd.read_parquet(path)
             update_data_func = get_update_episode_and_task_func(num_episodes, meta.tasks, aggr_meta.tasks)
             df = df.apply(update_data_func, axis=1)
 
-            aggr_path = aggr_root / DEFAULT_DATA_PATH.format(chunk_index=aggr_data_chunk_idx, file_index=aggr_data_file_idx)
+            aggr_path = aggr_root / DEFAULT_DATA_PATH.format(
+                chunk_index=aggr_data_chunk_idx, file_index=aggr_data_file_idx
+            )
             aggr_path.parent.mkdir(parents=True, exist_ok=True)
             df.to_parquet(aggr_path)
 
@@ -157,7 +200,7 @@ def aggregate_datasets(repo_ids: list[str], aggr_repo_id: str, roots: list[Path]
             if aggr_data_file_idx >= DEFAULT_CHUNK_SIZE:
                 aggr_data_file_idx = 0
                 aggr_data_chunk_idx += 1
-        
+
         num_episodes += meta.total_episodes
         num_frames += meta.total_frames
 
