@@ -1,0 +1,31 @@
+04-8-2025
+python lerobot/scripts/train.py \
+--policy.path="/home/zcai/jh_workspace/pi0" \
+--dataset.repo_id="/home/zcai/jh_workspace/koch_test" \
+--batch_size=1 \
+--policy.device="cpu"
+
+04-9-2025
+python lerobot/scripts/train.py \
+--policy.path="/home/zcai/jh_workspace/pi0" \
+--dataset.repo_id="/home/zcai/jh_workspace/koch_test" \
+--batch_size=1 \
+--output_dir="/home/zcai/jh_workspace/lerobot/our_data/our_training"
+
+04-17-2025
+
+%env WANDB_SILENT=True
+
+CUDA_VISIBLE_DEVICES=7 python lerobot/scripts/train.py \
+--policy.path="/data/jiahuan/huggingface/models/pi0" \
+--dataset.repo_id="/data/jiahuan/huggingface/datasets/koch_test" \
+--output_dir="/data/jiahuan/our_training/lerobot/pi0_koch_test_20240417" \
+--batch_size=1 \
+--save_freq=5000 \
+--steps=25000 \
+--num_workers=12 \
+--wandb.enable=true \
+--wandb.entity="GBuilders" \
+--wandb.project="pi0_TR2" \
+--wandb.disable_artifact=true \
+--job_name "pi0_koch_test"0

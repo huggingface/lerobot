@@ -220,6 +220,24 @@ def train(cfg: TrainPipelineConfig):
             use_amp=cfg.policy.use_amp,
         )
 
+        # Calculate action MSE if policy has predict_action method
+        if hasattr(policy, 'predict_action'):
+            with torch.no_grad():
+                obs_dict = {'obs': batch['obs']}
+                gt_action = batch['action']
+                result = policy.predict_action(obs_dict)
+                
+                if hasattr(cfg.policy, 'pred_action_steps_only') and cfg.policy.pred_action_steps_only:
+                    pred_action = result['action']
+                    start = cfg.policy.n_obs_steps - 1
+                    end = start + cfg.policy.n_action_steps
+                    gt_action = gt_action[:,start:end]
+                else:
+                    pred_action = result['action_pred']
+                
+                action_mse = torch.nn.functional.mse_loss(pred_action, gt_action)
+                output_dict['train_action_mse_error'] = action_mse.item()
+
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
         # increment `step` here.
         step += 1
