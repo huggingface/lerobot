@@ -757,7 +757,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         item = {}
         for vid_key, query_ts in query_timestamps.items():
             # Episodes are stored sequentially on a single mp4 to reduce the number of files.
-            # Thus we load the start timestamp of the episode on this mp4 and,
+            # Thus we load the start timestamp of the episode on this mp4 and
             # shift the query timestamp accordingly.
             from_timestamp = self.meta.episodes[f"videos/{vid_key}/from_timestamp"][ep_idx]
             shifted_query_ts = [from_timestamp + ts for ts in query_ts]
