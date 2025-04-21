@@ -43,7 +43,6 @@ class RealSenseCameraConfig(CameraConfig):
     use_depth: bool = False
     force_hardware_reset: bool = True
     rotation: int | None = None
-    mock: bool = False
 
     def __post_init__(self):
         # bool is stronger than is None, since it works with empty strings
