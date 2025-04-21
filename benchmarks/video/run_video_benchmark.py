@@ -35,12 +35,12 @@ import torch
 from skimage.metrics import mean_squared_error, peak_signal_noise_ratio, structural_similarity
 from tqdm import tqdm
 
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.datasets.video_utils import (
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.video_utils import (
     decode_video_frames_torchvision,
     encode_video_frames,
 )
-from lerobot.common.utils.benchmark import TimeBenchmark
+from lerobot.utils.benchmark import TimeBenchmark
 
 BASE_ENCODING = OrderedDict(
     [
@@ -418,7 +418,7 @@ if __name__ == "__main__":
         "--vcodec",
         type=str,
         nargs="*",
-        default=["libx264", "libx265", "libsvtav1"],
+        default=["libx264", "hevc", "libsvtav1"],
         help="Video codecs to be tested",
     )
     parser.add_argument(
@@ -448,7 +448,7 @@ if __name__ == "__main__":
     #     nargs="*",
     #     default=[0, 1],
     #     help="Use the fastdecode tuning option. 0 disables it. "
-    #         "For libx264 and libx265, only 1 is possible. "
+    #         "For libx264 and libx265/hevc, only 1 is possible. "
     #         "For libsvtav1, 1, 2 or 3 are possible values with a higher number meaning a faster decoding optimization",
     # )
     parser.add_argument(
