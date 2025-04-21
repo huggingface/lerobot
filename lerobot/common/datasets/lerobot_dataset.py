@@ -296,7 +296,7 @@ class LeRobotDatasetMetadata:
 
             if latest_size_in_mb + ep_size_in_mb >= self.files_size_in_mb:
                 # Size limit is reached, prepare new parquet file
-                chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, self.meta.chunks_size)
+                chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, self.chunks_size)
 
             # Update the existing pandas dataframe with new row
             df["meta/episodes/chunk_index"] = [chunk_idx]
