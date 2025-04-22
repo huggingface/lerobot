@@ -20,7 +20,7 @@ import argparse
 import logging
 import shutil
 import sounddevice as sd
-import soundfile as sf
+from soundfile import SoundFile
 import numpy as np
 import time
 from multiprocessing import Event as process_Event
@@ -201,7 +201,7 @@ class PortAudioMicrophone(Microphone):
         Thread/Process-safe loop to write audio data into a file.
         """
         # Can only be run on a single process/thread for file writing safety
-        with sf.SoundFile(
+        with SoundFile(
             output_file,
             mode="w",
             samplerate=sample_rate,
