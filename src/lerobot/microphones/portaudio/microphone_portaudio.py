@@ -26,7 +26,7 @@ from typing import Any
 
 import numpy as np
 import sounddevice as sd
-import soundfile as sf
+from soundfile import SoundFile
 
 from lerobot.utils.errors import (
     DeviceAlreadyConnectedError,
@@ -196,7 +196,7 @@ class PortAudioMicrophone(Microphone):
         Thread/Process-safe loop to write audio data into a file.
         """
         # Can only be run on a single process/thread for file writing safety
-        with sf.SoundFile(
+        with SoundFile(
             output_file,
             mode="w",
             samplerate=sample_rate,
