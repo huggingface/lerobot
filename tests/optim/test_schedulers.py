@@ -13,8 +13,8 @@
 # limitations under the License.
 from torch.optim.lr_scheduler import LambdaLR
 
-from lerobot.common.constants import SCHEDULER_STATE
-from lerobot.common.optim.schedulers import (
+from lerobot.constants import SCHEDULER_STATE
+from lerobot.optim.schedulers import (
     CosineDecayWithWarmupSchedulerConfig,
     DiffuserSchedulerConfig,
     VQBeTSchedulerConfig,
@@ -37,7 +37,6 @@ def test_diffuser_scheduler(optimizer):
         "base_lrs": [0.001],
         "last_epoch": 1,
         "lr_lambdas": [None],
-        "verbose": False,
     }
     assert scheduler.state_dict() == expected_state_dict
 
@@ -56,7 +55,6 @@ def test_vqbet_scheduler(optimizer):
         "base_lrs": [0.001],
         "last_epoch": 1,
         "lr_lambdas": [None],
-        "verbose": False,
     }
     assert scheduler.state_dict() == expected_state_dict
 
@@ -77,7 +75,6 @@ def test_cosine_decay_with_warmup_scheduler(optimizer):
         "base_lrs": [0.001],
         "last_epoch": 1,
         "lr_lambdas": [None],
-        "verbose": False,
     }
     assert scheduler.state_dict() == expected_state_dict
 
