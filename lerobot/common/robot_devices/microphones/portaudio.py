@@ -31,7 +31,7 @@ from threading import Event, Thread
 from threading import Event as thread_Event
 
 import numpy as np
-import soundfile as sf
+from soundfile import SoundFile
 
 from lerobot.common.robot_devices.microphones.configs import PortAudioMicrophoneConfig
 from lerobot.common.robot_devices.utils import (
@@ -250,7 +250,7 @@ class PortAudioMicrophone:
         Thread/Process-safe loop to write audio data into a file.
         """
         # Can only be run on a single process/thread for file writing safety
-        with sf.SoundFile(
+        with SoundFile(
             output_file,
             mode="w",
             samplerate=sample_rate,
