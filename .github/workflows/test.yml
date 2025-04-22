@@ -69,7 +69,7 @@ jobs:
           python-version: "3.10"
 
       - name: Install lerobot (all extras)
-        run: uv sync --all-extras
+        run: uv sync --all-extras --prerelease=allow
 
       - name: Test with pytest
         run: |
