@@ -213,7 +213,7 @@ class RobotKinematics:
         )
 
         # Forearm origin + centroid transform
-        self.X_FoFc = self._create_translation_matrix(x=0.036)
+        self.X_FoFc = self._create_translation_matrix(x=0.036)  # spellchecker:disable-line
 
         # 0-position forearm frame pose wrt base
         self.X_BF = self._create_translation_matrix(
@@ -301,7 +301,7 @@ class RobotKinematics:
             @ screw_axis_to_transform(self.S_BS, robot_pos_rad[0])
             @ screw_axis_to_transform(self.S_BH, robot_pos_rad[1])
             @ screw_axis_to_transform(self.S_BF, robot_pos_rad[2])
-            @ self.X_FoFc
+            @ self.X_FoFc  # spellchecker:disable-line
             @ self.X_BF
         )
 
