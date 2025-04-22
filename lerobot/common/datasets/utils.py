@@ -50,7 +50,8 @@ from lerobot.common.utils.utils import is_valid_numpy_dtype_string
 from lerobot.configs.types import FeatureType, PolicyFeature
 
 DEFAULT_CHUNK_SIZE = 1000  # Max number of files per chunk
-DEFAULT_FILE_SIZE_IN_MB = 100.0  # Max size per file
+DEFAULT_DATA_FILE_SIZE_IN_MB = 100  # Max size per file
+DEFAULT_VIDEO_FILE_SIZE_IN_MB = 500  # Max size per file
 
 INFO_PATH = "meta/info.json"
 STATS_PATH = "meta/stats.json"
@@ -142,6 +143,7 @@ def get_video_size_in_mb(mp4_path: Path):
 
 
 def concat_video_files(paths_to_cat: list[Path], root: Path, video_key: str, chunk_idx: int, file_idx: int):
+    # TODO(rcadene): move to video_utils.py
     # TODO(rcadene): add docstring
     tmp_dir = Path(tempfile.mkdtemp(dir=root))
     # Create a text file with the list of files to concatenate
@@ -175,6 +177,7 @@ def concat_video_files(paths_to_cat: list[Path], root: Path, video_key: str, chu
 
 
 def get_video_duration_in_s(mp4_file: Path):
+    # TODO(rcadene): move to video_utils.py
     command = [
         "ffprobe",
         "-v",
@@ -290,7 +293,7 @@ def load_stats(local_dir: Path) -> dict[str, dict[str, np.ndarray]]:
 
 
 def write_hf_dataset(hf_dataset: Dataset, local_dir: Path):
-    if get_hf_dataset_size_in_mb(hf_dataset) > DEFAULT_FILE_SIZE_IN_MB:
+    if get_hf_dataset_size_in_mb(hf_dataset) > DEFAULT_DATA_FILE_SIZE_IN_MB:
         raise NotImplementedError("Contact a maintainer.")
 
     path = local_dir / DEFAULT_DATA_PATH.format(chunk_index=0, file_index=0)
@@ -310,7 +313,7 @@ def load_tasks(local_dir: Path):
 
 
 def write_episodes(episodes: Dataset, local_dir: Path):
-    if get_hf_dataset_size_in_mb(episodes) > DEFAULT_FILE_SIZE_IN_MB:
+    if get_hf_dataset_size_in_mb(episodes) > DEFAULT_DATA_FILE_SIZE_IN_MB:
         raise NotImplementedError("Contact a maintainer.")
 
     fpath = local_dir / DEFAULT_EPISODES_PATH.format(chunk_index=0, file_index=0)
@@ -318,9 +321,13 @@ def write_episodes(episodes: Dataset, local_dir: Path):
     episodes.to_parquet(fpath)
 
 
-def load_episodes(local_dir: Path):
-    hf_dataset = load_nested_dataset(local_dir / EPISODES_DIR)
-    return hf_dataset
+def load_episodes(local_dir: Path) -> datasets.Dataset:
+    episodes = load_nested_dataset(local_dir / EPISODES_DIR)
+    # Select episode features/columns containing references to episode data and videos
+    # (e.g. tasks, dataset_from_index, dataset_to_index, data/chunk_index, data/file_index, etc.)
+    # This is to speedup access to these data, instead of having to load episode stats.
+    episodes = episodes.select_columns([key for key in episodes.features if not key.startswith("stats/")])
+    return episodes
 
 
 def backward_compatible_episodes_stats(
@@ -581,9 +588,9 @@ def create_empty_dataset_info(
         "total_episodes": 0,
         "total_frames": 0,
         "total_tasks": 0,
-        "total_videos": 0,
         "chunks_size": DEFAULT_CHUNK_SIZE,
-        "files_size_in_mb": DEFAULT_FILE_SIZE_IN_MB,
+        "data_files_size_in_mb": DEFAULT_DATA_FILE_SIZE_IN_MB,
+        "video_files_size_in_mb": DEFAULT_VIDEO_FILE_SIZE_IN_MB,
         "fps": fps,
         "splits": {},
         "data_path": DEFAULT_DATA_PATH,

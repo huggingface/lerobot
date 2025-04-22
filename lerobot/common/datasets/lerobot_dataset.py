@@ -56,6 +56,7 @@ from lerobot.common.datasets.utils import (
     get_safe_version,
     get_video_duration_in_s,
     get_video_size_in_mb,
+    hf_transform_to_torch,
     is_valid_version,
     load_episodes,
     load_info,
@@ -136,14 +137,16 @@ class LeRobotDatasetMetadata:
         return packaging.version.parse(self.info["codebase_version"])
 
     def get_data_file_path(self, ep_index: int) -> Path:
-        chunk_idx = self.episodes["data/chunk_index"][ep_index]
-        file_idx = self.episodes["data/file_index"][ep_index]
+        ep = self.episodes[ep_index]
+        chunk_idx = ep["data/chunk_index"]
+        file_idx = ep["data/file_index"]
         fpath = self.data_path.format(chunk_index=chunk_idx, file_index=file_idx)
         return Path(fpath)
 
     def get_video_file_path(self, ep_index: int, vid_key: str) -> Path:
-        chunk_idx = self.episodes[f"videos/{vid_key}/chunk_index"][ep_index]
-        file_idx = self.episodes[f"videos/{vid_key}/file_index"][ep_index]
+        ep = self.episodes[ep_index]
+        chunk_idx = ep[f"videos/{vid_key}/chunk_index"]
+        file_idx = ep[f"videos/{vid_key}/file_index"]
         fpath = self.video_path.format(video_key=vid_key, chunk_index=chunk_idx, file_index=file_idx)
         return Path(fpath)
 
@@ -218,9 +221,14 @@ class LeRobotDatasetMetadata:
         return self.info["chunks_size"]
 
     @property
-    def files_size_in_mb(self) -> int:
-        """Max size of file in mega bytes."""
-        return self.info["files_size_in_mb"]
+    def data_files_size_in_mb(self) -> int:
+        """Max size of data file in mega bytes."""
+        return self.info["data_files_size_in_mb"]
+
+    @property
+    def video_files_size_in_mb(self) -> int:
+        """Max size of video file in mega bytes."""
+        return self.info["video_files_size_in_mb"]
 
     def get_task_index(self, task: str) -> int | None:
         """
@@ -278,23 +286,14 @@ class LeRobotDatasetMetadata:
             df["dataset_to_index"] = [len(df)]
         else:
             # Retrieve information from the latest parquet file
-            latest_ep = self.episodes.with_format(
-                columns=[
-                    "meta/episodes/chunk_index",
-                    "meta/episodes/file_index",
-                    "dataset_from_index",
-                    "dataset_to_index",
-                ]
-            )[-1]
-            chunk_idx, file_idx = (
-                latest_ep["meta/episodes/chunk_index"],
-                latest_ep["meta/episodes/file_index"],
-            )
+            latest_ep = self.episodes[-1]
+            chunk_idx = latest_ep["meta/episodes/chunk_index"]
+            file_idx = latest_ep["meta/episodes/file_index"]
 
             latest_path = self.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
             latest_size_in_mb = get_parquet_file_size_in_mb(latest_path)
 
-            if latest_size_in_mb + ep_size_in_mb >= self.files_size_in_mb:
+            if latest_size_in_mb + ep_size_in_mb >= self.data_files_size_in_mb:
                 # Size limit is reached, prepare new parquet file
                 chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, self.chunks_size)
 
@@ -304,7 +303,7 @@ class LeRobotDatasetMetadata:
             df["dataset_from_index"] = [latest_ep["dataset_to_index"]]
             df["dataset_to_index"] = [latest_ep["dataset_to_index"] + len(df)]
 
-            if latest_size_in_mb + ep_size_in_mb < self.files_size_in_mb:
+            if latest_size_in_mb + ep_size_in_mb < self.data_files_size_in_mb:
                 # Size limit wasnt reached, concatenate latest dataframe with new one
                 latest_df = pd.read_parquet(latest_path)
                 df = pd.concat([latest_df, df], ignore_index=True)
@@ -339,6 +338,7 @@ class LeRobotDatasetMetadata:
         # Update info
         self.info["total_episodes"] += 1
         self.info["total_frames"] += episode_length
+        self.info["total_tasks"] = len(self.tasks)
         self.info["splits"] = {"train": f"0:{self.info['total_episodes']}"}
         if len(self.video_keys) > 0:
             self.update_video_info()
@@ -674,14 +674,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def load_hf_dataset(self) -> datasets.Dataset:
         """hf_dataset contains all the observations, states, actions, rewards, etc."""
         hf_dataset = load_nested_dataset(self.root / "data")
-        hf_dataset.set_format("torch")
+        hf_dataset.set_transform(hf_transform_to_torch)
         return hf_dataset
 
     def create_hf_dataset(self) -> datasets.Dataset:
         features = get_hf_features_from_features(self.features)
         ft_dict = {col: [] for col in features}
         hf_dataset = datasets.Dataset.from_dict(ft_dict, features=features, split="train")
-        hf_dataset.set_format("torch")
+        hf_dataset.set_transform(hf_transform_to_torch)
         return hf_dataset
 
     @property
@@ -712,8 +712,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
             return get_hf_features_from_features(self.features)
 
     def _get_query_indices(self, idx: int, ep_idx: int) -> tuple[dict[str, list[int | bool]]]:
-        ep_start = self.meta.episodes["dataset_from_index"][ep_idx]
-        ep_end = self.meta.episodes["dataset_to_index"][ep_idx]
+        ep = self.meta.episodes[ep_idx]
+        ep_start = ep["dataset_from_index"]
+        ep_end = ep["dataset_to_index"]
         query_indices = {
             key: [max(ep_start, min(ep_end - 1, idx + delta)) for delta in delta_idx]
             for key, delta_idx in self.delta_indices.items()
@@ -754,12 +755,13 @@ class LeRobotDataset(torch.utils.data.Dataset):
         Segmentation Fault. This probably happens because a memory reference to the video loader is created in
         the main process and a subprocess fails to access it.
         """
+        ep = self.meta.episodes[ep_idx]
         item = {}
         for vid_key, query_ts in query_timestamps.items():
             # Episodes are stored sequentially on a single mp4 to reduce the number of files.
             # Thus we load the start timestamp of the episode on this mp4 and,
             # shift the query timestamp accordingly.
-            from_timestamp = self.meta.episodes[f"videos/{vid_key}/from_timestamp"][ep_idx]
+            from_timestamp = ep[f"videos/{vid_key}/from_timestamp"]
             shifted_query_ts = [from_timestamp + ts for ts in query_ts]
 
             video_path = self.root / self.meta.get_video_file_path(ep_idx, vid_key)
@@ -984,15 +986,16 @@ class LeRobotDataset(torch.utils.data.Dataset):
             latest_num_frames = 0
         else:
             # Retrieve information from the latest parquet file
-            latest_ep = self.meta.episodes.with_format(columns=["data/chunk_index", "data/file_index"])[-1]
-            chunk_idx, file_idx = latest_ep["data/chunk_index"], latest_ep["data/file_index"]
+            latest_ep = self.meta.episodes[-1]
+            chunk_idx = latest_ep["data/chunk_index"]
+            file_idx = latest_ep["data/file_index"]
 
             latest_path = self.root / self.meta.data_path.format(chunk_index=chunk_idx, file_index=file_idx)
             latest_size_in_mb = get_parquet_file_size_in_mb(latest_path)
             latest_num_frames = get_parquet_num_frames(latest_path)
 
             # Determine if a new parquet file is needed
-            if latest_size_in_mb + ep_size_in_mb >= self.meta.files_size_in_mb:
+            if latest_size_in_mb + ep_size_in_mb >= self.meta.data_files_size_in_mb:
                 # Size limit is reached, prepare new parquet file
                 chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, self.meta.chunks_size)
                 latest_num_frames = 0
@@ -1039,13 +1042,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
             shutil.move(str(ep_path), str(new_path))
         else:
             # Retrieve information from the latest video file
-            latest_ep = self.meta.episodes.with_format(
-                columns=[f"videos/{video_key}/chunk_index", f"videos/{video_key}/file_index"]
-            )[-1]
-            chunk_idx, file_idx = (
-                latest_ep[f"videos/{video_key}/chunk_index"],
-                latest_ep[f"videos/{video_key}/file_index"],
-            )
+            latest_ep = self.meta.episodes[-1]
+            chunk_idx = latest_ep[f"videos/{video_key}/chunk_index"]
+            file_idx = latest_ep[f"videos/{video_key}/file_index"]
 
             latest_path = self.root / self.meta.video_path.format(
                 video_key=video_key, chunk_index=chunk_idx, file_index=file_idx
@@ -1053,7 +1052,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             latest_size_in_mb = get_video_size_in_mb(latest_path)
             latest_duration_in_s = get_video_duration_in_s(latest_path)
 
-            if latest_size_in_mb + ep_size_in_mb >= self.meta.files_size_in_mb:
+            if latest_size_in_mb + ep_size_in_mb >= self.meta.video_files_size_in_mb:
                 # Move temporary episode video to a new video file in the dataset
                 chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, self.meta.chunks_size)
                 new_path = self.root / self.meta.video_path.format(
@@ -1114,16 +1113,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """Wait for asynchronous image writer to finish."""
         if self.image_writer is not None:
             self.image_writer.wait_until_done()
-
-    # TODO(rcadene): this method is currently not used
-    # def encode_videos(self) -> None:
-    #     """
-    #     Use ffmpeg to convert frames stored as png into mp4 videos.
-    #     Note: `encode_video_frames` is a blocking call. Making it asynchronous shouldn't speedup encoding,
-    #     since video encoding with ffmpeg is already using multithreading.
-    #     """
-    #     for ep_idx in range(self.meta.total_episodes):
-    #         self.encode_episode_videos(ep_idx)
 
     def _encode_temporary_episode_video(self, video_key: str, episode_index: int) -> dict:
         """
