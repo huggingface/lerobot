@@ -85,4 +85,5 @@ class LeKiwiClientConfig(RobotConfig):
         }
     )
 
+    polling_timeout_ms: int = 15
     connect_timeout_s: int = 5

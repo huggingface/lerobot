@@ -21,6 +21,7 @@ import cv2
 import numpy as np
 import torch
 import zmq
+from typing import Tuple, Dict, Any, Optional
 
 from lerobot.common.constants import OBS_IMAGES, OBS_STATE
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
@@ -45,6 +46,7 @@ class LeKiwiClient(Robot):
 
         self.teleop_keys = config.teleop_keys
 
+        self.polling_timeot_ms = config.polling_timeout_ms
         self.connect_timeout_s = config.connect_timeout_s
 
         self.zmq_context = None
@@ -261,83 +263,119 @@ class LeKiwiClient(Robot):
         theta_cmd = theta_rad * (180.0 / np.pi)
         return {"x_cmd": x_cmd, "y_cmd": y_cmd, "theta_cmd": theta_cmd}
 
-    # TODO(Steven): This is flaky, for example, if we received a state but failed decoding the image, we will not update any value
-    # TODO(Steven): All this function needs to be refactored
-    def _get_data(self):
-        # Copied from robot_lekiwi.py
-        """Polls the video socket for up to 15 ms. If data arrives, decode only
-        the *latest* message, returning frames, speed, and arm state. If
-        nothing arrives for any field, use the last known values."""
 
-        frames = {}
-        present_speed = {}
-
-        remote_arm_state_tensor = {}
-
-        # Poll up to 15 ms
+    def _poll_and_get_latest_message(self) -> Optional[str]:
+        """Polls the ZMQ socket for a limited time and returns the latest message string."""
         poller = zmq.Poller()
         poller.register(self.zmq_observation_socket, zmq.POLLIN)
-        socks = dict(poller.poll(15))
-        if self.zmq_observation_socket not in socks or socks[self.zmq_observation_socket] != zmq.POLLIN:
-            # No new data arrived → reuse ALL old data
-            # TODO(Steven): This might return empty variables at init
-            return (self.last_frames, self.last_present_speed, self.last_remote_arm_state)
+        
+        try:
+            socks = dict(poller.poll(self.polling_timeot_ms))
+        except zmq.ZMQError as e:
+            logging.error(f"ZMQ polling error: {e}")
+            return None
 
-        # Drain all messages, keep only the last
+        if self.zmq_observation_socket not in socks:
+            logging.info("No new data available within timeout.")
+            return None
+
         last_msg = None
-        # TODO(Steven): There's probably a way to do this without while True
-        # TODO(Steven): Even consider changing to PUB/SUB
         while True:
             try:
-                obs_string = self.zmq_observation_socket.recv_string(zmq.NOBLOCK)
-                last_msg = obs_string
+                msg = self.zmq_observation_socket.recv_string(zmq.NOBLOCK)
+                last_msg = msg
             except zmq.Again:
                 break
 
-        if not last_msg:
-            # No new message → also reuse old
-            return (self.last_frames, self.last_present_speed, self.last_remote_arm_state)
+        if last_msg is None:
+            logging.warning("Poller indicated data, but failed to retrieve message.")
 
-        # Decode only the final message
+        return last_msg
+    
+    def _parse_observation_json(self, obs_string: str) -> Optional[Dict[str, Any]]:
+        """Parses the JSON observation string."""
         try:
-            observation = json.loads(last_msg)
+            return json.loads(obs_string)
+        except json.JSONDecodeError as e:
+            logging.error(f"Error decoding JSON observation: {e}")
+            return None
 
-            state_observation = {k: v for k, v in observation.items() if k.startswith(OBS_STATE)}
-            image_observation = {k: v for k, v in observation.items() if k.startswith(OBS_IMAGES)}
+    
+    def _decode_image_from_b64(self, image_b64: str) -> Optional[np.ndarray]:
+        """Decodes a base64 encoded image string to an OpenCV image."""
+        if not image_b64:
+            return None
+        try:
+            jpg_data = base64.b64decode(image_b64)
+            np_arr = np.frombuffer(jpg_data, dtype=np.uint8)
+            frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+            if frame is None:
+                logging.warning("cv2.imdecode returned None for an image.")
+            return frame
+        except (TypeError, ValueError) as e:
+            logging.error(f"Error decoding base64 image data: {e}")
+            return None
+    
+    def _process_observation_data(self, observation: Dict[str, Any]) -> Tuple[Dict[str, np.ndarray], Dict[str, Any], Dict[str, Any]]:
+        """Extracts frames, speed, and arm state from the parsed observation."""
+        
+        # Separate image and state data
+        image_observation = {k: v for k, v in observation.items() if k.startswith(OBS_IMAGES)}
+        state_observation = {k: v for k, v in observation.items() if k.startswith(OBS_STATE)}
 
-            # Convert images
-            for cam_name, image_b64 in image_observation.items():
-                if image_b64:
-                    jpg_data = base64.b64decode(image_b64)
-                    np_arr = np.frombuffer(jpg_data, dtype=np.uint8)
-                    frame_candidate = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-                    if frame_candidate is not None:
-                        frames[cam_name] = frame_candidate
+        # Decode images
+        current_frames: Dict[str, np.ndarray] = {}
+        for cam_name, image_b64 in image_observation.items():
+            frame = self._decode_image_from_b64(image_b64)
+            if frame is not None:
+                current_frames[cam_name] = frame
 
-            # TODO(Steven): Should we really ignore the arm state if the image is None?
-            # If remote_arm_state is None and frames is None there is no message then use the previous message
-            if state_observation is not None and frames is not None:
-                self.last_frames = frames
+        # Extract state components
+        current_speed = {
+            k: v for k, v in state_observation.items() if k.startswith(f"{OBS_STATE}.base")
+        }
+        current_arm_state = {
+            k: v for k, v in state_observation.items() if k.startswith(f"{OBS_STATE}.arm")
+        }
 
-                remote_arm_state_tensor = {
-                    k: v for k, v in state_observation.items() if k.startswith(f"{OBS_STATE}.arm")
-                }
-                self.last_remote_arm_state = remote_arm_state_tensor
+        return current_frames, current_speed, current_arm_state
 
-                present_speed = {
-                    k: v for k, v in state_observation.items() if k.startswith(f"{OBS_STATE}.base")
-                }
-                self.last_present_speed = present_speed
-            else:
-                frames = self.last_frames
-                remote_arm_state_tensor = self.last_remote_arm_state
-                present_speed = self.last_present_speed
 
+    def _get_data(self) -> Tuple[Dict[str, np.ndarray], Dict[str, Any], Dict[str, Any]]:
+        """
+        Polls the video socket for the latest observation data.
+
+        Attempts to retrieve and decode the latest message within a short timeout.
+        If successful, updates and returns the new frames, speed, and arm state.
+        If no new data arrives or decoding fails, returns the last known values.
+        """
+        
+        # 1. Get the latest message string from the socket
+        latest_message_str = self._poll_and_get_latest_message()
+
+        # 2. If no message, return cached data
+        if latest_message_str is None:
+            return self.last_frames, self.last_present_speed, self.last_remote_arm_state
+
+        # 3. Parse the JSON message
+        observation = self._parse_observation_json(latest_message_str)
+
+        # 4. If JSON parsing failed, return cached data
+        if observation is None:
+            return self.last_frames, self.last_present_speed, self.last_remote_arm_state
+
+        # 5. Process the valid observation data
+        try:
+            current_frames, current_speed, current_arm_state = self._process_observation_data(observation)
         except Exception as e:
-            print(f"[DEBUG] Error decoding video message: {e}")
-            # If decode fails, fall back to old data
-            return (self.last_frames, self.last_present_speed, self.last_remote_arm_state)
-        return frames, present_speed, remote_arm_state_tensor
+            logging.error(f"Error processing observation data, serving last observation: {e}")
+            return self.last_frames, self.last_present_speed, self.last_remote_arm_state
+
+        self.last_frames = current_frames
+        self.last_present_speed = current_speed
+        self.last_remote_arm_state = current_arm_state
+
+        return current_frames, current_speed, current_arm_state
 
     def get_observation(self) -> dict[str, Any]:
         """
