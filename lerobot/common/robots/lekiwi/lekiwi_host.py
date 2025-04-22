@@ -40,7 +40,7 @@ class LeKiwiHost:
         self.zmq_observation_socket.bind(f"tcp://*:{config.port_zmq_observations}")
 
         self.connection_time_s = config.connection_time_s
-        self.watchdog_timeout_s = config.watchdog_timeout_s
+        self.watchdog_timeout_ms = config.watchdog_timeout_ms
         self.max_loop_freq_hz = config.max_loop_freq_hz
 
     def disconnect(self):
@@ -62,6 +62,7 @@ def main():
     host = LeKiwiHost(host_config)
 
     last_cmd_time = time.time()
+    watchdog_active = False
     logging.info("Waiting for commands...")
     try:
         # Business logic
@@ -74,13 +75,19 @@ def main():
                 data = dict(json.loads(msg))
                 _action_sent = robot.send_action(data)
                 last_cmd_time = time.time()
+                watchdog_active = False
             except zmq.Again:
-                logging.warning("No command available")
+                if not watchdog_active:
+                    logging.warning("No command available")
             except Exception as e:
                 logging.error("Message fetching failed: %s", e)
 
             now = time.time()
-            if now - last_cmd_time > host.watchdog_timeout_s:
+            if (now - last_cmd_time > host.watchdog_timeout_ms / 1000) and not watchdog_active:
+                logging.warning(
+                    f"Command not received for more than {host.watchdog_timeout_ms} milliseconds. Stopping the base."
+                )
+                watchdog_active = True
                 robot.stop_base()
 
             last_observation = robot.get_observation()
@@ -96,17 +103,22 @@ def main():
                     last_observation[f"{OBS_IMAGES}.{cam_key}"] = ""
 
             # Send the observation to the remote agent
-            host.zmq_observation_socket.send_string(json.dumps(last_observation))
+            try:
+                host.zmq_observation_socket.send_string(json.dumps(last_observation), flags=zmq.NOBLOCK)
+            except zmq.Again:
+                logging.info("Dropping observation, no client connected")
 
             # Ensure a short sleep to avoid overloading the CPU.
             elapsed = time.time() - loop_start_time
 
             time.sleep(max(1 / host.max_loop_freq_hz - elapsed, 0))
             duration = time.perf_counter() - start
+        print("Cycle time reached.")
 
     except KeyboardInterrupt:
-        print("Shutting down LeKiwi server.")
+        print("Keyboard interrupt received. Exiting...")
     finally:
+        print("Shutting down Lekiwi Host.")
         robot.disconnect()
         host.disconnect()
 

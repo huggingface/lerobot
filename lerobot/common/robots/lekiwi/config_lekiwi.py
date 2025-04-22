@@ -35,10 +35,10 @@ class LeKiwiConfig(RobotConfig):
     cameras: dict[str, CameraConfig] = field(
         default_factory=lambda: {
             "front": OpenCVCameraConfig(
-                camera_index="/dev/video1", fps=30, width=640, height=480, rotation=90
+                camera_index="/dev/video0", fps=30, width=640, height=480, rotation=None
             ),
             "wrist": OpenCVCameraConfig(
-                camera_index="/dev/video4", fps=30, width=640, height=480, rotation=180
+                camera_index="/dev/video2", fps=30, width=640, height=480, rotation=180
             ),
         }
     )
@@ -51,10 +51,10 @@ class LeKiwiHostConfig:
     port_zmq_observations: int = 5556
 
     # Duration of the application
-    connection_time_s: int = 100
+    connection_time_s: int = 30
 
     # Watchdog: stop the robot if no command is received for over 0.5 seconds.
-    watchdog_timeout_s: int = 1
+    watchdog_timeout_ms: int = 1000
 
     # If robot jitters decrease the frequency and monitor cpu load with `top` in cmd
     max_loop_freq_hz: int = 30

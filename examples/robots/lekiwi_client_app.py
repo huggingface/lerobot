@@ -13,12 +13,15 @@
 # limitations under the License.
 
 import logging
+import time
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.robots.lekiwi.config_lekiwi import LeKiwiClientConfig
-from lerobot.common.robots.lekiwi.lekiwi_client import LeKiwiClient
+from lerobot.common.robots.lekiwi.lekiwi_client import OBS_STATE, LeKiwiClient
 from lerobot.common.teleoperators.keyboard import KeyboardTeleop, KeyboardTeleopConfig
 from lerobot.common.teleoperators.so100 import SO100Leader, SO100LeaderConfig
+
+NB_CYCLES_CLIENT_CONNECTION = 250
 
 
 def main():
@@ -35,10 +38,20 @@ def main():
 
     logging.info("Creating LeRobot Dataset")
 
+    # The observations that we get are expected to be in body frame (x,y,theta)
+    obs_dict = {f"{OBS_STATE}." + key: value for key, value in robot.state_feature_client.items()}
+    # The actions that we send are expected to be in wheel frame (motor encoders)
+    act_dict = {"action." + key: value for key, value in robot.action_feature.items()}
+
+    features_dict = {
+        **act_dict,
+        **obs_dict,
+        **robot.camera_features,
+    }
     dataset = LeRobotDataset.create(
-        repo_id="user/lekiwi",
+        repo_id="user/lekiwi" + str(int(time.time())),
         fps=10,
-        features={**robot.state_feature, **robot.camera_features},
+        features=features_dict,
     )
 
     logging.info("Connecting Teleop Devices")
@@ -54,7 +67,7 @@ def main():
 
     logging.info("Starting LeKiwi teleoperation")
     i = 0
-    while i < 1000:
+    while i < NB_CYCLES_CLIENT_CONNECTION:
         arm_action = leader_arm.get_action()
         base_action = keyboard.get_action()
         action = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
@@ -63,19 +76,21 @@ def main():
         observation = robot.get_observation()
 
         frame = {**action_sent, **observation}
-        frame.update({"task": "Dummy Task Dataset"})
+        frame.update({"task": "Dummy Example Task Dataset"})
 
         logging.info("Saved a frame into the dataset")
         dataset.add_frame(frame)
         i += 1
 
-    dataset.save_episode()
-    dataset.push_to_hub()
-
     logging.info("Disconnecting Teleop Devices and LeKiwi Client")
     robot.disconnect()
     leader_arm.disconnect()
     keyboard.disconnect()
+
+    logging.info("Uploading dataset to the hub")
+    dataset.save_episode()
+    dataset.push_to_hub()
+
     logging.info("Finished LeKiwi cleanly")
 
 

@@ -19,7 +19,7 @@ import time
 from typing import Any
 
 from lerobot.common.cameras.utils import make_cameras_from_configs
-from lerobot.common.constants import OBS_IMAGES
+from lerobot.common.constants import OBS_IMAGES, OBS_STATE
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.common.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.common.motors.feetech import (
@@ -71,11 +71,18 @@ class LeKiwi(Robot):
 
     @property
     def state_feature(self) -> dict:
-        return {
-            "dtype": "float32",
-            "shape": (len(self.bus),),
-            "names": {"motors": list(self.bus.motors)},
+        state_ft = {
+            "arm_shoulder_pan": {"dtype": "float32"},
+            "arm_shoulder_lift": {"dtype": "float32"},
+            "arm_elbow_flex": {"dtype": "float32"},
+            "arm_wrist_flex": {"dtype": "float32"},
+            "arm_wrist_roll": {"dtype": "float32"},
+            "arm_gripper": {"dtype": "float32"},
+            "base_left_wheel": {"dtype": "float32"},
+            "base_right_wheel": {"dtype": "float32"},
+            "base_back_wheel": {"dtype": "float32"},
         }
+        return state_ft
 
     @property
     def action_feature(self) -> dict:
@@ -187,6 +194,7 @@ class LeKiwi(Robot):
         arm_pos = self.bus.sync_read("Present_Position", self.arm_motors)
         base_vel = self.bus.sync_read("Present_Velocity", self.base_motors)
         obs_dict = {**arm_pos, **base_vel}
+        obs_dict = {f"{OBS_STATE}." + key: value for key, value in obs_dict.items()}
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
 
