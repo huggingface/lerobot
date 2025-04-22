@@ -33,7 +33,7 @@ from diffusers.schedulers.scheduling_ddim import DDIMScheduler
 from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
 from torch import Tensor, nn
 
-from lerobot.common.constants import OBS_ENV, OBS_ROBOT
+from lerobot.common.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
 from lerobot.common.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.pretrained import PreTrainedPolicy
@@ -48,7 +48,7 @@ from lerobot.common.policies.utils import (
 class DiffusionPolicy(PreTrainedPolicy):
     """
     Diffusion Policy as per "Diffusion Policy: Visuomotor Policy Learning via Action Diffusion"
-    (paper: https://arxiv.org/abs/2303.04137, code: https://github.com/real-stanford/diffusion_policy).
+    (paper: https://huggingface.co/papers/2303.04137, code: https://github.com/real-stanford/diffusion_policy).
     """
 
     config_class = DiffusionConfig
@@ -100,6 +100,18 @@ class DiffusionPolicy(PreTrainedPolicy):
             self._queues["observation.environment_state"] = deque(maxlen=self.config.n_obs_steps)
 
     @torch.no_grad
+    def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
+        """Predict a chunk of actions given environment observations."""
+        # stack n latest observations from the queue
+        batch = {k: torch.stack(list(self._queues[k]), dim=1) for k in batch if k in self._queues}
+        actions = self.diffusion.generate_actions(batch)
+
+        # TODO(rcadene): make above methods return output dictionary?
+        actions = self.unnormalize_outputs({ACTION: actions})[ACTION]
+
+        return actions
+
+    @torch.no_grad
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
         """Select a single action given environment observations.
 
@@ -124,23 +136,15 @@ class DiffusionPolicy(PreTrainedPolicy):
         batch = self.normalize_inputs(batch)
         if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
-            batch["observation.images"] = torch.stack(
-                [batch[key] for key in self.config.image_features], dim=-4
-            )
+            batch[OBS_IMAGES] = torch.stack([batch[key] for key in self.config.image_features], dim=-4)
         # Note: It's important that this happens after stacking the images into a single key.
         self._queues = populate_queues(self._queues, batch)
 
-        if len(self._queues["action"]) == 0:
-            # stack n latest observations from the queue
-            batch = {k: torch.stack(list(self._queues[k]), dim=1) for k in batch if k in self._queues}
-            actions = self.diffusion.generate_actions(batch)
+        if len(self._queues[ACTION]) == 0:
+            actions = self.predict_action_chunk(batch)
+            self._queues[ACTION].extend(actions.transpose(0, 1))
 
-            # TODO(rcadene): make above methods return output dictionary?
-            actions = self.unnormalize_outputs({"action": actions})["action"]
-
-            self._queues["action"].extend(actions.transpose(0, 1))
-
-        action = self._queues["action"].popleft()
+        action = self._queues[ACTION].popleft()
         return action
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, None]:
@@ -148,9 +152,7 @@ class DiffusionPolicy(PreTrainedPolicy):
         batch = self.normalize_inputs(batch)
         if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
-            batch["observation.images"] = torch.stack(
-                [batch[key] for key in self.config.image_features], dim=-4
-            )
+            batch[OBS_IMAGES] = torch.stack([batch[key] for key in self.config.image_features], dim=-4)
         batch = self.normalize_targets(batch)
         loss = self.diffusion.compute_loss(batch)
         # no output_dict so returning None
@@ -238,8 +240,8 @@ class DiffusionModel(nn.Module):
 
     def _prepare_global_conditioning(self, batch: dict[str, Tensor]) -> Tensor:
         """Encode image features and concatenate them all together along with the state vector."""
-        batch_size, n_obs_steps = batch[OBS_ROBOT].shape[:2]
-        global_cond_feats = [batch[OBS_ROBOT]]
+        batch_size, n_obs_steps = batch[OBS_STATE].shape[:2]
+        global_cond_feats = [batch[OBS_STATE]]
         # Extract image features.
         if self.config.image_features:
             if self.config.use_separate_rgb_encoder_per_camera:
@@ -269,7 +271,7 @@ class DiffusionModel(nn.Module):
             global_cond_feats.append(img_features)
 
         if self.config.env_state_feature:
-            global_cond_feats.append(batch[OBS_ENV])
+            global_cond_feats.append(batch[OBS_ENV_STATE])
 
         # Concatenate features then flatten to (B, global_cond_dim).
         return torch.cat(global_cond_feats, dim=-1).flatten(start_dim=1)
@@ -370,7 +372,7 @@ class DiffusionModel(nn.Module):
 class SpatialSoftmax(nn.Module):
     """
     Spatial Soft Argmax operation described in "Deep Spatial Autoencoders for Visuomotor Learning" by Finn et al.
-    (https://arxiv.org/pdf/1509.06113). A minimal port of the robomimic implementation.
+    (https://huggingface.co/papers/1509.06113). A minimal port of the robomimic implementation.
 
     At a high level, this takes 2D feature maps (from a convnet/ViT) and returns the "center of mass"
     of activations of each channel, i.e., keypoints in the image space for the policy to focus on.
@@ -728,7 +730,7 @@ class DiffusionConditionalResidualBlock1d(nn.Module):
 
         self.conv1 = DiffusionConv1dBlock(in_channels, out_channels, kernel_size, n_groups=n_groups)
 
-        # FiLM modulation (https://arxiv.org/abs/1709.07871) outputs per-channel bias and (maybe) scale.
+        # FiLM modulation (https://huggingface.co/papers/1709.07871) outputs per-channel bias and (maybe) scale.
         cond_channels = out_channels * 2 if use_film_scale_modulation else out_channels
         self.cond_encoder = nn.Sequential(nn.Mish(), nn.Linear(cond_dim, cond_channels))
 
