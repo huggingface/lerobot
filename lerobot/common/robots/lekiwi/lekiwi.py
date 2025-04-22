@@ -19,7 +19,7 @@ import time
 from typing import Any
 
 from lerobot.common.cameras.utils import make_cameras_from_configs
-from lerobot.common.constants import OBS_IMAGES, OBS_STATE
+from lerobot.common.constants import OBS_IMAGES
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.common.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.common.motors.feetech import (
@@ -180,20 +180,20 @@ class LeKiwi(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        obs_dict = {OBS_IMAGES: {}}
+        obs_dict = {}
 
         # Read actuators position for arm and vel for base
         start = time.perf_counter()
         arm_pos = self.bus.sync_read("Present_Position", self.arm_motors)
         base_vel = self.bus.sync_read("Present_Velocity", self.base_motors)
-        obs_dict[OBS_STATE] = {**arm_pos, **base_vel}
+        obs_dict = {**arm_pos, **base_vel}
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
 
         # Capture images from cameras
         for cam_key, cam in self.cameras.items():
             start = time.perf_counter()
-            obs_dict[OBS_IMAGES][cam_key] = cam.async_read()
+            obs_dict[f"{OBS_IMAGES}.{cam_key}"] = cam.async_read()
             dt_ms = (time.perf_counter() - start) * 1e3
             logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
 
@@ -226,9 +226,6 @@ class LeKiwi(Robot):
             goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in arm_goal_pos.items()}
             arm_safe_goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
             arm_goal_pos = arm_safe_goal_pos
-
-        # TODO(Steven):  Message fetching failed: Magnitude 34072 exceeds 32767 (max for sign_bit_index=15)
-        # TODO(Steven): IMO, this should be a check in the motor bus
 
         # Send goal position to the actuators
         self.bus.sync_write("Goal_Position", arm_goal_pos)

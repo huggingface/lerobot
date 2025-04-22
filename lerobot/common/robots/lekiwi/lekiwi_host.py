@@ -79,8 +79,6 @@ def main():
             except Exception as e:
                 logging.error("Message fetching failed: %s", e)
 
-            # TODO(Steven): Check this value
-
             now = time.time()
             if now - last_cmd_time > host.watchdog_timeout_s:
                 robot.stop_base()
@@ -90,12 +88,12 @@ def main():
             # Encode ndarrays to base64 strings
             for cam_key, _ in robot.cameras.items():
                 ret, buffer = cv2.imencode(
-                    ".jpg", last_observation[OBS_IMAGES][cam_key], [int(cv2.IMWRITE_JPEG_QUALITY), 90]
+                    ".jpg", last_observation[f"{OBS_IMAGES}.{cam_key}"], [int(cv2.IMWRITE_JPEG_QUALITY), 90]
                 )
                 if ret:
-                    last_observation[OBS_IMAGES][cam_key] = base64.b64encode(buffer).decode("utf-8")
+                    last_observation[f"{OBS_IMAGES}.{cam_key}"] = base64.b64encode(buffer).decode("utf-8")
                 else:
-                    last_observation[OBS_IMAGES][cam_key] = ""
+                    last_observation[f"{OBS_IMAGES}.{cam_key}"] = ""
 
             # Send the observation to the remote agent
             host.zmq_observation_socket.send_string(json.dumps(last_observation))

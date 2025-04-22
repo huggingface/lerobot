@@ -23,15 +23,12 @@ import torch
 import zmq
 
 from lerobot.common.constants import OBS_IMAGES, OBS_STATE
-from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError, InvalidActionError
+from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..robot import Robot
-from .config_lekiwi import LeKiwiClientConfig, RobotMode
+from .config_lekiwi import LeKiwiClientConfig
 
 
-# TODO(Steven): This doesn't need to inherit from Robot
-# But we do it for now to offer a familiar API
-# TODO(Steven): Check if we can move everything to 32 instead
 class LeKiwiClient(Robot):
     config_class = LeKiwiClientConfig
     name = "lekiwi_client"
@@ -41,13 +38,14 @@ class LeKiwiClient(Robot):
         self.config = config
         self.id = config.id
         self.robot_type = config.type
-        self.robot_mode = config.robot_mode
 
         self.remote_ip = config.remote_ip
         self.port_zmq_cmd = config.port_zmq_cmd
         self.port_zmq_observations = config.port_zmq_observations
 
         self.teleop_keys = config.teleop_keys
+
+        self.connect_timeout_s = config.connect_timeout_s
 
         self.zmq_context = None
         self.zmq_cmd_socket = None
@@ -71,8 +69,6 @@ class LeKiwiClient(Robot):
 
     @property
     def state_feature(self) -> dict:
-        # TODO(Steven): Get this from the data fetched? Motor names are unknown for the Daemon
-        # For now we assume its size/metadata is known
         return {
             "dtype": "float32",
             "shape": (9,),
@@ -97,15 +93,13 @@ class LeKiwiClient(Robot):
 
     @property
     def camera_features(self) -> dict[str, dict]:
-        # TODO(Steven): Get this from the data fetched? Motor names are unknown for the Daemon
-        # For now we assume its size/metadata is known
         cam_ft = {
-            "front": {
+            f"{OBS_IMAGES}.front": {
                 "shape": (480, 640, 3),
                 "names": ["height", "width", "channels"],
                 "info": None,
             },
-            "wrist": {
+            f"{OBS_IMAGES}.wrist": {
                 "shape": (480, 640, 3),
                 "names": ["height", "width", "channels"],
                 "info": None,
@@ -139,6 +133,12 @@ class LeKiwiClient(Robot):
         zmq_observations_locator = f"tcp://{self.remote_ip}:{self.port_zmq_observations}"
         self.zmq_observation_socket.connect(zmq_observations_locator)
         self.zmq_observation_socket.setsockopt(zmq.CONFLATE, 1)
+
+        poller = zmq.Poller()
+        poller.register(self.zmq_observation_socket, zmq.POLLIN)
+        socks = dict(poller.poll(self.connect_timeout_s * 1000))
+        if self.zmq_observation_socket not in socks or socks[self.zmq_observation_socket] != zmq.POLLIN:
+            raise DeviceNotConnectedError("Timeout waiting for LeKiwi Host to connect expired.")
 
         self._is_connected = True
 
@@ -302,8 +302,8 @@ class LeKiwiClient(Robot):
         try:
             observation = json.loads(last_msg)
 
-            state_observation = observation[OBS_STATE]
-            image_observation = observation[OBS_IMAGES]
+            state_observation = {k: v for k, v in observation.items() if k.startswith(OBS_STATE)}
+            image_observation = {k: v for k, v in observation.items() if k.startswith(OBS_IMAGES)}
 
             # Convert images
             for cam_name, image_b64 in image_observation.items():
@@ -319,10 +319,14 @@ class LeKiwiClient(Robot):
             if state_observation is not None and frames is not None:
                 self.last_frames = frames
 
-                remote_arm_state_tensor = {k: v for k, v in state_observation.items() if k.startswith("arm")}
+                remote_arm_state_tensor = {
+                    k: v for k, v in state_observation.items() if k.startswith(f"{OBS_STATE}.arm")
+                }
                 self.last_remote_arm_state = remote_arm_state_tensor
 
-                present_speed = {k: v for k, v in state_observation.items() if k.startswith("base")}
+                present_speed = {
+                    k: v for k, v in state_observation.items() if k.startswith(f"{OBS_STATE}.base")
+                }
                 self.last_present_speed = present_speed
             else:
                 frames = self.last_frames
@@ -347,15 +351,16 @@ class LeKiwiClient(Robot):
         # TODO(Steven): remove hard-coded cam names & dims
         # This is needed at init for when there's no comms
         obs_dict = {
-            OBS_IMAGES: {"wrist": np.zeros(shape=(480, 640, 3)), "front": np.zeros(shape=(640, 480, 3))}
+            f"{OBS_IMAGES}.wrist": np.zeros(shape=(480, 640, 3)),
+            f"{OBS_IMAGES}.front": np.zeros(shape=(640, 480, 3)),
         }
 
         frames, present_speed, remote_arm_state_tensor = self._get_data()
         body_state = self._wheel_raw_to_body(present_speed)
-        # TODO(Steven): output is dict[str,Any] and we multiply by 1000.0. This should be more explicit and specify the expected type instead of Any
         body_state_mm = {k: v * 1000.0 for k, v in body_state.items()}  # Convert x,y to mm/s
 
-        obs_dict[OBS_STATE] = {**remote_arm_state_tensor, **body_state_mm}
+        obs_dict.update(remote_arm_state_tensor)
+        obs_dict.update(body_state_mm)
 
         # Loop over each configured camera
         for cam_name, frame in frames.items():
@@ -363,7 +368,7 @@ class LeKiwiClient(Robot):
                 # TODO(Steven): Daemon doesn't know camera dimensions (hard-coded for now), consider at least getting them from state features
                 logging.warning("Frame is None")
                 frame = np.zeros((480, 640, 3), dtype=np.uint8)
-            obs_dict[OBS_IMAGES][cam_name] = torch.from_numpy(frame)
+            obs_dict[f"{OBS_IMAGES}.{cam_name}"] = torch.from_numpy(frame)
 
         return obs_dict
 
@@ -415,33 +420,22 @@ class LeKiwiClient(Robot):
                 "ManipulatorRobot is not connected. You need to run `robot.connect()`."
             )
 
-        if self.robot_mode is RobotMode.AUTO:
-            raise NotImplementedError
-
         goal_pos = {}
-        if self.robot_mode is RobotMode.TELEOP:
-            motors_name = self.state_feature.get("names").get("motors")
+        motors_name = self.state_feature.get("names").get("motors")
 
-            common_keys = [
-                key for key in action if key in (motor.replace("arm_", "") for motor in motors_name)
-            ]
+        common_keys = [key for key in action if key in (motor.replace("arm_", "") for motor in motors_name)]
 
-            # TODO(Steven): I don't like this
-            if len(common_keys) < 6:
-                logging.error("Action should include at least the states of the leader arm")
-                raise InvalidActionError
+        arm_actions = {"arm_" + arm_motor: action[arm_motor] for arm_motor in common_keys}
+        goal_pos = arm_actions
 
-            arm_actions = {"arm_" + arm_motor: action[arm_motor] for arm_motor in common_keys}
-            goal_pos = arm_actions
+        if len(action) > 6:
+            keyboard_keys = np.array(list(set(action.keys()) - set(common_keys)))
+            wheel_actions = {
+                "base_" + k: v for k, v in self._from_keyboard_to_wheel_action(keyboard_keys).items()
+            }
+            goal_pos = {**arm_actions, **wheel_actions}
 
-            if len(action) > 6:
-                keyboard_keys = np.array(list(set(action.keys()) - set(common_keys)))
-                wheel_actions = {
-                    "base_" + k: v for k, v in self._from_keyboard_to_wheel_action(keyboard_keys).items()
-                }
-                goal_pos = {**arm_actions, **wheel_actions}
-
-            self.zmq_cmd_socket.send_string(json.dumps(goal_pos))  # action is in motor space
+        self.zmq_cmd_socket.send_string(json.dumps(goal_pos))  # action is in motor space
 
         return goal_pos
 

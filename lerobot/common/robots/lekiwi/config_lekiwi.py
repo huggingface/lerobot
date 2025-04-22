@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import enum
 from dataclasses import dataclass, field
 
 from lerobot.common.cameras.configs import CameraConfig
@@ -21,14 +20,6 @@ from lerobot.common.cameras.opencv.configuration_opencv import OpenCVCameraConfi
 from ..config import RobotConfig
 
 
-class RobotMode(enum.Enum):
-    TELEOP = 0
-    AUTO = 1
-
-
-# TODO(Steven): Consider sending config at initial step over a socket
-# However, this isn't practical because anyways we have to configure the
-# socket ports to begin with
 @RobotConfig.register_subclass("lekiwi")
 @dataclass
 class LeKiwiConfig(RobotConfig):
@@ -94,4 +85,4 @@ class LeKiwiClientConfig(RobotConfig):
         }
     )
 
-    robot_mode: RobotMode | None = None
+    connect_timeout_s: int = 5
