@@ -539,7 +539,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.revision = revision if revision else CODEBASE_VERSION
         self.video_backend = video_backend if video_backend else get_safe_default_codec()
         self.audio_backend = (
-            audio_backend if audio_backend else "trochaudio"
+            audio_backend if audio_backend else "torchaudio"
         )  # Waiting for torchcodec release #TODO(CarolinePascal)
         self.delta_indices = None
 
@@ -1231,7 +1231,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.episode_data_index = None
         obj.video_backend = video_backend if video_backend is not None else get_safe_default_codec()
         obj.audio_backend = (
-            audio_backend if audio_backend is not None else "trochaudio"
+            audio_backend if audio_backend is not None else "torchaudio"
         )  # Waiting for torchcodec release #TODO(CarolinePascal)
         return obj
 

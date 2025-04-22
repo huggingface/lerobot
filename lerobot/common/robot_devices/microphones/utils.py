@@ -59,7 +59,7 @@ def make_microphone(microphone_type, **kwargs) -> Microphone:
 
 def async_microphones_start_recording(
     microphones: dict[str, Microphone],
-    output_files: list[str | None] | None,
+    output_files: list[str | None] | None = None,
     multiprocessing: bool = False,
     overwrite: bool = True,
 ):
