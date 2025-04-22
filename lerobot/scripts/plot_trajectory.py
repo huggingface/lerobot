@@ -1,104 +1,135 @@
 #!/usr/bin/env python
+"""
+plot_trajectory.py
+==================
+• plot_trajectory_comparison() —— 画单条轨迹 (xyz) 的 GT vs Pred
+• plot_epoch_trajectories()    —— 随机抽 num_samples 条轨迹绘制并返回图片路径
+• get_predicted_action()       —— 专为 π0 设计的动作提取器
+"""
 
-import numpy as np
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
-import torch
+from __future__ import annotations
 import random
+from pathlib import Path
+from typing import Dict, List, Any
 
-def plot_trajectory_comparison(gt_trajectory, pred_trajectory, title="Trajectory Comparison", save_path=None):
-    """
-    绘制真实轨迹和预测轨迹的3D对比图（仅XYZ）
-    
-    Args:
-        gt_trajectory (torch.Tensor): 真实轨迹，形状为 [T, 3] 或 [B, T, 3]
-        pred_trajectory (torch.Tensor): 预测轨迹，形状为 [T, 3] 或 [B, T, 3]
-        title (str): 图表标题
-        save_path (str): 保存图片的路径，如果为None则不保存
-    """
-    # 确保输入是numpy数组
-    if isinstance(gt_trajectory, torch.Tensor):
-        gt_trajectory = gt_trajectory.detach().cpu().numpy()
-    if isinstance(pred_trajectory, torch.Tensor):
-        pred_trajectory = pred_trajectory.detach().cpu().numpy()
-    
-    # 如果输入是批次数据，只取第一个样本
-    if len(gt_trajectory.shape) == 3:
-        gt_trajectory = gt_trajectory[0]
-    if len(pred_trajectory.shape) == 3:
-        pred_trajectory = pred_trajectory[0]
-    
-    # 只取XYZ坐标（前3个维度）
-    gt_trajectory = gt_trajectory[:, :3]
-    pred_trajectory = pred_trajectory[:, :3]
-    
-    # 创建3D图形
-    fig = plt.figure(figsize=(10, 8))
-    ax = fig.add_subplot(111, projection='3d')
-    
-    # 绘制轨迹
-    ax.plot(gt_trajectory[:, 0], gt_trajectory[:, 1], gt_trajectory[:, 2], 
-            'b-', label='Ground Truth', linewidth=2)
-    ax.plot(pred_trajectory[:, 0], pred_trajectory[:, 1], pred_trajectory[:, 2], 
-            'r--', label='Predicted', linewidth=2)
-    
-    # 设置坐标轴标签
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
-    ax.set_zlabel('Z')
-    
-    # 设置标题和图例
-    ax.set_title(title)
-    ax.legend()
-    
-    # 设置视角
-    ax.view_init(elev=20, azim=45)
-    
-    # 自动调整坐标轴范围
-    all_points = np.vstack([gt_trajectory, pred_trajectory])
-    min_val = np.min(all_points, axis=0)
-    max_val = np.max(all_points, axis=0)
-    range_val = max_val - min_val
-    padding = 0.1 * range_val
-    
-    ax.set_xlim(min_val[0] - padding[0], max_val[0] + padding[0])
-    ax.set_ylim(min_val[1] - padding[1], max_val[1] + padding[1])
-    ax.set_zlim(min_val[2] - padding[2], max_val[2] + padding[2])
-    
-    # 保存图片
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
+from mpl_toolkits.mplot3d import Axes3D  # noqa: F401  (必需请勿删除)
+
+from lerobot.common.policies.pretrained import PreTrainedPolicy
+from lerobot.common.policies.utils import get_device_from_parameters
+
+
+# ============================== 绘图工具 ================================= #
+def _to_numpy(x: torch.Tensor | np.ndarray) -> np.ndarray:
+    return x.detach().cpu().numpy() if isinstance(x, torch.Tensor) else x
+
+
+def plot_trajectory_comparison(
+    gt: torch.Tensor | np.ndarray,
+    pred: torch.Tensor | np.ndarray,
+    title: str = "Trajectory Comparison (xyz only)",
+    save_path: str | Path | None = None,
+):
+    """画单条 xyz 轨迹对比"""
+    gt, pred = _to_numpy(gt), _to_numpy(pred)
+    if gt.ndim == 3:  # (B,T,3)
+        gt = gt[0]
+    if pred.ndim == 3:
+        pred = pred[0]
+
+    gt, pred = gt[:, :3], pred[:, :3]  # 只留 xyz
+
+    fig = plt.figure(figsize=(8, 6))
+    ax = fig.add_subplot(111, projection="3d")
+    ax.plot(gt[:, 0], gt[:, 1], gt[:, 2], "b-", label="Ground Truth", linewidth=2)
+    ax.plot(pred[:, 0], pred[:, 1], pred[:, 2], "r--", label="Predicted", linewidth=2)
+    ax.set_xlabel("X"); ax.set_ylabel("Y"); ax.set_zlabel("Z")
+    ax.set_title(title); ax.legend(); ax.view_init(elev=20, azim=45)
+
+    all_pts = np.vstack([gt, pred])
+    pad = 0.1 * (all_pts.max(0) - all_pts.min(0))
+    ax.set_xlim(all_pts[:, 0].min() - pad[0], all_pts[:, 0].max() + pad[0])
+    ax.set_ylim(all_pts[:, 1].min() - pad[1], all_pts[:, 1].max() + pad[1])
+    ax.set_zlim(all_pts[:, 2].min() - pad[2], all_pts[:, 2].max() + pad[2])
+
     if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        plt.close()
+        Path(save_path).parent.mkdir(exist_ok=True, parents=True)
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        plt.close(fig)
     else:
         plt.show()
 
-def plot_epoch_trajectories(gt_trajectories, pred_trajectories, save_dir, epoch, num_samples=3):
+
+def plot_epoch_trajectories(
+    gt_batch: torch.Tensor,
+    pred_batch: torch.Tensor,
+    save_dir: str | Path,
+    epoch: int,
+    num_samples: int = 3,
+) -> List[Path]:
     """
-    为每个epoch绘制指定数量的轨迹对比图
-    
-    Args:
-        gt_trajectories (torch.Tensor): 真实轨迹，形状为 [B, T, D]
-        pred_trajectories (torch.Tensor): 预测轨迹，形状为 [B, T, D]
-        save_dir (str): 保存图片的目录
-        epoch (int): 当前epoch
-        num_samples (int): 要绘制的样本数量
+    随机抽 num_samples 条样本绘图，返回图片文件列表。
     """
-    # 确保输入是numpy数组
-    if isinstance(gt_trajectories, torch.Tensor):
-        gt_trajectories = gt_trajectories.detach().cpu().numpy()
-    if isinstance(pred_trajectories, torch.Tensor):
-        pred_trajectories = pred_trajectories.detach().cpu().numpy()
-    
-    # 随机选择指定数量的样本
-    batch_size = len(gt_trajectories)
-    selected_indices = random.sample(range(batch_size), min(num_samples, batch_size))
-    
-    # 绘制选中的样本
-    for i, idx in enumerate(selected_indices):
-        save_path = f"{save_dir}/trajectory_epoch_{epoch}_sample_{i}.png"
-        plot_trajectory_comparison(
-            gt_trajectories[idx],
-            pred_trajectories[idx],
-            title=f"Trajectory Comparison (Epoch {epoch}, Sample {i})",
-            save_path=save_path
-        ) 
+    save_dir = Path(save_dir)
+    save_dir.mkdir(parents=True, exist_ok=True)
+
+    gt_np, pred_np = _to_numpy(gt_batch), _to_numpy(pred_batch)
+    idxs = random.sample(range(gt_np.shape[0]), min(num_samples, gt_np.shape[0]))
+
+    paths: List[Path] = []
+    for i, idx in enumerate(idxs):
+        path = save_dir / f"trajectory_epoch_{epoch}_sample_{i}.png"
+        plot_trajectory_comparison(gt_np[idx], pred_np[idx],
+                                   title=f"Epoch {epoch} – Sample {i}",
+                                   save_path=path)
+        paths.append(path)
+    return paths
+
+
+# ========================== π0 动作提取工具 ============================ #
+def _ensure_bt_d(a: torch.Tensor) -> torch.Tensor:
+    """把 (B,D) → (B,1,D)，保持 (B,T,D) 不变。"""
+    return a.unsqueeze(1) if a.dim() == 2 else a
+
+
+def get_predicted_action(
+    policy: PreTrainedPolicy,
+    batch: Dict[str, torch.Tensor],
+) -> torch.Tensor | None:
+    """
+    返回 π0 的预测动作 (B,T,D)。优先用 predict_action()，
+    否则 fallback 到 sample_actions()；失败则返回 None。
+    """
+    device = get_device_from_parameters(policy)
+
+    # 1) predict_action ----------------------------------------------------
+    if hasattr(policy, "predict_action"):
+        try:
+            out = policy.predict_action({"obs": batch["obs"]})
+            if isinstance(out, tuple):
+                out = out[1] if len(out) > 1 else out[0]
+            if isinstance(out, dict):
+                act = out.get("action_pred") or out.get("action")
+                if isinstance(act, torch.Tensor):
+                    return _ensure_bt_d(act).to(device)
+        except Exception as e:
+            print(f"[DEBUG] predict_action failed: {e}")
+
+    # 2) sample_actions ----------------------------------------------------
+    try:
+        imgs, img_masks = policy.prepare_images(batch)
+        state = policy.prepare_state(batch)
+        lang_tokens, lang_masks = policy.prepare_language(batch)
+
+        acts = policy.model.sample_actions(imgs, img_masks, lang_tokens, lang_masks, state)
+        act_dim = policy.config.action_feature.shape[0]
+        acts = acts[:, :, :act_dim]                                # 去 padding
+        acts = policy.unnormalize_outputs({"action": acts})["action"]
+        return acts.to(device)
+    except Exception as e:
+        print(f"[DEBUG] sample_actions failed: {e}")
+
+    # 3) 未获取到动作 ------------------------------------------------------
+    return None

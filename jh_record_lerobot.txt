@@ -29,3 +29,22 @@ CUDA_VISIBLE_DEVICES=7 python lerobot/scripts/train.py \
 --wandb.project="pi0_TR2" \
 --wandb.disable_artifact=true \
 --job_name "pi0_koch_test"0
+
+
+04-22-2025
+CUDA_VISIBLE_DEVICES=6 python lerobot/scripts/train.py \
+--policy.path="/data/jiahuan/huggingface/models/pi0" \
+--dataset.repo_id="/data/jiahuan/huggingface/datasets/koch_test" \
+--output_dir="/data/jiahuan/our_training/lerobot/pi0_koch_test_20240422" \
+--config_path="/data/jiahuan/our_training/lerobot/pi0_koch_test_20240422/checkpoints/last/pretrained_model/train_config.json"  \
+--batch_size=1 \
+--save_freq=100 \
+--log_freq=50 \
+--steps=1000 \
+--num_workers=4 \
+--wandb.enable=true \
+--wandb.entity="GBuilders" \
+--wandb.project="pi0_TR2" \
+--wandb.disable_artifact=true \
+--resume=true \
+--job_name "pi0_koch_test"
