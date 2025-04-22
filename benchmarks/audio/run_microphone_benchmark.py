@@ -20,7 +20,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-import soundfile as sf
+from soundfile import read
 
 from lerobot.common.robot_devices.microphones.configs import MicrophoneConfig, PortAudioMicrophoneConfig
 from lerobot.common.robot_devices.microphones.portaudio import find_microphones
@@ -97,8 +97,8 @@ def main(
             recorded_audio_chunks = all_audio_chunks[i][microphone_key]
 
             # Load recorded file
-            recorded_data, _ = sf.read(recording_dir / f"{microphone_key}_recording_{i}.wav")
-            if len(recorded_data.shape) == 1:
+            recorded_data, _ = read(recording_dir / f"{microphone_key}_recording_{i}.wav")
+            if recorded_data.ndim == 1:
                 recorded_data = np.expand_dims(recorded_data, axis=1)
 
             record_length[i, j] = recorded_data.shape[0]

@@ -23,7 +23,6 @@ import datasets
 import numpy as np
 import packaging.version
 import PIL.Image
-import soundfile as sf
 import torch
 import torch.utils
 from datasets import concatenate_datasets, load_dataset
@@ -1038,7 +1037,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 audio_path = self._get_raw_audio_file_path(
                     episode_index=self.episode_buffer["episode_index"][0], audio_key=key
                 )
-                with sf.SoundFile(
+                with SoundFile(
                     audio_path,
                     mode="w",
                     samplerate=self.meta.features[key]["info"]["sample_rate"],
