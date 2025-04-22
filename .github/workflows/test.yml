@@ -69,7 +69,7 @@ jobs:
           python-version: "3.10"
 
       - name: Install lerobot (all extras)
-        run: uv sync --all-extras --prerelease=allow
+        run: uv sync --all-extras
 
       - name: Test with pytest
         run: |
@@ -101,20 +101,14 @@ jobs:
           python-version: "3.10"
 
       - name: Install lerobot
-        run: uv sync --extra "test" --prerelease=allow
+        run: uv sync --extra "test"
 
       - name: Test with pytest
-        # HACK: Remove it if mani-skill is released or if we drop maniskill
         run: |
-          uv run \
-            --extra test \
-            --prerelease=allow \
-            --frozen \
-            pytest tests -v \
-              --cov=./lerobot --durations=0 \
-              -W ignore::DeprecationWarning:imageio_ffmpeg._utils:7 \
-              -W ignore::UserWarning:torch.utils.data.dataloader:558 \
-              -W ignore::UserWarning:gymnasium.utils.env_checker:247 \
+          uv run pytest tests -v --cov=./lerobot --durations=0 \
+            -W ignore::DeprecationWarning:imageio_ffmpeg._utils:7 \
+            -W ignore::UserWarning:torch.utils.data.dataloader:558 \
+            -W ignore::UserWarning:gymnasium.utils.env_checker:247 \
             && rm -rf tests/outputs outputs
 
   end-to-end:
@@ -144,7 +138,7 @@ jobs:
       - name: Install lerobot (all extras)
         run: |
           uv venv
-          uv sync --all-extras --prerelease=allow
+          uv sync --all-extras
 
       - name: venv
         run: |
