@@ -42,7 +42,7 @@ Replace the `dataset_repo_id` field with the identifier for your dataset, which 
 dataset_repo_id: "my_dataset_repo_id"
 ## Typical logs and metrics
 ```
-When you start the training process, you will first see your full configuration being printed in the terminal. You can check it to make sure that you config it correctly and your config is not overrided by other files. The final configuration will also be saved with the checkpoint.
+When you start the training process, you will first see your full configuration being printed in the terminal. You can check it to make sure that you config it correctly and your config is not overriden by other files. The final configuration will also be saved with the checkpoint.
 
 After that, you will see training log like this one:
 

@@ -262,7 +262,7 @@ class GamepadController(InputController):
                 elif event.button == 6:
                     self.close_gripper_command = True
 
-                # LT button (7) for openning gripper
+                # LT button (7) for opening gripper
                 elif event.button == 7:
                     self.open_gripper_command = True
 
@@ -421,45 +421,44 @@ class GamepadControllerHID(InputController):
         try:
             # Read data from the gamepad
             data = self.device.read(64)
-            if data:
-                # Interpret gamepad data - this will vary by controller model
-                # These offsets are for the Logitech RumblePad 2
-                if len(data) >= 8:
-                    # Normalize joystick values from 0-255 to -1.0-1.0
-                    self.left_x = (data[1] - 128) / 128.0
-                    self.left_y = (data[2] - 128) / 128.0
-                    self.right_x = (data[3] - 128) / 128.0
-                    self.right_y = (data[4] - 128) / 128.0
+            # Interpret gamepad data - this will vary by controller model
+            # These offsets are for the Logitech RumblePad 2
+            if data and len(data) >= 8:
+                # Normalize joystick values from 0-255 to -1.0-1.0
+                self.left_x = (data[1] - 128) / 128.0
+                self.left_y = (data[2] - 128) / 128.0
+                self.right_x = (data[3] - 128) / 128.0
+                self.right_y = (data[4] - 128) / 128.0
 
-                    # Apply deadzone
-                    self.left_x = 0 if abs(self.left_x) < self.deadzone else self.left_x
-                    self.left_y = 0 if abs(self.left_y) < self.deadzone else self.left_y
-                    self.right_x = 0 if abs(self.right_x) < self.deadzone else self.right_x
-                    self.right_y = 0 if abs(self.right_y) < self.deadzone else self.right_y
+                # Apply deadzone
+                self.left_x = 0 if abs(self.left_x) < self.deadzone else self.left_x
+                self.left_y = 0 if abs(self.left_y) < self.deadzone else self.left_y
+                self.right_x = 0 if abs(self.right_x) < self.deadzone else self.right_x
+                self.right_y = 0 if abs(self.right_y) < self.deadzone else self.right_y
 
-                    # Parse button states (byte 5 in the Logitech RumblePad 2)
-                    buttons = data[5]
+                # Parse button states (byte 5 in the Logitech RumblePad 2)
+                buttons = data[5]
 
-                    # Check if RB is pressed then the intervention flag should be set
-                    self.intervention_flag = data[6] in [2, 6, 10, 14]
+                # Check if RB is pressed then the intervention flag should be set
+                self.intervention_flag = data[6] in [2, 6, 10, 14]
 
-                    # Check if RT is pressed
-                    self.open_gripper_command = data[6] in [8, 10, 12]
+                # Check if RT is pressed
+                self.open_gripper_command = data[6] in [8, 10, 12]
 
-                    # Check if LT is pressed
-                    self.close_gripper_command = data[6] in [4, 6, 12]
+                # Check if LT is pressed
+                self.close_gripper_command = data[6] in [4, 6, 12]
 
-                    # Check if Y/Triangle button (bit 7) is pressed for saving
-                    # Check if X/Square button (bit 5) is pressed for failure
-                    # Check if A/Cross button (bit 4) is pressed for rerecording
-                    if buttons & 1 << 7:
-                        self.episode_end_status = "success"
-                    elif buttons & 1 << 5:
-                        self.episode_end_status = "failure"
-                    elif buttons & 1 << 4:
-                        self.episode_end_status = "rerecord_episode"
-                    else:
-                        self.episode_end_status = None
+                # Check if Y/Triangle button (bit 7) is pressed for saving
+                # Check if X/Square button (bit 5) is pressed for failure
+                # Check if A/Cross button (bit 4) is pressed for rerecording
+                if buttons & 1 << 7:
+                    self.episode_end_status = "success"
+                elif buttons & 1 << 5:
+                    self.episode_end_status = "failure"
+                elif buttons & 1 << 4:
+                    self.episode_end_status = "rerecord_episode"
+                else:
+                    self.episode_end_status = None
 
         except OSError as e:
             logging.error(f"Error reading from gamepad: {e}")
@@ -618,7 +617,7 @@ def teleoperate_delta_inverse_kinematics(robot, controller, fps=10, bounds=None,
             # Process input events
             controller.update()
 
-            # Get currrent robot state
+            # Get current robot state
             joint_positions = robot.follower_arms["main"].read("Present_Position")
             current_ee_pos = kinematics.fk_gripper_tip(joint_positions)
 
@@ -635,7 +634,7 @@ def teleoperate_delta_inverse_kinematics(robot, controller, fps=10, bounds=None,
                 desired_ee_pos[:3, 3] = np.clip(desired_ee_pos[:3, 3], bounds["min"], bounds["max"])
 
             # Only send commands if there's actual movement
-            if any([abs(v) > 0.001 for v in [delta_x, delta_y, delta_z]]):
+            if any(abs(v) > 0.001 for v in [delta_x, delta_y, delta_z]):
                 # Compute joint targets via inverse kinematics
                 target_joint_state = kinematics.ik(joint_positions, desired_ee_pos, position_only=True)
 
@@ -678,7 +677,7 @@ def teleoperate_gym_env(env, controller, fps: int = 30):
                 action = np.array([delta_x, delta_y, delta_z])
 
                 # Skip if no movement
-                if any([abs(v) > 0.001 for v in [delta_x, delta_y, delta_z]]):
+                if any(abs(v) > 0.001 for v in [delta_x, delta_y, delta_z]):
                     # Step the environment - pass action as a tensor with intervention flag
                     action_tensor = torch.from_numpy(action.astype(np.float32))
                     obs, reward, terminated, truncated, info = env.step((action_tensor, False))

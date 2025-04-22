@@ -168,7 +168,7 @@ def test_save_multi_optimizer_state(multi_optimizers, tmp_path):
     save_optimizer_state(multi_optimizers, tmp_path)
 
     # Verify that directories were created for each optimizer
-    for name in multi_optimizers.keys():
+    for name in multi_optimizers:
         assert (tmp_path / name).is_dir()
         assert (tmp_path / name / OPTIMIZER_STATE).is_file()
         assert (tmp_path / name / OPTIMIZER_PARAM_GROUPS).is_file()
@@ -204,7 +204,7 @@ def test_save_and_load_multi_optimizer_state(base_params_dict, multi_optimizers,
     loaded_optimizers = load_optimizer_state(new_optimizers, tmp_path)
 
     # Verify state dictionaries match
-    for name in multi_optimizers.keys():
+    for name in multi_optimizers:
         torch.testing.assert_close(multi_optimizers[name].state_dict(), loaded_optimizers[name].state_dict())
 
 

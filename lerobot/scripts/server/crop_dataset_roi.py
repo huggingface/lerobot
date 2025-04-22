@@ -269,7 +269,7 @@ if __name__ == "__main__":
     new_repo_id = args.repo_id + "_cropped_resized"
     new_dataset_root = Path(str(dataset.root) + "_cropped_resized")
 
-    croped_resized_dataset = convert_lerobot_dataset_to_cropper_lerobot_dataset(
+    cropped_resized_dataset = convert_lerobot_dataset_to_cropper_lerobot_dataset(
         original_dataset=dataset,
         crop_params_dict=rois,
         new_repo_id=new_repo_id,

@@ -106,7 +106,7 @@ class HILSerlRobotEnv(gym.Env):
             - The action space is defined as a Tuple where:
                 • The first element is a Box space representing joint position commands. It is defined as relative (delta)
                   or absolute, based on the configuration.
-                • ThE SECONd element is a Discrete space (with 2 values) serving as a flag for intervention (teleoperation).
+                • The second element is a Discrete space (with 2 values) serving as a flag for intervention (teleoperation).
         """
         example_obs = self.robot.capture_observation()
 
@@ -384,7 +384,7 @@ class ActionRepeatWrapper(gym.Wrapper):
 class RewardWrapper(gym.Wrapper):
     def __init__(self, env, reward_classifier, device: torch.device = "cuda"):
         """
-        Wrapper to add reward prediction to the environment, it use a trained classifer.
+        Wrapper to add reward prediction to the environment, it use a trained classifier.
 
         cfg.
             env: The environment to wrap
@@ -414,7 +414,7 @@ class RewardWrapper(gym.Wrapper):
                 if self.reward_classifier is not None
                 else 0.0
             )
-        info["Reward classifer frequency"] = 1 / (time.perf_counter() - start_time)
+        info["Reward classifier frequency"] = 1 / (time.perf_counter() - start_time)
 
         if success == 1.0:
             terminated = True
@@ -784,11 +784,11 @@ class ResetWrapper(gym.Wrapper):
             while time.perf_counter() - start_time < self.reset_time_s:
                 self.robot.teleop_step()
 
-            log_say("Manual reseting of the environment done.", play_sounds=True)
+            log_say("Manual reset of the environment done.", play_sounds=True)
         return super().reset(seed=seed, options=options)
 
 
-class BatchCompitableWrapper(gym.ObservationWrapper):
+class BatchCompatibleWrapper(gym.ObservationWrapper):
     def __init__(self, env):
         super().__init__(env)
 
@@ -823,10 +823,7 @@ class GripperPenaltyWrapper(gym.RewardWrapper):
 
     def step(self, action):
         self.last_gripper_state = self.unwrapped.robot.follower_arms["main"].read("Present_Position")[-1]
-        if isinstance(action, tuple):
-            gripper_action = action[0][-1]
-        else:
-            gripper_action = action[-1]
+        gripper_action = action[0][-1] if isinstance(action, tuple) else action[-1]
         obs, reward, terminated, truncated, info = self.env.step(action)
         gripper_penalty = self.reward(reward, gripper_action)
 
@@ -1279,7 +1276,7 @@ def make_robot_env(cfg) -> gym.vector.VectorEnv:
     )
     if cfg.wrapper.ee_action_space_params is None and cfg.wrapper.joint_masking_action_space is not None:
         env = JointMaskingActionSpace(env=env, mask=cfg.wrapper.joint_masking_action_space)
-    env = BatchCompitableWrapper(env=env)
+    env = BatchCompatibleWrapper(env=env)
 
     return env
 
@@ -1492,7 +1489,7 @@ def main(cfg: EnvConfig):
     alpha = 1.0
 
     num_episode = 0
-    sucesses = []
+    successes = []
     while num_episode < 20:
         start_loop_s = time.perf_counter()
         # Sample a new random action from the robot's action space.
@@ -1503,15 +1500,15 @@ def main(cfg: EnvConfig):
         # Execute the step: wrap the NumPy action in a torch tensor.
         obs, reward, terminated, truncated, info = env.step((torch.from_numpy(smoothed_action), False))
         if terminated or truncated:
-            sucesses.append(reward)
+            successes.append(reward)
             env.reset()
             num_episode += 1
 
         dt_s = time.perf_counter() - start_loop_s
         busy_wait(1 / cfg.fps - dt_s)
 
-    logging.info(f"Success after 20 steps {sucesses}")
-    logging.info(f"success rate {sum(sucesses) / len(sucesses)}")
+    logging.info(f"Success after 20 steps {successes}")
+    logging.info(f"success rate {sum(successes) / len(successes)}")
 
 
 if __name__ == "__main__":

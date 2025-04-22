@@ -262,8 +262,6 @@ def control_loop(
     while timestamp < control_time_s:
         start_loop_t = time.perf_counter()
 
-        current_joint_positions = robot.follower_arms["main"].read("Present_Position")
-
         if teleoperate:
             observation, action = robot.teleop_step(record_data=True)
         else:
@@ -326,7 +324,7 @@ def reset_follower_position(robot: Robot, target_position):
     current_position = robot.follower_arms["main"].read("Present_Position")
     trajectory = torch.from_numpy(
         np.linspace(current_position, target_position, 50)
-    )  # NOTE: 30 is just an aribtrary number
+    )  # NOTE: 30 is just an arbitrary number
     for pose in trajectory:
         robot.send_action(pose)
         busy_wait(0.015)

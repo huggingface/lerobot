@@ -224,7 +224,7 @@ def act_with_policy(
     logging.info("make_policy")
 
     ### Instantiate the policy in both the actor and learner processes
-    ### To avoid sending a SACPolicy object through the port, we create a policy intance
+    ### To avoid sending a SACPolicy object through the port, we create a policy instance
     ### on both sides, the learner sends the updated parameters every n steps to update the actor's parameters
     # TODO: At some point we should just need make sac policy
     policy: SACPolicy = make_policy(
@@ -278,7 +278,7 @@ def act_with_policy(
         # Increment total steps counter for intervention rate
         episode_total_steps += 1
 
-        # NOTE: We overide the action if the intervention is True, because the action applied is the intervention action
+        # NOTE: We override the action if the intervention is True, because the action applied is the intervention action
         if "is_intervention" in info and info["is_intervention"]:
             # TODO: Check the shape
             # NOTE: The action space for demonstration before hand is with the full action space

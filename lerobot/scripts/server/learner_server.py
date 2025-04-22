@@ -319,7 +319,7 @@ def add_actor_information_and_train(
         batch_size: int = batch_size // 2  # We will sample from both replay buffer
 
     logging.info("Starting learner thread")
-    interaction_message, transition = None, None
+    interaction_message = None
     optimization_step = resume_optimization_step if resume_optimization_step is not None else 0
     interaction_step_shift = resume_interaction_step if resume_interaction_step is not None else 0
 
@@ -654,7 +654,7 @@ def start_learner_server(
 
     shutdown_event.wait()
     logging.info("[LEARNER] Stopping gRPC server...")
-    server.stop(learner_service.STUTDOWN_TIMEOUT)
+    server.stop(learner_service.SHUTDOWN_TIMEOUT)
     logging.info("[LEARNER] gRPC server stopped")
 
 
@@ -719,7 +719,7 @@ def save_training_checkpoint(
     # Update the "last" symlink
     update_last_checkpoint(checkpoint_dir)
 
-    # TODO : temporarly save replay buffer here, remove later when on the robot
+    # TODO : temporary save replay buffer here, remove later when on the robot
     # We want to control this with the keyboard inputs
     dataset_dir = os.path.join(cfg.output_dir, "dataset")
     if os.path.exists(dataset_dir) and os.path.isdir(dataset_dir):
@@ -889,7 +889,7 @@ def load_training_state(
         training_state_path = os.path.join(checkpoint_dir, TRAINING_STATE_DIR, "training_state.pt")
         interaction_step = 0
         if os.path.exists(training_state_path):
-            training_state = torch.load(training_state_path, weights_only=False)
+            training_state = torch.load(training_state_path, weights_only=False)  # nosec B614: Safe usage of torch.load
             interaction_step = training_state.get("interaction_step", 0)
 
         logging.info(f"Resuming from step {step}, interaction step {interaction_step}")
