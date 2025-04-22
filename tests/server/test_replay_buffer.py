@@ -403,24 +403,24 @@ def test_from_lerobot_dataset(tmp_path):
 
     assert len(reconverted_buffer) == 4, "Reconverted Replay buffer should have the same size as original"
 
-    assert torch.equal(reconverted_buffer.actions, replay_buffer.actions), (
+    assert torch.equal(reconverted_buffer.actions[0:4], replay_buffer.actions[0:4]), (
         "Actions from converted buffer should be equal to the original replay buffer."
     )
-    assert torch.equal(reconverted_buffer.rewards, replay_buffer.rewards), (
+    assert torch.equal(reconverted_buffer.rewards[0:4], replay_buffer.rewards[0:4]), (
         "Rewards from converted buffer should be equal to the original replay buffer."
     )
-    assert torch.equal(reconverted_buffer.dones, replay_buffer.dones), (
+    assert torch.equal(reconverted_buffer.dones[0:4], replay_buffer.dones[0:4]), (
         "Dones from converted buffer should be equal to the original replay buffer."
     )
 
     # Lerobot DS haven't supported truncateds yet
     expected_truncateds = torch.zeros(replay_buffer.truncateds.shape[0]).bool()
-    assert torch.equal(reconverted_buffer.truncateds, expected_truncateds), (
+    assert torch.equal(reconverted_buffer.truncateds[0:4], expected_truncateds[0:4]), (
         "Truncateds from converted buffer should be equal False"
     )
 
     assert torch.equal(
-        replay_buffer.states["observation.state"], reconverted_buffer.states["observation.state"]
+        replay_buffer.states["observation.state"][0:4], reconverted_buffer.states["observation.state"][0:4]
     ), "State should be the same after converting to dataset and return back"
 
     for i in range(4):
