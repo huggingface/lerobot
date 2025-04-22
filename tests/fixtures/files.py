@@ -48,16 +48,6 @@ def create_stats(stats_factory):
     return _create_stats
 
 
-# @pytest.fixture(scope="session")
-# def create_episodes_stats(episodes_stats_factory):
-#     def _create_episodes_stats(dir: Path, episodes_stats: Dataset | None = None):
-#         if episodes_stats is None:
-#             episodes_stats = episodes_stats_factory()
-#         write_episodes_stats(episodes_stats, dir)
-
-#     return _create_episodes_stats
-
-
 @pytest.fixture(scope="session")
 def create_tasks(tasks_factory):
     def _create_tasks(dir: Path, tasks: pd.DataFrame | None = None):
