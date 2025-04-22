@@ -1,3 +1,5 @@
+# ruff: noqa: N806, N815, N803
+
 import numpy as np
 from scipy.spatial.transform import Rotation
 
