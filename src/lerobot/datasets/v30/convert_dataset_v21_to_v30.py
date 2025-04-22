@@ -34,8 +34,9 @@ from lerobot.common.datasets.compute_stats import aggregate_stats
 from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset
 from lerobot.common.datasets.utils import (
     DEFAULT_CHUNK_SIZE,
+    DEFAULT_DATA_FILE_SIZE_IN_MB,
     DEFAULT_DATA_PATH,
-    DEFAULT_FILE_SIZE_IN_MB,
+    DEFAULT_VIDEO_FILE_SIZE_IN_MB,
     DEFAULT_VIDEO_PATH,
     cast_stats_to_numpy,
     concat_video_files,
@@ -174,7 +175,7 @@ def convert_data(root, new_root):
         episodes_metadata.append(ep_metadata)
         ep_idx += 1
 
-        if size_in_mb < DEFAULT_FILE_SIZE_IN_MB:
+        if size_in_mb < DEFAULT_DATA_FILE_SIZE_IN_MB:
             paths_to_cat.append(ep_path)
             continue
 
@@ -263,7 +264,7 @@ def convert_videos_of_camera(root: Path, new_root: Path, video_key):
         episodes_metadata.append(ep_metadata)
         ep_idx += 1
 
-        if size_in_mb < DEFAULT_FILE_SIZE_IN_MB:
+        if size_in_mb < DEFAULT_VIDEO_FILE_SIZE_IN_MB:
             paths_to_cat.append(ep_path)
             continue
 
@@ -337,8 +338,8 @@ def convert_info(root, new_root):
     info["codebase_version"] = "v3.0"
     del info["total_chunks"]
     del info["total_videos"]
-    info["files_size_in_mb"] = DEFAULT_FILE_SIZE_IN_MB
-    # TODO(rcadene): chunk- or chunk_ or file- or file_
+    info["data_files_size_in_mb"] = DEFAULT_DATA_FILE_SIZE_IN_MB
+    info["video_files_size_in_mb"] = DEFAULT_VIDEO_FILE_SIZE_IN_MB
     info["data_path"] = DEFAULT_DATA_PATH
     info["video_path"] = DEFAULT_VIDEO_PATH
     info["fps"] = float(info["fps"])

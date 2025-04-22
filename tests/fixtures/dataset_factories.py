@@ -28,12 +28,14 @@ from datasets import Dataset
 from lerobot.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset, LeRobotDatasetMetadata
 from lerobot.datasets.utils import (
     DEFAULT_CHUNK_SIZE,
+    DEFAULT_DATA_FILE_SIZE_IN_MB,
     DEFAULT_DATA_PATH,
     DEFAULT_FEATURES,
-    DEFAULT_FILE_SIZE_IN_MB,
+    DEFAULT_VIDEO_FILE_SIZE_IN_MB,
     DEFAULT_VIDEO_PATH,
     flatten_dict,
     get_hf_features_from_features,
+    hf_transform_to_torch,
 )
 from tests.fixtures.constants import (
     DEFAULT_FPS,
@@ -121,7 +123,8 @@ def info_factory(features_factory):
         total_tasks: int = 0,
         total_videos: int = 0,
         chunks_size: int = DEFAULT_CHUNK_SIZE,
-        files_size_in_mb: float = DEFAULT_FILE_SIZE_IN_MB,
+        data_files_size_in_mb: float = DEFAULT_DATA_FILE_SIZE_IN_MB,
+        video_files_size_in_mb: float = DEFAULT_VIDEO_FILE_SIZE_IN_MB,
         data_path: str = DEFAULT_DATA_PATH,
         video_path: str = DEFAULT_VIDEO_PATH,
         motor_features: dict = DUMMY_MOTOR_FEATURES,
@@ -137,7 +140,8 @@ def info_factory(features_factory):
             "total_tasks": total_tasks,
             "total_videos": total_videos,
             "chunks_size": chunks_size,
-            "files_size_in_mb": files_size_in_mb,
+            "data_files_size_in_mb": data_files_size_in_mb,
+            "video_files_size_in_mb": video_files_size_in_mb,
             "fps": fps,
             "splits": {},
             "data_path": data_path,
@@ -352,7 +356,7 @@ def hf_dataset_factory(features_factory, tasks_factory, episodes_factory, img_ar
             },
             features=hf_features,
         )
-        dataset.set_format("torch")
+        dataset.set_transform(hf_transform_to_torch)
         return dataset
 
     return _create_hf_dataset
