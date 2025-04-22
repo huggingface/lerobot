@@ -44,12 +44,12 @@
   </div>
 
 
-  <p><strong>Meet the updated SO100, the SO-101 – Just $110 per arm!</strong></p>
+  <p><strong>Meet the updated SO100, the SO-101 – Just €110 per arm!</strong></p>
   <p>Train it in minutes with a few simple moves on your laptop.</p>
   <p>Then sit back and watch your creation act autonomously! 🤯</p>
 
   <p><a href="https://github.com/huggingface/lerobot/blob/main/examples/12_use_so101.md">
-      Get the full SO-101 tutorial here.</a></p>
+      See the full SO-101 tutorial here.</a></p>
 
   <p>Want to take it to the next level? Make your SO-101 mobile by building LeKiwi!</p>
   <p>Check out the <a href="https://github.com/huggingface/lerobot/blob/main/examples/11_use_lekiwi.md">LeKiwi tutorial</a> and bring your robot to life on wheels.</p>
