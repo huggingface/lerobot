@@ -33,23 +33,23 @@ def select_rect_roi(img):
 
     roi = None  # Will store the final ROI as (top, left, height, width)
     drawing = False
-    ix, iy = -1, -1  # Initial click coordinates
+    index_x, index_y = -1, -1  # Initial click coordinates
 
     def mouse_callback(event, x, y, flags, param):
-        nonlocal ix, iy, drawing, roi, working_img
+        nonlocal index_x, index_y, drawing, roi, working_img
 
         if event == cv2.EVENT_LBUTTONDOWN:
             # Start drawing: record starting coordinates
             drawing = True
-            ix, iy = x, y
+            index_x, index_y = x, y
 
         elif event == cv2.EVENT_MOUSEMOVE:
             if drawing:
                 # Compute the top-left and bottom-right corners regardless of drag direction
-                top = min(iy, y)
-                left = min(ix, x)
-                bottom = max(iy, y)
-                right = max(ix, x)
+                top = min(index_y, y)
+                left = min(index_x, x)
+                bottom = max(index_y, y)
+                right = max(index_x, x)
                 # Show a temporary image with the current rectangle drawn
                 temp = working_img.copy()
                 cv2.rectangle(temp, (left, top), (right, bottom), (0, 255, 0), 2)
@@ -58,10 +58,10 @@ def select_rect_roi(img):
         elif event == cv2.EVENT_LBUTTONUP:
             # Finish drawing
             drawing = False
-            top = min(iy, y)
-            left = min(ix, x)
-            bottom = max(iy, y)
-            right = max(ix, x)
+            top = min(index_y, y)
+            left = min(index_x, x)
+            bottom = max(index_y, y)
+            right = max(index_x, x)
             height = bottom - top
             width = right - left
             roi = (top, left, height, width)  # (top, left, height, width)
