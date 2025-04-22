@@ -262,6 +262,11 @@ def load_image_as_numpy(
 
 def load_audio_from_path(fpath: str | Path) -> np.ndarray:
     audio_data, _ = read(fpath, dtype="float32")
+
+    # Fill missing channel dimension when loading mono audio data
+    if audio_data.ndim == 1:
+        audio_data = np.expand_dims(audio_data, axis=1)
+
     return audio_data
 
 
