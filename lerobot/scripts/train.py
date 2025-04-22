@@ -51,6 +51,7 @@ from lerobot.common.utils.wandb_utils import WandBLogger
 from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.scripts.eval import eval_policy
+from lerobot.scripts.plot_trajectory import plot_epoch_trajectories
 
 
 def update_policy(
@@ -237,6 +238,21 @@ def train(cfg: TrainPipelineConfig):
                 
                 action_mse = torch.nn.functional.mse_loss(pred_action, gt_action)
                 output_dict['train_action_mse_error'] = action_mse.item()
+
+                # 每10个epoch绘制并上传轨迹图
+                if step % (cfg.log_freq * 10) == 0:  # 假设每个epoch有cfg.log_freq步
+                    epoch = step // cfg.log_freq
+                    save_dir = cfg.output_dir / "trajectory_plots"
+                    save_dir.mkdir(exist_ok=True)
+                    
+                    # 绘制轨迹图
+                    plot_epoch_trajectories(gt_action, pred_action, save_dir, epoch)
+                    
+                    # 上传到WandB
+                    if wandb_logger:
+                        for i in range(3):  # 上传3个样本的图
+                            img_path = save_dir / f"trajectory_epoch_{epoch}_sample_{i}.png"
+                            wandb_logger.log_image(img_path, step, f"trajectory_epoch_{epoch}_sample_{i}")
 
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
         # increment `step` here.
