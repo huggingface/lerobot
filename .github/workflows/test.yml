@@ -104,6 +104,7 @@ jobs:
         run: uv sync --extra "test" --prerelease=allow
 
       - name: Test with pytest
+        # HACK: Remove it if mani-skill is released or if we drop maniskill
         run: |
           uv run \
             --extra test \
