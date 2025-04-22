@@ -208,7 +208,7 @@ class ManipulatorRobot:
             key = f"observation.audio.{mic_key}"
             mic_ft[key] = {
                 "dtype": "audio",
-                "shape": (len(mic.channels),),
+                "shape": (1, len(mic.channels)),
                 "names": "channels",
                 "info": {
                     "sample_rate": mic.sample_rate
