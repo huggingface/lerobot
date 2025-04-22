@@ -101,9 +101,7 @@ jobs:
           python-version: "3.10"
 
       - name: Install lerobot
-        env:
-          UV_PRERELEASE: allow # HACK: Remove once we have a release
-        run: uv sync --extra "test"
+        run: uv sync --extra "test" --prerelease=allow
 
       - name: Test with pytest
         run: |
