@@ -155,6 +155,7 @@ def decode_video_frames_torchvision(
     )
 
     # get closest frames to the query timestamps
+    # TODO(rcadene): remove torch.stack
     closest_frames = torch.stack([loaded_frames[idx] for idx in argmin_])
     closest_ts = loaded_ts[argmin_]
 
