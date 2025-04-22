@@ -801,11 +801,9 @@ def validate_feature_audio(name: str, expected_shape: list[str], value: np.ndarr
     if isinstance(value, np.ndarray):
         actual_shape = value.shape
         c = expected_shape
-        if len(actual_shape) != 2 or (
-            actual_shape[-1] != c[-1] and actual_shape[0] != c[0]
-        ):  # The number of frames might be different
+        if len(actual_shape) != 2 or actual_shape[-1] != c[-1]:  # The number of frames might be different
             error_message += (
-                f"The feature '{name}' of shape '{actual_shape}' does not have the expected shape '{(c,)}'.\n"
+                f"The feature '{name}' of shape '{actual_shape}' does not have the expected shape '{c}'.\n"
             )
     else:
         error_message += f"The feature '{name}' is expected to be of type 'np.ndarray', but type '{type(value)}' provided instead.\n"

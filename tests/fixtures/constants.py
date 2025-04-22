@@ -46,8 +46,8 @@ DUMMY_VIDEO_INFO = {
     "has_audio": False,
 }
 DUMMY_MICROPHONE_FEATURES = {
-    "laptop": {"dtype": "audio", "shape": (1,), "names": ["channels"], "info": None},
-    "phone": {"dtype": "audio", "shape": (1,), "names": ["channels"], "info": None},
+    "laptop": {"dtype": "audio", "shape": (1, 2), "names": ["channels"], "info": None},
+    "phone": {"dtype": "audio", "shape": (1, 2), "names": ["channels"], "info": None},
 }
 DEFAULT_SAMPLE_RATE = 48000
 DUMMY_AUDIO_CHANNELS = 2

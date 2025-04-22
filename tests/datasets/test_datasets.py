@@ -71,7 +71,7 @@ def audio_dataset(tmp_path, empty_lerobot_dataset_factory):
     features = {
         "observation.audio.microphone": {
             "dtype": "audio",
-            "shape": (DUMMY_AUDIO_CHANNELS,),
+            "shape": (1, DUMMY_AUDIO_CHANNELS),
             "names": [
                 "channels",
             ],
