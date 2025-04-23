@@ -44,7 +44,7 @@
   </div>
 
 
-  <p><strong>Meet the updated SO100, the SO-101 – Just €110 per arm!</strong></p>
+  <p><strong>Meet the updated SO100, the SO-101 – Just €114 per arm!</strong></p>
   <p>Train it in minutes with a few simple moves on your laptop.</p>
   <p>Then sit back and watch your creation act autonomously! 🤯</p>
 
