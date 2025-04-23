@@ -65,8 +65,12 @@ class LeKiwi(Robot):
             },
             calibration=self.calibration,
         )
-        self.arm_motors = [m for m in self.bus.names if m.startswith("arm")]
-        self.base_motors = [m for m in self.bus.names if m.startswith("base")]
+        self.arm_motors = [
+            motor_name for motor_name, _ in self.bus.motors.items() if motor_name.startswith("arm")
+        ]
+        self.base_motors = [
+            motor_name for motor_name, _ in self.bus.motors.items() if motor_name.startswith("base")
+        ]
         self.cameras = make_cameras_from_configs(config.cameras)
 
     @property
