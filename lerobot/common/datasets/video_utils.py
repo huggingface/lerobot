@@ -255,15 +255,19 @@ def encode_video_frames(
     overwrite: bool = False,
 ) -> None:
     """More info on ffmpeg arguments tuning on `benchmark/video/README.md`"""
+    # Check encoder availability
+    if vcodec not in ["h264", "hevc", "libsvtav1"]:
+        raise ValueError(f"Unsupported video codec: {vcodec}. Supported codecs are: h264, hevc, libsvtav1.")
+
     video_path = Path(video_path)
     imgs_dir = Path(imgs_dir)
 
     video_path.parent.mkdir(parents=True, exist_ok=overwrite)
 
     # Encoders/pixel formats incompatibility check
-    if vcodec == "libsvtav1" and pix_fmt == "yuv444p":
+    if (vcodec == "libsvtav1" or vcodec == "hevc") and pix_fmt == "yuv444p":
         logging.warning(
-            "Incompatible pixel format 'yuv444p' for codec 'libsvtav1', auto-selecting format 'yuv420p'"
+            f"Incompatible pixel format 'yuv444p' for codec {vcodec}, auto-selecting format 'yuv420p'"
         )
         pix_fmt = "yuv420p"
 
