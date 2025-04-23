@@ -187,6 +187,7 @@ def aggregate_datasets(repo_ids: list[str], aggr_repo_id: str, roots: list[Path]
         for chunk_idx, file_idx in data_chunk_file_ids:
             path = meta.root / DEFAULT_DATA_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
             df = pd.read_parquet(path)
+            # TODO(rcadene): update frame index
             update_data_func = get_update_episode_and_task_func(num_episodes, meta.tasks, aggr_meta.tasks)
             df = df.apply(update_data_func, axis=1)
 
