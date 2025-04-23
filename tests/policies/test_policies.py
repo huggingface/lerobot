@@ -141,6 +141,7 @@ def test_policy(ds_repo_id, env_name, env_kwargs, policy_name, policy_kwargs):
     Note: We test various combinations of policy and dataset. The combinations are by no means exhaustive,
           and for now we add tests as we see fit.
     """
+    policy_kwargs["device"] = DEVICE
 
     train_cfg = TrainPipelineConfig(
         # TODO(rcadene, aliberts): remove dataset download
