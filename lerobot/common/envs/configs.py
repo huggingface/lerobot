@@ -182,7 +182,8 @@ class EEActionSpaceConfig:
     y_step_size: float
     z_step_size: float
     bounds: Dict[str, Any]  # Contains 'min' and 'max' keys with position bounds
-    use_gamepad: bool = False
+    use_gamepad: bool = True
+    use_leader_control: bool = False
 
 
 @dataclass
