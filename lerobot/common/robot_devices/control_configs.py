@@ -88,7 +88,7 @@ class RecordControlConfig(ControlConfig):
     # Resume recording on an existing dataset.
     resume: bool = False
     # Reset follower arms to an initial configuration.
-    reset_follower_arms: bool = True
+    reset_follower_arms: bool = False
 
     def __post_init__(self):
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
