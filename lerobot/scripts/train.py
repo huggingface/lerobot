@@ -52,7 +52,7 @@ def compute_action_mse(policy: PreTrainedPolicy, batch: dict, device: torch.devi
     with torch.no_grad(), torch.autocast(device_type=device.type, enabled=policy.config.use_amp):
         gt = batch[ACTION].to(device)[:, : policy.config.n_action_steps, :3]
         pred = policy.predict_actions_batch(batch)[:, : policy.config.n_action_steps, :3]
-        return F.mse_loss(pred, gt, reduction="mean")
+        return F.mse_loss(pred, gt, reduction="mean") / 1000.0
 
 
 # ─────────────────────────────────────────
