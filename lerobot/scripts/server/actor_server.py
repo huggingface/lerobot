@@ -226,7 +226,6 @@ def act_with_policy(
     ### Instantiate the policy in both the actor and learner processes
     ### To avoid sending a SACPolicy object through the port, we create a policy instance
     ### on both sides, the learner sends the updated parameters every n steps to update the actor's parameters
-    # TODO: At some point we should just need make sac policy
     policy: SACPolicy = make_policy(
         cfg=cfg.policy,
         env_cfg=cfg.env,
@@ -280,7 +279,6 @@ def act_with_policy(
 
         # NOTE: We override the action if the intervention is True, because the action applied is the intervention action
         if "is_intervention" in info and info["is_intervention"]:
-            # TODO: Check the shape
             # NOTE: The action space for demonstration before hand is with the full action space
             # but sometimes for example we want to deactivate the gripper
             action = info["action_intervention"]
@@ -301,16 +299,13 @@ def act_with_policy(
                 next_state=next_obs,
                 done=done,
                 truncated=truncated,  # TODO: (azouitine) Handle truncation properly
-                complementary_info=info,  # TODO Handle information for the transition, is_demonstraction: bool
+                complementary_info=info,
             )
         )
         # assign obs to the next obs and continue the rollout
         obs = next_obs
 
-        # HACK: We have only one env but we want to batch it, it will be resolved with the torch box
-        # Because we are using a single environment we can index at zero
         if done or truncated:
-            # TODO: Handle logging for episode information
             logging.info(f"[ACTOR] Global step {interaction_step}: Episode reward: {sum_reward_episode}")
 
             update_policy_parameters(policy=policy.actor, parameters_queue=parameters_queue, device=device)
@@ -342,9 +337,10 @@ def act_with_policy(
                     }
                 )
             )
+
+            # Reset intervention counters
             sum_reward_episode = 0.0
             episode_intervention = False
-            # Reset intervention counters
             episode_intervention_steps = 0
             episode_total_steps = 0
             obs, info = online_env.reset()

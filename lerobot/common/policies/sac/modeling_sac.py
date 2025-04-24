@@ -15,8 +15,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# TODO: (1) better device management
-
 import math
 from dataclasses import asdict
 from typing import Callable, List, Literal, Optional, Tuple
@@ -254,7 +252,6 @@ class SACPolicy(
         with torch.no_grad():
             next_action_preds, next_log_probs, _ = self.actor(next_observations, next_observation_features)
 
-            # TODO: (maractingi, azouitine) This is to slow, we should find a way to do this in a more efficient way
             next_action_preds = self.unnormalize_outputs({"action": next_action_preds})["action"]
 
             # 2- compute q targets
@@ -378,7 +375,6 @@ class SACPolicy(
     ) -> Tensor:
         actions_pi, log_probs, _ = self.actor(observations, observation_features)
 
-        # TODO: (maractingi, azouitine) This is to slow, we should find a way to do this in a more efficient way
         actions_pi: Tensor = self.unnormalize_outputs({"action": actions_pi})["action"]
 
         q_preds = self.critic_forward(
