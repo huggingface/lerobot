@@ -64,7 +64,7 @@ def decode_audio_torchcodec(
     audio_chunks = []
     for ts in timestamps:
         current_audio_chunk = audio_decoder.get_samples_played_in_range(
-            start_seconds=ts, stop_seconds=ts + duration
+            start_seconds=ts - duration, stop_seconds=ts
         )
 
         if log_loaded_timestamps:
@@ -101,7 +101,7 @@ def decode_audio_torchaudio(
 
     audio_chunks = []
     for ts in timestamps:
-        reader.seek(ts)  # Default to closest audio sample
+        reader.seek(ts - duration)  # Default to closest audio sample
         status = reader.fill_buffer()
         if status != 0:
             logging.warning("Audio stream reached end of recording before decoding desired timestamps.")
