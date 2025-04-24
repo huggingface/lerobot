@@ -201,13 +201,8 @@ def record(
     resume: bool = False,
     local_files_only: bool = False,
     run_compute_stats: bool = True,
-    assign_rewards: bool = False,
 ) -> LeRobotDataset:
     # Load pretrained policy
-
-    extra_features = (
-        {"next.reward": {"dtype": "int64", "shape": (1,), "names": None}} if assign_rewards else None
-    )
 
     policy = None
     if pretrained_policy_name_or_path is not None:
@@ -221,7 +216,7 @@ def record(
         raise ValueError("Either policy or process_action_fn has to be set to enable control in sim.")
 
     # initialize listener before sim env
-    listener, events = init_keyboard_listener(assign_rewards=assign_rewards)
+    listener, events = init_keyboard_listener()
 
     # create sim env
     env = env()
@@ -269,7 +264,6 @@ def record(
             "shape": env.action_space.shape,
             "names": None,
         }
-        features = {**features, **extra_features}
 
         # Create empty dataset or load existing saved episodes
         sanity_check_dataset_name(repo_id, policy)
@@ -320,13 +314,6 @@ def record(
                 "seed": seed,
                 "timestamp": env_timestamp,
             }
-
-            # Overwrite environment reward with manually assigned reward
-            if assign_rewards:
-                frame["next.reward"] = events["next.reward"]
-
-                # Should success always be false to match what we do in control_utils?
-                frame["next.success"] = False
 
             for key in image_keys:
                 if not key.startswith("observation.image"):

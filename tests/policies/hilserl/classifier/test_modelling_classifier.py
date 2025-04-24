@@ -4,6 +4,7 @@ from lerobot.common.policies.hilserl.classifier.modeling_classifier import (
     ClassifierConfig,
     ClassifierOutput,
 )
+from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from tests.utils import require_package
 
 
@@ -27,19 +28,39 @@ def test_binary_classifier_with_default_params():
     )
 
     config = ClassifierConfig()
+    config.input_features = {
+        "observation.image": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 224, 224)),
+    }
+    config.output_features = {
+        "next.reward": PolicyFeature(type=FeatureType.REWARD, shape=(1,)),
+    }
+    config.normalization_mapping = {
+        "VISUAL": NormalizationMode.IDENTITY,
+        "REWARD": NormalizationMode.IDENTITY,
+    }
+    config.num_cameras = 1
     classifier = Classifier(config)
 
     batch_size = 10
 
-    input = torch.rand(batch_size, 3, 224, 224)
-    output = classifier(input)
+    input = {
+        "observation.image": torch.rand((batch_size, 3, 224, 224)),
+        "next.reward": torch.randint(low=0, high=2, size=(batch_size,)).float(),
+    }
+
+    images, labels = classifier.extract_images_and_labels(input)
+    assert len(images) == 1
+    assert images[0].shape == torch.Size([batch_size, 3, 224, 224])
+    assert labels.shape == torch.Size([batch_size])
+
+    output = classifier.predict(images)
 
     assert output is not None
-    assert output.logits.shape == torch.Size([batch_size])
+    assert output.logits.size() == torch.Size([batch_size])
     assert not torch.isnan(output.logits).any(), "Tensor contains NaN values"
     assert output.probabilities.shape == torch.Size([batch_size])
     assert not torch.isnan(output.probabilities).any(), "Tensor contains NaN values"
-    assert output.hidden_states.shape == torch.Size([batch_size, 2048])
+    assert output.hidden_states.shape == torch.Size([batch_size, 512])
     assert not torch.isnan(output.hidden_states).any(), "Tensor contains NaN values"
 
 
@@ -50,20 +71,37 @@ def test_multiclass_classifier():
     )
 
     num_classes = 5
-    config = ClassifierConfig(num_classes=num_classes)
+    config = ClassifierConfig()
+    config.input_features = {
+        "observation.image": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 224, 224)),
+    }
+    config.output_features = {
+        "next.reward": PolicyFeature(type=FeatureType.REWARD, shape=(num_classes,)),
+    }
+    config.num_cameras = 1
+    config.num_classes = num_classes
     classifier = Classifier(config)
 
     batch_size = 10
 
-    input = torch.rand(batch_size, 3, 224, 224)
-    output = classifier(input)
+    input = {
+        "observation.image": torch.rand((batch_size, 3, 224, 224)),
+        "next.reward": torch.rand((batch_size, num_classes)),
+    }
+
+    images, labels = classifier.extract_images_and_labels(input)
+    assert len(images) == 1
+    assert images[0].shape == torch.Size([batch_size, 3, 224, 224])
+    assert labels.shape == torch.Size([batch_size, num_classes])
+
+    output = classifier.predict(images)
 
     assert output is not None
     assert output.logits.shape == torch.Size([batch_size, num_classes])
     assert not torch.isnan(output.logits).any(), "Tensor contains NaN values"
     assert output.probabilities.shape == torch.Size([batch_size, num_classes])
     assert not torch.isnan(output.probabilities).any(), "Tensor contains NaN values"
-    assert output.hidden_states.shape == torch.Size([batch_size, 2048])
+    assert output.hidden_states.shape == torch.Size([batch_size, 512])
     assert not torch.isnan(output.hidden_states).any(), "Tensor contains NaN values"
 
 
@@ -87,9 +125,9 @@ def test_explicit_device_setup():
         Classifier,
     )
 
-    config = ClassifierConfig(device="meta")
-    assert config.device == "meta"
+    config = ClassifierConfig(device="cpu")
+    assert config.device == "cpu"
 
     classifier = Classifier(config)
     for p in classifier.parameters():
-        assert p.device == torch.device("meta")
+        assert p.device == torch.device("cpu")
