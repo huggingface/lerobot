@@ -28,6 +28,8 @@ service AsyncInference {
   rpc SendObservations(stream Observation) returns (Empty);
   rpc StreamActions(Empty) returns (stream Action);
   rpc Ready(Empty) returns (Empty);
+  rpc SelectAction(SelectActionRequest) returns (SelectActionResponse);
+  rpc SelectActionStream(stream SelectActionRequest) returns (stream SelectActionResponse);
 }
 
 enum TransferState {
@@ -35,6 +37,19 @@ enum TransferState {
     TRANSFER_BEGIN = 1;
     TRANSFER_MIDDLE = 2;
     TRANSFER_END = 3;
+}
+
+message SelectActionRequest {
+  bytes data = 1;
+}
+
+message SelectActionStreamRequest {
+  TransferState transfer_state = 1;
+  bytes data = 2;
+}
+
+message SelectActionResponse {
+  bytes data = 1;
 }
 
 // Messages
