@@ -23,10 +23,7 @@ import numpy as np
 import tqdm
 
 from lerobot.common.robot_devices.motors.configs import DynamixelMotorsBusConfig
-from lerobot.common.robot_devices.utils import (
-    RobotDeviceAlreadyConnectedError,
-    RobotDeviceNotConnectedError,
-)
+from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
 from lerobot.common.utils.utils import capture_timestamp_utc
 
 PROTOCOL_VERSION = 2.0
@@ -787,12 +784,7 @@ class DynamixelMotorsBus:
                 f"{self.packet_handler.getTxRxResult(comm)}"
             )
 
-    def write(
-        self,
-        data_name,
-        values: int | float | np.ndarray,
-        motor_names: str | list[str] | None = None,
-    ):
+    def write(self, data_name, values: int | float | np.ndarray, motor_names: str | list[str] | None = None):
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
                 f"DynamixelMotorsBus({self.port}) is not connected. You need to run `motors_bus.connect()`."

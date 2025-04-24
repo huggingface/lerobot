@@ -25,14 +25,9 @@ import zmq
 
 from lerobot.common.robot_devices.cameras.utils import make_cameras_from_configs
 from lerobot.common.robot_devices.motors.feetech import TorqueMode
-from lerobot.common.robot_devices.motors.utils import (
-    MotorsBus,
-    make_motors_buses_from_configs,
-)
+from lerobot.common.robot_devices.motors.utils import MotorsBus, make_motors_buses_from_configs
 from lerobot.common.robot_devices.robots.configs import LeKiwiRobotConfig
-from lerobot.common.robot_devices.robots.feetech_calibration import (
-    run_arm_manual_calibration,
-)
+from lerobot.common.robot_devices.robots.feetech_calibration import run_arm_manual_calibration
 from lerobot.common.robot_devices.robots.utils import get_arm_id
 from lerobot.common.robot_devices.utils import RobotDeviceNotConnectedError
 
@@ -329,11 +324,7 @@ class MobileManipulator:
         socks = dict(poller.poll(15))
         if self.video_socket not in socks or socks[self.video_socket] != zmq.POLLIN:
             # No new data arrived → reuse ALL old data
-            return (
-                self.last_frames,
-                self.last_present_speed,
-                self.last_remote_arm_state,
-            )
+            return (self.last_frames, self.last_present_speed, self.last_remote_arm_state)
 
         # Drain all messages, keep only the last
         last_msg = None
@@ -346,11 +337,7 @@ class MobileManipulator:
 
         if not last_msg:
             # No new message → also reuse old
-            return (
-                self.last_frames,
-                self.last_present_speed,
-                self.last_remote_arm_state,
-            )
+            return (self.last_frames, self.last_present_speed, self.last_remote_arm_state)
 
         # Decode only the final message
         try:
@@ -388,11 +375,7 @@ class MobileManipulator:
         except Exception as e:
             print(f"[DEBUG] Error decoding video message: {e}")
             # If decode fails, fall back to old data
-            return (
-                self.last_frames,
-                self.last_present_speed,
-                self.last_remote_arm_state,
-            )
+            return (self.last_frames, self.last_present_speed, self.last_remote_arm_state)
 
         return frames, present_speed, remote_arm_state_tensor
 
@@ -478,11 +461,7 @@ class MobileManipulator:
 
         body_state = self.wheel_raw_to_body(present_speed)
 
-        body_state_mm = (
-            body_state[0] * 1000.0,
-            body_state[1] * 1000.0,
-            body_state[2],
-        )  # Convert x,y to mm/s
+        body_state_mm = (body_state[0] * 1000.0, body_state[1] * 1000.0, body_state[2])  # Convert x,y to mm/s
         wheel_state_tensor = torch.tensor(body_state_mm, dtype=torch.float32)
         combined_state_tensor = torch.cat((remote_arm_state_tensor, wheel_state_tensor), dim=0)
 
@@ -641,11 +620,7 @@ class MobileManipulator:
         # Convert each wheel’s angular speed (deg/s) to a raw integer.
         wheel_raw = [MobileManipulator.degps_to_raw(deg) for deg in wheel_degps]
 
-        return {
-            "left_wheel": wheel_raw[0],
-            "back_wheel": wheel_raw[1],
-            "right_wheel": wheel_raw[2],
-        }
+        return {"left_wheel": wheel_raw[0], "back_wheel": wheel_raw[1], "right_wheel": wheel_raw[2]}
 
     def wheel_raw_to_body(
         self, wheel_raw: dict, wheel_radius: float = 0.05, base_radius: float = 0.125

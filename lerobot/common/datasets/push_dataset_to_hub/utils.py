@@ -77,9 +77,7 @@ def check_repo_id(repo_id: str) -> None:
 
 
 # TODO(aliberts): remove
-def calculate_episode_data_index(
-    hf_dataset: datasets.Dataset,
-) -> Dict[str, torch.Tensor]:
+def calculate_episode_data_index(hf_dataset: datasets.Dataset) -> Dict[str, torch.Tensor]:
     """
     Calculate episode data index for the provided HuggingFace Dataset. Relies on episode_index column of hf_dataset.
 

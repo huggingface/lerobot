@@ -293,8 +293,7 @@ def eval_policy(
             seeds = None
         else:
             seeds = range(
-                start_seed + (batch_ix * env.num_envs),
-                start_seed + ((batch_ix + 1) * env.num_envs),
+                start_seed + (batch_ix * env.num_envs), start_seed + ((batch_ix + 1) * env.num_envs)
             )
         rollout_data = rollout(
             env,
@@ -414,11 +413,7 @@ def eval_policy(
 
 
 def _compile_episode_data(
-    rollout_data: dict,
-    done_indices: Tensor,
-    start_episode_index: int,
-    start_data_index: int,
-    fps: float,
+    rollout_data: dict, done_indices: Tensor, start_episode_index: int, start_data_index: int, fps: float
 ) -> dict:
     """Convenience function for `eval_policy(return_episode_data=True)`
 
@@ -486,10 +481,7 @@ def eval_main(cfg: EvalPipelineConfig):
     )
     policy.eval()
 
-    with (
-        torch.no_grad(),
-        torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext(),
-    ):
+    with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext():
         info = eval_policy(
             env,
             policy,

@@ -29,11 +29,7 @@ from torch import Tensor, nn
 
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.pretrained import PreTrainedPolicy
-from lerobot.common.policies.utils import (
-    get_device_from_parameters,
-    get_output_shape,
-    populate_queues,
-)
+from lerobot.common.policies.utils import get_device_from_parameters, get_output_shape, populate_queues
 from lerobot.common.policies.vqbet.configuration_vqbet import VQBeTConfig
 from lerobot.common.policies.vqbet.vqbet_utils import GPT, ResidualVQ
 
@@ -328,8 +324,7 @@ class VQBeTModel(nn.Module):
 
         # To input state and observation features into GPT layers, we first project the features to fit the shape of input size of GPT.
         self.state_projector = MLP(
-            config.robot_state_feature.shape[0],
-            hidden_channels=[self.config.gpt_input_dim],
+            config.robot_state_feature.shape[0], hidden_channels=[self.config.gpt_input_dim]
         )
         self.rgb_feature_projector = MLP(
             self.rgb_encoder.feature_dim, hidden_channels=[self.config.gpt_input_dim]
@@ -359,11 +354,7 @@ class VQBeTModel(nn.Module):
         )
         # Separate batch and sequence dims.
         img_features = einops.rearrange(
-            img_features,
-            "(b s n) ... -> b s n ...",
-            b=batch_size,
-            s=n_obs_steps,
-            n=self.num_images,
+            img_features, "(b s n) ... -> b s n ...", b=batch_size, s=n_obs_steps, n=self.num_images
         )
 
         # Arrange prior and current observation step tokens as shown in the class docstring.
@@ -400,11 +391,7 @@ class VQBeTModel(nn.Module):
         # Thus, it predicts a historical action sequence, in addition to current and future actions (predicting future actions : optional).
         if len_additional_action_token > 0:
             features = torch.cat(
-                [
-                    features[:, historical_act_pred_index],
-                    features[:, -len_additional_action_token:],
-                ],
-                dim=1,
+                [features[:, historical_act_pred_index], features[:, -len_additional_action_token:]], dim=1
             )
         else:
             features = features[:, historical_act_pred_index]
@@ -527,13 +514,7 @@ class VQBeTHead(nn.Module):
 
             cbet_secondary_logits = self.map_to_cbet_preds_secondary_bin(
                 torch.cat(
-                    (
-                        x,
-                        F.one_hot(
-                            sampled_primary_centers,
-                            num_classes=self.config.vqvae_n_embed,
-                        ),
-                    ),
+                    (x, F.one_hot(sampled_primary_centers, num_classes=self.config.vqvae_n_embed)),
                     axis=1,
                 )
             )
@@ -551,9 +532,7 @@ class VQBeTHead(nn.Module):
         else:
             cbet_logits = self.map_to_cbet_preds_bin(x)
             cbet_logits = einops.rearrange(
-                cbet_logits,
-                "(NT) (G C) -> (NT) G C",
-                G=self.vqvae_model.vqvae_num_layers,
+                cbet_logits, "(NT) (G C) -> (NT) G C", G=self.vqvae_model.vqvae_num_layers
             )
             cbet_probs = torch.softmax(cbet_logits / self.config.bet_softmax_temperature, dim=-1)
             NT, G, choices = cbet_probs.shape
@@ -751,9 +730,7 @@ class VQBeTRgbEncoder(nn.Module):
 
 
 def _replace_submodules(
-    root_module: nn.Module,
-    predicate: Callable[[nn.Module], bool],
-    func: Callable[[nn.Module], nn.Module],
+    root_module: nn.Module, predicate: Callable[[nn.Module], bool], func: Callable[[nn.Module], nn.Module]
 ) -> nn.Module:
     """
     Args:

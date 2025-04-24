@@ -81,11 +81,7 @@ def run_server(
     static_folder: Path,
     template_folder: Path,
 ):
-    app = Flask(
-        __name__,
-        static_folder=static_folder.resolve(),
-        template_folder=template_folder.resolve(),
-    )
+    app = Flask(__name__, static_folder=static_folder.resolve(), template_folder=template_folder.resolve())
     app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0  # specifying not to cache
 
     @app.route("/")
@@ -201,8 +197,7 @@ def run_server(
             ]
 
             response = requests.get(
-                f"https://huggingface.co/datasets/{repo_id}/resolve/main/meta/episodes.jsonl",
-                timeout=5,
+                f"https://huggingface.co/datasets/{repo_id}/resolve/main/meta/episodes.jsonl", timeout=5
             )
             response.raise_for_status()
             # Split into lines and parse each line as JSON
@@ -287,8 +282,7 @@ def get_episode_data(dataset: LeRobotDataset | IterableNamespace, episode_index)
         repo_id = dataset.repo_id
 
         url = f"https://huggingface.co/datasets/{repo_id}/resolve/main/" + dataset.data_path.format(
-            episode_chunk=int(episode_index) // dataset.chunks_size,
-            episode_index=episode_index,
+            episode_chunk=int(episode_index) // dataset.chunks_size, episode_index=episode_index
         )
         df = pd.read_parquet(url)
         data = df[selected_columns]  # Select specific columns
@@ -337,8 +331,7 @@ def get_episode_language_instruction(dataset: LeRobotDataset, ep_index: int) -> 
 
 def get_dataset_info(repo_id: str) -> IterableNamespace:
     response = requests.get(
-        f"https://huggingface.co/datasets/{repo_id}/resolve/main/meta/info.json",
-        timeout=5,
+        f"https://huggingface.co/datasets/{repo_id}/resolve/main/meta/info.json", timeout=5
     )
     response.raise_for_status()  # Raises an HTTPError for bad responses
     dataset_info = response.json()

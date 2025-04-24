@@ -18,10 +18,7 @@ from lerobot.common.utils.logging_utils import AverageMeter, MetricsTracker
 
 @pytest.fixture
 def mock_metrics():
-    return {
-        "loss": AverageMeter("loss", ":.3f"),
-        "accuracy": AverageMeter("accuracy", ":.2f"),
-    }
+    return {"loss": AverageMeter("loss", ":.3f"), "accuracy": AverageMeter("accuracy", ":.2f")}
 
 
 def test_average_meter_initialization():
@@ -61,11 +58,7 @@ def test_average_meter_str():
 
 def test_metrics_tracker_initialization(mock_metrics):
     tracker = MetricsTracker(
-        batch_size=32,
-        num_frames=1000,
-        num_episodes=50,
-        metrics=mock_metrics,
-        initial_step=10,
+        batch_size=32, num_frames=1000, num_episodes=50, metrics=mock_metrics, initial_step=10
     )
     assert tracker.steps == 10
     assert tracker.samples == 10 * 32
@@ -77,11 +70,7 @@ def test_metrics_tracker_initialization(mock_metrics):
 
 def test_metrics_tracker_step(mock_metrics):
     tracker = MetricsTracker(
-        batch_size=32,
-        num_frames=1000,
-        num_episodes=50,
-        metrics=mock_metrics,
-        initial_step=5,
+        batch_size=32, num_frames=1000, num_episodes=50, metrics=mock_metrics, initial_step=5
     )
     tracker.step()
     assert tracker.steps == 6

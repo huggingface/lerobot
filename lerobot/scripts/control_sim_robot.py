@@ -149,11 +149,7 @@ def init_sim_calibration(robot, cfg):
     axis_directions = np.array(cfg.get("axis_directions", [1]))
     offsets = np.array(cfg.get("offsets", [0])) * np.pi
 
-    return {
-        "start_pos": start_pos,
-        "axis_directions": axis_directions,
-        "offsets": offsets,
-    }
+    return {"start_pos": start_pos, "axis_directions": axis_directions, "offsets": offsets}
 
 
 def real_positions_to_sim(real_positions, axis_directions, start_pos, offsets):
@@ -203,7 +199,6 @@ def record(
     run_compute_stats: bool = True,
 ) -> LeRobotDataset:
     # Load pretrained policy
-
     policy = None
     if pretrained_policy_name_or_path is not None:
         policy, policy_fps, device, use_amp = init_policy(pretrained_policy_name_or_path, policy_overrides)
@@ -246,11 +241,7 @@ def record(
             shape = env.observation_space[key].shape
             if not key.startswith("observation.image."):
                 key = "observation.image." + key
-            features[key] = {
-                "dtype": "video",
-                "names": ["channels", "height", "width"],
-                "shape": shape,
-            }
+            features[key] = {"dtype": "video", "names": ["channels", "height", "width"], "shape": shape}
 
         for key, obs_key in state_keys_dict.items():
             features[key] = {
@@ -259,11 +250,7 @@ def record(
                 "shape": env.observation_space[obs_key].shape,
             }
 
-        features["action"] = {
-            "dtype": "float32",
-            "shape": env.action_space.shape,
-            "names": None,
-        }
+        features["action"] = {"dtype": "float32", "shape": env.action_space.shape, "names": None}
 
         # Create empty dataset or load existing saved episodes
         sanity_check_dataset_name(repo_id, policy)
@@ -374,12 +361,7 @@ def record(
 
 
 def replay(
-    env,
-    root: Path,
-    repo_id: str,
-    episode: int,
-    fps: int | None = None,
-    local_files_only: bool = True,
+    env, root: Path, repo_id: str, episode: int, fps: int | None = None, local_files_only: bool = True
 ):
     env = env()
 
@@ -426,10 +408,7 @@ if __name__ == "__main__":
 
     parser_record = subparsers.add_parser("record", parents=[base_parser])
     parser_record.add_argument(
-        "--fps",
-        type=none_or_int,
-        default=None,
-        help="Frames per second (set to None to disable)",
+        "--fps", type=none_or_int, default=None, help="Frames per second (set to None to disable)"
     )
     parser_record.add_argument(
         "--root",
@@ -507,19 +486,9 @@ if __name__ == "__main__":
         default=0,
         help="Resume recording on an existing dataset.",
     )
-    parser_record.add_argument(
-        "--assign-rewards",
-        type=int,
-        default=0,
-        help="Enables the assignation of rewards to frames (by default no assignation). When enabled, assign a 0 reward to frames until the space bar is pressed which assign a 1 reward. Press the space bar a second time to assign a 0 reward. The reward assigned is reset to 0 when the episode ends.",
-    )
-
     parser_replay = subparsers.add_parser("replay", parents=[base_parser])
     parser_replay.add_argument(
-        "--fps",
-        type=none_or_int,
-        default=None,
-        help="Frames per second (set to None to disable)",
+        "--fps", type=none_or_int, default=None, help="Frames per second (set to None to disable)"
     )
     parser_replay.add_argument(
         "--root",

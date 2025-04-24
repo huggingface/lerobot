@@ -19,10 +19,7 @@ from lerobot.common.datasets.utils import load_image_as_numpy
 
 
 def estimate_num_samples(
-    dataset_len: int,
-    min_num_samples: int = 100,
-    max_num_samples: int = 10_000,
-    power: float = 0.75,
+    dataset_len: int, min_num_samples: int = 100, max_num_samples: int = 10_000, power: float = 0.75
 ) -> int:
     """Heuristic to estimate the number of samples based on dataset size.
     The power controls the sample growth relative to dataset size.
@@ -126,9 +123,7 @@ def _assert_type_and_shape(stats_list: list[dict[str, dict]]):
                     raise ValueError(f"Shape of '{k}' must be (3,1,1), but is {v.shape} instead.")
 
 
-def aggregate_feature_stats(
-    stats_ft_list: list[dict[str, dict]],
-) -> dict[str, dict[str, np.ndarray]]:
+def aggregate_feature_stats(stats_ft_list: list[dict[str, dict]]) -> dict[str, dict[str, np.ndarray]]:
     """Aggregates stats for a single feature."""
     means = np.stack([s["mean"] for s in stats_ft_list])
     variances = np.stack([s["std"] ** 2 for s in stats_ft_list])
@@ -157,9 +152,7 @@ def aggregate_feature_stats(
     }
 
 
-def aggregate_stats(
-    stats_list: list[dict[str, dict]],
-) -> dict[str, dict[str, np.ndarray]]:
+def aggregate_stats(stats_list: list[dict[str, dict]]) -> dict[str, dict[str, np.ndarray]]:
     """Aggregate stats from multiple compute_stats outputs into a single set of stats.
 
     The final stats will have the union of all data keys from each of the stats dicts.

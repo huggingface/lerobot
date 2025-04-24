@@ -154,32 +154,14 @@ class OnlineBuffer(torch.utils.data.Dataset):
             OnlineBuffer.NEXT_INDEX_KEY: {"dtype": np.dtype("int64"), "shape": ()},
             # Since the memmap is initialized with all-zeros, this keeps track of which indices are occupied
             # with real data rather than the dummy initialization.
-            OnlineBuffer.OCCUPANCY_MASK_KEY: {
-                "dtype": np.dtype("?"),
-                "shape": (buffer_capacity,),
-            },
-            OnlineBuffer.INDEX_KEY: {
-                "dtype": np.dtype("int64"),
-                "shape": (buffer_capacity,),
-            },
-            OnlineBuffer.FRAME_INDEX_KEY: {
-                "dtype": np.dtype("int64"),
-                "shape": (buffer_capacity,),
-            },
-            OnlineBuffer.EPISODE_INDEX_KEY: {
-                "dtype": np.dtype("int64"),
-                "shape": (buffer_capacity,),
-            },
-            OnlineBuffer.TIMESTAMP_KEY: {
-                "dtype": np.dtype("float64"),
-                "shape": (buffer_capacity,),
-            },
+            OnlineBuffer.OCCUPANCY_MASK_KEY: {"dtype": np.dtype("?"), "shape": (buffer_capacity,)},
+            OnlineBuffer.INDEX_KEY: {"dtype": np.dtype("int64"), "shape": (buffer_capacity,)},
+            OnlineBuffer.FRAME_INDEX_KEY: {"dtype": np.dtype("int64"), "shape": (buffer_capacity,)},
+            OnlineBuffer.EPISODE_INDEX_KEY: {"dtype": np.dtype("int64"), "shape": (buffer_capacity,)},
+            OnlineBuffer.TIMESTAMP_KEY: {"dtype": np.dtype("float64"), "shape": (buffer_capacity,)},
         }
         for k, v in data_spec.items():
-            complete_data_spec[k] = {
-                "dtype": v["dtype"],
-                "shape": (buffer_capacity, *v["shape"]),
-            }
+            complete_data_spec[k] = {"dtype": v["dtype"], "shape": (buffer_capacity, *v["shape"])}
         return complete_data_spec
 
     def add_data(self, data: dict[str, np.ndarray]):

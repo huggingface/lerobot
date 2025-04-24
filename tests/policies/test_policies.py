@@ -59,33 +59,16 @@ def dummy_dataset_metadata(lerobot_dataset_metadata_factory, info_factory, tmp_p
         "action": {
             "dtype": "float32",
             "shape": (6,),
-            "names": [
-                "shoulder_pan",
-                "shoulder_lift",
-                "elbow_flex",
-                "wrist_flex",
-                "wrist_roll",
-                "gripper",
-            ],
+            "names": ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"],
         },
         "observation.state": {
             "dtype": "float32",
             "shape": (6,),
-            "names": [
-                "shoulder_pan",
-                "shoulder_lift",
-                "elbow_flex",
-                "wrist_flex",
-                "wrist_roll",
-                "gripper",
-            ],
+            "names": ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"],
         },
     }
     info = info_factory(
-        total_episodes=1,
-        total_frames=1,
-        camera_features=camera_features,
-        motor_features=motor_features,
+        total_episodes=1, total_frames=1, camera_features=camera_features, motor_features=motor_features
     )
     ds_meta = lerobot_dataset_metadata_factory(root=tmp_path / "init", info=info)
     return ds_meta
@@ -98,8 +81,7 @@ def test_get_policy_and_config_classes(policy_name: str):
     policy_cfg = make_policy_config(policy_name)
     assert policy_cls.name == policy_name
     assert issubclass(
-        policy_cfg.__class__,
-        inspect.signature(policy_cls.__init__).parameters["config"].annotation,
+        policy_cfg.__class__, inspect.signature(policy_cls.__init__).parameters["config"].annotation
     )
 
 
@@ -110,13 +92,7 @@ def test_get_policy_and_config_classes(policy_name: str):
         ("lerobot/pusht", "pusht", {}, "diffusion", {}),
         ("lerobot/pusht", "pusht", {}, "vqbet", {}),
         ("lerobot/pusht", "pusht", {}, "act", {}),
-        (
-            "lerobot/aloha_sim_insertion_human",
-            "aloha",
-            {"task": "AlohaInsertion-v0"},
-            "act",
-            {},
-        ),
+        ("lerobot/aloha_sim_insertion_human", "aloha", {"task": "AlohaInsertion-v0"}, "act", {}),
         (
             "lerobot/aloha_sim_insertion_scripted",
             "aloha",
