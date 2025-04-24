@@ -21,7 +21,7 @@ idle_wait = 0.1
 class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
     def __init__(self):
         # TODO: Add device specification for policy inference at init
-        self.device = "mps"
+        self.device = "cpu"
         start = time.time()
         self.policy = ACTPolicy.from_pretrained("fracapuano/act_so100_test")
         self.policy.to(self.device)
@@ -94,10 +94,28 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
         ]
 
     @torch.no_grad()
+    def _get_action_chunk(self, observation: dict[str, torch.Tensor]) -> torch.Tensor:
+        """Get an action chunk from the policy"""
+        start_time = time.time()
+
+        # prepare observation for policy forward pass
+        batch = self.policy.normalize_inputs(observation)
+        if self.policy.config.image_features:
+            batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
+            batch["observation.images"] = [batch[key] for key in self.policy.config.image_features]
+
+        # forward pass outputs up to policy.config.n_action_steps != actions_per_chunk
+        actions = self.policy.model(batch)[0][:, : self.actions_per_chunk]
+        actions = self.policy.unnormalize_outputs({"action": actions})["action"]
+
+        end_time = time.time()
+        elapsed_time = end_time - start_time
+        print(f"Action chunk generation time: {elapsed_time:.6f} seconds")
+
+        return actions
+
     def _predict_action_chunk(self, observation_t: TimedObservation) -> list[TimedAction]:
         """Predict an action based on the observation"""
-        self.policy.eval()
-
         observation = {}
         for k, v in observation_t.get_observation().items():
             if "image" in k:
@@ -105,8 +123,12 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
             else:
                 observation[k] = v.unsqueeze(0).to(self.device)
 
+        # normalize observation
+        observation = self.policy.normalize_inputs(observation)
+
         # Remove batch dimension
-        action_tensor = self.policy.select_action(observation).squeeze(0)
+        action_tensor = self._get_action_chunk(observation)
+        action_tensor = action_tensor.squeeze(0)
 
         if action_tensor.dim() == 1:
             # No chunk dimension, so repeat action to create a (dummy) chunk of actions
@@ -120,7 +142,7 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
         # Create and return the Action message
         action = async_inference_pb2.Action(transfer_state=observation_t.transfer_state, data=action_bytes)
 
-        time.sleep(inference_latency)  # slow action generation, emulates inference time (ACT is very fast)
+        # time.sleep(inference_latency)  # slow action generation, emulates inference time (ACT is very fast)
 
         return action
 
