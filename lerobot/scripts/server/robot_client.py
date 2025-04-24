@@ -84,13 +84,27 @@ class TimedObservation(TimedData):
         return self.get_data()
 
 
+class TinyPolicyConfig:
+    def __init__(
+        self,
+        policy_type: str = "act",
+        pretrained_name_or_path: str = "fracapuano/act_so100_test",
+        device: str = "cpu",
+    ):
+        self.policy_type = policy_type
+        self.pretrained_name_or_path = pretrained_name_or_path
+        self.device = device
+
+
 class RobotClient:
     def __init__(
         self,
-        # cfg: RobotConfig,
         server_address="localhost:50051",
-        use_robot=True,
+        policy_type: str = "pi0",  # "pi0"
+        pretrained_name_or_path: str = "lerobot/pi0",  # "fracapuano/act_so100_test", #"lerobot/pi0"
+        policy_device: str = "mps",
     ):
+        self.policy_config = TinyPolicyConfig(policy_type, pretrained_name_or_path, policy_device)
         self.channel = grpc.insecure_channel(server_address)
         self.stub = async_inference_pb2_grpc.AsyncInferenceStub(self.channel)
         logger.info(f"Initializing client to connect to server at {server_address}")
@@ -137,7 +151,23 @@ class RobotClient:
             end_time = time.time()
             logger.info(f"Connected to policy server in {end_time - start_time:.4f}s")
 
+            # send policy instructions
+            policy_config_bytes = pickle.dumps(self.policy_config)
+            policy_setup = async_inference_pb2.PolicySetup(
+                transfer_state=async_inference_pb2.TRANSFER_BEGIN, data=policy_config_bytes
+            )
+
+            logger.info("Sending policy instructions to policy server")
+            logger.info(
+                f"Policy type: {self.policy_config.policy_type} | "
+                f"Pretrained name or path: {self.policy_config.pretrained_name_or_path} | "
+                f"Device: {self.policy_config.device}"
+            )
+
+            self.stub.SendPolicyInstructions(policy_setup)
+
             self.running = True
+
             return True
 
         except grpc.RpcError as e:

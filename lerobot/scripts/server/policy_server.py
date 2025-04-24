@@ -15,7 +15,12 @@ import torch
 from datasets import load_dataset
 
 from lerobot.common.policies.factory import get_policy_class
-from lerobot.scripts.server.robot_client import TimedAction, TimedObservation, environment_dt
+from lerobot.scripts.server.robot_client import (
+    TimedAction,
+    TimedObservation,
+    TinyPolicyConfig,
+    environment_dt,
+)
 
 # Create logs directory if it doesn't exist
 os.makedirs("logs", exist_ok=True)
@@ -48,20 +53,6 @@ idle_wait = 0.1
 
 class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
     def __init__(self):
-        # TODO: Add device specification for policy inference at init
-        self.device = "mps"
-
-        # self.policy = ACTPolicy.from_pretrained("fracapuano/act_so100_test")
-        policy_class = get_policy_class("act")
-        pretrained_name_or_path = "fracapuano/act_so100_test"
-
-        start = time.time()
-        self.policy = policy_class.from_pretrained(pretrained_name_or_path)
-        self.policy.to(self.device)
-        end = time.time()
-
-        logger.info(f"Time taken to put policy on {self.device}: {end - start:.4f} seconds")
-
         # Initialize dataset action generator
         self.action_generator = itertools.cycle(self._stream_action_chunks_from_dataset())
 
@@ -76,9 +67,37 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
         self.observation_queue = Queue(maxsize=1)
 
     def Ready(self, request, context):  # noqa: N802
-        self._setup_server()
         client_id = context.peer()
         logger.info(f"Client {client_id} connected and ready")
+        self._setup_server()
+
+        return async_inference_pb2.Empty()
+
+    def SendPolicyInstructions(self, request, context):  # noqa: N802
+        """Receive policy instructions from the robot client"""
+        client_id = context.peer()
+        logger.debug(f"Receiving policy instructions from {client_id}")
+
+        policy_specs = pickle.loads(request.data)  # nosec
+        assert isinstance(policy_specs, TinyPolicyConfig), (
+            f"Policy specs must be a TinyPolicyConfig. Got {type(policy_specs)}"
+        )
+
+        logger.info(
+            f"Policy type: {policy_specs.policy_type} | "
+            f"Pretrained name or path: {policy_specs.pretrained_name_or_path} | "
+            f"Device: {policy_specs.device}"
+        )
+
+        self.device = policy_specs.device
+        policy_class = get_policy_class(policy_specs.policy_type)
+
+        start = time.time()
+        self.policy = policy_class.from_pretrained(policy_specs.pretrained_name_or_path)
+        self.policy.to(self.device)
+        end = time.time()
+
+        logger.info(f"Time taken to put policy on {self.device}: {end - start:.4f} seconds")
 
         return async_inference_pb2.Empty()
 
