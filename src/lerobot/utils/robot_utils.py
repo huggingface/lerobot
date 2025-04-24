@@ -13,11 +13,12 @@
 # limitations under the License.
 
 import platform
+import sys
 import time
 
 
 def busy_wait(seconds):
-    if platform.system() == "Darwin" or platform.system() == "Windows":
+    if (platform.system() == "Darwin" and sys.version_info < (3, 11)) or platform.system() == "Windows":
         # On Mac and Windows, `time.sleep` is not accurate and we need to use this while loop trick,
         # but it consumes CPU cycles.
         end_time = time.perf_counter() + seconds
