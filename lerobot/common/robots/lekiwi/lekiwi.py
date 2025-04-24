@@ -65,12 +65,8 @@ class LeKiwi(Robot):
             },
             calibration=self.calibration,
         )
-        self.arm_motors = [
-            motor_name for motor_name, _ in self.bus.motors.items() if motor_name.startswith("arm")
-        ]
-        self.base_motors = [
-            motor_name for motor_name, _ in self.bus.motors.items() if motor_name.startswith("base")
-        ]
+        self.arm_motors = [motor for motor in self.bus.motors if motor.startswith("arm")]
+        self.base_motors = [motor for motor in self.bus.motors if motor.startswith("base")]
         self.cameras = make_cameras_from_configs(config.cameras)
 
     @property
@@ -191,8 +187,6 @@ class LeKiwi(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        obs_dict = {}
-
         # Read actuators position for arm and vel for base
         start = time.perf_counter()
         arm_pos = self.bus.sync_read("Present_Position", self.arm_motors)
@@ -212,7 +206,6 @@ class LeKiwi(Robot):
         return obs_dict
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
-        # Copied from S100 robot
         """Command lekiwi to move to a target joint configuration.
 
         The relative action magnitude may be clipped depending on the configuration parameter
