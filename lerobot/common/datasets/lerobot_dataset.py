@@ -487,7 +487,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.meta = LeRobotDatasetMetadata(
             self.repo_id, self.root, self.revision, force_cache_sync=force_cache_sync
         )
-        # self.episodes = self.meta.episodes
         if self.episodes is not None and self.meta._version >= packaging.version.parse("v2.1"):
             episodes_stats = [self.meta.episodes_stats[ep_idx] for ep_idx in self.episodes]
             self.stats = aggregate_stats(episodes_stats)
@@ -746,7 +745,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 item[cam] = self.image_transforms(item[cam])
 
         # Add task as a string
-        task_idx = 0 #TODO: to delete after adding task index in original parquet file
+        task_idx = item["task_index"].item()
         item["task"] = self.meta.tasks[task_idx]
 
         return item

@@ -1,0 +1,5 @@
+[
+    {"episode_range": [0, 199], "task_index": 0, "task_detail": "Use the right hand to pick up the black foam object and place it onto the center purple tray. Then, use the left hand to pick up the black foam from the purple tray and place it into the pink plastic container."},
+    {"episode_range": [200, 740], "task_index": 1, "task_detail": "The right hand picks up the purple cup and stacks it on top of the blue cup, then the left hand picks up the white cup and stacks it on top of the purple cup."},
+    {"episode_range": [741, 1281], "task_index": 2, "task_detail": "Test The right hand picks up the purple cup and stacks it on top of the blue cup, then the left hand picks up the white cup and stacks it on top of the purple cup."}
+  ]
