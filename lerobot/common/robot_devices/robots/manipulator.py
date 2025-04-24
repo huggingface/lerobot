@@ -474,14 +474,6 @@ class ManipulatorRobot:
             before_fwrite_t = time.perf_counter()
             goal_pos = leader_pos[name]
 
-            # If specified, clip the goal positions within predefined bounds specified in the config of the robot
-            # if self.config.joint_position_relative_bounds is not None:
-            #     goal_pos = torch.clamp(
-            #         goal_pos,
-            #         self.config.joint_position_relative_bounds["min"],
-            #         self.config.joint_position_relative_bounds["max"],
-            #     )
-
             # Cap goal position when too far away from present position.
             # Slower fps expected due to reading from the follower.
             if self.config.max_relative_target is not None:
@@ -602,14 +594,6 @@ class ManipulatorRobot:
             to_idx += len(self.follower_arms[name].motor_names)
             goal_pos = action[from_idx:to_idx]
             from_idx = to_idx
-
-            # If specified, clip the goal positions within predefined bounds specified in the config of the robot
-            # if self.config.joint_position_relative_bounds is not None:
-            #     goal_pos = torch.clamp(
-            #         goal_pos,
-            #         self.config.joint_position_relative_bounds["min"],
-            #         self.config.joint_position_relative_bounds["max"],
-            #     )
 
             # Cap goal position when too far away from present position.
             # Slower fps expected due to reading from the follower.
