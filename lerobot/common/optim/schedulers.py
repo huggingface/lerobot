@@ -49,11 +49,7 @@ class DiffuserSchedulerConfig(LRSchedulerConfig):
     def build(self, optimizer: Optimizer, num_training_steps: int) -> LambdaLR:
         from diffusers.optimization import get_scheduler
 
-        kwargs = {
-            **asdict(self),
-            "num_training_steps": num_training_steps,
-            "optimizer": optimizer,
-        }
+        kwargs = {**asdict(self), "num_training_steps": num_training_steps, "optimizer": optimizer}
         return get_scheduler(**kwargs)
 
 
@@ -75,10 +71,7 @@ class VQBeTSchedulerConfig(LRSchedulerConfig):
                 progress = float(adjusted_step - self.num_warmup_steps) / float(
                     max(1, num_training_steps - self.num_warmup_steps)
                 )
-                return max(
-                    0.0,
-                    0.5 * (1.0 + math.cos(math.pi * float(self.num_cycles) * 2.0 * progress)),
-                )
+                return max(0.0, 0.5 * (1.0 + math.cos(math.pi * float(self.num_cycles) * 2.0 * progress)))
 
         return LambdaLR(optimizer, lr_lambda, -1)
 

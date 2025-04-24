@@ -40,10 +40,7 @@ import pytest
 import torch
 
 from lerobot.common.robot_devices.robots.utils import make_robot
-from lerobot.common.robot_devices.utils import (
-    RobotDeviceAlreadyConnectedError,
-    RobotDeviceNotConnectedError,
-)
+from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
 from tests.utils import TEST_ROBOT_TYPES, mock_calibration_dir, require_robot
 
 

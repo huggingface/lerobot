@@ -209,10 +209,7 @@ class DiffusionModel(nn.Module):
 
     # ========= inference  ============
     def conditional_sample(
-        self,
-        batch_size: int,
-        global_cond: Tensor | None = None,
-        generator: torch.Generator | None = None,
+        self, batch_size: int, global_cond: Tensor | None = None, generator: torch.Generator | None = None
     ) -> Tensor:
         device = get_device_from_parameters(self)
         dtype = get_dtype_from_parameters(self)
@@ -257,10 +254,7 @@ class DiffusionModel(nn.Module):
                 # Separate batch and sequence dims back out. The camera index dim gets absorbed into the
                 # feature dim (effectively concatenating the camera features).
                 img_features = einops.rearrange(
-                    img_features_list,
-                    "(n b s) ... -> b s (n ...)",
-                    b=batch_size,
-                    s=n_obs_steps,
+                    img_features_list, "(n b s) ... -> b s (n ...)", b=batch_size, s=n_obs_steps
                 )
             else:
                 # Combine batch, sequence, and "which camera" dims before passing to shared encoder.
@@ -270,10 +264,7 @@ class DiffusionModel(nn.Module):
                 # Separate batch dim and sequence dim back out. The camera index dim gets absorbed into the
                 # feature dim (effectively concatenating the camera features).
                 img_features = einops.rearrange(
-                    img_features,
-                    "(b s n) ... -> b s (n ...)",
-                    b=batch_size,
-                    s=n_obs_steps,
+                    img_features, "(b s n) ... -> b s (n ...)", b=batch_size, s=n_obs_steps
                 )
             global_cond_feats.append(img_features)
 
@@ -524,9 +515,7 @@ class DiffusionRgbEncoder(nn.Module):
 
 
 def _replace_submodules(
-    root_module: nn.Module,
-    predicate: Callable[[nn.Module], bool],
-    func: Callable[[nn.Module], nn.Module],
+    root_module: nn.Module, predicate: Callable[[nn.Module], bool], func: Callable[[nn.Module], nn.Module]
 ) -> nn.Module:
     """
     Args:
@@ -644,14 +633,10 @@ class DiffusionConditionalUnet1d(nn.Module):
         self.mid_modules = nn.ModuleList(
             [
                 DiffusionConditionalResidualBlock1d(
-                    config.down_dims[-1],
-                    config.down_dims[-1],
-                    **common_res_block_kwargs,
+                    config.down_dims[-1], config.down_dims[-1], **common_res_block_kwargs
                 ),
                 DiffusionConditionalResidualBlock1d(
-                    config.down_dims[-1],
-                    config.down_dims[-1],
-                    **common_res_block_kwargs,
+                    config.down_dims[-1], config.down_dims[-1], **common_res_block_kwargs
                 ),
             ]
         )

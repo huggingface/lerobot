@@ -26,11 +26,7 @@ from huggingface_hub.errors import HfHubHTTPError
 from lerobot.common.optim.optimizers import OptimizerConfig
 from lerobot.common.optim.schedulers import LRSchedulerConfig
 from lerobot.common.utils.hub import HubMixin
-from lerobot.common.utils.utils import (
-    auto_select_torch_device,
-    is_amp_available,
-    is_torch_device_available,
-)
+from lerobot.common.utils.utils import auto_select_torch_device, is_amp_available, is_torch_device_available
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 
 # Generic variable that is either PreTrainedConfig or a subclass thereof

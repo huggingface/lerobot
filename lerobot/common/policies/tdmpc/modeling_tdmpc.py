@@ -39,11 +39,7 @@ from lerobot.common.constants import OBS_ENV, OBS_ROBOT
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.policies.tdmpc.configuration_tdmpc import TDMPCConfig
-from lerobot.common.policies.utils import (
-    get_device_from_parameters,
-    get_output_shape,
-    populate_queues,
-)
+from lerobot.common.policies.utils import get_device_from_parameters, get_output_shape, populate_queues
 
 
 class TDMPCPolicy(PreTrainedPolicy):
@@ -67,11 +63,7 @@ class TDMPCPolicy(PreTrainedPolicy):
     config_class = TDMPCConfig
     name = "tdmpc"
 
-    def __init__(
-        self,
-        config: TDMPCConfig,
-        dataset_stats: dict[str, dict[str, Tensor]] | None = None,
-    ):
+    def __init__(self, config: TDMPCConfig, dataset_stats: dict[str, dict[str, Tensor]] | None = None):
         """
         Args:
             config: Policy configuration class instance or None, in which case the default instantiation of
@@ -197,20 +189,13 @@ class TDMPCPolicy(PreTrainedPolicy):
 
         # In the CEM loop we will need this for a call to estimate_value with the gaussian sampled
         # trajectories.
-        z = einops.repeat(
-            z,
-            "b d -> n b d",
-            n=self.config.n_gaussian_samples + self.config.n_pi_samples,
-        )
+        z = einops.repeat(z, "b d -> n b d", n=self.config.n_gaussian_samples + self.config.n_pi_samples)
 
         # Model Predictive Path Integral (MPPI) with the cross-entropy method (CEM) as the optimization
         # algorithm.
         # The initial mean and standard deviation for the cross-entropy method (CEM).
         mean = torch.zeros(
-            self.config.horizon,
-            batch_size,
-            self.config.action_feature.shape[0],
-            device=device,
+            self.config.horizon, batch_size, self.config.action_feature.shape[0], device=device
         )
         # Maybe warm start CEM with the mean from the previous step.
         if self._prev_mean is not None:
@@ -306,10 +291,9 @@ class TDMPCPolicy(PreTrainedPolicy):
         if self.config.q_ensemble_size > 2:
             G += (
                 running_discount
-                * torch.min(
-                    terminal_values[torch.randint(0, self.config.q_ensemble_size, size=(2,))],
-                    dim=0,
-                )[0]
+                * torch.min(terminal_values[torch.randint(0, self.config.q_ensemble_size, size=(2,))], dim=0)[
+                    0
+                ]
             )
         else:
             G += running_discount * torch.min(terminal_values, dim=0)[0]
@@ -345,10 +329,7 @@ class TDMPCPolicy(PreTrainedPolicy):
         # Apply random image augmentations.
         if self.config.image_features and self.config.max_random_shift_ratio > 0:
             observations["observation.image"] = flatten_forward_unflatten(
-                partial(
-                    random_shifts_aug,
-                    max_random_shift_ratio=self.config.max_random_shift_ratio,
-                ),
+                partial(random_shifts_aug, max_random_shift_ratio=self.config.max_random_shift_ratio),
                 observations["observation.image"],
             )
 
@@ -572,10 +553,7 @@ class TDMPCTOLD(nn.Module):
         self._Qs = nn.ModuleList(
             [
                 nn.Sequential(
-                    nn.Linear(
-                        config.latent_dim + config.action_feature.shape[0],
-                        config.mlp_dim,
-                    ),
+                    nn.Linear(config.latent_dim + config.action_feature.shape[0], config.mlp_dim),
                     nn.LayerNorm(config.mlp_dim),
                     nn.Tanh(),
                     nn.Linear(config.mlp_dim, config.mlp_dim),
@@ -724,26 +702,11 @@ class TDMPCObservationEncoder(nn.Module):
                     stride=2,
                 ),
                 nn.ReLU(),
-                nn.Conv2d(
-                    config.image_encoder_hidden_dim,
-                    config.image_encoder_hidden_dim,
-                    5,
-                    stride=2,
-                ),
+                nn.Conv2d(config.image_encoder_hidden_dim, config.image_encoder_hidden_dim, 5, stride=2),
                 nn.ReLU(),
-                nn.Conv2d(
-                    config.image_encoder_hidden_dim,
-                    config.image_encoder_hidden_dim,
-                    3,
-                    stride=2,
-                ),
+                nn.Conv2d(config.image_encoder_hidden_dim, config.image_encoder_hidden_dim, 3, stride=2),
                 nn.ReLU(),
-                nn.Conv2d(
-                    config.image_encoder_hidden_dim,
-                    config.image_encoder_hidden_dim,
-                    3,
-                    stride=2,
-                ),
+                nn.Conv2d(config.image_encoder_hidden_dim, config.image_encoder_hidden_dim, 3, stride=2),
                 nn.ReLU(),
             )
             dummy_shape = (1, *next(iter(config.image_features.values())).shape)
@@ -786,8 +749,7 @@ class TDMPCObservationEncoder(nn.Module):
         if self.config.image_features:
             feat.append(
                 flatten_forward_unflatten(
-                    self.image_enc_layers,
-                    obs_dict[next(iter(self.config.image_features))],
+                    self.image_enc_layers, obs_dict[next(iter(self.config.image_features))]
                 )
             )
         if self.config.env_state_feature:
@@ -834,9 +796,7 @@ def update_ema_parameters(ema_net: nn.Module, net: nn.Module, alpha: float):
     """Update EMA parameters in place with ema_param <- alpha * ema_param + (1 - alpha) * param."""
     for ema_module, module in zip(ema_net.modules(), net.modules(), strict=True):
         for (n_p_ema, p_ema), (n_p, p) in zip(
-            ema_module.named_parameters(recurse=False),
-            module.named_parameters(recurse=False),
-            strict=True,
+            ema_module.named_parameters(recurse=False), module.named_parameters(recurse=False), strict=True
         ):
             assert n_p_ema == n_p, "Parameter names don't match for EMA model update"
             if isinstance(p, dict):

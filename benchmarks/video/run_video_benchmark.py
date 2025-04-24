@@ -32,11 +32,7 @@ import numpy as np
 import pandas as pd
 import PIL
 import torch
-from skimage.metrics import (
-    mean_squared_error,
-    peak_signal_noise_ratio,
-    structural_similarity,
-)
+from skimage.metrics import mean_squared_error, peak_signal_noise_ratio, structural_similarity
 from tqdm import tqdm
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
@@ -98,11 +94,7 @@ def load_original_frames(imgs_dir: Path, timestamps: list[float], fps: int) -> t
 
 
 def save_decoded_frames(
-    imgs_dir: Path,
-    save_dir: Path,
-    frames: torch.Tensor,
-    timestamps: list[float],
-    fps: int,
+    imgs_dir: Path, save_dir: Path, frames: torch.Tensor, timestamps: list[float], fps: int
 ) -> None:
     if save_dir.exists() and len(list(save_dir.glob("frame_*.png"))) == len(timestamps):
         return
@@ -112,10 +104,7 @@ def save_decoded_frames(
         idx = int(ts * fps)
         frame_hwc = (frames[i].permute((1, 2, 0)) * 255).type(torch.uint8).cpu().numpy()
         PIL.Image.fromarray(frame_hwc).save(save_dir / f"frame_{idx:06d}_decoded.png")
-        shutil.copyfile(
-            imgs_dir / f"frame_{idx:06d}.png",
-            save_dir / f"frame_{idx:06d}_original.png",
-        )
+        shutil.copyfile(imgs_dir / f"frame_{idx:06d}.png", save_dir / f"frame_{idx:06d}_original.png")
 
 
 def save_first_episode(imgs_dir: Path, dataset: LeRobotDataset) -> None:
@@ -131,11 +120,7 @@ def save_first_episode(imgs_dir: Path, dataset: LeRobotDataset) -> None:
     imgs_dataset = hf_dataset.select_columns(img_keys[0])
 
     for i, item in enumerate(
-        tqdm(
-            imgs_dataset,
-            desc=f"saving {dataset.repo_id} first episode images",
-            leave=False,
-        )
+        tqdm(imgs_dataset, desc=f"saving {dataset.repo_id} first episode images", leave=False)
     ):
         img = item[img_keys[0]]
         img.save(str(imgs_dir / f"frame_{i:06d}.png"), quality=100)
@@ -290,9 +275,7 @@ def benchmark_encoding_decoding(
     random.seed(seed)
     benchmark_table = []
     for timestamps_mode in tqdm(
-        decoding_cfg["timestamps_modes"],
-        desc="decodings (timestamps_modes)",
-        leave=False,
+        decoding_cfg["timestamps_modes"], desc="decodings (timestamps_modes)", leave=False
     ):
         for backend in tqdm(decoding_cfg["backends"], desc="decodings (backends)", leave=False):
             benchmark_row = benchmark_decoding(

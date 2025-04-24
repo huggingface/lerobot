@@ -390,8 +390,7 @@ def test_record_with_event_exit_early(tmp_path, request, robot_type, mock):
 
 
 @pytest.mark.parametrize(
-    "robot_type, mock, num_image_writer_processes",
-    [("koch", True, 0), ("koch", True, 1)],
+    "robot_type, mock, num_image_writer_processes", [("koch", True, 0), ("koch", True, 1)]
 )
 @require_robot
 def test_record_with_event_stop_recording(tmp_path, request, robot_type, mock, num_image_writer_processes):

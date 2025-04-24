@@ -196,11 +196,7 @@ def train(cfg: TrainPipelineConfig):
     }
 
     train_tracker = MetricsTracker(
-        cfg.batch_size,
-        dataset.num_frames,
-        dataset.num_episodes,
-        train_metrics,
-        initial_step=step,
+        cfg.batch_size, dataset.num_frames, dataset.num_episodes, train_metrics, initial_step=step
     )
 
     logging.info("Start offline training on a fixed dataset")
@@ -271,11 +267,7 @@ def train(cfg: TrainPipelineConfig):
                 "eval_s": AverageMeter("eval_s", ":.3f"),
             }
             eval_tracker = MetricsTracker(
-                cfg.batch_size,
-                dataset.num_frames,
-                dataset.num_episodes,
-                eval_metrics,
-                initial_step=step,
+                cfg.batch_size, dataset.num_frames, dataset.num_episodes, eval_metrics, initial_step=step
             )
             eval_tracker.eval_s = eval_info["aggregated"].pop("eval_s")
             eval_tracker.avg_sum_reward = eval_info["aggregated"].pop("avg_sum_reward")

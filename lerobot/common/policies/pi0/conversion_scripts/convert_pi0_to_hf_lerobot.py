@@ -61,11 +61,7 @@ from lerobot.common.policies.pi0.conversion_scripts.conversion_utils import (
 )
 from lerobot.common.policies.pi0.modeling_pi0 import PI0Policy
 
-PRECISIONS = {
-    "bfloat16": torch.bfloat16,
-    "float32": torch.float32,
-    "float16": torch.float16,
-}
+PRECISIONS = {"bfloat16": torch.bfloat16, "float32": torch.float32, "float16": torch.float16}
 
 
 def slice_paligemma_state_dict(state_dict, config):
