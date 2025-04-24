@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tcpdump sysstat screen tmux \
     libglib2.0-0 libgl1-mesa-glx libegl1-mesa \
     speech-dispatcher portaudio19-dev libgeos-dev \
-    python${PYTHON_VERSION} python${PYTHON_VERSION}-venv \
+    python${PYTHON_VERSION} python${PYTHON_VERSION}-venv python${PYTHON_VERSION}-dev \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Install ffmpeg build dependencies. See:
