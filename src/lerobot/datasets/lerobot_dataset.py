@@ -30,6 +30,7 @@ from datasets import concatenate_datasets, load_dataset
 from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.constants import REPOCARD_NAME
 from huggingface_hub.errors import RevisionNotFoundError
+from soundfile import SoundFile
 
 from lerobot.constants import HF_LEROBOT_HOME
 from lerobot.datasets.compute_stats import aggregate_stats, compute_episode_stats
@@ -499,7 +500,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             download_audio (bool, optional): Flag to download the audio. Defaults to True.
             video_backend (str | None, optional): Video backend to use for decoding videos. Defaults to torchcodec when available int the platform; otherwise, defaults to 'pyav'.
                 You can also use the 'pyav' decoder used by Torchvision, which used to be the default option, or 'video_reader' which is another decoder of Torchvision.
-            audio_backend (str | None, optional): Audio backend to use for decoding audio. Defaults to 'torchaudio'.
+            audio_backend (str | None, optional): Audio backend to use for decoding audio. Defaults to 'torchcodec'.
             batch_encoding_size (int, optional): Number of episodes to accumulate before batch encoding videos.
                 Set to 1 for immediate encoding (default), or higher for batched encoding. Defaults to 1.
         """
@@ -513,7 +514,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.revision = revision if revision else CODEBASE_VERSION
         self.video_backend = video_backend if video_backend else get_safe_default_codec()
         self.audio_backend = (
-            audio_backend if audio_backend else "torchaudio"
+            audio_backend if audio_backend else "torchcodec"
         )  # Waiting for torchcodec release #TODO(CarolinePascal)
         self.delta_indices = None
         self.batch_encoding_size = batch_encoding_size
@@ -1262,7 +1263,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.episode_data_index = None
         obj.video_backend = video_backend if video_backend is not None else get_safe_default_codec()
         obj.audio_backend = (
-            audio_backend if audio_backend is not None else "torchaudio"
+            audio_backend if audio_backend is not None else "torchcodec"
         )  # Waiting for torchcodec release #TODO(CarolinePascal)
         return obj
 

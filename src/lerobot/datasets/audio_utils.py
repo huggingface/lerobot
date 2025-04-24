@@ -41,7 +41,7 @@ def decode_audio(
     audio_path: Path | str,
     timestamps: list[float],
     duration: float,
-    backend: str | None = "torchaudio",
+    backend: str | None = "torchcodec",
 ) -> torch.Tensor:
     """
     Decodes audio using the specified backend.
@@ -49,7 +49,7 @@ def decode_audio(
         audio_path (Path): Path to the audio file.
         timestamps (list[float]): List of (starting) timestamps to extract audio chunks.
         duration (float): Duration of the audio chunks in seconds.
-        backend (str, optional): Backend to use for decoding. Defaults to "torchaudio".
+        backend (str, optional): Backend to use for decoding. Defaults to "torchcodec".
 
     Returns:
         torch.Tensor: Decoded audio chunks.
@@ -57,8 +57,7 @@ def decode_audio(
     Currently supports torchaudio.
     """
     if backend == "torchcodec":
-        #   return decode_audio_torchcodec(audio_path, timestamps, duration)    #TODO(CarolinePascal): uncomment this line at next torchcodec release
-        raise ValueError("torchcodec backend is not available yet.")
+        return decode_audio_torchcodec(audio_path, timestamps, duration)
     elif backend == "torchaudio":
         return decode_audio_torchaudio(audio_path, timestamps, duration)
     else:
