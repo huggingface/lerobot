@@ -33,13 +33,13 @@ def main():
     keyboard = KeyboardTeleop(keyboard_config)
 
     logging.info("Configuring LeKiwi Client")
-    robot_config = LeKiwiClientConfig(id="lekiwi")
+    robot_config = LeKiwiClientConfig(remote_ip="192.0.2.42", id="lekiwi")
     robot = LeKiwiClient(robot_config)
 
     logging.info("Creating LeRobot Dataset")
 
     # The observations that we get are expected to be in body frame (x,y,theta)
-    obs_dict = {f"{OBS_STATE}." + key: value for key, value in robot.state_feature_client.items()}
+    obs_dict = {f"{OBS_STATE}." + key: value for key, value in robot.state_feature.items()}
     # The actions that we send are expected to be in wheel frame (motor encoders)
     act_dict = {"action." + key: value for key, value in robot.action_feature.items()}
 

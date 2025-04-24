@@ -53,9 +53,9 @@ class LeKiwiClient(Robot):
         self.zmq_observation_socket = None
 
         self.last_frames = {}
-        self.last_present_speed = {"x_cmd": 0.0, "y_cmd": 0.0, "theta_cmd": 0.0}
 
         self.last_remote_arm_state = {}
+        self.last_remote_base_state = {"base_left_wheel": 0, "base_back_wheel": 0, "base_right_wheel": 0}
 
         # Define three speed levels and a current index
         self.speed_levels = [
@@ -69,7 +69,7 @@ class LeKiwiClient(Robot):
         self.logs = {}
 
     @property
-    def state_feature_client(self) -> dict:
+    def state_feature(self) -> dict:
         state_ft = {
             "arm_shoulder_pan": {"shape": (1,), "info": None, "dtype": "float32"},
             "arm_shoulder_lift": {"shape": (1,), "info": None, "dtype": "float32"},
@@ -84,8 +84,8 @@ class LeKiwiClient(Robot):
         return state_ft
 
     @property
-    def state_feature_host(self) -> dict:
-        state_ft = {
+    def action_feature(self) -> dict:
+        action_ft = {
             "arm_shoulder_pan": {"shape": (1,), "info": None, "dtype": "float32"},
             "arm_shoulder_lift": {"shape": (1,), "info": None, "dtype": "float32"},
             "arm_elbow_flex": {"shape": (1,), "info": None, "dtype": "float32"},
@@ -96,19 +96,7 @@ class LeKiwiClient(Robot):
             "base_right_wheel": {"shape": (1,), "info": None, "dtype": "float32"},
             "base_back_wheel": {"shape": (1,), "info": None, "dtype": "float32"},
         }
-        return state_ft
-
-    @property
-    def state_feature(self) -> dict:
-        raise (
-            NotImplementedError(
-                "state_feature is not implemented for LeKiwiClient. Use state_feature_client or state_feature_host instead."
-            )
-        )
-
-    @property
-    def action_feature(self) -> dict:
-        return self.state_feature_host
+        return action_ft
 
     @property
     def camera_features(self) -> dict[str, dict]:
@@ -207,7 +195,7 @@ class LeKiwiClient(Robot):
 
         Returns:
           A dictionary with wheel raw commands:
-             {"left_wheel": value, "back_wheel": value, "right_wheel": value}.
+             {"base_left_wheel": value, "base_back_wheel": value, "base_right_wheel": value}.
 
         Notes:
           - Internally, the method converts theta_cmd to rad/s for the kinematics.
@@ -244,7 +232,11 @@ class LeKiwiClient(Robot):
         # Convert each wheel’s angular speed (deg/s) to a raw integer.
         wheel_raw = [self._degps_to_raw(deg) for deg in wheel_degps]
 
-        return {"left_wheel": wheel_raw[0], "back_wheel": wheel_raw[1], "right_wheel": wheel_raw[2]}
+        return {
+            "base_left_wheel": wheel_raw[0],
+            "base_back_wheel": wheel_raw[1],
+            "base_right_wheel": wheel_raw[2],
+        }
 
     def _wheel_raw_to_body(
         self, wheel_raw: dict[str, Any], wheel_radius: float = 0.05, base_radius: float = 0.125
@@ -253,15 +245,15 @@ class LeKiwiClient(Robot):
         Convert wheel raw command feedback back into body-frame velocities.
 
         Parameters:
-          wheel_raw   : Vector with raw wheel commands ("left_wheel", "back_wheel", "right_wheel").
+          wheel_raw   : Vector with raw wheel commands ("base_left_wheel", "base_back_wheel", "base_right_wheel").
           wheel_radius: Radius of each wheel (meters).
           base_radius : Distance from the robot center to each wheel (meters).
 
         Returns:
-          A tuple (x_cmd, y_cmd, theta_cmd) where:
-             x_cmd      : Linear velocity in x (m/s).
-             y_cmd      : Linear velocity in y (m/s).
-             theta_cmd  : Rotational velocity in deg/s.
+          A dict (x_cmd, y_cmd, theta_cmd) where:
+             OBS_STATE.x_cmd      : Linear velocity in x (m/s).
+             OBS_STATE.y_cmd      : Linear velocity in y (m/s).
+             OBS_STATE.theta_cmd  : Rotational velocity in deg/s.
         """
 
         # Convert each raw command back to an angular speed in deg/s.
@@ -280,7 +272,11 @@ class LeKiwiClient(Robot):
         velocity_vector = m_inv.dot(wheel_linear_speeds)
         x_cmd, y_cmd, theta_rad = velocity_vector
         theta_cmd = theta_rad * (180.0 / np.pi)
-        return {f"{OBS_STATE}.x_cmd": x_cmd, f"{OBS_STATE}.y_cmd": y_cmd, f"{OBS_STATE}.theta_cmd": theta_cmd}
+        return {
+            f"{OBS_STATE}.x_cmd": x_cmd * 1000,
+            f"{OBS_STATE}.y_cmd": y_cmd * 1000,
+            f"{OBS_STATE}.theta_cmd": theta_cmd,
+        }  # Convert to mm/s
 
     def _poll_and_get_latest_message(self) -> Optional[str]:
         """Polls the ZMQ socket for a limited time and returns the latest message string."""
@@ -333,7 +329,7 @@ class LeKiwiClient(Robot):
             logging.error(f"Error decoding base64 image data: {e}")
             return None
 
-    def _process_observation_data(
+    def _remote_state_from_obs(
         self, observation: Dict[str, Any]
     ) -> Tuple[Dict[str, np.ndarray], Dict[str, Any], Dict[str, Any]]:
         """Extracts frames, speed, and arm state from the parsed observation."""
@@ -350,10 +346,10 @@ class LeKiwiClient(Robot):
                 current_frames[cam_name] = frame
 
         # Extract state components
-        current_speed = {k: v for k, v in state_observation.items() if k.startswith(f"{OBS_STATE}.base")}
         current_arm_state = {k: v for k, v in state_observation.items() if k.startswith(f"{OBS_STATE}.arm")}
+        current_base_state = {k: v for k, v in state_observation.items() if k.startswith(f"{OBS_STATE}.base")}
 
-        return current_frames, current_speed, current_arm_state
+        return current_frames, current_arm_state, current_base_state
 
     def _get_data(self) -> Tuple[Dict[str, np.ndarray], Dict[str, Any], Dict[str, Any]]:
         """
@@ -369,27 +365,27 @@ class LeKiwiClient(Robot):
 
         # 2. If no message, return cached data
         if latest_message_str is None:
-            return self.last_frames, self.last_present_speed, self.last_remote_arm_state
+            return self.last_frames, self.last_remote_arm_state, self.last_remote_base_state
 
         # 3. Parse the JSON message
         observation = self._parse_observation_json(latest_message_str)
 
         # 4. If JSON parsing failed, return cached data
         if observation is None:
-            return self.last_frames, self.last_present_speed, self.last_remote_arm_state
+            return self.last_frames, self.last_remote_arm_state, self.last_remote_base_state
 
         # 5. Process the valid observation data
         try:
-            current_frames, current_speed, current_arm_state = self._process_observation_data(observation)
+            new_frames, new_arm_state, new_base_state = self._remote_state_from_obs(observation)
         except Exception as e:
             logging.error(f"Error processing observation data, serving last observation: {e}")
-            return self.last_frames, self.last_present_speed, self.last_remote_arm_state
+            return self.last_frames, self.last_remote_arm_state, self.last_remote_base_state
 
-        self.last_frames = current_frames
-        self.last_present_speed = current_speed
-        self.last_remote_arm_state = current_arm_state
+        self.last_frames = new_frames
+        self.last_remote_arm_state = new_arm_state
+        self.last_remote_base_state = new_base_state
 
-        return current_frames, current_speed, current_arm_state
+        return new_frames, new_arm_state, new_base_state
 
     def get_observation(self) -> dict[str, Any]:
         """
@@ -400,13 +396,10 @@ class LeKiwiClient(Robot):
         if not self._is_connected:
             raise DeviceNotConnectedError("LeKiwiClient is not connected. You need to run `robot.connect()`.")
 
-        frames, present_speed, remote_arm_state_tensor = self._get_data()
-        body_state = self._wheel_raw_to_body(present_speed)
-        body_state_mm = {k: v * 1000.0 for k, v in body_state.items()}  # Convert x,y to mm/s
+        frames, remote_arm_state, remote_base_state = self._get_data()
+        remote_body_state = self._wheel_raw_to_body(remote_base_state)
 
-        obs_dict = {}
-        obs_dict.update(remote_arm_state_tensor)
-        obs_dict.update(body_state_mm)
+        obs_dict = {**remote_arm_state, **remote_body_state}
 
         # TODO(Steven): Remove this when it is possible to record a non-numpy array value
         obs_dict = {k: np.array([v], dtype=np.float32) for k, v in obs_dict.items()}
@@ -473,16 +466,14 @@ class LeKiwiClient(Robot):
         common_keys = [
             key
             for key in action
-            if key in (motor.replace("arm_", "") for motor, _ in self.state_feature_host.items())
+            if key in (motor.replace("arm_", "") for motor, _ in self.action_feature.items())
         ]
 
         arm_actions = {"arm_" + arm_motor: action[arm_motor] for arm_motor in common_keys}
         goal_pos = arm_actions
 
         keyboard_keys = np.array(list(set(action.keys()) - set(common_keys)))
-        wheel_actions = {
-            "base_" + k: v for k, v in self._from_keyboard_to_wheel_action(keyboard_keys).items()
-        }
+        wheel_actions = self._from_keyboard_to_wheel_action(keyboard_keys)
         goal_pos = {**arm_actions, **wheel_actions}
 
         self.zmq_cmd_socket.send_string(json.dumps(goal_pos))  # action is in motor space
