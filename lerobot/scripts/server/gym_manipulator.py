@@ -1133,10 +1133,6 @@ class TorchBox(gym.spaces.Box):
         return torch.as_tensor(arr, dtype=self.torch_dtype, device=self.device)
 
     def contains(self, x: torch.Tensor) -> bool:
-        # Only tensor inputs are valid
-        if not torch.is_tensor(x):
-            return False
-
         # Move to CPU/numpy and cast to the internal dtype
         arr = x.detach().cpu().numpy().astype(self.dtype, copy=False)
         return super().contains(arr)
