@@ -50,6 +50,8 @@ logger.addHandler(file_handler)
 inference_latency = 1 / 3
 idle_wait = 0.1
 
+supported_policies = ["act"]
+
 
 class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
     def __init__(self):
@@ -87,6 +89,10 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
             f"Policy type: {policy_specs.policy_type} | "
             f"Pretrained name or path: {policy_specs.pretrained_name_or_path} | "
             f"Device: {policy_specs.device}"
+        )
+
+        assert policy_specs.policy_type in supported_policies, (
+            f"Policy type {policy_specs.policy_type} not supported. Supported policies: {supported_policies}"
         )
 
         self.device = policy_specs.device
@@ -180,6 +186,7 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
 
     @torch.no_grad()
     def _get_action_chunk(self, observation: dict[str, torch.Tensor]) -> torch.Tensor:
+        # NOTE: This temporary function only works for ACT policies (Pi0-like models are *not* supported just yet)
         """Get an action chunk from the policy"""
         start_time = time.time()
 

@@ -100,8 +100,8 @@ class RobotClient:
     def __init__(
         self,
         server_address="localhost:50051",
-        policy_type: str = "pi0",  # "pi0"
-        pretrained_name_or_path: str = "lerobot/pi0",  # "fracapuano/act_so100_test", #"lerobot/pi0"
+        policy_type: str = "act",  # "pi0"
+        pretrained_name_or_path: str = "fracapuano/act_so100_test",  # "lerobot/pi0"
         policy_device: str = "mps",
     ):
         self.policy_config = TinyPolicyConfig(policy_type, pretrained_name_or_path, policy_device)
