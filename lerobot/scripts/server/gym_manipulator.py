@@ -1171,6 +1171,8 @@ class TorchActionWrapper(gym.Wrapper):
         )
 
     def step(self, action: torch.Tensor):
+        if action.dim() == 2:
+            action = action.squeeze(0)
         action = action.detach().cpu().numpy()
         return self.env.step(action)
 

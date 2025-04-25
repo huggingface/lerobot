@@ -37,11 +37,7 @@ from lerobot.common.utils.utils import (
 from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.scripts.server import hilserl_pb2, hilserl_pb2_grpc, learner_service
-from lerobot.scripts.server.buffer import (
-    Transition,
-    move_state_dict_to_device,
-    move_transition_to_device,
-)
+from lerobot.scripts.server.buffer import Transition
 from lerobot.scripts.server.gym_manipulator import make_robot_env
 from lerobot.scripts.server.network_utils import (
     bytes_to_state_dict,
@@ -50,7 +46,12 @@ from lerobot.scripts.server.network_utils import (
     send_bytes_in_chunks,
     transitions_to_bytes,
 )
-from lerobot.scripts.server.utils import get_last_item_from_queue, setup_process_handlers
+from lerobot.scripts.server.utils import (
+    get_last_item_from_queue,
+    move_state_dict_to_device,
+    move_transition_to_device,
+    setup_process_handlers,
+)
 
 ACTOR_SHUTDOWN_TIMEOUT = 30
 
