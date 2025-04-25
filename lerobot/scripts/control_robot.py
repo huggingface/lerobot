@@ -276,6 +276,7 @@ def record(
 
     if not robot.is_connected:
         robot.connect()
+
     listener, events = init_keyboard_listener()
 
     # Execute a few seconds without recording to:
