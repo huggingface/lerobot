@@ -579,8 +579,13 @@ def merge_convert_metadata(input_dir_list:list[Path], dataset: Dataset, output_d
     write_json(metadata_v2_0, output_dir / INFO_PATH)
     merge_convert_stats_to_json(input_dir_list, output_dir)
 
-def convert_metadata(input_dir:Path, dataset: Dataset, meta_dir: Path, output_dir: Path, episode_lengths_in, single_task: str):
+def convert_metadata(input_dir:Path, dataset: Dataset, meta_dir: Path, output_dir: Path, episode_lengths_in):
     print("Converting metadata...")
+    task_map = load_task_map()
+    if (len(task_map) > 1):
+        print("wrong task num, please check")
+        return
+    single_task = task_map[0]["task_detail"]
     output_meta_dir = output_dir / "meta"
     output_meta_dir.mkdir(exist_ok=True)
     features = get_features_from_hf_dataset(dataset, None)
@@ -672,33 +677,23 @@ def main(input_dir_list: list[Path], output_dir: Path):
         return
     else:
         input_dir = input_dir_list[0]
-    print(f"Converting dataset from {input_dir} to {output_dir}")
-    # print(type(input_dir))
-    # print(len(input_dir))
-    # print(input_dir[1])
-    # return
-    # single_task = "Use the right hand to pick up the black foam object and place it onto the center purple tray. Then, use the left hand to pick up the black foam from the purple tray and place it into the pink plastic container."
+        print(f"Converting dataset from {input_dir} to {output_dir}")
+        output_dir.mkdir(parents=True, exist_ok=True)
 
-    
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    output_parquet_dir = input_dir.with_name(f"{input_dir.name}_parquet")
-    # # 1. 处理arrow文件
-    arrow_file = next(input_dir.glob("train/data-*.arrow"))
-    # print(str(arrow_file))
-    episode_lengths, dataset_out = convert_arrow_to_v2(input_dir, arrow_file, output_dir)
-    
-    # # 2. 处理视频文件
-    videos_dir = input_dir / "videos"
-    reorganize_videos(videos_dir, output_dir)
-    
-    # #3. 处理元数据
-    meta_dir = input_dir / "meta_data"
-    convert_metadata(input_dir, dataset_out, meta_dir, output_dir, episode_lengths, single_task)
-    shutil.rmtree(output_parquet_dir)
-
-
-
+        output_parquet_dir = input_dir.with_name(f"{input_dir.name}_parquet")
+        # # 1. 处理arrow文件
+        arrow_file = next(input_dir.glob("train/data-*.arrow"))
+        # print(str(arrow_file))
+        episode_lengths, dataset_out = convert_arrow_to_v2(input_dir, arrow_file, output_dir)
+        
+        # # 2. 处理视频文件
+        videos_dir = input_dir / "videos"
+        reorganize_videos(videos_dir, output_dir)
+        
+        # #3. 处理元数据
+        meta_dir = input_dir / "meta_data"
+        convert_metadata(input_dir, dataset_out, meta_dir, output_dir, episode_lengths)
+        shutil.rmtree(output_parquet_dir)
 
     # input_path = Path("/home/h666/code/dataset/hf_dataset/zcai/aloha2/collect_dish_0126_merged_resized6d_new_2")
     # output_path = Path("/home/h666/code/dataset/hf_dataset/zcai/aloha2/collect_dish_0126_merged_resized6d_new_2")

@@ -248,7 +248,7 @@ class PI0Policy(PreTrainedPolicy):
             config.output_features, config.normalization_mapping, dataset_stats
         )
 
-        self.language_tokenizer = AutoTokenizer.from_pretrained("/home/h666/code/model_platform/lerobot/data/paligemma-3b-pt-224")
+        self.language_tokenizer = AutoTokenizer.from_pretrained("/data/jiahuan/huggingface/models/paligemma-3b-pt-224")
         self.model = PI0FlowMatching(config)
 
         self.reset()

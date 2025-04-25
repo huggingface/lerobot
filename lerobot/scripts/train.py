@@ -19,6 +19,8 @@ from contextlib import nullcontext
 from pathlib import Path
 from pprint import pformat
 from typing import Any, List
+import sys
+import os
 
 import torch
 import torch.nn.functional as F
@@ -52,7 +54,7 @@ from lerobot.common.utils.utils import (
 )
 from lerobot.common.utils.wandb_utils import WandBLogger
 from lerobot.configs import parser
-from lerobot.configs.train import TrainPipelineConfig
+from lerobot.configs.train import TrainPipelineConfig,TRAIN_CONFIG_NAME
 from lerobot.scripts.eval import eval_policy
 from lerobot.scripts.plot_trajectory import plot_epoch_trajectories
 
@@ -127,8 +129,21 @@ def train(cfg: TrainPipelineConfig):
     cfg.validate()
     logging.info(pformat(cfg.to_dict()))
 
+    args = sys.argv
+    command = " ".join(args)
+    if cfg.resume == False:
+        command = command + f" --resume=true --config_path={cfg.output_dir.joinpath('checkpoints/last/pretrained_model/'+TRAIN_CONFIG_NAME)}"
+    logging.info("resume command: "+colored(f"python {command}", "yellow", attrs=["bold"]))
+
+    logger = logging.getLogger(__name__)
+    logger.propagate = False
+    os.makedirs(cfg.output_dir, exist_ok=True)
+    logger.addHandler(logging.FileHandler(cfg.output_dir.joinpath("resume_command.log"), mode="w"))
+    logger.info(f"resume command: python {command}")
+
     if cfg.wandb.enable and cfg.wandb.project:
         wandb_logger = WandBLogger(cfg)
+        logger.info(f"Track this run --> {wandb_logger._wandb.run.get_url()}")
     else:
         wandb_logger = None
         logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
