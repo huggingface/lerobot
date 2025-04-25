@@ -72,7 +72,7 @@ class KeyboardTeleop(Teleoperator):
 
     @property
     def is_connected(self) -> bool:
-        return self._is_connected
+        return PYNPUT_AVAILABLE and isinstance(self.listener, keyboard.Listener) and self.listener.is_alive()
 
     @property
     def is_calibrated(self) -> bool:
