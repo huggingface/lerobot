@@ -457,7 +457,6 @@ class ReplayBuffer:
             first_state = {k: v.to(device) for k, v in first_transition["state"].items()}
             first_action = first_transition["action"].to(device)
 
-
             # Get complementary info if available
             first_complementary_info = None
             if (

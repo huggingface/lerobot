@@ -3,7 +3,7 @@ import sys
 import time
 from collections import deque
 from threading import Lock
-from typing import Annotated, Any, Dict, Tuple, Sequence
+from typing import Annotated, Any, Dict, Sequence, Tuple
 
 import gymnasium as gym
 import numpy as np
@@ -797,7 +797,7 @@ class BaseLeaderControlWrapper(gym.Wrapper):
         else:
             self._handle_leader_teleoperation()
 
-        # NOTE: 
+        # NOTE:
         obs, reward, terminated, truncated, info = self.env.step(action)
 
         # Add intervention info
@@ -829,7 +829,6 @@ class BaseLeaderControlWrapper(gym.Wrapper):
 
 
 class GearedLeaderControlWrapper(BaseLeaderControlWrapper):
-
     """Wrapper that enables manual intervention via keyboard."""
 
     def _init_keyboard_events(self):
@@ -999,7 +998,9 @@ class GamepadControlWrapper(gym.Wrapper):
         print("  Y/Triangle button: End episode (SUCCESS)")
         print("  B/Circle button: Exit program")
 
-    def get_gamepad_action(self) -> Tuple[bool | np.ndarray[Any, np.dtype[Any]] | np.ndarray[Any, np.dtype[np.floating[np._32Bit]]]]:
+    def get_gamepad_action(
+        self,
+    ) -> Tuple[bool | np.ndarray[Any, np.dtype[Any]] | np.ndarray[Any, np.dtype[np.floating[np._32Bit]]]]:
         """
         Get the current action from the gamepad if any input is active.
 
@@ -1105,12 +1106,14 @@ class GamepadControlWrapper(gym.Wrapper):
         # Call the parent close method
         return self.env.close()
 
+
 class TorchBox(gym.spaces.Box):
     """A version of gym.spaces.Box that handles PyTorch tensors.
-    
+
     This class extends gym.spaces.Box to work with PyTorch tensors,
     providing compatibility between NumPy arrays and PyTorch tensors.
     """
+
     def __init__(
         self,
         low: float | Sequence[float] | np.ndarray,
@@ -1118,7 +1121,7 @@ class TorchBox(gym.spaces.Box):
         shape: Sequence[int] | None = None,
         np_dtype: np.dtype | type = np.float32,
         torch_dtype: torch.dtype = torch.float32,
-        device: torch.device = torch.device("cpu"),
+        device: str = "cpu",
         seed: int | np.random.Generator | None = None,
     ) -> None:
         super().__init__(low, high, shape=shape, dtype=np_dtype, seed=seed)
@@ -1148,11 +1151,13 @@ class TorchBox(gym.spaces.Box):
             f"np={self.dtype.name}, torch={self.torch_dtype}, device={self.device})"
         )
 
+
 class TorchActionWrapper(gym.Wrapper):
     """
     The goal of this wrapper is to change the action_space.sample()
     to torch tensors.
     """
+
     def __init__(self, env: gym.Env, device: str):
         super().__init__(env)
         self.action_space = TorchBox(
@@ -1166,6 +1171,7 @@ class TorchActionWrapper(gym.Wrapper):
     def step(self, action: torch.Tensor):
         action = action.detach().cpu().numpy()
         return self.env.step(action)
+
 
 ###########################################################
 # Factory functions

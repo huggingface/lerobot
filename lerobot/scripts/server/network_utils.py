@@ -17,8 +17,8 @@
 
 import io
 import logging
-from multiprocessing import Event, Queue
 import pickle
+from multiprocessing import Event, Queue
 from typing import Any
 
 import torch
@@ -27,6 +27,8 @@ from lerobot.scripts.server import hilserl_pb2
 from lerobot.scripts.server.utils import Transition
 
 CHUNK_SIZE = 2 * 1024 * 1024  # 2 MB
+
+
 def bytes_buffer_size(buffer: io.BytesIO) -> int:
     buffer.seek(0, io.SEEK_END)
     result = buffer.tell()
@@ -62,7 +64,7 @@ def send_bytes_in_chunks(buffer: bytes, message_class: Any, log_prefix: str = ""
     logging_method(f"{log_prefix} Published {sent_bytes / 1024 / 1024} MB")
 
 
-def receive_bytes_in_chunks(iterator, queue: Queue, shutdown_event: Event, log_prefix: str = ""): # type: ignore
+def receive_bytes_in_chunks(iterator, queue: Queue, shutdown_event: Event, log_prefix: str = ""):  # type: ignore
     bytes_buffer = io.BytesIO()
     step = 0
 

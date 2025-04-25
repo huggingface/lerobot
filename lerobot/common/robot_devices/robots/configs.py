@@ -474,10 +474,7 @@ class So100RobotConfig(ManipulatorRobotConfig):
         }
     )
 
-    cameras: dict[str, CameraConfig] = field(
-        default_factory=lambda: {
-        }
-    )
+    cameras: dict[str, CameraConfig] = field(default_factory=lambda: {})
 
     mock: bool = False
 

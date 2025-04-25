@@ -42,14 +42,13 @@ from lerobot.scripts.server.buffer import (
     move_state_dict_to_device,
     move_transition_to_device,
 )
-
 from lerobot.scripts.server.gym_manipulator import make_robot_env
 from lerobot.scripts.server.network_utils import (
+    bytes_to_state_dict,
     python_object_to_bytes,
-    transitions_to_bytes,
     receive_bytes_in_chunks,
     send_bytes_in_chunks,
-    bytes_to_state_dict,
+    transitions_to_bytes,
 )
 from lerobot.scripts.server.utils import get_last_item_from_queue, setup_process_handlers
 
@@ -132,7 +131,6 @@ def actor_cli(cfg: TrainPipelineConfig):
     transitions_process.start()
     interactions_process.start()
     receive_policy_process.start()
-
 
     act_with_policy(
         cfg=cfg,
@@ -264,7 +262,6 @@ def act_with_policy(
             episode_intervention = True
             # Increment intervention steps counter
             episode_intervention_steps += 1
-
 
         list_transition_to_send_to_learner.append(
             Transition(

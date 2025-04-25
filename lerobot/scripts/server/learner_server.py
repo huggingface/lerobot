@@ -23,7 +23,6 @@ from pathlib import Path
 from pprint import pformat
 
 import grpc
-
 import hilserl_pb2_grpc  # type: ignore
 import torch
 from termcolor import colored
@@ -38,7 +37,6 @@ from lerobot.common.constants import (
     TRAINING_STATE_DIR,
 )
 from lerobot.common.datasets.factory import make_dataset
-
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.sac.modeling_sac import SACPolicy
@@ -60,20 +58,17 @@ from lerobot.common.utils.wandb_utils import WandBLogger
 from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.scripts.server import learner_service
-from lerobot.scripts.server.network_utils import (
-    bytes_to_python_object,
-    bytes_to_transitions,
-    state_to_bytes,
-)
-
 from lerobot.scripts.server.buffer import ReplayBuffer, concatenate_batch_transitions
-
 from lerobot.scripts.server.network_utils import (
     bytes_to_python_object,
     bytes_to_transitions,
     state_to_bytes,
 )
-from lerobot.scripts.server.utils import setup_process_handlers, move_state_dict_to_device, move_transition_to_device
+from lerobot.scripts.server.utils import (
+    move_state_dict_to_device,
+    move_transition_to_device,
+    setup_process_handlers,
+)
 
 LOG_PREFIX = "[LEARNER]"
 

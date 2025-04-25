@@ -20,6 +20,7 @@ import signal
 import sys
 from queue import Empty
 from typing import TypedDict
+
 import torch
 from torch.multiprocessing import Queue
 
@@ -82,6 +83,7 @@ class Transition(TypedDict):
     done: bool
     truncated: bool
     complementary_info: dict[str, torch.Tensor | float | int] | None = None
+
 
 def move_transition_to_device(transition: Transition, device: str = "cpu") -> Transition:
     device = torch.device(device)
