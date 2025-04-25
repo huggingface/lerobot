@@ -3,7 +3,7 @@ import sys
 import time
 from collections import deque
 from threading import Lock
-from typing import Annotated, Any, Dict, Tuple
+from typing import Annotated, Any, Dict, Tuple, Sequence
 
 import gymnasium as gym
 import numpy as np
@@ -153,8 +153,6 @@ class RobotEnv(gym.Env):
                 - info (dict): Additional debugging information including:
         """
         self.current_joint_positions = self.robot.follower_arms["main"].read("Present_Position")
-        if isinstance(action, torch.Tensor):
-            action = action.cpu().numpy()
 
         self.robot.send_action(torch.from_numpy(action))
         observation = self.robot.capture_observation()
@@ -277,8 +275,6 @@ class RewardWrapper(gym.Wrapper):
         """
         self.env = env
 
-        if isinstance(device, str):
-            device = torch.device(device)
         self.device = device
 
         self.reward_classifier = torch.compile(reward_classifier)
@@ -378,29 +374,21 @@ class ImageCropResizeWrapper(gym.Wrapper):
                 flattened_spatial_dims = obs[k].view(batch_size, channels, -1)
 
                 # Calculate standard deviation across spatial dimensions (H, W)
-                std_per_channel = torch.std(flattened_spatial_dims, dim=2)
-
                 # If any channel has std=0, all pixels in that channel have the same value
+                # This is helpful if one camera mistakenly covered or the image is black
+                std_per_channel = torch.std(flattened_spatial_dims, dim=2)
                 if (std_per_channel <= 0.02).any():
                     logging.warning(
                         f"Potential hardware issue detected: All pixels have the same value in observation {k}"
                     )
-            # Check for NaNs before processing
-            if torch.isnan(obs[k]).any():
-                logging.error(f"NaN values detected in observation {k} before crop and resize")
 
             if device == torch.device("mps:0"):
                 obs[k] = obs[k].cpu()
 
             obs[k] = F.crop(obs[k], *self.crop_params_dict[k])
             obs[k] = F.resize(obs[k], self.resize_size)
-            # TODO(michel-aractingi): Bug in resize, it returns values outside [0, 1]
+            # TODO (michel-aractingi): Bug in resize, it returns values outside [0, 1]
             obs[k] = obs[k].clamp(0.0, 1.0)
-
-            # Check for NaNs after processing
-            if torch.isnan(obs[k]).any():
-                logging.error(f"NaN values detected in observation {k} after crop and resize")
-
             obs[k] = obs[k].to(device)
 
         return obs, reward, terminated, truncated, info
@@ -422,8 +410,6 @@ class ConvertToLeRobotObservation(gym.ObservationWrapper):
     def __init__(self, env, device):
         super().__init__(env)
 
-        if isinstance(device, str):
-            device = torch.device(device)
         self.device = device
 
     def observation(self, observation):
@@ -608,8 +594,6 @@ class EEActionWrapper(gym.ActionWrapper):
 
         current_joint_pos = self.unwrapped.robot.follower_arms["main"].read("Present_Position")
         current_ee_pos = self.fk_function(current_joint_pos)
-        if isinstance(action, torch.Tensor):
-            action = action.cpu().numpy()
         desired_ee_pos[:3, 3] = np.clip(
             current_ee_pos[:3, 3] + action,
             self.bounds["min"],
@@ -1121,6 +1105,67 @@ class GamepadControlWrapper(gym.Wrapper):
         # Call the parent close method
         return self.env.close()
 
+class TorchBox(gym.spaces.Box):
+    """A version of gym.spaces.Box that handles PyTorch tensors.
+    
+    This class extends gym.spaces.Box to work with PyTorch tensors,
+    providing compatibility between NumPy arrays and PyTorch tensors.
+    """
+    def __init__(
+        self,
+        low: float | Sequence[float] | np.ndarray,
+        high: float | Sequence[float] | np.ndarray,
+        shape: Sequence[int] | None = None,
+        np_dtype: np.dtype | type = np.float32,
+        torch_dtype: torch.dtype = torch.float32,
+        device: torch.device = torch.device("cpu"),
+        seed: int | np.random.Generator | None = None,
+    ) -> None:
+        super().__init__(low, high, shape=shape, dtype=np_dtype, seed=seed)
+        self.torch_dtype = torch_dtype
+        self.device = device
+
+    def sample(self) -> torch.Tensor:
+        arr = super().sample()
+        return torch.as_tensor(arr, dtype=self.torch_dtype, device=self.device)
+
+    def contains(self, x: torch.Tensor) -> bool:
+        # Only tensor inputs are valid
+        if not torch.is_tensor(x):
+            return False
+
+        # Move to CPU/numpy and cast to the internal dtype
+        arr = x.detach().cpu().numpy().astype(self.dtype, copy=False)
+        return super().contains(arr)
+
+    def seed(self, seed: int | np.random.Generator | None = None):
+        super().seed(seed)
+        return [seed]
+
+    def __repr__(self) -> str:
+        return (
+            f"TorchBox({self.low_repr}, {self.high_repr}, {self.shape}, "
+            f"np={self.dtype.name}, torch={self.torch_dtype}, device={self.device})"
+        )
+
+class TorchActionWrapper(gym.Wrapper):
+    """
+    The goal of this wrapper is to change the action_space.sample()
+    to torch tensors.
+    """
+    def __init__(self, env: gym.Env, device: str):
+        super().__init__(env)
+        self.action_space = TorchBox(
+            low=env.action_space.low,
+            high=env.action_space.high,
+            shape=env.action_space.shape,
+            torch_dtype=torch.float32,
+            device=torch.device("cpu"),
+        )
+
+    def step(self, action: torch.Tensor):
+        action = action.detach().cpu().numpy()
+        return self.env.step(action)
 
 ###########################################################
 # Factory functions
@@ -1139,15 +1184,6 @@ def make_robot_env(cfg) -> gym.vector.VectorEnv:
     Returns:
         A vectorized gym environment with all the necessary wrappers applied.
     """
-    if "maniskill" in cfg.name:
-        from lerobot.scripts.server.maniskill_manipulator import make_maniskill
-
-        logging.warning("WE SHOULD REMOVE THE MANISKILL BEFORE THE MERGE INTO MAIN")
-        env = make_maniskill(
-            cfg=cfg,
-            n_envs=1,
-        )
-        return env
     robot = make_robot_from_config(cfg.robot)
     # Create base environment
     env = RobotEnv(
@@ -1220,6 +1256,7 @@ def make_robot_env(cfg) -> gym.vector.VectorEnv:
         reset_time_s=cfg.wrapper.reset_time_s,
     )
     env = BatchCompatibleWrapper(env=env)
+    env = TorchActionWrapper(env=env, device=cfg.device)
 
     return env
 
@@ -1277,10 +1314,7 @@ def record_dataset(env, policy, cfg):
     from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 
     # Setup initial action (zero action if using teleop)
-    dummy_action = env.action_space.sample() * 0.0
-    if isinstance(dummy_action, np.ndarray):
-        dummy_action = torch.from_numpy(dummy_action)
-    action = dummy_action
+    action = env.action_space.sample() * 0.0
 
     # Configure dataset features based on environment spaces
     features = {

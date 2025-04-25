@@ -39,16 +39,17 @@ from lerobot.configs.train import TrainPipelineConfig
 from lerobot.scripts.server import hilserl_pb2, hilserl_pb2_grpc, learner_service
 from lerobot.scripts.server.buffer import (
     Transition,
-    bytes_to_state_dict,
     move_state_dict_to_device,
     move_transition_to_device,
-    python_object_to_bytes,
-    transitions_to_bytes,
 )
+
 from lerobot.scripts.server.gym_manipulator import make_robot_env
 from lerobot.scripts.server.network_utils import (
+    python_object_to_bytes,
+    transitions_to_bytes,
     receive_bytes_in_chunks,
     send_bytes_in_chunks,
+    bytes_to_state_dict,
 )
 from lerobot.scripts.server.utils import get_last_item_from_queue, setup_process_handlers
 
@@ -132,19 +133,9 @@ def actor_cli(cfg: TrainPipelineConfig):
     interactions_process.start()
     receive_policy_process.start()
 
-    reward_classifier = None
-    # if (
-    #     cfg.env.reward_classifier["pretrained_path"] is not None
-    #     and cfg.env.reward_classifier["config_path"] is not None
-    # ):
-    #     reward_classifier = get_classifier(
-    #         pretrained_path=cfg.env.reward_classifier["pretrained_path"],
-    #         config_path=cfg.env.reward_classifier["config_path"],
-    #     )
 
     act_with_policy(
         cfg=cfg,
-        reward_classifier=reward_classifier,
         shutdown_event=shutdown_event,
         parameters_queue=parameters_queue,
         transitions_queue=transitions_queue,
@@ -179,7 +170,6 @@ def actor_cli(cfg: TrainPipelineConfig):
 
 def act_with_policy(
     cfg: TrainPipelineConfig,
-    reward_classifier: nn.Module,
     shutdown_event: any,  # Event,
     parameters_queue: Queue,
     transitions_queue: Queue,
@@ -193,7 +183,6 @@ def act_with_policy(
 
     Args:
         cfg: Configuration settings for the interaction process.
-        reward_classifier: Reward classifier to use for the interaction process.
         shutdown_event: Event to check if the process should shutdown.
         parameters_queue: Queue to receive updated network parameters from the learner.
         transitions_queue: Queue to send transitions to the learner.
@@ -258,16 +247,10 @@ def act_with_policy(
 
             log_policy_frequency_issue(policy_fps=policy_fps, cfg=cfg, interaction_step=interaction_step)
 
-            next_obs, reward, done, truncated, info = online_env.step(action.squeeze(dim=0).cpu().numpy())
         else:
-            # TODO (azouitine): Make a custom space for torch tensor
             action = online_env.action_space.sample()
-            next_obs, reward, done, truncated, info = online_env.step(action)
 
-            # HACK: We have only one env but we want to batch it, it will be resolved with the torch box
-            action = (
-                torch.from_numpy(action[0]).to(device, non_blocking=device.type == "cuda").unsqueeze(dim=0)
-            )
+        next_obs, reward, done, truncated, info = online_env.step(action)
 
         sum_reward_episode += float(reward)
         # Increment total steps counter for intervention rate
@@ -282,10 +265,6 @@ def act_with_policy(
             # Increment intervention steps counter
             episode_intervention_steps += 1
 
-        # Check for NaN values in observations
-        for key, tensor in obs.items():
-            if torch.isnan(tensor).any():
-                logging.error(f"[ACTOR] NaN values found in obs[{key}] at step {interaction_step}")
 
         list_transition_to_send_to_learner.append(
             Transition(
