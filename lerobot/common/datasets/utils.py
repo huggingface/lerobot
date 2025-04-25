@@ -225,10 +225,7 @@ def load_episodes(local_dir: Path) -> dict:
 def write_episode_stats(episode_index: int, episode_stats: dict, local_dir: Path):
     # We wrap episode_stats in a dictionary since `episode_stats["episode_index"]`
     # is a dictionary of stats and not an integer.
-    episode_stats = {
-        "episode_index": episode_index,
-        "stats": serialize_dict(episode_stats),
-    }
+    episode_stats = {"episode_index": episode_index, "stats": serialize_dict(episode_stats)}
     append_jsonlines(episode_stats, local_dir / EPISODES_STATS_PATH)
 
 
@@ -412,7 +409,7 @@ def dataset_to_policy_features(features: dict[str, dict]) -> dict[str, PolicyFea
 
             names = ft["names"]
             # Backward compatibility for "channel" which is an error introduced in LeRobotDataset v2.0 for ported datasets.
-            if names is not None and names[2] in ["channel", "channels"]:  # (h, w, c) -> (c, h, w)
+            if names[2] in ["channel", "channels"]:  # (h, w, c) -> (c, h, w)
                 shape = (shape[2], shape[0], shape[1])
         elif key == "observation.environment_state":
             type = FeatureType.ENV
@@ -543,10 +540,7 @@ def check_timestamps_sync(
 
 
 def check_delta_timestamps(
-    delta_timestamps: dict[str, list[float]],
-    fps: int,
-    tolerance_s: float,
-    raise_value_error: bool = True,
+    delta_timestamps: dict[str, list[float]], fps: int, tolerance_s: float, raise_value_error: bool = True
 ) -> bool:
     """This will check if all the values in delta_timestamps are multiples of 1/fps +/- tolerance.
     This is to ensure that these delta_timestamps added to any timestamp from a dataset will themselves be
