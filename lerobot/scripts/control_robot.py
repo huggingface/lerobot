@@ -167,7 +167,7 @@ from lerobot.common.robot_devices.control_utils import (
     warmup_record,
 )
 from lerobot.common.robot_devices.robots.utils import Robot, make_robot_from_config
-from lerobot.common.robot_devices.utils import safe_disconnect
+from lerobot.common.robot_devices.utils import busy_wait, safe_disconnect
 from lerobot.common.utils.utils import has_method, init_logging, log_say
 from lerobot.configs import parser
 
@@ -276,6 +276,7 @@ def record(
 
     if not robot.is_connected:
         robot.connect()
+
     listener, events = init_keyboard_listener()
 
     # Execute a few seconds without recording to:
@@ -284,14 +285,7 @@ def record(
     # 3. place the cameras windows on screen
     enable_teleoperation = policy is None
     log_say("Warmup record", cfg.play_sounds)
-    warmup_record(
-        robot,
-        events,
-        enable_teleoperation,
-        cfg.warmup_time_s,
-        cfg.display_data,
-        cfg.fps,
-    )
+    warmup_record(robot, events, enable_teleoperation, cfg.warmup_time_s, cfg.display_data, cfg.fps)
 
     if has_method(robot, "teleop_safety_stop"):
         robot.teleop_safety_stop()
@@ -356,6 +350,7 @@ def replay(
 
     dataset = LeRobotDataset(cfg.repo_id, root=cfg.root, episodes=[cfg.episode])
     actions = dataset.hf_dataset.select_columns("action")
+
     if not robot.is_connected:
         robot.connect()
 
@@ -365,6 +360,9 @@ def replay(
 
         action = actions[idx]["action"]
         robot.send_action(action)
+
+        dt_s = time.perf_counter() - start_episode_t
+        busy_wait(1 / cfg.fps - dt_s)
 
         dt_s = time.perf_counter() - start_episode_t
         log_control_info(robot, dt_s, fps=cfg.fps)

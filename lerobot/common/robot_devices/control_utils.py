@@ -308,13 +308,13 @@ def reset_environment(robot, events, reset_time_s, fps):
     )
 
 
-def reset_follower_position(robot: Robot, target_position):
-    current_position = robot.follower_arms["main"].read("Present_Position")
+def reset_follower_position(robot_arm, target_position):
+    current_position = robot_arm.read("Present_Position")
     trajectory = torch.from_numpy(
         np.linspace(current_position, target_position, 50)
     )  # NOTE: 30 is just an arbitrary number
     for pose in trajectory:
-        robot.send_action(pose)
+        robot_arm.write("Goal_Position", pose)
         busy_wait(0.015)
 
 

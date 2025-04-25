@@ -17,10 +17,14 @@
 
 import io
 import logging
+import pickle  # nosec B403: Safe usage for internal serialization only
 from multiprocessing import Event, Queue
 from typing import Any
 
+import torch
+
 from lerobot.scripts.server import hilserl_pb2
+from lerobot.scripts.server.utils import Transition
 
 CHUNK_SIZE = 2 * 1024 * 1024  # 2 MB
 
@@ -60,7 +64,7 @@ def send_bytes_in_chunks(buffer: bytes, message_class: Any, log_prefix: str = ""
     logging_method(f"{log_prefix} Published {sent_bytes / 1024 / 1024} MB")
 
 
-def receive_bytes_in_chunks(iterator, queue: Queue, shutdown_event: Event, log_prefix: str = ""):
+def receive_bytes_in_chunks(iterator, queue: Queue, shutdown_event: Event, log_prefix: str = ""):  # type: ignore
     bytes_buffer = io.BytesIO()
     step = 0
 
@@ -93,3 +97,44 @@ def receive_bytes_in_chunks(iterator, queue: Queue, shutdown_event: Event, log_p
             step = 0
 
             logging.debug(f"{log_prefix} Queue updated")
+
+
+def state_to_bytes(state_dict: dict[str, torch.Tensor]) -> bytes:
+    """Convert model state dict to flat array for transmission"""
+    buffer = io.BytesIO()
+
+    torch.save(state_dict, buffer)
+
+    return buffer.getvalue()
+
+
+def bytes_to_state_dict(buffer: bytes) -> dict[str, torch.Tensor]:
+    buffer = io.BytesIO(buffer)
+    buffer.seek(0)
+    return torch.load(buffer)  # nosec B614: Safe usage of torch.load
+
+
+def python_object_to_bytes(python_object: Any) -> bytes:
+    return pickle.dumps(python_object)
+
+
+def bytes_to_python_object(buffer: bytes) -> Any:
+    buffer = io.BytesIO(buffer)
+    buffer.seek(0)
+    obj = pickle.load(buffer)  # nosec B301: Safe usage of pickle.load
+    # Add validation checks here
+    return obj
+
+
+def bytes_to_transitions(buffer: bytes) -> list[Transition]:
+    buffer = io.BytesIO(buffer)
+    buffer.seek(0)
+    transitions = torch.load(buffer)  # nosec B614: Safe usage of torch.load
+    # Add validation checks here
+    return transitions
+
+
+def transitions_to_bytes(transitions: list[Transition]) -> bytes:
+    buffer = io.BytesIO()
+    torch.save(transitions, buffer)
+    return buffer.getvalue()

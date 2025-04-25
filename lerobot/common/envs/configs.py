@@ -182,15 +182,15 @@ class EEActionSpaceConfig:
     y_step_size: float
     z_step_size: float
     bounds: Dict[str, Any]  # Contains 'min' and 'max' keys with position bounds
-    use_gamepad: bool = False
+    control_mode: str = "gamepad"
 
 
 @dataclass
 class EnvWrapperConfig:
     """Configuration for environment wrappers."""
 
+    ee_action_space_params: EEActionSpaceConfig = field(default_factory=EEActionSpaceConfig)
     display_cameras: bool = False
-    use_relative_joint_positions: bool = True
     add_joint_velocity_to_observation: bool = False
     add_current_to_observation: bool = False
     add_ee_pose_to_observation: bool = False
@@ -199,13 +199,10 @@ class EnvWrapperConfig:
     control_time_s: float = 20.0
     fixed_reset_joint_positions: Optional[Any] = None
     reset_time_s: float = 5.0
-    joint_masking_action_space: Optional[Any] = None
-    ee_action_space_params: Optional[EEActionSpaceConfig] = None
     use_gripper: bool = False
     gripper_quantization_threshold: float | None = 0.8
     gripper_penalty: float = 0.0
     gripper_penalty_in_reward: bool = False
-    open_gripper_on_reset: bool = False
 
 
 @EnvConfig.register_subclass(name="gym_manipulator")

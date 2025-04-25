@@ -524,7 +524,9 @@ def teleoperate_inverse_kinematics_with_leader(robot, fps=10):
         leader_ee = kinematics.fk_gripper_tip(leader_joint_positions)
 
         desired_ee_pos = leader_ee
-        target_joint_state = kinematics.ik(joint_positions, desired_ee_pos, position_only=True)
+        target_joint_state = kinematics.ik(
+            joint_positions, desired_ee_pos, position_only=True, fk_func=kinematics.fk_gripper_tip
+        )
         robot.send_action(torch.from_numpy(target_joint_state))
         logging.info(f"Leader EE: {leader_ee[:3, 3]}, Follower EE: {ee_pos[:3, 3]}")
         busy_wait(1 / fps - (time.perf_counter() - loop_start_time))
@@ -544,6 +546,8 @@ def teleoperate_delta_inverse_kinematics_with_leader(robot, fps=10):
     initial_leader_ee = kinematics.fk_gripper_tip(leader_joint_positions)
 
     desired_ee_pos = np.diag(np.ones(4))
+    joint_positions = robot.follower_arms["main"].read("Present_Position")
+    fixed_ee_pos = kinematics.fk_gripper_tip(joint_positions)
 
     while time.perf_counter() - timestep < 60.0:
         loop_start_time = time.perf_counter()
@@ -561,25 +565,26 @@ def teleoperate_delta_inverse_kinematics_with_leader(robot, fps=10):
         # Calculate delta between leader and follower end-effectors
         # Scaling factor can be adjusted for sensitivity
         scaling_factor = 1.0
-        ee_delta = (leader_ee - initial_leader_ee) * scaling_factor
+        ee_delta = -np.clip((leader_ee - initial_leader_ee) * scaling_factor, -0.05, 0.05)
 
         # Apply delta to current position
-        desired_ee_pos[0, 3] = current_ee_pos[0, 3] + ee_delta[0, 3]
-        desired_ee_pos[1, 3] = current_ee_pos[1, 3] + ee_delta[1, 3]
-        desired_ee_pos[2, 3] = current_ee_pos[2, 3] + ee_delta[2, 3]
+        desired_ee_pos[0, 3] = fixed_ee_pos[0, 3]  # current_ee_pos[0, 3] + ee_delta[0, 3] * 0
+        desired_ee_pos[1, 3] = fixed_ee_pos[1, 3]  # current_ee_pos[1, 3] + ee_delta[1, 3] * 0
+        desired_ee_pos[2, 3] = current_ee_pos[2, 3] - ee_delta[2, 3]
 
-        if np.any(np.abs(ee_delta[:3, 3]) > 0.01):
-            # Compute joint targets via inverse kinematics
-            target_joint_state = kinematics.ik(joint_positions, desired_ee_pos, position_only=True)
+        # Compute joint targets via inverse kinematics
+        target_joint_state = kinematics.ik(
+            joint_positions, desired_ee_pos, position_only=True, fk_func=kinematics.fk_gripper_tip
+        )
 
-            initial_leader_ee = leader_ee.copy()
+        initial_leader_ee = leader_ee.copy()
 
-            # Send command to robot
-            robot.send_action(torch.from_numpy(target_joint_state))
+        # Send command to robot
+        robot.send_action(torch.from_numpy(target_joint_state))
 
-            # Logging
-            logging.info(f"Current EE: {current_ee_pos[:3, 3]}, Desired EE: {desired_ee_pos[:3, 3]}")
-            logging.info(f"Delta EE: {ee_delta[:3, 3]}")
+        # Logging
+        logging.info(f"Current EE: {current_ee_pos[:3, 3]}, Desired EE: {desired_ee_pos[:3, 3]}")
+        logging.info(f"Delta EE: {ee_delta[:3, 3]}")
 
         busy_wait(1 / fps - (time.perf_counter() - loop_start_time))
 
@@ -715,8 +720,8 @@ if __name__ == "__main__":
             "gamepad",
             "keyboard_gym",
             "gamepad_gym",
+            "leader_delta",
             "leader",
-            "leader_abs",
         ],
         help="Control mode to use",
     )
@@ -768,11 +773,11 @@ if __name__ == "__main__":
             env = make_robot_env(cfg, robot)
             teleoperate_gym_env(env, controller, fps=cfg.fps)
 
-        elif args.mode == "leader":
+        elif args.mode == "leader_delta":
             # Leader-follower modes don't use controllers
             teleoperate_delta_inverse_kinematics_with_leader(robot)
 
-        elif args.mode == "leader_abs":
+        elif args.mode == "leader":
             teleoperate_inverse_kinematics_with_leader(robot)
 
     finally:
