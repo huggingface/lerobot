@@ -20,13 +20,11 @@ from functools import lru_cache
 from queue import Empty
 from statistics import mean, quantiles
 
-# from lerobot.scripts.eval import eval_policy
 import grpc
 import torch
 from torch import nn
 from torch.multiprocessing import Event, Queue
 
-# TODO: Remove the import of maniskill
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.sac.modeling_sac import SACPolicy
 from lerobot.common.robot_devices.utils import busy_wait
@@ -134,8 +132,6 @@ def actor_cli(cfg: TrainPipelineConfig):
     interactions_process.start()
     receive_policy_process.start()
 
-    # HACK: FOR MANISKILL we do not have a reward classifier
-    # TODO: Remove this once we merge into main
     reward_classifier = None
     # if (
     #     cfg.env.reward_classifier["pretrained_path"] is not None

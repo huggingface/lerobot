@@ -1,6 +1,7 @@
 import logging
 import sys
 import time
+from collections import deque
 from threading import Lock
 from typing import Annotated, Any, Dict, Tuple
 
@@ -25,7 +26,7 @@ logging.basicConfig(level=logging.INFO)
 MAX_GRIPPER_COMMAND = 40
 
 
-class HILSerlRobotEnv(gym.Env):
+class RobotEnv(gym.Env):
     """
     Gym-compatible environment for evaluating robotic control policies with integrated human intervention.
 
@@ -37,19 +38,16 @@ class HILSerlRobotEnv(gym.Env):
     def __init__(
         self,
         robot,
-        use_delta_action_space: bool = True,
         display_cameras: bool = False,
     ):
         """
-        Initialize the HILSerlRobotEnv environment.
+        Initialize the RobotEnv environment.
 
         The environment is set up with a robot interface, which is used to capture observations and send joint commands. The setup
         supports both relative (delta) adjustments and absolute joint positions for controlling the robot.
 
         cfg.
             robot: The robot interface object used to connect and interact with the physical robot.
-            use_delta_action_space (bool): If True, uses a delta (relative) action space for joint control. Otherwise, absolute
-                joint positions are used.
             display_cameras (bool): If True, the robot's camera feeds will be displayed during execution.
         """
         super().__init__()
@@ -65,27 +63,8 @@ class HILSerlRobotEnv(gym.Env):
         self.current_step = 0
         self.episode_data = None
 
-        self.use_delta_action_space = use_delta_action_space
         self.current_joint_positions = self.robot.follower_arms["main"].read("Present_Position")
 
-        # Retrieve the size of the joint position interval bound.
-
-        self.relative_bounds_size = None
-        # (
-        #     (
-        #         self.robot.config.joint_position_relative_bounds["max"]
-        #         - self.robot.config.joint_position_relative_bounds["min"]
-        #     )
-        #     if self.robot.config.joint_position_relative_bounds is not None
-        #     else None
-        # )
-        self.robot.config.joint_position_relative_bounds = None
-
-        self.robot.config.max_relative_target = (
-            self.relative_bounds_size.float() if self.relative_bounds_size is not None else None
-        )
-
-        # Dynamically configure the observation and action spaces.
         self._setup_spaces()
 
     def _setup_spaces(self):
@@ -119,35 +98,16 @@ class HILSerlRobotEnv(gym.Env):
 
         # Define the action space for joint positions along with setting an intervention flag.
         action_dim = len(self.robot.follower_arms["main"].read("Present_Position"))
-        if self.use_delta_action_space:
-            bounds = (
-                self.relative_bounds_size
-                if self.relative_bounds_size is not None
-                else np.ones(action_dim) * 1000
-            )
-            self.action_space = gym.spaces.Box(
-                low=-bounds,
-                high=bounds,
-                shape=(action_dim,),
-                dtype=np.float32,
-            )
-        else:
-            bounds_min = (
-                self.robot.config.joint_position_relative_bounds["min"].cpu().numpy()
-                if self.robot.config.joint_position_relative_bounds is not None
-                else np.ones(action_dim) * -1000
-            )
-            bounds_max = (
-                self.robot.config.joint_position_relative_bounds["max"].cpu().numpy()
-                if self.robot.config.joint_position_relative_bounds is not None
-                else np.ones(action_dim) * 1000
-            )
-            self.action_space = gym.spaces.Box(
-                low=bounds_min,
-                high=bounds_max,
-                shape=(action_dim,),
-                dtype=np.float32,
-            )
+        bounds = {}
+        bounds["min"] = np.ones(action_dim) * -1000
+        bounds["max"] = np.ones(action_dim) * 1000
+
+        self.action_space = gym.spaces.Box(
+            low=bounds["min"],
+            high=bounds["max"],
+            shape=(action_dim,),
+            dtype=np.float32,
+        )
 
     def reset(self, seed=None, options=None) -> Tuple[Dict[str, np.ndarray], Dict[str, Any]]:
         """
@@ -172,7 +132,7 @@ class HILSerlRobotEnv(gym.Env):
         self.current_step = 0
         self.episode_data = None
 
-        return observation, {}
+        return observation, {"is_intervention": False}
 
     def step(self, action) -> Tuple[Dict[str, np.ndarray], float, bool, bool, Dict[str, Any]]:
         """
@@ -195,14 +155,8 @@ class HILSerlRobotEnv(gym.Env):
         self.current_joint_positions = self.robot.follower_arms["main"].read("Present_Position")
         if isinstance(action, torch.Tensor):
             action = action.cpu().numpy()
-            action = np.clip(action, self.action_space.low, self.action_space.high)
 
-        if self.use_delta_action_space:
-            target_joint_positions = self.current_joint_positions + action
-        else:
-            target_joint_positions = action
-
-        self.robot.send_action(torch.from_numpy(target_joint_positions))
+        self.robot.send_action(torch.from_numpy(action))
         observation = self.robot.capture_observation()
 
         if self.display_cameras:
@@ -219,7 +173,7 @@ class HILSerlRobotEnv(gym.Env):
             reward,
             terminated,
             truncated,
-            {},
+            {"is_intervention": False},
         )
 
     def render(self):
@@ -309,19 +263,6 @@ class AddCurrentToObservation(gym.ObservationWrapper):
             [observation["observation.state"], torch.from_numpy(present_current)], dim=-1
         )
         return observation
-
-
-class ActionRepeatWrapper(gym.Wrapper):
-    def __init__(self, env, nb_repeat: int = 1):
-        super().__init__(env)
-        self.nb_repeat = nb_repeat
-
-    def step(self, action):
-        for _ in range(self.nb_repeat):
-            obs, reward, done, truncated, info = self.env.step(action)
-            if done or truncated:
-                break
-        return obs, reward, done, truncated, info
 
 
 class RewardWrapper(gym.Wrapper):
@@ -456,9 +397,6 @@ class ImageCropResizeWrapper(gym.Wrapper):
             # TODO(michel-aractingi): Bug in resize, it returns values outside [0, 1]
             obs[k] = obs[k].clamp(0.0, 1.0)
 
-            # import cv2
-            # cv2.imwrite(f"tmp_img/{k}.jpg", obs[k].squeeze(0).permute(1, 2, 0).cpu().numpy() * 255)
-
             # Check for NaNs after processing
             if torch.isnan(obs[k]).any():
                 logging.error(f"NaN values detected in observation {k} after crop and resize")
@@ -499,149 +437,29 @@ class ConvertToLeRobotObservation(gym.ObservationWrapper):
         return observation
 
 
-class KeyboardInterfaceWrapper(gym.Wrapper):
-    def __init__(self, env):
-        super().__init__(env)
-        self.listener = None
-        self.events = {
-            "exit_early": False,
-            "pause_policy": False,
-            "reset_env": False,
-            "human_intervention_step": False,
-            "episode_success": False,
-        }
-        self.event_lock = Lock()  # Thread-safe access to events
-        self._init_keyboard_listener()
-
-    def _init_keyboard_listener(self):
-        """Initialize keyboard listener if not in headless mode"""
-
-        if is_headless():
-            logging.warning(
-                "Headless environment detected. On-screen cameras display and keyboard inputs will not be available."
-            )
-            return
-        try:
-            from pynput import keyboard
-
-            def on_press(key):
-                with self.event_lock:
-                    try:
-                        if key == keyboard.Key.right or key == keyboard.Key.esc:
-                            print("Right arrow key pressed. Exiting loop...")
-                            self.events["exit_early"] = True
-                            return
-                        if hasattr(key, "char") and key.char == "s":
-                            print("Key 's' pressed. Episode success triggered.")
-                            self.events["episode_success"] = True
-                            return
-                        if key == keyboard.Key.space and not self.events["exit_early"]:
-                            if not self.events["pause_policy"]:
-                                print(
-                                    "Space key pressed. Human intervention required.\n"
-                                    "Place the leader in similar pose to the follower and press space again."
-                                )
-                                self.events["pause_policy"] = True
-                                log_say(
-                                    "Human intervention stage. Get ready to take over.",
-                                    play_sounds=True,
-                                )
-                                return
-                            if self.events["pause_policy"] and not self.events["human_intervention_step"]:
-                                self.events["human_intervention_step"] = True
-                                print("Space key pressed. Human intervention starting.")
-                                log_say("Starting human intervention.", play_sounds=True)
-                                return
-                            if self.events["pause_policy"] and self.events["human_intervention_step"]:
-                                self.events["pause_policy"] = False
-                                self.events["human_intervention_step"] = False
-                                print("Space key pressed for a third time.")
-                                log_say("Continuing with policy actions.", play_sounds=True)
-                                return
-                    except Exception as e:
-                        print(f"Error handling key press: {e}")
-
-            self.listener = keyboard.Listener(on_press=on_press)
-            self.listener.start()
-        except ImportError:
-            logging.warning("Could not import pynput. Keyboard interface will not be available.")
-            self.listener = None
-
-    def step(self, action: Any) -> Tuple[Any, float, bool, bool, Dict]:
-        terminated_by_keyboard = False
-
-        # Check the event flags without holding the lock for too long.
-        with self.event_lock:
-            if self.events["exit_early"]:
-                terminated_by_keyboard = True
-            pause_policy = self.events["pause_policy"]
-
-        if pause_policy:
-            # Now, wait for human_intervention_step without holding the lock
-            while True:
-                with self.event_lock:
-                    if self.events["human_intervention_step"]:
-                        is_intervention = True
-                        break
-                time.sleep(0.1)  # Check frequently for intervention step
-
-        # Execute the step in the underlying environment
-        obs, reward, terminated, truncated, info = self.env.step((policy_action, is_intervention))
-
-        # Override reward and termination if episode success event triggered
-        with self.event_lock:
-            if self.events["episode_success"]:
-                reward = 1
-                terminated_by_keyboard = True
-
-        return obs, reward, terminated or terminated_by_keyboard, truncated, info
-
-    def reset(self, **kwargs) -> Tuple[Any, Dict]:
-        """
-        Reset the environment and clear any pending events
-        """
-        with self.event_lock:
-            self.events = dict.fromkeys(self.events, False)
-        return self.env.reset(**kwargs)
-
-    def close(self):
-        """
-        Properly clean up the keyboard listener when the environment is closed
-        """
-        if self.listener is not None:
-            self.listener.stop()
-        super().close()
-
-
 class ResetWrapper(gym.Wrapper):
     def __init__(
         self,
-        env: HILSerlRobotEnv,
+        env: RobotEnv,
         reset_pose: np.ndarray | None = None,
         reset_time_s: float = 5,
-        open_gripper_on_reset: bool = False,
     ):
         super().__init__(env)
         self.reset_time_s = reset_time_s
         self.reset_pose = reset_pose
         self.robot = self.unwrapped.robot
-        self.open_gripper_on_reset = open_gripper_on_reset
 
     def reset(self, *, seed=None, options=None):
         if self.reset_pose is not None:
-            start_time = time.perf_counter()
             log_say("Reset the environment.", play_sounds=True)
-            reset_follower_position(self.robot, self.reset_pose)
-            busy_wait(self.reset_time_s - (time.perf_counter() - start_time))
+            reset_follower_position(self.robot.follower_arms["main"], self.reset_pose)
             log_say("Reset the environment done.", play_sounds=True)
-            if self.open_gripper_on_reset:
-                current_joint_pos = self.robot.follower_arms["main"].read("Present_Position")
-                current_joint_pos[-1] = MAX_GRIPPER_COMMAND
-                self.robot.send_action(torch.from_numpy(current_joint_pos))
-                busy_wait(0.1)
-                current_joint_pos[-1] = 0.0
-                self.robot.send_action(torch.from_numpy(current_joint_pos))
-                busy_wait(0.2)
+
+            if len(self.robot.leader_arms) > 0:
+                self.robot.leader_arms["main"].write("Torque_Enable", 1)
+                log_say("Reset the leader robot.", play_sounds=True)
+                reset_follower_position(self.robot.leader_arms["main"], self.reset_pose)
+                log_say("Reset the leader robot done.", play_sounds=True)
         else:
             log_say(
                 f"Manually reset the environment for {self.reset_time_s} seconds.",
@@ -671,10 +489,9 @@ class BatchCompatibleWrapper(gym.ObservationWrapper):
 
 
 class GripperPenaltyWrapper(gym.RewardWrapper):
-    def __init__(self, env, penalty: float = -0.1, gripper_penalty_in_reward: bool = True):
+    def __init__(self, env, penalty: float = -0.1):
         super().__init__(env)
         self.penalty = penalty
-        self.gripper_penalty_in_reward = gripper_penalty_in_reward
         self.last_gripper_state = None
 
     def reward(self, reward, action):
@@ -694,18 +511,14 @@ class GripperPenaltyWrapper(gym.RewardWrapper):
         obs, reward, terminated, truncated, info = self.env.step(action)
         gripper_penalty = self.reward(reward, gripper_action)
 
-        if self.gripper_penalty_in_reward:
-            reward += gripper_penalty
-        else:
-            info["discrete_penalty"] = gripper_penalty
+        info["discrete_penalty"] = gripper_penalty
 
         return obs, reward, terminated, truncated, info
 
     def reset(self, **kwargs):
         self.last_gripper_state = None
         obs, info = super().reset(**kwargs)
-        if self.gripper_penalty_in_reward:
-            info["gripper_penalty"] = 0.0
+        info["gripper_penalty"] = 0.0
         return obs, info
 
 
@@ -846,28 +659,74 @@ class EEObservationWrapper(gym.ObservationWrapper):
         return observation
 
 
-class GearedLeaderControlWrapper(gym.Wrapper):
-    def __init__(self, env, use_geared_leader_arm: bool = False, ee_action_space_params=None):
+###########################################################
+# Wrappers related to human intervention and input devices
+###########################################################
+
+
+class BaseLeaderControlWrapper(gym.Wrapper):
+    """Base class for leader-follower robot control wrappers."""
+
+    def __init__(
+        self, env, use_geared_leader_arm: bool = False, ee_action_space_params=None, use_gripper=False
+    ):
         super().__init__(env)
         self.robot_leader = env.unwrapped.robot.leader_arms["main"]
         self.robot_follower = env.unwrapped.robot.follower_arms["main"]
         self.use_geared_leader_arm = use_geared_leader_arm
         self.ee_action_space_params = ee_action_space_params
+        self.use_ee_action_space = ee_action_space_params is not None
+        self.use_gripper: bool = use_gripper
 
+        # Set up keyboard event tracking
+        self._init_keyboard_events()
+        self.event_lock = Lock()  # Thread-safe access to events
+
+        # Initialize robot control
+        robot_type = getattr(env.unwrapped.robot.config, "robot_type", "so100")
+        self.kinematics = RobotKinematics(robot_type)
+        self.prev_leader_ee = None
+        self.prev_leader_pos = None
+        self.leader_torque_enabled = True
+
+        # Configure leader arm
+        # NOTE: Lower the gains of leader arm for automatic take-over
+        # With lower gains we can manually move the leader arm without risk of injury to ourselves or the robot
+        # With higher gains, it would be dangerous and difficult to modify the leader's pose while torque is enabled
+        # Default value for P_coeff is 32
+        self.robot_leader.write("Torque_Enable", 1)
+        self.robot_leader.write("P_Coefficient", 4)
+        self.robot_leader.write("I_Coefficient", 0)
+        self.robot_leader.write("D_Coefficient", 4)
+
+        self._init_keyboard_listener()
+
+    def _init_keyboard_events(self):
+        """Initialize the keyboard events dictionary - override in subclasses."""
         self.keyboard_events = {
-            "pause_policy": False,
             "episode_success": False,
             "episode_end": False,
             "rerecord_episode": False,
         }
-        self.event_lock = Lock()  # Thread-safe access to events
-        self._init_keyboard_listener()
-        self.kinematics = RobotKinematics(env.unwrapped.robot.config.robot_type)
-        self.prev_leader_ee = None
+
+    def _handle_key_press(self, key, keyboard):
+        """Handle key presses - override in subclasses for additional keys."""
+        try:
+            if key == keyboard.Key.esc:
+                self.keyboard_events["episode_end"] = True
+                return
+            if key == keyboard.Key.left:
+                self.keyboard_events["rerecord_episode"] = True
+                return
+            if hasattr(key, "char") and key.char == "s":
+                logging.info("Key 's' pressed. Episode success triggered.")
+                self.keyboard_events["episode_success"] = True
+                return
+        except Exception as e:
+            logging.error(f"Error handling key press: {e}")
 
     def _init_keyboard_listener(self):
         """Initialize keyboard listener if not in headless mode"""
-
         if is_headless():
             logging.warning(
                 "Headless environment detected. On-screen cameras display and keyboard inputs will not be available."
@@ -878,39 +737,7 @@ class GearedLeaderControlWrapper(gym.Wrapper):
 
             def on_press(key):
                 with self.event_lock:
-                    try:
-                        if key == keyboard.Key.esc:
-                            self.events["episode_end"] = True
-                            return
-                        if key == keyboard.Key.left:
-                            self.events["rerecord_episode"] = True
-                            return
-                        if hasattr(key, "char") and key.char == "s":
-                            logging.info("Key 's' pressed. Episode success triggered.")
-                            self.events["episode_success"] = True
-                            return
-                        if key == keyboard.Key.space:
-                            if not self.events["pause_policy"]:
-                                logging.info(
-                                    "Space key pressed. Human intervention required.\n"
-                                    "Place the leader in similar pose to the follower and press space again."
-                                )
-                                self.events["pause_policy"] = True
-                                log_say(
-                                    "Human intervention step.",
-                                    play_sounds=True,
-                                )
-                                return
-                            else:
-                                self.events["pause_policy"] = False
-                                logging.info(
-                                    "Space key pressed for a second time.\nContinuing with policy actions."
-                                )
-                                log_say("Continuing with policy actions.", play_sounds=True)
-                                return
-
-                    except Exception as e:
-                        print(f"Error handling key press: {e}")
+                    self._handle_key_press(key, keyboard)
 
             self.listener = keyboard.Listener(on_press=on_press)
             self.listener.start()
@@ -919,25 +746,209 @@ class GearedLeaderControlWrapper(gym.Wrapper):
             logging.warning("Could not import pynput. Keyboard interface will not be available.")
             self.listener = None
 
-    def step(self, action):
+    def _check_intervention(self):
+        """Check if intervention is needed - override in subclasses."""
+        return False
+
+    def _handle_intervention(self, action):
+        """Process actions during intervention mode."""
+        if self.leader_torque_enabled:
+            self.robot_leader.write("Torque_Enable", 0)
+            self.leader_torque_enabled = False
+
         leader_pos = self.robot_leader.read("Present_Position")
-        is_intervention = False
-        if self.use_ee_action_space:
-            leader_ee = self.kinematics.fk_gripper_tip(leader_pos)
-            if self.prev_leader_ee is None:
-                self.prev_leader_ee = leader_ee
-            action = leader_ee - self.prev_leader_ee
+        follower_pos = self.robot_follower.read("Present_Position")
+
+        # [:3, 3] Last column of the transformation matrix corresponds to the xyz translation
+        leader_ee = self.kinematics.fk_gripper_tip(leader_pos)[:3, 3]
+        follower_ee = self.kinematics.fk_gripper_tip(follower_pos)[:3, 3]
+
+        if self.prev_leader_ee is None:
             self.prev_leader_ee = leader_ee
+
+        # NOTE: Using the leader's position delta for teleoperation is too noisy
+        # Instead, we move the follower to match the leader's absolute position,
+        # and record the leader's position changes as the intervention action
+        action = leader_ee - follower_ee
+        action_intervention = leader_ee - self.prev_leader_ee
+        self.prev_leader_ee = leader_ee
+
+        if self.use_gripper:
+            # Get gripper action delta based on leader pose
+            leader_gripper = leader_pos[-1]
+            follower_gripper = follower_pos[-1]
+            gripper_delta = leader_gripper - follower_gripper
+
+            # Normalize by max angle and quantize to {0,1,2}
+            normalized_delta = gripper_delta / MAX_GRIPPER_COMMAND
+            if normalized_delta > 0.3:
+                gripper_action = 2
+            elif normalized_delta < -0.3:
+                gripper_action = 0
+            else:
+                gripper_action = 1
+
+            action = np.append(action, gripper_action)
+            action_intervention = np.append(action_intervention, gripper_delta)
+
+        return action, action_intervention
+
+    def _handle_leader_teleoperation(self):
+        """Handle leader teleoperation (non-intervention) operation."""
+        if not self.leader_torque_enabled:
+            self.robot_leader.write("Torque_Enable", 1)
+            self.leader_torque_enabled = True
+
+        follower_pos = self.robot_follower.read("Present_Position")
+        self.robot_leader.write("Goal_Position", follower_pos)
+
+    def step(self, action):
+        """Execute environment step with possible intervention."""
+        is_intervention = self._check_intervention()
+        action_intervention = None
+
+        # NOTE:
+        if is_intervention:
+            action, action_intervention = self._handle_intervention(action)
         else:
-            action = self.robot_leader.read("Present_Position")
+            self._handle_leader_teleoperation()
 
+        # NOTE: 
         obs, reward, terminated, truncated, info = self.env.step(action)
-        info["is_intervention"] = is_intervention
 
-        return self.env.step(action)
+        # Add intervention info
+        info["is_intervention"] = is_intervention
+        info["action_intervention"] = action_intervention if is_intervention else None
+
+        # Check for success or manual termination
+        success = self.keyboard_events["episode_success"]
+        terminated = terminated or self.keyboard_events["episode_end"] or success
+
+        if success:
+            reward = 1.0
+            logging.info("Episode ended successfully with reward 1.0")
+
+        return obs, reward, terminated, truncated, info
 
     def reset(self, **kwargs):
+        """Reset the environment and internal state."""
         self.prev_leader_ee = None
+        self.prev_leader_pos = None
+        self.keyboard_events = dict.fromkeys(self.keyboard_events, False)
+        return super().reset(**kwargs)
+
+    def close(self):
+        """Clean up resources."""
+        if hasattr(self, "listener") and self.listener is not None:
+            self.listener.stop()
+        return self.env.close()
+
+
+class GearedLeaderControlWrapper(BaseLeaderControlWrapper):
+
+    """Wrapper that enables manual intervention via keyboard."""
+
+    def _init_keyboard_events(self):
+        """Initialize keyboard events including human intervention flag."""
+        super()._init_keyboard_events()
+        self.keyboard_events["human_intervention_step"] = False
+
+    def _handle_key_press(self, key, keyboard):
+        """Handle key presses including space for intervention toggle."""
+        super()._handle_key_press(key, keyboard)
+        if key == keyboard.Key.space:
+            if not self.keyboard_events["human_intervention_step"]:
+                logging.info(
+                    "Space key pressed. Human intervention required.\n"
+                    "Place the leader in similar pose to the follower and press space again."
+                )
+                self.keyboard_events["human_intervention_step"] = True
+                log_say("Human intervention step.", play_sounds=True)
+            else:
+                self.keyboard_events["human_intervention_step"] = False
+                logging.info("Space key pressed for a second time.\nContinuing with policy actions.")
+                log_say("Continuing with policy actions.", play_sounds=True)
+
+    def _check_intervention(self):
+        """Check if human intervention is active."""
+        return self.keyboard_events["human_intervention_step"]
+
+
+class GearedLeaderAutomaticControlWrapper(BaseLeaderControlWrapper):
+    """Wrapper with automatic intervention based on error thresholds."""
+
+    def __init__(
+        self,
+        env,
+        ee_action_space_params=None,
+        use_gripper=False,
+        intervention_threshold=1.7,
+        release_threshold=0.01,
+        queue_size=10,
+    ):
+        super().__init__(env, ee_action_space_params=ee_action_space_params, use_gripper=use_gripper)
+
+        # Error tracking parameters
+        self.intervention_threshold = intervention_threshold  # Threshold to trigger intervention
+        self.release_threshold = release_threshold  # Threshold to release intervention
+        self.queue_size = queue_size  # Number of error measurements to keep
+
+        # Error tracking variables
+        self.error_queue = deque(maxlen=self.queue_size)
+        self.error_over_time_queue = deque(maxlen=self.queue_size)
+        self.previous_error = 0.0
+        self.is_intervention_active = False
+        self.start_time = time.perf_counter()
+
+    def _check_intervention(self):
+        """Determine if intervention should occur based on leader-follower error."""
+        # Skip intervention logic for the first few steps to collect data
+        if time.perf_counter() - self.start_time < 1.0:  # Wait 1 second before enabling
+            return False
+
+        # Get current positions
+        leader_positions = self.robot_leader.read("Present_Position")
+        follower_positions = self.robot_follower.read("Present_Position")
+
+        # Calculate error and error rate
+        error = np.linalg.norm(leader_positions - follower_positions)
+        error_over_time = np.abs(error - self.previous_error)
+
+        # Add to queue for running average
+        self.error_queue.append(error)
+        self.error_over_time_queue.append(error_over_time)
+
+        # Update previous error
+        self.previous_error = error
+
+        # Calculate averages if we have enough data
+        if len(self.error_over_time_queue) >= self.queue_size:
+            avg_error_over_time = np.mean(self.error_over_time_queue)
+
+            # Debug info
+            if self.is_intervention_active:
+                logging.debug(f"Error rate during intervention: {avg_error_over_time:.4f}")
+
+            # Determine if intervention should start or stop
+            if not self.is_intervention_active and avg_error_over_time > self.intervention_threshold:
+                # Transition to intervention mode
+                self.is_intervention_active = True
+                logging.info(f"Starting automatic intervention: error rate {avg_error_over_time:.4f}")
+
+            elif self.is_intervention_active and avg_error_over_time < self.release_threshold:
+                # End intervention mode
+                self.is_intervention_active = False
+                logging.info(f"Ending automatic intervention: error rate {avg_error_over_time:.4f}")
+
+        return self.is_intervention_active
+
+    def reset(self, **kwargs):
+        """Reset error tracking on environment reset."""
+        self.error_queue.clear()
+        self.error_over_time_queue.clear()
+        self.previous_error = 0.0
+        self.is_intervention_active = False
+        self.start_time = time.perf_counter()
         return super().reset(**kwargs)
 
 
@@ -1004,7 +1015,7 @@ class GamepadControlWrapper(gym.Wrapper):
         print("  Y/Triangle button: End episode (SUCCESS)")
         print("  B/Circle button: Exit program")
 
-    def get_gamepad_action(self):
+    def get_gamepad_action(self) -> Tuple[bool | np.ndarray[Any, np.dtype[Any]] | np.ndarray[Any, np.dtype[np.floating[np._32Bit]]]]:
         """
         Get the current action from the gamepad if any input is active.
 
@@ -1070,10 +1081,10 @@ class GamepadControlWrapper(gym.Wrapper):
             logging.info(f"Episode manually ended: {'SUCCESS' if success else 'FAILURE'}")
 
         # Only override the action if gamepad is active
-        final_action = torch.from_numpy(gamepad_action) if is_intervention else action
+        action = torch.from_numpy(gamepad_action) if is_intervention else action
 
         # Step the environment
-        obs, reward, terminated, truncated, info = self.env.step(final_action)
+        obs, reward, terminated, truncated, info = self.env.step(action)
 
         # Add episode ending if requested via gamepad
         terminated = terminated or truncated or terminate_episode
@@ -1082,13 +1093,11 @@ class GamepadControlWrapper(gym.Wrapper):
             reward = 1.0
             logging.info("Episode ended successfully with reward 1.0")
 
-        if isinstance(final_action, np.ndarray):
-            action_intervention = torch.from_numpy(final_action)
-        else:
-            action_intervention = final_action
+        if isinstance(action, np.ndarray):
+            action = torch.from_numpy(action)
 
         info["is_intervention"] = is_intervention
-        info["action_intervention"] = action_intervention
+        info["action_intervention"] = action
         info["rerecord_episode"] = rerecord_episode
 
         # If episode ended, reset the state
@@ -1111,6 +1120,11 @@ class GamepadControlWrapper(gym.Wrapper):
 
         # Call the parent close method
         return self.env.close()
+
+
+###########################################################
+# Factory functions
+###########################################################
 
 
 def make_robot_env(cfg) -> gym.vector.VectorEnv:
@@ -1136,11 +1150,9 @@ def make_robot_env(cfg) -> gym.vector.VectorEnv:
         return env
     robot = make_robot_from_config(cfg.robot)
     # Create base environment
-    env = HILSerlRobotEnv(
+    env = RobotEnv(
         robot=robot,
         display_cameras=cfg.wrapper.display_cameras,
-        use_delta_action_space=cfg.wrapper.use_relative_joint_positions
-        and cfg.wrapper.ee_action_space_params is None,
     )
 
     # Add observation and image processing
@@ -1171,38 +1183,41 @@ def make_robot_env(cfg) -> gym.vector.VectorEnv:
             env = GripperPenaltyWrapper(
                 env=env,
                 penalty=cfg.wrapper.gripper_penalty,
-                gripper_penalty_in_reward=cfg.wrapper.gripper_penalty_in_reward,
             )
 
-    if cfg.wrapper.ee_action_space_params is not None:
-        env = EEActionWrapper(
+    env = EEActionWrapper(
+        env=env,
+        ee_action_space_params=cfg.wrapper.ee_action_space_params,
+        use_gripper=cfg.wrapper.use_gripper,
+    )
+
+    if cfg.wrapper.ee_action_space_params.control_mode == "gamepad":
+        env = GamepadControlWrapper(
+            env=env,
+            x_step_size=cfg.wrapper.ee_action_space_params.x_step_size,
+            y_step_size=cfg.wrapper.ee_action_space_params.y_step_size,
+            z_step_size=cfg.wrapper.ee_action_space_params.z_step_size,
+            use_gripper=cfg.wrapper.use_gripper,
+        )
+    elif cfg.wrapper.ee_action_space_params.control_mode == "leader":
+        env = GearedLeaderControlWrapper(
             env=env,
             ee_action_space_params=cfg.wrapper.ee_action_space_params,
             use_gripper=cfg.wrapper.use_gripper,
         )
-
-    if cfg.wrapper.ee_action_space_params is not None:
-        if cfg.wrapper.ee_action_space_params.use_gamepad:
-            env = GamepadControlWrapper(
-                env=env,
-                x_step_size=cfg.wrapper.ee_action_space_params.x_step_size,
-                y_step_size=cfg.wrapper.ee_action_space_params.y_step_size,
-                z_step_size=cfg.wrapper.ee_action_space_params.z_step_size,
-                use_gripper=cfg.wrapper.use_gripper,
-            )
-        elif cfg.wrapper.ee_action_space_params.use_leader_control:
-            env = GearedLeaderControlWrapper(
-                env=env,
-                ee_action_space_params=cfg.wrapper.ee_action_space_params,
-            )
+    elif cfg.wrapper.ee_action_space_params.control_mode == "leader_automatic":
+        env = GearedLeaderAutomaticControlWrapper(
+            env=env,
+            ee_action_space_params=cfg.wrapper.ee_action_space_params,
+            use_gripper=cfg.wrapper.use_gripper,
+        )
     else:
-        env = KeyboardInterfaceWrapper(env=env)
+        raise ValueError(f"Invalid control mode: {cfg.wrapper.ee_action_space_params.control_mode}")
 
     env = ResetWrapper(
         env=env,
         reset_pose=cfg.wrapper.fixed_reset_joint_positions,
         reset_time_s=cfg.wrapper.reset_time_s,
-        open_gripper_on_reset=cfg.wrapper.open_gripper_on_reset,
     )
     env = BatchCompatibleWrapper(env=env)
 
@@ -1237,6 +1252,11 @@ def init_reward_classifier(cfg):
     classifier.eval()  # Set to evaluation mode
 
     return classifier
+
+
+###########################################################
+# Record and replay functions
+###########################################################
 
 
 def record_dataset(env, policy, cfg):
