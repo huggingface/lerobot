@@ -80,7 +80,7 @@ def create_stats_buffers(
 
         # TODO(aliberts, rcadene): harmonize this to only use one framework (np or torch)
         if stats and key in stats:
-            # NOTE:(maractingi, azouitine): Change the order of these conditions becuase in online environments we don't have dataset stats
+            # NOTE:(maractingi, azouitine): Change the order of these conditions because in online environments we don't have dataset stats
             # Therefore, we don't access to full stats of the data, some elements either have min-max or mean-std only
             if norm_mode is NormalizationMode.MEAN_STD:
                 if "mean" not in stats[key] or "std" not in stats[key]:

@@ -7,12 +7,12 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import NormalizationMode
 
 
-@PreTrainedConfig.register_subclass(name="hilserl_classifier")
+@PreTrainedConfig.register_subclass(name="reward_classifier")
 @dataclass
-class ClassifierConfig(PreTrainedConfig):
-    """Configuration for the Classifier model."""
+class RewardClassifierConfig(PreTrainedConfig):
+    """Configuration for the Reward Classifier model."""
 
-    name: str = "hilserl_classifier"
+    name: str = "reward_classifier"
     num_classes: int = 2
     hidden_dim: int = 256
     dropout_rate: float = 0.1

@@ -5,11 +5,9 @@ import torch
 from torch import Tensor, nn
 
 from lerobot.common.constants import OBS_IMAGE
-from lerobot.common.policies.hilserl.classifier.configuration_classifier import (
-    ClassifierConfig,
-)
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.pretrained import PreTrainedPolicy
+from lerobot.common.policies.reward_model.configuration_classifier import RewardClassifierConfig
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -39,12 +37,12 @@ class ClassifierOutput:
 class Classifier(PreTrainedPolicy):
     """Image classifier built on top of a pre-trained encoder."""
 
-    name = "hilserl_classifier"
-    config_class = ClassifierConfig
+    name = "reward_classifier"
+    config_class = RewardClassifierConfig
 
     def __init__(
         self,
-        config: ClassifierConfig,
+        config: RewardClassifierConfig,
         dataset_stats: Dict[str, Dict[str, Tensor]] | None = None,
     ):
         from transformers import AutoModel
