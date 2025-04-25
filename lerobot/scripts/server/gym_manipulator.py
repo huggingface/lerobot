@@ -11,7 +11,6 @@ import torch
 import torchvision.transforms.functional as F  # noqa: N812
 
 from lerobot.common.envs.configs import EnvConfig
-from lerobot.common.envs.utils import preprocess_observation
 from lerobot.common.robot_devices.control_utils import (
     busy_wait,
     is_headless,
@@ -407,14 +406,17 @@ class ImageCropResizeWrapper(gym.Wrapper):
 
 
 class ConvertToLeRobotObservation(gym.ObservationWrapper):
-    def __init__(self, env, device):
+    def __init__(self, env, device: str = "cpu"):
         super().__init__(env)
 
-        self.device = device
+        self.device = torch.device(device)
 
     def observation(self, observation):
-        observation = preprocess_observation(observation)
-
+        for key in observation:
+            observation[key] = observation[key].float()
+            if "image" in key:
+                observation[key] = observation[key].permute(2, 0, 1)
+                observation[key] /= 255.0
         observation = {
             key: observation[key].to(self.device, non_blocking=self.device.type == "cuda")
             for key in observation
@@ -436,6 +438,7 @@ class ResetWrapper(gym.Wrapper):
         self.robot = self.unwrapped.robot
 
     def reset(self, *, seed=None, options=None):
+        start_time = time.perf_counter()
         if self.reset_pose is not None:
             log_say("Reset the environment.", play_sounds=True)
             reset_follower_position(self.robot.follower_arms["main"], self.reset_pose)
@@ -456,6 +459,9 @@ class ResetWrapper(gym.Wrapper):
                 self.robot.teleop_step()
 
             log_say("Manual reset of the environment done.", play_sounds=True)
+
+        busy_wait(self.reset_time_s - (time.perf_counter() - start_time))
+
         return super().reset(seed=seed, options=options)
 
 
@@ -1000,7 +1006,7 @@ class GamepadControlWrapper(gym.Wrapper):
 
     def get_gamepad_action(
         self,
-    ) -> Tuple[bool | np.ndarray[Any, np.dtype[Any]] | np.ndarray[Any, np.dtype[np.floating[np._32Bit]]]]:
+    ) -> Tuple[bool, np.ndarray, bool, bool, bool]:
         """
         Get the current action from the gamepad if any input is active.
 
@@ -1066,7 +1072,7 @@ class GamepadControlWrapper(gym.Wrapper):
             logging.info(f"Episode manually ended: {'SUCCESS' if success else 'FAILURE'}")
 
         # Only override the action if gamepad is active
-        action = torch.from_numpy(gamepad_action) if is_intervention else action
+        action = gamepad_action if is_intervention else action
 
         # Step the environment
         obs, reward, terminated, truncated, info = self.env.step(action)
@@ -1479,7 +1485,7 @@ def main(cfg: EnvConfig):
         smoothed_action = alpha * new_random_action + (1 - alpha) * smoothed_action
 
         # Execute the step: wrap the NumPy action in a torch tensor.
-        obs, reward, terminated, truncated, info = env.step(torch.from_numpy(smoothed_action))
+        obs, reward, terminated, truncated, info = env.step(smoothed_action)
         if terminated or truncated:
             successes.append(reward)
             env.reset()

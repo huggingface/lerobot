@@ -17,7 +17,7 @@
 
 import io
 import logging
-import pickle
+import pickle  # nosec B403: Safe usage for internal serialization only
 from multiprocessing import Event, Queue
 from typing import Any
 
