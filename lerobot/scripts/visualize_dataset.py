@@ -136,7 +136,7 @@ def visualize_dataset(
 
     # Track which keys have video files
     keys_with_videos = set()
-    
+
     # Log video assets first
     for key in dataset.meta.camera_keys:
         video_path = dataset.root / dataset.meta.get_video_file_path(episode_index, key)
@@ -175,7 +175,7 @@ def visualize_dataset(
             timestamp_ns = int(batch["timestamp"][i].item() * 1e9)
             rr.set_time_nanos("frame_index", timestamp_ns)
             rr.set_time_seconds("timestamp", batch["timestamp"][i].item())
-            
+
             # Only show individual frames for keys without video files
             for key in dataset.meta.camera_keys:
                 if key not in keys_with_videos:
