@@ -58,7 +58,6 @@ class KeyboardTeleop(Teleoperator):
         self.event_queue = Queue()
         self.current_pressed = {}
         self.listener = None
-        self._is_connected = False
         self.logs = {}
 
     @property
@@ -79,7 +78,7 @@ class KeyboardTeleop(Teleoperator):
         pass
 
     def connect(self) -> None:
-        if self._is_connected:
+        if self.is_connected:
             raise DeviceAlreadyConnectedError(
                 "Keyboard is already connected. Do not run `robot.connect()` twice."
             )
@@ -94,8 +93,6 @@ class KeyboardTeleop(Teleoperator):
         else:
             logging.info("pynput not available - skipping local keyboard listener.")
             self.listener = None
-
-        self._is_connected = True
 
     def calibrate(self) -> None:
         pass
@@ -139,11 +136,9 @@ class KeyboardTeleop(Teleoperator):
         pass
 
     def disconnect(self) -> None:
-        if not self._is_connected:
+        if not self.is_connected:
             raise DeviceNotConnectedError(
                 "KeyboardTeleop is not connected. You need to run `robot.connect()` before `disconnect()`."
             )
         if self.listener is not None:
             self.listener.stop()
-
-        self._is_connected = False
