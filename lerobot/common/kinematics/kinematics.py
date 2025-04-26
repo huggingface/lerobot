@@ -4,14 +4,12 @@ import numpy as np
 from scipy.spatial.transform import Rotation as R
 from scipy.spatial.transform import Slerp
 
-
-# TODO: 
+# TODO:
 
 # 1) functions to switch from DH to mechanical angles (and viceversa))
 
 
 class Robot:
-
     # Follow this convention: theta , d, a, alpha
     ROBOT_DH_TABLES = {
         "so100": [
@@ -22,13 +20,9 @@ class Robot:
             [0, 0.15, 0.0, 0.0],
         ]
     }
-    
-    FROM_DH_TO_MECH = {
-        "so100" : [90.0,90.0,90.0,90.0,90.0]
-        }
-    FROM_MECH_TO_DH = {
-        "so100" : [90.0,90.0,90.0,90.0,90.0]
-        }
+
+    FROM_DH_TO_MECH = {"so100": [90.0, 90.0, 90.0, 90.0, 90.0]}
+    FROM_MECH_TO_DH = {"so100": [90.0, 90.0, 90.0, 90.0, 90.0]}
 
     def __init__(self, robot_type="so100"):
         if robot_type not in Robot.ROBOT_DH_TABLES:
@@ -41,19 +35,18 @@ class Robot:
         self.dh_table = Robot.ROBOT_DH_TABLES[robot_type]
         self.dh2mech = Robot.FROM_DH_TO_MECH[robot_type]
         self.mech2dh = Robot.FROM_MECH_TO_DH[robot_type]
-        
+
         # set worldTbase and nTtool frames
         # NB: worldTbase and nTtool can be used ONLY with:
         # use_orientation = True (see inverse_kinematics() method)
         self.worldTbase = np.eye(4)
         self.nTtool = np.eye(4)
-        
+
     def from_dh_to_mech(q_dh):
         pass
-    
+
     def from_mech_to_dh(q_mech):
         pass
-
 
 
 class RobotUtils:
@@ -154,7 +147,7 @@ class RobotKinematics:
         """compute forward kinematics (worldTtool)"""
 
         baseTn = self._forward_kinematics_baseTn(robot, q)
-        
+
         return robot.worldTbase @ baseTn @ robot.nTtool
 
     def _forward_kinematics_baseTn(self, robot, q):
@@ -170,7 +163,9 @@ class RobotKinematics:
 
         return T
 
-    def _inverse_kinematics_step_baseTn(self, robot, q_start, T_desired, use_orientation=True, k=0.8, n_iter=50):
+    def _inverse_kinematics_step_baseTn(
+        self, robot, q_start, T_desired, use_orientation=True, k=0.8, n_iter=50
+    ):
         """compute inverse kinematics (T_desired must be expressed in baseTn)"""
 
         # don't override current joint positions
@@ -214,32 +209,34 @@ class RobotKinematics:
             @ desired_worldTtool
             @ RobotUtils.inv_homog_mat(robot.nTtool)
         )
-        
+
         # don't override current joint positions
         q = copy.deepcopy(q_start)
 
         # init interpolator
         n_steps = self._interp_init(self._forward_kinematics_baseTn(robot, q), desired_baseTn)
-        
+
         for i in range(0, n_steps + 1):
             # current setpoint as baseTn
             T_desired_interp = self._interp_execute(i)
 
             # get updated joint positions
             q = self._inverse_kinematics_step_baseTn(robot, q, T_desired_interp, use_orientation, k, n_iter)
-        
+
         # check final error
         current_worldTtool = self.forward_kinematics(robot, q)
         err_lin = RobotUtils.calc_lin_err(current_worldTtool, desired_worldTtool)
         lin_error_norm = np.linalg.norm(err_lin)
         if lin_error_norm > 1e-2:
-            print(f"[WARNING] Large position error ({lin_error_norm:.4f}). Check target reachability (position/orientation)")
+            print(
+                f"[WARNING] Large position error ({lin_error_norm:.4f}). Check target reachability (position/orientation)"
+            )
 
         return q
 
     def _interp_init(self, T_start, T_final, delta=0.01):
         """Initialiaze interpolator parameters"""
-        
+
         # init
         self.t_start = T_start[:3, 3]
         self.t_final = T_final[:3, 3]
@@ -273,23 +270,17 @@ class RobotKinematics:
         return T_interp
 
 
-
-
-
-
 if __name__ == "__main__":
-    
-    
     # init
     robot = Robot(robot_type="so100")
     kin = RobotKinematics()
-    
+
     # compute forward kinematics
-    q_init = np.array([0.0, 0, 0.0, -np.pi/2, 0.0]) # full extended arm
-    
+    q_init = np.array([0.0, 0, 0.0, -np.pi / 2, 0.0])  # full extended arm
+
     # convert from mechanical angle to dh angle
     # q_init = from_mech_to_dh(q_init)
-    
+
     # compute start pose
     T_start = kin.forward_kinematics(robot, q_init)
     print("T_start = \n", T_start)
@@ -308,11 +299,6 @@ if __name__ == "__main__":
 
     print("err_lin = ", RobotUtils.calc_lin_err(T_goal, T_final))
     print("err_ang = ", RobotUtils.calc_ang_err(T_goal, T_final))
-    
+
     # convert from dh angle to mechanical angle
     # q_final = from_dh_to_mech(q_final)
-    
-    
-    
-    
-    
