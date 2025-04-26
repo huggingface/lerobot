@@ -41,7 +41,7 @@ from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from tests.artifacts.policies.save_policy_to_safetensors import get_policy_stats
-from tests.utils import DEVICE, require_cpu, require_env, require_x86_64_kernel
+from tests.testutils import DEVICE, require_cpu, require_env, require_x86_64_kernel
 
 
 @pytest.fixture
