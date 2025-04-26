@@ -8,25 +8,22 @@ import shutil
 import threading
 import time
 from pathlib import Path
-import time
 from threading import Thread
 
+# TODO(Yadunund): Implement mock.
+import cv2
 import numpy as np
+import rclpy
+from cv_bridge import CvBridge
 from PIL import Image
+from sensor_msgs.msg import Image as ImageMsg
 
 from lerobot.common.robot_devices.cameras.configs import ROS2CameraConfig
 from lerobot.common.robot_devices.utils import (
     RobotDeviceAlreadyConnectedError,
     RobotDeviceNotConnectedError,
-    busy_wait,
 )
 from lerobot.common.utils.utils import capture_timestamp_utc
-
-# TODO(Yadunund): Implement mock.
-import cv2
-from cv_bridge import CvBridge
-from sensor_msgs.msg import Image as ImageMsg
-import rclpy
 
 
 def save_image(img_array, camera_name, frame_index, images_dir):
@@ -48,9 +45,7 @@ def save_images_from_cameras(
     camera = ROS2Camera(config)
     camera.connect()
     print("Here 0")
-    print(
-        f"ROS2Camera({camera.node.get_name()}"
-    )
+    print(f"ROS2Camera({camera.node.get_name()}")
     cameras.append(camera)
 
     images_dir = Path(images_dir)
@@ -140,9 +135,9 @@ class ROS2Camera:
         self.color_mode = config.color_mode
         self.mock = config.mock
 
-        self.br : CvBridge = CvBridge()
-        self.image_msg : ImageMsg | None = None
-        self.is_connected : bool = False
+        self.br: CvBridge = CvBridge()
+        self.image_msg: ImageMsg | None = None
+        self.is_connected: bool = False
         self.sub = None
         self.logs = {}
         self.node = rclpy.create_node("lerobot_camera_node")
@@ -167,12 +162,7 @@ class ROS2Camera:
         if self.is_connected:
             raise RobotDeviceAlreadyConnectedError(f"ROS2Camera({self.config.topic}) is already connected.")
 
-        self.sub = self.node.create_subscription(
-            ImageMsg,
-            self.config.topic,
-            self.sub_cb,
-            10
-        )
+        self.sub = self.node.create_subscription(ImageMsg, self.config.topic, self.sub_cb, 10)
 
         while self.image_msg is None:
             print(f"Waiting to receive message over {self.config.topic}")
@@ -198,7 +188,6 @@ class ROS2Camera:
                 f"ROS2Camera({self.node.get_name()}) is not connected. Try running `camera.connect()` first."
             )
 
-
         start_time = time.perf_counter()
 
         desired_encoding = "passthrough" if temporary_color is None else temporary_color
@@ -219,9 +208,8 @@ class ROS2Camera:
 
         return image
 
-
     def async_read(self):
-      return self.read()
+        return self.read()
 
     def disconnect(self):
         if not self.is_connected:

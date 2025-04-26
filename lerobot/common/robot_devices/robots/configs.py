@@ -22,7 +22,6 @@ from lerobot.common.robot_devices.cameras.configs import (
     CameraConfig,
     IntelRealSenseCameraConfig,
     OpenCVCameraConfig,
-    ROS2CameraConfig,
 )
 from lerobot.common.robot_devices.motors.configs import (
     DynamixelMotorsBusConfig,

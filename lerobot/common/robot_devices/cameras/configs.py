@@ -113,6 +113,7 @@ class IntelRealSenseCameraConfig(CameraConfig):
         if self.rotation not in [-90, None, 90, 180]:
             raise ValueError(f"`rotation` must be in [-90, None, 90, 180] (got {self.rotation})")
 
+
 @CameraConfig.register_subclass("ros2")
 @dataclass
 class ROS2CameraConfig(CameraConfig):
@@ -123,6 +124,7 @@ class ROS2CameraConfig(CameraConfig):
     ROS2CameraConfig(topic="/image_raw", fps=30, width=640, height=480)
     ```
     """
+
     # TODO(Yadunund): Consider converting inputs to lists to subscribe to multiple
     # topics with the same node.
     topic: str
