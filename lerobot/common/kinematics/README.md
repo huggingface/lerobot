@@ -8,7 +8,7 @@ This module provides an implementation of **forward and inverse kinematics** for
 
 ### `Robot`
 Defines a robot model from a predefined set (`"so100"`, `"koch"`, `"moss"`), with attributes:
-- `dh_table`: DH table as a list of $[ \theta, d, a, \alpha ]$ entries. **These tables need to be updated with correct measurements of the robots**, more on this later.
+- `dh_table`: DH table as a list of $[ \theta, d, a, \alpha ]$ entries.
 - `dh2mech`: DH angles to mechanical angles conversion.
 - `mech2dh`: mechanical angles to DH angles conversion.
 - `worldTbase`: 4x4 homogeneous transform (default identity).
