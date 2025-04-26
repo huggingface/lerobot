@@ -9,6 +9,8 @@ This module provides an implementation of **forward and inverse kinematics** for
 ### `Robot`
 Defines a robot model from a predefined set (`"so100"`, `"koch"`, `"moss"`), with attributes:
 - `dh_table`: DH table as a list of $[ \theta, d, a, \alpha ]$ entries. **These tables need to be updated with correct measurements of the robots**, more on this later.
+- `dh2mech`: DH angles to mechanical angles conversion.
+- `mech2dh`: mechanical angles to DH angles conversion.
 - `worldTbase`: 4x4 homogeneous transform (default identity).
 - `nTtool`: 4x4 homogeneous transform (default identity).
 
@@ -50,7 +52,7 @@ DH (Denavit–Hartenberg) frames provide a systematic and compact way to model t
 
 <p align="center">
   <img src="./dh.PNG" alt="DH"/><br>
-  <em>Figure: Example of DH table and DH frames on a 3DOF planar robot</em>
+  <em>Figure: Example of DH frames and DH table on a 3DOF planar robot</em>
 </p>
 
 Each robot uses the **standard DH convention**:
@@ -76,17 +78,28 @@ $$
 ^{base}T_{n}(q) = A_1(\theta_1) \cdot A_2(\theta_2) \cdot \dots \cdot A_n(\theta_n)
 $$
 
-### Note
-The only remaining step is to **compute the corresponding DH table** (see image) given the real robots. Since I do not own SO100/koch/moss robots, I hope LeRobot Team can measure the corresponding parameters and provide the DH table. Happy to anwer any further question, I also attach the PDF "robot kinematics" for more details about DH tables.
+### SO100 DH Frames
+
+<p align="center">
+  <img src="dh1.PNG" alt="DH"/><br>
+  <em>Figure: DH frames and DH table computed for the SO100 robotic arm</em>
+</p>
+
+<p align="center">
+  <img src="dh2.PNG" alt="DH"/><br>
+  <em>Figure: DH angles Vs mechanical angles</em>
+</p>
 
 ---
 
 ## Example (in `__main__`)
 
 - Initializes the `"so100"` robot model.
+- **Transform mechanical angles in DH angles**
 - Define a goal pose worldTtool.
 - Solves IK with only position tracking.
 - Prints joint angles and final pose with direct kinematics.
+- **Transform DH angles in mechanical angles**
 
 ---
 
@@ -98,3 +111,4 @@ This module is designed to compute both **forward and inverse kinematics** accur
 - Jacobian computation using DH tables.
 - Inverse kinematics using Jacobian transpose and dump-least square method to avoid singularities.
 - Pose interpolation: linear (position) + SLERP (orientation)
+- DH angles to mechanical angles conversion (and viceversa).
