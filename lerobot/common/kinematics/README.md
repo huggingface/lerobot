@@ -51,7 +51,7 @@ Computes inverse kinematics using iterative pose interpolation and transpose Jac
 DH (Denavit–Hartenberg) frames provide a systematic and compact way to model the kinematics of robotic arms. Each joint and link transformation is represented by a standard set of parameters, allowing for consistent and scalable computation of **forward kinematics, inverse kinematics and Jacobians**.
 
 <p align="center">
-  <img src="./dh.PNG" alt="DH"/><br>
+  <img src="./images/dh.PNG" alt="DH"/><br>
   <em>Figure: Example of DH frames and DH table on a 3DOF planar robot</em>
 </p>
 
@@ -81,12 +81,12 @@ $$
 ### SO100 DH Frames
 
 <p align="center">
-  <img src="dh1.PNG" alt="DH"/><br>
+  <img src="./images/dh1.png" alt="DH"/><br>
   <em>Figure: DH frames and DH table computed for the SO100 robotic arm</em>
 </p>
 
 <p align="center">
-  <img src="dh2.PNG" alt="DH"/><br>
+  <img src="./images/dh2.png" alt="DH"/><br>
   <em>Figure: DH angles Vs mechanical angles</em>
 </p>
 
