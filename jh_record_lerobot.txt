@@ -83,3 +83,19 @@ CUDA_VISIBLE_DEVICES=4 python lerobot/scripts/train.py \
 --wandb.project="pi0_TR2" \
 --wandb.disable_artifact=true \
 --job_name "stack_cup_0423"
+
+04-27-2025
+CUDA_VISIBLE_DEVICES=5 python lerobot/scripts/train.py \
+--policy.path="/data/jiahuan/huggingface/models/pi0" \
+--dataset.repo_id="/data/TR2/hugging_face/stack_cup_0414_merged_rf10" \
+--output_dir="/data/jiahuan/our_training/lerobot/stack_cup_0423" \
+--batch_size=1 \
+--save_freq=10 \
+--log_freq=5 \
+--steps=100 \
+--num_workers=4 \
+--wandb.enable=fasle \
+--wandb.entity="GBuilders" \
+--wandb.project="pi0_TR2" \
+--wandb.disable_artifact=true \
+--job_name "stack_cup_0423_plot_test"

@@ -284,7 +284,7 @@ def train(cfg: TrainPipelineConfig):
                 index=step,
                 naming='step',
                 one_hand=False,
-                rotation=True,
+                rotation=False,
                 n_samples=3,
             )
             if wandb_logger:
