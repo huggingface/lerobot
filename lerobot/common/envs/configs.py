@@ -164,12 +164,20 @@ class GenesisEnv(EnvConfig):
     obs_type: str = "pixels_agent_pos"
     render_mode: str = "rgb_array"
     enable_pixels: bool = True
+    num_envs: int = 10
+    observation_height: int = 480
+    observation_width: int = 640
+    env_spacing: tuple = (1.0, 1.0)
+    camera_capture_mode: str = "per_env"
 
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
             "action": PolicyFeature(type=FeatureType.ACTION, shape=(9,)),
             "agent_pos": PolicyFeature(type=FeatureType.STATE, shape=(20,)),
-            "pixels": PolicyFeature(type=FeatureType.VISUAL, shape=(960, 1280, 3)),
+            "pixels": PolicyFeature(
+                type=FeatureType.VISUAL,
+                shape=(self.observation_height, self.observation_width, 3)
+            ),
         }
     )
 
@@ -186,4 +194,9 @@ class GenesisEnv(EnvConfig):
         return {
             "task": "cube",
             "enable_pixels": self.enable_pixels,
+            "num_envs": self.num_envs,
+            "observation_height": self.observation_height,
+            "observation_width": self.observation_width,
+            "env_spacing": self.env_spacing,
+            "camera_capture_mode": self.camera_capture_mode,
         }
