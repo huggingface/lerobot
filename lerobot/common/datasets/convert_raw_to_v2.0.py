@@ -66,7 +66,7 @@ robot_type = "unknown"
 
 V16 = "v1.6"
 V20 = "v2.0"
-task_map_path = Path("/users/huxian/project/lerobot/lerobot/common/datasets/task_map.json")
+task_map_path = Path(__file__).resolve().parent / "task_map.json"
 EPISODES_STATS_PATH = "meta/episodes_stats.jsonl"
 GITATTRIBUTES_REF = "aliberts/gitattributes_reference"
 V1_VIDEO_FILE = "{video_key}_episode_{episode_index:06d}.mp4"
