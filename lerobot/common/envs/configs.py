@@ -174,10 +174,6 @@ class GenesisEnv(EnvConfig):
         default_factory=lambda: {
             "action": PolicyFeature(type=FeatureType.ACTION, shape=(9,)),
             "agent_pos": PolicyFeature(type=FeatureType.STATE, shape=(9,)),
-            "pixels": PolicyFeature(
-                type=FeatureType.VISUAL,
-                shape=(480, 640, 3)
-            ),
         }
     )
 
@@ -201,7 +197,6 @@ class GenesisEnv(EnvConfig):
         return {
             "task": "cube",
             "enable_pixels": self.enable_pixels,
-            "num_envs": self.num_envs,
             "observation_height": self.observation_height,
             "observation_width": self.observation_width,
             "env_spacing": self.env_spacing,

@@ -97,7 +97,21 @@ def are_all_envs_same_type(env: gym.vector.VectorEnv) -> bool:
     return all(type(e) is first_type for e in env.envs)  # Fast type check
 
 
-def check_env_attributes_and_types(env: gym.vector.VectorEnv) -> None:
+def check_env_attributes_and_types(env) -> None:
+    # Dispatch to the right function depending on env type
+    if hasattr(env, "envs"):
+        # Standard Gym VectorEnv pattern
+        return check_env_attributes_and_types_vector(env)
+    elif env:  # or another Genesis-unique attr
+        # Genesis native batched env
+        return check_env_attributes_and_types_batched(env)
+    else:
+        warnings.warn(
+            f"Unknown environment type: {type(env)}. Attribute check skipped.",
+            UserWarning, stacklevel=2
+        )
+
+def check_env_attributes_and_types_vector(env: gym.vector.VectorEnv) -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("once", UserWarning)  # Apply filter only in this function
 
@@ -113,15 +127,35 @@ def check_env_attributes_and_types(env: gym.vector.VectorEnv) -> None:
                 UserWarning,
                 stacklevel=2,
             )
+def check_env_attributes_and_types_batched(env) -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("once", UserWarning)  # Apply filter only in this function
 
+        if not (hasattr(env, "task_description") and hasattr(env, "task")):
+            warnings.warn(
+                "The environment does not have 'task_description' and 'task'. Some policies require these features.",
+                UserWarning,
+                stacklevel=2,
+            )
 
 def add_envs_task(env: gym.vector.VectorEnv, observation: dict[str, Any]) -> dict[str, Any]:
     """Adds task feature to the observation dict with respect to the first environment attribute."""
-    if hasattr(env.envs[0], "task_description"):
-        observation["task"] = env.call("task_description")
-    elif hasattr(env.envs[0], "task"):
-        observation["task"] = env.call("task")
-    else:  #  For envs without language instructions, e.g. aloha transfer cube and etc.
-        num_envs = observation[list(observation.keys())[0]].shape[0]
-        observation["task"] = ["" for _ in range(num_envs)]
+    num_envs = observation[list(observation.keys())[0]].shape[0]
+    if hasattr(env, "envs"):
+        if hasattr(env.envs[0], "task_description"):
+            observation["task"] = env.call("task_description")
+        elif hasattr(env.envs[0], "task"):
+            observation["task"] = env.call("task")
+        else:  #  For envs without language instructions, e.g. aloha transfer cube and etc.
+            num_envs = observation[list(observation.keys())[0]].shape[0]
+            observation["task"] = ["" for _ in range(num_envs)]
+    else:
+        # natively batched env (Genesis, IsaacLab, etc.)
+        if hasattr(env, "task_description"):
+            observation["task"] = [env.task_description] * num_envs
+        elif hasattr(env, "task"):
+            observation["task"] = [env.task] * num_envs
+        else:
+            observation["task"] = ["" for _ in range(num_envs)]
+
     return observation
