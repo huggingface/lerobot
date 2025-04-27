@@ -158,7 +158,7 @@ class XarmEnv(EnvConfig):
 @EnvConfig.register_subclass("genesis")
 @dataclass
 class GenesisEnv(EnvConfig):
-    task: str = "GenesisCube-v0"
+    task: str = "CubePick-v0"
     fps: int = 60
     episode_length: int = 200
     obs_type: str = "pixels_agent_pos"
@@ -173,10 +173,10 @@ class GenesisEnv(EnvConfig):
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
             "action": PolicyFeature(type=FeatureType.ACTION, shape=(9,)),
-            "agent_pos": PolicyFeature(type=FeatureType.STATE, shape=(20,)),
+            "agent_pos": PolicyFeature(type=FeatureType.STATE, shape=(9,)),
             "pixels": PolicyFeature(
                 type=FeatureType.VISUAL,
-                shape=(self.observation_height, self.observation_width, 3)
+                shape=(480, 640, 3)
             ),
         }
     )
@@ -185,9 +185,16 @@ class GenesisEnv(EnvConfig):
         default_factory=lambda: {
             "action": ACTION,
             "agent_pos": OBS_ROBOT,
+            "environment_state": OBS_ENV,
             "pixels": OBS_IMAGE,
         }
     )
+
+    def __post_init__(self):
+        if self.obs_type == "pixels_agent_pos":
+            self.features["pixels"] = PolicyFeature(type=FeatureType.VISUAL, shape=(480, 640, 3))
+        elif self.obs_type == "environment_state_agent_pos":
+            self.features["environment_state"] = PolicyFeature(type=FeatureType.ENV, shape=(11,))
 
     @property
     def gym_kwargs(self) -> dict:

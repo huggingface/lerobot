@@ -51,7 +51,7 @@ def make_env(cfg: EnvConfig, n_envs: int = 1, use_async_envs: bool = False) -> g
     """
     if n_envs < 1:
         raise ValueError("`n_envs must be at least 1")
-
+    
     package_name = f"gym_{cfg.type}"
 
     try:
@@ -59,8 +59,20 @@ def make_env(cfg: EnvConfig, n_envs: int = 1, use_async_envs: bool = False) -> g
     except ModuleNotFoundError as e:
         print(f"{package_name} is not installed. Please install it with `pip install 'lerobot[{cfg.type}]'`")
         raise e
-
+    
     gym_handle = f"{package_name}/{cfg.task}"
+
+    if cfg.type == "genesis":
+        # Genesis env is natively batched—just create it with num_envs=n_envs
+        env = gym.make(
+            gym_handle,
+            num_envs=n_envs,
+            disable_env_checker=True,
+            **cfg.gym_kwargs,
+        )
+        return env
+    
+    # otherwise, use vectorized Gym environments
 
     # batched version of the env that returns an observation of shape (b, c)
     env_cls = gym.vector.AsyncVectorEnv if use_async_envs else gym.vector.SyncVectorEnv
