@@ -262,9 +262,12 @@ def train(cfg: TrainPipelineConfig):
 
         # ---------- 轨迹样本 ----------
         if len(traj_pool) < 3:
-            gt_xyz   = batch[ACTION][:, : policy.config.n_action_steps, :3].detach().cpu()
-            pred_xyz = policy.predict_actions_batch(batch)[:, : policy.config.n_action_steps, :3].detach().cpu()
-            traj_pool.append((gt_xyz[0], pred_xyz[0]))
+            # ground truth: shape (B, T, D)
+            gt_full = batch[ACTION][:, : cfg.policy.n_action_steps, :].detach().cpu()
+           # predicted: same shape
+            pred_full = policy.predict_actions_batch(batch)[:, : cfg.policy.n_action_steps, :].detach().cpu()
+           # store the first sample of this batch
+            traj_pool.append((gt_full[0], pred_full[0]))
 
         # ========== logging ==========
         step += 1
@@ -288,12 +291,16 @@ def train(cfg: TrainPipelineConfig):
             save_checkpoint(checkpoint_dir, step, cfg, policy, optimizer, lr_scheduler)
             update_last_checkpoint(checkpoint_dir)
             # Save trajectory samples
+            gt_arr   = torch.stack([p[0] for p in traj_pool])
+            pred_arr = torch.stack([p[1] for p in traj_pool])
             paths = plot_epoch_trajectories(
-                gt_xyz_all=torch.stack([p[0] for p in traj_pool]),
-                pred_xyz_all=torch.stack([p[1] for p in traj_pool]),
+                gt_all=gt_arr,
+                pred_all=pred_arr,
                 save_dir=cfg.output_dir / "trajectory_plots",
-                index=step,                 # or epoch_idx
-                naming='step',              # choose 'step' or 'epoch'
+                index=step,
+                naming='step',
+                one_hand=False,
+                rotation=False,
                 n_samples=3,
             )
             if wandb_logger:
