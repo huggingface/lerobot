@@ -130,6 +130,7 @@ def train(cfg: TrainPipelineConfig):
     logging.info(pformat(cfg.to_dict()))
 
     args = sys.argv
+    args = [x for x in args if "output_dir" not in x ]
     command = " ".join(args)
     if cfg.resume == False:
         command = command + f" --resume=true --config_path={cfg.output_dir.joinpath('checkpoints/last/pretrained_model/'+TRAIN_CONFIG_NAME)}"
