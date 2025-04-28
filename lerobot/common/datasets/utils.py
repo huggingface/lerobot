@@ -426,6 +426,10 @@ def dataset_to_policy_features(features: dict[str, dict]) -> dict[str, PolicyFea
             # Backward compatibility for "channel" which is an error introduced in LeRobotDataset v2.0 for ported datasets.
             if names[2] in ["channel", "channels"]:  # (h, w, c) -> (c, h, w)
                 shape = (shape[2], shape[0], shape[1])
+        elif ft["dtype"] == "audio":
+            type = FeatureType.AUDIO
+            if len(shape) != 2:
+                raise ValueError(f"Number of dimensions of {key} != 2 (shape={shape})")
         elif key == "observation.environment_state":
             type = FeatureType.ENV
         elif key.startswith("observation"):
