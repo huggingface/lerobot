@@ -227,7 +227,7 @@ class HILSerlRobotEnvConfig(EnvConfig):
 
     def gym_kwargs(self) -> dict:
         return {}
-    
+
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
             "action": PolicyFeature(type=FeatureType.ACTION, shape=(6,)),
