@@ -98,6 +98,7 @@ class ACTConfig(PreTrainedConfig):
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.MEAN_STD,
+            "AUDIO": NormalizationMode.MIN_MAX,
             "STATE": NormalizationMode.MEAN_STD,
             "ACTION": NormalizationMode.MEAN_STD,
         }
@@ -108,6 +109,8 @@ class ACTConfig(PreTrainedConfig):
     vision_backbone: str = "resnet18"
     pretrained_backbone_weights: str | None = "ResNet18_Weights.IMAGENET1K_V1"
     replace_final_stride_with_dilation: int = False
+    # Audio backbone.
+    audio_backbone: str = vision_backbone
     # Transformer layers.
     pre_norm: bool = False
     dim_model: int = 512
@@ -170,8 +173,10 @@ class ACTConfig(PreTrainedConfig):
         return None
 
     def validate_features(self) -> None:
-        if not self.image_features and not self.env_state_feature:
-            raise ValueError("You must provide at least one image or the environment state among the inputs.")
+        if not (self.image_features or self.audio_features) and not self.env_state_feature:
+            raise ValueError(
+                "You must provide at least one image/audio or the environment state among the inputs."
+            )
 
     @property
     def observation_delta_indices(self) -> None:
