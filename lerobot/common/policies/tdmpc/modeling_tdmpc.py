@@ -122,7 +122,7 @@ class TDMPCPolicy(PreTrainedPolicy):
 
         # When the action queue is depleted, populate it again by querying the policy.
         if len(self._queues["action"]) == 0:
-            batch = {key: torch.stack(list(self._queues[key]), dim=1) for key in batch}
+            batch = {key: torch.stack(list(self._queues[key]), dim=1) for key in batch if key in self._queues}
 
             # Remove the time dimensions as it is not handled yet.
             for key in batch:
@@ -594,9 +594,9 @@ class TDMPCTOLD(nn.Module):
 
         self.apply(_apply_fn)
         for m in [self._reward, *self._Qs]:
-            assert isinstance(
-                m[-1], nn.Linear
-            ), "Sanity check. The last linear layer needs 0 initialization on weights."
+            assert isinstance(m[-1], nn.Linear), (
+                "Sanity check. The last linear layer needs 0 initialization on weights."
+            )
             nn.init.zeros_(m[-1].weight)
             nn.init.zeros_(m[-1].bias)  # this has already been done, but keep this line here for good measure
 

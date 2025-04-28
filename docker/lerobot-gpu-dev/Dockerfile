@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tcpdump sysstat screen tmux \
     libglib2.0-0 libgl1-mesa-glx libegl1-mesa \
     speech-dispatcher portaudio19-dev libgeos-dev \
-    python${PYTHON_VERSION} python${PYTHON_VERSION}-venv \
+    python${PYTHON_VERSION} python${PYTHON_VERSION}-venv python${PYTHON_VERSION}-dev \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Install ffmpeg build dependencies. See:
@@ -58,7 +58,7 @@ RUN (type -p wget >/dev/null || (apt update && apt-get install wget -y)) \
 RUN ln -s /usr/bin/python3 /usr/bin/python
 
 # Install poetry
-RUN curl -sSL https://install.python-poetry.org | python - --version 1.8.5
+RUN curl -sSL https://install.python-poetry.org | python -
 ENV PATH="/root/.local/bin:$PATH"
 RUN echo 'if [ "$HOME" != "/root" ]; then ln -sf /root/.local/bin/poetry $HOME/.local/bin/poetry; fi' >> /root/.bashrc
 RUN poetry config virtualenvs.create false

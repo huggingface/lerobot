@@ -111,9 +111,9 @@ def visualize_dataset(
     output_dir: Path | None = None,
 ) -> Path | None:
     if save:
-        assert (
-            output_dir is not None
-        ), "Set an output directory where to write .rrd files with `--output-dir path/to/directory`."
+        assert output_dir is not None, (
+            "Set an output directory where to write .rrd files with `--output-dir path/to/directory`."
+        )
 
     repo_id = dataset.repo_id
 
@@ -208,12 +208,6 @@ def main():
         help="Episode to visualize.",
     )
     parser.add_argument(
-        "--local-files-only",
-        type=int,
-        default=0,
-        help="Use local files only. By default, this script will try to fetch the dataset from the hub if it exists.",
-    )
-    parser.add_argument(
         "--root",
         type=Path,
         default=None,
@@ -271,14 +265,25 @@ def main():
         ),
     )
 
+    parser.add_argument(
+        "--tolerance-s",
+        type=float,
+        default=1e-4,
+        help=(
+            "Tolerance in seconds used to ensure data timestamps respect the dataset fps value"
+            "This is argument passed to the constructor of LeRobotDataset and maps to its tolerance_s constructor argument"
+            "If not given, defaults to 1e-4."
+        ),
+    )
+
     args = parser.parse_args()
     kwargs = vars(args)
     repo_id = kwargs.pop("repo_id")
     root = kwargs.pop("root")
-    local_files_only = kwargs.pop("local_files_only")
+    tolerance_s = kwargs.pop("tolerance_s")
 
     logging.info("Loading dataset")
-    dataset = LeRobotDataset(repo_id, root=root, local_files_only=local_files_only)
+    dataset = LeRobotDataset(repo_id, root=root, tolerance_s=tolerance_s)
 
     visualize_dataset(dataset, **vars(args))
 
