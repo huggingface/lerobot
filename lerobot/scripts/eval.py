@@ -124,7 +124,12 @@ def rollout(
 
     # Reset the policy and environments.
     policy.reset()
-    observation, info = env.reset(seed=seeds)
+    if seeds is not None:
+        try:
+            observation, info = env.reset(seed=seeds)
+        except Exception:
+            # fallback: if env only accepts a single int
+            observation, info = env.reset(seed=seeds[0] if isinstance(seeds, list) else seeds)
     if render_callback is not None:
         render_callback(env)
 
