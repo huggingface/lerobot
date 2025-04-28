@@ -36,6 +36,12 @@ ZERO_POSITION_DEGREE = 0
 ROTATED_POSITION_DEGREE = 90
 
 
+def reset_middle_positions(arm: MotorsBus):
+    input("Please move the robot to the new middle position for calibration, then press Enter...")
+    # Write 128 to Torque_Enable for all motors.
+    arm.write("Torque_Enable", 128)
+
+
 def assert_drive_mode(drive_mode):
     # `drive_mode` is in [0,1] with 0 means original rotation direction for the motor, and 1 means inverted.
     if not np.all(np.isin(drive_mode, [0, 1])):
@@ -438,6 +444,8 @@ def run_arm_manual_calibration(arm: MotorsBus, robot_type: str, arm_name: str, a
         raise ValueError("To run calibration, the torque must be disabled on all motors.")
 
     print(f"\nRunning calibration of {robot_type} {arm_name} {arm_type}...")
+
+    reset_middle_positions(arm)
 
     print("\nMove arm to zero position")
     print("See: " + URL_TEMPLATE.format(robot=robot_type, arm=arm_type, position="zero"))
