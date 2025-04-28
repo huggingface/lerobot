@@ -60,19 +60,40 @@ def decode_audio_torchcodec(
 ) -> torch.Tensor:
     # TODO(CarolinePascal) : add channels selection
     audio_decoder = torchcodec.decoders.AudioDecoder(audio_path)
+    audio_sample_rate = audio_decoder.metadata.sample_rate
+    audio_channels = audio_decoder.metadata.num_channels
+    # TODO(CarolinePascal) : assert ts < total record duration
 
     audio_chunks = []
     for ts in timestamps:
         current_audio_chunk = audio_decoder.get_samples_played_in_range(
-            start_seconds=ts - duration, stop_seconds=ts
+            start_seconds=max(0.0, ts - duration), stop_seconds=ts
         )
 
         if log_loaded_timestamps:
             logging.info(
-                f"audio chunk loaded at starting timestamp={current_audio_chunk.pts_seconds:.4f} with duration={current_audio_chunk.duration_seconds:.4f}"
+                f"audio chunk loaded at timestamp={current_audio_chunk.pts_seconds:.4f} with duration={current_audio_chunk.duration_seconds:.4f}"
             )
 
-        audio_chunks.append(current_audio_chunk.data)
+        current_audio_chunk_data = current_audio_chunk.data.t()
+
+        # Case where the requested audio chunk starts before the beginning of the audio stream
+        if ts - duration < 0:
+            # No useful audio sample has been recorded
+            if ts < 1 / audio_sample_rate:
+                # TODO(CarolinePascal) : add low level white noise instead of zeros ?
+                current_audio_chunk_data = torch.zeros(
+                    (int(ceil(duration * audio_sample_rate)), audio_channels)
+                )
+            # At least one useful audio sample has been recorded
+            else:
+                # Pad the beginning of the audio chunk with zeros
+                # TODO(CarolinePascal) : add low level white noise instead of zeros ?
+                current_audio_chunk_data = torch.nn.functional.pad(
+                    current_audio_chunk_data, (0, 0, int(ceil((duration - ts) * audio_sample_rate)), 0)
+                )
+
+        audio_chunks.append(current_audio_chunk_data)
 
     audio_chunks = torch.stack(audio_chunks)
 
@@ -91,6 +112,8 @@ def decode_audio_torchaudio(
 
     reader = torchaudio.io.StreamReader(src=audio_path)
     audio_sample_rate = reader.get_src_stream_info(reader.default_audio_stream).sample_rate
+    audio_channels = reader.get_src_stream_info(reader.default_audio_stream).num_channels
+    # TODO(CarolinePascal) : assert ts < total record duration
 
     # TODO(CarolinePascal) : sort timestamps ?
     reader.add_basic_audio_stream(
@@ -101,16 +124,32 @@ def decode_audio_torchaudio(
 
     audio_chunks = []
     for ts in timestamps:
-        reader.seek(ts - duration)  # Default to closest audio sample
+        reader.seek(max(0.0, ts - duration))  # Default to closest audio sample. Needs to be non-negative !
         status = reader.fill_buffer()
         if status != 0:
+            # Should not happen, but just in case
             logging.warning("Audio stream reached end of recording before decoding desired timestamps.")
 
         current_audio_chunk = reader.pop_chunks()[0]
 
+        # Case where the requested audio chunk starts before the beginning of the audio stream
+        if ts - duration < 0:
+            # No useful audio sample has been recorded
+            if ts < 1 / audio_sample_rate:
+                current_audio_chunk = torch.zeros((int(ceil(duration * audio_sample_rate)), audio_channels))
+            # At least one useful audio sample has been recorded
+            else:
+                # Remove the superfluous last samples of the audio chunk
+                current_audio_chunk = current_audio_chunk[: int(ceil(ts * audio_sample_rate))]
+                # Pad the beginning of the audio chunk with zeros
+                # TODO(CarolinePascal) : add low level white noise instead of zeros ?
+                current_audio_chunk = torch.nn.functional.pad(
+                    current_audio_chunk, (0, 0, int(ceil((duration - ts) * audio_sample_rate)), 0)
+                )
+
         if log_loaded_timestamps:
             logging.info(
-                f"audio chunk loaded at starting timestamp={current_audio_chunk['pts']:.4f} with duration={len(current_audio_chunk) / audio_sample_rate:.4f}"
+                f"audio chunk loaded at timestamp={current_audio_chunk['pts']:.4f} with duration={len(current_audio_chunk) / audio_sample_rate:.4f}"
             )
 
         audio_chunks.append(current_audio_chunk)
