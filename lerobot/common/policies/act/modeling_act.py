@@ -30,8 +30,11 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 import torchvision
 from torch import Tensor, nn
+from torchaudio.functional import amplitude_to_DB
+from torchaudio.transforms import MelSpectrogram, Resample
 from torchvision.models._utils import IntermediateLayerGetter
 from torchvision.ops.misc import FrozenBatchNorm2d
+from torchvision.transforms import Compose, Lambda, Resize
 
 from lerobot.common.policies.act.configuration_act import ACTConfig
 from lerobot.common.policies.normalize import Normalize, Unnormalize
@@ -69,6 +72,30 @@ class ACTPolicy(PreTrainedPolicy):
         )
         self.unnormalize_outputs = Unnormalize(
             config.output_features, config.normalization_mapping, dataset_stats
+        )
+
+        # TODO(CarolinePascal) : add variable sample length and initial sampling frequency
+        self.mel_spectrogram_transform = Compose(
+            [
+                Lambda(lambda x: x.mean(dim=1)),  # Average over the second dimension (channel)
+                Resample(orig_freq=48000, new_freq=16000).to(
+                    self.config.device
+                ),  # Subsampling (less samples, reduced temporal resolution, lower frequency range)
+                MelSpectrogram(
+                    sample_rate=16000,  # Subsampling (less samples, reduced temporal resolution, lower frequency range)
+                    n_fft=1024,  # FFT window size (the bigger the window, the more frequency information, the lower the temporal resolution)
+                    hop_length=36,  # Number of samples between frames (the smaller the hop, the higher the temporal resolution) - Value picked to match ResNet18 input and a 0.5s input
+                    n_mels=224,  # Number of Mel bands (the more bands, the more rows in the spectrogram, the higher the frequency resolution)
+                    power=2,  # Power spectrum
+                ).to(self.config.device),
+                Lambda(
+                    lambda x: amplitude_to_DB(x, multiplier=10, amin=1e-10, db_multiplier=0)
+                ),  # Convert to decibels
+                Resize((224, 224)),  # Resize spectrogram to 224×224
+                Lambda(
+                    lambda x: x.unsqueeze(1).expand(-1, 3, -1, -1)
+                ),  # Duplicate across 3 channels to mimic RGB images. Dimensions are [batch, rgb, height, width].
+            ]
         )
 
         self.model = ACT(config)
@@ -121,6 +148,12 @@ class ACTPolicy(PreTrainedPolicy):
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
             batch["observation.images"] = [batch[key] for key in self.config.image_features]
 
+        if self.config.audio_features:
+            batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
+            batch["observation.audio"] = [
+                self.mel_spectrogram_transform(batch[key]) for key in self.config.audio_features
+            ]
+
         # If we are doing temporal ensembling, do online updates where we keep track of the number of actions
         # we are ensembling over.
         if self.config.temporal_ensemble_coeff is not None:
@@ -148,6 +181,12 @@ class ACTPolicy(PreTrainedPolicy):
         if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
             batch["observation.images"] = [batch[key] for key in self.config.image_features]
+
+        if self.config.audio_features:
+            batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
+            batch["observation.audio"] = [
+                self.mel_spectrogram_transform(batch[key]) for key in self.config.audio_features
+            ]
 
         batch = self.normalize_targets(batch)
         actions_hat, (mu_hat, log_sigma_x2_hat) = self.model(batch)
@@ -342,12 +381,26 @@ class ACT(nn.Module):
             # Note: The forward method of this returns a dict: {"feature_map": output}.
             self.backbone = IntermediateLayerGetter(backbone_model, return_layers={"layer4": "feature_map"})
 
+        # Backbone for audio feature extraction.
+        if self.config.audio_features:
+            audio_backbone_model = getattr(torchvision.models, config.vision_backbone)(
+                replace_stride_with_dilation=[False, False, config.replace_final_stride_with_dilation],
+                weights=config.pretrained_backbone_weights,
+                norm_layer=FrozenBatchNorm2d,
+            )
+            # Note: The assumption here is that we are using a ResNet model (and hence layer4 is the final
+            # feature map).
+            # Note: The forward method of this returns a dict: {"feature_map": output}.
+            self.audio_backbone = IntermediateLayerGetter(
+                audio_backbone_model, return_layers={"layer4": "feature_map"}
+            )
+
         # Transformer (acts as VAE decoder when training with the variational objective).
         self.encoder = ACTEncoder(config)
         self.decoder = ACTDecoder(config)
 
         # Transformer encoder input projections. The tokens will be structured like
-        # [latent, (robot_state), (env_state), (image_feature_map_pixels)].
+        # [latent, (robot_state), (env_state), (image_feature_map_pixels), (audio_feature)].
         if self.config.robot_state_feature:
             self.encoder_robot_state_input_proj = nn.Linear(
                 self.config.robot_state_feature.shape[0], config.dim_model
@@ -361,6 +414,10 @@ class ACT(nn.Module):
             self.encoder_img_feat_input_proj = nn.Conv2d(
                 backbone_model.fc.in_features, config.dim_model, kernel_size=1
             )
+        if self.config.audio_features:
+            self.encoder_audio_feat_input_proj = nn.Conv2d(
+                audio_backbone_model.fc.in_features, config.dim_model, kernel_size=1
+            )
         # Transformer encoder positional embeddings.
         n_1d_tokens = 1  # for the latent
         if self.config.robot_state_feature:
@@ -370,6 +427,8 @@ class ACT(nn.Module):
         self.encoder_1d_feature_pos_embed = nn.Embedding(n_1d_tokens, config.dim_model)
         if self.config.image_features:
             self.encoder_cam_feat_pos_embed = ACTSinusoidalPositionEmbedding2d(config.dim_model // 2)
+        if self.config.audio_features:
+            self.encoder_audio_feat_pos_embed = ACTSinusoidalPositionEmbedding2d(config.dim_model // 2)
 
         # Transformer decoder.
         # Learnable positional embedding for the transformer's decoder (in the style of DETR object queries).
@@ -412,6 +471,8 @@ class ACT(nn.Module):
 
         if "observation.images" in batch:
             batch_size = batch["observation.images"][0].shape[0]
+        elif "observation.audio" in batch:
+            batch_size = batch["observation.audio"][0].shape[0]
         else:
             batch_size = batch["observation.environment_state"].shape[0]
 
@@ -501,6 +562,28 @@ class ACT(nn.Module):
 
             encoder_in_tokens.extend(torch.cat(all_cam_features, axis=0))
             encoder_in_pos_embed.extend(torch.cat(all_cam_pos_embeds, axis=0))
+
+        # Audio observation features and positional embeddings.
+        if self.config.audio_features:
+            all_audio_features = []
+            all_audio_pos_embeds = []
+
+            for audio in batch["observation.audio"]:
+                audio_features = self.audio_backbone(audio)["feature_map"]
+                audio_pos_embed = self.encoder_audio_feat_pos_embed(audio_features).to(
+                    dtype=audio_features.dtype
+                )
+                audio_features = self.encoder_audio_feat_input_proj(audio_features)
+
+                # Rearrange features to (sequence, batch, dim).
+                audio_features = einops.rearrange(audio_features, "b c h w -> (h w) b c")
+                audio_pos_embed = einops.rearrange(audio_pos_embed, "b c h w -> (h w) b c")
+
+                all_audio_features.append(audio_features)
+                all_audio_pos_embeds.append(audio_pos_embed)
+
+            encoder_in_tokens.extend(torch.cat(all_audio_features, axis=0))
+            encoder_in_pos_embed.extend(torch.cat(all_audio_pos_embeds, axis=0))
 
         # Stack all tokens along the sequence dimension.
         encoder_in_tokens = torch.stack(encoder_in_tokens, axis=0)
