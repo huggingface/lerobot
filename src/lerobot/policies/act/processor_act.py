@@ -20,6 +20,7 @@ import torch
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
+    AudioProcessorStep,
     DeviceProcessorStep,
     NormalizerProcessorStep,
     PolicyAction,
@@ -63,6 +64,7 @@ def make_act_pre_post_processors(
             stats=dataset_stats,
             device=config.device,
         ),
+        AudioProcessorStep(),
     ]
     output_steps = [
         UnnormalizerProcessorStep(
