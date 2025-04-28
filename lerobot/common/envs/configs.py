@@ -227,6 +227,23 @@ class HILSerlRobotEnvConfig(EnvConfig):
 
     def gym_kwargs(self) -> dict:
         return {}
+    
+    features: dict[str, PolicyFeature] = field(
+        default_factory=lambda: {
+            "action": PolicyFeature(type=FeatureType.ACTION, shape=(6,)),
+            "observation.image.gripper": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 128, 128)),
+            "observation.image.top": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 128, 128)),
+            "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(25,)),
+        }
+    )
+    features_map: dict[str, str] = field(
+        default_factory=lambda: {
+            "action": ACTION,
+            "observation.image.gripper": OBS_IMAGE,
+            "observation.image.top": OBS_IMAGE,
+            "observation.state": OBS_ROBOT,
+        }
+    )
 
 
 @EnvConfig.register_subclass("maniskill_push")
