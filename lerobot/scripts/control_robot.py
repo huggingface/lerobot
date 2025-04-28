@@ -285,7 +285,9 @@ def record(
     # 3. place the cameras windows on screen
     enable_teleoperation = policy is None
     log_say("Warmup record", cfg.play_sounds)
-    warmup_record(robot, events, enable_teleoperation, cfg.warmup_time_s, cfg.display_data, cfg.fps)
+    # For evals, do not display data during warmup, since you don't pass a policy
+    display_data = cfg.display_data and not is_headless() and policy is None
+    warmup_record(robot, events, enable_teleoperation, cfg.warmup_time_s, display_data, cfg.fps)
 
     if has_method(robot, "teleop_safety_stop"):
         robot.teleop_safety_stop()
@@ -296,12 +298,13 @@ def record(
             break
 
         log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
+        display_data = cfg.display_data and not is_headless()
         record_episode(
             robot=robot,
             dataset=dataset,
             events=events,
             episode_time_s=cfg.episode_time_s,
-            display_data=cfg.display_data,
+            display_data=display_data,
             policy=policy,
             fps=cfg.fps,
             single_task=cfg.single_task,
