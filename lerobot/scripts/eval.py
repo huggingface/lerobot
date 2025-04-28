@@ -142,7 +142,15 @@ def rollout(
     step = 0
     # Keep track of which environments are done.
     done = np.array([False] * env.num_envs)
-    max_steps = env.call("_max_episode_steps")[0]
+    #TODO (jadechoghari):add fallback or not?
+    if hasattr(env, "call"):
+        max_steps = env.call("_max_episode_steps")[0]
+    elif hasattr(env, "max_episode_steps"):
+        max_steps = env.max_episode_steps
+    elif hasattr(env, "_max_episode_steps"):
+        max_steps = env._max_episode_steps
+    else:
+        max_steps = 200  # default fallback
     progbar = trange(
         max_steps,
         desc=f"Running rollout with at most {max_steps} steps",
@@ -502,7 +510,9 @@ def eval_main(cfg: EvalPipelineConfig):
     print(info["aggregated"])
 
     # Save info
-    with open(Path(cfg.output_dir) / "eval_info.json", "w") as f:
+    output_file = Path(cfg.output_dir) / "eval_info.json"
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_file, "w") as f:
         json.dump(info, f, indent=2)
 
     env.close()
