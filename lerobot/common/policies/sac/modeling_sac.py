@@ -15,7 +15,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import math
 from dataclasses import asdict
 from typing import Callable, List, Literal, Optional, Tuple
 
@@ -1110,6 +1109,7 @@ class TanhMultivariateNormalDiag(TransformedDistribution):
 
         return x
 
+
 def _inv_softplus(x: float | torch.Tensor) -> float | torch.Tensor:
     """
     Numerically stable inverse of the softplus function.
@@ -1121,6 +1121,7 @@ def _inv_softplus(x: float | torch.Tensor) -> float | torch.Tensor:
     x_tensor = torch.as_tensor(x)
     out = torch.log(torch.expm1(x_tensor).clamp(min=1e-6))
     return out if is_tensor else out.item()
+
 
 def _convert_normalization_params_to_tensor(normalization_params: dict) -> dict:
     converted_params = {}
