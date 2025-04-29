@@ -4,7 +4,7 @@ from typing import Dict, Optional, Tuple
 import torch
 from torch import Tensor, nn
 
-from lerobot.common.constants import OBS_IMAGE
+from lerobot.common.constants import OBS_IMAGE, OBS_IMAGES
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.policies.reward_model.configuration_classifier import RewardClassifierConfig
@@ -33,6 +33,59 @@ class ClassifierOutput:
             f"hidden_states={self.hidden_states})"
         )
 
+
+class SpatialLearnedEmbeddings(nn.Module):
+    def __init__(self, height, width, channel, num_features=8):
+        """
+        PyTorch implementation of learned spatial embeddings
+        
+        Args:
+            height: Spatial height of input features
+            width: Spatial width of input features
+            channel: Number of input channels
+            num_features: Number of output embedding dimensions
+        """
+        super().__init__()
+        self.height = height
+        self.width = width
+        self.channel = channel
+        self.num_features = num_features
+
+        self.kernel = nn.Parameter(torch.empty(channel, height, width, num_features))
+        
+        nn.init.kaiming_normal_(self.kernel, mode='fan_in', nonlinearity='linear')
+
+    def forward(self, features):
+        """
+        Forward pass for spatial embedding
+        
+        Args:
+            features: Input tensor of shape [B, H, W, C] or [H, W, C] if no batch
+        Returns:
+            Output tensor of shape [B, C*F] or [C*F] if no batch
+        """
+
+        features = features.last_hidden_state
+
+        original_shape = features.shape
+        if features.dim() == 3:
+            features = features.unsqueeze(0)  # Add batch dim
+
+        features_expanded = features.unsqueeze(-1)  # [B, H, W, C, 1]
+        kernel_expanded = self.kernel.unsqueeze(0)  # [1, H, W, C, F]
+
+        # Element-wise multiplication and spatial reduction
+        output = (features_expanded * kernel_expanded).sum(dim=(2, 3))  # Sum H,W
+        
+        # Reshape to combine channel and feature dimensions
+        output = output.view(output.size(0), -1)  # [B, C*F]
+
+        # Remove batch dim
+        if len(original_shape) == 3:
+            output = output.squeeze(0)
+
+        return output
+    
 
 class Classifier(PreTrainedPolicy):
     """Image classifier built on top of a pre-trained encoder."""
@@ -78,6 +131,16 @@ class Classifier(PreTrainedPolicy):
             self._setup_cnn_backbone()
 
         self._freeze_encoder()
+
+        self.encoders = nn.ModuleDict()
+
+        # Extract image keys from input_features
+        self.image_keys = [key.replace(".", "_") for key in config.input_features if key.startswith(OBS_IMAGES)]
+
+        for image_key in self.image_keys:
+            encoder = self._create_single_encoder()
+            self.encoders[image_key] = encoder
+
         self._build_classifier_head()
 
     def _setup_cnn_backbone(self):
@@ -95,19 +158,27 @@ class Classifier(PreTrainedPolicy):
         for param in self.encoder.parameters():
             param.requires_grad = False
 
+    def _create_single_encoder(self):
+        encoder = nn.Sequential(
+            self.encoder,
+            SpatialLearnedEmbeddings(
+                height=4, 
+                width=4, 
+                channel=self.feature_dim,
+                num_features=self.config.image_embedding_pooling_dim
+            ),
+            nn.Dropout(self.config.dropout_rate),
+            nn.Linear(self.feature_dim * self.config.image_embedding_pooling_dim, self.config.latent_dim),
+            nn.LayerNorm(self.config.latent_dim),
+            nn.Tanh()
+        )
+
+        return encoder
+
     def _build_classifier_head(self) -> None:
         """Initialize the classifier head architecture."""
-        # Get input dimension based on model type
-        if self.is_cnn:
-            input_dim = self.feature_dim
-        else:  # Transformer models
-            if hasattr(self.encoder.config, "hidden_size"):
-                input_dim = self.encoder.config.hidden_size
-            else:
-                raise ValueError("Unsupported transformer architecture since hidden_size is not found")
-
         self.classifier_head = nn.Sequential(
-            nn.Linear(input_dim * self.config.num_cameras, self.config.hidden_dim),
+            nn.Linear(self.config.latent_dim * self.config.num_cameras, self.config.hidden_dim),
             nn.Dropout(self.config.dropout_rate),
             nn.LayerNorm(self.config.hidden_dim),
             nn.ReLU(),
@@ -117,34 +188,28 @@ class Classifier(PreTrainedPolicy):
             ),
         )
 
-    def _get_encoder_output(self, x: torch.Tensor) -> torch.Tensor:
+    def _get_encoder_output(self, x: torch.Tensor, image_key: str) -> torch.Tensor:
         """Extract the appropriate output from the encoder."""
         with torch.no_grad():
             if self.is_cnn:
                 # The HF ResNet applies pooling internally
-                outputs = self.encoder(x)
-                # Get pooled output directly
-                features = outputs.pooler_output
-
-                if features.dim() > 2:
-                    features = features.squeeze(-1).squeeze(-1)
-                return features
+                outputs = self.encoders[image_key](x)
+                return outputs
             else:  # Transformer models
                 outputs = self.encoder(x)
-                if hasattr(outputs, "pooler_output") and outputs.pooler_output is not None:
-                    return outputs.pooler_output
                 return outputs.last_hidden_state[:, 0, :]
 
     def extract_images_and_labels(self, batch: Dict[str, Tensor]) -> Tuple[list, Tensor]:
         """Extract image tensors and label tensors from batch."""
-        images = [batch[key] for key in self.config.input_features if key.startswith(OBS_IMAGE)]
+        # Check for both OBS_IMAGE and OBS_IMAGES prefixes
+        images = [batch[key] for key in self.config.input_features if key.startswith(OBS_IMAGE) or key.startswith(OBS_IMAGES)]
         labels = batch["next.reward"]
 
         return images, labels
 
     def predict(self, xs: list) -> ClassifierOutput:
         """Forward pass of the classifier for inference."""
-        encoder_outputs = torch.hstack([self._get_encoder_output(x) for x in xs])
+        encoder_outputs = torch.hstack([self._get_encoder_output(x, img_key) for x, img_key in zip(xs, self.image_keys, strict=True)])
         logits = self.classifier_head(encoder_outputs)
 
         if self.config.num_classes == 2:
@@ -193,7 +258,8 @@ class Classifier(PreTrainedPolicy):
 
     def predict_reward(self, batch, threshold=0.5):
         """Legacy method for compatibility."""
-        images = [batch[key] for key in self.config.input_features if key.startswith(OBS_IMAGE)]
+        # Check for both OBS_IMAGE and OBS_IMAGES prefixes
+        images = [batch[key] for key in self.config.input_features if key.startswith(OBS_IMAGE) or key.startswith(OBS_IMAGES)]
         if self.config.num_classes == 2:
             probs = self.predict(images).probabilities
             logging.debug(f"Predicted reward images: {probs}")
@@ -201,13 +267,9 @@ class Classifier(PreTrainedPolicy):
         else:
             return torch.argmax(self.predict(images).probabilities, dim=1)
 
-    def get_optim_params(self) -> dict:
+    def get_optim_params(self):
         """Return optimizer parameters for the policy."""
-        return {
-            "params": self.parameters(),
-            "lr": getattr(self.config, "learning_rate", 1e-4),
-            "weight_decay": getattr(self.config, "weight_decay", 0.01),
-        }
+        return self.parameters()
 
     def select_action(self, batch: Dict[str, Tensor]) -> Tensor:
         """

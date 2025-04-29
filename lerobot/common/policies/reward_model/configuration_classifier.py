@@ -15,6 +15,8 @@ class RewardClassifierConfig(PreTrainedConfig):
     name: str = "reward_classifier"
     num_classes: int = 2
     hidden_dim: int = 256
+    latent_dim: int = 256
+    image_embedding_pooling_dim: int = 8
     dropout_rate: float = 0.1
     model_name: str = "helper2424/resnet10"
     device: str = "cpu"
