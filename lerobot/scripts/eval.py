@@ -66,7 +66,12 @@ from torch import Tensor, nn
 from tqdm import trange
 
 from lerobot.common.envs.factory import make_env
-from lerobot.common.envs.utils import add_envs_task, check_env_attributes_and_types, preprocess_observation, BatchedEnv
+from lerobot.common.envs.utils import (
+    BatchedEnv,
+    add_envs_task,
+    check_env_attributes_and_types,
+    preprocess_observation,
+)
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.policies.utils import get_device_from_parameters
@@ -196,7 +201,9 @@ def rollout(
         all_actions.append(torch.from_numpy(action))
         all_rewards.append(torch.from_numpy(reward))
         all_dones.append(torch.from_numpy(done))
-        all_successes.append(torch.tensor(successes, device="cpu")) # .from_numpy move to cpu, while this stays on gpu, so we move it back to cpu
+        all_successes.append(
+            torch.tensor(successes, device="cpu")
+        )  # .from_numpy move to cpu, while this stays on gpu, so we move it back to cpu
 
         step += 1
         running_success_rate = (
@@ -324,7 +331,10 @@ def eval_policy(
         # Make a mask with shape (batch, n_steps) to mask out rollout data after the first done
         # (batch-element-wise). Note the `done_indices + 1` to make sure to keep the data from the done step.
         # updated because of device mismatch
-        mask = (torch.arange(n_steps).to(done_indices.device) <= einops.repeat(done_indices + 1, "b -> b s", s=n_steps)).int()
+        mask = (
+            torch.arange(n_steps).to(done_indices.device)
+            <= einops.repeat(done_indices + 1, "b -> b s", s=n_steps)
+        ).int()
         # Extend metrics.
         batch_sum_rewards = einops.reduce((rollout_data["reward"] * mask), "b n -> b", "sum")
         sum_rewards.extend(batch_sum_rewards.tolist())
