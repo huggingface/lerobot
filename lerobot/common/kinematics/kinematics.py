@@ -227,7 +227,9 @@ class RobotKinematics:
         current_worldTtool = self.forward_kinematics(robot, q)
         err_lin = RobotUtils.calc_lin_err(current_worldTtool, desired_worldTtool)
         lin_error_norm = np.linalg.norm(err_lin)
-        assert lin_error_norm < 1e-2, f"[ERROR] Large position error ({lin_error_norm:.4f}). Check target reachability (position/orientation)"
+        assert lin_error_norm < 1e-2, (
+            f"[ERROR] Large position error ({lin_error_norm:.4f}). Check target reachability (position/orientation)"
+        )
 
         return q
 
@@ -268,9 +270,8 @@ class RobotKinematics:
 
 
 if __name__ == "__main__":
-    
     ## basic usage ##
-    
+
     # init
     robot = Robot(robot_type="so100")
     kin = RobotKinematics()
@@ -302,14 +303,14 @@ if __name__ == "__main__":
 
     # convert from dh angle to mechanical angle
     # q_final = from_dh_to_mech(q_final)
-    
+
     ## test assert error when final pose is far from T_goal ##
-    
+
     # Define very far pose goal not reachable to trigger error
     T_goal = T_start.copy()
     T_goal[:3, 3] += np.array([-0.9, 0.1, 0.1])
     print("T_goal = \n", T_goal)
-    
+
     # IK with internal interpolation
     q_final = kin.inverse_kinematics(robot, q_init, T_goal, use_orientation=False, k=0.8, n_iter=50)
     T_final = kin.forward_kinematics(robot, q_final)
@@ -319,10 +320,3 @@ if __name__ == "__main__":
 
     print("err_lin = ", RobotUtils.calc_lin_err(T_goal, T_final))
     print("err_ang = ", RobotUtils.calc_ang_err(T_goal, T_final))
-    
-    
-    
-    
-    
-    
-    
