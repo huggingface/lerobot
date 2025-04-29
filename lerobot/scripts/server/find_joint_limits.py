@@ -10,8 +10,8 @@ from lerobot.common.robot_devices.robots.utils import make_robot_from_config
 from lerobot.configs import parser
 from lerobot.scripts.server.kinematics import RobotKinematics
 
-follower_port = "/dev/tty.usbmodem58760431631"
-leader_port = "/dev/tty.usbmodem585A0077921"
+follower_port = "/dev/tty.usbmodem58FA0834591"
+leader_port = "/dev/tty.usbmodem58FA0823481"
 
 
 def find_joint_bounds(
