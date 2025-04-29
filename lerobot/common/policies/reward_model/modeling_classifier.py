@@ -38,7 +38,7 @@ class SpatialLearnedEmbeddings(nn.Module):
     def __init__(self, height, width, channel, num_features=8):
         """
         PyTorch implementation of learned spatial embeddings
-        
+
         Args:
             height: Spatial height of input features
             width: Spatial width of input features
@@ -52,13 +52,13 @@ class SpatialLearnedEmbeddings(nn.Module):
         self.num_features = num_features
 
         self.kernel = nn.Parameter(torch.empty(channel, height, width, num_features))
-        
-        nn.init.kaiming_normal_(self.kernel, mode='fan_in', nonlinearity='linear')
+
+        nn.init.kaiming_normal_(self.kernel, mode="fan_in", nonlinearity="linear")
 
     def forward(self, features):
         """
         Forward pass for spatial embedding
-        
+
         Args:
             features: Input tensor of shape [B, H, W, C] or [H, W, C] if no batch
         Returns:
@@ -76,7 +76,7 @@ class SpatialLearnedEmbeddings(nn.Module):
 
         # Element-wise multiplication and spatial reduction
         output = (features_expanded * kernel_expanded).sum(dim=(2, 3))  # Sum H,W
-        
+
         # Reshape to combine channel and feature dimensions
         output = output.view(output.size(0), -1)  # [B, C*F]
 
@@ -85,7 +85,7 @@ class SpatialLearnedEmbeddings(nn.Module):
             output = output.squeeze(0)
 
         return output
-    
+
 
 class Classifier(PreTrainedPolicy):
     """Image classifier built on top of a pre-trained encoder."""
@@ -135,7 +135,9 @@ class Classifier(PreTrainedPolicy):
         self.encoders = nn.ModuleDict()
 
         # Extract image keys from input_features
-        self.image_keys = [key.replace(".", "_") for key in config.input_features if key.startswith(OBS_IMAGES)]
+        self.image_keys = [
+            key.replace(".", "_") for key in config.input_features if key.startswith(OBS_IMAGES)
+        ]
 
         for image_key in self.image_keys:
             encoder = self._create_single_encoder()
@@ -162,15 +164,15 @@ class Classifier(PreTrainedPolicy):
         encoder = nn.Sequential(
             self.encoder,
             SpatialLearnedEmbeddings(
-                height=4, 
-                width=4, 
+                height=4,
+                width=4,
                 channel=self.feature_dim,
-                num_features=self.config.image_embedding_pooling_dim
+                num_features=self.config.image_embedding_pooling_dim,
             ),
             nn.Dropout(self.config.dropout_rate),
             nn.Linear(self.feature_dim * self.config.image_embedding_pooling_dim, self.config.latent_dim),
             nn.LayerNorm(self.config.latent_dim),
-            nn.Tanh()
+            nn.Tanh(),
         )
 
         return encoder
@@ -202,14 +204,20 @@ class Classifier(PreTrainedPolicy):
     def extract_images_and_labels(self, batch: Dict[str, Tensor]) -> Tuple[list, Tensor]:
         """Extract image tensors and label tensors from batch."""
         # Check for both OBS_IMAGE and OBS_IMAGES prefixes
-        images = [batch[key] for key in self.config.input_features if key.startswith(OBS_IMAGE) or key.startswith(OBS_IMAGES)]
+        images = [
+            batch[key]
+            for key in self.config.input_features
+            if key.startswith(OBS_IMAGE) or key.startswith(OBS_IMAGES)
+        ]
         labels = batch["next.reward"]
 
         return images, labels
 
     def predict(self, xs: list) -> ClassifierOutput:
         """Forward pass of the classifier for inference."""
-        encoder_outputs = torch.hstack([self._get_encoder_output(x, img_key) for x, img_key in zip(xs, self.image_keys, strict=True)])
+        encoder_outputs = torch.hstack(
+            [self._get_encoder_output(x, img_key) for x, img_key in zip(xs, self.image_keys, strict=True)]
+        )
         logits = self.classifier_head(encoder_outputs)
 
         if self.config.num_classes == 2:
@@ -259,7 +267,11 @@ class Classifier(PreTrainedPolicy):
     def predict_reward(self, batch, threshold=0.5):
         """Legacy method for compatibility."""
         # Check for both OBS_IMAGE and OBS_IMAGES prefixes
-        images = [batch[key] for key in self.config.input_features if key.startswith(OBS_IMAGE) or key.startswith(OBS_IMAGES)]
+        images = [
+            batch[key]
+            for key in self.config.input_features
+            if key.startswith(OBS_IMAGE) or key.startswith(OBS_IMAGES)
+        ]
         if self.config.num_classes == 2:
             probs = self.predict(images).probabilities
             logging.debug(f"Predicted reward images: {probs}")
