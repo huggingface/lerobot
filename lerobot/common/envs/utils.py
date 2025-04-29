@@ -21,11 +21,24 @@ import gymnasium as gym
 import numpy as np
 import torch
 from torch import Tensor
+from typing import Union
 
 from lerobot.common.envs.configs import EnvConfig
 from lerobot.common.utils.utils import get_channel_first_image_shape
 from lerobot.configs.types import FeatureType, PolicyFeature
 
+from typing import Protocol, Any
+
+class BatchedEnv(Protocol):
+    """A protocol for any natively batched environment."""
+    
+    num_envs: int
+
+    def reset(self, *, seed=None, options=None) -> tuple[Any, dict]:
+        ...
+
+    def step(self, action) -> tuple[Any, Any, Any, Any, dict]:
+        ...
 
 def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Tensor]:
     # TODO(aliberts, rcadene): refactor this to use features from the environment (no hardcoding)
@@ -97,19 +110,14 @@ def are_all_envs_same_type(env: gym.vector.VectorEnv) -> bool:
     return all(type(e) is first_type for e in env.envs)  # Fast type check
 
 
-def check_env_attributes_and_types(env) -> None:
+def check_env_attributes_and_types(env: Union[gym.vector.VectorEnv, BatchedEnv]) -> None:
     # Dispatch to the right function depending on env type
-    if hasattr(env, "envs"):
+    if isinstance(env, gym.vector.VectorEnv):
         # Standard Gym VectorEnv pattern
         return check_env_attributes_and_types_vector(env)
-    elif env:  # or another Genesis-unique attr
+    else:
         # Genesis native batched env
         return check_env_attributes_and_types_batched(env)
-    else:
-        warnings.warn(
-            f"Unknown environment type: {type(env)}. Attribute check skipped.", UserWarning, stacklevel=2
-        )
-
 
 def check_env_attributes_and_types_vector(env: gym.vector.VectorEnv) -> None:
     with warnings.catch_warnings():
@@ -128,8 +136,7 @@ def check_env_attributes_and_types_vector(env: gym.vector.VectorEnv) -> None:
                 stacklevel=2,
             )
 
-
-def check_env_attributes_and_types_batched(env) -> None:
+def check_env_attributes_and_types_batched(env: Union[gym.vector.VectorEnv, BatchedEnv]) -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("once", UserWarning)  # Apply filter only in this function
 
@@ -140,11 +147,10 @@ def check_env_attributes_and_types_batched(env) -> None:
                 stacklevel=2,
             )
 
-
-def add_envs_task(env: gym.vector.VectorEnv, observation: dict[str, Any]) -> dict[str, Any]:
+def add_envs_task(env: Union[gym.vector.VectorEnv, BatchedEnv], observation: dict[str, Any]) -> dict[str, Any]:
     """Adds task feature to the observation dict with respect to the first environment attribute."""
     num_envs = observation[list(observation.keys())[0]].shape[0]
-    if hasattr(env, "envs"):
+    if isinstance(env, gym.vector.VectorEnv):
         if hasattr(env.envs[0], "task_description"):
             observation["task"] = env.call("task_description")
         elif hasattr(env.envs[0], "task"):
