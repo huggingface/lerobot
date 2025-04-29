@@ -18,6 +18,7 @@ import importlib
 import gymnasium as gym
 
 from lerobot.common.envs.configs import AlohaEnv, EnvConfig, PushtEnv, XarmEnv
+from lerobot.common.envs.utils import ObservationProcessorWrapper
 
 
 def make_env_config(env_type: str, **kwargs) -> EnvConfig:
@@ -65,5 +66,6 @@ def make_env(cfg: EnvConfig, n_envs: int = 1, use_async_envs: bool = False) -> g
     env = env_cls(
         [lambda: gym.make(gym_handle, disable_env_checker=True, **cfg.gym_kwargs) for _ in range(n_envs)]
     )
+    env = ObservationProcessorWrapper(env=env)
 
     return env
