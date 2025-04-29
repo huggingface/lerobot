@@ -14,10 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import importlib
+from typing import Union
 
 import gymnasium as gym
 
-from typing import Union
 from lerobot.common.envs.configs import AlohaEnv, EnvConfig, GenesisEnv, PushtEnv, XarmEnv
 from lerobot.common.envs.utils import BatchedEnv
 
@@ -35,7 +35,9 @@ def make_env_config(env_type: str, **kwargs) -> EnvConfig:
         raise ValueError(f"Policy type '{env_type}' is not available.")
 
 
-def make_env(cfg: EnvConfig, n_envs: int = 1, use_async_envs: bool = False) -> Union[gym.vector.VectorEnv, BatchedEnv] | None:
+def make_env(
+    cfg: EnvConfig, n_envs: int = 1, use_async_envs: bool = False
+) -> Union[gym.vector.VectorEnv, BatchedEnv] | None:
     """Makes a gym vector environment according to the config.
 
     Args:
