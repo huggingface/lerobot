@@ -611,6 +611,27 @@ class ManipulatorRobot:
                 "ManipulatorRobot is not connected. You need to run `robot.connect()` before disconnecting."
             )
 
+        # Disable torque on all motors before disconnecting
+        if self.robot_type in ["koch", "koch_bimanual", "aloha"]:
+            from lerobot.common.robot_devices.motors.dynamixel import TorqueMode
+        elif self.robot_type in ["so100", "so101", "moss", "lekiwi"]:
+            from lerobot.common.robot_devices.motors.feetech import TorqueMode
+
+        # Disable torque on follower arms
+        for name in self.follower_arms:
+            try:
+                self.follower_arms[name].write("Torque_Enable", TorqueMode.DISABLED.value)
+            except Exception as e:
+                print(f"Warning: Failed to disable torque on follower arm {name}: {e}")
+
+        # Disable torque on leader arms
+        for name in self.leader_arms:
+            try:
+                self.leader_arms[name].write("Torque_Enable", TorqueMode.DISABLED.value)
+            except Exception as e:
+                print(f"Warning: Failed to disable torque on leader arm {name}: {e}")
+
+        # Disconnect all devices
         for name in self.follower_arms:
             self.follower_arms[name].disconnect()
 
