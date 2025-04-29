@@ -15,10 +15,8 @@
 # limitations under the License.
 
 import functools
-import io
-import pickle  # nosec B403: Safe usage of pickle
 from contextlib import suppress
-from typing import Any, Callable, Optional, Sequence, TypedDict
+from typing import Callable, Optional, Sequence, TypedDict
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -483,8 +481,6 @@ class ReplayBuffer:
                     data[k] = v.to(storage_device)
 
             action = data["action"]
-            if action_mask is not None:
-                action = action[action_mask] if action.dim() == 1 else action[:, action_mask]
 
             replay_buffer.add(
                 state=data["state"],
