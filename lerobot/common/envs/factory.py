@@ -17,7 +17,7 @@ import importlib
 
 import gymnasium as gym
 
-from lerobot.common.envs.configs import AlohaEnv, EnvConfig, PushtEnv, XarmEnv, GenesisEnv
+from lerobot.common.envs.configs import AlohaEnv, EnvConfig, GenesisEnv, PushtEnv, XarmEnv
 
 
 def make_env_config(env_type: str, **kwargs) -> EnvConfig:
@@ -51,7 +51,7 @@ def make_env(cfg: EnvConfig, n_envs: int = 1, use_async_envs: bool = False) -> g
     """
     if n_envs < 1:
         raise ValueError("`n_envs must be at least 1")
-    
+
     package_name = f"gym_{cfg.type}"
 
     try:
@@ -59,7 +59,7 @@ def make_env(cfg: EnvConfig, n_envs: int = 1, use_async_envs: bool = False) -> g
     except ModuleNotFoundError as e:
         print(f"{package_name} is not installed. Please install it with `pip install 'lerobot[{cfg.type}]'`")
         raise e
-    
+
     gym_handle = f"{package_name}/{cfg.task}"
 
     if cfg.type == "genesis":
@@ -71,7 +71,7 @@ def make_env(cfg: EnvConfig, n_envs: int = 1, use_async_envs: bool = False) -> g
             **cfg.gym_kwargs,
         )
         return env
-    
+
     # otherwise, use vectorized Gym environments
 
     # batched version of the env that returns an observation of shape (b, c)

@@ -142,7 +142,7 @@ def rollout(
     step = 0
     # Keep track of which environments are done.
     done = np.array([False] * env.num_envs)
-    #TODO (jadechoghari):add fallback or not?
+    # TODO (jadechoghari):add fallback or not?
     if hasattr(env, "call"):
         max_steps = env.call("_max_episode_steps")[0]
     elif hasattr(env, "max_episode_steps"):
@@ -197,7 +197,7 @@ def rollout(
         all_actions.append(torch.from_numpy(action))
         all_rewards.append(torch.from_numpy(reward))
         all_dones.append(torch.from_numpy(done))
-        all_successes.append(torch.tensor(successes, device="cpu")) # see why it needs to be on cpu
+        all_successes.append(torch.tensor(successes, device="cpu"))  # see why it needs to be on cpu
 
         step += 1
         running_success_rate = (
@@ -324,7 +324,7 @@ def eval_policy(
 
         # Make a mask with shape (batch, n_steps) to mask out rollout data after the first done
         # (batch-element-wise). Note the `done_indices + 1` to make sure to keep the data from the done step.
-        #TODO: (jadechogahri): see better fix for genesis (device mismatch)
+        # TODO: (jadechogahri): see better fix for genesis (device mismatch)
         mask = (
             torch.arange(n_steps).to(done_indices.device)
             <= einops.repeat(done_indices + 1, "b -> b s", s=n_steps)

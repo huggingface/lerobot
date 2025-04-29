@@ -107,9 +107,9 @@ def check_env_attributes_and_types(env) -> None:
         return check_env_attributes_and_types_batched(env)
     else:
         warnings.warn(
-            f"Unknown environment type: {type(env)}. Attribute check skipped.",
-            UserWarning, stacklevel=2
+            f"Unknown environment type: {type(env)}. Attribute check skipped.", UserWarning, stacklevel=2
         )
+
 
 def check_env_attributes_and_types_vector(env: gym.vector.VectorEnv) -> None:
     with warnings.catch_warnings():
@@ -127,6 +127,8 @@ def check_env_attributes_and_types_vector(env: gym.vector.VectorEnv) -> None:
                 UserWarning,
                 stacklevel=2,
             )
+
+
 def check_env_attributes_and_types_batched(env) -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("once", UserWarning)  # Apply filter only in this function
@@ -137,6 +139,7 @@ def check_env_attributes_and_types_batched(env) -> None:
                 UserWarning,
                 stacklevel=2,
             )
+
 
 def add_envs_task(env: gym.vector.VectorEnv, observation: dict[str, Any]) -> dict[str, Any]:
     """Adds task feature to the observation dict with respect to the first environment attribute."""

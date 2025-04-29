@@ -155,6 +155,7 @@ class XarmEnv(EnvConfig):
             "max_episode_steps": self.episode_length,
         }
 
+
 @EnvConfig.register_subclass("genesis")
 @dataclass
 class GenesisEnv(EnvConfig):
