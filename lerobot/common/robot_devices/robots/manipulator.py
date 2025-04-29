@@ -243,7 +243,7 @@ class ManipulatorRobot:
 
         if self.robot_type in ["koch", "koch_bimanual", "aloha"]:
             from lerobot.common.robot_devices.motors.dynamixel import TorqueMode
-        elif self.robot_type in ["so100", "moss", "lekiwi"]:
+        elif self.robot_type in ["so100", "so101", "moss", "lekiwi"]:
             from lerobot.common.robot_devices.motors.feetech import TorqueMode
 
         # We assume that at connection time, arms are in a rest position, and torque can
@@ -260,7 +260,7 @@ class ManipulatorRobot:
             self.set_koch_robot_preset()
         elif self.robot_type == "aloha":
             self.set_aloha_robot_preset()
-        elif self.robot_type in ["so100", "moss", "lekiwi"]:
+        elif self.robot_type in ["so100", "so101", "moss", "lekiwi"]:
             self.set_so100_robot_preset()
 
         # Enable torque on all motors of the follower arms
@@ -313,7 +313,7 @@ class ManipulatorRobot:
 
                     calibration = run_arm_calibration(arm, self.robot_type, name, arm_type)
 
-                elif self.robot_type in ["so100", "moss", "lekiwi"]:
+                elif self.robot_type in ["so100", "so101", "moss", "lekiwi"]:
                     from lerobot.common.robot_devices.robots.feetech_calibration import (
                         run_arm_manual_calibration,
                     )

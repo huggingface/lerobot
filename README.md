@@ -23,21 +23,35 @@
 </div>
 
 <h2 align="center">
-    <p><a href="https://github.com/huggingface/lerobot/blob/main/examples/10_use_so100.md">
-        Build Your Own SO-100 Robot!</a></p>
+    <p><a href="https://github.com/huggingface/lerobot/blob/main/examples/12_use_so101.md">
+        Build Your Own SO-101 Robot!</a></p>
 </h2>
 
 <div align="center">
-  <img src="media/so100/leader_follower.webp?raw=true" alt="SO-100 leader and follower arms" title="SO-100 leader and follower arms" width="50%">
+  <div style="display: flex; gap: 1rem; justify-content: center; align-items: center;" >
+    <img
+      src="media/so101/so101.webp?raw=true"
+      alt="SO-101 follower arm"
+      title="SO-101 follower arm"
+      style="width: 40%;"
+    />
+    <img
+      src="media/so101/so101-leader.webp?raw=true"
+      alt="SO-101 leader arm"
+      title="SO-101 leader arm"
+      style="width: 40%;"
+    />
+  </div>
 
-  <p><strong>Meet the SO-100 – Just $110 per arm!</strong></p>
+
+  <p><strong>Meet the updated SO100, the SO-101 – Just €114 per arm!</strong></p>
   <p>Train it in minutes with a few simple moves on your laptop.</p>
   <p>Then sit back and watch your creation act autonomously! 🤯</p>
 
-  <p><a href="https://github.com/huggingface/lerobot/blob/main/examples/10_use_so100.md">
-      Get the full SO-100 tutorial here.</a></p>
+  <p><a href="https://github.com/huggingface/lerobot/blob/main/examples/12_use_so101.md">
+      See the full SO-101 tutorial here.</a></p>
 
-  <p>Want to take it to the next level? Make your SO-100 mobile by building LeKiwi!</p>
+  <p>Want to take it to the next level? Make your SO-101 mobile by building LeKiwi!</p>
   <p>Check out the <a href="https://github.com/huggingface/lerobot/blob/main/examples/11_use_lekiwi.md">LeKiwi tutorial</a> and bring your robot to life on wheels.</p>
 
   <img src="media/lekiwi/kiwi.webp?raw=true" alt="LeKiwi mobile robot" title="LeKiwi mobile robot" width="50%">
@@ -50,7 +64,6 @@
 </h3>
 
 ---
-
 
 🤗 LeRobot aims to provide models, datasets, and tools for real-world robotics in PyTorch. The goal is to lower the barrier to entry to robotics so that everyone can contribute and benefit from sharing datasets and pretrained models.
 
@@ -103,13 +116,20 @@ When using `miniconda`, install `ffmpeg` in your environment:
 conda install ffmpeg -c conda-forge
 ```
 
+> **NOTE:** This usually installs `ffmpeg 7.X` for your platform compiled with the `libsvtav1` encoder. If `libsvtav1` is not supported (check supported encoders with `ffmpeg -encoders`), you can:
+>  - _[On any platform]_ Explicitly install `ffmpeg 7.X` using:
+>  ```bash
+>  conda install ffmpeg=7.1.1 -c conda-forge
+>  ```
+>  - _[On Linux only]_ Install [ffmpeg build dependencies](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#GettheDependencies) and [compile ffmpeg from source with libsvtav1](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#libsvtav1), and make sure you use the corresponding ffmpeg binary to your install with `which ffmpeg`.
+
 Install 🤗 LeRobot:
 ```bash
 pip install -e .
 ```
 
 > **NOTE:** If you encounter build errors, you may need to install additional dependencies (`cmake`, `build-essential`, and `ffmpeg libs`). On Linux, run:
-`sudo apt-get install cmake build-essential python-dev pkg-config libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev libswscale-dev libswresample-dev libavfilter-dev pkg-config`. For other systems, see: [Compiling PyAV](https://pyav.org/docs/develop/overview/installation.html#bring-your-own-ffmpeg)
+`sudo apt-get install cmake build-essential python3-dev pkg-config libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev libswscale-dev libswresample-dev libavfilter-dev pkg-config`. For other systems, see: [Compiling PyAV](https://pyav.org/docs/develop/overview/installation.html#bring-your-own-ffmpeg)
 
 For simulations, 🤗 LeRobot comes with gymnasium environments that can be installed as extras:
 - [aloha](https://github.com/huggingface/gym-aloha)
