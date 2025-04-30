@@ -211,53 +211,22 @@ class HILSerlRobotEnvConfig(EnvConfig):
     """Configuration for the HILSerlRobotEnv environment."""
 
     robot: Optional[RobotConfig] = None
-    wrapper: Optional[EnvWrapperConfig] = EnvWrapperConfig(
-        ee_action_space_params=EEActionSpaceConfig(
-            x_step_size=0.005,
-            y_step_size=0.005,
-            z_step_size=0.005,
-            bounds={"min": [-0.3514026, -0.4317106, -0.01228632], "max": [0.38472422, 0.37771041, 0.50390895]},
-            control_mode="leader_automatic",
-        ),
-        display_cameras=False,
-        add_ee_pose_to_observation=False,
-        add_current_to_observation=False,
-        add_joint_velocity_to_observation=False, 
-        control_time_s=20,
-        reset_time_s=1
-    )
-    fps: int = 30
+    wrapper: Optional[EnvWrapperConfig] = None
+    fps: int = 10
     name: str = "real_robot"
     mode: str = None  # Either "record", "replay", None
     repo_id: Optional[str] = None
     dataset_root: Optional[str] = None
     task: str = ""
-    num_episodes: int = 50  # only for record mode
+    num_episodes: int = 10  # only for record mode
     episode: int = 0
     device: str = "cuda"
-    push_to_hub: bool = False
+    push_to_hub: bool = True
     pretrained_policy_name_or_path: Optional[str] = None
     reward_classifier_pretrained_path: Optional[str] = None
 
     def gym_kwargs(self) -> dict:
         return {}
-
-    features: dict[str, PolicyFeature] = field(
-        default_factory=lambda: {
-            "action": PolicyFeature(type=FeatureType.ACTION, shape=(6,)),
-            "observation.image.gripper": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 128, 128)),
-            "observation.image.top": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 128, 128)),
-            "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(6,)),
-        }
-    )
-    features_map: dict[str, str] = field(
-        default_factory=lambda: {
-            "action": ACTION,
-            "observation.image.gripper": OBS_IMAGE,
-            "observation.image.top": OBS_IMAGE,
-            "observation.state": OBS_ROBOT,
-        }
-    )
 
 
 @EnvConfig.register_subclass("maniskill_push")
