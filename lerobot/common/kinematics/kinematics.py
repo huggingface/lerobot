@@ -6,6 +6,7 @@ from scipy.spatial.transform import Slerp
 
 
 class Robot:
+    
     # Follow this convention: theta , d, a, alpha
     ROBOT_DH_TABLES = {
         "so100": [
@@ -16,14 +17,14 @@ class Robot:
             [0, 0.15, 0.0, 0.0],
         ]
     }
-
-    # to be filled with correct numbers based on your motors assembly
+    
+    # to be filled with correct numbers based on your motors assembly 
     FROM_DH_TO_MECH = {"so100": np.deg2rad([90.0, 90.0, 90.0, 90.0, 90.0])}
     FROM_MECH_TO_DH = {"so100": np.deg2rad([90.0, 90.0, 90.0, 90.0, 90.0])}
-
-    # to be filled with correct numbers based on your motors assembly
-    MECH_JOINT_LIMITS_LOW = {"so100": np.deg2rad([-90.0, -90.0, -90.0, -90.0, -90.0])}
-    MECH_JOINT_LIMITS_UP = {"so100": np.deg2rad([90.0, 90.0, 90.0, 90.0, 90.0])}
+    
+    # to be filled with correct numbers based on your motors assembly (here gripper is included)
+    MECH_JOINT_LIMITS_LOW = {"so100": np.deg2rad([-90.0, -90.0, -90.0, -90.0, -90.0, -90.0])}
+    MECH_JOINT_LIMITS_UP = {"so100": np.deg2rad([90.0, 90.0, 90.0, 90.0, 90.0, 90.0])}
 
     def __init__(self, robot_type="so100"):
         if robot_type not in Robot.ROBOT_DH_TABLES:
@@ -45,27 +46,27 @@ class Robot:
         self.worldTbase = np.eye(4)
         self.nTtool = np.eye(4)
 
-    def from_dh_to_mech(self, q_dh):
+    def from_dh_to_mech(self, q_dh): 
         """convert joint positions from DH to mechanical coordinates"""
-
+        
         # to be implemented based on motors assembly
-
+        
         return q_dh
 
-    def from_mech_to_dh(self, q_mech):
+    def from_mech_to_dh(self, q_mech): 
         """convert joint positions from mechanical to DH coordinates"""
-
+        
         # to be implemented based on motors assembly
-
-        return q_mech
-
+        
+        return q_mech[:-1] # skip last DOF because it is the gripper
+    
     def check_joint_limits(self, q_vec):
         """raise an error in case mechanical joint limits are exceeded"""
-
-        for i, q in enumerate(q_vec):
-            assert self.mech_joint_limits_low[i] <= q <= self.mech_joint_limits_up[i], (
-                f"[ERROR] Joint limits out of bound. J{i + 1} = {q}, but limits are ({self.mech_joint_limits_low[i]}, {self.mech_joint_limits_up[i]})"
-            )
+        
+        for i,q in enumerate(q_vec):
+                assert (
+                        self.mech_joint_limits_low[i] <= q <= self.mech_joint_limits_up[i]
+                    ), f"[ERROR] Joint limits out of bound. J{i+1} = {q}, but limits are ({self.mech_joint_limits_low[i]}, {self.mech_joint_limits_up[i]})"
 
 
 class RobotUtils:
@@ -246,9 +247,7 @@ class RobotKinematics:
         current_worldTtool = self.forward_kinematics(robot, q)
         err_lin = RobotUtils.calc_lin_err(current_worldTtool, desired_worldTtool)
         lin_error_norm = np.linalg.norm(err_lin)
-        assert lin_error_norm < 1e-2, (
-            f"[ERROR] Large position error ({lin_error_norm:.4f}). Check target reachability (position/orientation)"
-        )
+        assert lin_error_norm < 1e-2, f"[ERROR] Large position error ({lin_error_norm:.4f}). Check target reachability (position/orientation)"
 
         return q
 
@@ -289,20 +288,21 @@ class RobotKinematics:
 
 
 if __name__ == "__main__":
+    
     ## basic usage demo ##
-
+    
     # init
     robot = Robot(robot_type="so100")
     kin = RobotKinematics()
 
     # get current joint positions
-    q_init = np.array([0.0, 0, 0.0, -np.pi / 2, 0.0])  # full extended arm
+    q_init = np.array([0.0, 0, 0.0, -np.pi / 2, 0.0, 0.0])  # full extended arm (6th DOF is gripper)
 
     # convert from mechanical angle to dh angle
-    q_init = robot.from_mech_to_dh(q_init)
+    q_init_dh = robot.from_mech_to_dh(q_init)
 
     # compute start pose
-    T_start = kin.forward_kinematics(robot, q_init)
+    T_start = kin.forward_kinematics(robot, q_init_dh)
     print("T_start = \n", T_start)
 
     # Define goal pose
@@ -311,17 +311,27 @@ if __name__ == "__main__":
     print("T_goal = \n", T_goal)
 
     # IK with internal interpolation
-    q_final = kin.inverse_kinematics(robot, q_init, T_goal, use_orientation=False, k=0.8, n_iter=50)
-    T_final = kin.forward_kinematics(robot, q_final)
+    q_final_dh = kin.inverse_kinematics(robot, q_init_dh, T_goal, use_orientation=False, k=0.8, n_iter=50)
+    T_final = kin.forward_kinematics(robot, q_final_dh)
 
-    print("Final joint angles = ", q_final)
+    print("Final joint angles = ", q_final_dh)
     print("Final pose direct kinematics = \n", T_final)
 
     print("err_lin = ", RobotUtils.calc_lin_err(T_goal, T_final))
     print("err_ang = ", RobotUtils.calc_ang_err(T_goal, T_final))
 
     # convert from dh angle to mechanical angle
-    q_final = robot.from_dh_to_mech(q_final)
-
+    q_final_mech = robot.from_dh_to_mech(q_final_dh)
+    
+    # add gripper position
+    gripper_pose = np.deg2rad(0.0)
+    q_final_mech = np.append(q_final_mech, gripper_pose)
+    
     # raise an error in case joint limits are exceeded
-    robot.check_joint_limits(q_final)
+    robot.check_joint_limits(q_final_mech)
+    
+
+    
+    
+    
+    
