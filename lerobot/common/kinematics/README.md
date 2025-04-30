@@ -1,6 +1,6 @@
 # Robot Kinematics Module – PR request
 
-This module provides an implementation of **forward and inverse kinematics** for robotic manipulators exploiting Denavit-Hartenberg (DH) parameters. It includes pose interpolation (position + orientation) and transpose Jacobian method for inverse kinematics.
+This module provides an implementation of **forward and inverse kinematics** for robotic manipulators exploiting Denavit-Hartenberg (DH) parameters. It includes pose interpolation (position + orientation) and DLS Jacobian method for inverse kinematics.
 
 ---
 
@@ -11,6 +11,8 @@ Defines a robot model from a predefined set (`"so100"`, `"koch"`, `"moss"`), wit
 - `dh_table`: DH table as a list of $[ \theta, d, a, \alpha ]$ entries.
 - `dh2mech`: DH angles to mechanical angles conversion.
 - `mech2dh`: mechanical angles to DH angles conversion.
+- `mech_joint_limits_low`: mechanical joint position limits lower bound
+- `mech_joint_limits_up`: mechanical joint position limits upper bound
 - `worldTbase`: 4x4 homogeneous transform (default identity).
 - `nTtool`: 4x4 homogeneous transform (default identity).
 
@@ -100,6 +102,7 @@ $$
 - Solves IK with only position tracking.
 - Prints joint angles and final pose with direct kinematics.
 - **Transform DH angles in mechanical angles**
+- Check mechanical angles are within their physical limits
 
 ---
 
@@ -112,3 +115,4 @@ This module is designed to compute both **forward and inverse kinematics** accur
 - Inverse kinematics using Jacobian transpose and dump-least square method to avoid singularities.
 - Pose interpolation: linear (position) + SLERP (orientation)
 - DH angles to mechanical angles conversion (and viceversa).
+- Out of Bound joint position limits checker
