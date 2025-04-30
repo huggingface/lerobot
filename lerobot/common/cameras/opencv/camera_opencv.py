@@ -116,13 +116,6 @@ class OpenCVCamera(Camera):
         self.capture_width: int | None = config.width
         self.capture_height: int | None = config.height
 
-        if config.rotation in [-90, 90]:
-            self.width: int | None = config.height
-            self.height: int | None = config.width
-        else:
-            self.width: int | None = config.width
-            self.height: int | None = config.height
-
         self.fps: int | None = config.fps
         self.channels: int = config.channels
         self.color_mode: ColorMode = config.color_mode
@@ -146,6 +139,7 @@ class OpenCVCamera(Camera):
         """Checks if the camera is currently connected and opened."""
         return isinstance(self.videocapture_camera, cv2.VideoCapture) and self.videocapture_camera.isOpened()
 
+    # NOTE(Steven): Make it a class method and an util for calling it in utils.py (don't raise)
     def _scan_available_cameras_and_raise(self, index_or_path: IndexOrPath) -> None:
         """
         Scans for available cameras and raises an error if the specified
@@ -173,7 +167,7 @@ class OpenCVCamera(Camera):
         )
 
     # NOTE(Steven): Moving it to a different function for now. To be evaluated later if it is worth it and if it makes sense to have it as an abstract method
-    def _configure_capture_settings(self, fps: int | None, width: int | None, height: int | None) -> None:
+    def _configure_capture_settings(self) -> None:
         """
         Applies the specified FPS, width, and height settings to the connected camera.
 
@@ -194,12 +188,14 @@ class OpenCVCamera(Camera):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"Cannot configure settings for {self} as it is not connected.")
 
-        if fps is not None:
-            self._set_fps(fps)
-        if width is not None:
-            self._set_capture_width(width)
-        if height is not None:
-            self._set_capture_height(height)
+        self._set_fps()
+        self._set_capture_width()
+        self._set_capture_height()
+
+        if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
+            self.width, self.height = self.capture_height, self.capture_width
+        else:
+            self.width, self.height = self.capture_width, self.capture_height
 
     def connect(self):
         """
@@ -225,53 +221,72 @@ class OpenCVCamera(Camera):
         self.videocapture_camera = cv2.VideoCapture(self.index_or_path, self.backend)
 
         if not self.videocapture_camera.isOpened():
-            logger.error(f"Failed to open camera {self.index_or_path}.")
             self.videocapture_camera.release()
             self.videocapture_camera = None
-            self._scan_available_cameras_and_raise(self.index_or_path)  # This raises an exception everytime
+            raise ConnectionError(
+                f"Failed to open camera {self.index_or_path}. Run NOTE(Steven): Add right file to scan for available cameras."
+            )  # NOTE(Steven): Run this _scan_available_cameras_and_raise
 
         logger.debug(f"Successfully opened camera {self.index_or_path}. Applying configuration...")
-        self._configure_capture_settings(self.fps, self.capture_width, self.capture_height)
+        self._configure_capture_settings()
         logger.debug(f"Camera {self.index_or_path} connected and configured successfully.")
 
-    def _set_fps(self, fps: int) -> None:
+    def _set_fps(self) -> None:
         """Sets the camera's frames per second (FPS)."""
-        success = self.videocapture_camera.set(cv2.CAP_PROP_FPS, float(fps))
+
+        if self.fps is None:
+            self.fps = self.videocapture_camera.get(cv2.CAP_PROP_FPS)
+            logger.info(f"FPS set to camera default: {self.fps}.")
+            return
+
+        success = self.videocapture_camera.set(cv2.CAP_PROP_FPS, float(self.fps))
         actual_fps = self.videocapture_camera.get(cv2.CAP_PROP_FPS)
         # Use math.isclose for robust float comparison
-        if not success or not math.isclose(fps, actual_fps, rel_tol=1e-3):
+        if not success or not math.isclose(self.fps, actual_fps, rel_tol=1e-3):
             logger.warning(
-                f"Requested FPS {fps} for {self}, but camera reported {actual_fps} (set success: {success}). "
+                f"Requested FPS {self.fps} for {self}, but camera reported {actual_fps} (set success: {success}). "
                 "This might be due to camera limitations."
             )
             raise RuntimeError(
-                f"Failed to set requested FPS {fps} for {self}. Actual value reported: {actual_fps}."
+                f"Failed to set requested FPS {self.fps} for {self}. Actual value reported: {actual_fps}."
             )
         logger.debug(f"FPS set to {actual_fps} for {self}.")
 
-    def _set_capture_width(self, capture_width: int) -> None:
+    def _set_capture_width(self) -> None:
         """Sets the camera's frame capture width."""
-        success = self.videocapture_camera.set(cv2.CAP_PROP_FRAME_WIDTH, float(capture_width))
+
+        if self.capture_width is None:
+            self.capture_width = self.videocapture_camera.get(cv2.CAP_PROP_FRAME_WIDTH)
+            logger.info(f"Capture width set to camera default: {self.capture_width}.")
+            return
+
+        success = self.videocapture_camera.set(cv2.CAP_PROP_FRAME_WIDTH, float(self.capture_width))
         actual_width = round(self.videocapture_camera.get(cv2.CAP_PROP_FRAME_WIDTH))
         if not success or self.capture_width != actual_width:
             logger.warning(
-                f"Requested capture width {capture_width} for {self}, but camera reported {actual_width} (set success: {success})."
+                f"Requested capture width {self.capture_width} for {self}, but camera reported {actual_width} (set success: {success})."
             )
             raise RuntimeError(
-                f"Failed to set requested capture width {capture_width} for {self}. Actual value: {actual_width}."
+                f"Failed to set requested capture width {self.capture_width} for {self}. Actual value: {actual_width}."
             )
         logger.debug(f"Capture width set to {actual_width} for {self}.")
 
-    def _set_capture_height(self, capture_height: int) -> None:
+    def _set_capture_height(self) -> None:
         """Sets the camera's frame capture height."""
-        success = self.videocapture_camera.set(cv2.CAP_PROP_FRAME_HEIGHT, float(capture_height))
+
+        if self.capture_height is None:
+            self.capture_height = self.videocapture_camera.get(cv2.CAP_PROP_FRAME_HEIGHT)
+            logger.info(f"Capture height set to camera default: {self.capture_height}.")
+            return
+
+        success = self.videocapture_camera.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self.capture_height))
         actual_height = round(self.videocapture_camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
         if not success or self.capture_height != actual_height:
             logger.warning(
-                f"Requested capture height {capture_height} for {self}, but camera reported {actual_height} (set success: {success})."
+                f"Requested capture height {self.capture_height} for {self}, but camera reported {actual_height} (set success: {success})."
             )
             raise RuntimeError(
-                f"Failed to set requested capture height {capture_height} for {self}. Actual value: {actual_height}."
+                f"Failed to set requested capture height {self.capture_height} for {self}. Actual value: {actual_height}."
             )
         logger.debug(f"Capture height set to {actual_height} for {self}.")
 
@@ -406,9 +421,9 @@ class OpenCVCamera(Camera):
             processed_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
             logger.debug(f"Converted frame from BGR to RGB for {self}.")
 
-        if self.rotation is not None:
+        if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
             processed_image = cv2.rotate(processed_image, self.rotation)
-            logger.debug(f"Rotated frame by {self.config.rotation} degrees for {self}.")
+        logger.debug(f"Rotated frame by {self.config.rotation} degrees for {self}.")
 
         return processed_image
 
