@@ -6,7 +6,6 @@ from scipy.spatial.transform import Slerp
 
 
 class Robot:
-    
     # Follow this convention: theta , d, a, alpha
     ROBOT_DH_TABLES = {
         "so100": [
@@ -17,11 +16,11 @@ class Robot:
             [0, 0.15, 0.0, 0.0],
         ]
     }
-    
+
     # to be filled with correct numbers based on your motors assembly
     FROM_DH_TO_MECH = {"so100": np.deg2rad([90.0, 90.0, 90.0, 90.0, 90.0])}
     FROM_MECH_TO_DH = {"so100": np.deg2rad([90.0, 90.0, 90.0, 90.0, 90.0])}
-    
+
     # to be filled with correct numbers based on your motors assembly
     MECH_JOINT_LIMITS_LOW = {"so100": np.deg2rad([-90.0, -90.0, -90.0, -90.0, -90.0])}
     MECH_JOINT_LIMITS_UP = {"so100": np.deg2rad([90.0, 90.0, 90.0, 90.0, 90.0])}
@@ -46,27 +45,27 @@ class Robot:
         self.worldTbase = np.eye(4)
         self.nTtool = np.eye(4)
 
-    def from_dh_to_mech(self, q_dh): 
+    def from_dh_to_mech(self, q_dh):
         """convert joint positions from DH to mechanical coordinates"""
-        
+
         # to be implemented based on motors assembly
-        
+
         return q_dh
 
-    def from_mech_to_dh(self, q_mech): 
+    def from_mech_to_dh(self, q_mech):
         """convert joint positions from mechanical to DH coordinates"""
-        
+
         # to be implemented based on motors assembly
-        
+
         return q_mech
-    
+
     def check_joint_limits(self, q_vec):
         """raise an error in case mechanical joint limits are exceeded"""
-        
-        for i,q in enumerate(q_vec):
-                assert (
-                        self.mech_joint_limits_low[i] <= q <= self.mech_joint_limits_up[i]
-                    ), f"[ERROR] Joint limits out of bound. J{i+1} = {q}, but limits are ({self.mech_joint_limits_low[i]}, {self.mech_joint_limits_up[i]})"
+
+        for i, q in enumerate(q_vec):
+            assert self.mech_joint_limits_low[i] <= q <= self.mech_joint_limits_up[i], (
+                f"[ERROR] Joint limits out of bound. J{i + 1} = {q}, but limits are ({self.mech_joint_limits_low[i]}, {self.mech_joint_limits_up[i]})"
+            )
 
 
 class RobotUtils:
@@ -247,7 +246,9 @@ class RobotKinematics:
         current_worldTtool = self.forward_kinematics(robot, q)
         err_lin = RobotUtils.calc_lin_err(current_worldTtool, desired_worldTtool)
         lin_error_norm = np.linalg.norm(err_lin)
-        assert lin_error_norm < 1e-2, f"[ERROR] Large position error ({lin_error_norm:.4f}). Check target reachability (position/orientation)"
+        assert lin_error_norm < 1e-2, (
+            f"[ERROR] Large position error ({lin_error_norm:.4f}). Check target reachability (position/orientation)"
+        )
 
         return q
 
@@ -288,9 +289,8 @@ class RobotKinematics:
 
 
 if __name__ == "__main__":
-    
     ## basic usage demo ##
-    
+
     # init
     robot = Robot(robot_type="so100")
     kin = RobotKinematics()
@@ -322,10 +322,6 @@ if __name__ == "__main__":
 
     # convert from dh angle to mechanical angle
     q_final = robot.from_dh_to_mech(q_final)
-    
+
     # raise an error in case joint limits are exceeded
     robot.check_joint_limits(q_final)
-    
-    
-    
-    
