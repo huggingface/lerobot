@@ -53,7 +53,6 @@ def get_cv2_rotation(rotation: Cv2Rotation) -> int:
         Cv2Rotation.ROTATE_270: cv2.ROTATE_90_COUNTERCLOCKWISE,
         Cv2Rotation.ROTATE_90: cv2.ROTATE_90_CLOCKWISE,
         Cv2Rotation.ROTATE_180: cv2.ROTATE_180,
-        Cv2Rotation.NO_ROTATION: 0,
     }.get(rotation)
 
 
