@@ -46,6 +46,7 @@ class OpenCVCameraConfig(CameraConfig):
     OpenCVCameraConfig(0, 30, 1280, 720)
     ```
     """
+
     camera_index: int
     fps: Optional[int] = None
     width: Optional[int] = None
@@ -75,6 +76,7 @@ class IntelRealSenseCameraConfig(CameraConfig):
     IntelRealSenseCameraConfig(128422271347, 30, 640, 480, rotation=90)
     ```
     """
+
     name: Optional[str] = None
     serial_number: Optional[int] = None
     fps: Optional[int] = None
