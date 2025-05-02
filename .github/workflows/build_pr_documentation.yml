@@ -2,6 +2,8 @@ name: Build PR Documentation
 
 on:
   pull_request:
+    paths:
+      - "docs/**"
 
 
 concurrency:
@@ -15,4 +17,4 @@ jobs:
       commit_sha: ${{ github.event.pull_request.head.sha }}
       pr_number: ${{ github.event.number }}
       package: lerobot
-      languages: en
+      additional_args: --not_python_module
