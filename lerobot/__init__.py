@@ -181,6 +181,7 @@ available_robots = [
     "koch_bimanual",
     "aloha",
     "so100",
+    "so101",
     "moss",
 ]
 

@@ -62,7 +62,7 @@ dependencies = [
     "omegaconf>=2.3.0",
     "opencv-python-headless>=4.9.0",
     "packaging>=24.2",
-    "av>=12.0.5",
+    "av>=14.2.0",
     "pymunk>=6.6.0",
     "pynput>=1.7.7",
     "pyzmq>=26.2.1",
@@ -77,6 +77,7 @@ dependencies = [
 
 [project.optional-dependencies]
 aloha = ["gym-aloha>=0.1.1 ; python_version < '4.0'"]
+docs = ["hf-doc-builder @ git+https://github.com/huggingface/doc-builder.git@main", "watchdog >= 6.0.0"]
 dev = ["pre-commit>=3.7.0", "debugpy>=1.8.1"]
 dora = [
     "gym-dora @ git+https://github.com/dora-rs/dora-lerobot.git#subdirectory=gym_dora ; python_version < '4.0'",
