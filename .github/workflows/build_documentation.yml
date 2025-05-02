@@ -3,6 +3,8 @@ name: Build documentation
 on:
   workflow_dispatch:
   push:
+    paths:
+      - "docs/**"
     branches:
     - main
     - doc-builder*
@@ -14,9 +16,7 @@ jobs:
     with:
       commit_sha: ${{ github.sha }}
       package: lerobot
-      notebook_folder: lerobot_doc
-      languages: en
-      custom_container: huggingface/lerobot-doc-builder
+      additional_args: --not_python_module
     secrets:
       token: ${{ secrets.HUGGINGFACE_PUSH }}
       hf_token: ${{ secrets.HF_DOC_BUILD_PUSH }}
