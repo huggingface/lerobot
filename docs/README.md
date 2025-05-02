@@ -23,11 +23,7 @@ you can install them with the following command, at the root of the code reposit
 pip install -e ".[docs]"
 ```
 
-Then you need to install our special tool that builds the documentation:
-
-```bash
-pip install git+https://github.com/huggingface/doc-builder
-```
+You will also need `nodejs`. Please refer to their [installation page](https://nodejs.org/en/download)
 
 ---
 **NOTE**
@@ -59,12 +55,6 @@ pip install watchdog
 ```
 
 Then run the following command:
-
-```bash
-doc-builder preview {package_name} {path_to_docs}
-```
-
-For example:
 
 ```bash
 doc-builder preview lerobot docs/source/
@@ -111,12 +101,6 @@ Use the relative style to link to the new file so that the versioned docs contin
 
 For an example of a rich moved sections set please see the very end of [the transformers Trainer doc](https://github.com/huggingface/transformers/blob/main/docs/source/en/main_classes/trainer.md).
 
-## Writing Documentation - Specification
-
-The `huggingface/lerobot` documentation follows the
-[Google documentation](https://sphinxcontrib-napoleon.readthedocs.io/en/latest/example_google.html) style for docstrings,
-although we can write them directly in Markdown.
-
 ### Adding a new tutorial
 
 Adding a new tutorial or section is done in two steps:
@@ -131,65 +115,6 @@ Make sure to put your new file under the proper section. If you have a doubt, fe
 Values that should be put in `code` should either be surrounded by backticks: \`like so\`. Note that argument names
 and objects like True, None or any strings should usually be put in `code`.
 
-When mentioning a class, function or method, it is recommended to use our syntax for internal links so that our tool
-adds a link to its documentation with this syntax: \[\`XXXClass\`\] or \[\`function\`\]. This requires the class or
-function to be in the main package.
-
-If you want to create a link to some internal class or function, you need to
-provide its path. For instance: \[\`table.InMemoryTable\`\]. This will be converted into a link with
-`table.InMemoryTable` in the description. To get rid of the path and only keep the name of the object you are
-linking to in the description, add a ~: \[\`~table.InMemoryTable\`\] will generate a link with `InMemoryTable` in the description.
-
-The same works for methods so you can either use \[\`XXXClass.method\`\] or \[~\`XXXClass.method\`\].
-
-#### Defining arguments in a method
-
-Arguments should be defined with the `Args:` (or `Arguments:` or `Parameters:`) prefix, followed by a line return and
-an indentation. The argument should be followed by its type, with its shape if it is a tensor, a colon and its
-description:
-
-```
-    Args:
-        n_layers (`int`): The number of layers of the model.
-```
-
-If the description is too long to fit in one line, another indentation is necessary before writing the description
-after the argument.
-
-Here's an example showcasing everything so far:
-
-```
-    Args:
-        input_ids (`torch.LongTensor` of shape `(batch_size, sequence_length)`):
-            Indices of input sequence tokens in the vocabulary.
-
-            Indices can be obtained using [`AlbertTokenizer`]. See [`~PreTrainedTokenizer.encode`] and
-            [`~PreTrainedTokenizer.__call__`] for details.
-
-            [What are input IDs?](../glossary#input-ids)
-```
-
-For optional arguments or arguments with defaults we follow the following syntax: imagine we have a function with the
-following signature:
-
-```
-def my_function(x: str = None, a: float = 1):
-```
-
-then its documentation should look like this:
-
-```
-    Args:
-        x (`str`, *optional*):
-            This argument controls ...
-        a (`float`, *optional*, defaults to 1):
-            This argument is used to ...
-```
-
-Note that we always omit the "defaults to \`None\`" when None is the default for any argument. Also note that even
-if the first line describing your argument type and its default gets long, you can't break it into several lines. You can
-however write as many lines as you want in the indented description (see the example above with `input_ids`).
-
 #### Writing a multi-line code block
 
 Multi-line code blocks can be useful for displaying examples. They are done between two lines of three backticks as usual in Markdown:
@@ -202,30 +127,6 @@ Multi-line code blocks can be useful for displaying examples. They are done betw
 # etc
 ```
 ````
-
-#### Writing a return block
-
-The return block should be introduced with the `Returns:` prefix, followed by a line return and an indentation.
-The first line should be the type of the return, followed by a line return. No need to indent further for the elements
-building the return.
-
-Here's an example of a single value return:
-
-```
-    Returns:
-        `List[int]`: A list of integers in the range [0, 1] --- 1 for a special token, 0 for a sequence token.
-```
-
-Here's an example of tuple return, comprising several objects:
-
-```
-    Returns:
-        `tuple(torch.FloatTensor)` comprising various elements depending on the configuration ([`BertConfig`]) and inputs:
-        - ** loss** (*optional*, returned when `masked_lm_labels` is provided) `torch.FloatTensor` of shape `(1,)` --
-          Total loss as the sum of the masked language modeling loss and the next sequence prediction (classification) loss.
-        - **prediction_scores** (`torch.FloatTensor` of shape `(batch_size, sequence_length, config.vocab_size)`) --
-          Prediction scores of the language modeling head (scores for each vocabulary token before SoftMax).
-```
 
 #### Adding an image
 
