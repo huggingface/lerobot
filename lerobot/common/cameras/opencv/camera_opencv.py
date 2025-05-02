@@ -115,12 +115,15 @@ class OpenCVCamera(Camera):
 
         self.capture_width: int | None = config.width
         self.capture_height: int | None = config.height
+        self.width: int | None = None
+        self.height: int | None = None
 
         self.fps: int | None = config.fps
         self.channels: int = config.channels
         self.color_mode: ColorMode = config.color_mode
 
         self.videocapture_camera: cv2.VideoCapture | None = None
+
         self.thread: Thread | None = None
         self.stop_event: Event | None = None
         self.frame_queue: queue.Queue = queue.Queue(maxsize=1)
@@ -188,18 +191,19 @@ class OpenCVCamera(Camera):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"Cannot configure settings for {self} as it is not connected.")
 
-        self._set_fps()
-        self._set_capture_width()
-        self._set_capture_height()
+        self._validate_fps()
+        self._validate_capture_width()
+        self._validate_capture_height()
 
         if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
             self.width, self.height = self.capture_height, self.capture_width
         else:
             self.width, self.height = self.capture_width, self.capture_height
+        logger.debug(f"Final image dimensions set to: {self.width}x{self.height} (after rotation if any)")
 
     def connect(self):
         """
-        Connects to the camera device specified in the configuration.
+        Connects to the OpenCV camera specified in the configuration.
 
         Initializes the OpenCV VideoCapture object, sets desired camera properties
         (FPS, width, height), and performs initial checks.
@@ -231,8 +235,8 @@ class OpenCVCamera(Camera):
         self._configure_capture_settings()
         logger.debug(f"Camera {self.index_or_path} connected and configured successfully.")
 
-    def _set_fps(self) -> None:
-        """Sets the camera's frames per second (FPS)."""
+    def _validate_fps(self) -> None:
+        """Validates and sets the camera's frames per second (FPS)."""
 
         if self.fps is None:
             self.fps = self.videocapture_camera.get(cv2.CAP_PROP_FPS)
@@ -252,8 +256,8 @@ class OpenCVCamera(Camera):
             )
         logger.debug(f"FPS set to {actual_fps} for {self}.")
 
-    def _set_capture_width(self) -> None:
-        """Sets the camera's frame capture width."""
+    def _validate_capture_width(self) -> None:
+        """Validates and sets the camera's frame capture width."""
 
         if self.capture_width is None:
             self.capture_width = self.videocapture_camera.get(cv2.CAP_PROP_FRAME_WIDTH)
@@ -271,8 +275,8 @@ class OpenCVCamera(Camera):
             )
         logger.debug(f"Capture width set to {actual_width} for {self}.")
 
-    def _set_capture_height(self) -> None:
-        """Sets the camera's frame capture height."""
+    def _validate_capture_height(self) -> None:
+        """Validates and sets the camera's frame capture height."""
 
         if self.capture_height is None:
             self.capture_height = self.videocapture_camera.get(cv2.CAP_PROP_FRAME_HEIGHT)
@@ -365,6 +369,7 @@ class OpenCVCamera(Camera):
 
         start_time = time.perf_counter()
 
+        # NOTE(Steven): Are we okay with this blocking an undefined amount of time?
         ret, frame = self.videocapture_camera.read()
 
         if not ret or frame is None:
@@ -423,7 +428,7 @@ class OpenCVCamera(Camera):
 
         if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
             processed_image = cv2.rotate(processed_image, self.rotation)
-        logger.debug(f"Rotated frame by {self.config.rotation} degrees for {self}.")
+            logger.debug(f"Rotated frame by {self.config.rotation} degrees for {self}.")
 
         return processed_image
 
@@ -433,7 +438,7 @@ class OpenCVCamera(Camera):
 
         Continuously reads frames from the camera using the synchronous `read()`
         method and places the latest frame into the `frame_queue`. It overwrites
-        any previous frame in the queue to ensure only the most recent one is available.
+        any previous frame in the queue.
         """
         logger.debug(f"Starting read loop thread for {self}.")
         while not self.stop_event.is_set():
@@ -455,7 +460,6 @@ class OpenCVCamera(Camera):
 
     def _ensure_read_thread_running(self):
         """Starts or restarts the background read thread if it's not running."""
-        logger.debug(f"Read thread for {self} is not running. Starting...")
         if self.thread is not None:
             self.thread.join(timeout=0.1)
         if self.stop_event is not None:
@@ -495,11 +499,9 @@ class OpenCVCamera(Camera):
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
         if self.thread is None or not self.thread.is_alive():
-            # Ensure the background reading thread is operational
             self._ensure_read_thread_running()
 
         try:
-            # Get the latest frame from the queue, waiting up to the timeout
             return self.frame_queue.get(timeout=timeout_ms / 1000.0)
         except queue.Empty as e:
             thread_alive = self.thread is not None and self.thread.is_alive()
@@ -516,19 +518,23 @@ class OpenCVCamera(Camera):
             raise RuntimeError(f"Error getting frame from queue for camera {self.index_or_path}: {e}") from e
 
     def _shutdown_read_thread(self):
-        """Cleans the background read thread if it's running."""
+        """Signals the background read thread to stop and waits for it to join."""
         if self.stop_event is not None:
             logger.debug(f"Signaling stop event for read thread of {self}.")
             self.stop_event.set()
         else:
             logger.warning(f"Stop event not found for thread of {self}, cannot signal.")
 
-        logger.debug(f"Waiting for read thread of {self} to join...")
-        self.thread.join(timeout=2.0)
         if self.thread.is_alive():
-            logger.warning(f"Read thread for {self} did not terminate gracefully after 2 seconds.")
+            logger.debug(f"Waiting for read thread of {self} to join...")
+            self.thread.join(timeout=2.0)
+            if self.thread.is_alive():
+                logger.warning(f"Read thread for {self} did not terminate gracefully after 2 seconds.")
+            else:
+                logger.debug(f"Read thread for {self} joined successfully.")
         else:
-            logger.debug(f"Read thread for {self} joined successfully.")
+            logger.debug(f"Read thread for {self} was already stopped.")
+
         self.thread = None
         self.stop_event = None
 
@@ -556,9 +562,5 @@ class OpenCVCamera(Camera):
             logger.debug(f"Releasing OpenCV VideoCapture object for {self}.")
             self.videocapture_camera.release()
             self.videocapture_camera = None
-        else:
-            logger.debug(
-                f"No OpenCV VideoCapture object to release for {self} (was already None or failed connection)."
-            )
 
-        logger.debug(f"Camera {self.index_or_path} disconnected successfully.")
+        logger.info(f"Camera {self.index_or_path} disconnected successfully.")
