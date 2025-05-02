@@ -440,7 +440,7 @@ class AddCurrentToObservation(gym.ObservationWrapper):
 
 
 class RewardWrapper(gym.Wrapper):
-    def __init__(self, env, reward_classifier, device: torch.device = "cuda"):
+    def __init__(self, env, reward_classifier, device="cuda"):
         """
         Wrapper to add reward prediction to the environment using a trained classifier.
 
@@ -467,24 +467,28 @@ class RewardWrapper(gym.Wrapper):
             Tuple of (observation, reward, terminated, truncated, info).
         """
         observation, _, terminated, truncated, info = self.env.step(action)
-        images = {
-            key: observation[key].to(self.device, non_blocking=self.device.type == "cuda")
-            for key in observation
-            if "image" in key
-        }
+
+        images = {}
+        for key in observation:
+            if "image" in key:
+                images[key] = observation[key].to(self.device, non_blocking=(self.device=="cuda"))
+                if images[key].dim() == 3: 
+                    images[key] = images[key].unsqueeze(0)
+
         start_time = time.perf_counter()
         with torch.inference_mode():
             success = (
-                self.reward_classifier.predict_reward(images, threshold=0.8)
+                self.reward_classifier.predict_reward(images, threshold=0.7)
                 if self.reward_classifier is not None
                 else 0.0
             )
         info["Reward classifier frequency"] = 1 / (time.perf_counter() - start_time)
 
+        reward = 0.0
         if success == 1.0:
             terminated = True
             reward = 1.0
-
+            
         return observation, reward, terminated, truncated, info
 
     def reset(self, seed=None, options=None):
@@ -1614,8 +1618,6 @@ class GamepadControlWrapper(gym.Wrapper):
 
         # Create action from gamepad input
         gamepad_action = np.array([delta_x, delta_y, delta_z], dtype=np.float32)
-
-        print(f"Gamepad action: {gamepad_action}, intervention: {intervention_is_active}")
 
         if self.use_gripper:
             gripper_command = self.controller.gripper_command()
