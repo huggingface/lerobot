@@ -455,9 +455,8 @@ def create_empty_dataset_info(
 def get_episode_data_index(
     episode_dicts: dict[dict], episodes: list[int] | None = None
 ) -> dict[str, torch.Tensor]:
-    episode_lengths = {ep_idx: ep_dict["length"] for ep_idx, ep_dict in episode_dicts.items()}
-    if episodes is not None:
-        episode_lengths = {ep_idx: episode_lengths[ep_idx] for ep_idx in episodes}
+    episode_lengths = {ep_idx: ep_dict["length"] if episodes is None or ep_idx in episodes else 0 \
+            for ep_idx, ep_dict in episode_dicts.items()}
 
     cumulative_lengths = list(accumulate(episode_lengths.values()))
     return {
