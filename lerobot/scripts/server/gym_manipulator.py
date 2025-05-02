@@ -471,8 +471,8 @@ class RewardWrapper(gym.Wrapper):
         images = {}
         for key in observation:
             if "image" in key:
-                images[key] = observation[key].to(self.device, non_blocking=(self.device=="cuda"))
-                if images[key].dim() == 3: 
+                images[key] = observation[key].to(self.device, non_blocking=(self.device == "cuda"))
+                if images[key].dim() == 3:
                     images[key] = images[key].unsqueeze(0)
 
         start_time = time.perf_counter()
@@ -488,7 +488,7 @@ class RewardWrapper(gym.Wrapper):
         if success == 1.0:
             terminated = True
             reward = 1.0
-            
+
         return observation, reward, terminated, truncated, info
 
     def reset(self, seed=None, options=None):
