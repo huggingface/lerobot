@@ -161,8 +161,30 @@ class ManipulatorRobot:
         self.config = config
         self.robot_type = self.config.type
         self.calibration_dir = Path(self.config.calibration_dir)
-        self.leader_arms = make_motors_buses_from_configs(self.config.leader_arms)
-        self.follower_arms = make_motors_buses_from_configs(self.config.follower_arms)
+        
+        # Special handling for shared_port robot type
+        if self.robot_type == "shared_port":
+            # Create leader arms first
+            self.leader_arms = make_motors_buses_from_configs(self.config.leader_arms)
+            
+            # For follower arms, we need to create a special config that reuses the same port instance
+            from lerobot.common.robot_devices.motors.feetech import FeetechMotorsBus
+            
+            # Create follower arms manually, reusing the leader arm's port
+            self.follower_arms = {}
+            for key, leader_bus in self.leader_arms.items():
+                if key in self.config.follower_arms:
+                    follower_config = self.config.follower_arms[key]
+                    # Create a new FeetechMotorsBus with the follower config but reuse the leader's port
+                    self.follower_arms[key] = FeetechMotorsBus(
+                        follower_config, 
+                        reuse_port=leader_bus._port  # Reuse the port from leader
+                    )
+        else:
+            # Normal initialization for other robot types
+            self.leader_arms = make_motors_buses_from_configs(self.config.leader_arms)
+            self.follower_arms = make_motors_buses_from_configs(self.config.follower_arms)
+            
         self.cameras = make_cameras_from_configs(self.config.cameras)
         self.is_connected = False
         self.logs = {}
@@ -243,7 +265,7 @@ class ManipulatorRobot:
 
         if self.robot_type in ["koch", "koch_bimanual", "aloha"]:
             from lerobot.common.robot_devices.motors.dynamixel import TorqueMode
-        elif self.robot_type in ["so100", "so101", "moss", "lekiwi"]:
+        elif self.robot_type in ["so100", "so101", "moss", "lekiwi", "shared_port"]:
             from lerobot.common.robot_devices.motors.feetech import TorqueMode
 
         # We assume that at connection time, arms are in a rest position, and torque can
@@ -260,7 +282,7 @@ class ManipulatorRobot:
             self.set_koch_robot_preset()
         elif self.robot_type == "aloha":
             self.set_aloha_robot_preset()
-        elif self.robot_type in ["so100", "so101", "moss", "lekiwi"]:
+        elif self.robot_type in ["so100", "so101", "moss", "lekiwi", "shared_port"]:
             self.set_so100_robot_preset()
 
         # Enable torque on all motors of the follower arms
@@ -313,7 +335,7 @@ class ManipulatorRobot:
 
                     calibration = run_arm_calibration(arm, self.robot_type, name, arm_type)
 
-                elif self.robot_type in ["so100", "so101", "moss", "lekiwi"]:
+                elif self.robot_type in ["so100", "so101", "moss", "lekiwi", "shared_port"]:
                     from lerobot.common.robot_devices.robots.feetech_calibration import (
                         run_arm_manual_calibration,
                     )

@@ -288,6 +288,7 @@ class FeetechMotorsBus:
     def __init__(
         self,
         config: FeetechMotorsBusConfig,
+        reuse_port=None,
     ):
         self.port = config.port
         self.motors = config.motors
@@ -296,6 +297,8 @@ class FeetechMotorsBus:
         self.model_ctrl_table = deepcopy(MODEL_CONTROL_TABLE)
         self.model_resolution = deepcopy(MODEL_RESOLUTION)
 
+        # If reuse_port is provided, use it instead of creating a new port handler
+        self._port = reuse_port
         self.port_handler = None
         self.packet_handler = None
         self.calibration = None
@@ -317,18 +320,25 @@ class FeetechMotorsBus:
         else:
             import scservo_sdk as scs
 
-        self.port_handler = scs.PortHandler(self.port)
-        self.packet_handler = scs.PacketHandler(PROTOCOL_VERSION)
-
-        try:
-            if not self.port_handler.openPort():
-                raise OSError(f"Failed to open port '{self.port}'.")
-        except Exception:
-            traceback.print_exc()
-            print(
-                "\nTry running `python lerobot/scripts/find_motors_bus_port.py` to make sure you are using the correct port.\n"
-            )
-            raise
+        # If we're reusing a port, use the existing port handler
+        if self._port is not None:
+            print(f"Reusing existing port handler for {self.port}")
+            self.port_handler = self._port
+            self.packet_handler = scs.PacketHandler(PROTOCOL_VERSION)
+        else:
+            # Otherwise create a new port handler
+            self.port_handler = scs.PortHandler(self.port)
+            self.packet_handler = scs.PacketHandler(PROTOCOL_VERSION)
+            self._port = self.port_handler  # Store for potential reuse
+            
+            try:
+                if not self.port_handler.openPort():
+                    raise OSError(f"Failed to open port '{self.port}'.")
+            except Exception:
+                traceback.print_exc()
+                print(
+                    "\nTry running `python lerobot/scripts/find_motors_bus_port.py` to make sure you are using the correct port.\n"
+                )
 
         # Allow to read and write
         self.is_connected = True
@@ -884,8 +894,12 @@ class FeetechMotorsBus:
                 f"FeetechMotorsBus({self.port}) is not connected. Try running `motors_bus.connect()` first."
             )
 
-        if self.port_handler is not None:
+        # Only close the port if we're not reusing it (i.e., we created it ourselves)
+        if self.port_handler is not None and self._port is self.port_handler:
             self.port_handler.closePort()
+            self.port_handler = None
+        else:
+            # If we're reusing a port, just set the handler to None but don't close it
             self.port_handler = None
 
         self.packet_handler = None
