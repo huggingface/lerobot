@@ -156,7 +156,7 @@ def test_record_and_replay_and_policy(tmp_path, request, robot_type, mock):
         pass
 
     repo_id = "lerobot_test/debug"
-    root = tmp_path / "data" / repo_id
+    root = tmp_path / "data"
     single_task = "Do something."
 
     robot = make_robot(**robot_kwargs)
