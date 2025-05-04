@@ -132,16 +132,16 @@ class Classifier(PreTrainedPolicy):
 
         self._freeze_encoder()
 
-        self.encoders = nn.ModuleDict()
-
         # Extract image keys from input_features
         self.image_keys = [
             key.replace(".", "_") for key in config.input_features if key.startswith(OBS_IMAGE)
         ]
 
-        for image_key in self.image_keys:
-            encoder = self._create_single_encoder()
-            self.encoders[image_key] = encoder
+        if self.is_cnn:
+            self.encoders = nn.ModuleDict()
+            for image_key in self.image_keys:
+                encoder = self._create_single_encoder()
+                self.encoders[image_key] = encoder
 
         self._build_classifier_head()
 
@@ -179,8 +179,17 @@ class Classifier(PreTrainedPolicy):
 
     def _build_classifier_head(self) -> None:
         """Initialize the classifier head architecture."""
+        # Get input dimension based on model type
+        if self.is_cnn:
+            input_dim = self.config.latent_dim
+        else:  # Transformer models
+            if hasattr(self.encoder.config, "hidden_size"):
+                input_dim = self.encoder.config.hidden_size
+            else:
+                raise ValueError("Unsupported transformer architecture since hidden_size is not found")\
+
         self.classifier_head = nn.Sequential(
-            nn.Linear(self.config.latent_dim * self.config.num_cameras, self.config.hidden_dim),
+            nn.Linear(input_dim * self.config.num_cameras, self.config.hidden_dim),
             nn.Dropout(self.config.dropout_rate),
             nn.LayerNorm(self.config.hidden_dim),
             nn.ReLU(),
@@ -204,7 +213,11 @@ class Classifier(PreTrainedPolicy):
     def extract_images_and_labels(self, batch: Dict[str, Tensor]) -> Tuple[list, Tensor]:
         """Extract image tensors and label tensors from batch."""
         # Check for both OBS_IMAGE and OBS_IMAGES prefixes
-        images = [batch[key] for key in self.config.input_features if key.startswith(OBS_IMAGE)]
+        images = [
+            batch[key]
+            for key in self.config.input_features
+            if key.startswith(OBS_IMAGE)
+        ]
         labels = batch["next.reward"]
 
         return images, labels
