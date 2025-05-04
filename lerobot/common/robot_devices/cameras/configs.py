@@ -117,32 +117,114 @@ class IntelRealSenseCameraConfig(CameraConfig):
 @CameraConfig.register_subclass("ros2")
 @dataclass
 class ROS2CameraConfig(CameraConfig):
-    """
-    Example of tested options for any camera with a ROS 2 driver:
+    """Configuration for cameras connected through ROS 2 topics.
 
-    ```python
-    ROS2CameraConfig(topic="/image_raw", fps=30, width=640, height=480)
-    ```
+    This class allows configuring cameras that publish images to ROS 2 topics, making
+    them available for use in LeRobot. The class supports RGB/BGR color formats, image
+    resizing, and rotation.
+
+    Examples:
+        Basic usage with a standard color camera:
+
+        ```python
+        ROS2CameraConfig(
+            topic="/camera/color/image_raw",
+            fps=30,
+            width=640,
+            height=480
+        )
+        ```
+
+        Using a depth camera:
+
+        ```python
+        ROS2CameraConfig(
+            topic="/camera/depth/image_rect_raw",
+            fps=30,
+            width=640,
+            height=480,
+            channels=1  # Depth cameras typically use 1 channel
+        )
+        ```
+
+        With image rotation and BGR format:
+
+        ```python
+        ROS2CameraConfig(
+            topic="/camera/image_raw",
+            fps=30,
+            width=1280,
+            height=720,
+            encoding="bgr8",
+            rotation=90
+        )
+        ```
+
+        Mock camera for testing:
+
+        ```python
+        ROS2CameraConfig(
+            topic="/test/image",
+            mock=True
+        )
+        ```
+
+        Example of a dictionary with multiple camera configurations:
+        ```python
+        cameras: dict[str, CameraConfig] = field(
+            default_factory=lambda: {
+                "rs_camera_color": ROS2CameraConfig(
+                    topic="/rs/color/image_raw",
+                    fps=30,
+                    width=640,
+                    height=480,
+                    channels=3,
+                ),
+                "rs_camera_depth": ROS2CameraConfig(
+                    topic="/rs/depth/image_rect_raw",
+                    fps=30,
+                    width=640,
+                    height=480,
+                    channels=1,
+                ),
+                "oak_color_camera": ROS2CameraConfig(
+                    topic="/oak/rgb/image_raw",
+                    fps=30,
+                    width=640,
+                    height=480,
+                    channels=3,
+                ),
+                "oak_camera_depth": ROS2CameraConfig(
+                    topic="/oak/stereo/image_raw",
+                    fps=30,
+                    width=640,
+                    height=480,
+                    channels=1,
+                ),
+            }
+        )
+        ```
+
+    Args:
+        topic: ROS 2 topic to subscribe to for images
+        fps: Target frames per second (optional)
+        width: Target image width in pixels (optional)
+        height: Target image height in pixels (optional)
+        encoding: ROS image coding (default is "passthrough"). See https://github.com/ros2/common_interfaces/blob/rolling/sensor_msgs/include/sensor_msgs/image_encodings.hpp
+        channels: Number of color channels (auto-detected if None)
+        rotation: Optional rotation in degrees, must be one of [-90, None, 90, 180]
+        mock: Whether to use a mock camera instead of connecting to ROS 2
     """
 
-    # TODO(Yadunund): Consider converting inputs to lists to subscribe to multiple
-    # topics with the same node.
     topic: str
     fps: int | None = None
     width: int | None = None
     height: int | None = None
-    color_mode: str = "rgb"
+    encoding: str | None = "passthrough"
     channels: int | None = None
     rotation: int | None = None
     mock: bool = False
 
     def __post_init__(self):
-        if self.color_mode not in ["rgb", "bgr"]:
-            raise ValueError(
-                f"`color_mode` is expected to be 'rgb' or 'bgr', but {self.color_mode} is provided."
-            )
-
-        self.channels = 3
-
         if self.rotation not in [-90, None, 90, 180]:
             raise ValueError(f"`rotation` must be in [-90, None, 90, 180] (got {self.rotation})")

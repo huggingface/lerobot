@@ -8,12 +8,13 @@ import shutil
 import threading
 import time
 from pathlib import Path
-from threading import Thread
 
 # TODO(Yadunund): Implement mock.
 import cv2
 import numpy as np
 import rclpy
+import rclpy.node
+import rclpy.subscription
 from cv_bridge import CvBridge
 from PIL import Image
 from sensor_msgs.msg import Image as ImageMsg
@@ -21,7 +22,6 @@ from sensor_msgs.msg import Image as ImageMsg
 from lerobot.common.robot_devices.cameras.configs import ROS2CameraConfig
 from lerobot.common.robot_devices.utils import (
     RobotDeviceAlreadyConnectedError,
-    RobotDeviceNotConnectedError,
 )
 from lerobot.common.utils.utils import capture_timestamp_utc
 
@@ -124,26 +124,59 @@ class ROS2Camera:
     ```
     """
 
+    class ROS2CameraTopic:
+        """
+        A helper class that bundles a ROS2 subscription with its latest image message.
+        This allows for more organized tracking of multiple camera topics.
+        """
+
+        def __init__(self, subscription: rclpy.subscription.Subscription, config: ROS2CameraConfig):
+            self.subscription = subscription
+            self.latest_msg: ImageMsg | None = None
+            self.last_received_time = 0.0
+            self.config = config
+
+        def update_message(self, msg: ImageMsg):
+            """Update the latest message and record the timestamp."""
+            self.latest_msg = msg
+            self.last_received_time = time.perf_counter()
+
+        @property
+        def has_message(self) -> bool:
+            """Check if this topic has received any messages."""
+            return self.latest_msg is not None
+
+    # Static variables that will be reused for all ROS2Camera instances.
+    rclpy_initialized: bool = False
+    rclpy_shutdown: bool = False
+    rclpy_node: rclpy.node.Node | None = None
+    rclpy_spin_thread: threading.Thread | None = None
+    rclpy_stop_event: threading.Event | None = None
+    image_subs: dict[str, "ROS2Camera.ROS2CameraTopic"] = {}
+    cv_bridge: CvBridge | None = None
+
     def __init__(self, config: ROS2CameraConfig):
-        rclpy.init()
+        if not ROS2Camera.rclpy_initialized:
+            rclpy.init()
+            ROS2Camera.rclpy_initialized = True
+        if ROS2Camera.rclpy_node is None:
+            ROS2Camera.rclpy_node = rclpy.create_node("lerobot_camera_node")
+            ROS2Camera.rclpy_stop_event = threading.Event()
+        if ROS2Camera.rclpy_spin_thread is None or not ROS2Camera.rclpy_spin_thread.is_alive():
+            ROS2Camera.rclpy_stop_event.clear()
+            ROS2Camera.rclpy_spin_thread = threading.Thread(target=ROS2Camera.spin_node, daemon=True)
+            ROS2Camera.rclpy_spin_thread.start()
+        if ROS2Camera.cv_bridge is None:
+            ROS2Camera.cv_bridge = CvBridge()
+
         self.config = config
+        # While these variables can be accessed from the config, the lerobot codebase expects them to be attributes of the camera.
         self.fps = config.fps
         self.width = config.width
         self.height = config.height
         self.channels = config.channels
-        self.color_mode = config.color_mode
         self.mock = config.mock
-
-        self.br: CvBridge = CvBridge()
-        self.image_msg: ImageMsg | None = None
         self.is_connected: bool = False
-        self.sub = None
-        self.logs = {}
-        self.node = rclpy.create_node("lerobot_camera_node")
-        self.stop_event = threading.Event()
-        self.spin_thread = Thread(target=self.spin_node)
-        self.spin_thread.start()
-
         # TODO(aliberts): Do we keep original width/height or do we define them after rotation?
         self.rotation = None
         if config.rotation == -90:
@@ -152,18 +185,21 @@ class ROS2Camera:
             self.rotation = cv2.ROTATE_90_CLOCKWISE
         elif config.rotation == 180:
             self.rotation = cv2.ROTATE_180
+        self.logs = {}
 
-    def spin_node(self):
-        while rclpy.ok() and not self.stop_event.is_set():
-            rclpy.spin_once(self.node)
+    @staticmethod
+    def spin_node():
+        while rclpy.ok() and not ROS2Camera.rclpy_stop_event.is_set():
+            rclpy.spin_once(ROS2Camera.rclpy_node)
 
     def connect(self):
         if self.is_connected:
             raise RobotDeviceAlreadyConnectedError(f"ROS2Camera({self.config.topic}) is already connected.")
 
-        self.sub = self.node.create_subscription(ImageMsg, self.config.topic, self.sub_cb, 10)
+        rclpy_sub = ROS2Camera.rclpy_node.create_subscription(ImageMsg, self.config.topic, self.sub_cb, 10)
+        ROS2Camera.image_subs[self.config.topic] = ROS2Camera.ROS2CameraTopic(rclpy_sub, self.config)
 
-        while self.image_msg is None:
+        while not ROS2Camera.image_subs[self.config.topic].has_message:
             print(f"Waiting to receive message over {self.config.topic}")
             time.sleep(1)
 
@@ -171,9 +207,10 @@ class ROS2Camera:
         self.is_connected = True
 
     def sub_cb(self, msg):
-        self.image_msg = msg
-        self.width = msg.width
-        self.height = msg.height
+        if self.config.topic in ROS2Camera.image_subs:
+            ROS2Camera.image_subs[self.config.topic].update_message(msg)
+            self.width = msg.width
+            self.height = msg.height
 
     def read(self, temporary_color: str | None = None) -> np.ndarray:
         """Read a frame from the camera returned in the format (height, width, channels)
@@ -182,19 +219,22 @@ class ROS2Camera:
         Note: Reading a frame is done every `camera.fps` times per second, and it is blocking.
         If you are reading data from other sensors, we advise to use `camera.async_read()` which is non blocking version of `camera.read()`.
         """
-        if not self.is_connected or self.image_msg is None:
-            raise RobotDeviceNotConnectedError(
+        if self.config.topic not in ROS2Camera.image_subs or not self.is_connected:
+            raise ValueError(
                 f"ROS2Camera({self.node.get_name()}) is not connected. Try running `camera.connect()` first."
             )
+        camera_topic = ROS2Camera.image_subs[self.config.topic]
 
-        start_time = time.perf_counter()
+        start_time = camera_topic.last_received_time
 
-        desired_encoding = "passthrough" if temporary_color is None else temporary_color
-
-        image = self.br.imgmsg_to_cv2(self.image_msg, desired_encoding)
+        image = ROS2Camera.cv_bridge.imgmsg_to_cv2(camera_topic.latest_msg, self.config.encoding)
 
         if self.rotation is not None:
             image = cv2.rotate(image, self.rotation)
+
+        # Ensure that single-channel images have a third channel dimension
+        if len(image.shape) == 2:
+            image = image[:, :, np.newaxis]
 
         # log the number of seconds it took to read the image
         self.logs["delta_timestamp_s"] = time.perf_counter() - start_time
@@ -209,23 +249,31 @@ class ROS2Camera:
 
     def disconnect(self):
         if not self.is_connected:
-            raise RobotDeviceNotConnectedError(
-                f"ROS2Camera({self.node.get_name()}) is not connected. Try running `camera.connect()` first."
-            )
+            return
 
-        if self.spin_thread is not None:
-            self.stop_event.set()
-            self.spin_thread.join()  # wait for the thread to finish
-            self.spin_thread = None
-            self.stop_event = None
-
-        self.sub = None
+        del ROS2Camera.image_subs[self.config.topic]
         self.is_connected = False
+        print(f"Disconnected from ROS2Camera({self.config.topic})")
 
     def __del__(self):
         if getattr(self, "is_connected", False):
             self.disconnect()
-        rclpy.shutdown()
+
+        # If this is the last ROS2Camera instance, stop the thread and shutdown rclpy
+        if len(ROS2Camera.image_subs) == 0:
+            if ROS2Camera.rclpy_stop_event is not None:
+                ROS2Camera.rclpy_stop_event.set()
+            if ROS2Camera.rclpy_spin_thread is not None and ROS2Camera.rclpy_spin_thread.is_alive():
+                ROS2Camera.rclpy_spin_thread.join(timeout=1.0)
+
+            if ROS2Camera.rclpy_initialized and not ROS2Camera.rclpy_shutdown:
+                rclpy.shutdown()
+                ROS2Camera.rclpy_shutdown = True
+                ROS2Camera.rclpy_initialized = False
+                ROS2Camera.rclpy_node = None
+                ROS2Camera.rclpy_spin_thread = None
+                ROS2Camera.rclpy_stop_event = None
+                print("ROS 2 node shutdown complete")
 
 
 if __name__ == "__main__":
