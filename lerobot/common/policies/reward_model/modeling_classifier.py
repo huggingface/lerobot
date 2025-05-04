@@ -4,7 +4,7 @@ from typing import Dict, Optional, Tuple
 import torch
 from torch import Tensor, nn
 
-from lerobot.common.constants import OBS_IMAGE, OBS_IMAGES
+from lerobot.common.constants import OBS_IMAGE
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.policies.reward_model.configuration_classifier import RewardClassifierConfig
@@ -136,7 +136,7 @@ class Classifier(PreTrainedPolicy):
 
         # Extract image keys from input_features
         self.image_keys = [
-            key.replace(".", "_") for key in config.input_features if key.startswith(OBS_IMAGES)
+            key.replace(".", "_") for key in config.input_features if key.startswith(OBS_IMAGE)
         ]
 
         for image_key in self.image_keys:
@@ -207,7 +207,7 @@ class Classifier(PreTrainedPolicy):
         images = [
             batch[key]
             for key in self.config.input_features
-            if key.startswith(OBS_IMAGE) or key.startswith(OBS_IMAGES)
+            if key.startswith(OBS_IMAGE)
         ]
         labels = batch["next.reward"]
 
@@ -270,7 +270,7 @@ class Classifier(PreTrainedPolicy):
         images = [
             batch[key]
             for key in self.config.input_features
-            if key.startswith(OBS_IMAGE) or key.startswith(OBS_IMAGES)
+            if key.startswith(OBS_IMAGE)
         ]
         if self.config.num_classes == 2:
             probs = self.predict(images).probabilities
