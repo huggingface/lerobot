@@ -186,7 +186,7 @@ class Classifier(PreTrainedPolicy):
             if hasattr(self.encoder.config, "hidden_size"):
                 input_dim = self.encoder.config.hidden_size
             else:
-                raise ValueError("Unsupported transformer architecture since hidden_size is not found")\
+                raise ValueError("Unsupported transformer architecture since hidden_size is not found")
 
         self.classifier_head = nn.Sequential(
             nn.Linear(input_dim * self.config.num_cameras, self.config.hidden_dim),
@@ -213,11 +213,7 @@ class Classifier(PreTrainedPolicy):
     def extract_images_and_labels(self, batch: Dict[str, Tensor]) -> Tuple[list, Tensor]:
         """Extract image tensors and label tensors from batch."""
         # Check for both OBS_IMAGE and OBS_IMAGES prefixes
-        images = [
-            batch[key]
-            for key in self.config.input_features
-            if key.startswith(OBS_IMAGE)
-        ]
+        images = [batch[key] for key in self.config.input_features if key.startswith(OBS_IMAGE)]
         labels = batch["next.reward"]
 
         return images, labels
@@ -276,11 +272,7 @@ class Classifier(PreTrainedPolicy):
     def predict_reward(self, batch, threshold=0.5):
         """Legacy method for compatibility."""
         # Check for both OBS_IMAGE and OBS_IMAGES prefixes
-        images = [
-            batch[key]
-            for key in self.config.input_features
-            if key.startswith(OBS_IMAGE)
-        ]
+        images = [batch[key] for key in self.config.input_features if key.startswith(OBS_IMAGE)]
         if self.config.num_classes == 2:
             probs = self.predict(images).probabilities
             logging.debug(f"Predicted reward images: {probs}")
