@@ -44,7 +44,6 @@ def save_images_from_cameras(
     config = ROS2CameraConfig(topic=topic, mock=mock)
     camera = ROS2Camera(config)
     camera.connect()
-    print("Here 0")
     print(f"ROS2Camera({camera.node.get_name()}")
     cameras.append(camera)
 
@@ -86,42 +85,42 @@ def save_images_from_cameras(
 
 class ROS2Camera:
     """
-    The ROS2Camera class allows to record images from cameras over ROS 2.
+    The ROS2Camera class records images from cameras via ROS 2.
 
-    An ROS2Camera instance requires a ROS 2 driver for the camera to be running with images published over a known topic, eg. /camera/image.
-    It is therefore compatible with any camera that has a ROS 2 driver which may be running on the same host or any other host on the same network.
+    This class requires a ROS 2 camera driver to be running and publishing images on a specified topic.
+    It's compatible with any camera that has a ROS 2 driver, whether running on the same host or another host on the network.
 
-    To find the topic published by the ROS 2 driver, you may list the various topics in your network:
+    To discover available camera topics:
     ```bash
-    # Make sure to source your ROS 2 installation first.
+    # Source your ROS 2 installation first
     ros2 topic list
     ```
 
-    Example of usage:
+    Basic usage:
     ```python
     from lerobot.common.robot_devices.cameras.configs import ROS2CameraConfig
 
-    config = ROS2CameraConfig(node.name=0)
+    config = ROS2CameraConfig(topic="/camera/image")
     camera = ROS2Camera(config)
     camera.connect()
-    color_image = camera.read()
-    # when done using the camera, consider disconnecting
-    camera.disconnect()
+    image = camera.read()
+    camera.disconnect()  # Clean up when done
     ```
 
-    Example of configuring the camera:
-
-    Note: Apart from the topic name, all other options are only configurable
-    on the ROS 2 driver side. We could infer some of these settings once we
-    successfully subscribe to the camera topic but some layers of the lerobot
-    stack (eg. recording an episode) require these attributes to be present in
-    the CameraConfig implementation before the first frame is read from the
-    camera. So for now, the user needs to ensure the settings here match those
-    on the ROS 2 driver side.
+    Configuration notes:
+    - The topic name is required for connection
+    - Other parameters (fps, width, height) should match the actual ROS 2 driver settings
+    - Width and height will be updated from the first received message
+    - Rotation can be applied (90, -90, 180 degrees) if specified in the config
 
     ```python
-    config = ROS2CameraConfig(topic="/image_raw", fps=30, width=640, height=480)
-    # Note: might error out open `camera.connect()` if these settings are not compatible with the camera
+    config = ROS2CameraConfig(
+        topic="/camera/image_raw",
+        fps=30,
+        width=640,
+        height=480,
+        rotation=90  # Optional rotation
+    )
     ```
     """
 
@@ -202,9 +201,6 @@ class ROS2Camera:
 
         # log the utc time at which the image was received
         self.logs["timestamp_utc"] = capture_timestamp_utc()
-
-        print(image.shape)
-        print(image.dtype)
 
         return image
 
