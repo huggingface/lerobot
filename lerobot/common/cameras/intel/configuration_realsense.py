@@ -36,7 +36,7 @@ class RealSenseCameraConfig(CameraConfig):
     name: str | None = None
     serial_number: int | None = None
     fps: int | None = None
-    width: int | None = None
+    width: int | None = None  # NOTE(Steven): Make this not None allowed!
     height: int | None = None
     color_mode: ColorMode = ColorMode.RGB
     channels: int | None = 3
