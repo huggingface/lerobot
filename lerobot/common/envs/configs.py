@@ -191,12 +191,12 @@ class GenesisEnv(EnvConfig):
         if self.obs_type == "pixels_agent_pos":
             self.features["pixels"] = PolicyFeature(type=FeatureType.VISUAL, shape=(480, 640, 3))
         elif self.obs_type == "environment_state_agent_pos":
-            self.features["environment_state"] = PolicyFeature(type=FeatureType.ENV, shape=(11,))
+            env_shape = 14 if self.task == "CubeStack-v0" else 11
+            self.features["environment_state"] = PolicyFeature(type=FeatureType.ENV, shape=(env_shape,))
 
     @property
     def gym_kwargs(self) -> dict:
         return {
-            "task": "cube",
             "enable_pixels": self.enable_pixels,
             "observation_height": self.observation_height,
             "observation_width": self.observation_width,
