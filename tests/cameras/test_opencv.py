@@ -21,6 +21,8 @@ from lerobot.common.cameras.configs import Cv2Rotation
 from lerobot.common.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
+# NOTE(Steven): Patch get/set calls
+
 
 def test_base_class_implementation():
     config = OpenCVCameraConfig(index_or_path=0)

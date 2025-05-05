@@ -217,7 +217,7 @@ class RealSenseCamera(Camera):
     def _configure_realsense_settings(self) -> rs.config:
         """Creates and configures the RealSense pipeline configuration object."""
         rs_config = rs.config()
-        rs_config.enable_device(self.serial_number)
+        rs.config.enable_device(rs_config, self.serial_number)
 
         if self.capture_width and self.capture_height and self.fps:
             logger.debug(
@@ -300,6 +300,7 @@ class RealSenseCamera(Camera):
             self.width, self.height = self.capture_width, self.capture_height
         logger.debug(f"Final image dimensions set to: {self.width}x{self.height} (after rotation if any)")
 
+    # NOTE(Steven): Add a wamr-up period time config
     def connect(self):
         """
         Connects to the RealSense camera specified in the configuration.
