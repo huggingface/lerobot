@@ -60,6 +60,7 @@ python -m lerobot.record \
 import logging
 import time
 from dataclasses import asdict, dataclass
+import numpy as np
 from pathlib import Path
 from pprint import pformat
 
@@ -72,7 +73,7 @@ from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.datasets.image_writer import safe_stop_image_writer
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.utils import build_dataset_frame, hw_to_dataset_features
+from lerobot.datasets.utils import build_dataset_frame, hw_to_dataset_features, DEFAULT_AUDIO_CHUNK_DURATION
 from lerobot.datasets.video_utils import VideoEncodingManager
 from lerobot.policies.factory import make_policy
 from lerobot.policies.pretrained import PreTrainedPolicy
@@ -85,6 +86,10 @@ from lerobot.robots import (  # noqa: F401
     make_robot_from_config,
     so100_follower,
     so101_follower,
+)
+from lerobot.microphones.utils import (
+    async_microphones_start_recording,
+    async_microphones_stop_recording,
 )
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
@@ -227,8 +232,15 @@ def record_loop(
         for microphone_key, microphone in robot.microphones.items():
             dataset.add_microphone_recording(microphone, microphone_key)
     else:
-        for _, microphone in robot.microphones.items():
-            microphone.start_recording()
+        async_microphones_start_recording(robot.microphones)
+
+    # Create a buffer for audio observations (shifting window of fixed size over audio samples)
+    audio_buffer = {
+        microphone_name: np.zeros(
+            (int(microphone.sample_rate * DEFAULT_AUDIO_CHUNK_DURATION), len(microphone.channels))
+        )
+        for microphone_name, microphone in robot.microphones.items()
+    }
 
     timestamp = 0
     start_episode_t = time.perf_counter()
@@ -245,6 +257,16 @@ def record_loop(
             observation_frame = build_dataset_frame(dataset.features, observation, prefix="observation")
 
         if policy is not None:
+
+            # Transform instantaneous audio samples into a buffer of fixed size
+            for name in audio_buffer:
+                # Remove as many old audio samples as needed
+                audio_buffer[name] = audio_buffer[name][len(observation_frame[name]) :]
+                # Add new audio samples
+                audio_buffer[name] = np.vstack((audio_buffer[name], observation_frame[name]))
+                # Add the audio buffer to the observation
+                observation_frame[name] = audio_buffer[name]
+
             action_values = predict_action(
                 observation_frame,
                 policy,
@@ -290,8 +312,7 @@ def record_loop(
 
         timestamp = time.perf_counter() - start_episode_t
 
-    for _, microphone in robot.microphones.items():
-        microphone.stop_recording()
+    async_microphones_stop_recording(robot.microphones)
 
 @parser.wrap()
 def record(cfg: RecordConfig) -> LeRobotDataset:
