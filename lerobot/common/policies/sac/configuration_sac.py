@@ -140,7 +140,6 @@ class SACConfig(PreTrainedConfig):
     )
 
     # Architecture specifics
-    camera_number: int = 1
     device: str = "cpu"
     storage_device: str = "cpu"
     # Set to "helper2424/resnet10" for hil serl
