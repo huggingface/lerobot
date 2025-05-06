@@ -32,6 +32,7 @@ from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnecte
 TEST_ARTIFACTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "artifacts", "cameras")
 BAG_FILE_PATH = os.path.join(TEST_ARTIFACTS_DIR, "test.bag")
 
+
 if not os.path.exists(BAG_FILE_PATH):
     print(f"Warning: Bag file not found at {BAG_FILE_PATH}. Some tests might fail or be skipped.")
 
@@ -39,7 +40,6 @@ if not os.path.exists(BAG_FILE_PATH):
 def mock_rs_config_enable_device_from_file(rs_config_instance, sn):
     if not os.path.exists(BAG_FILE_PATH):
         raise FileNotFoundError(f"Test bag file not found: {BAG_FILE_PATH}")
-    print(f"MOCK: Calling enable_device_from_file with: {BAG_FILE_PATH}")
     return rs_config_instance.enable_device_from_file(BAG_FILE_PATH, repeat_playback=True)
 
 
@@ -147,7 +147,7 @@ def test_async_read_timeout(mock_enable_device):
     camera.connect()
 
     with pytest.raises(TimeoutError):
-        camera.async_read(timeout_ms=1)
+        camera.async_read(timeout_ms=0)
 
     camera.disconnect()
 
