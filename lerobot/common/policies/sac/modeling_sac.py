@@ -79,8 +79,9 @@ class SACPolicy(
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
         """Select action for inference/evaluation"""
+
         observations_features = None
-        if self.shared_encoder:
+        if self.shared_encoder and self.actor.encoder.has_images:
             # Cache and normalize image features
             observations_features = self.actor.encoder.get_cached_image_features(batch, normalize=True)
 
@@ -393,6 +394,7 @@ class SACPolicy(
         self.normalize_inputs = nn.Identity()
         self.normalize_targets = nn.Identity()
         self.unnormalize_outputs = nn.Identity()
+
         if self.config.dataset_stats:
             params = _convert_normalization_params_to_tensor(self.config.dataset_stats)
             self.normalize_inputs = Normalize(
@@ -440,8 +442,9 @@ class SACPolicy(
         )
         self.critic_target.load_state_dict(self.critic_ensemble.state_dict())
 
-        self.critic_ensemble = torch.compile(self.critic_ensemble)
-        self.critic_target = torch.compile(self.critic_target)
+        if self.config.use_torch_compile:
+            self.critic_ensemble = torch.compile(self.critic_ensemble)
+            self.critic_target = torch.compile(self.critic_target)
 
         if self.config.num_discrete_actions is not None:
             self._init_discrete_critics()

@@ -184,6 +184,9 @@ class SACConfig(PreTrainedConfig):
     actor_learner_config: ActorLearnerConfig = field(default_factory=ActorLearnerConfig)
     concurrency: ConcurrencyConfig = field(default_factory=ConcurrencyConfig)
 
+    # Optimizations
+    use_torch_compile: bool = True
+
     def __post_init__(self):
         super().__post_init__()
         # Any validation specific to SAC configuration
