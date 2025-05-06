@@ -308,7 +308,19 @@ class HILEnvConfig(EnvConfig):
             "observation.state": OBS_ROBOT,
         }
     )
+    ################# args from hilserlrobotenv
     reward_classifier_pretrained_path: Optional[str] = None
+    robot: Optional[RobotConfig] = None
+    wrapper: Optional[EnvWrapperConfig] = None
+    mode: str = None  # Either "record", "replay", None
+    repo_id: Optional[str] = None
+    dataset_root: Optional[str] = None
+    num_episodes: int = 10  # only for record mode
+    episode: int = 0
+    device: str = "cuda"
+    push_to_hub: bool = True
+    pretrained_policy_name_or_path: Optional[str] = None
+    ############################
 
     @property
     def gym_kwargs(self) -> dict:
