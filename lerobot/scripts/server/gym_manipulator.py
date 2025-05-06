@@ -11,6 +11,7 @@ import torch
 import torchvision.transforms.functional as F  # noqa: N812
 
 from lerobot.common.envs.configs import EnvConfig
+from lerobot.common.envs.utils import preprocess_observation
 from lerobot.common.robot_devices.control_utils import (
     busy_wait,
     is_headless,
@@ -1757,6 +1758,14 @@ class GymHilInfoWrapper(gym.Wrapper):
         return obs, info
 
 
+class GymHilObservationProcessorWrapper(gym.ObservationWrapper):
+    def __init__(self, env: gym.Env):
+        super().__init__(env)
+
+    def observation(self, observation: dict[str, Any]) -> dict[str, Any]:
+        return preprocess_observation(observation)
+
+
 ###########################################################
 # Factory functions
 ###########################################################
@@ -1773,16 +1782,15 @@ def make_robot_env(cfg) -> gym.vector.VectorEnv:
         cfg: Configuration object containing environment parameters.
 
     Returns:
+
         A vectorized gym environment with all necessary wrappers applied.
     """
     if cfg.robot == "hil":
         import gymnasium as gym
 
-        from lerobot.common.envs.utils import ObservationProcessorWrapper
-
         # TODO (azouitine)
         env = gym.make(f"gym_hil/{cfg.env.task}")
-        env = ObservationProcessorWrapper(env=env)
+        env = GymHilObservationProcessorWrapper(env=env)
         env = GymHilInfoWrapper(env=env, device=cfg.device)
         env = BatchCompatibleWrapper(env=env)
         env = TorchActionWrapper(env=env, device=cfg.device)
