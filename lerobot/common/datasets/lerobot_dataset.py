@@ -276,6 +276,7 @@ class LeRobotDatasetMetadata:
         ep_dataset = Dataset.from_dict(episode_dict)
         ep_size_in_mb = get_hf_dataset_size_in_mb(ep_dataset)
         df = pd.DataFrame(ep_dataset)
+        num_frames = episode_dict["length"][0]
 
         if self.episodes is None:
             # Initialize indices and frame count for a new dataset made of the first episode data
@@ -283,7 +284,7 @@ class LeRobotDatasetMetadata:
             df["meta/episodes/chunk_index"] = [chunk_idx]
             df["meta/episodes/file_index"] = [file_idx]
             df["dataset_from_index"] = [0]
-            df["dataset_to_index"] = [len(df)]
+            df["dataset_to_index"] = [num_frames]
         else:
             # Retrieve information from the latest parquet file
             latest_ep = self.episodes[-1]
@@ -301,7 +302,7 @@ class LeRobotDatasetMetadata:
             df["meta/episodes/chunk_index"] = [chunk_idx]
             df["meta/episodes/file_index"] = [file_idx]
             df["dataset_from_index"] = [latest_ep["dataset_to_index"]]
-            df["dataset_to_index"] = [latest_ep["dataset_to_index"] + len(df)]
+            df["dataset_to_index"] = [latest_ep["dataset_to_index"] + num_frames]
 
             if latest_size_in_mb + ep_size_in_mb < self.data_files_size_in_mb:
                 # Size limit wasnt reached, concatenate latest dataframe with new one
