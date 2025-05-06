@@ -1,5 +1,5 @@
 This tutorial will explain the training script, how to use it, and particularly how to configure everything needed for the training run.
-> **Note:** The following assume you're running these commands on a machine equipped with a cuda GPU. If you don't have one (or if you're using a Mac), you can add `--policy.device=cpu` (`--policy.device=mps` respectively). However, be advised that the code executes much slower on cpu.
+> **Note:** The following assumes you're running these commands on a machine equipped with a cuda GPU. If you don't have one (or if you're using a Mac), you can add `--policy.device=cpu` (`--policy.device=mps` respectively). However, be advised that the code executes much slower on cpu.
 
 
 ## The training script
@@ -23,7 +23,7 @@ def train(cfg: TrainPipelineConfig):
 
 You can inspect the `TrainPipelineConfig` defined in [`lerobot/configs/train.py`](../lerobot/configs/train.py) (which is heavily commented and meant to be a reference to understand any option)
 
-When running the script, inputs for the command line are parsed thanks to the `@parser.wrap()` decorator and an instance of this class is automatically generated. Under the hood, this is done with [Draccus](https://github.com/dlwh/draccus) which is a tool dedicated for this purpose. If you're familiar with Hydra, Draccus can similarly load configurations from config files (.json, .yaml) and also override their values through command line inputs. Unlike Hydra, these configurations are pre-defined in the code through dataclasses rather than being defined entirely in config files. This allows for more rigorous serialization/deserialization, typing, and to manipulate configuration as objects directly in the code and not as dictionaries or namespaces (which enables nice features in an IDE such as autocomplete, jump-to-def, etc.)
+When running the script, inputs for the command line are parsed thanks to the `@parser.wrap()` decorator and an instance of this class is automatically generated. Under the hood, this is done with [Draccus](https://github.com/dlwh/draccus) which is a tool dedicated to this purpose. If you're familiar with Hydra, Draccus can similarly load configurations from config files (.json, .yaml) and also override their values through command line inputs. Unlike Hydra, these configurations are pre-defined in the code through dataclasses rather than being defined entirely in config files. This allows for more rigorous serialization/deserialization, typing, and to manipulate configuration as objects directly in the code and not as dictionaries or namespaces (which enables nice features in an IDE such as autocomplete, jump-to-def, etc.)
 
 Let's have a look at a simplified example. Amongst other attributes, the training config has the following attributes:
 ```python
@@ -43,7 +43,7 @@ class DatasetConfig:
 ```
 
 This creates a hierarchical relationship where, for example assuming we have a `cfg` instance of `TrainPipelineConfig`, we can access the `repo_id` value with `cfg.dataset.repo_id`.
-From the command line, we can specify this value with using a very similar syntax `--dataset.repo_id=repo/id`.
+From the command line, we can specify this value by using a very similar syntax `--dataset.repo_id=repo/id`.
 
 By default, every field takes its default value specified in the dataclass. If a field doesn't have a default value, it needs to be specified either from the command line or from a config file – which path is also given in the command line (more in this below). In the example above, the `dataset` field doesn't have a default value which means it must be specified.
 
@@ -135,7 +135,7 @@ will start a training run with the same configuration used for training [lerobot
 
 ## Resume training
 
-Being able to resume a training run is important in case it crashed or aborted for any reason. We'll demonstrate how to that here.
+Being able to resume a training run is important in case it crashed or aborted for any reason. We'll demonstrate how to do that here.
 
 Let's reuse the command from the previous run and add a few more options:
 ```bash

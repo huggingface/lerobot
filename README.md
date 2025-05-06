@@ -23,21 +23,35 @@
 </div>
 
 <h2 align="center">
-    <p><a href="https://github.com/huggingface/lerobot/blob/main/examples/10_use_so100.md">
-        Build Your Own SO-100 Robot!</a></p>
+    <p><a href="https://github.com/huggingface/lerobot/blob/main/examples/12_use_so101.md">
+        Build Your Own SO-101 Robot!</a></p>
 </h2>
 
 <div align="center">
-  <img src="media/so100/leader_follower.webp?raw=true" alt="SO-100 leader and follower arms" title="SO-100 leader and follower arms" width="50%">
+  <div style="display: flex; gap: 1rem; justify-content: center; align-items: center;" >
+    <img
+      src="media/so101/so101.webp?raw=true"
+      alt="SO-101 follower arm"
+      title="SO-101 follower arm"
+      style="width: 40%;"
+    />
+    <img
+      src="media/so101/so101-leader.webp?raw=true"
+      alt="SO-101 leader arm"
+      title="SO-101 leader arm"
+      style="width: 40%;"
+    />
+  </div>
 
-  <p><strong>Meet the SO-100 – Just $110 per arm!</strong></p>
+
+  <p><strong>Meet the updated SO100, the SO-101 – Just €114 per arm!</strong></p>
   <p>Train it in minutes with a few simple moves on your laptop.</p>
   <p>Then sit back and watch your creation act autonomously! 🤯</p>
 
-  <p><a href="https://github.com/huggingface/lerobot/blob/main/examples/10_use_so100.md">
-      Get the full SO-100 tutorial here.</a></p>
+  <p><a href="https://github.com/huggingface/lerobot/blob/main/examples/12_use_so101.md">
+      See the full SO-101 tutorial here.</a></p>
 
-  <p>Want to take it to the next level? Make your SO-100 mobile by building LeKiwi!</p>
+  <p>Want to take it to the next level? Make your SO-101 mobile by building LeKiwi!</p>
   <p>Check out the <a href="https://github.com/huggingface/lerobot/blob/main/examples/11_use_lekiwi.md">LeKiwi tutorial</a> and bring your robot to life on wheels.</p>
 
   <img src="media/lekiwi/kiwi.webp?raw=true" alt="LeKiwi mobile robot" title="LeKiwi mobile robot" width="50%">
@@ -50,7 +64,6 @@
 </h3>
 
 ---
-
 
 🤗 LeRobot aims to provide models, datasets, and tools for real-world robotics in PyTorch. The goal is to lower the barrier to entry to robotics so that everyone can contribute and benefit from sharing datasets and pretrained models.
 
@@ -208,7 +221,7 @@ dataset attributes:
   │  ├ episode_index (int64): index of the episode for this sample
   │  ├ frame_index (int64): index of the frame for this sample in the episode ; starts at 0 for each episode
   │  ├ timestamp (float32): timestamp in the episode
-  │  ├ next.done (bool): indicates the end of en episode ; True for the last frame in each episode
+  │  ├ next.done (bool): indicates the end of an episode ; True for the last frame in each episode
   │  └ index (int64): general index in the whole dataset
   ├ episode_data_index: contains 2 tensors with the start and end indices of each episode
   │  ├ from (1D int64 tensor): first frame index for each episode — shape (num episodes,) starts with 0
@@ -257,7 +270,7 @@ See `python lerobot/scripts/eval.py --help` for more instructions.
 
 ### Train your own policy
 
-Check out [example 3](./examples/3_train_policy.py) that illustrate how to train a model using our core library in python, and [example 4](./examples/4_train_policy_with_script.md) that shows how to use our training script from command line.
+Check out [example 3](./examples/3_train_policy.py) that illustrates how to train a model using our core library in python, and [example 4](./examples/4_train_policy_with_script.md) that shows how to use our training script from command line.
 
 To use wandb for logging training and evaluation curves, make sure you've run `wandb login` as a one-time setup step. Then, when running the training command above, enable WandB in the configuration by adding `--wandb.enable=true`.
 
@@ -308,7 +321,7 @@ Once you have trained a policy you may upload it to the Hugging Face hub using a
 You first need to find the checkpoint folder located inside your experiment directory (e.g. `outputs/train/2024-05-05/20-21-12_aloha_act_default/checkpoints/002500`). Within that there is a `pretrained_model` directory which should contain:
 - `config.json`: A serialized version of the policy configuration (following the policy's dataclass config).
 - `model.safetensors`: A set of `torch.nn.Module` parameters, saved in [Hugging Face Safetensors](https://huggingface.co/docs/safetensors/index) format.
-- `train_config.json`: A consolidated configuration containing all parameter userd for training. The policy configuration should match `config.json` exactly. Thisis useful for anyone who wants to evaluate your policy or for reproducibility.
+- `train_config.json`: A consolidated configuration containing all parameters used for training. The policy configuration should match `config.json` exactly. This is useful for anyone who wants to evaluate your policy or for reproducibility.
 
 To upload these to the hub, run the following:
 ```bash
