@@ -823,32 +823,6 @@ class BatchCompatibleWrapper(gym.ObservationWrapper):
         return observation
 
 
-class HackVecToMonoEnv(gym.vector.VectorEnvWrapper):
-    """
-    Wrapper that ensures observations are compatible with batch processing.
-
-    This wrapper adds a batch dimension to observations that don't already have one,
-    making them compatible with models that expect batched inputs.
-    """
-
-    def __init__(self, env):
-        """
-        Initialize the batch compatibility wrapper.
-
-        Args:
-            env: The environment to wrap.
-        """
-        super().__init__(env)
-
-    def step(self, action):
-        obs, reward, done, truncated, info = self.env.step(action)
-        reward = reward[0]
-        done = done[0]
-        truncated = truncated[0]
-        info = info[0]
-        return obs, reward, done, truncated, info
-
-
 class GripperPenaltyWrapper(gym.RewardWrapper):
     """
     Wrapper that adds penalties for inefficient gripper commands.
