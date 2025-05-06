@@ -22,8 +22,8 @@ class Robot:
     FROM_MECH_TO_DH = {"so100": np.deg2rad([90.0, 90.0, 90.0, 90.0, 90.0])}
 
     # to be filled with correct numbers based on your motors assembly (here gripper is included)
-    MECH_JOINT_LIMITS_LOW = {"so100": np.deg2rad([-90.0, -90.0, -90.0, -90.0, -90.0, -90.0])}
-    MECH_JOINT_LIMITS_UP = {"so100": np.deg2rad([90.0, 90.0, 90.0, 90.0, 90.0, 90.0])}
+    MECH_JOINT_LIMITS_LOW = {"so100": np.deg2rad([-90.0, -290.0, -290.0, -90.0, -90.0, -90.0])}
+    MECH_JOINT_LIMITS_UP = {"so100": np.deg2rad([90.0, 290.0, 290.0, 90.0, 90.0, 90.0])}
 
     def __init__(self, robot_type="so100"):
         if robot_type not in Robot.ROBOT_DH_TABLES:
@@ -254,7 +254,12 @@ class RobotKinematics:
 
     def _interp_init(self, T_start, T_final, delta=0.01):
         """Initialize interpolator parameters"""
-
+        
+        # avoid division by zero
+        assert delta > 0, (
+            f"[ERROR] Delta = ({delta:.4f}). This value must be strictly greater than zero"
+        )
+        
         # init
         self.t_start = T_start[:3, 3]
         self.t_final = T_final[:3, 3]
@@ -269,14 +274,19 @@ class RobotKinematics:
         # divide trajectory in steps
         dist = RobotUtils.calc_distance(self.t_final, self.t_start)
         self.n_steps = int(np.ceil(dist / delta))
-
+                
         return self.n_steps
 
     def _interp_execute(self, i):
         """Compute Cartesian pose setpoint for the current step"""
-
-        # compute current step
-        s = i / self.n_steps
+        
+        # n_steps == 0 means Tgoal == Tinit
+        # In this way I also avoid division by zero
+        if (self.n_steps == 0):
+            s = 1.0
+        else:
+            s = i / self.n_steps # compute current step
+        
         t_interp = (1 - s) * self.t_start + s * self.t_final
         R_interp = self.slerp(s).as_matrix()
 
@@ -296,7 +306,7 @@ if __name__ == "__main__":
     kin = RobotKinematics()
 
     # get current joint positions
-    q_init = np.array([0.0, 0, 0.0, -np.pi / 2, 0.0, 0.0])  # full extended arm (6th DOF is gripper)
+    q_init = np.array([0.0, 0.0, 0.0, -np.pi / 2, 0.0, 0.0])  # full extended arm (6th DOF is gripper)
 
     # convert from mechanical angle to dh angle
     q_init_dh = robot.from_mech_to_dh(q_init)
@@ -307,11 +317,11 @@ if __name__ == "__main__":
 
     # Define goal pose
     T_goal = T_start.copy()
-    T_goal[:3, 3] += np.array([-0.2, 0.1, 0.1])
+    T_goal[:3, 3] += np.array([-0.2, 0.0, 0.0])
     print("T_goal = \n", T_goal)
 
     # IK with internal interpolation
-    q_final_dh = kin.inverse_kinematics(robot, q_init_dh, T_goal, use_orientation=False, k=0.8, n_iter=50)
+    q_final_dh = kin.inverse_kinematics(robot, q_init_dh, T_goal, use_orientation=True, k=0.8, n_iter=50)
     T_final = kin.forward_kinematics(robot, q_final_dh)
 
     print("Final joint angles = ", q_final_dh)
