@@ -139,7 +139,7 @@ class WandBLogger:
         for k, v in d.items():
             if not isinstance(v, (int, float, str)):
                 logging.warning(
-                    f'WandB logging of key "{k}" was ignored as its type is not handled by this wrapper.'
+                    f'WandB logging of key "{k}" was ignored as its type "{type(v)}" is not handled by this wrapper.'
                 )
                 continue
 
