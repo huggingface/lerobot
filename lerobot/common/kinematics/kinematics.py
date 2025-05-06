@@ -254,12 +254,10 @@ class RobotKinematics:
 
     def _interp_init(self, T_start, T_final, delta=0.01):
         """Initialize interpolator parameters"""
-        
+
         # avoid division by zero
-        assert delta > 0, (
-            f"[ERROR] Delta = ({delta:.4f}). This value must be strictly greater than zero"
-        )
-        
+        assert delta > 0, f"[ERROR] Delta = ({delta:.4f}). This value must be strictly greater than zero"
+
         # init
         self.t_start = T_start[:3, 3]
         self.t_final = T_final[:3, 3]
@@ -274,19 +272,19 @@ class RobotKinematics:
         # divide trajectory in steps
         dist = RobotUtils.calc_distance(self.t_final, self.t_start)
         self.n_steps = int(np.ceil(dist / delta))
-                
+
         return self.n_steps
 
     def _interp_execute(self, i):
         """Compute Cartesian pose setpoint for the current step"""
-        
+
         # n_steps == 0 means Tgoal == Tinit
         # In this way I also avoid division by zero
-        if (self.n_steps == 0):
+        if self.n_steps == 0:
             s = 1.0
         else:
-            s = i / self.n_steps # compute current step
-        
+            s = i / self.n_steps  # compute current step
+
         t_interp = (1 - s) * self.t_start + s * self.t_final
         R_interp = self.slerp(s).as_matrix()
 
