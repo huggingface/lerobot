@@ -128,7 +128,7 @@ def test_async_read_timeout():
     camera.connect()
 
     with pytest.raises(TimeoutError):
-        _ = camera.async_read(timeout_ms=1)
+        camera.async_read(timeout_ms=0)
 
     camera.disconnect()
 
