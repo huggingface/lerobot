@@ -1,0 +1,370 @@
+# Getting Started with Real-World Robots
+
+This tutorial will explain you how to train a neural network to autonomously control a real robot.
+
+**You'll learn:**
+1. How to record and visualize your dataset.
+2. How to train a policy using your data and prepare it for evaluation.
+3. How to evaluate your policy and visualize the results.
+
+By following these steps, you'll be able to replicate tasks like picking up a Lego block and placing it in a bin with a high success rate, as demonstrated in [this video](https://x.com/RemiCadene/status/1814680760592572934).
+
+This tutorial is specifically made for the affordable [SO-101](https://github.com/TheRobotStudio/SO-ARM100) robot, but it contains additional information to be easily adapted to various types of robots like [Aloha bimanual robot](https://aloha-2.github.io) by changing some configurations. The SO-101 consists of a leader arm and a follower arm, each with 6 motors. It can work with one or several cameras to record the scene, which serve as visual sensors for the robot.
+
+During the data collection phase, you will control the follower arm by moving the leader arm. This process is known as "teleoperation." This technique is used to collect robot trajectories. Afterward, you'll train a neural network to imitate these trajectories and deploy the network to enable your robot to operate autonomously.
+
+If you encounter any issues at any step of the tutorial, feel free to seek help on [Discord](https://discord.com/invite/s3KuuzsPFb) or don't hesitate to iterate with us on the tutorial by creating issues or pull requests.
+
+## Setup and Calibrate
+
+If you haven't yet setup and calibrate the SO-101 follow these steps:
+1. [Find ports and update config file](./assemble_so101#find-the-usb-ports-associated-to-each-arm)
+2. [Calibrate](./assemble_so101#calibrate)
+
+## Teleoperate
+
+Run this simple script to teleoperate your robot (it won't connect and display the cameras):
+```bash
+python lerobot/scripts/control_robot.py \
+  --robot.type=so101 \
+  --robot.cameras='{}' \
+  --control.type=teleoperate
+```
+
+The teleoperate command will automatically:
+1. Identify any missing calibrations and initiate the calibration procedure.
+2. Connect the robot and start teleoperation.
+
+## Setup Cameras
+
+To connect a camera you have three options:
+1. OpenCVCamera which allows us to use any camera: usb, realsense, laptop webcam
+2. iPhone camera with MacOS
+3. Phone camera on Linux
+
+### Use OpenCVCamera
+
+The [`OpenCVCamera`](../lerobot/common/robot_devices/cameras/opencv.py) class allows you to efficiently record frames from most cameras using the [`opencv2`](https://docs.opencv.org) library.  For more details on compatibility, see [Video I/O with OpenCV Overview](https://docs.opencv.org/4.x/d0/da7/videoio_overview.html).
+
+To instantiate an [`OpenCVCamera`](../lerobot/common/robot_devices/cameras/opencv.py), you need a camera index (e.g. `OpenCVCamera(camera_index=0)`). When you only have one camera like a webcam of a laptop, the camera index is usually `0` but it might differ, and the camera index might change if you reboot your computer or re-plug your camera. This behavior depends on your operating system.
+
+To find the camera indices, run the following utility script, which will save a few frames from each detected camera:
+```bash
+python lerobot/common/robot_devices/cameras/opencv.py \
+    --images-dir outputs/images_from_opencv_cameras
+```
+
+The output will look something like this if you have two cameras connected:
+```
+Mac or Windows detected. Finding available camera indices through scanning all indices from 0 to 60
+[...]
+Camera found at index 0
+Camera found at index 1
+[...]
+Connecting cameras
+OpenCVCamera(0, fps=30.0, width=1920.0, height=1080.0, color_mode=rgb)
+OpenCVCamera(1, fps=24.0, width=1920.0, height=1080.0, color_mode=rgb)
+Saving images to outputs/images_from_opencv_cameras
+Frame: 0000	Latency (ms): 39.52
+[...]
+Frame: 0046	Latency (ms): 40.07
+Images have been saved to outputs/images_from_opencv_cameras
+```
+
+Check the saved images in `outputs/images_from_opencv_cameras` to identify which camera index corresponds to which physical camera (e.g. `0` for `camera_00` or `1` for `camera_01`):
+```
+camera_00_frame_000000.png
+[...]
+camera_00_frame_000047.png
+camera_01_frame_000000.png
+[...]
+camera_01_frame_000047.png
+```
+
+Note: Some cameras may take a few seconds to warm up, and the first frame might be black or green.
+
+Now that you have the camera indexes, you should specify the camera's in the config.
+
+### Use your phone
+<hfoptions id="use phone">
+<hfoption id="Mac">
+
+To use your iPhone as a camera on macOS, enable the Continuity Camera feature:
+- Ensure your Mac is running macOS 13 or later, and your iPhone is on iOS 16 or later.
+- Sign in both devices with the same Apple ID.
+- Connect your devices with a USB cable or turn on Wi-Fi and Bluetooth for a wireless connection.
+
+For more details, visit [Apple support](https://support.apple.com/en-gb/guide/mac-help/mchl77879b8a/mac).
+
+Your iPhone should be detected automatically when running the camera setup script in the next section.
+
+</hfoption>
+<hfoption id="Linux">
+
+If you want to use your phone as a camera on Linux, follow these steps to set up a virtual camera
+
+1. *Install `v4l2loopback-dkms` and `v4l-utils`*. Those packages are required to create virtual camera devices (`v4l2loopback`) and verify their settings with the `v4l2-ctl` utility from `v4l-utils`. Install them using:
+```python
+sudo apt install v4l2loopback-dkms v4l-utils
+```
+2. *Install [DroidCam](https://droidcam.app) on your phone*. This app is available for both iOS and Android.
+3. *Install [OBS Studio](https://obsproject.com)*. This software will help you manage the camera feed. Install it using [Flatpak](https://flatpak.org):
+```python
+flatpak install flathub com.obsproject.Studio
+```
+4. *Install the DroidCam OBS plugin*. This plugin integrates DroidCam with OBS Studio. Install it with:
+```python
+flatpak install flathub com.obsproject.Studio.Plugin.DroidCam
+```
+5. *Start OBS Studio*. Launch with:
+```python
+flatpak run com.obsproject.Studio
+```
+6. *Add your phone as a source*. Follow the instructions [here](https://droidcam.app/obs/usage). Be sure to set the resolution to `640x480`.
+7. *Adjust resolution settings*. In OBS Studio, go to `File > Settings > Video`. Change the `Base(Canvas) Resolution` and the `Output(Scaled) Resolution` to `640x480` by manually typing it in.
+8. *Start virtual camera*. In OBS Studio, follow the instructions [here](https://obsproject.com/kb/virtual-camera-guide).
+9. *Verify the virtual camera setup*. Use `v4l2-ctl` to list the devices:
+```python
+v4l2-ctl --list-devices
+```
+You should see an entry like:
+```
+VirtualCam (platform:v4l2loopback-000):
+/dev/video1
+```
+10. *Check the camera resolution*. Use `v4l2-ctl` to ensure that the virtual camera output resolution is `640x480`. Change `/dev/video1` to the port of your virtual camera from the output of `v4l2-ctl --list-devices`.
+```python
+v4l2-ctl -d /dev/video1 --get-fmt-video
+```
+You should see an entry like:
+```
+>>> Format Video Capture:
+>>>	Width/Height      : 640/480
+>>>	Pixel Format      : 'YUYV' (YUYV 4:2:2)
+```
+
+Troubleshooting: If the resolution is not correct you will have to delete the Virtual Camera port and try again as it cannot be changed.
+
+If everything is set up correctly, you can proceed with the rest of the tutorial.
+
+</hfoption>
+</hfoptions>
+
+## Teleoperate with cameras
+
+We can now teleoperate again while at the same time visualizing the cameras and joint positions with `rerun`.
+
+```bash
+python lerobot/scripts/control_robot.py \
+  --robot.type=so101 \
+  --control.type=teleoperate
+  --control.display_data=true
+```
+
+## Record a dataset
+
+Once you're familiar with teleoperation, you can record your first dataset with SO-101.
+
+We use the Hugging Face hub features for uploading your dataset. If you haven't previously used the Hub, make sure you can login via the cli using a write-access token, this token can be generated from the [Hugging Face settings](https://huggingface.co/settings/tokens).
+
+Add your token to the cli by running this command:
+```bash
+huggingface-cli login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
+```
+
+Then store your Hugging Face repository name in a variable:
+```bash
+HF_USER=$(huggingface-cli whoami | head -n 1)
+echo $HF_USER
+```
+
+Now you can record a dataset, to record 2 episodes and upload your dataset to the hub execute this command:
+```bash
+python lerobot/scripts/control_robot.py \
+  --robot.type=so101 \
+  --control.type=record \
+  --control.fps=30 \
+  --control.single_task="Grasp a lego block and put it in the bin." \
+  --control.repo_id=${HF_USER}/so101_test \
+  --control.tags='["so101","tutorial"]' \
+  --control.warmup_time_s=5 \
+  --control.episode_time_s=30 \
+  --control.reset_time_s=30 \
+  --control.num_episodes=2 \
+  --control.push_to_hub=true
+```
+
+You will see a lot of lines appearing like this one:
+```
+INFO 2024-08-10 15:02:58 ol_robot.py:219 dt:33.34 (30.0hz) dtRlead: 5.06 (197.5hz) dtWfoll: 0.25 (3963.7hz) dtRfoll: 6.22 (160.7hz) dtRlaptop: 32.57 (30.7hz) dtRphone: 33.84 (29.5hz)
+```
+
+| Field | Meaning |
+|:---|:---|
+| `2024-08-10 15:02:58` | Timestamp when `print` was called. |
+| `ol_robot.py:219` | Source file and line number of the `print` call (`lerobot/scripts/control_robot.py` at line `219`). |
+| `dt: 33.34 (30.0 Hz)` | Delta time (ms) between teleop steps (target: 30.0 Hz, `--fps 30`). Yellow if step is too slow. |
+| `dtRlead: 5.06 (197.5 Hz)` | Delta time (ms) for reading present position from the **leader arm**. |
+| `dtWfoll: 0.25 (3963.7 Hz)` | Delta time (ms) for writing goal position to the **follower arm** (asynchronous). |
+| `dtRfoll: 6.22 (160.7 Hz)` | Delta time (ms) for reading present position from the **follower arm**. |
+| `dtRlaptop: 32.57 (30.7 Hz)` | Delta time (ms) for capturing an image from the **laptop camera** (async thread). |
+| `dtRphone: 33.84 (29.5 Hz)` | Delta time (ms) for capturing an image from the **phone camera** (async thread). |
+
+
+#### Dataset upload
+Locally your dataset is stored in this folder: `~/.cache/huggingface/lerobot/{repo-id}` (e.g. `data/cadene/so101_test`). At the end of data recording, your dataset will be uploaded on your Hugging Face page (e.g. https://huggingface.co/datasets/cadene/so101_test) that you can obtain by running:
+```bash
+echo https://huggingface.co/datasets/${HF_USER}/so101_test
+```
+Your dataset will be automatically tagged with `LeRobot` for the community to find it easily, and you can also add custom tags (in this case `tutorial` for example).
+
+You can look for other LeRobot datasets on the hub by searching for `LeRobot` [tags](https://huggingface.co/datasets?other=LeRobot).
+
+#### Record function
+
+The `record` function provides a suite of tools for capturing and managing data during robot operation:
+
+##### 1. Frame Capture and Video Encoding
+- Frames from cameras are saved to disk during recording.
+- At the end of each episode, frames are encoded into video files.
+
+##### 2. Data Storage
+- Data is stored using the `LeRobotDataset` format.
+- By default, the dataset is pushed to your Hugging Face page.
+  - To disable uploading, use `--control.push_to_hub=false`.
+
+##### 3. Checkpointing and Resuming
+- Checkpoints are automatically created during recording.
+- If an issue occurs, you can resume by re-running the same command with `--control.resume=true`.
+- To start recording from scratch, **manually delete** the dataset directory.
+
+##### 4. Recording Parameters
+Set the flow of data recording using command-line arguments:
+- `--control.warmup_time_s=10`
+  Number of seconds before starting data collection (default: **10 seconds**).
+  Allows devices to warm up and synchronize.
+- `--control.episode_time_s=60`
+  Duration of each data recording episode (default: **60 seconds**).
+- `--control.reset_time_s=60`
+  Duration for resetting the environment after each episode (default: **60 seconds**).
+- `--control.num_episodes=50`
+  Total number of episodes to record (default: **50**).
+
+##### 5. Keyboard Controls During Recording
+Control the data recording flow using keyboard shortcuts:
+- Press **Right Arrow (`→`)**: Early stop the current episode or reset time and move to the next.
+- Press **Left Arrow (`←`)**: Cancel the current episode and re-record it.
+- Press **Escape (`ESC`)**: Immediately stop the session, encode videos, and upload the dataset.
+
+#### Tips for gathering data
+
+Once you're comfortable with data recording, you can create a larger dataset for training. A good starting task is grasping an object at different locations and placing it in a bin. We suggest recording at least 50 episodes, with 10 episodes per location. Keep the cameras fixed and maintain consistent grasping behavior throughout the recordings. Also make sure the object you are manipulating is visible on the camera's. A good rule of thumb is you should be able to do the task yourself by only looking at the camera images.
+
+In the following sections, you’ll train your neural network. After achieving reliable grasping performance, you can start introducing more variations during data collection, such as additional grasp locations, different grasping techniques, and altering camera positions.
+
+Avoid adding too much variation too quickly, as it may hinder your results.
+
+
+#### Troubleshooting:
+- On Linux, if the left and right arrow keys and escape key don't have any effect during data recording, make sure you've set the `$DISPLAY` environment variable. See [pynput limitations](https://pynput.readthedocs.io/en/latest/limitations.html#linux).
+
+## Visualize a dataset
+
+If you uploaded your dataset to the hub with `--control.push_to_hub=true`, you can [visualize your dataset online](https://huggingface.co/spaces/lerobot/visualize_dataset) by copy pasting your repo id given by:
+```bash
+echo ${HF_USER}/so101_test
+```
+
+If you didn't upload with `--control.push_to_hub=false`, you can visualize it locally with (via a window in the browser `http://127.0.0.1:9090` with the visualization tool):
+```bash
+python lerobot/scripts/visualize_dataset_html.py \
+  --repo-id ${HF_USER}/so101_test \
+  --local-files-only 1
+```
+
+This will launch a local web server that looks like this:
+<div style="text-align:center;">
+  <img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/visualize_dataset_html.webp?raw=true" alt="Koch v1.1 leader and follower arms" title="Koch v1.1 leader and follower arms" width="100%"></img>
+</div>
+
+## Replay an episode
+
+A useful feature is the `replay` function, which allows to replay on your robot any episode that you've recorded or episodes from any dataset out there. This function helps you test the repeatability of your robot's actions and assess transferability across robots of the same model.
+
+You can replay the first episode on your robot with:
+```bash
+python lerobot/scripts/control_robot.py \
+  --robot.type=so101 \
+  --control.type=replay \
+  --control.fps=30 \
+  --control.repo_id=${HF_USER}/so101_test \
+  --control.episode=0
+```
+
+Your robot should replicate movements similar to those you recorded. For example, check out [this video](https://x.com/RemiCadene/status/1793654950905680090) where we use `replay` on a Aloha robot from [Trossen Robotics](https://www.trossenrobotics.com).
+
+## Train a policy
+
+To train a policy to control your robot, use the [`python lerobot/scripts/train.py`](../lerobot/scripts/train.py) script. A few arguments are required. Here is an example command:
+```bash
+python lerobot/scripts/train.py \
+  --dataset.repo_id=${HF_USER}/so101_test \
+  --policy.type=act \
+  --output_dir=outputs/train/act_so101_test \
+  --job_name=act_so101_test \
+  --policy.device=cuda \
+  --wandb.enable=true
+```
+
+Let's explain the command:
+1. We provided the dataset as argument with `--dataset.repo_id=${HF_USER}/so101_test`.
+2. We provided the policy with `policy.type=act`. This loads configurations from [`configuration_act.py`](../lerobot/common/policies/act/configuration_act.py). Importantly, this policy will automatically adapt to the number of motor states, motor actions and cameras of your robot (e.g. `laptop` and `phone`) which have been saved in your dataset.
+4. We provided `policy.device=cuda` since we are training on a Nvidia GPU, but you could use `policy.device=mps` to train on Apple silicon.
+5. We provided `wandb.enable=true` to use [Weights and Biases](https://docs.wandb.ai/quickstart) for visualizing training plots. This is optional but if you use it, make sure you are logged in by running `wandb login`.
+
+Training should take several hours. You will find checkpoints in `outputs/train/act_so101_test/checkpoints`.
+
+To resume training from a checkpoint, below is an example command to resume from `last` checkpoint of the `act_so101_test` policy:
+```bash
+python lerobot/scripts/train.py \
+  --config_path=outputs/train/act_so101_test/checkpoints/last/pretrained_model/train_config.json \
+  --resume=true
+```
+
+#### Upload policy checkpoints
+
+Once training is done, upload the latest checkpoint with:
+```bash
+huggingface-cli upload ${HF_USER}/act_so101_test \
+  outputs/train/act_so101_test/checkpoints/last/pretrained_model
+```
+
+You can also upload intermediate checkpoints with:
+```bash
+CKPT=010000
+huggingface-cli upload ${HF_USER}/act_so101_test${CKPT} \
+  outputs/train/act_so101_test/checkpoints/${CKPT}/pretrained_model
+```
+
+## Evaluate your policy
+
+You can use the `record` function from [`lerobot/scripts/control_robot.py`](../lerobot/scripts/control_robot.py) but with a policy checkpoint as input. For instance, run this command to record 10 evaluation episodes:
+```bash
+python lerobot/scripts/control_robot.py \
+  --robot.type=so101 \
+  --control.type=record \
+  --control.fps=30 \
+  --control.single_task="Grasp a lego block and put it in the bin." \
+  --control.repo_id=${HF_USER}/eval_act_so101_test \
+  --control.tags='["tutorial"]' \
+  --control.warmup_time_s=5 \
+  --control.episode_time_s=30 \
+  --control.reset_time_s=30 \
+  --control.num_episodes=10 \
+  --control.push_to_hub=true \
+  --control.policy.path=outputs/train/act_so101_test/checkpoints/last/pretrained_model
+```
+
+As you can see, it's almost the same command as previously used to record your training dataset. Two things changed:
+1. There is an additional `--control.policy.path` argument which indicates the path to your policy checkpoint with  (e.g. `outputs/train/eval_act_so101_test/checkpoints/last/pretrained_model`). You can also use the model repository if you uploaded a model checkpoint to the hub (e.g. `${HF_USER}/act_so101_test`).
+2. The name of dataset begins by `eval` to reflect that you are running inference (e.g. `${HF_USER}/eval_act_so101_test`).
