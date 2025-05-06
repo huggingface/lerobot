@@ -822,6 +822,32 @@ class BatchCompatibleWrapper(gym.ObservationWrapper):
         return observation
 
 
+class HackVecToMonoEnv(gym.vector.VectorEnvWrapper):
+    """
+    Wrapper that ensures observations are compatible with batch processing.
+
+    This wrapper adds a batch dimension to observations that don't already have one,
+    making them compatible with models that expect batched inputs.
+    """
+
+    def __init__(self, env):
+        """
+        Initialize the batch compatibility wrapper.
+
+        Args:
+            env: The environment to wrap.
+        """
+        super().__init__(env)
+
+    def step(self, action):
+        obs, reward, done, truncated, info = self.env.step(action)
+        reward = reward[0]
+        done = done[0]
+        truncated = truncated[0]
+        info = info[0]
+        return obs, reward, done, truncated, info
+
+
 class GripperPenaltyWrapper(gym.RewardWrapper):
     """
     Wrapper that adds penalties for inefficient gripper commands.
@@ -1713,6 +1739,24 @@ class GamepadControlWrapper(gym.Wrapper):
         return self.env.close()
 
 
+class GymHilInfoWrapper(gym.Wrapper):
+    def __init__(self, env, device="cpu"):
+        super().__init__(env)
+        self.device = device
+
+    def step(self, action):
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        if "action_intervention" in info:
+            info["action_intervention"] = torch.from_numpy(info["action_intervention"]).to(self.device)
+        return obs, reward, terminated, truncated, info
+
+    def reset(self, *, seed: int | None = None, options: dict[str, Any] | None = None):
+        obs, info = self.env.reset(seed=seed, options=options)
+        if "action_intervention" in info:
+            info["action_intervention"] = torch.from_numpy(info["action_intervention"]).to(self.device)
+        return obs, info
+
+
 ###########################################################
 # Factory functions
 ###########################################################
@@ -1731,6 +1775,18 @@ def make_robot_env(cfg) -> gym.vector.VectorEnv:
     Returns:
         A vectorized gym environment with all necessary wrappers applied.
     """
+    if cfg.robot == "hil":
+        import gymnasium as gym
+
+        from lerobot.common.envs.utils import ObservationProcessorWrapper
+
+        # TODO (azouitine)
+        env = gym.make(f"gym_hil/{cfg.env.task}")
+        env = ObservationProcessorWrapper(env=env)
+        env = GymHilInfoWrapper(env=env, device=cfg.device)
+        env = BatchCompatibleWrapper(env=env)
+        env = TorchActionWrapper(env=env, device=cfg.device)
+        return env
     robot = make_robot_from_config(cfg.robot)
     # Create base environment
     env = RobotEnv(
@@ -2096,4 +2152,15 @@ def main(cfg: EnvConfig):
 
 
 if __name__ == "__main__":
-    main()
+    # main()
+    from lerobot.common.envs.configs import HILEnvConfig
+    from lerobot.common.envs.factory import make_env
+
+    cfg = HILEnvConfig(
+        type="hil",
+        task="PandaPickCubeBase-v0",
+    )
+    env = make_env(cfg)
+    env = TorchActionWrapper(env=env, device=cfg.device)
+    env = HackVecToMonoEnv(env=env)
+    env.reset()
