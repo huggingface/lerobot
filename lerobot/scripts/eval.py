@@ -66,7 +66,7 @@ from torch import Tensor, nn
 from tqdm import trange
 
 from lerobot.common.envs.factory import make_env
-from lerobot.common.envs.utils import add_envs_task, check_env_attributes_and_types
+from lerobot.common.envs.utils import add_envs_task, check_env_attributes_and_types, preprocess_observation
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.policies.utils import get_device_from_parameters
@@ -94,8 +94,8 @@ def rollout(
     data will probably need to be discarded (for environments that aren't the first one to be done).
 
     The return dictionary contains:
-        (optional) "observation": A a dictionary of (batch, sequence + 1, *) tensors mapped to observation
-            keys. NOTE the that this has an extra sequence element relative to the other keys in the
+        (optional) "observation": A dictionary of (batch, sequence + 1, *) tensors mapped to observation
+            keys. NOTE that this has an extra sequence element relative to the other keys in the
             dictionary. This is because an extra observation is included for after the environment is
             terminated or truncated.
         "action": A (batch, sequence, action_dim) tensor of actions applied based on the observations (not
@@ -146,6 +146,8 @@ def rollout(
     )
     check_env_attributes_and_types(env)
     while not np.all(done):
+        # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
+        observation = preprocess_observation(observation)
         if return_observations:
             all_observations.append(deepcopy(observation))
 
@@ -193,6 +195,7 @@ def rollout(
 
     # Track the final observation.
     if return_observations:
+        observation = preprocess_observation(observation)
         all_observations.append(deepcopy(observation))
 
     # Stack the sequence along the first dimension so that we have (batch, sequence, *) tensors.

@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+
 # Copyright 2024 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,6 +22,7 @@ from gymnasium.utils.env_checker import check_env
 
 import lerobot
 from lerobot.common.envs.factory import make_env, make_env_config
+from lerobot.common.envs.utils import preprocess_observation
 from tests.utils import require_env
 
 OBS_TYPES = ["state", "pixels", "pixels_agent_pos"]
@@ -46,6 +48,7 @@ def test_factory(env_name):
     cfg = make_env_config(env_name)
     env = make_env(cfg, n_envs=1)
     obs, _ = env.reset()
+    obs = preprocess_observation(obs)
 
     # test image keys are float32 in range [0,1]
     for key in obs:

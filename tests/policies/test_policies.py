@@ -26,6 +26,7 @@ from lerobot import available_policies
 from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.datasets.utils import cycle, dataset_to_policy_features
 from lerobot.common.envs.factory import make_env, make_env_config
+from lerobot.common.envs.utils import preprocess_observation
 from lerobot.common.optim.factory import make_optimizer_and_scheduler
 from lerobot.common.policies.act.modeling_act import ACTTemporalEnsembler
 from lerobot.common.policies.factory import (
@@ -180,6 +181,9 @@ def test_policy(ds_repo_id, env_name, env_kwargs, policy_name, policy_kwargs):
     # reset the policy and environment
     policy.reset()
     observation, _ = env.reset(seed=train_cfg.seed)
+
+    # apply transform to normalize the observations
+    observation = preprocess_observation(observation)
 
     # send observation to device/gpu
     observation = {key: observation[key].to(DEVICE, non_blocking=True) for key in observation}
