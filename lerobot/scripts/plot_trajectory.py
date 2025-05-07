@@ -22,8 +22,33 @@ Example
 
 from pathlib import Path
 from typing import List, Literal, Tuple
+from __future__ import annotations
+
+"""Utility functions for visualising action trajectories.
+
+This module supersedes the previous `plot_trajectory.py` by automatically
+handling two common action encodings:
+
+* **Pose‐based**: `(x, y, z, rot..., gripper)` per hand (≥8 dim typically)
+* **Joint‐based**: `n_joints` joint positions (6 or 7 dim usually)
+
+It aims to remain *plug‑and‑play* – you can drop it into other workspaces
+without touching the rest of your pipeline.  Simply import the top‑level
+:func:`plot_epoch_trajectories` in place of the old implementation.
+
+Example
+-------
+>>> from pathlib import Path
+>>> import torch
+>>> gt, pred = torch.randn(4, 10, 14), torch.randn(4, 10, 14)  # (B,T,D)
+>>> out_paths = plot_epoch_trajectories(gt, pred, Path('tmp/plots'), index=1)
+"""
+
+from pathlib import Path
+from typing import List, Literal, Tuple
 
 import numpy as np
+import torch
 import torch
 import matplotlib.pyplot as plt
 
@@ -80,7 +105,62 @@ def _plot_gripper(gt: np.ndarray, pred: np.ndarray, title: str, save_path: Path)
     fig, ax = plt.subplots()
     ax.plot(gt, label="GT_grip")
     ax.plot(pred, linestyle="--", label="Pred_grip")
+
+__all__ = [
+    "plot_epoch_trajectories",
+]
+
+###############################################################################
+# Low‑level helpers
+###############################################################################
+
+
+def _plot_xyz(
+    gt_xyz: np.ndarray, pred_xyz: np.ndarray, title: str, save_path: Path
+) -> None:
+    """3‑D XYZ trajectory plot."""
+
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection="3d")
+    ax.plot(gt_xyz[:, 0], gt_xyz[:, 1], gt_xyz[:, 2], label="GroundTruth", linestyle="-")
+    ax.plot(pred_xyz[:, 0], pred_xyz[:, 1], pred_xyz[:, 2], label="Prediction", linestyle="--")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.set_zlabel("z")
     ax.set_title(title)
+    ax.legend()
+    fig.savefig(save_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _plot_rotations(
+    gt_rot: np.ndarray,
+    pred_rot: np.ndarray,
+    title: str,
+    save_path: Path,
+) -> None:
+    """Plot each rotation channel as a separate line on a common axis."""
+
+    fig, ax = plt.subplots()
+    rot_dim = gt_rot.shape[1]
+    for c in range(rot_dim):
+        ax.plot(gt_rot[:, c], label=f"GT_R{c}")
+        ax.plot(pred_rot[:, c], linestyle="--", label=f"Pred_R{c}")
+    ax.set_title(title)
+    ax.set_xlabel("t")
+    ax.legend(ncol=2, fontsize="small")
+    fig.savefig(save_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _plot_gripper(gt: np.ndarray, pred: np.ndarray, title: str, save_path: Path) -> None:
+    """Plot gripper open value over time."""
+
+    fig, ax = plt.subplots()
+    ax.plot(gt, label="GT_grip")
+    ax.plot(pred, linestyle="--", label="Pred_grip")
+    ax.set_title(title)
+    ax.set_xlabel("t")
     ax.set_xlabel("t")
     ax.legend()
     fig.savefig(save_path, dpi=200, bbox_inches="tight")
