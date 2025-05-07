@@ -14,11 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import argparse  
+import argparse
 import json
 from copy import deepcopy
-from typing import Dict, Tuple
 from pathlib import Path
+from typing import Dict, Tuple
+
 import cv2
 
 # import torch.nn.functional as F  # noqa: N812
