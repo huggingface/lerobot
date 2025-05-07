@@ -1012,7 +1012,7 @@ class EEActionWrapper(gym.ActionWrapper):
         self.use_gripper = use_gripper
 
         # Initialize kinematics instance for the appropriate robot type
-        robot_type = getattr(env.unwrapped.robot.config, "robot_type", "so100")
+        robot_type = getattr(env.unwrapped.robot.config, "type", "so100")
         self.kinematics = RobotKinematics(robot_type)
         self.fk_function = self.kinematics.fk_gripper_tip
 
