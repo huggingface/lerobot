@@ -54,9 +54,7 @@ def calculate_episode_data_index(hf_dataset: datasets.Dataset) -> dict[str, np.n
 
 @pytest.fixture(scope="module")
 def synced_timestamps_factory(hf_dataset_factory):
-    def _create_synced_timestamps(
-        fps: int = 30,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def _create_synced_timestamps(fps: int = 30) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         hf_dataset = hf_dataset_factory(fps=fps)
         timestamps = torch.stack(hf_dataset["timestamp"]).numpy()
         episode_indices = torch.stack(hf_dataset["episode_index"]).numpy()
@@ -93,9 +91,7 @@ def slightly_off_timestamps_factory(synced_timestamps_factory):
 @pytest.fixture(scope="module")
 def valid_delta_timestamps_factory():
     def _create_valid_delta_timestamps(
-        fps: int = 30,
-        keys: list = DUMMY_MOTOR_FEATURES,
-        min_max_range: tuple[int, int] = (-10, 10),
+        fps: int = 30, keys: list = DUMMY_MOTOR_FEATURES, min_max_range: tuple[int, int] = (-10, 10)
     ) -> dict:
         delta_timestamps = {key: [i * (1 / fps) for i in range(*min_max_range)] for key in keys}
         return delta_timestamps
