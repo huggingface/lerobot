@@ -63,7 +63,6 @@ dependencies = [
     "omegaconf>=2.3.0",
     "opencv-python-headless>=4.9.0",
     "packaging>=24.2",
-    "protobuf>=5.29.3",
     "av>=14.2.0",
     "pymunk>=6.6.0",
     "pynput>=1.7.7",
@@ -72,9 +71,7 @@ dependencies = [
     "termcolor>=2.4.0",
     "torch>=2.2.1,<2.7",
     "torchcodec==0.2.1; sys_platform != 'win32' and (sys_platform != 'linux' or (platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l')) and (sys_platform != 'darwin' or platform_machine != 'x86_64')",
-    "torchmetrics>=1.6.0",
     "torchvision>=0.21.0",
-    "transformers>=4.47.0",
     "wandb>=0.16.3",
     "zarr>=2.17.0",
 ]
@@ -88,7 +85,7 @@ dora = [
 ]
 dynamixel = ["dynamixel-sdk>=3.7.31", "pynput>=1.7.7"]
 feetech = ["feetech-servo-sdk>=1.0.0", "pynput>=1.7.7"]
-hilserl = ["transformers>=4.48.0", "torchmetrics>=1.6.0", "gym-hil>=0.1.2"]
+hilserl = ["transformers>=4.48.0", "torchmetrics>=1.6.0", "gym-hil>=0.1.2", "protobuf>=5.29.3"]
 intelrealsense = ["pyrealsense2>=2.55.1.6486 ; sys_platform != 'darwin'"]
 pi0 = ["transformers>=4.48.0"]
 pusht = ["gym-pusht>=0.1.5 ; python_version < '4.0'"]
