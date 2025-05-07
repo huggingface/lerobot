@@ -24,6 +24,7 @@ import queue
 import time
 from pathlib import Path
 from threading import Event, Thread
+from typing import Dict, List, Union
 
 import cv2
 import numpy as np
@@ -142,34 +143,6 @@ class OpenCVCamera(Camera):
         """Checks if the camera is currently connected and opened."""
         return isinstance(self.videocapture_camera, cv2.VideoCapture) and self.videocapture_camera.isOpened()
 
-    # NOTE(Steven): Make it a class method and an util for calling it in utils.py (don't raise)
-    def _scan_available_cameras_and_raise(self, index_or_path: IndexOrPath) -> None:
-        """
-        Scans for available cameras and raises an error if the specified
-        camera cannot be found or accessed.
-
-        Args:
-            index_or_path: The camera identifier that failed to connect.
-
-        Raises:
-            ValueError: If the specified `index_or_path` is not found among the
-                list of detected, usable cameras.
-            ConnectionError: If the camera connection fails (this specific method
-                is called within the connection failure context).
-        """
-        cameras_info = self.find_cameras()
-        available_cam_ids = [cam["index"] for cam in cameras_info]
-        if index_or_path not in available_cam_ids:
-            raise ValueError(
-                f"Camera '{index_or_path}' not found or not accessible among available cameras: {available_cam_ids}. "
-                "Ensure the camera is properly connected and drivers are installed. "
-                "Run 'NOTE(Steven): Add script path' to list detected cameras."
-            )
-        raise ConnectionError(
-            f"Failed to connect to camera {self}. Even though it might be listed, it could not be opened."
-        )
-
-    # NOTE(Steven): Moving it to a different function for now. To be evaluated later if it is worth it and if it makes sense to have it as an abstract method
     def _configure_capture_settings(self) -> None:
         """
         Applies the specified FPS, width, and height settings to the connected camera.
@@ -228,8 +201,9 @@ class OpenCVCamera(Camera):
             self.videocapture_camera.release()
             self.videocapture_camera = None
             raise ConnectionError(
-                f"Failed to open camera {self.index_or_path}. Run NOTE(Steven): Add right file to scan for available cameras."
-            )  # NOTE(Steven): Run this _scan_available_cameras_and_raise
+                f"Failed to open OpenCV camera {self.index_or_path}."
+                f"Run 'python -m find_cameras list-cameras' for details."
+            )
 
         logger.debug(f"Successfully opened camera {self.index_or_path}. Applying configuration...")
         self._configure_capture_settings()
@@ -259,13 +233,14 @@ class OpenCVCamera(Camera):
     def _validate_capture_width(self) -> None:
         """Validates and sets the camera's frame capture width."""
 
+        actual_width = int(round(self.videocapture_camera.get(cv2.CAP_PROP_FRAME_WIDTH)))
+
         if self.capture_width is None:
-            self.capture_width = self.videocapture_camera.get(cv2.CAP_PROP_FRAME_WIDTH)
+            self.capture_width = actual_width
             logger.info(f"Capture width set to camera default: {self.capture_width}.")
             return
 
         success = self.videocapture_camera.set(cv2.CAP_PROP_FRAME_WIDTH, float(self.capture_width))
-        actual_width = round(self.videocapture_camera.get(cv2.CAP_PROP_FRAME_WIDTH))
         if not success or self.capture_width != actual_width:
             logger.warning(
                 f"Requested capture width {self.capture_width} for {self}, but camera reported {actual_width} (set success: {success})."
@@ -278,13 +253,14 @@ class OpenCVCamera(Camera):
     def _validate_capture_height(self) -> None:
         """Validates and sets the camera's frame capture height."""
 
+        actual_height = int(round(self.videocapture_camera.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+
         if self.capture_height is None:
-            self.capture_height = self.videocapture_camera.get(cv2.CAP_PROP_FRAME_HEIGHT)
+            self.capture_height = actual_height
             logger.info(f"Capture height set to camera default: {self.capture_height}.")
             return
 
         success = self.videocapture_camera.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self.capture_height))
-        actual_height = round(self.videocapture_camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
         if not success or self.capture_height != actual_height:
             logger.warning(
                 f"Requested capture height {self.capture_height} for {self}, but camera reported {actual_height} (set success: {success})."
@@ -295,25 +271,25 @@ class OpenCVCamera(Camera):
         logger.debug(f"Capture height set to {actual_height} for {self}.")
 
     @staticmethod
-    def find_cameras(max_index_search_range=MAX_OPENCV_INDEX) -> list[IndexOrPath]:
+    def find_cameras(
+        max_index_search_range=MAX_OPENCV_INDEX, raise_when_empty: bool = True
+    ) -> List[Dict[str, Union[str, int, float]]]:
         """
-        Detects available cameras connected to the system.
+        Detects available OpenCV cameras connected to the system.
 
         On Linux, it scans '/dev/video*' paths. On other systems (like macOS, Windows),
         it checks indices from 0 up to `max_index_search_range`.
 
         Args:
             max_index_search_range (int): The maximum index to check on non-Linux systems.
+            raise_when_empty (bool): If True, raises an OSError if no cameras are found.
 
         Returns:
-            list[dict]: A list of dictionaries, where each dictionary contains information
-                       about a found camera, primarily its 'index' (which can be an
-                       integer index or a string path).
-
-        Note:
-            This method temporarily opens each potential camera to check availability,
-            which might briefly interfere with other applications using cameras.
+            List[Dict[str, Union[str, int, float]]]: A list of dictionaries,
+            where each dictionary contains 'type', 'id' (port index or path),
+            'default_width', 'default_height', and 'default_fps'.
         """
+        found_cameras_info = []
 
         if platform.system() == "Linux":
             logger.info("Linux detected. Scanning '/dev/video*' device paths...")
@@ -326,20 +302,32 @@ class OpenCVCamera(Camera):
             )
             targets_to_scan = list(range(max_index_search_range))
 
-        found_cameras = []
         for target in targets_to_scan:
             camera = cv2.VideoCapture(target, get_cv2_backend())
             if camera.isOpened():
-                logger.debug(f"Camera found and accessible at '{target}'")
-                found_cameras.append(target)
+                default_width = int(camera.get(cv2.CAP_PROP_FRAME_WIDTH))
+                default_height = int(camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                default_fps = camera.get(cv2.CAP_PROP_FPS)
+
+                camera_info = {
+                    "type": "OpenCV",
+                    "id": target,
+                    "default_width": default_width,
+                    "default_height": default_height,
+                    "default_fps": default_fps,
+                    "backend_api": camera.getBackendName(),
+                }
+                found_cameras_info.append(camera_info)
+                logger.debug(f"Found OpenCV camera:: {camera_info}")
                 camera.release()
 
-        if not found_cameras:
-            logger.warning("No OpenCV cameras detected.")
-        else:
-            logger.info(f"Detected accessible cameras: {found_cameras}")
+        if not found_cameras_info:
+            logger.warning("No OpenCV devices detected.")
+            if raise_when_empty:
+                raise OSError("No OpenCV devices detected. Ensure cameras are connected.")
 
-        return found_cameras
+        logger.info(f"Detected OpenCV cameras: {[cam['id'] for cam in found_cameras_info]}")
+        return found_cameras_info
 
     def read(self, color_mode: ColorMode | None = None) -> np.ndarray:
         """
@@ -460,7 +448,7 @@ class OpenCVCamera(Camera):
 
     def _ensure_read_thread_running(self):
         """Starts or restarts the background read thread if it's not running."""
-        if self.thread is not None:
+        if self.thread is not None and self.thread.is_alive():
             self.thread.join(timeout=0.1)
         if self.stop_event is not None:
             self.stop_event.set()
@@ -522,18 +510,14 @@ class OpenCVCamera(Camera):
         if self.stop_event is not None:
             logger.debug(f"Signaling stop event for read thread of {self}.")
             self.stop_event.set()
-        else:
-            logger.warning(f"Stop event not found for thread of {self}, cannot signal.")
 
-        if self.thread.is_alive():
+        if self.thread is not None and self.thread.is_alive():
             logger.debug(f"Waiting for read thread of {self} to join...")
             self.thread.join(timeout=2.0)
             if self.thread.is_alive():
                 logger.warning(f"Read thread for {self} did not terminate gracefully after 2 seconds.")
             else:
                 logger.debug(f"Read thread for {self} joined successfully.")
-        else:
-            logger.debug(f"Read thread for {self} was already stopped.")
 
         self.thread = None
         self.stop_event = None
