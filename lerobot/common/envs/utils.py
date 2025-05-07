@@ -47,6 +47,8 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
             # TODO(aliberts, rcadene): use transforms.ToTensor()?
             img = torch.from_numpy(img)
 
+            if img.dim() == 3:
+                img = img.unsqueeze(0)
             # sanity check that images are channel last
             _, h, w, c = img.shape
             assert c < h and c < w, f"expect channel last images, but instead got {img.shape=}"
@@ -62,14 +64,48 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
             return_observations[imgkey] = img
 
     if "environment_state" in observations:
-        return_observations["observation.environment_state"] = torch.from_numpy(
-            observations["environment_state"]
-        ).float()
+        env_state = torch.from_numpy(observations["environment_state"]).float()
+        if env_state.dim() == 1:
+            env_state = env_state.unsqueeze(0)
+
+        return_observations["observation.environment_state"] = env_state
 
     # TODO(rcadene): enable pixels only baseline with `obs_type="pixels"` in environment by removing
-    # requirement for "agent_pos"
-    return_observations["observation.state"] = torch.from_numpy(observations["agent_pos"]).float()
+    agent_pos = torch.from_numpy(observations["agent_pos"]).float()
+    if agent_pos.dim() == 1:
+        agent_pos = agent_pos.unsqueeze(0)
+    return_observations["observation.state"] = agent_pos
+
     return return_observations
+
+
+class ObservationProcessorWrapper(gym.vector.VectorEnvWrapper):
+    def __init__(self, env: gym.vector.VectorEnv):
+        super().__init__(env)
+
+    def _observations(self, observations: dict[str, Any]) -> dict[str, Any]:
+        return preprocess_observation(observations)
+
+    def reset(
+        self,
+        *,
+        seed: int | list[int] | None = None,
+        options: dict[str, Any] | None = None,
+    ):
+        """Modifies the observation returned from the environment ``reset`` using the :meth:`observation`."""
+        observations, infos = self.env.reset(seed=seed, options=options)
+        return self._observations(observations), infos
+
+    def step(self, actions):
+        """Modifies the observation returned from the environment ``step`` using the :meth:`observation`."""
+        observations, rewards, terminations, truncations, infos = self.env.step(actions)
+        return (
+            self._observations(observations),
+            rewards,
+            terminations,
+            truncations,
+            infos,
+        )
 
 
 def env_to_policy_features(env_cfg: EnvConfig) -> dict[str, PolicyFeature]:
