@@ -65,7 +65,6 @@ class RealSenseCameraConfig(CameraConfig):
         if self.channels != 3:
             raise NotImplementedError(f"Unsupported number of channels: {self.channels}")
 
-        # bool is stronger than is None, since it works with empty strings
         if bool(self.name) and bool(self.serial_number):
             raise ValueError(
                 f"One of them must be set: name or serial_number, but {self.name=} and {self.serial_number=} provided."

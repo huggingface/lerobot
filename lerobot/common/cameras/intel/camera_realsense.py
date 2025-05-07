@@ -154,9 +154,8 @@ class RealSenseCamera(Camera):
         """Checks if the camera pipeline is started and streams are active."""
         return self.rs_pipeline is not None and self.rs_profile is not None
 
-    # NOTE(Steven): Make it a class method and an util for calling it in utils.py (don't raise)
     @staticmethod
-    def find_cameras(raise_when_empty: bool = True) -> List[Dict[str, str]]:
+    def find_cameras(raise_when_empty: bool = True) -> List[Dict[str, Union[str, int, float]]]:
         """
         Detects available Intel RealSense cameras connected to the system.
 
@@ -164,38 +163,47 @@ class RealSenseCamera(Camera):
             raise_when_empty (bool): If True, raises an OSError if no cameras are found.
 
         Returns:
-            list[dict]: A list of dictionaries, where each dictionary contains
-                       'serial_number' and 'name' of a found camera.
+            List[Dict[str, Union[str, int, float]]]: A list of dictionaries,
+            where each dictionary contains 'type', 'serial_number', 'name',
+            firmware version, USB type, and other available specs.
 
         Raises:
-            OSError: If `raise_when_empty` is True and no cameras are detected.
+            OSError: If `raise_when_empty` is True and no cameras are detected,
+                     or if pyrealsense2 is not installed.
         """
-        cameras_info = []
+        found_cameras_info = []
         context = rs.context()
         devices = context.query_devices()
+
         if not devices:
             logger.warning("No RealSense devices detected.")
             if raise_when_empty:
                 raise OSError(
                     "No RealSense devices detected. Ensure cameras are connected, "
-                    "drivers (`librealsense`) and wrapper (`pyrealsense2`) are installed, "
-                    "and firmware is up-to-date."
+                    "library (`pyrealsense2`) is installed, and firmware is up-to-date."
                 )
-            return []
 
         for device in devices:
-            serial = device.get_info(rs.camera_info.serial_number)
-            name = device.get_info(rs.camera_info.name)
-            cameras_info.append({"serial_number": serial, "name": name})
-            logger.debug(f"Found RealSense camera: Name='{name}', SN='{serial}'")
+            camera_info = {
+                "type": "RealSense",
+                "serial_number": device.get_info(rs.camera_info.serial_number),
+                "firmware_version": device.get_info(rs.camera_info.firmware_version),
+                "usb_type_descriptor": device.get_info(rs.camera_info.usb_type_descriptor),
+                "physical_port": device.get_info(rs.camera_info.physical_port),
+                "product_id": device.get_info(rs.camera_info.product_id),
+                "product_line": device.get_info(rs.camera_info.product_line),
+                "name": device.get_info(rs.camera_info.name),
+            }
+            found_cameras_info.append(camera_info)
+            logger.debug(f"Found RealSense camera: {camera_info}")
 
-        logger.info(f"Detected RealSense cameras: {cameras_info}")
-        return cameras_info
+        logger.info(f"Detected RealSense cameras: {[cam['serial_number'] for cam in found_cameras_info]}")
+        return found_cameras_info
 
     def _find_serial_number_from_name(self, name: str) -> str:
         """Finds the serial number for a given unique camera name."""
-        camera_infos = self.find_cameras(raise_when_empty=True)  # Raises if none found
-        found_devices = [cam for cam in camera_infos if cam["name"] == name]
+        camera_infos = self.find_cameras(raise_when_empty=True)
+        found_devices = [cam for cam in camera_infos if str(cam["name"]) == name]
 
         if not found_devices:
             available_names = [cam["name"] for cam in camera_infos]
@@ -210,7 +218,7 @@ class RealSenseCamera(Camera):
                 f"Please use a unique serial number instead. Found SNs: {serial_numbers}"
             )
 
-        serial_number = found_devices[0]["serial_number"]
+        serial_number = str(found_devices[0]["serial_number"])
         logger.info(f"Found serial number '{serial_number}' for camera name '{name}'.")
         return serial_number
 
@@ -265,7 +273,6 @@ class RealSenseCamera(Camera):
         self._validate_capture_width()
         self._validate_capture_height()
 
-        # Validate Depth Stream if enabled
         if self.use_depth:
             try:
                 depth_stream = self.rs_profile.get_stream(rs.stream.depth).as_video_stream_profile()
@@ -329,8 +336,9 @@ class RealSenseCamera(Camera):
             self.rs_profile = None
             self.rs_pipeline = None
             raise ConnectionError(
-                f"Failed to open camera {self.serial_number}. Run NOTE(Steven): Add right file to scan for available cameras."
-            ) from e  # NOTE(Steven): Run find_cameras: available_sns = [cam["serial_number"] for cam in self.find_cameras(raise_when_empty=False)]
+                f"Failed to open RealSense camera {self.serial_number}. Error: {e}. "
+                f"Run 'python -m find_cameras list-cameras' for details."
+            ) from e
 
         logger.debug(f"Validating stream configuration for {self.serial_number}...")
         self._validate_capture_settings()
@@ -362,14 +370,13 @@ class RealSenseCamera(Camera):
         """Validates and sets the internal capture width based on actual stream width."""
 
         color_stream = self.rs_profile.get_stream(rs.stream.color).as_video_stream_profile()
-        actual_width = color_stream.width()
+        actual_width = int(round(color_stream.width()))
 
         if self.capture_width is None:
             self.capture_width = actual_width
             logger.info(f"Capture width not specified, using camera default: {self.capture_width} pixels.")
             return
 
-        actual_width = round(actual_width)
         if self.capture_width != actual_width:
             logger.warning(
                 f"Requested capture width {self.capture_width} for {self}, but camera reported {actual_width}."
@@ -383,14 +390,13 @@ class RealSenseCamera(Camera):
         """Validates and sets the internal capture height based on actual stream height."""
 
         color_stream = self.rs_profile.get_stream(rs.stream.color).as_video_stream_profile()
-        actual_height = color_stream.height()
+        actual_height = int(round(color_stream.height()))
 
         if self.capture_height is None:
             self.capture_height = actual_height
             logger.info(f"Capture height not specified, using camera default: {self.capture_height} pixels.")
             return
 
-        actual_height = round(actual_height)
         if self.capture_height != actual_height:
             logger.warning(
                 f"Requested capture height {self.capture_height} for {self}, but camera reported {actual_height}."
@@ -531,7 +537,7 @@ class RealSenseCamera(Camera):
         logger.debug(f"Starting read loop thread for {self}.")
         while not self.stop_event.is_set():
             try:
-                frame_data = self.read()
+                frame_data = self.read(timeout_ms=500)
 
                 with contextlib.suppress(queue.Empty):
                     _ = self.frame_queue.get_nowait()
@@ -548,7 +554,7 @@ class RealSenseCamera(Camera):
 
     def _ensure_read_thread_running(self):
         """Starts or restarts the background read thread if it's not running."""
-        if self.thread is not None:
+        if self.thread is not None and self.thread.is_alive():
             self.thread.join(timeout=0.1)
         if self.stop_event is not None:
             self.stop_event.set()
@@ -615,18 +621,14 @@ class RealSenseCamera(Camera):
         if self.stop_event is not None:
             logger.debug(f"Signaling stop event for read thread of {self}.")
             self.stop_event.set()
-        else:
-            logger.warning(f"Read thread exists for {self}, but stop event is None. Cannot signal.")
 
-        if self.thread.is_alive():
+        if self.thread is not None and self.thread.is_alive():
             logger.debug(f"Waiting for read thread of {self} to join...")
             self.thread.join(timeout=2.0)
             if self.thread.is_alive():
                 logger.warning(f"Read thread for {self} did not terminate gracefully after 2 seconds.")
             else:
                 logger.debug(f"Read thread for {self} joined successfully.")
-        else:
-            logger.debug(f"Read thread for {self} was already stopped.")
 
         self.thread = None
         self.stop_event = None
