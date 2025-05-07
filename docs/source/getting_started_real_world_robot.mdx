@@ -152,7 +152,7 @@ If everything is set up correctly, you can proceed with the rest of the tutorial
 
 ## Teleoperate with cameras
 
-We can now teleoperate again while at the same time visualzing the camera's and joint positions with `rerun`.
+We can now teleoperate again while at the same time visualizing the camera's and joint positions with `rerun`.
 
 ```bash
 python lerobot/scripts/control_robot.py \
@@ -165,7 +165,7 @@ python lerobot/scripts/control_robot.py \
 
 Once you're familiar with teleoperation, you can record your first dataset with SO-101.
 
-We use the Hugging Face hub features for uploading your dataset. If you haven't previously used the Hub, make sure you've can login via the cli using a write-access token, this token can be generated from the [Hugging Face settings](https://huggingface.co/settings/tokens).
+We use the Hugging Face hub features for uploading your dataset. If you haven't previously used the Hub, make sure you can login via the cli using a write-access token, this token can be generated from the [Hugging Face settings](https://huggingface.co/settings/tokens).
 
 Add your token to the cli by running this command:
 ```bash
@@ -318,7 +318,7 @@ python lerobot/scripts/train.py \
 
 Let's explain the command:
 1. We provided the dataset as argument with `--dataset.repo_id=${HF_USER}/so101_test`.
-2. We provided the policy with `policy.type=act`. This loads configurations from [`configuration_act.py`](../lerobot/common/policies/act/configuration_act.py). Importantly, this policy will automatically adapt to the number of motor sates, motor actions and cameras of your robot (e.g. `laptop` and `phone`) which have been saved in your dataset.
+2. We provided the policy with `policy.type=act`. This loads configurations from [`configuration_act.py`](../lerobot/common/policies/act/configuration_act.py). Importantly, this policy will automatically adapt to the number of motor states, motor actions and cameras of your robot (e.g. `laptop` and `phone`) which have been saved in your dataset.
 4. We provided `policy.device=cuda` since we are training on a Nvidia GPU, but you could use `policy.device=mps` to train on Apple silicon.
 5. We provided `wandb.enable=true` to use [Weights and Biases](https://docs.wandb.ai/quickstart) for visualizing training plots. This is optional but if you use it, make sure you are logged in by running `wandb login`.
 
