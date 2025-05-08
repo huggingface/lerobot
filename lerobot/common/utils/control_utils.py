@@ -31,9 +31,9 @@ from termcolor import colored
 
 from lerobot.common.datasets.image_writer import safe_stop_image_writer
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.datasets.utils import get_features_from_robot
+from lerobot.common.datasets.utils import DEFAULT_FEATURES
 from lerobot.common.policies.pretrained import PreTrainedPolicy
-from lerobot.common.robots.utils import Robot
+from lerobot.common.robots import Robot
 from lerobot.common.utils.robot_utils import busy_wait
 from lerobot.common.utils.utils import get_safe_torch_device, has_method
 
@@ -327,12 +327,12 @@ def sanity_check_dataset_name(repo_id, policy_cfg):
 
 
 def sanity_check_dataset_robot_compatibility(
-    dataset: LeRobotDataset, robot: Robot, fps: int, use_videos: bool
+    dataset: LeRobotDataset, robot: Robot, fps: int, features: dict
 ) -> None:
     fields = [
         ("robot_type", dataset.meta.robot_type, robot.robot_type),
         ("fps", dataset.fps, fps),
-        ("features", dataset.features, get_features_from_robot(robot, use_videos)),
+        ("features", dataset.features, {**features, **DEFAULT_FEATURES}),
     ]
 
     mismatches = []

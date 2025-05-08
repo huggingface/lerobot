@@ -72,7 +72,7 @@ from lerobot.common.datasets.video_utils import (
     get_safe_default_codec,
     get_video_info,
 )
-from lerobot.common.robots.utils import Robot
+from lerobot.common.robots import Robot
 
 CODEBASE_VERSION = "v2.1"
 
@@ -785,7 +785,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         else:
             self.image_writer.save_image(image=image, fpath=fpath)
 
-    def add_frame(self, frame: dict) -> None:
+    def add_frame(self, frame: dict, task: str, timestamp: float | None = None) -> None:
         """
         This function only adds the frame to the episode_buffer. Apart from images — which are written in a
         temporary directory — nothing is written to disk. To save those frames, the 'save_episode()' method
@@ -803,17 +803,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         # Automatically add frame_index and timestamp to episode buffer
         frame_index = self.episode_buffer["size"]
-        timestamp = frame.pop("timestamp") if "timestamp" in frame else frame_index / self.fps
+        if timestamp is None:
+            timestamp = frame_index / self.fps
         self.episode_buffer["frame_index"].append(frame_index)
         self.episode_buffer["timestamp"].append(timestamp)
+        self.episode_buffer["task"].append(task)
 
         # Add frame features to episode_buffer
         for key in frame:
-            if key == "task":
-                # Note: we associate the task in natural language to its task index during `save_episode`
-                self.episode_buffer["task"].append(frame["task"])
-                continue
-
             if key not in self.features:
                 raise ValueError(
                     f"An element of the frame is not in the features. '{key}' not in '{self.features.keys()}'."
