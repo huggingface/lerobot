@@ -9,25 +9,6 @@ from examples.port_datasets.droid_rlds.port_droid import DROID_SHARDS
 from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
 
 
-def validate_shard(repo_id):
-    """Sanity check that ensure meta data can be loaded and all files are present."""
-    meta = LeRobotDatasetMetadata(repo_id)
-
-    if meta.total_episodes == 0:
-        raise ValueError("Number of episodes is 0.")
-
-    for ep_idx in range(meta.total_episodes):
-        data_path = meta.root / meta.get_data_file_path(ep_idx)
-
-        if not data_path.exists():
-            raise ValueError(f"Parquet file is missing in: {data_path}")
-
-        for vid_key in meta.video_keys:
-            vid_path = meta.root / meta.get_video_file_path(ep_idx, vid_key)
-            if not vid_path.exists():
-                raise ValueError(f"Video file is missing in: {vid_path}")
-
-
 class PortDroidShards(PipelineStep):
     def __init__(
         self,
@@ -41,7 +22,7 @@ class PortDroidShards(PipelineStep):
     def run(self, data=None, rank: int = 0, world_size: int = 1):
         from datasets.utils.tqdm import disable_progress_bars
 
-        from examples.port_datasets.droid_rlds.port_droid import port_droid
+        from examples.port_datasets.droid_rlds.port_droid import port_droid, validate_dataset
         from lerobot.common.utils.utils import init_logging
 
         init_logging()
@@ -57,7 +38,7 @@ class PortDroidShards(PipelineStep):
             shard_index=rank,
         )
 
-        validate_shard(shard_repo_id)
+        validate_dataset(shard_repo_id)
 
 
 def make_port_executor(

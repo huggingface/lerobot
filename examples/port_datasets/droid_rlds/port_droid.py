@@ -22,7 +22,7 @@ from pathlib import Path
 import numpy as np
 import tensorflow_datasets as tfds
 
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.common.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
 from lerobot.common.utils.utils import get_elapsed_time_in_days_hours_minutes_seconds
 
 DROID_SHARDS = 2048
@@ -368,6 +368,25 @@ def port_droid(
             tags=["openx"],
             private=False,
         )
+
+
+def validate_dataset(repo_id):
+    """Sanity check that ensure meta data can be loaded and all files are present."""
+    meta = LeRobotDatasetMetadata(repo_id)
+
+    if meta.total_episodes == 0:
+        raise ValueError("Number of episodes is 0.")
+
+    for ep_idx in range(meta.total_episodes):
+        data_path = meta.root / meta.get_data_file_path(ep_idx)
+
+        if not data_path.exists():
+            raise ValueError(f"Parquet file is missing in: {data_path}")
+
+        for vid_key in meta.video_keys:
+            vid_path = meta.root / meta.get_video_file_path(ep_idx, vid_key)
+            if not vid_path.exists():
+                raise ValueError(f"Video file is missing in: {vid_path}")
 
 
 def main():
