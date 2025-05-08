@@ -15,10 +15,10 @@ import os
 import time
 from pathlib import Path
 
-from serial.tools import list_ports  # Part of pyserial library
-
 
 def find_available_ports():
+    from serial.tools import list_ports  # Part of pyserial library
+
     if os.name == "nt":  # Windows
         # List COM ports using pyserial
         ports = [port.device for port in list_ports.comports()]
