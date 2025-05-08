@@ -195,7 +195,7 @@ def record_loop(
 
 
 @draccus.wrap()
-def record(cfg: RecordConfig):
+def record(cfg: RecordConfig) -> LeRobotDataset:
     init_logging()
     logging.info(pformat(asdict(cfg)))
     if cfg.display_data:
