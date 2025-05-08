@@ -46,7 +46,7 @@ class Teleoperator(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def connect(self) -> None:
+    def connect(self, calibrate: bool = True) -> None:
         """Connects to the teleoperator."""
         pass
 

@@ -82,7 +82,7 @@ class MossRobot(Robot):
         # TODO(aliberts): add cam.is_connected for cam in self.cameras
         return self.arm.is_connected
 
-    def connect(self) -> None:
+    def connect(self, calibrate: bool = True) -> None:
         """
         We assume that at connection time, arm is in a rest position,
         and torque can be safely disabled to run calibration.
@@ -91,7 +91,7 @@ class MossRobot(Robot):
             raise DeviceAlreadyConnectedError(f"{self} already connected")
 
         self.arm.connect()
-        if not self.is_calibrated:
+        if not self.is_calibrated and calibrate:
             self.calibrate()
 
         # Connect the cameras

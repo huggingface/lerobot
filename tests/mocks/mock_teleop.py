@@ -51,11 +51,13 @@ class MockTeleop(Teleoperator):
     def is_connected(self) -> bool:
         return self._is_connected
 
-    def connect(self) -> None:
+    def connect(self, calibrate: bool = True) -> None:
         if self.is_connected:
             raise DeviceAlreadyConnectedError(f"{self} already connected")
 
         self._is_connected = True
+        if calibrate:
+            self.calibrate()
 
     @property
     def is_calibrated(self) -> bool:

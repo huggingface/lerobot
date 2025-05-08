@@ -104,12 +104,12 @@ class LeKiwi(Robot):
         # TODO(aliberts): add cam.is_connected for cam in self.cameras
         return self.bus.is_connected
 
-    def connect(self) -> None:
+    def connect(self, calibrate: bool = True) -> None:
         if self.is_connected:
             raise DeviceAlreadyConnectedError(f"{self} already connected")
 
         self.bus.connect()
-        if not self.is_calibrated:
+        if not self.is_calibrated and calibrate:
             self.calibrate()
 
         for cam in self.cameras.values():

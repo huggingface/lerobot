@@ -69,12 +69,12 @@ class WidowX(Teleoperator):
     def is_connected(self) -> bool:
         return self.arm.is_connected
 
-    def connect(self):
+    def connect(self, calibrate: bool = True):
         if self.is_connected:
             raise DeviceAlreadyConnectedError(f"{self} already connected")
 
         self.arm.connect()
-        if not self.is_calibrated:
+        if not self.is_calibrated and calibrate:
             self.calibrate()
 
         self.configure()
