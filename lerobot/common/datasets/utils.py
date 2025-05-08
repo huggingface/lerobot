@@ -126,9 +126,8 @@ def load_nested_dataset(pq_dir: Path) -> Dataset:
         raise FileNotFoundError(f"Provided directory does not contain any parquet file: {pq_dir}")
 
     # TODO(rcadene): set num_proc to accelerate conversion to pyarrow
-    return concatenate_datasets(
-        [Dataset.from_parquet(str(path)) for path in sorted(pq_dir.glob("*/*.parquet"))]
-    )
+    datasets = [Dataset.from_parquet(str(path)) for path in paths]
+    return concatenate_datasets(datasets)
 
 
 def get_parquet_num_frames(parquet_path):
