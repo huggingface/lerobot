@@ -1,47 +1,27 @@
 import logging
 from pprint import pformat
-from typing import Protocol
 
 from lerobot.common.robots import RobotConfig
 
-
-def get_arm_id(name, arm_type):
-    """Returns the string identifier of a robot arm. For instance, for a bimanual manipulator
-    like Aloha, it could be left_follower, right_follower, left_leader, or right_leader.
-    """
-    return f"{name}_{arm_type}"
-
-
-# TODO(aliberts): Remove and point to lerobot.common.robots.Robot
-class Robot(Protocol):
-    robot_type: str
-    features: dict
-
-    def connect(self): ...
-    def run_calibration(self): ...
-    def teleop_step(self, record_data=False): ...
-    def capture_observation(self): ...
-    def send_action(self, action): ...
-    def disconnect(self): ...
+from .robot import Robot
 
 
 def make_robot_config(robot_type: str, **kwargs) -> RobotConfig:
     if robot_type == "aloha":
-        from .aloha.configuration_aloha import AlohaRobotConfig
+        raise NotImplementedError  # TODO
 
-        return AlohaRobotConfig(**kwargs)
     elif robot_type == "koch_follower":
-        from .koch.config_koch_follower import KochFollowerConfig
+        from .koch_follower.config_koch_follower import KochFollowerConfig
 
         return KochFollowerConfig(**kwargs)
     # elif robot_type == "koch_bimanual":
     #     return KochBimanualRobotConfig(**kwargs)
     elif robot_type == "moss":
-        from .moss.configuration_moss import MossRobotConfig
+        from .moss_follower.configuration_moss import MossRobotConfig
 
         return MossRobotConfig(**kwargs)
     elif robot_type == "so100_leader":
-        from .so100.config_so100_follower import SO100FollowerConfig
+        from .so100_follower.config_so100_follower import SO100FollowerConfig
 
         return SO100FollowerConfig(**kwargs)
     elif robot_type == "stretch":
@@ -56,23 +36,29 @@ def make_robot_config(robot_type: str, **kwargs) -> RobotConfig:
         raise ValueError(f"Robot type '{robot_type}' is not available.")
 
 
-def make_robot_from_config(config: RobotConfig):
-    from .lekiwi.config_lekiwi import LeKiwiConfig
-    from .manipulator import ManipulatorRobotConfig
+def make_robot_from_config(config: RobotConfig) -> Robot:
+    if config.type == "koch_follower":
+        from .koch_follower import KochFollower
 
-    if isinstance(config, ManipulatorRobotConfig):
-        from lerobot.common.robots.manipulator import ManipulatorRobot
+        return KochFollower(config)
+    elif config.type == "so100_follower":
+        from .so100_follower import SO100Follower
 
-        return ManipulatorRobot(config)
-    elif isinstance(config, LeKiwiConfig):
-        from lerobot.common.robots.lekiwi import LeKiwiClient
+        return SO100Follower(config)
+    elif config.type == "lekiwi":
+        from .lekiwi import LeKiwiClient
 
         return LeKiwiClient(config)
-        ...
-    else:
-        from lerobot.common.robots.stretch3.robot_stretch3 import Stretch3Robot
+    elif config.type == "stretch3":
+        from .stretch3 import Stretch3Robot
 
         return Stretch3Robot(config)
+    elif config.type == "viperx":
+        from .viperx import ViperX
+
+        return ViperX(config)
+    else:
+        raise ValueError(config.type)
 
 
 def make_robot(robot_type: str, **kwargs) -> Robot:
@@ -116,3 +102,11 @@ def ensure_safe_goal_position(
         )
 
     return safe_goal_positions
+
+
+# TODO(aliberts): Remove
+def get_arm_id(name, arm_type):
+    """Returns the string identifier of a robot arm. For instance, for a bimanual manipulator
+    like Aloha, it could be left_follower, right_follower, left_leader, or right_leader.
+    """
+    return f"{name}_{arm_type}"

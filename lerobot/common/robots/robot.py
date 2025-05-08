@@ -36,15 +36,11 @@ class Robot(abc.ABC):
 
     # TODO(aliberts): create a proper Feature class for this that links with datasets
     @abc.abstractproperty
-    def state_feature(self) -> dict:
+    def observation_features(self) -> dict:
         pass
 
     @abc.abstractproperty
-    def action_feature(self) -> dict:
-        pass
-
-    @abc.abstractproperty
-    def camera_features(self) -> dict[str, dict]:
+    def action_features(self) -> dict:
         pass
 
     @abc.abstractproperty

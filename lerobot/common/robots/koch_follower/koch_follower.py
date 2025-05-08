@@ -16,71 +16,69 @@
 
 import logging
 import time
+from functools import cached_property
 from typing import Any
 
 from lerobot.common.cameras.utils import make_cameras_from_configs
-from lerobot.common.constants import OBS_IMAGES, OBS_STATE
+from lerobot.common.constants import OBS_STATE
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.common.motors import Motor, MotorCalibration, MotorNormMode
-from lerobot.common.motors.feetech import (
-    FeetechMotorsBus,
+from lerobot.common.motors.dynamixel import (
+    DynamixelMotorsBus,
     OperatingMode,
 )
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
-from .config_so100_follower import SO100FollowerConfig
+from .config_koch_follower import KochFollowerConfig
 
 logger = logging.getLogger(__name__)
 
 
-class SO100Follower(Robot):
+class KochFollower(Robot):
     """
-    [SO-100 Follower Arm](https://github.com/TheRobotStudio/SO-ARM100) designed by TheRobotStudio
+    - [Koch v1.0](https://github.com/AlexanderKoch-Koch/low_cost_robot), with and without the wrist-to-elbow
+        expansion, developed by Alexander Koch from [Tau Robotics](https://tau-robotics.com)
+    - [Koch v1.1](https://github.com/jess-moss/koch-v1-1) developed by Jess Moss
     """
 
-    config_class = SO100FollowerConfig
-    name = "so100_follower"
+    config_class = KochFollowerConfig
+    name = "koch_follower"
 
-    def __init__(self, config: SO100FollowerConfig):
+    def __init__(self, config: KochFollowerConfig):
         super().__init__(config)
         self.config = config
-        self.arm = FeetechMotorsBus(
+        self.arm = DynamixelMotorsBus(
             port=self.config.port,
             motors={
-                "shoulder_pan": Motor(1, "sts3215", MotorNormMode.RANGE_M100_100),
-                "shoulder_lift": Motor(2, "sts3215", MotorNormMode.RANGE_M100_100),
-                "elbow_flex": Motor(3, "sts3215", MotorNormMode.RANGE_M100_100),
-                "wrist_flex": Motor(4, "sts3215", MotorNormMode.RANGE_M100_100),
-                "wrist_roll": Motor(5, "sts3215", MotorNormMode.RANGE_M100_100),
-                "gripper": Motor(6, "sts3215", MotorNormMode.RANGE_0_100),
+                "shoulder_pan": Motor(1, "xl430-w250", MotorNormMode.RANGE_M100_100),
+                "shoulder_lift": Motor(2, "xl430-w250", MotorNormMode.RANGE_M100_100),
+                "elbow_flex": Motor(3, "xl330-m288", MotorNormMode.RANGE_M100_100),
+                "wrist_flex": Motor(4, "xl330-m288", MotorNormMode.RANGE_M100_100),
+                "wrist_roll": Motor(5, "xl330-m288", MotorNormMode.RANGE_M100_100),
+                "gripper": Motor(6, "xl330-m288", MotorNormMode.RANGE_0_100),
             },
             calibration=self.calibration,
         )
         self.cameras = make_cameras_from_configs(config.cameras)
 
     @property
-    def state_feature(self) -> dict:
+    def _motors_ft(self) -> dict[str, type]:
+        return {f"{motor}.pos": float for motor in self.arm.motors}
+
+    @property
+    def _cameras_ft(self) -> dict[str, tuple]:
         return {
-            "dtype": "float32",
-            "shape": (len(self.arm),),
-            "names": {"motors": list(self.arm.motors)},
+            cam: (self.config.cameras[cam].height, self.config.cameras[cam].width, 3) for cam in self.cameras
         }
 
-    @property
-    def action_feature(self) -> dict:
-        return self.state_feature
+    @cached_property
+    def observation_features(self) -> dict[str, type | tuple]:
+        return {**self._motors_ft, **self._cameras_ft}
 
-    @property
-    def camera_features(self) -> dict[str, dict]:
-        cam_ft = {}
-        for cam_key, cam in self.cameras.items():
-            cam_ft[cam_key] = {
-                "shape": (cam.height, cam.width, cam.channels),
-                "names": ["height", "width", "channels"],
-                "info": None,
-            }
-        return cam_ft
+    @cached_property
+    def action_features(self) -> dict[str, type]:
+        return self._motors_ft
 
     @property
     def is_connected(self) -> bool:
@@ -99,7 +97,6 @@ class SO100Follower(Robot):
         if not self.is_calibrated:
             self.calibrate()
 
-        # Connect the cameras
         for cam in self.cameras.values():
             cam.connect()
 
@@ -114,20 +111,21 @@ class SO100Follower(Robot):
         logger.info(f"\nRunning calibration of {self}")
         self.arm.disable_torque()
         for motor in self.arm.motors:
-            self.arm.write("Operating_Mode", motor, OperatingMode.POSITION.value)
+            self.arm.write("Operating_Mode", motor, OperatingMode.EXTENDED_POSITION.value)
 
         input(f"Move {self} to the middle of its range of motion and press ENTER....")
         homing_offsets = self.arm.set_half_turn_homings()
 
-        full_turn_motor = "wrist_roll"
-        unknown_range_motors = [motor for motor in self.arm.motors if motor != full_turn_motor]
+        full_turn_motors = ["shoulder_pan", "wrist_roll"]
+        unknown_range_motors = [motor for motor in self.arm.motors if motor not in full_turn_motors]
         print(
-            f"Move all joints except '{full_turn_motor}' sequentially through their "
-            "entire ranges of motion.\nRecording positions. Press ENTER to stop..."
+            f"Move all joints except {full_turn_motors} sequentially through their entire "
+            "ranges of motion.\nRecording positions. Press ENTER to stop..."
         )
         range_mins, range_maxes = self.arm.record_ranges_of_motion(unknown_range_motors)
-        range_mins[full_turn_motor] = 0
-        range_maxes[full_turn_motor] = 4095
+        for motor in full_turn_motors:
+            range_mins[motor] = 0
+            range_maxes[motor] = 4095
 
         self.calibration = {}
         for motor, m in self.arm.motors.items():
@@ -141,18 +139,31 @@ class SO100Follower(Robot):
 
         self.arm.write_calibration(self.calibration)
         self._save_calibration()
-        print("Calibration saved to", self.calibration_fpath)
+        logger.info(f"Calibration saved to {self.calibration_fpath}")
 
     def configure(self) -> None:
         with self.arm.torque_disabled():
             self.arm.configure_motors()
+            # Use 'extended position mode' for all motors except gripper, because in joint mode the servos
+            # can't rotate more than 360 degrees (from 0 to 4095) And some mistake can happen while assembling
+            # the arm, you could end up with a servo with a position 0 or 4095 at a crucial point
             for motor in self.arm.motors:
-                self.arm.write("Operating_Mode", motor, OperatingMode.POSITION.value)
-                # Set P_Coefficient to lower value to avoid shakiness (Default is 32)
-                self.arm.write("P_Coefficient", motor, 16)
-                # Set I_Coefficient and D_Coefficient to default value 0 and 32
-                self.arm.write("I_Coefficient", motor, 0)
-                self.arm.write("D_Coefficient", motor, 32)
+                if motor != "gripper":
+                    self.arm.write("Operating_Mode", motor, OperatingMode.EXTENDED_POSITION.value)
+
+            # Use 'position control current based' for gripper to be limited by the limit of the current. For
+            # the follower gripper, it means it can grasp an object without forcing too much even tho, its
+            # goal position is a complete grasp (both gripper fingers are ordered to join and reach a touch).
+            # For the leader gripper, it means we can use it as a physical trigger, since we can force with
+            # our finger to make it move, and it will move back to its original target position when we
+            # release the force.
+            self.arm.write("Operating_Mode", "gripper", OperatingMode.CURRENT_POSITION.value)
+
+            # Set better PID values to close the gap between recorded states and actions
+            # TODO(rcadene): Implement an automatic procedure to set optimal PID values for each motor
+            self.arm.write("Position_P_Gain", "elbow_flex", 1500)
+            self.arm.write("Position_I_Gain", "elbow_flex", 0)
+            self.arm.write("Position_D_Gain", "elbow_flex", 600)
 
     def setup_motors(self) -> None:
         for motor in reversed(self.arm.motors):
@@ -169,35 +180,36 @@ class SO100Follower(Robot):
         # Read arm position
         start = time.perf_counter()
         obs_dict[OBS_STATE] = self.arm.sync_read("Present_Position")
+        obs_dict = {f"{motor}.pos": val for motor, val in obs_dict.items()}
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
 
         # Capture images from cameras
         for cam_key, cam in self.cameras.items():
             start = time.perf_counter()
-            obs_dict[f"{OBS_IMAGES}.{cam_key}"] = cam.async_read()
+            obs_dict[cam_key] = cam.async_read()
             dt_ms = (time.perf_counter() - start) * 1e3
             logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
 
         return obs_dict
 
-    def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
+    def send_action(self, action: dict[str, float]) -> dict[str, float]:
         """Command arm to move to a target joint configuration.
 
         The relative action magnitude may be clipped depending on the configuration parameter
         `max_relative_target`. In this case, the action sent differs from original action.
         Thus, this function always returns the action actually sent.
 
-        Raises:
-            RobotDeviceNotConnectedError: if robot is not connected.
+        Args:
+            action (dict[str, float]): The goal positions for the motors.
 
         Returns:
-            the action sent to the motors, potentially clipped.
+            dict[str, float]: The action sent to the motors, potentially clipped.
         """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        goal_pos = action
+        goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
 
         # Cap goal position when too far away from present position.
         # /!\ Slower fps expected due to reading from the follower.
@@ -208,7 +220,7 @@ class SO100Follower(Robot):
 
         # Send goal position to the arm
         self.arm.sync_write("Goal_Position", goal_pos)
-        return goal_pos
+        return {f"{motor}.pos": val for motor, val in goal_pos.items()}
 
     def disconnect(self):
         if not self.is_connected:
