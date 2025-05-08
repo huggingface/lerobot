@@ -1,7 +1,6 @@
 <mujoco model="vx300s">
   <compiler angle="radian" meshdir="assets" texturedir="assets" autolimits="true"/>
-
-  <option cone="elliptic" impratio="10"/>
+  <option cone="elliptic" impratio="10" timestep="0.01" gravity="0 0 -9.81"/>
 
   <asset>
     <texture type="2d" file="interbotix_black.png"/>
@@ -71,6 +70,13 @@
 
   <worldbody>
     <light mode="targetbodycom" target="gripper_link" pos="1 0 1"/>
+    <!-- 軸の描画 -->
+    <geom type="capsule" fromto="0 0 0  .5 0 0" size="0.01" rgba="1 0 0 1"/>
+    <geom type="capsule" fromto="0 0 0  0 .5 0" size="0.01" rgba="0 1 0 1"/>
+    <geom type="capsule" fromto="0 0 0  0 0 .5" size="0.01" rgba="0 0 1 1"/>
+    <!-- posが(0, 0, 0だとなぜかpythonから位置を変更できない) -->
+    <site name="goal_site" pos="0.1 0 0" size="0.02" rgba="1 0 0 1" type="sphere"/>
+    <site name="ee_site" pos="0.1 0 0" size="0.02" rgba="0 1 0 1" type="sphere"/>
     <body name="base_link" childclass="vx300s">
       <inertial pos="-0.0534774 -0.000562575 0.0205961" quat="-0.00292324 0.712517 0.00480387 0.701633" mass="0.969034"
         diaginertia="0.0071633 0.00602451 0.00169819"/>
