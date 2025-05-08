@@ -23,5 +23,9 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
         from .widowx import WidowX
 
         return WidowX(config)
+    elif config.type == "mock_teleop":
+        from tests.mocks.mock_teleop import MockTeleop
+
+        return MockTeleop(config)
     else:
         raise ValueError(config.type)

@@ -1,4 +1,3 @@
 from .camera import Camera
 from .configs import CameraConfig
-
-__all__ = ["Camera", "CameraConfig"]
+from .utils import make_cameras_from_configs
