@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-This scripts demonstrates how to evaluate a pretrained policy from the HuggingFace Hub or from your local
+This script demonstrates how to evaluate a pretrained policy from the HuggingFace Hub or from your local
 training outputs directory. In the latter case, you might want to run examples/3_train_policy.py first.
 
 It requires the installation of the 'gym_pusht' simulation environment. Install it by running:
@@ -119,7 +119,7 @@ while not done:
     rewards.append(reward)
     frames.append(env.render())
 
-    # The rollout is considered done when the success state is reach (i.e. terminated is True),
+    # The rollout is considered done when the success state is reached (i.e. terminated is True),
     # or the maximum number of iterations is reached (i.e. truncated is True)
     done = terminated | truncated | done
     step += 1
