@@ -1,8 +1,10 @@
 import gymnasium as gym
 import mujoco
+import mujoco.viewer
 import numpy as np
 from gymnasium import spaces
 from mujoco import MjData, MjModel
+
 
 class VX300sEnv(gym.Env):
     def __init__(self, xml_path, render_mode=None):
@@ -16,24 +18,28 @@ class VX300sEnv(gym.Env):
         self.observation_space = spaces.Box(
             low=-np.pi, high=np.pi, shape=(self.n_joints,), dtype=np.float32
         )
-        
+
         # render_mode を受け取る
         self.render_mode = render_mode
+        self.viewer = None
         if self.render_mode == "human":
-            self.viewer = mujoco.MjViewer(self.model)
+            # MjViewer の代わりに、viewer モジュールを使う
+            self.viewer = mujoco.viewer.launch_passive(self.model, self.data)
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         self.goal = np.zeros(6, dtype=np.float32)  # 目標状態をゼロに設定（例）
 
-        self.data.qpos[:self.n_joints] = np.random.uniform(-0.1, 0.1, size=self.n_joints)
-        self.data.qvel[:self.n_joints] = 0
+        self.data.qpos[: self.n_joints] = np.random.uniform(
+            -0.1, 0.1, size=self.n_joints
+        )
+        self.data.qvel[: self.n_joints] = 0
         mujoco.mj_forward(self.model, self.data)
 
         return self._get_obs(), {}
 
     def step(self, action):
-        self.data.ctrl[:self.n_joints] = action
+        self.data.ctrl[: self.n_joints] = action
         mujoco.mj_step(self.model, self.data)
 
         observation = self._get_obs()
@@ -46,8 +52,13 @@ class VX300sEnv(gym.Env):
         return observation, reward, terminated, truncated, info
 
     def _get_obs(self):
-        return self.data.qpos[:self.n_joints].astype(np.float32)
+        return self.data.qpos[: self.n_joints].astype(np.float32)
 
     def render(self):
-        if self.render_mode == "human":
-            self.viewer.render()  # MjViewerを使ってシミュレーションをレンダリング
+        self.viewer.sync()
+
+    def close(self):
+        # 環境を閉じる際にviewerも閉じる
+        if self.viewer is not None and self.viewer.is_running():
+            self.viewer.close()
+        self.viewer = None
