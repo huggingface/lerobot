@@ -65,11 +65,6 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         raise ValueError(config.type)
 
 
-def make_robot(robot_type: str, **kwargs) -> Robot:
-    config = make_robot_config(robot_type, **kwargs)
-    return make_robot_from_config(config)
-
-
 def ensure_safe_goal_position(
     goal_present_pos: dict[str, tuple[float, float]], max_relative_target: float | dict[float]
 ) -> dict[str, float]:

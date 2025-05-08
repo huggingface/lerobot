@@ -13,11 +13,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import json
 import os
 import platform
 from functools import wraps
-from pathlib import Path
 
 import pytest
 import torch
@@ -189,46 +187,6 @@ def require_package(package_name):
     return decorator
 
 
-def require_robot(func):
-    """
-    Decorator that skips the test if a robot is not available
-
-    The decorated function must have two arguments `request` and `robot_type`.
-
-    Example of usage:
-    ```python
-    @pytest.mark.parametrize(
-        "robot_type", ["koch", "aloha"]
-    )
-    @require_robot
-    def test_require_robot(request, robot_type):
-        pass
-    ```
-    """
-
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        # Access the pytest request context to get the is_robot_available fixture
-        request = kwargs.get("request")
-        robot_type = kwargs.get("robot_type")
-        mock = kwargs.get("mock")
-
-        if robot_type is None:
-            raise ValueError("The 'robot_type' must be an argument of the test function.")
-        if request is None:
-            raise ValueError("The 'request' fixture must be an argument of the test function.")
-        if mock is None:
-            raise ValueError("The 'mock' variable must be an argument of the test function.")
-
-        # Run test with a real robot. Skip test if robot connection fails.
-        if not mock and not request.getfixturevalue("is_robot_available"):
-            pytest.skip(f"A {robot_type} robot is not available.")
-
-        return func(*args, **kwargs)
-
-    return wrapper
-
-
 def require_camera(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
@@ -250,55 +208,6 @@ def require_camera(func):
         return func(*args, **kwargs)
 
     return wrapper
-
-
-def require_motor(func):
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        # Access the pytest request context to get the is_motor_available fixture
-        request = kwargs.get("request")
-        motor_type = kwargs.get("motor_type")
-        mock = kwargs.get("mock")
-
-        if request is None:
-            raise ValueError("The 'request' fixture must be an argument of the test function.")
-        if motor_type is None:
-            raise ValueError("The 'motor_type' must be an argument of the test function.")
-        if mock is None:
-            raise ValueError("The 'mock' variable must be an argument of the test function.")
-
-        if not mock and not request.getfixturevalue("is_motor_available"):
-            pytest.skip(f"A {motor_type} motor is not available.")
-
-        return func(*args, **kwargs)
-
-    return wrapper
-
-
-def mock_calibration_dir(calibration_dir):
-    # TODO(rcadene): remove this hack
-    # calibration file produced with Moss v1, but works with Koch, Koch bimanual and SO-100
-    example_calib = {
-        "homing_offset": [-1416, -845, 2130, 2872, 1950, -2211],
-        "drive_mode": [0, 0, 1, 1, 1, 0],
-        "start_pos": [1442, 843, 2166, 2849, 1988, 1835],
-        "end_pos": [2440, 1869, -1106, -1848, -926, 3235],
-        "calib_mode": ["DEGREE", "DEGREE", "DEGREE", "DEGREE", "DEGREE", "LINEAR"],
-        "motor_names": ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"],
-    }
-    Path(str(calibration_dir)).mkdir(parents=True, exist_ok=True)
-    with open(calibration_dir / "main_follower.json", "w") as f:
-        json.dump(example_calib, f)
-    with open(calibration_dir / "main_leader.json", "w") as f:
-        json.dump(example_calib, f)
-    with open(calibration_dir / "left_follower.json", "w") as f:
-        json.dump(example_calib, f)
-    with open(calibration_dir / "left_leader.json", "w") as f:
-        json.dump(example_calib, f)
-    with open(calibration_dir / "right_follower.json", "w") as f:
-        json.dump(example_calib, f)
-    with open(calibration_dir / "right_leader.json", "w") as f:
-        json.dump(example_calib, f)
 
 
 # TODO(rcadene, aliberts): remove this dark pattern that overrides
