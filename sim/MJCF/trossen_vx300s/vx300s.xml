@@ -1,0 +1,202 @@
+<mujoco model="vx300s">
+  <compiler angle="radian" meshdir="assets" texturedir="assets" autolimits="true"/>
+
+  <option cone="elliptic" impratio="10"/>
+
+  <asset>
+    <texture type="2d" file="interbotix_black.png"/>
+    <material name="black" texture="interbotix_black"/>
+
+    <mesh file="vx300s_1_base.stl" scale="0.001 0.001 0.001"/>
+    <mesh file="vx300s_2_shoulder.stl" scale="0.001 0.001 0.001"/>
+    <mesh file="vx300s_3_upper_arm.stl" scale="0.001 0.001 0.001"/>
+    <mesh file="vx300s_4_upper_forearm.stl" scale="0.001 0.001 0.001"/>
+    <mesh file="vx300s_5_lower_forearm.stl" scale="0.001 0.001 0.001"/>
+    <mesh file="vx300s_6_wrist.stl" scale="0.001 0.001 0.001"/>
+    <mesh file="vx300s_7_gripper.stl" scale="0.001 0.001 0.001"/>
+    <mesh file="vx300s_8_gripper_prop.stl" scale="0.001 0.001 0.001"/>
+    <mesh file="vx300s_9_gripper_bar.stl" scale="0.001 0.001 0.001"/>
+    <mesh file="vx300s_10_gripper_finger.stl" scale="0.001 0.001 0.001"/>
+  </asset>
+
+  <default>
+    <default class="vx300s">
+      <joint axis="0 1 0"/>
+      <position forcerange="-35 35"/>
+      <default class="waist">
+        <joint axis="0 0 1" range="-3.14158 3.14158" damping="2.86"/>
+        <position ctrlrange="-3.14158 3.14158" kp="25"/>
+      </default>
+      <default class="shoulder">
+        <joint range="-1.85005 1.25664" armature="0.004" frictionloss="0.06" damping="6.25"/>
+        <position ctrlrange="-1.85005 1.25664" kp="76" forcerange="-57 57"/>
+      </default>
+      <default class="elbow">
+        <joint range="-1.76278 1.6057" armature="0.072" frictionloss="1.74" damping="8.15"/>
+        <position ctrlrange="-1.76278 1.6057" kp="106" forcerange="-25 25"/>
+      </default>
+      <default class="forearm_roll">
+        <joint axis="1 0 0" range="-3.14158 3.14158" armature="0.060" damping="3.07"/>
+        <position ctrlrange="-3.14158 3.14158" kp="35" forcerange="-10 10"/>
+      </default>
+      <default class="wrist_angle">
+        <joint range="-1.8675 2.23402" damping="1.18"/>
+        <position ctrlrange="-1.8675 2.23402" kp="8"/>
+      </default>
+      <default class="wrist_rotate">
+        <joint axis="1 0 0" range="-3.14158 3.14158" damping="0.78"/>
+        <position ctrlrange="-3.14158 3.14158" kp="7"/>
+      </default>
+      <default class="finger">
+        <joint type="slide" armature="0.251" damping="10"/>
+        <position ctrlrange="0.021 0.057" kp="300"/>
+        <default class="left_finger">
+          <joint range="0.021 0.057"/>
+        </default>
+        <default class="right_finger">
+          <joint range="-0.057 -0.021"/>
+        </default>
+      </default>
+      <default class="visual">
+        <geom type="mesh" contype="0" conaffinity="0" density="0" group="2" material="black"/>
+      </default>
+      <default class="collision">
+        <geom group="3" type="mesh"/>
+        <default class="finger_collision">
+          <geom condim="4" solimp="2 1 0.01" solref="0.01 1" friction="1 0.005 0.0001"/>
+        </default>
+      </default>
+    </default>
+  </default>
+
+  <worldbody>
+    <light mode="targetbodycom" target="gripper_link" pos="1 0 1"/>
+    <body name="base_link" childclass="vx300s">
+      <inertial pos="-0.0534774 -0.000562575 0.0205961" quat="-0.00292324 0.712517 0.00480387 0.701633" mass="0.969034"
+        diaginertia="0.0071633 0.00602451 0.00169819"/>
+      <geom quat="1 0 0 1" class="visual" mesh="vx300s_1_base"/>
+      <geom quat="1 0 0 1" mesh="vx300s_1_base" class="collision"/>
+      <body name="shoulder_link" pos="0 0 0.079">
+        <inertial pos="0.000259233 -3.3552e-06 0.0116129" quat="-0.476119 0.476083 0.52279 0.522826" mass="0.798614"
+          diaginertia="0.00120156 0.00113744 0.0009388"/>
+        <joint name="waist" class="waist"/>
+        <geom pos="0 0 -0.003" quat="1 0 0 1" class="visual" mesh="vx300s_2_shoulder"/>
+        <geom pos="0 0 -0.003" quat="1 0 0 1" mesh="vx300s_2_shoulder" class="collision"/>
+        <body name="upper_arm_link" pos="0 0 0.04805">
+          <inertial pos="0.0206949 4e-10 0.226459" quat="0 0.0728458 0 0.997343" mass="0.792592"
+            diaginertia="0.00911338 0.008925 0.000759317"/>
+          <joint name="shoulder" class="shoulder"/>
+          <geom quat="1 0 0 1" class="visual" mesh="vx300s_3_upper_arm"/>
+          <geom quat="1 0 0 1" class="collision" mesh="vx300s_3_upper_arm"/>
+          <body name="upper_forearm_link" pos="0.05955 0 0.3">
+            <inertial pos="0.105723 0 0" quat="-0.000621631 0.704724 0.0105292 0.709403" mass="0.322228"
+              diaginertia="0.00144107 0.00134228 0.000152047"/>
+            <joint name="elbow" class="elbow"/>
+            <geom class="visual" mesh="vx300s_4_upper_forearm"/>
+            <geom class="collision" mesh="vx300s_4_upper_forearm"/>
+            <body name="lower_forearm_link" pos="0.2 0 0">
+              <inertial pos="0.0513477 0.00680462 0" quat="-0.702604 -0.0796724 -0.702604 0.0796724" mass="0.414823"
+                diaginertia="0.0005911 0.000546493 0.000155707"/>
+              <joint name="forearm_roll" class="forearm_roll"/>
+              <geom quat="0 1 0 0" class="visual" mesh="vx300s_5_lower_forearm"/>
+              <geom quat="0 1 0 0" class="collision" mesh="vx300s_5_lower_forearm"/>
+              <body name="wrist_link" pos="0.1 0 0">
+                <inertial pos="0.046743 -7.6652e-06 0.010565" quat="-0.00100191 0.544586 0.0026583 0.8387"
+                  mass="0.115395" diaginertia="5.45707e-05 4.63101e-05 4.32692e-05"/>
+                <joint name="wrist_angle" class="wrist_angle"/>
+                <geom quat="1 0 0 1" class="visual" mesh="vx300s_6_wrist"/>
+                <geom quat="1 0 0 1" class="collision" mesh="vx300s_6_wrist"/>
+                <body name="gripper_link" pos="0.069744 0 0">
+                  <inertial pos="0.0395662 -2.56311e-07 0.00400649" quat="0.62033 0.619916 -0.339682 0.339869"
+                    mass="0.251652" diaginertia="0.000689546 0.000650316 0.000468142"/>
+                  <joint name="wrist_rotate" class="wrist_rotate"/>
+                  <geom pos="-0.02 0 0" quat="1 0 0 1" class="visual" mesh="vx300s_7_gripper"/>
+                  <geom pos="-0.02 0 0" quat="1 0 0 1" class="collision" mesh="vx300s_7_gripper"/>
+                  <geom pos="-0.020175 0 0" quat="1 0 0 1" class="visual" mesh="vx300s_9_gripper_bar"/>
+                  <geom pos="-0.020175 0 0" quat="1 0 0 1" class="collision" mesh="vx300s_9_gripper_bar"/>
+                  <site name="pinch" pos="0.1 0 0" size="0.005" rgba="0.6 0.3 0.3 1" group="5"/>
+                  <body name="gripper_prop_link" pos="0.0485 0 0">
+                    <inertial pos="0.002378 2.85e-08 0" quat="0 0 0.897698 0.440611" mass="0.008009"
+                      diaginertia="4.2979e-06 2.8868e-06 1.5314e-06"/>
+                    <geom pos="-0.0685 0 0" quat="1 0 0 1" class="visual" mesh="vx300s_8_gripper_prop"/>
+                    <geom pos="-0.0685 0 0" quat="1 0 0 1" class="collision" mesh="vx300s_8_gripper_prop"/>
+                  </body>
+                  <body name="left_finger_link" pos="0.0687 0 0">
+                    <inertial pos="0.017344 -0.0060692 0" quat="0.449364 0.449364 -0.54596 -0.54596" mass="0.034796"
+                      diaginertia="2.48003e-05 1.417e-05 1.20797e-05"/>
+                    <joint name="left_finger" class="left_finger"/>
+                    <geom pos="-0.0404 -0.0575 0" quat="-1 1 -1 1" class="visual" mesh="vx300s_10_gripper_finger"/>
+                    <geom class="finger_collision" type="box" name="left_finger_pad_0" size="0.01405 0.01405 0.001"
+                      pos="0.0478 -0.0125 0.0106" quat="0.65 0.65 -0.27 0.27"/>
+                    <geom class="finger_collision" type="box" name="left_finger_pad_1" size="0.01405 0.01405 0.001"
+                      pos="0.0478 -0.0125 -0.0106" quat="0.65 0.65 -0.27 0.27"/>
+                    <geom class="finger_collision" type="box" name="left_finger_pad_2" size="0.01058 0.01058 0.001"
+                      pos="0.0571 -0.0125 0.0" quat="1 1 0 0"/>
+                    <geom class="finger_collision" type="box" name="left_finger_pad_3" size="0.01 0.0105 0.001"
+                      pos="0.0378 -0.0125 0.0" quat="1 1 0 0"/>
+                    <geom class="finger_collision" type="box" name="left_finger_pad_4" size="0.015 0.0105 0.001"
+                      pos="0.0128 -0.0125 0.0" quat="1 1 0 0"/>
+                    <geom class="finger_collision" type="box" name="left_finger_pad_5" size="0.01 0.0105 0.001"
+                      pos="0.0378 -0.0125 0.02" quat="1 1 0 0"/>
+                    <geom class="finger_collision" type="box" name="left_finger_pad_6" size="0.015 0.0105 0.001"
+                      pos="0.0128 -0.0125 0.02" quat="1 1 0 0"/>
+                    <geom class="finger_collision" type="box" name="left_finger_pad_7" size="0.01 0.0105 0.001"
+                      pos="0.0378 -0.0125 -0.02" quat="1 1 0 0"/>
+                    <geom class="finger_collision" type="box" name="left_finger_pad_8" size="0.015 0.0105 0.001"
+                      pos="0.0128 -0.0125 -0.02" quat="1 1 0 0"/>
+                  </body>
+                  <body name="right_finger_link" pos="0.0687 0 0">
+                    <inertial pos="0.017344 0.0060692 0" quat="0.44937 -0.44937 0.545955 -0.545955" mass="0.034796"
+                      diaginertia="2.48002e-05 1.417e-05 1.20798e-05"/>
+                    <joint name="right_finger" class="right_finger"/>
+                    <geom pos="-0.0404 0.0575 0" quat="1 1 1 1" class="visual" mesh="vx300s_10_gripper_finger"/>
+                    <geom class="finger_collision" type="box" name="right_finger_pad_0" size="0.01405 0.01405 0.001"
+                      pos="0.0478 0.0125 0.0106" quat="0.65 0.65 -0.27 0.27"/>
+                    <geom class="finger_collision" type="box" name="right_finger_pad_1" size="0.01405 0.01405 0.001"
+                      pos="0.0478 0.0125 -0.0106" quat="0.65 0.65 -0.27 0.27"/>
+                    <geom class="finger_collision" type="box" name="right_finger_pad_2" size="0.01058 0.01058 0.001"
+                      pos="0.0571 0.0125 0.0" quat="1 1 0 0"/>
+                    <geom class="finger_collision" type="box" name="right_finger_pad_3" size="0.01 0.0105 0.001"
+                      pos="0.0378 0.0125 0.0" quat="1 1 0 0"/>
+                    <geom class="finger_collision" type="box" name="right_finger_pad_4" size="0.015 0.0105 0.001"
+                      pos="0.0128 0.0125 0.0" quat="1 1 0 0"/>
+                    <geom class="finger_collision" type="box" name="right_finger_pad_5" size="0.01 0.0105 0.001"
+                      pos="0.0378 0.0125 0.02" quat="1 1 0 0"/>
+                    <geom class="finger_collision" type="box" name="right_finger_pad_6" size="0.015 0.0105 0.001"
+                      pos="0.0128 0.0125 0.02" quat="1 1 0 0"/>
+                    <geom class="finger_collision" type="box" name="right_finger_pad_7" size="0.01 0.0105 0.001"
+                      pos="0.0378 0.0125 -0.02" quat="1 1 0 0"/>
+                    <geom class="finger_collision" type="box" name="right_finger_pad_8" size="0.015 0.0105 0.001"
+                      pos="0.0128 0.0125 -0.02" quat="1 1 0 0"/>
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <equality>
+    <joint joint1="left_finger" joint2="right_finger" polycoef="0 -1 0 0 0"/>
+  </equality>
+
+  <actuator>
+    <position class="waist" name="waist" joint="waist"/>
+    <position class="shoulder" name="shoulder" joint="shoulder"/>
+    <position class="elbow" name="elbow" joint="elbow"/>
+    <position class="forearm_roll" name="forearm_roll" joint="forearm_roll"/>
+    <position class="wrist_angle" name="wrist_angle" joint="wrist_angle"/>
+    <position class="wrist_rotate" name="wrist_rotate" joint="wrist_rotate"/>
+    <position class="finger" name="gripper" joint="left_finger"/>
+  </actuator>
+
+  <contact>
+    <exclude body1="base_link" body2="shoulder_link"/>
+  </contact>
+
+  <keyframe>
+    <key name="home" qpos="0 -0.96 1.16 0 -0.3 0 0.024 -0.024" ctrl="0 -0.96 1.16 0 -0.3 0 0.024"/>
+  </keyframe>
+</mujoco>
