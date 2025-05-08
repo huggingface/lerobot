@@ -61,12 +61,15 @@ class KeyboardTeleop(Teleoperator):
         self.logs = {}
 
     @property
-    def action_feature(self) -> dict:
-        # TODO(Steven): Change this when we agree what should this return
-        ...
+    def action_features(self) -> dict:
+        return {
+            "dtype": "float32",
+            "shape": (len(self.arm),),
+            "names": {"motors": list(self.arm.motors)},
+        }
 
     @property
-    def feedback_feature(self) -> dict:
+    def feedback_features(self) -> dict:
         return {}
 
     @property

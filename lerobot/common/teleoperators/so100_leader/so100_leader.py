@@ -55,15 +55,11 @@ class SO100Leader(Teleoperator):
         )
 
     @property
-    def action_feature(self) -> dict:
-        return {
-            "dtype": "float32",
-            "shape": (len(self.arm),),
-            "names": {"motors": list(self.arm.motors)},
-        }
+    def action_features(self) -> dict[str, type]:
+        return {f"{motor}.pos": float for motor in self.arm.motors}
 
     @property
-    def feedback_feature(self) -> dict:
+    def feedback_features(self) -> dict[str, type]:
         return {}
 
     @property
@@ -133,6 +129,7 @@ class SO100Leader(Teleoperator):
     def get_action(self) -> dict[str, float]:
         start = time.perf_counter()
         action = self.arm.sync_read("Present_Position")
+        action = {f"{motor}.pos": val for motor, val in action.items()}
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read action: {dt_ms:.1f}ms")
         return action

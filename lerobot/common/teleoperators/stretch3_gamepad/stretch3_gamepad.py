@@ -73,7 +73,7 @@ class Stretch3GamePad(Teleoperator):
         RobotParams.set_logging_formatter("brief_console_formatter")
 
     @property
-    def action_feature(self) -> dict:
+    def action_features(self) -> dict:
         return {
             "dtype": "float32",
             "shape": (len(GAMEPAD_BUTTONS),),
@@ -81,7 +81,7 @@ class Stretch3GamePad(Teleoperator):
         }
 
     @property
-    def feedback_feature(self) -> dict:
+    def feedback_features(self) -> dict:
         return {}
 
     def connect(self) -> None:
