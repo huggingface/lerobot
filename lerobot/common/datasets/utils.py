@@ -477,9 +477,9 @@ def dataset_to_policy_features(features: dict[str, dict]) -> dict[str, PolicyFea
 def create_empty_dataset_info(
     codebase_version: str,
     fps: int,
-    robot_type: str,
     features: dict,
     use_videos: bool,
+    robot_type: str | None = None,
 ) -> dict:
     return {
         "codebase_version": codebase_version,
