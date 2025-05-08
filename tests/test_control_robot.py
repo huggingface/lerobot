@@ -24,7 +24,7 @@ def test_teleoperate():
     assert actual_duration <= expected_duration * 1.1
 
 
-def test_record(tmp_path):
+def test_record_and_resume(tmp_path):
     robot_cfg = MockRobotConfig()
     teleop_cfg = MockTeleopConfig()
     dataset_cfg = DatasetRecordConfig(
@@ -33,6 +33,7 @@ def test_record(tmp_path):
         root=tmp_path / "record",
         num_episodes=1,
         episode_time_s=0.1,
+        reset_time_s=0,
         push_to_hub=False,
     )
     cfg = RecordConfig(
@@ -47,6 +48,13 @@ def test_record(tmp_path):
     assert dataset.fps == 30
     assert dataset.meta.total_episodes == dataset.num_episodes == 1
     assert dataset.meta.total_frames == dataset.num_frames == 3
+    assert dataset.meta.total_tasks == 1
+
+    cfg.resume = True
+    dataset = record(cfg)
+
+    assert dataset.meta.total_episodes == dataset.num_episodes == 2
+    assert dataset.meta.total_frames == dataset.num_frames == 6
     assert dataset.meta.total_tasks == 1
 
 
