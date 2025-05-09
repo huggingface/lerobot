@@ -22,7 +22,7 @@ import math
 import queue
 import time
 from threading import Event, Thread
-from typing import Dict, List, Tuple, Union
+from typing import Any, Dict, List, Tuple, Union
 
 import cv2
 import numpy as np
@@ -155,7 +155,7 @@ class RealSenseCamera(Camera):
         return self.rs_pipeline is not None and self.rs_profile is not None
 
     @staticmethod
-    def find_cameras(raise_when_empty: bool = True) -> List[Dict[str, Union[str, int, float]]]:
+    def find_cameras(raise_when_empty: bool = True) -> List[Dict[str, Any]]:
         """
         Detects available Intel RealSense cameras connected to the system.
 
@@ -163,13 +163,14 @@ class RealSenseCamera(Camera):
             raise_when_empty (bool): If True, raises an OSError if no cameras are found.
 
         Returns:
-            List[Dict[str, Union[str, int, float]]]: A list of dictionaries,
-            where each dictionary contains 'type', 'serial_number', 'name',
-            firmware version, USB type, and other available specs.
+            List[Dict[str, Any]]: A list of dictionaries,
+            where each dictionary contains 'type', 'id' (serial number), 'name',
+            firmware version, USB type, and other available specs, and the default profile properties (width, height, fps, format).
 
         Raises:
             OSError: If `raise_when_empty` is True and no cameras are detected,
                      or if pyrealsense2 is not installed.
+            ImportError: If pyrealsense2 is not installed.
         """
         found_cameras_info = []
         context = rs.context()
@@ -185,19 +186,37 @@ class RealSenseCamera(Camera):
 
         for device in devices:
             camera_info = {
+                "name": device.get_info(rs.camera_info.name),
                 "type": "RealSense",
-                "serial_number": device.get_info(rs.camera_info.serial_number),
+                "id": device.get_info(rs.camera_info.serial_number),
                 "firmware_version": device.get_info(rs.camera_info.firmware_version),
                 "usb_type_descriptor": device.get_info(rs.camera_info.usb_type_descriptor),
                 "physical_port": device.get_info(rs.camera_info.physical_port),
                 "product_id": device.get_info(rs.camera_info.product_id),
                 "product_line": device.get_info(rs.camera_info.product_line),
-                "name": device.get_info(rs.camera_info.name),
             }
+
+            # Get stream profiles for each sensor
+            sensors = device.query_sensors()
+            for sensor in sensors:
+                profiles = sensor.get_stream_profiles()
+
+                for profile in profiles:
+                    if profile.is_video_stream_profile() and profile.is_default():
+                        vprofile = profile.as_video_stream_profile()
+                        stream_info = {
+                            "stream_type": vprofile.stream_name(),
+                            "format": vprofile.format().name,
+                            "width": vprofile.width(),
+                            "height": vprofile.height(),
+                            "fps": vprofile.fps(),
+                        }
+                        camera_info["default_stream_profile"] = stream_info
+
             found_cameras_info.append(camera_info)
             logger.debug(f"Found RealSense camera: {camera_info}")
 
-        logger.info(f"Detected RealSense cameras: {[cam['serial_number'] for cam in found_cameras_info]}")
+        logger.info(f"Detected RealSense cameras: {[cam['id'] for cam in found_cameras_info]}")
         return found_cameras_info
 
     def _find_serial_number_from_name(self, name: str) -> str:

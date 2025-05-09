@@ -24,7 +24,7 @@ import queue
 import time
 from pathlib import Path
 from threading import Event, Thread
-from typing import Dict, List, Union
+from typing import Any, Dict, List
 
 import cv2
 import numpy as np
@@ -59,7 +59,7 @@ class OpenCVCamera(Camera):
     or port changes, especially on Linux. Use the provided utility script to find
     available camera indices or paths:
     ```bash
-    NOTE(Steven): Point to future util
+    python -m lerobot.find_cameras
     ```
 
     The camera's default settings (FPS, resolution, color mode) are used unless
@@ -132,7 +132,7 @@ class OpenCVCamera(Camera):
         self.logs: dict = {}  # NOTE(Steven): Might be removed in the future
 
         self.rotation: int | None = get_cv2_rotation(config.rotation)
-        self.backend: int = get_cv2_backend()
+        self.backend: int = get_cv2_backend()  # NOTE(Steven): If I specify backend the opencv open fails
 
     def __str__(self) -> str:
         """Returns a string representation of the camera instance."""
@@ -195,7 +195,7 @@ class OpenCVCamera(Camera):
         cv2.setNumThreads(1)
 
         logger.debug(f"Attempting to connect to camera {self.index_or_path} using backend {self.backend}...")
-        self.videocapture_camera = cv2.VideoCapture(self.index_or_path, self.backend)
+        self.videocapture_camera = cv2.VideoCapture(self.index_or_path)
 
         if not self.videocapture_camera.isOpened():
             self.videocapture_camera.release()
@@ -273,7 +273,7 @@ class OpenCVCamera(Camera):
     @staticmethod
     def find_cameras(
         max_index_search_range=MAX_OPENCV_INDEX, raise_when_empty: bool = True
-    ) -> List[Dict[str, Union[str, int, float]]]:
+    ) -> List[Dict[str, Any]]:
         """
         Detects available OpenCV cameras connected to the system.
 
@@ -285,9 +285,9 @@ class OpenCVCamera(Camera):
             raise_when_empty (bool): If True, raises an OSError if no cameras are found.
 
         Returns:
-            List[Dict[str, Union[str, int, float]]]: A list of dictionaries,
+            List[Dict[str, Any]]: A list of dictionaries,
             where each dictionary contains 'type', 'id' (port index or path),
-            'default_width', 'default_height', and 'default_fps'.
+            and the default profile properties (width, height, fps, format).
         """
         found_cameras_info = []
 
@@ -303,20 +303,25 @@ class OpenCVCamera(Camera):
             targets_to_scan = list(range(max_index_search_range))
 
         for target in targets_to_scan:
-            camera = cv2.VideoCapture(target, get_cv2_backend())
+            camera = cv2.VideoCapture(target)
             if camera.isOpened():
                 default_width = int(camera.get(cv2.CAP_PROP_FRAME_WIDTH))
                 default_height = int(camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
                 default_fps = camera.get(cv2.CAP_PROP_FPS)
-
+                default_format = camera.get(cv2.CAP_PROP_FORMAT)
                 camera_info = {
+                    "name": f"OpenCV Camera @ {target}",
                     "type": "OpenCV",
                     "id": target,
-                    "default_width": default_width,
-                    "default_height": default_height,
-                    "default_fps": default_fps,
                     "backend_api": camera.getBackendName(),
+                    "default_stream_profile": {
+                        "format": default_format,
+                        "width": default_width,
+                        "height": default_height,
+                        "fps": default_fps,
+                    },
                 }
+
                 found_cameras_info.append(camera_info)
                 logger.debug(f"Found OpenCV camera:: {camera_info}")
                 camera.release()
