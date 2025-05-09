@@ -23,10 +23,12 @@ import traceback
 from contextlib import nullcontext
 from copy import copy
 from functools import cache
+from uuid import uuid4
 
 import rerun as rr
 import torch
 from deepdiff import DeepDiff
+from numpy import linspace
 from termcolor import colored
 
 from lerobot.common.datasets.image_writer import safe_stop_image_writer
@@ -274,6 +276,33 @@ def control_loop(
         for microphone_name, microphone in robot.microphones.items()
     }
 
+    if (display_data and not is_headless()) or (display_data and robot.robot_type.startswith("lekiwi")):
+        # Create Rerun blueprint
+        blueprint = rr.blueprint.Grid(
+            contents=[
+                rr.blueprint.TimeSeriesView(
+                    origin=plot_path,
+                    plot_legend=rr.blueprint.PlotLegend(visible=True),
+                )
+                for plot_path in ["states_actions", "audio"]
+            ]
+            + [
+                rr.blueprint.Spatial2DView(
+                    origin=f"observation.images.{camera_name}",
+                )
+                for camera_name in robot.cameras
+            ],
+        )
+        # Flush rerun plots by calling init()
+        rr.init(
+            application_id="lerobot_control_loop",
+            recording_id=uuid4(),
+            spawn=True,
+            default_blueprint=blueprint,
+        )
+        rr.set_time_seconds("episode_time", seconds=0.0)
+        rerun_start_time = time.perf_counter()
+
     while timestamp < control_time_s:
         start_loop_t = time.perf_counter()
 
@@ -307,14 +336,36 @@ def control_loop(
 
         # TODO(Steven): This should be more general (for RemoteRobot instead of checking the name, but anyways it will change soon)
         if (display_data and not is_headless()) or (display_data and robot.robot_type.startswith("lekiwi")):
+            rerun_current_time = time.perf_counter() - rerun_start_time
+            rr.set_time_seconds("episode_time", seconds=rerun_current_time)
+
             if action is not None:
                 for k, v in action.items():
                     for i, vv in enumerate(v):
-                        rr.log(f"sent_{k}_{i}", rr.Scalar(vv.numpy()))
+                        rr.log(f"states_actions/sent_{k}_{i}", rr.Scalar(vv.numpy()))
 
             image_keys = [key for key in observation if "image" in key]
             for key in image_keys:
                 rr.log(key, rr.Image(observation[key].numpy()), static=True)
+
+            for microphone_key, microphone in robot.microphones.items():
+                observation_key = f"observation.audio.{microphone_key}"
+                rr.send_columns(
+                    "audio/" + observation_key,
+                    indexes=[
+                        rr.TimeSecondsColumn(
+                            "episode_time",
+                            times=rerun_current_time
+                            + linspace(
+                                -len(observation[observation_key]) / microphone.sample_rate,
+                                0,
+                                len(observation[observation_key]),
+                                endpoint=False,
+                            ),
+                        )
+                    ],
+                    columns=rr.Scalar.columns(scalar=observation[observation_key].numpy()),
+                )
 
         if fps is not None:
             dt_s = time.perf_counter() - start_loop_t
