@@ -18,7 +18,7 @@ class VX300sEnv(gym.Env):
         self.goal = self._sample_goal()
         self.ee_site_name = "pinch"
         self.action_space = spaces.Box(
-            low=-0.05, high=0.05, shape=(self.n_joints,), dtype=np.float32
+            low=-3.14, high=3.14, shape=(self.n_joints,), dtype=np.float32
         )
         # 6つのサーボがある
         # 現在の関節位置(1 * 6)
@@ -76,7 +76,7 @@ class VX300sEnv(gym.Env):
         ee_pos = self._get_ee_position()
         distance = np.linalg.norm(ee_pos - self.goal)
 
-        reward = -distance**2
+        reward = -(distance**2)
         terminated = distance < 0.05
         truncated = False
         info = {"distance": distance}
