@@ -14,7 +14,7 @@
 
 from dataclasses import dataclass
 
-from ..configs import CameraConfig
+from ..configs import CameraConfig, ColorMode, Cv2Rotation
 
 
 @CameraConfig.register_subclass("intelrealsense")
@@ -36,36 +36,36 @@ class RealSenseCameraConfig(CameraConfig):
     name: str | None = None
     serial_number: int | None = None
     fps: int | None = None
-    width: int | None = None
+    width: int | None = None  # NOTE(Steven): Make this not None allowed!
     height: int | None = None
-    color_mode: str = "rgb"
-    channels: int | None = None
+    color_mode: ColorMode = ColorMode.RGB
+    channels: int | None = 3
     use_depth: bool = False
     force_hardware_reset: bool = True
-    rotation: int | None = None
-    mock: bool = False
+    rotation: Cv2Rotation = (
+        Cv2Rotation.NO_ROTATION
+    )  # NOTE(Steven): Check how draccus would deal with this str -> enum
 
     def __post_init__(self):
-        # bool is stronger than is None, since it works with empty strings
+        if self.color_mode not in (ColorMode.RGB, ColorMode.BGR):
+            raise ValueError(
+                f"`color_mode` is expected to be {ColorMode.RGB.value} or {ColorMode.BGR.value}, but {self.color_mode} is provided."
+            )
+
+        if self.rotation not in (
+            Cv2Rotation.NO_ROTATION,
+            Cv2Rotation.ROTATE_90,
+            Cv2Rotation.ROTATE_180,
+            Cv2Rotation.ROTATE_270,
+        ):
+            raise ValueError(
+                f"`rotation` is expected to be in {(Cv2Rotation.NO_ROTATION, Cv2Rotation.ROTATE_90, Cv2Rotation.ROTATE_180, Cv2Rotation.ROTATE_270)}, but {self.rotation} is provided."
+            )
+
+        if self.channels != 3:
+            raise NotImplementedError(f"Unsupported number of channels: {self.channels}")
+
         if bool(self.name) and bool(self.serial_number):
             raise ValueError(
                 f"One of them must be set: name or serial_number, but {self.name=} and {self.serial_number=} provided."
             )
-
-        if self.color_mode not in ["rgb", "bgr"]:
-            raise ValueError(
-                f"`color_mode` is expected to be 'rgb' or 'bgr', but {self.color_mode} is provided."
-            )
-
-        self.channels = 3
-
-        at_least_one_is_not_none = self.fps is not None or self.width is not None or self.height is not None
-        at_least_one_is_none = self.fps is None or self.width is None or self.height is None
-        if at_least_one_is_not_none and at_least_one_is_none:
-            raise ValueError(
-                "For `fps`, `width` and `height`, either all of them need to be set, or none of them, "
-                f"but {self.fps=}, {self.width=}, {self.height=} were provided."
-            )
-
-        if self.rotation not in [-90, None, 90, 180]:
-            raise ValueError(f"`rotation` must be in [-90, None, 90, 180] (got {self.rotation})")

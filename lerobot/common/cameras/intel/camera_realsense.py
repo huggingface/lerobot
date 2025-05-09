@@ -13,523 +13,669 @@
 # limitations under the License.
 
 """
-This file contains utilities for recording frames from Intel Realsense cameras.
+Provides the RealSenseCamera class for capturing frames from Intel RealSense cameras.
 """
 
-import argparse
-import concurrent.futures
+import contextlib
 import logging
 import math
-import shutil
-import threading
+import queue
 import time
-import traceback
-from collections import Counter
-from pathlib import Path
-from threading import Thread
+from threading import Event, Thread
+from typing import Any, Dict, List, Tuple, Union
 
+import cv2
 import numpy as np
-from PIL import Image
+import pyrealsense2 as rs
 
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from lerobot.common.utils.robot_utils import (
-    busy_wait,
-)
 from lerobot.common.utils.utils import capture_timestamp_utc
 
 from ..camera import Camera
+from ..configs import ColorMode
+from ..utils import get_cv2_rotation
 from .configuration_realsense import RealSenseCameraConfig
 
-SERIAL_NUMBER_INDEX = 1
-
-
-def find_cameras(raise_when_empty=True, mock=False) -> list[dict]:
-    """
-    Find the names and the serial numbers of the Intel RealSense cameras
-    connected to the computer.
-    """
-    if mock:
-        import tests.cameras.mock_pyrealsense2 as rs
-    else:
-        import pyrealsense2 as rs
-
-    cameras = []
-    for device in rs.context().query_devices():
-        serial_number = int(device.get_info(rs.camera_info(SERIAL_NUMBER_INDEX)))
-        name = device.get_info(rs.camera_info.name)
-        cameras.append(
-            {
-                "serial_number": serial_number,
-                "name": name,
-            }
-        )
-
-    if raise_when_empty and len(cameras) == 0:
-        raise OSError(
-            "Not a single camera was detected. Try re-plugging, or re-installing `librealsense` and its python wrapper `pyrealsense2`, or updating the firmware."
-        )
-
-    return cameras
-
-
-def save_image(img_array, serial_number, frame_index, images_dir):
-    try:
-        img = Image.fromarray(img_array)
-        path = images_dir / f"camera_{serial_number}_frame_{frame_index:06d}.png"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        img.save(str(path), quality=100)
-        logging.info(f"Saved image: {path}")
-    except Exception as e:
-        logging.error(f"Failed to save image for camera {serial_number} frame {frame_index}: {e}")
-
-
-def save_images_from_cameras(
-    images_dir: Path,
-    serial_numbers: list[int] | None = None,
-    fps=None,
-    width=None,
-    height=None,
-    record_time_s=2,
-    mock=False,
-):
-    """
-    Initializes all the cameras and saves images to the directory. Useful to visually identify the camera
-    associated to a given serial number.
-    """
-    if serial_numbers is None or len(serial_numbers) == 0:
-        camera_infos = find_cameras(mock=mock)
-        serial_numbers = [cam["serial_number"] for cam in camera_infos]
-
-    if mock:
-        import tests.cameras.mock_cv2 as cv2
-    else:
-        import cv2
-
-    print("Connecting cameras")
-    cameras = []
-    for cam_sn in serial_numbers:
-        print(f"{cam_sn=}")
-        config = RealSenseCameraConfig(serial_number=cam_sn, fps=fps, width=width, height=height, mock=mock)
-        camera = RealSenseCamera(config)
-        camera.connect()
-        print(
-            f"RealSenseCamera({camera.serial_number}, fps={camera.fps}, width={camera.capture_width}, height={camera.capture_height}, color_mode={camera.color_mode})"
-        )
-        cameras.append(camera)
-
-    images_dir = Path(images_dir)
-    if images_dir.exists():
-        shutil.rmtree(
-            images_dir,
-        )
-    images_dir.mkdir(parents=True, exist_ok=True)
-
-    print(f"Saving images to {images_dir}")
-    frame_index = 0
-    start_time = time.perf_counter()
-    try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            while True:
-                now = time.perf_counter()
-
-                for camera in cameras:
-                    # If we use async_read when fps is None, the loop will go full speed, and we will end up
-                    # saving the same images from the cameras multiple times until the RAM/disk is full.
-                    image = camera.read() if fps is None else camera.async_read()
-                    if image is None:
-                        print("No Frame")
-
-                    bgr_converted_image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-
-                    executor.submit(
-                        save_image,
-                        bgr_converted_image,
-                        camera.serial_number,
-                        frame_index,
-                        images_dir,
-                    )
-
-                if fps is not None:
-                    dt_s = time.perf_counter() - now
-                    busy_wait(1 / fps - dt_s)
-
-                if time.perf_counter() - start_time > record_time_s:
-                    break
-
-                print(f"Frame: {frame_index:04d}\tLatency (ms): {(time.perf_counter() - now) * 1000:.2f}")
-
-                frame_index += 1
-    finally:
-        print(f"Images have been saved to {images_dir}")
-        for camera in cameras:
-            camera.disconnect()
+logger = logging.getLogger(__name__)
 
 
 class RealSenseCamera(Camera):
     """
-    The RealSenseCamera class is similar to OpenCVCamera class but adds additional features for Intel Real Sense cameras:
-    - is instantiated with the serial number of the camera - won't randomly change as it can be the case of OpenCVCamera for Linux,
-    - can also be instantiated with the camera's name — if it's unique — using RealSenseCamera.init_from_name(),
-    - depth map can be returned.
+    Manages interactions with Intel RealSense cameras for frame and depth recording.
 
-    To find the camera indices of your cameras, you can run our utility script that will save a few frames for each camera:
-    ```bash
-    python lerobot/common/robot_devices/cameras/intelrealsense.py --images-dir outputs/images_from_intelrealsense_cameras
-    ```
+    This class provides an interface similar to `OpenCVCamera` but tailored for
+    RealSense devices, leveraging the `pyrealsense2` library. It uses the camera's
+    unique serial number for identification, offering more stability than device
+    indices, especially on Linux. It also supports capturing depth maps alongside
+    color frames.
 
-    When an RealSenseCamera is instantiated, if no specific config is provided, the default fps, width, height and color_mode
-    of the given camera will be used.
+    A `RealSenseCamera` instance requires a configuration object specifying the
+    camera's serial number or a unique device name. If using the name, ensure only
+    one camera with that name is connected.
 
-    Example of instantiating with a serial number:
-    ```python
-    from lerobot.common.robot_devices.cameras.configs import RealSenseCameraConfig
+    The camera's default settings (FPS, resolution, color mode) from the stream
+    profile are used unless overridden in the configuration.
 
-    config = RealSenseCameraConfig(serial_number=128422271347)
-    camera = RealSenseCamera(config)
-    camera.connect()
-    color_image = camera.read()
-    # when done using the camera, consider disconnecting
-    camera.disconnect()
-    ```
+    Args:
+        config (RealSenseCameraConfig): Configuration object containing settings like
+            serial number or name, desired FPS, width, height, color mode, rotation,
+            and whether to capture depth.
 
-    Example of instantiating with a name if it's unique:
-    ```
-    config = RealSenseCameraConfig(name="Intel RealSense D405")
-    ```
+    Example:
+        ```python
+        from lerobot.common.cameras.intel.camera_realsense import RealSenseCamera
+        from lerobot.common.cameras.intel.configuration_realsense import RealSenseCameraConfig
+        from lerobot.common.cameras.configs import ColorMode
 
-    Example of changing default fps, width, height and color_mode:
-    ```python
-    config = RealSenseCameraConfig(serial_number=128422271347, fps=30, width=1280, height=720)
-    config = RealSenseCameraConfig(serial_number=128422271347, fps=90, width=640, height=480)
-    config = RealSenseCameraConfig(serial_number=128422271347, fps=90, width=640, height=480, color_mode="bgr")
-    # Note: might error out upon `camera.connect()` if these settings are not compatible with the camera
-    ```
+        # Basic usage with serial number
+        config = RealSenseCameraConfig(serial_number="1234567890") # Replace with actual SN
+        camera = RealSenseCamera(config)
+        try:
+            camera.connect()
+            print(f"Connected to {camera}")
+            color_image = camera.read() # Synchronous read (color only)
+            print(f"Read frame shape: {color_image.shape}")
+            async_image = camera.async_read() # Asynchronous read
+            print(f"Async read frame shape: {async_image.shape}")
+        except Exception as e:
+            print(f"An error occurred: {e}")
+        finally:
+            camera.disconnect()
+            print(f"Disconnected from {camera}")
 
-    Example of returning depth:
-    ```python
-    config = RealSenseCameraConfig(serial_number=128422271347, use_depth=True)
-    camera = RealSenseCamera(config)
-    camera.connect()
-    color_image, depth_map = camera.read()
-    ```
+        # Example with depth capture and custom settings
+        custom_config = RealSenseCameraConfig(
+            serial_number="1234567890", # Replace with actual SN
+            fps=30,
+            width=1280,
+            height=720,
+            color_mode=ColorMode.BGR, # Request BGR output
+            rotation=0,
+            use_depth=True
+        )
+        depth_camera = RealSenseCamera(custom_config)
+        try:
+            depth_camera.connect()
+            color_image, depth_map = depth_camera.read() # Returns tuple
+            print(f"Color shape: {color_image.shape}, Depth shape: {depth_map.shape}")
+        finally:
+            depth_camera.disconnect()
+
+        # Example using a unique camera name
+        name_config = RealSenseCameraConfig(name="Intel RealSense D435") # If unique
+        name_camera = RealSenseCamera(name_config)
+        # ... connect, read, disconnect ...
+        ```
     """
 
-    def __init__(
-        self,
-        config: RealSenseCameraConfig,
-    ):
+    def __init__(self, config: RealSenseCameraConfig):
+        """
+        Initializes the RealSenseCamera instance.
+
+        Args:
+            config: The configuration settings for the camera.
+        """
         self.config = config
-        if config.name is not None:
-            self.serial_number = self.find_serial_number_from_name(config.name)
+
+        if config.name is not None:  # TODO(Steven): Do we want to continue supporting this?
+            self.serial_number = self._find_serial_number_from_name(config.name)
+        elif config.serial_number is not None:
+            self.serial_number = str(config.serial_number)
         else:
-            self.serial_number = config.serial_number
+            raise ValueError("RealSenseCameraConfig must provide either 'serial_number' or 'name'.")
 
-        # Store the raw (capture) resolution from the config.
-        self.capture_width = config.width
-        self.capture_height = config.height
+        self.capture_width: int | None = config.width
+        self.capture_height: int | None = config.height
+        self.width: int | None = None
+        self.height: int | None = None
 
-        # If rotated by ±90, swap width and height.
-        if config.rotation in [-90, 90]:
-            self.width = config.height
-            self.height = config.width
-        else:
-            self.width = config.width
-            self.height = config.height
+        self.fps: int | None = config.fps
+        self.channels: int = config.channels
+        self.color_mode: ColorMode = config.color_mode
+        self.use_depth: bool = config.use_depth
 
-        self.fps = config.fps
-        self.channels = config.channels
-        self.color_mode = config.color_mode
-        self.use_depth = config.use_depth
-        self.force_hardware_reset = config.force_hardware_reset
-        self.mock = config.mock
+        self.rs_pipeline: rs.pipeline | None = None
+        self.rs_profile: rs.pipeline_profile | None = None
 
-        self.camera = None
-        self.is_connected = False
-        self.thread = None
-        self.stop_event = None
-        self.color_image = None
-        self.depth_map = None
-        self.logs = {}
+        self.thread: Thread | None = None
+        self.stop_event: Event | None = None
+        self.frame_queue: queue.Queue = queue.Queue(maxsize=1)
 
-        if self.mock:
-            import tests.cameras.mock_cv2 as cv2
-        else:
-            import cv2
+        self.logs: dict = {}  # For timestamping or other metadata
 
-        self.rotation = None
-        if config.rotation == -90:
-            self.rotation = cv2.ROTATE_90_COUNTERCLOCKWISE
-        elif config.rotation == 90:
-            self.rotation = cv2.ROTATE_90_CLOCKWISE
-        elif config.rotation == 180:
-            self.rotation = cv2.ROTATE_180
+        self.rotation: int | None = get_cv2_rotation(config.rotation)
 
-    def find_serial_number_from_name(self, name):
-        camera_infos = find_cameras()
-        camera_names = [cam["name"] for cam in camera_infos]
-        this_name_count = Counter(camera_names)[name]
-        if this_name_count > 1:
-            # TODO(aliberts): Test this with multiple identical cameras (Aloha)
+    def __str__(self) -> str:
+        """Returns a string representation of the camera instance."""
+        return f"{self.__class__.__name__}({self.serial_number})"
+
+    @property
+    def is_connected(self) -> bool:
+        """Checks if the camera pipeline is started and streams are active."""
+        return self.rs_pipeline is not None and self.rs_profile is not None
+
+    @staticmethod
+    def find_cameras(raise_when_empty: bool = True) -> List[Dict[str, Any]]:
+        """
+        Detects available Intel RealSense cameras connected to the system.
+
+        Args:
+            raise_when_empty (bool): If True, raises an OSError if no cameras are found.
+
+        Returns:
+            List[Dict[str, Any]]: A list of dictionaries,
+            where each dictionary contains 'type', 'id' (serial number), 'name',
+            firmware version, USB type, and other available specs, and the default profile properties (width, height, fps, format).
+
+        Raises:
+            OSError: If `raise_when_empty` is True and no cameras are detected,
+                     or if pyrealsense2 is not installed.
+            ImportError: If pyrealsense2 is not installed.
+        """
+        found_cameras_info = []
+        context = rs.context()
+        devices = context.query_devices()
+
+        if not devices:
+            logger.warning("No RealSense devices detected.")
+            if raise_when_empty:
+                raise OSError(
+                    "No RealSense devices detected. Ensure cameras are connected, "
+                    "library (`pyrealsense2`) is installed, and firmware is up-to-date."
+                )
+
+        for device in devices:
+            camera_info = {
+                "name": device.get_info(rs.camera_info.name),
+                "type": "RealSense",
+                "id": device.get_info(rs.camera_info.serial_number),
+                "firmware_version": device.get_info(rs.camera_info.firmware_version),
+                "usb_type_descriptor": device.get_info(rs.camera_info.usb_type_descriptor),
+                "physical_port": device.get_info(rs.camera_info.physical_port),
+                "product_id": device.get_info(rs.camera_info.product_id),
+                "product_line": device.get_info(rs.camera_info.product_line),
+            }
+
+            # Get stream profiles for each sensor
+            sensors = device.query_sensors()
+            for sensor in sensors:
+                profiles = sensor.get_stream_profiles()
+
+                for profile in profiles:
+                    if profile.is_video_stream_profile() and profile.is_default():
+                        vprofile = profile.as_video_stream_profile()
+                        stream_info = {
+                            "stream_type": vprofile.stream_name(),
+                            "format": vprofile.format().name,
+                            "width": vprofile.width(),
+                            "height": vprofile.height(),
+                            "fps": vprofile.fps(),
+                        }
+                        camera_info["default_stream_profile"] = stream_info
+
+            found_cameras_info.append(camera_info)
+            logger.debug(f"Found RealSense camera: {camera_info}")
+
+        logger.info(f"Detected RealSense cameras: {[cam['id'] for cam in found_cameras_info]}")
+        return found_cameras_info
+
+    def _find_serial_number_from_name(self, name: str) -> str:
+        """Finds the serial number for a given unique camera name."""
+        camera_infos = self.find_cameras(raise_when_empty=True)
+        found_devices = [cam for cam in camera_infos if str(cam["name"]) == name]
+
+        if not found_devices:
+            available_names = [cam["name"] for cam in camera_infos]
             raise ValueError(
-                f"Multiple {name} cameras have been detected. Please use their serial number to instantiate them."
+                f"No RealSense camera found with name '{name}'. Available camera names: {available_names}"
             )
 
-        name_to_serial_dict = {cam["name"]: cam["serial_number"] for cam in camera_infos}
-        cam_sn = name_to_serial_dict[name]
+        if len(found_devices) > 1:
+            serial_numbers = [dev["serial_number"] for dev in found_devices]
+            raise ValueError(
+                f"Multiple RealSense cameras found with name '{name}'. "
+                f"Please use a unique serial number instead. Found SNs: {serial_numbers}"
+            )
 
-        return cam_sn
+        serial_number = str(found_devices[0]["serial_number"])
+        logger.info(f"Found serial number '{serial_number}' for camera name '{name}'.")
+        return serial_number
 
-    def connect(self):
-        if self.is_connected:
-            raise DeviceAlreadyConnectedError(f"RealSenseCamera({self.serial_number}) is already connected.")
+    def _configure_realsense_settings(self) -> rs.config:
+        """Creates and configures the RealSense pipeline configuration object."""
+        rs_config = rs.config()
+        rs.config.enable_device(rs_config, self.serial_number)
 
-        if self.mock:
-            import tests.cameras.mock_pyrealsense2 as rs
-        else:
-            import pyrealsense2 as rs
-
-        config = rs.config()
-        config.enable_device(str(self.serial_number))
-
-        if self.fps and self.capture_width and self.capture_height:
-            # TODO(rcadene): can we set rgb8 directly?
-            config.enable_stream(
+        if self.capture_width and self.capture_height and self.fps:
+            logger.debug(
+                f"Requesting Color Stream: {self.capture_width}x{self.capture_height} @ {self.fps} FPS, Format: {rs.format.rgb8}"
+            )
+            rs_config.enable_stream(
                 rs.stream.color, self.capture_width, self.capture_height, rs.format.rgb8, self.fps
             )
         else:
-            config.enable_stream(rs.stream.color)
+            logger.debug(f"Requesting Color Stream: Default settings, Format: {rs.stream.color}")
+            rs_config.enable_stream(rs.stream.color)
 
         if self.use_depth:
-            if self.fps and self.capture_width and self.capture_height:
-                config.enable_stream(
+            if self.capture_width and self.capture_height and self.fps:
+                logger.debug(
+                    f"Requesting Depth Stream: {self.capture_width}x{self.capture_height} @ {self.fps} FPS, Format: {rs.format.z16}"
+                )
+                rs_config.enable_stream(
                     rs.stream.depth, self.capture_width, self.capture_height, rs.format.z16, self.fps
                 )
             else:
-                config.enable_stream(rs.stream.depth)
+                logger.debug(f"Requesting Depth Stream: Default settings, Format: {rs.stream.depth}")
+                rs_config.enable_stream(rs.stream.depth)
 
-        self.camera = rs.pipeline()
-        try:
-            profile = self.camera.start(config)
-            is_camera_open = True
-        except RuntimeError:
-            is_camera_open = False
-            traceback.print_exc()
+        return rs_config
 
-        # If the camera doesn't work, display the camera indices corresponding to
-        # valid cameras.
-        if not is_camera_open:
-            # Verify that the provided `serial_number` is valid before printing the traceback
-            camera_infos = find_cameras()
-            serial_numbers = [cam["serial_number"] for cam in camera_infos]
-            if self.serial_number not in serial_numbers:
-                raise ValueError(
-                    f"`serial_number` is expected to be one of these available cameras {serial_numbers}, but {self.serial_number} is provided instead. "
-                    "To find the serial number you should use, run `python lerobot/common/robot_devices/cameras/intelrealsense.py`."
-                )
+    def _validate_capture_settings(self) -> None:
+        """
+        Validates if the actual stream settings match the requested configuration.
 
-            raise OSError(f"Can't access RealSenseCamera({self.serial_number}).")
+        This method compares the requested FPS, width, and height against the
+        actual settings obtained from the active RealSense profile after the
+        pipeline has started.
 
-        color_stream = profile.get_stream(rs.stream.color)
-        color_profile = color_stream.as_video_stream_profile()
-        actual_fps = color_profile.fps()
-        actual_width = color_profile.width()
-        actual_height = color_profile.height()
-
-        # Using `math.isclose` since actual fps can be a float (e.g. 29.9 instead of 30)
-        if self.fps is not None and not math.isclose(self.fps, actual_fps, rel_tol=1e-3):
-            # Using `OSError` since it's a broad that encompasses issues related to device communication
-            raise OSError(
-                f"Can't set {self.fps=} for RealSenseCamera({self.serial_number}). Actual value is {actual_fps}."
-            )
-        if self.capture_width is not None and self.capture_width != actual_width:
-            raise OSError(
-                f"Can't set {self.capture_width=} for RealSenseCamera({self.serial_number}). Actual value is {actual_width}."
-            )
-        if self.capture_height is not None and self.capture_height != actual_height:
-            raise OSError(
-                f"Can't set {self.capture_height=} for RealSenseCamera({self.serial_number}). Actual value is {actual_height}."
-            )
-
-        self.fps = round(actual_fps)
-        self.capture_width = round(actual_width)
-        self.capture_height = round(actual_height)
-
-        self.is_connected = True
-
-    def read(self, temporary_color: str | None = None) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
-        """Read a frame from the camera returned in the format height x width x channels (e.g. 480 x 640 x 3)
-        of type `np.uint8`, contrarily to the pytorch format which is float channel first.
-
-        When `use_depth=True`, returns a tuple `(color_image, depth_map)` with a depth map in the format
-        height x width (e.g. 480 x 640) of type np.uint16.
-
-        Note: Reading a frame is done every `camera.fps` times per second, and it is blocking.
-        If you are reading data from other sensors, we advise to use `camera.async_read()` which is non blocking version of `camera.read()`.
+        Raises:
+            RuntimeError: If the actual camera settings significantly deviate
+                          from the requested ones.
+            DeviceNotConnectedError: If the camera is not connected when attempting
+                                     to validate settings.
         """
         if not self.is_connected:
-            raise DeviceNotConnectedError(
-                f"RealSenseCamera({self.serial_number}) is not connected. Try running `camera.connect()` first."
-            )
+            raise DeviceNotConnectedError(f"Cannot validate settings for {self} as it is not connected.")
 
-        if self.mock:
-            import tests.cameras.mock_cv2 as cv2
+        self._validate_fps()
+        self._validate_capture_width()
+        self._validate_capture_height()
+
+        if self.use_depth:
+            try:
+                depth_stream = self.rs_profile.get_stream(rs.stream.depth).as_video_stream_profile()
+                actual_depth_width = depth_stream.width()
+                actual_depth_height = depth_stream.height()
+                actual_depth_fps = depth_stream.fps()
+                logger.info(
+                    f"Actual Depth Stream: {actual_depth_width}x{actual_depth_height} @ {actual_depth_fps} FPS"
+                )
+
+                # NOTE(Steven): This could be better, we could call the _set_XXX methods but those potentially modify the capture value of the color profile
+                if self.capture_width and self.capture_width != actual_depth_width:
+                    logger.warning(
+                        f"Depth width ({actual_depth_width}) differs from requested color width ({self.capture_width}) for {self}."
+                    )
+                if self.capture_height and self.capture_height != actual_depth_height:
+                    logger.warning(
+                        f"Depth height ({actual_depth_height}) differs from requested color height ({self.capture_height}) for {self}."
+                    )
+                if self.fps and self.fps != actual_depth_fps:
+                    logger.warning(
+                        f"Depth FPS ({actual_depth_fps}) differs from requested color FPS ({self.fps}) for {self}."
+                    )
+
+            except Exception as e:
+                logger.error(f"Failed to get or validate active depth stream profile on {self}: {e}")
+
+        # Set final width/height considering rotation
+        if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
+            self.width, self.height = self.capture_height, self.capture_width
         else:
-            import cv2
+            self.width, self.height = self.capture_width, self.capture_height
+        logger.debug(f"Final image dimensions set to: {self.width}x{self.height} (after rotation if any)")
+
+    # NOTE(Steven): Add a wamr-up period time config
+    def connect(self):
+        """
+        Connects to the RealSense camera specified in the configuration.
+
+        Initializes the RealSense pipeline, configures the required streams (color
+        and optionally depth), starts the pipeline, and validates the actual stream settings.
+
+        Raises:
+            DeviceAlreadyConnectedError: If the camera is already connected.
+            ValueError: If the configuration is invalid (e.g., missing serial/name, name not unique).
+            ConnectionError: If the camera is found but fails to start the pipeline.
+            RuntimeError: If the pipeline starts but fails to apply requested settings.
+            OSError: If no RealSense devices are detected at all.
+        """
+        if self.is_connected:
+            raise DeviceAlreadyConnectedError(f"{self} is already connected.")
+
+        logger.debug(f"Attempting to connect to camera {self.serial_number}...")
+        self.rs_pipeline = rs.pipeline()
+        rs_config = self._configure_realsense_settings()
+
+        try:
+            self.rs_profile = self.rs_pipeline.start(rs_config)
+            logger.debug(f"Successfully started pipeline for camera {self.serial_number}.")
+        except RuntimeError as e:
+            self.rs_profile = None
+            self.rs_pipeline = None
+            raise ConnectionError(
+                f"Failed to open RealSense camera {self.serial_number}. Error: {e}. "
+                f"Run 'python -m find_cameras list-cameras' for details."
+            ) from e
+
+        logger.debug(f"Validating stream configuration for {self.serial_number}...")
+        self._validate_capture_settings()
+        logger.info(f"Camera {self.serial_number} connected and configured successfully.")
+
+    def _validate_fps(self) -> None:
+        """Validates and sets the internal FPS based on actual stream FPS."""
+
+        color_stream = self.rs_profile.get_stream(rs.stream.color).as_video_stream_profile()
+        actual_fps = color_stream.fps()
+
+        if self.fps is None:
+            self.fps = actual_fps
+            logger.info(f"FPS not specified, using camera default: {self.fps} FPS.")
+            return
+
+        # Use math.isclose for robust float comparison
+        if not math.isclose(self.fps, actual_fps, rel_tol=1e-3):
+            logger.warning(
+                f"Requested FPS {self.fps} for {self}, but camera reported {actual_fps}. "
+                "This might be due to camera limitations."
+            )
+            raise RuntimeError(
+                f"Failed to set requested FPS {self.fps} for {self}. Actual value reported: {actual_fps}."
+            )
+        logger.debug(f"FPS set to {actual_fps} for {self}.")
+
+    def _validate_capture_width(self) -> None:
+        """Validates and sets the internal capture width based on actual stream width."""
+
+        color_stream = self.rs_profile.get_stream(rs.stream.color).as_video_stream_profile()
+        actual_width = int(round(color_stream.width()))
+
+        if self.capture_width is None:
+            self.capture_width = actual_width
+            logger.info(f"Capture width not specified, using camera default: {self.capture_width} pixels.")
+            return
+
+        if self.capture_width != actual_width:
+            logger.warning(
+                f"Requested capture width {self.capture_width} for {self}, but camera reported {actual_width}."
+            )
+            raise RuntimeError(
+                f"Failed to set requested capture width {self.capture_width} for {self}. Actual value: {actual_width}."
+            )
+        logger.debug(f"Capture width set to {actual_width} for {self}.")
+
+    def _validate_capture_height(self) -> None:
+        """Validates and sets the internal capture height based on actual stream height."""
+
+        color_stream = self.rs_profile.get_stream(rs.stream.color).as_video_stream_profile()
+        actual_height = int(round(color_stream.height()))
+
+        if self.capture_height is None:
+            self.capture_height = actual_height
+            logger.info(f"Capture height not specified, using camera default: {self.capture_height} pixels.")
+            return
+
+        if self.capture_height != actual_height:
+            logger.warning(
+                f"Requested capture height {self.capture_height} for {self}, but camera reported {actual_height}."
+            )
+            raise RuntimeError(
+                f"Failed to set requested capture height {self.capture_height} for {self}. Actual value: {actual_height}."
+            )
+        logger.debug(f"Capture height set to {actual_height} for {self}.")
+
+    def read(
+        self, color_mode: ColorMode | None = None, timeout_ms: int = 5000
+    ) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
+        """
+        Reads a single frame (color and optionally depth) synchronously from the camera.
+
+        This is a blocking call. It waits for a coherent set of frames (color, depth if enabled)
+        from the camera hardware via the RealSense pipeline.
+
+        Args:
+            timeout_ms (int): Maximum time in milliseconds to wait for a frame. Defaults to 5000ms.
+
+        Returns:
+            Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
+            - If `use_depth` is False: The captured color frame as a NumPy array
+              (height, width, channels), processed according to `color_mode` and rotation.
+            - If `use_depth` is True: A tuple containing:
+                - color_image (np.ndarray): The processed color frame.
+                - depth_map (np.ndarray): The depth map as a NumPy array (height, width)
+                  of type `np.uint16` (raw depth values in millimeters, before rotation).
+                  Depth map is NOT rotated by this method.
+
+        Raises:
+            DeviceNotConnectedError: If the camera is not connected.
+            RuntimeError: If reading frames from the pipeline fails or frames are invalid.
+            ValueError: If an invalid `color_mode` is requested.
+        """
+        if not self.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
 
         start_time = time.perf_counter()
 
-        frame = self.camera.wait_for_frames(timeout_ms=5000)
+        ret, frame = self.rs_pipeline.try_wait_for_frames(
+            timeout_ms=timeout_ms
+        )  # NOTE(Steven): This read has a timeout
+
+        if not ret or frame is None:
+            raise RuntimeError(
+                f"Failed to capture frame from {self}. '.read()' returned status={ret} and frame is None."
+            )
 
         color_frame = frame.get_color_frame()
+        color_image_raw = np.asanyarray(color_frame.get_data())
 
-        if not color_frame:
-            raise OSError(f"Can't capture color image from RealSenseCamera({self.serial_number}).")
-
-        color_image = np.asanyarray(color_frame.get_data())
-
-        requested_color_mode = self.color_mode if temporary_color is None else temporary_color
-        if requested_color_mode not in ["rgb", "bgr"]:
-            raise ValueError(
-                f"Expected color values are 'rgb' or 'bgr', but {requested_color_mode} is provided."
-            )
-
-        # IntelRealSense uses RGB format as default (red, green, blue).
-        if requested_color_mode == "bgr":
-            color_image = cv2.cvtColor(color_image, cv2.COLOR_RGB2BGR)
-
-        h, w, _ = color_image.shape
-        if h != self.capture_height or w != self.capture_width:
-            raise OSError(
-                f"Can't capture color image with expected height and width ({self.height} x {self.width}). ({h} x {w}) returned instead."
-            )
-
-        if self.rotation is not None:
-            color_image = cv2.rotate(color_image, self.rotation)
-
-        # log the number of seconds it took to read the image
-        self.logs["delta_timestamp_s"] = time.perf_counter() - start_time
-
-        # log the utc time at which the image was received
-        self.logs["timestamp_utc"] = capture_timestamp_utc()
+        color_image_processed = self._postprocess_image(color_image_raw, color_mode)
 
         if self.use_depth:
             depth_frame = frame.get_depth_frame()
-            if not depth_frame:
-                raise OSError(f"Can't capture depth image from RealSenseCamera({self.serial_number}).")
-
             depth_map = np.asanyarray(depth_frame.get_data())
 
+            # NOTE(Steven): Simplified version of _postprocess_image() for depth image
             h, w = depth_map.shape
+
             if h != self.capture_height or w != self.capture_width:
-                raise OSError(
-                    f"Can't capture depth map with expected height and width ({self.height} x {self.width}). ({h} x {w}) returned instead."
+                raise RuntimeError(
+                    f"Captured frame dimensions ({h}x{w}) do not match configured capture dimensions ({self.capture_height}x{self.capture_width}) for {self}."
                 )
 
-            if self.rotation is not None:
+            if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
                 depth_map = cv2.rotate(depth_map, self.rotation)
+                logger.debug(f"Rotated frame by {self.config.rotation} degrees for {self}.")
 
-            return color_image, depth_map
+            read_duration_ms = (time.perf_counter() - start_time) * 1e3
+            logger.debug(f"{self} synchronous read took: {read_duration_ms:.1f}ms")
+
+            self.logs["timestamp_utc"] = capture_timestamp_utc()
+            return color_image_processed, depth_map
         else:
-            return color_image
+            read_duration_ms = (time.perf_counter() - start_time) * 1e3
+            logger.debug(f"{self} synchronous read took: {read_duration_ms:.1f}ms")
 
-    def read_loop(self):
+            self.logs["timestamp_utc"] = capture_timestamp_utc()
+            return color_image_processed
+
+    def _postprocess_image(self, image: np.ndarray, color_mode: ColorMode | None = None) -> np.ndarray:
+        """
+        Applies color conversion, dimension validation, and rotation to a raw color frame.
+
+        Args:
+            image (np.ndarray): The raw image frame (expected RGB format from RealSense).
+            color_mode (Optional[ColorMode]): The target color mode (RGB or BGR). If None,
+                                             uses the instance's default `self.color_mode`.
+
+        Returns:
+            np.ndarray: The processed image frame according to `self.color_mode` and `self.rotation`.
+
+        Raises:
+            ValueError: If the requested `color_mode` is invalid.
+            RuntimeError: If the raw frame dimensions do not match the configured
+                          `capture_width` and `capture_height`.
+        """
+        requested_color_mode = self.color_mode if color_mode is None else color_mode
+
+        if requested_color_mode not in (ColorMode.RGB, ColorMode.BGR):
+            raise ValueError(
+                f"Invalid requested color mode '{requested_color_mode}'. Expected {ColorMode.RGB} or {ColorMode.BGR}."
+            )
+
+        h, w, c = image.shape
+
+        if h != self.capture_height or w != self.capture_width:
+            raise RuntimeError(
+                f"Captured frame dimensions ({h}x{w}) do not match configured capture dimensions ({self.capture_height}x{self.capture_width}) for {self}."
+            )
+        if c != self.channels:
+            logger.warning(
+                f"Captured frame channels ({c}) do not match configured channels ({self.channels}) for {self}."
+            )
+
+        processed_image = image
+        if self.color_mode == ColorMode.BGR:
+            processed_image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+            logger.debug(f"Converted frame from RGB to BGR for {self}.")
+
+        if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
+            processed_image = cv2.rotate(processed_image, self.rotation)
+            logger.debug(f"Rotated frame by {self.config.rotation} degrees for {self}.")
+
+        return processed_image
+
+    def _read_loop(self):
+        """
+        Internal loop run by the background thread for asynchronous reading.
+
+        Continuously reads frames (color and optional depth) using `read()`
+        and places the latest result (single image or tuple) into the `frame_queue`.
+        It overwrites any previous frame in the queue.
+        """
+        logger.debug(f"Starting read loop thread for {self}.")
         while not self.stop_event.is_set():
-            if self.use_depth:
-                self.color_image, self.depth_map = self.read()
-            else:
-                self.color_image = self.read()
+            try:
+                frame_data = self.read(timeout_ms=500)
 
-    def async_read(self):
-        """Access the latest color image"""
+                with contextlib.suppress(queue.Empty):
+                    _ = self.frame_queue.get_nowait()
+                self.frame_queue.put(frame_data)
+                logger.debug(f"Frame data placed in queue for {self}.")
+
+            except DeviceNotConnectedError:
+                logger.error(f"Read loop for {self} stopped: Camera disconnected.")
+                break
+            except Exception as e:
+                logger.warning(f"Error reading frame in background thread for {self}: {e}")
+
+        logger.debug(f"Stopping read loop thread for {self}.")
+
+    def _ensure_read_thread_running(self):
+        """Starts or restarts the background read thread if it's not running."""
+        if self.thread is not None and self.thread.is_alive():
+            self.thread.join(timeout=0.1)
+        if self.stop_event is not None:
+            self.stop_event.set()
+
+        self.stop_event = Event()
+        self.thread = Thread(
+            target=self._read_loop, args=(), name=f"RealSenseReadLoop-{self}-{self.serial_number}"
+        )
+        self.thread.daemon = True
+        self.thread.start()
+        logger.debug(f"Read thread started for {self}.")
+
+    def async_read(self, timeout_ms: float = 2000) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
+        """
+        Reads the latest available frame data (color or color+depth) asynchronously.
+
+        This method retrieves the most recent frame captured by the background
+        read thread. It does not block waiting for the camera hardware directly,
+        only waits for a frame to appear in the internal queue up to the specified
+        timeout.
+
+        Args:
+            timeout_ms (float): Maximum time in milliseconds to wait for a frame
+                to become available in the queue. Defaults to 2000ms (2 seconds).
+
+        Returns:
+            Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
+            The latest captured frame data (color image or tuple of color image
+            and depth map), processed according to configuration. Format depends
+            on `self.use_depth`.
+
+        Raises:
+            DeviceNotConnectedError: If the camera is not connected.
+            TimeoutError: If no frame data becomes available within the specified timeout.
+            RuntimeError: If the background thread died unexpectedly or another queue error occurs.
+        """
         if not self.is_connected:
-            raise DeviceNotConnectedError(
-                f"RealSenseCamera({self.serial_number}) is not connected. Try running `camera.connect()` first."
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+
+        if self.thread is None or not self.thread.is_alive():
+            self._ensure_read_thread_running()
+
+        try:
+            return self.frame_queue.get(timeout=timeout_ms / 1000.0)
+        except queue.Empty as e:
+            thread_alive = self.thread is not None and self.thread.is_alive()
+            logger.error(
+                f"Timeout waiting for frame from {self} queue after {timeout_ms}ms. "
+                f"(Read thread alive: {thread_alive})"
             )
+            raise TimeoutError(
+                f"Timed out waiting for frame from camera {self.serial_number} after {timeout_ms} ms. "
+                f"Read thread alive: {thread_alive}."
+            ) from e
+        except Exception as e:
+            logger.exception(f"Unexpected error getting frame data from queue for {self}: {e}")
+            raise RuntimeError(
+                f"Error getting frame data from queue for camera {self.serial_number}: {e}"
+            ) from e
 
-        if self.thread is None:
-            self.stop_event = threading.Event()
-            self.thread = Thread(target=self.read_loop, args=())
-            self.thread.daemon = True
-            self.thread.start()
-
-        num_tries = 0
-        while self.color_image is None:
-            # TODO(rcadene, aliberts): intelrealsense has diverged compared to opencv over here
-            num_tries += 1
-            time.sleep(1 / self.fps)
-            if num_tries > self.fps and (self.thread.ident is None or not self.thread.is_alive()):
-                raise Exception(
-                    "The thread responsible for `self.async_read()` took too much time to start. There might be an issue. Verify that `self.thread.start()` has been called."
-                )
-
-        if self.use_depth:
-            return self.color_image, self.depth_map
-        else:
-            return self.color_image
-
-    def disconnect(self):
-        if not self.is_connected:
-            raise DeviceNotConnectedError(
-                f"RealSenseCamera({self.serial_number}) is not connected. Try running `camera.connect()` first."
-            )
+    # NOTE(Steven): There are multiple functions that are the same between realsense and opencv. We should consider moving them to the parent class
+    def _shutdown_read_thread(self):
+        """Signals the background read thread to stop and waits for it to join."""
+        if self.stop_event is not None:
+            logger.debug(f"Signaling stop event for read thread of {self}.")
+            self.stop_event.set()
 
         if self.thread is not None and self.thread.is_alive():
-            # wait for the thread to finish
-            self.stop_event.set()
-            self.thread.join()
-            self.thread = None
-            self.stop_event = None
+            logger.debug(f"Waiting for read thread of {self} to join...")
+            self.thread.join(timeout=2.0)
+            if self.thread.is_alive():
+                logger.warning(f"Read thread for {self} did not terminate gracefully after 2 seconds.")
+            else:
+                logger.debug(f"Read thread for {self} joined successfully.")
 
-        self.camera.stop()
-        self.camera = None
+        self.thread = None
+        self.stop_event = None
 
-        self.is_connected = False
+    def disconnect(self):
+        """
+        Disconnects from the camera, stops the pipeline, and cleans up resources.
 
-    def __del__(self):
-        if getattr(self, "is_connected", False):
-            self.disconnect()
+        Stops the background read thread (if running) and stops the RealSense pipeline.
 
+        Raises:
+            DeviceNotConnectedError: If the camera is already disconnected (pipeline not running).
+        """
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Save a few frames using `RealSenseCamera` for all cameras connected to the computer, or a selected subset."
-    )
-    parser.add_argument(
-        "--serial-numbers",
-        type=int,
-        nargs="*",
-        default=None,
-        help="List of serial numbers used to instantiate the `RealSenseCamera`. If not provided, find and use all available camera indices.",
-    )
-    parser.add_argument(
-        "--fps",
-        type=int,
-        default=30,
-        help="Set the number of frames recorded per seconds for all cameras. If not provided, use the default fps of each camera.",
-    )
-    parser.add_argument(
-        "--width",
-        type=int,
-        default=640,
-        help="Set the width for all cameras. If not provided, use the default width of each camera.",
-    )
-    parser.add_argument(
-        "--height",
-        type=int,
-        default=480,
-        help="Set the height for all cameras. If not provided, use the default height of each camera.",
-    )
-    parser.add_argument(
-        "--images-dir",
-        type=Path,
-        default="outputs/images_from_intelrealsense_cameras",
-        help="Set directory to save a few frames for each camera.",
-    )
-    parser.add_argument(
-        "--record-time-s",
-        type=float,
-        default=2.0,
-        help="Set the number of seconds used to record the frames. By default, 2 seconds.",
-    )
-    args = parser.parse_args()
-    save_images_from_cameras(**vars(args))
+        if not self.is_connected and self.thread is None:
+            raise DeviceNotConnectedError(
+                f"Attempted to disconnect {self}, but it appears already disconnected."
+            )
+
+        logger.debug(f"Disconnecting from camera {self.serial_number}...")
+
+        if self.thread is not None:
+            self._shutdown_read_thread()
+
+        if self.rs_pipeline is not None:
+            logger.debug(f"Stopping RealSense pipeline object for {self}.")
+            self.rs_pipeline.stop()
+            self.rs_pipeline = None
+            self.rs_profile = None
+
+        logger.info(f"Camera {self.serial_number} disconnected successfully.")

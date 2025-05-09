@@ -84,7 +84,10 @@ dora = [
 ]
 dynamixel = ["dynamixel-sdk>=3.7.31", "pynput>=1.7.7"]
 feetech = ["feetech-servo-sdk>=1.0.0", "pynput>=1.7.7"]
-intelrealsense = ["pyrealsense2>=2.55.1.6486 ; sys_platform != 'darwin'"]
+intelrealsense = [
+    "pyrealsense2>=2.54 ; sys_platform != 'darwin'",
+    "pyrealsense2-macosx>=2.54 ; sys_platform == 'darwin'", #NOTE(Steven): Check previous version for sudo issue
+]
 pi0 = ["transformers>=4.48.0"]
 pusht = ["gym-pusht>=0.1.5 ; python_version < '4.0'"]
 stretch = [
