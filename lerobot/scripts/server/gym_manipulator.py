@@ -1794,7 +1794,7 @@ def make_robot_env(cfg) -> gym.vector.VectorEnv:
         A vectorized gym environment with all necessary wrappers applied.
     """
     if cfg.type == "hil":
-        import gymnasium as gym
+        import gym_hil  # noqa: F401
 
         # TODO (azouitine)
         env = gym.make(
@@ -1923,7 +1923,7 @@ def init_reward_classifier(cfg):
 ###########################################################
 
 
-def record_dataset(env, policy, cfg, success_collection_steps=15):
+def record_dataset(env, policy, cfg, success_collection_steps=0):
     """
     Record a dataset of robot interactions using either a policy or teleop.
 
@@ -2076,7 +2076,7 @@ def record_dataset(env, policy, cfg, success_collection_steps=15):
             logging.info(f"Re-recording episode {episode_index}")
             continue
 
-        dataset.save_episode(cfg.task)
+        dataset.save_episode()
         episode_index += 1
 
     # Finalize dataset
@@ -2144,7 +2144,7 @@ def main(cfg: EnvConfig):
             env,
             policy=policy,
             cfg=cfg,
-            success_collection_steps=15,
+            success_collection_steps=0,
         )
         exit()
 
