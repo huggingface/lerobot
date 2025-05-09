@@ -96,8 +96,8 @@ Reconnect the usb cable.
 #### Update config file
 
 Now that you have your ports, update the **port** default values of [`SO101RobotConfig`](https://github.com/huggingface/lerobot/blob/main/lerobot/common/robot_devices/robots/configs.py).
-You will find something like, update the `port` values with your actual motor ports:
-```python
+You will find a class called `so101` where you can update the `port` values with your actual motor ports:
+```diff
 @RobotConfig.register_subclass("so101")
 @dataclass
 class So101RobotConfig(ManipulatorRobotConfig):
@@ -110,7 +110,8 @@ class So101RobotConfig(ManipulatorRobotConfig):
     leader_arms: dict[str, MotorsBusConfig] = field(
         default_factory=lambda: {
             "main": FeetechMotorsBusConfig(
-                port="/dev/tty.usbmodem58760431091",  <-- UPDATE HERE
+-               port="/dev/tty.usbmodem58760431091",
++               port="{ADD YOUR LEADER PORT}",
                 motors={
                     # name: (index, model)
                     "shoulder_pan": [1, "sts3215"],
@@ -127,7 +128,8 @@ class So101RobotConfig(ManipulatorRobotConfig):
     follower_arms: dict[str, MotorsBusConfig] = field(
         default_factory=lambda: {
             "main": FeetechMotorsBusConfig(
-                port="/dev/tty.usbmodem585A0076891",  <-- UPDATE HERE
+-                port="/dev/tty.usbmodem585A0076891",
++                port="{ADD YOUR FOLLOWER PORT}",
                 motors={
                     # name: (index, model)
                     "shoulder_pan": [1, "sts3215"],
@@ -297,7 +299,7 @@ Remove all support material from the 3D-printed parts, the easiest way to do thi
 ##### Wiring
 
 - Attach the motor controller on the back.
-- Then insert all wires, use the wire guides everywhere to make sure the wires don't unplug themself and stay in place.
+- Then insert all wires, use the wire guides everywhere to make sure the wires don't unplug themselves and stay in place.
 
 <div class="video-container">
   <video controls width="600">
