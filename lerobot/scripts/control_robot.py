@@ -139,6 +139,7 @@ import os
 import time
 from dataclasses import asdict
 from pprint import pformat
+from uuid import uuid4
 
 import rerun as rr
 
@@ -386,7 +387,7 @@ def _init_rerun(control_config: ControlConfig, session_name: str = "lerobot_cont
         os.environ["RERUN_FLUSH_NUM_BYTES"] = batch_size
 
         # Initialize Rerun based on configuration
-        rr.init(session_name)
+        rr.init(session_name, recording_id=uuid4())
         if isinstance(control_config, RemoteRobotConfig):
             viewer_ip = control_config.viewer_ip
             viewer_port = control_config.viewer_port
