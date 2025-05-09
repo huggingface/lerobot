@@ -1,0 +1,26 @@
+<mujoco>
+  <option timestep="0.001" gravity="0 0 -9.81"/>
+  <!-- rangeなどのパラメータをdegreeで記述する -->
+  <compiler angle="degree"/>
+  <worldbody>
+    <geom type="capsule" fromto="0 0 0  .2 0 0" size="0.01" rgba="1 0 0 1"/>
+    <geom type="capsule" fromto="0 0 0  0 .2 0" size="0.01" rgba="0 1 0 1"/>
+    <geom type="capsule" fromto="0 0 0  0 0 .2" size="0.01" rgba="0 0 1 1"/>
+
+    <body name="torso" pos="0 0 0.5">
+      <joint name="waist" type="hinge" axis="0 1 0" range="-180 180" limited="true"/>
+      <geom type="capsule" pos="0 0 0.1" size="0.03 0.1" rgba="1 0 0 1"/>
+
+      <!-- pos: 重心位置 -->
+      <!-- mass: 質量[kg] -->
+      <!-- diaginertia: 慣性に関わる値。要調査 -->
+      <inertial pos="0 0 0.1" mass="1" diaginertia="0.1 0.1 0.1"/>
+    </body>
+  </worldbody>
+
+  <actuator>
+  <!-- kp: 目標値と現在値の差分にかかるゲイン。大きくすると速く目標値に到達する -->
+  <!-- kv: 減衰値。小さくすると目標値付近で振動が大きくなる-->
+    <position name="waist_act" joint="waist" kp="100" kv="0.1" ctrlrange="-180 180"/>
+  </actuator>
+</mujoco>
