@@ -69,11 +69,3 @@ class RealSenseCameraConfig(CameraConfig):
             raise ValueError(
                 f"One of them must be set: name or serial_number, but {self.name=} and {self.serial_number=} provided."
             )
-
-        at_least_one_is_not_none = self.fps is not None or self.width is not None or self.height is not None
-        at_least_one_is_none = self.fps is None or self.width is None or self.height is None
-        if at_least_one_is_not_none and at_least_one_is_none:
-            raise ValueError(
-                "For `fps`, `width` and `height`, either all of them need to be set, or none of them, "
-                f"but {self.fps=}, {self.width=}, {self.height=} were provided."
-            )
