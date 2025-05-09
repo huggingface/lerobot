@@ -1000,14 +1000,6 @@ def orthogonal_init():
     return lambda x: torch.nn.init.orthogonal_(x, gain=1.0)
 
 
-class Identity(nn.Module):
-    def __init__(self):
-        super().__init__()
-
-    def forward(self, x):
-        return x
-
-
 class SpatialLearnedEmbeddings(nn.Module):
     def __init__(self, height, width, channel, num_features=8):
         """
