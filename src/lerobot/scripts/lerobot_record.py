@@ -285,6 +285,13 @@ def record_loop(
     display_data: bool = False,
     display_compressed_images: bool = False,
 ):
+    if display_data:
+        init_rerun(
+            session_name="recording",
+            robot=robot,
+            reset_time=True,
+        )
+
     if dataset is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
 
