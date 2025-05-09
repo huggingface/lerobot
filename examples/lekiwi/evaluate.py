@@ -5,7 +5,6 @@ from lerobot.record import record_loop
 from lerobot.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
 from lerobot.utils.control_utils import init_keyboard_listener
 from lerobot.utils.utils import log_say
-from lerobot.utils.visualization_utils import _init_rerun
 
 NUM_EPISODES = 2
 FPS = 30
@@ -35,8 +34,6 @@ dataset = LeRobotDataset.create(
 
 # To connect you already should have this script running on LeKiwi: `python -m lerobot.robots.lekiwi.lekiwi_host --robot.id=my_awesome_kiwi`
 robot.connect()
-
-_init_rerun(session_name="recording")
 
 listener, events = init_keyboard_listener()
 
