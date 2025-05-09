@@ -225,6 +225,9 @@ class HILSerlRobotEnvConfig(EnvConfig):
     push_to_hub: bool = True
     pretrained_policy_name_or_path: Optional[str] = None
     reward_classifier_pretrained_path: Optional[str] = None
+    number_of_steps_after_success: int = (
+        0  # For the reward classifier, to record more positive examples after a success
+    )
 
     def gym_kwargs(self) -> dict:
         return {}
