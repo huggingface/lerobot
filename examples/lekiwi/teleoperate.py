@@ -43,7 +43,7 @@ def main():
     keyboard.connect()
 
     # Init rerun viewer
-    init_rerun(session_name="lekiwi_teleop")
+    init_rerun(session_name="lekiwi_teleop", robot=robot, reset_time=True)
 
     if not robot.is_connected or not leader_arm.is_connected or not keyboard.is_connected:
         raise ValueError("Robot or teleop is not connected!")
