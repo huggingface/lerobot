@@ -71,9 +71,9 @@
   <worldbody>
     <light mode="targetbodycom" target="gripper_link" pos="1 0 1"/>
     <!-- 軸の描画 -->
-    <geom type="capsule" fromto="0 0 0  .5 0 0" size="0.01" rgba="1 0 0 1"/>
-    <geom type="capsule" fromto="0 0 0  0 .5 0" size="0.01" rgba="0 1 0 1"/>
-    <geom type="capsule" fromto="0 0 0  0 0 .5" size="0.01" rgba="0 0 1 1"/>
+    <geom type="capsule" fromto="0 0 0  .5 0 0" size="0.01" rgba="1 0 0 1" contype="0" conaffinity="0"/>
+    <geom type="capsule" fromto="0 0 0  0 .5 0" size="0.01" rgba="0 1 0 1" contype="0" conaffinity="0"/>
+    <geom type="capsule" fromto="0 0 0  0 0 .5" size="0.01" rgba="0 0 1 1" contype="0" conaffinity="0"/>
     <!-- posが(0, 0, 0だとなぜかpythonから位置を変更できない) -->
     <site name="goal_site" pos="0.1 0 0" size="0.02" rgba="1 0 0 1" type="sphere"/>
     <site name="ee_site" pos="0.1 0 0" size="0.02" rgba="0 1 0 1" type="sphere"/>
