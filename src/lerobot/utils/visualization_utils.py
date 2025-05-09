@@ -15,20 +15,40 @@
 import numbers
 import os
 from typing import Any
+from uuid import uuid4
 
 import numpy as np
 import rerun as rr
 
+from lerobot.datasets.utils import DEFAULT_AUDIO_CHUNK_DURATION
+from lerobot.robots import Robot
+
 from .constants import OBS_PREFIX, OBS_STR
 
 
-def init_rerun(session_name: str = "lerobot_control_loop") -> None:
-    """Initializes the Rerun SDK for visualizing the control loop."""
+def init_rerun(
+    session_name: str = "lerobot_control_loop", robot: Robot | None = None, reset_time: bool = False
+) -> None:
+    """
+    Initializes the Rerun SDK for visualizing the control loop.
+
+    Args:
+        session_name: The name of the Rerun session.
+        robot: A Robot object. If provided, Rerun will be initialized with a blueprint that includes the object's cameras and microphones.
+        reset_time: Whether to reset the timer "episode_time" to 0.
+    """
     batch_size = os.getenv("RERUN_FLUSH_NUM_BYTES", "8000")
     os.environ["RERUN_FLUSH_NUM_BYTES"] = batch_size
-    rr.init(session_name)
+    rr.init(
+        application_id=session_name,
+        recording_id=uuid4(),
+        default_blueprint=build_rerun_blueprint(robot) if robot is not None else None,
+    )
     memory_limit = os.getenv("LEROBOT_RERUN_MEMORY_LIMIT", "10%")
     rr.spawn(memory_limit=memory_limit)
+
+    if reset_time:
+        rr.set_time_seconds("episode_time", seconds=0.0)
 
 
 def _is_scalar(x):
@@ -37,9 +57,46 @@ def _is_scalar(x):
     )
 
 
+def build_rerun_blueprint(robot: Robot) -> rr.blueprint.Grid:
+    """ "
+    Builds a Rerun blueprint for optimized visualization of the robot's observations and actions :
+    -   Time series views for all scalar observations and actions (e.g. position, velocity, torque, etc.).
+    -   Spatial 2D views for all camera observations.
+    -   Time series views for all microphone observations.
+
+    Args:
+        robot: A Robot object.
+    Returns:
+        A Rerun blueprint.
+    """
+    contents = [
+        rr.blueprint.TimeSeriesView(
+            origin="states_actions",
+            plot_legend=rr.blueprint.PlotLegend(visible=True),
+        )
+    ]
+    if robot.microphones:
+        contents += [
+            rr.blueprint.TimeSeriesView(
+                origin="microphones",
+                plot_legend=rr.blueprint.PlotLegend(visible=True),
+            )
+        ]
+    if robot.cameras:
+        contents += [
+            rr.blueprint.Spatial2DView(
+                origin=camera_name,
+            )
+            for camera_name in robot.cameras
+        ]
+
+    return rr.blueprint.Grid(contents)
+
+
 def log_rerun_data(
     observation: dict[str, Any] | None = None,
     action: dict[str, Any] | None = None,
+    log_time: float | None = None,
 ) -> None:
     """
     Logs observation and action data to Rerun for real-time visualization.
@@ -57,7 +114,12 @@ def log_rerun_data(
     Args:
         observation: An optional dictionary containing observation data to log.
         action: An optional dictionary containing action data to log.
+        log_time: The time to log the data in the "episode_time" timeline.
+                  If None, the current time is used in Rerun's default timeline.
     """
+    if log_time is not None:
+        rr.set_time_seconds("episode_time", seconds=log_time)
+
     if observation:
         for k, v in observation.items():
             if v is None:
@@ -71,10 +133,31 @@ def log_rerun_data(
                 # Convert CHW -> HWC when needed
                 if arr.ndim == 3 and arr.shape[0] in (1, 3, 4) and arr.shape[-1] not in (1, 3, 4):
                     arr = np.transpose(arr, (1, 2, 0))
+                # Convert channel x samples -> samples x channel when needed
+                elif arr.ndim == 2 and arr.shape[0] < arr.shape[1]:
+                    arr = np.transpose(arr, (1, 0))
+
                 if arr.ndim == 1:
                     for i, vi in enumerate(arr):
                         rr.log(f"{key}_{i}", rr.Scalars(float(vi)))
-                else:
+                elif arr.ndim == 2:
+                    rr.send_columns(
+                        "audio/" + key,
+                        indexes=[
+                            rr.TimeSecondsColumn(
+                                "episode_time",
+                                times=log_time
+                                + np.linspace(
+                                    -DEFAULT_AUDIO_CHUNK_DURATION,
+                                    0,
+                                    len(observation[key]),
+                                    endpoint=False,
+                                ),
+                            )
+                        ],
+                        columns=rr.Scalar.columns(scalar=observation[key]),
+                    )
+                elif arr.ndim == 3:
                     rr.log(key, rr.Image(arr), static=True)
 
     if action:
