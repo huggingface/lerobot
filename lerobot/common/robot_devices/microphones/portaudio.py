@@ -224,14 +224,15 @@ class PortAudioMicrophone:
             samplerate=self.sample_rate,
             channels=max(self.channels),
             dtype="float32",
+            blocksize=0,  # Varying input buffer length, but no additional latency
+            latency="low",  # Low latency mode (not enabled by default !)
+            # never_drop_input=True, # Disabled as it generates an error for some devices
             callback=self._audio_callback,
         )
-        # Remark : the blocksize parameter could be passed to the stream to ensure that audio_callback always receive same length buffers.
-        # However, this may lead to additional latency. We thus stick to blocksize=0 which means that audio_callback will receive varying length buffers, but with no additional latency.
 
         self.is_connected = True
 
-    def _audio_callback(self, indata, frames, time, status) -> None:
+    def _audio_callback(self, indata, frames, timestamp, status) -> None:
         """
         Low-level sounddevice callback.
         """
