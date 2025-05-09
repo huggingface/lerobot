@@ -76,7 +76,7 @@ class VX300sEnv(gym.Env):
         ee_pos = self._get_ee_position()
         distance = np.linalg.norm(ee_pos - self.goal)
 
-        reward = -distance  # ← 近いほど高報酬
+        reward = -distance**2
         terminated = distance < 0.05
         truncated = False
         info = {"distance": distance}
