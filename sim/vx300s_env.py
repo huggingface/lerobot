@@ -1,3 +1,5 @@
+import random
+
 import gymnasium as gym
 import mujoco
 import mujoco.viewer
@@ -7,11 +9,12 @@ from mujoco import MjData, MjModel
 
 
 class VX300sEnv(gym.Env):
-    def __init__(self, xml_path: str, render_mode: str | None = None):
+    def __init__(self, xml_path: str, render: bool = True) -> None:
         super().__init__()
         self.model = MjModel.from_xml_path(xml_path)
         self.data = MjData(self.model)
         self.n_joints = 6
+        self.is_running = True
         self.goal = self._sample_goal()
         self.ee_site_name = "pinch"
         self.action_space = spaces.Box(
@@ -25,20 +28,37 @@ class VX300sEnv(gym.Env):
             low=-np.inf, high=np.inf, shape=(6 + 6 + 3,), dtype=np.float32
         )
 
-        # render_mode を受け取る
-        self.render_mode = render_mode
         self.viewer = None
-        if self.render_mode == "human":
+        if render:
             # MjViewer の代わりに、viewer モジュールを使う
-            self.viewer = mujoco.viewer.launch_passive(self.model, self.data)
+            self.viewer = mujoco.viewer.launch_passive(
+                self.model,
+                self.data,
+                show_left_ui=False,
+                key_callback=self.key_callback,
+            )
+
+    def key_callback(self, keycode: int) -> None:
+        if chr(keycode) == "Q":
+            self.is_running = False
+            print("Finish!")
 
     def _sample_goal(self):
         # XYZ 方向に適当な範囲でゴールをサンプリング
-        return np.array([0.3, 0.3, 0.3]) + np.random.uniform(-0.1, 0.1, size=3)
+        scale = 0.5
+        x = 0.4
+        y = scale * random.uniform(-1, 1)
+        z = scale * random.uniform(0.3, 1)
+        return np.array([x, y, z])
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         self.goal = self._sample_goal()
+
+        # ゴール位置に目標オブジェクトを置く
+        goal_site_id = int(self.model.site("goal_site").id)
+        self.model.site_pos[goal_site_id] = self.goal
+
         self.data.qpos[: self.n_joints] = np.random.uniform(
             -0.1,
             0.1,
@@ -74,6 +94,12 @@ class VX300sEnv(gym.Env):
         return np.concatenate([qpos, qvel, error]).astype(np.float32)
 
     def render(self):
+        # エンドエフェクタの位置を取得しボールの位置を変える
+        pinch_site_id = int(self.model.site("pinch").id)
+        ee_site_id = int(self.model.site("ee_site").id)
+        pinch_pos = self.data.site_xpos[pinch_site_id]
+        self.model.site_pos[ee_site_id] = pinch_pos
+
         self.viewer.sync()
 
     def close(self):

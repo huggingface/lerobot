@@ -58,13 +58,8 @@ try:
 
     while is_running and viewer.is_running():
         target_angle = amplitude * np.sin(2 * np.pi * frequency * data.time)
-        # target_angle = np.deg2rad(90)
         data.ctrl[waist_id] = target_angle
         data.ctrl[shoulder_id] = target_angle
-        # これなら動く
-        # data.qpos[waist_id] = target_angle
-        # mujoco.mj_forward(model, data)
-        # print(target_angle)
 
         # エンドエフェクタの位置を取得しボールの位置を変える
         pinch_pos = data.site_xpos[pinch_site_id]
