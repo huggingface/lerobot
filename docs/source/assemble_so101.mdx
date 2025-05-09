@@ -96,7 +96,7 @@ Reconnect the usb cable.
 #### Update config file
 
 Now that you have your ports, update the **port** default values of [`SO101RobotConfig`](https://github.com/huggingface/lerobot/blob/main/lerobot/common/robot_devices/robots/configs.py).
-You will find something like, update the `port` values with your actual motor ports:
+You will find a class called `so101` where you can update the `port` values with your actual motor ports:
 ```python
 @RobotConfig.register_subclass("so101")
 @dataclass
@@ -297,7 +297,7 @@ Remove all support material from the 3D-printed parts, the easiest way to do thi
 ##### Wiring
 
 - Attach the motor controller on the back.
-- Then insert all wires, use the wire guides everywhere to make sure the wires don't unplug themself and stay in place.
+- Then insert all wires, use the wire guides everywhere to make sure the wires don't unplug themselves and stay in place.
 
 <div class="video-container">
   <video controls width="600">
