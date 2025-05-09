@@ -131,6 +131,12 @@ def teleop_loop(
         robot_action_processor: An optional pipeline to process actions before they are sent to the robot.
         robot_observation_processor: An optional pipeline to process raw observations from the robot.
     """
+    if display_data:
+        init_rerun(
+            session_name="teleoperation",
+            robot=robot,
+            reset_time=True,
+        )
 
     display_len = max(len(key) for key in robot.action_features)
 
@@ -192,8 +198,6 @@ def teleop_loop(
 def teleoperate(cfg: TeleoperateConfig):
     init_logging()
     logging.info(pformat(asdict(cfg)))
-    if cfg.display_data:
-        init_rerun(session_name="teleoperation")
 
     teleop = make_teleoperator_from_config(cfg.teleop)
     robot = make_robot_from_config(cfg.robot)
