@@ -3,7 +3,7 @@ import pickle  # nosec
 import threading
 import time
 from queue import Empty, Queue
-from typing import Any, Callable, Optional
+from typing import Callable, Optional
 
 import async_inference_pb2  # type: ignore
 import async_inference_pb2_grpc  # type: ignore
@@ -12,60 +12,7 @@ import torch
 
 from lerobot.common.robot_devices.robots.utils import make_robot
 from lerobot.scripts.server.constants import environment_dt, idle_wait
-from lerobot.scripts.server.helpers import setup_logging
-
-
-class TimedData:
-    def __init__(self, timestamp: float, data: Any, timestep: int):
-        """Initialize a TimedData object.
-
-        Args:
-            timestamp: Unix timestamp relative to data's creation.
-            data: The actual data to wrap a timestamp around.
-        """
-        self.timestamp = timestamp
-        self.data = data
-        self.timestep = timestep
-
-    def get_data(self):
-        return self.data
-
-    def get_timestamp(self):
-        return self.timestamp
-
-    def get_timestep(self):
-        return self.timestep
-
-
-class TimedAction(TimedData):
-    def __init__(self, timestamp: float, action: torch.Tensor, timestep: int):
-        super().__init__(timestamp=timestamp, data=action, timestep=timestep)
-
-    def get_action(self):
-        return self.get_data()
-
-
-class TimedObservation(TimedData):
-    def __init__(
-        self, timestamp: float, observation: dict[str, torch.Tensor], timestep: int, transfer_state: int = 0
-    ):
-        super().__init__(timestamp=timestamp, data=observation, timestep=timestep)
-        self.transfer_state = transfer_state
-
-    def get_observation(self):
-        return self.get_data()
-
-
-class TinyPolicyConfig:
-    def __init__(
-        self,
-        policy_type: str = "act",
-        pretrained_name_or_path: str = "fracapuano/act_so100_test",
-        device: str = "cpu",
-    ):
-        self.policy_type = policy_type
-        self.pretrained_name_or_path = pretrained_name_or_path
-        self.device = device
+from lerobot.scripts.server.helpers import TimedAction, TimedObservation, TinyPolicyConfig, setup_logging
 
 
 class RobotClient:
@@ -81,7 +28,7 @@ class RobotClient:
         policy_device: str = "mps",
         chunk_size_threshold: float = 0.5,
         robot: str = "so100",
-        mock: bool = False,
+        mock: bool = True,
     ):
         # Use environment variable if server_address is not provided
         if server_address is None:

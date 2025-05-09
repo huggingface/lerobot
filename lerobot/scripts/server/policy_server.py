@@ -13,8 +13,7 @@ from datasets import load_dataset
 
 from lerobot.common.policies.factory import get_policy_class
 from lerobot.scripts.server.constants import environment_dt, idle_wait, inference_latency, supported_policies
-from lerobot.scripts.server.helpers import setup_logging
-from lerobot.scripts.server.robot_client import TimedAction, TimedObservation, TinyPolicyConfig
+from lerobot.scripts.server.helpers import TimedAction, TimedObservation, TinyPolicyConfig, setup_logging
 
 
 class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
@@ -231,7 +230,7 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
         for k, v in observation_t.get_observation().items():
             if isinstance(v, torch.Tensor):  # VLAs present natural-language instructions
                 if "image" in k:
-                    # Add batch dimension first, then reorder to NCHW format
+                    # Add batch dimension first, then reorder to NCHW format, then normalize to [0, 1]
                     observation[k] = (
                         v.unsqueeze(0).permute(0, 3, 1, 2).to(self.device, non_blocking=True) / 255
                     )
