@@ -1,0 +1,12 @@
+- sections:
+  - local: index
+    title: LeRobot
+  - local: installation
+    title: Installation
+  title: Get started
+- sections:
+  - local: assemble_so101
+    title: Assemble SO-101
+  - local: getting_started_real_world_robot
+    title: Getting Started with Real-World Robots
+  title: "Tutorials"
