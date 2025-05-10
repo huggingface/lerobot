@@ -34,6 +34,7 @@ Main class for computing kinematics:
 
 #### `forward_kinematics(robot, q)`
 Returns the tool pose in the world frame:
+
 $$
 ^{world}T_{tool} = ^{world}T_{base} \cdot ^{base}T_n(q) \cdot ^nT_{tool}
 $$
