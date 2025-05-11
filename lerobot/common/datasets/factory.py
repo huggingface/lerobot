@@ -49,7 +49,7 @@ def resolve_delta_timestamps(
                 "observation.state": [-0.04, -0.02, 0]
                 "observation.action": [-0.02, 0, 0.02]
             }
-            returns `None` if the the resulting dict is empty.
+            returns `None` if the resulting dict is empty.
     """
     delta_timestamps = {}
     for key in ds_meta.features:
@@ -83,15 +83,18 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
     )
 
     if isinstance(cfg.dataset.repo_id, str):
-        ds_meta = LeRobotDatasetMetadata(cfg.dataset.repo_id, local_files_only=cfg.dataset.local_files_only)
+        ds_meta = LeRobotDatasetMetadata(
+            cfg.dataset.repo_id, root=cfg.dataset.root, revision=cfg.dataset.revision
+        )
         delta_timestamps = resolve_delta_timestamps(cfg.policy, ds_meta)
         dataset = LeRobotDataset(
             cfg.dataset.repo_id,
+            root=cfg.dataset.root,
             episodes=cfg.dataset.episodes,
             delta_timestamps=delta_timestamps,
             image_transforms=image_transforms,
+            revision=cfg.dataset.revision,
             video_backend=cfg.dataset.video_backend,
-            local_files_only=cfg.dataset.local_files_only,
         )
     else:
         raise NotImplementedError("The MultiLeRobotDataset isn't supported for now.")
