@@ -4,13 +4,18 @@ from typing import Generator
 from unittest.mock import MagicMock, patch
 
 import pytest
-import scservo_sdk as scs
 
 from lerobot.common.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.common.motors.feetech import MODEL_NUMBER, MODEL_NUMBER_TABLE, FeetechMotorsBus
 from lerobot.common.motors.feetech.tables import STS_SMS_SERIES_CONTROL_TABLE
 from lerobot.common.utils.encoding_utils import encode_sign_magnitude
-from tests.mocks.mock_feetech import MockMotors, MockPortHandler
+
+try:
+    import scservo_sdk as scs
+
+    from tests.mocks.mock_feetech import MockMotors, MockPortHandler
+except (ImportError, ModuleNotFoundError):
+    pytest.skip("scservo_sdk not available", allow_module_level=True)
 
 
 @pytest.fixture(autouse=True)

@@ -3,14 +3,19 @@ import sys
 from typing import Generator
 from unittest.mock import MagicMock, patch
 
-import dynamixel_sdk as dxl
 import pytest
 
 from lerobot.common.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.common.motors.dynamixel import MODEL_NUMBER_TABLE, DynamixelMotorsBus
 from lerobot.common.motors.dynamixel.tables import X_SERIES_CONTROL_TABLE
 from lerobot.common.utils.encoding_utils import encode_twos_complement
-from tests.mocks.mock_dynamixel import MockMotors, MockPortHandler
+
+try:
+    import dynamixel_sdk as dxl
+
+    from tests.mocks.mock_dynamixel import MockMotors, MockPortHandler
+except (ImportError, ModuleNotFoundError):
+    pytest.skip("dynamixel_sdk not available", allow_module_level=True)
 
 
 @pytest.fixture(autouse=True)
