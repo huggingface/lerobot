@@ -19,8 +19,7 @@ import os
 import sys
 import time
 from queue import Queue
-
-import numpy as np
+from typing import Any
 
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
@@ -59,11 +58,10 @@ class KeyboardTeleop(Teleoperator):
         self.event_queue = Queue()
         self.current_pressed = {}
         self.listener = None
-        self.is_connected = False
         self.logs = {}
 
     @property
-    def action_feature(self) -> dict:
+    def action_features(self) -> dict:
         return {
             "dtype": "float32",
             "shape": (len(self.arm),),
@@ -71,36 +69,42 @@ class KeyboardTeleop(Teleoperator):
         }
 
     @property
-    def feedback_feature(self) -> dict:
+    def feedback_features(self) -> dict:
         return {}
+
+    @property
+    def is_connected(self) -> bool:
+        return PYNPUT_AVAILABLE and isinstance(self.listener, keyboard.Listener) and self.listener.is_alive()
+
+    @property
+    def is_calibrated(self) -> bool:
+        pass
 
     def connect(self) -> None:
         if self.is_connected:
             raise DeviceAlreadyConnectedError(
-                "ManipulatorRobot is already connected. Do not run `robot.connect()` twice."
+                "Keyboard is already connected. Do not run `robot.connect()` twice."
             )
 
         if PYNPUT_AVAILABLE:
             logging.info("pynput is available - enabling local keyboard listener.")
             self.listener = keyboard.Listener(
-                on_press=self.on_press,
-                on_release=self.on_release,
+                on_press=self._on_press,
+                on_release=self._on_release,
             )
             self.listener.start()
         else:
             logging.info("pynput not available - skipping local keyboard listener.")
             self.listener = None
 
-        self.is_connected = True
-
     def calibrate(self) -> None:
         pass
 
-    def on_press(self, key):
+    def _on_press(self, key):
         if hasattr(key, "char"):
             self.event_queue.put((key.char, True))
 
-    def on_release(self, key):
+    def _on_release(self, key):
         if hasattr(key, "char"):
             self.event_queue.put((key.char, False))
         if key == keyboard.Key.esc:
@@ -112,7 +116,10 @@ class KeyboardTeleop(Teleoperator):
             key_char, is_pressed = self.event_queue.get_nowait()
             self.current_pressed[key_char] = is_pressed
 
-    def get_action(self) -> np.ndarray:
+    def configure(self):
+        pass
+
+    def get_action(self) -> dict[str, Any]:
         before_read_t = time.perf_counter()
 
         if not self.is_connected:
@@ -126,9 +133,9 @@ class KeyboardTeleop(Teleoperator):
         action = {key for key, val in self.current_pressed.items() if val}
         self.logs["read_pos_dt_s"] = time.perf_counter() - before_read_t
 
-        return np.array(list(action))
+        return dict.fromkeys(action, None)
 
-    def send_feedback(self, feedback: np.ndarray) -> None:
+    def send_feedback(self, feedback: dict[str, Any]) -> None:
         pass
 
     def disconnect(self) -> None:
@@ -138,5 +145,3 @@ class KeyboardTeleop(Teleoperator):
             )
         if self.listener is not None:
             self.listener.stop()
-
-        self.is_connected = False

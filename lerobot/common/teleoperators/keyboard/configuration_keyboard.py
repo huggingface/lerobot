@@ -22,4 +22,5 @@ from ..config import TeleoperatorConfig
 @TeleoperatorConfig.register_subclass("keyboard")
 @dataclass
 class KeyboardTeleopConfig(TeleoperatorConfig):
+    # TODO(Steven): Consider setting in here the keys that we want to capture/listen
     mock: bool = False

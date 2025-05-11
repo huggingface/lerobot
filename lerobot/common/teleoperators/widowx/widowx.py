@@ -58,64 +58,64 @@ class WidowX(Teleoperator):
         )
 
     @property
-    def action_feature(self) -> dict:
-        return {
-            "dtype": "float32",
-            "shape": (len(self.arm),),
-            "names": {"motors": list(self.arm.motors)},
-        }
+    def action_features(self) -> dict[str, type]:
+        return {f"{motor}.pos": float for motor in self.arm.motors}
 
     @property
-    def feedback_feature(self) -> dict:
+    def feedback_features(self) -> dict[str, type]:
         return {}
 
     @property
     def is_connected(self) -> bool:
         return self.arm.is_connected
 
-    def connect(self):
+    def connect(self, calibrate: bool = True):
         if self.is_connected:
             raise DeviceAlreadyConnectedError(f"{self} already connected")
 
         self.arm.connect()
-        if not self.is_calibrated:
+        if not self.is_calibrated and calibrate:
             self.calibrate()
 
         self.configure()
         logger.info(f"{self} connected.")
 
+    @property
+    def is_calibrated(self) -> bool:
+        return self.arm.is_calibrated
+
     def calibrate(self) -> None:
         raise NotImplementedError  # TODO(aliberts): adapt code below (copied from koch)
         logger.info(f"\nRunning calibration of {self}")
         self.arm.disable_torque()
-        for name in self.arm.names:
-            self.arm.write("Operating_Mode", name, OperatingMode.EXTENDED_POSITION.value)
+        for motor in self.arm.motors:
+            self.arm.write("Operating_Mode", motor, OperatingMode.EXTENDED_POSITION.value)
 
         self.arm.write("Drive_Mode", "elbow_flex", DriveMode.INVERTED.value)
-        drive_modes = {name: 1 if name == "elbow_flex" else 0 for name in self.arm.names}
+        drive_modes = {motor: 1 if motor == "elbow_flex" else 0 for motor in self.arm.motors}
 
         input("Move robot to the middle of its range of motion and press ENTER....")
         homing_offsets = self.arm.set_half_turn_homings()
 
         full_turn_motors = ["shoulder_pan", "wrist_roll"]
-        unknown_range_motors = [name for name in self.arm.names if name not in full_turn_motors]
-        logger.info(
+        unknown_range_motors = [motor for motor in self.arm.motors if motor not in full_turn_motors]
+        print(
             f"Move all joints except {full_turn_motors} sequentially through their "
             "entire ranges of motion.\nRecording positions. Press ENTER to stop..."
         )
         range_mins, range_maxes = self.arm.record_ranges_of_motion(unknown_range_motors)
-        for name in full_turn_motors:
-            range_mins[name] = 0
-            range_maxes[name] = 4095
+        for motor in full_turn_motors:
+            range_mins[motor] = 0
+            range_maxes[motor] = 4095
 
         self.calibration = {}
-        for name, motor in self.arm.motors.items():
-            self.calibration[name] = MotorCalibration(
-                id=motor.id,
-                drive_mode=drive_modes[name],
-                homing_offset=homing_offsets[name],
-                range_min=range_mins[name],
-                range_max=range_maxes[name],
+        for motor, m in self.arm.motors.items():
+            self.calibration[motor] = MotorCalibration(
+                id=m.id,
+                drive_mode=drive_modes[motor],
+                homing_offset=homing_offsets[motor],
+                range_min=range_mins[motor],
+                range_max=range_maxes[motor],
             )
 
         self.arm.write_calibration(self.calibration)
@@ -137,7 +137,8 @@ class WidowX(Teleoperator):
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
         start = time.perf_counter()
-        action = self.arm.read("Present_Position")
+        action = self.arm.sync_read("Present_Position")
+        action = {f"{motor}.pos": val for motor, val in action.items()}
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read action: {dt_ms:.1f}ms")
         return action

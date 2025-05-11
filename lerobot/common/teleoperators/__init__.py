@@ -1,4 +1,3 @@
 from .config import TeleoperatorConfig
 from .teleoperator import Teleoperator
-
-__all__ = ["TeleoperatorConfig", "Teleoperator"]
+from .utils import make_teleoperator_from_config

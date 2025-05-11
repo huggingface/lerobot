@@ -34,11 +34,11 @@ class Teleoperator(abc.ABC):
         return f"{self.id} {self.__class__.__name__}"
 
     @abc.abstractproperty
-    def action_feature(self) -> dict:
+    def action_features(self) -> dict:
         pass
 
     @abc.abstractproperty
-    def feedback_feature(self) -> dict:
+    def feedback_features(self) -> dict:
         pass
 
     @abc.abstractproperty
@@ -46,7 +46,7 @@ class Teleoperator(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def connect(self) -> None:
+    def connect(self, calibrate: bool = True) -> None:
         """Connects to the teleoperator."""
         pass
 

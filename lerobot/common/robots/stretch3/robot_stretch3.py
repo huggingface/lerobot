@@ -72,7 +72,7 @@ class Stretch3Robot(Robot):
         self.action_keys = None
 
     @property
-    def state_feature(self) -> dict:
+    def observation_features(self) -> dict:
         return {
             "dtype": "float32",
             "shape": (len(STRETCH_MOTORS),),
@@ -80,8 +80,8 @@ class Stretch3Robot(Robot):
         }
 
     @property
-    def action_feature(self) -> dict:
-        return self.state_feature
+    def action_features(self) -> dict:
+        return self.observation_features
 
     @property
     def camera_features(self) -> dict[str, dict]:

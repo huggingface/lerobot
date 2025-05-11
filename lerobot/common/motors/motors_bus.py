@@ -255,6 +255,7 @@ class MotorsBus(abc.ABC):
     """
 
     available_baudrates: list[int]
+    default_baudrate: int
     default_timeout: int
     model_baudrate_table: dict[str, dict]
     model_ctrl_table: dict[str, dict]
@@ -281,7 +282,7 @@ class MotorsBus(abc.ABC):
         self._no_error: int
 
         self._id_to_model_dict = {m.id: m.model for m in self.motors.values()}
-        self._id_to_name_dict = {m.id: name for name, m in self.motors.items()}
+        self._id_to_name_dict = {m.id: motor for motor, m in self.motors.items()}
         self._model_nb_to_model_dict = {v: k for k, v in self.model_number_table.items()}
 
         self._validate_motors()
@@ -306,10 +307,6 @@ class MotorsBus(abc.ABC):
         return any(
             DeepDiff(first_table, get_ctrl_table(self.model_ctrl_table, model)) for model in self.models[1:]
         )
-
-    @cached_property
-    def names(self) -> list[str]:
-        return list(self.motors)
 
     @cached_property
     def models(self) -> list[str]:
@@ -346,7 +343,7 @@ class MotorsBus(abc.ABC):
 
     def _get_motors_list(self, motors: str | list[str] | None) -> list[str]:
         if motors is None:
-            return self.names
+            return list(self.motors)
         elif isinstance(motors, str):
             return [motors]
         elif isinstance(motors, list):
@@ -414,6 +411,11 @@ class MotorsBus(abc.ABC):
                 f"{self.__class__.__name__}('{self.port}') is already connected. Do not call `{self.__class__.__name__}.connect()` twice."
             )
 
+        self._connect(handshake)
+        self.set_timeout()
+        logger.debug(f"{self.__class__.__name__} connected.")
+
+    def _connect(self, handshake: bool = True) -> None:
         try:
             if not self.port_handler.openPort():
                 raise OSError(f"Failed to open port '{self.port}'.")
@@ -425,9 +427,6 @@ class MotorsBus(abc.ABC):
                 "\nTry running `python lerobot/scripts/find_motors_bus_port.py`\n"
             ) from e
 
-        self.set_timeout()
-        logger.debug(f"{self.__class__.__name__} connected.")
-
     @abc.abstractmethod
     def _handshake(self) -> None:
         pass
@@ -435,13 +434,7 @@ class MotorsBus(abc.ABC):
     @classmethod
     def scan_port(cls, port: str, *args, **kwargs) -> dict[int, list[int]]:
         bus = cls(port, {}, *args, **kwargs)
-        try:
-            bus.port_handler.openPort()
-        except (FileNotFoundError, OSError, serial.SerialException) as e:
-            raise ConnectionError(
-                f"Could not connect to port '{port}'. Make sure you are using the correct port."
-                "\nTry running `python lerobot/scripts/find_motors_bus_port.py`\n"
-            ) from e
+        bus._connect(handshake=False)
         baudrate_ids = {}
         for baudrate in tqdm(bus.available_baudrates, desc="Scanning port"):
             bus.set_baudrate(baudrate)
@@ -452,12 +445,48 @@ class MotorsBus(abc.ABC):
 
         return baudrate_ids
 
+    def setup_motor(
+        self, motor: str, initial_baudrate: int | None = None, initial_id: int | None = None
+    ) -> None:
+        if not self.is_connected:
+            self._connect(handshake=False)
+
+        if initial_baudrate is None:
+            initial_baudrate, initial_id = self._find_single_motor(motor)
+
+        if initial_id is None:
+            _, initial_id = self._find_single_motor(motor, initial_baudrate)
+
+        model = self.motors[motor].model
+        target_id = self.motors[motor].id
+        self.set_baudrate(initial_baudrate)
+        self._disable_torque(initial_id, model)
+
+        # Set ID
+        addr, length = get_address(self.model_ctrl_table, model, "ID")
+        self._write(addr, length, initial_id, target_id)
+
+        # Set Baudrate
+        addr, length = get_address(self.model_ctrl_table, model, "Baud_Rate")
+        baudrate_value = self.model_baudrate_table[model][self.default_baudrate]
+        self._write(addr, length, target_id, baudrate_value)
+
+        self.set_baudrate(self.default_baudrate)
+
+    @abc.abstractmethod
+    def _find_single_motor(self, motor: str, initial_baudrate: int | None) -> tuple[int, int]:
+        pass
+
     @abc.abstractmethod
     def configure_motors(self) -> None:
         pass
 
     @abc.abstractmethod
-    def disable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
+    def disable_torque(self, motors: int | str | list[str] | None = None, num_retry: int = 0) -> None:
+        pass
+
+    @abc.abstractmethod
+    def _disable_torque(self, motor: int, model: str, num_retry: int = 0) -> None:
         pass
 
     @abc.abstractmethod
@@ -492,39 +521,17 @@ class MotorsBus(abc.ABC):
     def is_calibrated(self) -> bool:
         return self.calibration == self.read_calibration()
 
+    @abc.abstractmethod
     def read_calibration(self) -> dict[str, MotorCalibration]:
-        offsets = self.sync_read("Homing_Offset", normalize=False)
-        mins = self.sync_read("Min_Position_Limit", normalize=False)
-        maxes = self.sync_read("Max_Position_Limit", normalize=False)
+        pass
 
-        try:
-            drive_modes = self.sync_read("Drive_Mode", normalize=False)
-        except KeyError:
-            drive_modes = dict.fromkeys(self.names, 0)
-
-        calibration = {}
-        for name, motor in self.motors.items():
-            calibration[name] = MotorCalibration(
-                id=motor.id,
-                drive_mode=drive_modes[name],
-                homing_offset=offsets[name],
-                range_min=mins[name],
-                range_max=maxes[name],
-            )
-
-        return calibration
-
+    @abc.abstractmethod
     def write_calibration(self, calibration_dict: dict[str, MotorCalibration]) -> None:
-        for motor, calibration in calibration_dict.items():
-            self.write("Homing_Offset", motor, calibration.homing_offset)
-            self.write("Min_Position_Limit", motor, calibration.range_min)
-            self.write("Max_Position_Limit", motor, calibration.range_max)
-
-        self.calibration = calibration_dict
+        pass
 
     def reset_calibration(self, motors: NameOrID | list[NameOrID] | None = None) -> None:
         if motors is None:
-            motors = self.names
+            motors = list(self.motors)
         elif isinstance(motors, (str, int)):
             motors = [motors]
         elif not isinstance(motors, list):
@@ -560,10 +567,10 @@ class MotorsBus(abc.ABC):
         => Homing_Offset = ±(X - 2048)
         """
         if motors is None:
-            motors = self.names
+            motors = list(self.motors)
         elif isinstance(motors, (str, int)):
             motors = [motors]
-        else:
+        elif not isinstance(motors, list):
             raise TypeError(motors)
 
         self.reset_calibration(motors)
@@ -587,7 +594,7 @@ class MotorsBus(abc.ABC):
         typically be called prior to this.
         """
         if motors is None:
-            motors = self.names
+            motors = list(self.motors)
         elif isinstance(motors, (str, int)):
             motors = [motors]
         elif not isinstance(motors, list):
@@ -604,8 +611,8 @@ class MotorsBus(abc.ABC):
             if display_values:
                 print("\n-------------------------------------------")
                 print(f"{'NAME':<15} | {'MIN':>6} | {'POS':>6} | {'MAX':>6}")
-                for name in motors:
-                    print(f"{name:<15} | {mins[name]:>6} | {positions[name]:>6} | {maxes[name]:>6}")
+                for motor in motors:
+                    print(f"{motor:<15} | {mins[motor]:>6} | {positions[motor]:>6} | {maxes[motor]:>6}")
 
             if enter_pressed():
                 break
@@ -622,13 +629,15 @@ class MotorsBus(abc.ABC):
 
         normalized_values = {}
         for id_, val in ids_values.items():
-            name = self._id_to_name(id_)
-            min_ = self.calibration[name].range_min
-            max_ = self.calibration[name].range_max
+            motor = self._id_to_name(id_)
+            min_ = self.calibration[motor].range_min
+            max_ = self.calibration[motor].range_max
             bounded_val = min(max_, max(min_, val))
-            if self.motors[name].norm_mode is MotorNormMode.RANGE_M100_100:
+            # TODO(Steven): normalization can go boom if max_ == min_, we should add a check probably in record_ranges_of_motions
+            # (which probably indicates the user forgot to move a motor, most likely a gripper-like one)
+            if self.motors[motor].norm_mode is MotorNormMode.RANGE_M100_100:
                 normalized_values[id_] = (((bounded_val - min_) / (max_ - min_)) * 200) - 100
-            elif self.motors[name].norm_mode is MotorNormMode.RANGE_0_100:
+            elif self.motors[motor].norm_mode is MotorNormMode.RANGE_0_100:
                 normalized_values[id_] = ((bounded_val - min_) / (max_ - min_)) * 100
             else:
                 # TODO(alibers): velocity and degree modes
@@ -642,13 +651,13 @@ class MotorsBus(abc.ABC):
 
         unnormalized_values = {}
         for id_, val in ids_values.items():
-            name = self._id_to_name(id_)
-            min_ = self.calibration[name].range_min
-            max_ = self.calibration[name].range_max
-            if self.motors[name].norm_mode is MotorNormMode.RANGE_M100_100:
+            motor = self._id_to_name(id_)
+            min_ = self.calibration[motor].range_min
+            max_ = self.calibration[motor].range_max
+            if self.motors[motor].norm_mode is MotorNormMode.RANGE_M100_100:
                 bounded_val = min(100.0, max(-100.0, val))
                 unnormalized_values[id_] = int(((bounded_val + 100) / 200) * (max_ - min_) + min_)
-            elif self.motors[name].norm_mode is MotorNormMode.RANGE_0_100:
+            elif self.motors[motor].norm_mode is MotorNormMode.RANGE_0_100:
                 bounded_val = min(100.0, max(0.0, val))
                 unnormalized_values[id_] = int((bounded_val / 100) * (max_ - min_) + min_)
             else:
@@ -843,8 +852,8 @@ class MotorsBus(abc.ABC):
         self._assert_protocol_is_compatible("sync_read")
 
         names = self._get_motors_list(motors)
-        ids = [self.motors[name].id for name in names]
-        models = [self.motors[name].model for name in names]
+        ids = [self.motors[motor].id for motor in names]
+        models = [self.motors[motor].model for motor in names]
 
         if self._has_different_ctrl_tables:
             assert_same_address(self.model_ctrl_table, models, data_name)

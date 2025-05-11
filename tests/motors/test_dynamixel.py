@@ -3,14 +3,19 @@ import sys
 from typing import Generator
 from unittest.mock import MagicMock, patch
 
-import dynamixel_sdk as dxl
 import pytest
 
 from lerobot.common.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.common.motors.dynamixel import MODEL_NUMBER_TABLE, DynamixelMotorsBus
 from lerobot.common.motors.dynamixel.tables import X_SERIES_CONTROL_TABLE
 from lerobot.common.utils.encoding_utils import encode_twos_complement
-from tests.mocks.mock_dynamixel import MockMotors, MockPortHandler
+
+try:
+    import dynamixel_sdk as dxl
+
+    from tests.mocks.mock_dynamixel import MockMotors, MockPortHandler
+except (ImportError, ModuleNotFoundError):
+    pytest.skip("dynamixel_sdk not available", allow_module_level=True)
 
 
 @pytest.fixture(autouse=True)
@@ -46,13 +51,13 @@ def dummy_calibration(dummy_motors) -> dict[str, MotorCalibration]:
     mins = [43, 27, 145]
     maxes = [1335, 3608, 3999]
     calibration = {}
-    for name, motor in dummy_motors.items():
-        calibration[name] = MotorCalibration(
-            id=motor.id,
-            drive_mode=drive_modes[motor.id - 1],
-            homing_offset=homings[motor.id - 1],
-            range_min=mins[motor.id - 1],
-            range_max=maxes[motor.id - 1],
+    for motor, m in dummy_motors.items():
+        calibration[motor] = MotorCalibration(
+            id=m.id,
+            drive_mode=drive_modes[m.id - 1],
+            homing_offset=homings[m.id - 1],
+            range_min=mins[m.id - 1],
+            range_max=maxes[m.id - 1],
         )
     return calibration
 

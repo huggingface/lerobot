@@ -1,3 +1,24 @@
+# TODO(Steven): Consider doing the following:
+# from enum import Enum
+# class MyControlTableKey(Enum):
+#   ID = "ID"
+#   GOAL_SPEED = "Goal_Speed"
+#   ...
+#
+# MY_CONTROL_TABLE ={
+#   MyControlTableKey.ID.value: (5,1)
+#   MyControlTableKey.GOAL_SPEED.value: (46, 2)
+#   ...
+# }
+# This allows me do to:
+# bus.write(MyControlTableKey.GOAL_SPEED, ...)
+# Instead of:
+# bus.write("Goal_Speed", ...)
+# This is important for two reasons:
+# 1. The linter will tell me if I'm trying to use an invalid key, instead of me realizing when I get the RunTimeError
+# 2. We can change the value of the MyControlTableKey enums without impacting the client code
+
+
 # {data_name: (address, size_byte)}
 # https://emanual.robotis.com/docs/en/dxl/x/{MODEL}/#control-table
 X_SERIES_CONTROL_TABLE = {
@@ -57,13 +78,13 @@ X_SERIES_CONTROL_TABLE = {
 
 # https://emanual.robotis.com/docs/en/dxl/x/{MODEL}/#baud-rate8
 X_SERIES_BAUDRATE_TABLE = {
-    0: 9_600,
-    1: 57_600,
-    2: 115_200,
-    3: 1_000_000,
-    4: 2_000_000,
-    5: 3_000_000,
-    6: 4_000_000,
+    9_600: 0,
+    57_600: 1,
+    115_200: 2,
+    1_000_000: 3,
+    2_000_000: 4,
+    3_000_000: 5,
+    4_000_000: 6,
 }
 
 # {data_name: size_byte}

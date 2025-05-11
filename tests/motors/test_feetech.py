@@ -4,13 +4,18 @@ from typing import Generator
 from unittest.mock import MagicMock, patch
 
 import pytest
-import scservo_sdk as scs
 
 from lerobot.common.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.common.motors.feetech import MODEL_NUMBER, MODEL_NUMBER_TABLE, FeetechMotorsBus
 from lerobot.common.motors.feetech.tables import STS_SMS_SERIES_CONTROL_TABLE
 from lerobot.common.utils.encoding_utils import encode_sign_magnitude
-from tests.mocks.mock_feetech import MockMotors, MockPortHandler
+
+try:
+    import scservo_sdk as scs
+
+    from tests.mocks.mock_feetech import MockMotors, MockPortHandler
+except (ImportError, ModuleNotFoundError):
+    pytest.skip("scservo_sdk not available", allow_module_level=True)
 
 
 @pytest.fixture(autouse=True)
@@ -45,13 +50,13 @@ def dummy_calibration(dummy_motors) -> dict[str, MotorCalibration]:
     mins = [43, 27, 145]
     maxes = [1335, 3608, 3999]
     calibration = {}
-    for name, motor in dummy_motors.items():
-        calibration[name] = MotorCalibration(
-            id=motor.id,
+    for motor, m in dummy_motors.items():
+        calibration[motor] = MotorCalibration(
+            id=m.id,
             drive_mode=0,
-            homing_offset=homings[motor.id - 1],
-            range_min=mins[motor.id - 1],
-            range_max=maxes[motor.id - 1],
+            homing_offset=homings[m.id - 1],
+            range_min=mins[m.id - 1],
+            range_max=maxes[m.id - 1],
         )
     return calibration
 

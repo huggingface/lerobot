@@ -1,4 +1,3 @@
 from .config import RobotConfig
 from .robot import Robot
-
-__all__ = ["RobotConfig", "Robot"]
+from .utils import make_robot_from_config
