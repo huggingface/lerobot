@@ -128,7 +128,7 @@ sudo chmod 666 /dev/ttyACM1
 #### d. Update config file
 
 IMPORTANTLY: Now that you have your ports, update the **port** default values of [`SO100RobotConfig`](../lerobot/common/robot_devices/robots/configs.py). You will find something like:
-```python
+```diff
 @RobotConfig.register_subclass("so100")
 @dataclass
 class So100RobotConfig(ManipulatorRobotConfig):
@@ -141,7 +141,8 @@ class So100RobotConfig(ManipulatorRobotConfig):
     leader_arms: dict[str, MotorsBusConfig] = field(
         default_factory=lambda: {
             "main": FeetechMotorsBusConfig(
-                port="/dev/tty.usbmodem58760431091",  <-- UPDATE HERE
+-                port="/dev/tty.usbmodem58760431091",
++                port="{ADD YOUR LEADER PORT}",
                 motors={
                     # name: (index, model)
                     "shoulder_pan": [1, "sts3215"],
@@ -158,7 +159,8 @@ class So100RobotConfig(ManipulatorRobotConfig):
     follower_arms: dict[str, MotorsBusConfig] = field(
         default_factory=lambda: {
             "main": FeetechMotorsBusConfig(
-                port="/dev/tty.usbmodem585A0076891",  <-- UPDATE HERE
+-                port="/dev/tty.usbmodem585A0076891",
++                port="{ADD YOUR FOLLOWER PORT}",
                 motors={
                     # name: (index, model)
                     "shoulder_pan": [1, "sts3215"],
