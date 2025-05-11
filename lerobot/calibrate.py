@@ -12,6 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""
+Helper to recalibrate your device (robot or teleoperator).
+
+Example:
+
+```shell
+python -m lerobot.calibrate \
+    --device.type=so100_leader \
+    --device.port=/dev/tty.usbmodem58760431551 \
+    --device.id=blue
+```
+"""
+
 import logging
 from dataclasses import asdict, dataclass
 from pprint import pformat

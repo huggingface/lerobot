@@ -12,6 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""
+Replays the actions of an episode from a dataset on a robot.
+
+Example:
+
+```shell
+python -m lerobot.replay \
+    --robot.type=so100_follower \
+    --robot.port=/dev/tty.usbmodem58760431541 \
+    --robot.id=black \
+    --dataset.repo_id=aliberts/record-test \
+    --dataset.episode=2
+```
+"""
+
 import logging
 import time
 from dataclasses import asdict, dataclass

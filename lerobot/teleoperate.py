@@ -12,6 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""
+Simple script to control a robot from teleoperation.
+
+Example:
+
+```shell
+python -m lerobot.teleoperate \
+    --robot.type=so100_follower \
+    --robot.port=/dev/tty.usbmodem58760431541 \
+    --robot.cameras="{laptop: {type: opencv, camera_index: 0}}" \
+    --robot.id=black \
+    --teleop.type=so100_leader \
+    --teleop.port=/dev/tty.usbmodem58760431551 \
+    --teleop.id=blue
+```
+"""
+
 import logging
 import time
 from dataclasses import asdict, dataclass

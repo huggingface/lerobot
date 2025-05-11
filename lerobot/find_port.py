@@ -11,6 +11,17 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+"""
+Helper to find the USB port associated with your MotorsBus.
+
+Example:
+
+```shell
+python -m lerobot.find_port
+```
+"""
+
 import os
 import time
 from pathlib import Path
@@ -51,5 +62,4 @@ def find_port():
 
 
 if __name__ == "__main__":
-    # Helper to find the USB port associated with your MotorsBus.
     find_port()
