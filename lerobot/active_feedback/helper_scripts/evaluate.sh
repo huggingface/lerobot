@@ -1,0 +1,11 @@
+python lerobot/scripts/control_robot.py \
+  --robot.type=koch \
+  --control.type=record \
+  --control.fps=30  \
+  --control.single_task="Grasp a cube and place it in the bin." \
+  --control.episode_time_s=60 \
+  --control.reset_time_s=30 \
+  --control.num_episodes=5 \
+  --control.push_to_hub=false \
+  --control.policy.path=arclabmit/koch_act_cubebin_model \
+  --control.repo_id=arclabmit/eval_koch_act_cubebin_model_distractors
