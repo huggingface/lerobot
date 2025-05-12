@@ -411,21 +411,30 @@ def control_robot(cfg: ControlPipelineConfig):
 
     # TODO(Steven): Blueprint for fixed window size
 
-    if isinstance(cfg.control, CalibrateControlConfig):
-        calibrate(robot, cfg.control)
-    elif isinstance(cfg.control, TeleoperateControlConfig):
-        _init_rerun(control_config=cfg.control, session_name="lerobot_control_loop_teleop")
-        teleoperate(robot, cfg.control)
-    elif isinstance(cfg.control, RecordControlConfig):
-        _init_rerun(control_config=cfg.control, session_name="lerobot_control_loop_record")
-        record(robot, cfg.control)
-    elif isinstance(cfg.control, ReplayControlConfig):
-        replay(robot, cfg.control)
-    elif isinstance(cfg.control, RemoteRobotConfig):
-        from lerobot.common.robot_devices.robots.lekiwi_remote import run_lekiwi
+    try:
+        if isinstance(cfg.control, CalibrateControlConfig):
+            calibrate(robot, cfg.control)
+        elif isinstance(cfg.control, TeleoperateControlConfig):
+            _init_rerun(control_config=cfg.control, session_name="lerobot_control_loop_teleop")
+            teleoperate(robot, cfg.control)
+        elif isinstance(cfg.control, RecordControlConfig):
+            _init_rerun(control_config=cfg.control, session_name="lerobot_control_loop_record")
+            record(robot, cfg.control)
+        elif isinstance(cfg.control, ReplayControlConfig):
+            replay(robot, cfg.control)
+        elif isinstance(cfg.control, RemoteRobotConfig):
+            from lerobot.common.robot_devices.robots.lekiwi_remote import run_lekiwi
 
-        _init_rerun(control_config=cfg.control, session_name="lerobot_control_loop_remote")
-        run_lekiwi(cfg.robot)
+            _init_rerun(control_config=cfg.control, session_name="lerobot_control_loop_remote")
+            run_lekiwi(cfg.robot)
+    except KeyboardInterrupt:
+        pass
+    except ValueError as e:
+        print(f"Required configuration values not provided: {e}")
+        pass
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
+        pass
 
     if robot.is_connected:
         # Disconnect manually to avoid a "Core dump" during process
