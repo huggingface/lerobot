@@ -890,3 +890,11 @@ def validate_episode_buffer(episode_buffer: dict, total_episodes: int, features:
             f"In episode_buffer not in features: {buffer_keys - set(features)}"
             f"In features not in episode_buffer: {set(features) - buffer_keys}"
         )
+
+
+def safe_write_dataframe_to_parquet(df: pandas.DataFrame, path: Path, image_keys: list[str]):
+    if len(image_keys) > 0:
+        # TODO(qlhoest): replace this weird synthax by `df.to_parquet(path)` only
+        datasets.Dataset.from_dict(df.to_dict(orient="list")).to_parquet(path)
+    else:
+        df.to_parquet(path)

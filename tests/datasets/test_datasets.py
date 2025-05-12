@@ -71,7 +71,7 @@ def test_same_attributes_defined(tmp_path, lerobot_dataset_factory):
     dataset_create = LeRobotDataset.create(repo_id=DUMMY_REPO_ID, fps=30, robot=robot, root=root_create)
 
     root_init = tmp_path / "init"
-    dataset_init = lerobot_dataset_factory(root=root_init)
+    dataset_init = lerobot_dataset_factory(root=root_init, total_episodes=1, total_frames=1)
 
     init_attr = set(vars(dataset_init).keys())
     create_attr = set(vars(dataset_create).keys())
