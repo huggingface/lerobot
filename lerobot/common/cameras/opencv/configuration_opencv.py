@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from ..configs import CameraConfig, ColorMode, Cv2Rotation
@@ -18,9 +18,7 @@ class OpenCVCameraConfig(CameraConfig):
     ```
     """
 
-    index_or_path: int | Path = field(
-        default=...,
-    )
+    index_or_path: int | Path
     color_mode: ColorMode = ColorMode.RGB
     channels: int = 3  # NOTE(Steven): Why is this a config?
     rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION

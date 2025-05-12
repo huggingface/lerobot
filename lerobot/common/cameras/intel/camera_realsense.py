@@ -336,6 +336,10 @@ class RealSenseCamera(Camera):
 
         logger.debug(f"Validating stream configuration for {self.serial_number}...")
         self._validate_capture_settings()
+
+        logger.debug(f"Reading a warm-up frame for {self.serial_number}...")
+        self.read()  # NOTE(Steven): For now we just read one frame, we could also loop for X secs
+
         logger.info(f"Camera {self.serial_number} connected and configured successfully.")
 
     def _validate_fps(self, stream) -> None:
@@ -396,7 +400,7 @@ class RealSenseCamera(Camera):
 
     def read(
         self, color_mode: ColorMode | None = None, timeout_ms: int = 5000
-    ) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
+    ) -> np.ndarray | Tuple[np.ndarray, np.ndarray]:
         """
         Reads a single frame (color and optionally depth) synchronously from the camera.
 

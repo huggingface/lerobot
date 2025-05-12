@@ -33,7 +33,7 @@ class Cv2Rotation(Enum):
     ROTATE_270 = -90
 
 
-@dataclass
+@dataclass(kw_only=True)
 class CameraConfig(draccus.ChoiceRegistry, abc.ABC):
     fps: int | None = None
     width: int | None = None
