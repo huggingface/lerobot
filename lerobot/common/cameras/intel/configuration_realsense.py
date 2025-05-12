@@ -35,16 +35,11 @@ class RealSenseCameraConfig(CameraConfig):
 
     name: str | None = None
     serial_number: int | None = None
-    fps: int | None = None
-    width: int | None = None  # NOTE(Steven): Make this not None allowed!
-    height: int | None = None
     color_mode: ColorMode = ColorMode.RGB
     channels: int | None = 3
     use_depth: bool = False
-    force_hardware_reset: bool = True
-    rotation: Cv2Rotation = (
-        Cv2Rotation.NO_ROTATION
-    )  # NOTE(Steven): Check how draccus would deal with this str -> enum
+    # NOTE(Steven): Check how draccus would deal with this str -> enum
+    rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION
 
     def __post_init__(self):
         if self.color_mode not in (ColorMode.RGB, ColorMode.BGR):

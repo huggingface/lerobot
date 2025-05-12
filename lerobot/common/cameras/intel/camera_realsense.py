@@ -115,6 +115,9 @@ class RealSenseCamera(Camera):
         Args:
             config: The configuration settings for the camera.
         """
+
+        super().__init__(config)
+
         self.config = config
 
         if config.name is not None:  # TODO(Steven): Do we want to continue supporting this?
@@ -123,11 +126,6 @@ class RealSenseCamera(Camera):
             self.serial_number = str(config.serial_number)
         else:
             raise ValueError("RealSenseCameraConfig must provide either 'serial_number' or 'name'.")
-
-        self.capture_width: int | None = config.width
-        self.capture_height: int | None = config.height
-        self.width: int | None = None
-        self.height: int | None = None
 
         self.fps: int | None = config.fps
         self.channels: int = config.channels
@@ -144,6 +142,14 @@ class RealSenseCamera(Camera):
         self.logs: dict = {}  # For timestamping or other metadata
 
         self.rotation: int | None = get_cv2_rotation(config.rotation)
+
+        # NOTE(Steven): What happens if rotation is specified but we leave width and height to None?
+        # NOTE(Steven): Should we enforce these parameters if rotation is set?
+        if self.height and self.width:
+            if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
+                self.prerotated_width, self.prerotated_height = self.height, self.width
+            else:
+                self.prerotated_width, self.prerotated_height = self.width, self.height
 
     def __str__(self) -> str:
         """Returns a string representation of the camera instance."""
@@ -246,24 +252,24 @@ class RealSenseCamera(Camera):
         rs_config = rs.config()
         rs.config.enable_device(rs_config, self.serial_number)
 
-        if self.capture_width and self.capture_height and self.fps:
+        if self.width and self.height and self.fps:
             logger.debug(
-                f"Requesting Color Stream: {self.capture_width}x{self.capture_height} @ {self.fps} FPS, Format: {rs.format.rgb8}"
+                f"Requesting Color Stream: {self.prerotated_width}x{self.prerotated_height} @ {self.fps} FPS, Format: {rs.format.rgb8}"
             )
             rs_config.enable_stream(
-                rs.stream.color, self.capture_width, self.capture_height, rs.format.rgb8, self.fps
+                rs.stream.color, self.prerotated_width, self.prerotated_height, rs.format.rgb8, self.fps
             )
         else:
             logger.debug(f"Requesting Color Stream: Default settings, Format: {rs.stream.color}")
             rs_config.enable_stream(rs.stream.color)
 
         if self.use_depth:
-            if self.capture_width and self.capture_height and self.fps:
+            if self.width and self.height and self.fps:
                 logger.debug(
-                    f"Requesting Depth Stream: {self.capture_width}x{self.capture_height} @ {self.fps} FPS, Format: {rs.format.z16}"
+                    f"Requesting Depth Stream: {self.prerotated_width}x{self.prerotated_height} @ {self.fps} FPS, Format: {rs.format.z16}"
                 )
                 rs_config.enable_stream(
-                    rs.stream.depth, self.capture_width, self.capture_height, rs.format.z16, self.fps
+                    rs.stream.depth, self.prerotated_width, self.prerotated_height, rs.format.z16, self.fps
                 )
             else:
                 logger.debug(f"Requesting Depth Stream: Default settings, Format: {rs.stream.depth}")
@@ -289,8 +295,7 @@ class RealSenseCamera(Camera):
             raise DeviceNotConnectedError(f"Cannot validate settings for {self} as it is not connected.")
 
         self._validate_fps()
-        self._validate_capture_width()
-        self._validate_capture_height()
+        self._validate_width_and_height()
 
         if self.use_depth:
             try:
@@ -318,13 +323,6 @@ class RealSenseCamera(Camera):
 
             except Exception as e:
                 logger.error(f"Failed to get or validate active depth stream profile on {self}: {e}")
-
-        # Set final width/height considering rotation
-        if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
-            self.width, self.height = self.capture_height, self.capture_width
-        else:
-            self.width, self.height = self.capture_width, self.capture_height
-        logger.debug(f"Final image dimensions set to: {self.width}x{self.height} (after rotation if any)")
 
     # NOTE(Steven): Add a wamr-up period time config
     def connect(self):
@@ -385,43 +383,39 @@ class RealSenseCamera(Camera):
             )
         logger.debug(f"FPS set to {actual_fps} for {self}.")
 
-    def _validate_capture_width(self) -> None:
-        """Validates and sets the internal capture width based on actual stream width."""
+    def _validate_width_and_height(self) -> None:
+        """Validates and sets the internal capture width and height based on actual stream width."""
 
         color_stream = self.rs_profile.get_stream(rs.stream.color).as_video_stream_profile()
         actual_width = int(round(color_stream.width()))
+        actual_height = int(round(color_stream.height()))
 
-        if self.capture_width is None:
-            self.capture_width = actual_width
-            logger.info(f"Capture width not specified, using camera default: {self.capture_width} pixels.")
+        if self.width is None or self.height is None:
+            if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
+                self.width, self.height = actual_height, actual_width
+                self.prerotated_width, self.prerotated_height = actual_width, actual_height
+            else:
+                self.width, self.height = actual_width, actual_height
+                self.prerotated_width, self.prerotated_height = actual_width, actual_height
+            logger.info(f"Capture width set to camera default: {self.width}.")
+            logger.info(f"Capture height set to camera default: {self.height}.")
             return
 
-        if self.capture_width != actual_width:
+        if self.prerotated_width != actual_width:
             logger.warning(
-                f"Requested capture width {self.capture_width} for {self}, but camera reported {actual_width}."
+                f"Requested capture width {self.prerotated_width} for {self}, but camera reported {actual_width}."
             )
             raise RuntimeError(
-                f"Failed to set requested capture width {self.capture_width} for {self}. Actual value: {actual_width}."
+                f"Failed to set requested capture width {self.prerotated_width} for {self}. Actual value: {actual_width}."
             )
         logger.debug(f"Capture width set to {actual_width} for {self}.")
 
-    def _validate_capture_height(self) -> None:
-        """Validates and sets the internal capture height based on actual stream height."""
-
-        color_stream = self.rs_profile.get_stream(rs.stream.color).as_video_stream_profile()
-        actual_height = int(round(color_stream.height()))
-
-        if self.capture_height is None:
-            self.capture_height = actual_height
-            logger.info(f"Capture height not specified, using camera default: {self.capture_height} pixels.")
-            return
-
-        if self.capture_height != actual_height:
+        if self.prerotated_height != actual_height:
             logger.warning(
-                f"Requested capture height {self.capture_height} for {self}, but camera reported {actual_height}."
+                f"Requested capture height {self.prerotated_height} for {self}, but camera reported {actual_height}."
             )
             raise RuntimeError(
-                f"Failed to set requested capture height {self.capture_height} for {self}. Actual value: {actual_height}."
+                f"Failed to set requested capture height {self.prerotated_height} for {self}. Actual value: {actual_height}."
             )
         logger.debug(f"Capture height set to {actual_height} for {self}.")
 
@@ -478,9 +472,9 @@ class RealSenseCamera(Camera):
             # NOTE(Steven): Simplified version of _postprocess_image() for depth image
             h, w = depth_map.shape
 
-            if h != self.capture_height or w != self.capture_width:
+            if h != self.prerotated_height or w != self.prerotated_width:
                 raise RuntimeError(
-                    f"Captured frame dimensions ({h}x{w}) do not match configured capture dimensions ({self.capture_height}x{self.capture_width}) for {self}."
+                    f"Captured frame dimensions ({h}x{w}) do not match configured capture dimensions ({self.prerotated_height}x{self.prerotated_width}) for {self}."
                 )
 
             if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
@@ -514,7 +508,7 @@ class RealSenseCamera(Camera):
         Raises:
             ValueError: If the requested `color_mode` is invalid.
             RuntimeError: If the raw frame dimensions do not match the configured
-                          `capture_width` and `capture_height`.
+                          `width` and `height`.
         """
         requested_color_mode = self.color_mode if color_mode is None else color_mode
 
@@ -525,9 +519,9 @@ class RealSenseCamera(Camera):
 
         h, w, c = image.shape
 
-        if h != self.capture_height or w != self.capture_width:
+        if h != self.prerotated_height or w != self.prerotated_width:
             raise RuntimeError(
-                f"Captured frame dimensions ({h}x{w}) do not match configured capture dimensions ({self.capture_height}x{self.capture_width}) for {self}."
+                f"Captured frame dimensions ({h}x{w}) do not match configured capture dimensions ({self.prerotated_height}x{self.prerotated_width}) for {self}."
             )
         if c != self.channels:
             logger.warning(

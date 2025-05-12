@@ -111,13 +111,10 @@ class OpenCVCamera(Camera):
         Args:
             config: The configuration settings for the camera.
         """
+        super().__init__(config)
+
         self.config = config
         self.index_or_path: IndexOrPath = config.index_or_path
-
-        self.capture_width: int | None = config.width
-        self.capture_height: int | None = config.height
-        self.width: int | None = None
-        self.height: int | None = None
 
         self.fps: int | None = config.fps
         self.channels: int = config.channels
@@ -133,6 +130,14 @@ class OpenCVCamera(Camera):
 
         self.rotation: int | None = get_cv2_rotation(config.rotation)
         self.backend: int = get_cv2_backend()  # NOTE(Steven): If I specify backend the opencv open fails
+
+        # NOTE(Steven): What happens if rotation is specified but we leave width and height to None?
+        # NOTE(Steven): Should we enforce these parameters if rotation is set?
+        if self.height and self.width:
+            if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
+                self.prerotated_width, self.prerotated_height = self.height, self.width
+            else:
+                self.prerotated_width, self.prerotated_height = self.width, self.height
 
     def __str__(self) -> str:
         """Returns a string representation of the camera instance."""
@@ -165,14 +170,7 @@ class OpenCVCamera(Camera):
             raise DeviceNotConnectedError(f"Cannot configure settings for {self} as it is not connected.")
 
         self._validate_fps()
-        self._validate_capture_width()
-        self._validate_capture_height()
-
-        if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
-            self.width, self.height = self.capture_height, self.capture_width
-        else:
-            self.width, self.height = self.capture_width, self.capture_height
-        logger.debug(f"Final image dimensions set to: {self.width}x{self.height} (after rotation if any)")
+        self._validate_width_and_height()
 
     def connect(self):
         """
@@ -230,43 +228,41 @@ class OpenCVCamera(Camera):
             )
         logger.debug(f"FPS set to {actual_fps} for {self}.")
 
-    def _validate_capture_width(self) -> None:
-        """Validates and sets the camera's frame capture width."""
+    def _validate_width_and_height(self) -> None:
+        """Validates and sets the camera's frame capture width and height."""
 
         actual_width = int(round(self.videocapture_camera.get(cv2.CAP_PROP_FRAME_WIDTH)))
+        actual_height = int(round(self.videocapture_camera.get(cv2.CAP_PROP_FRAME_HEIGHT)))
 
-        if self.capture_width is None:
-            self.capture_width = actual_width
-            logger.info(f"Capture width set to camera default: {self.capture_width}.")
+        # NOTE(Steven): When do we constraint the possibility of only setting one?
+        if self.width is None or self.height is None:
+            if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
+                self.width, self.height = actual_height, actual_width
+                self.prerotated_width, self.prerotated_height = actual_width, actual_height
+            else:
+                self.width, self.height = actual_width, actual_height
+                self.prerotated_width, self.prerotated_height = actual_width, actual_height
+            logger.info(f"Capture width set to camera default: {self.width}.")
+            logger.info(f"Capture height set to camera default: {self.height}.")
             return
 
-        success = self.videocapture_camera.set(cv2.CAP_PROP_FRAME_WIDTH, float(self.capture_width))
-        if not success or self.capture_width != actual_width:
+        success = self.videocapture_camera.set(cv2.CAP_PROP_FRAME_WIDTH, float(self.prerotated_width))
+        if not success or self.prerotated_width != actual_width:
             logger.warning(
-                f"Requested capture width {self.capture_width} for {self}, but camera reported {actual_width} (set success: {success})."
+                f"Requested capture width {self.prerotated_width} for {self}, but camera reported {actual_width} (set success: {success})."
             )
             raise RuntimeError(
-                f"Failed to set requested capture width {self.capture_width} for {self}. Actual value: {actual_width}."
+                f"Failed to set requested capture width {self.prerotated_width} for {self}. Actual value: {actual_width}."
             )
         logger.debug(f"Capture width set to {actual_width} for {self}.")
 
-    def _validate_capture_height(self) -> None:
-        """Validates and sets the camera's frame capture height."""
-
-        actual_height = int(round(self.videocapture_camera.get(cv2.CAP_PROP_FRAME_HEIGHT)))
-
-        if self.capture_height is None:
-            self.capture_height = actual_height
-            logger.info(f"Capture height set to camera default: {self.capture_height}.")
-            return
-
-        success = self.videocapture_camera.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self.capture_height))
-        if not success or self.capture_height != actual_height:
+        success = self.videocapture_camera.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self.prerotated_height))
+        if not success or self.prerotated_height != actual_height:
             logger.warning(
-                f"Requested capture height {self.capture_height} for {self}, but camera reported {actual_height} (set success: {success})."
+                f"Requested capture height {self.prerotated_height} for {self}, but camera reported {actual_height} (set success: {success})."
             )
             raise RuntimeError(
-                f"Failed to set requested capture height {self.capture_height} for {self}. Actual value: {actual_height}."
+                f"Failed to set requested capture height {self.prerotated_height} for {self}. Actual value: {actual_height}."
             )
         logger.debug(f"Capture height set to {actual_height} for {self}.")
 
@@ -394,7 +390,7 @@ class OpenCVCamera(Camera):
         Raises:
             ValueError: If the requested `color_mode` is invalid.
             RuntimeError: If the raw frame dimensions do not match the configured
-                          `capture_width` and `capture_height`.
+                          `width` and `height`.
         """
         requested_color_mode = self.color_mode if color_mode is None else color_mode
 
@@ -405,9 +401,9 @@ class OpenCVCamera(Camera):
 
         h, w, c = image.shape
 
-        if h != self.capture_height or w != self.capture_width:
+        if h != self.prerotated_height or w != self.prerotated_width:
             raise RuntimeError(
-                f"Captured frame dimensions ({h}x{w}) do not match configured capture dimensions ({self.capture_height}x{self.capture_width}) for {self}."
+                f"Captured frame dimensions ({h}x{w}) do not match configured capture dimensions ({self.prerotated_height}x{self.prerotated_width}) for {self}."
             )
         if c != self.channels:
             logger.warning(
