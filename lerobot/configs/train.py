@@ -53,7 +53,7 @@ class TrainPipelineConfig(HubMixin):
     num_workers: int = 4
     batch_size: int = 8
     steps: int = 100_000
-    eval_freq: int = 20_000
+    eval_freq: int = 20_000 
     log_freq: int = 200
     save_checkpoint: bool = True
     # Checkpoint is saved every `save_freq` training iterations and after the last training step.
@@ -75,7 +75,7 @@ class TrainPipelineConfig(HubMixin):
             cli_overrides = parser.get_cli_overrides("policy")
             self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
             self.policy.pretrained_path = policy_path
-        elif self.resume:
+        if self.resume:
             # The entire train config is already loaded, we just need to get the checkpoint dir
             config_path = parser.parse_arg("config_path")
             if not config_path:
@@ -90,6 +90,7 @@ class TrainPipelineConfig(HubMixin):
             policy_path = Path(config_path).parent
             self.policy.pretrained_path = policy_path
             self.checkpoint_path = policy_path.parent
+            self.output_dir = self.checkpoint_path.parent.parent
 
         if not self.job_name:
             if self.env is None:

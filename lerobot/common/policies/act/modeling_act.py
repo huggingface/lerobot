@@ -105,7 +105,42 @@ class ACTPolicy(PreTrainedPolicy):
             self.temporal_ensembler.reset()
         else:
             self._action_queue = deque([], maxlen=self.config.n_action_steps)
+    @torch.no_grad
+    def predict_actions_batch(self, batch: dict[str, Tensor]) -> Tensor:
+        """Select a single action given environment observations.
 
+        This method wraps `select_actions` in order to return one action at a time for execution in the
+        environment. It works by managing the actions in a queue and only calling `select_actions` when the
+        queue is empty.
+        """
+        self.eval()
+
+        batch = self.normalize_inputs(batch)
+        if self.config.image_features:
+            batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
+            batch["observation.images"] = [batch[key] for key in self.config.image_features]
+
+        # If we are doing temporal ensembling, do online updates where we keep track of the number of actions
+        # we are ensembling over.
+        if self.config.temporal_ensemble_coeff is not None:
+            actions = self.model(batch)[0]  # (batch_size, chunk_size, action_dim)
+            actions = self.unnormalize_outputs({"action": actions})["action"]
+            action = self.temporal_ensembler.update(actions)
+            return action
+
+        # Action queue logic for n_action_steps > 1. When the action_queue is depleted, populate it by
+        # querying the policy.
+
+        actions = self.model(batch)[0][:, : self.config.n_action_steps]
+
+        # TODO(rcadene): make _forward return output dictionary?
+        actions = self.unnormalize_outputs({"action": actions})["action"]
+
+        # `self.model.forward` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
+        # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
+
+        return actions
+    
     @torch.no_grad
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
         """Select a single action given environment observations.

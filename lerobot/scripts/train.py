@@ -16,14 +16,19 @@
 import logging
 import time
 from contextlib import nullcontext
+from pathlib import Path
 from pprint import pformat
-from typing import Any
+from typing import Any, List
+import sys
+import os
 
 import torch
+import torch.nn.functional as F
 from termcolor import colored
 from torch.amp import GradScaler
 from torch.optim import Optimizer
 
+from lerobot.common.constants import ACTION
 from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.datasets.sampler import EpisodeAwareSampler
 from lerobot.common.datasets.utils import cycle
@@ -49,10 +54,24 @@ from lerobot.common.utils.utils import (
 )
 from lerobot.common.utils.wandb_utils import WandBLogger
 from lerobot.configs import parser
-from lerobot.configs.train import TrainPipelineConfig
+from lerobot.configs.train import TrainPipelineConfig,TRAIN_CONFIG_NAME
 from lerobot.scripts.eval import eval_policy
+from lerobot.scripts.plot_trajectory import plot_epoch_trajectories
 
 
+# ─────────────────────────────────────────
+# 辅助函数：batch 级 action‑MSE（仅 xyz）
+# ─────────────────────────────────────────
+def compute_action_mse(policy: PreTrainedPolicy, batch: dict, device: torch.device) -> torch.Tensor:
+    with torch.no_grad(), torch.autocast(device_type=device.type, enabled=policy.config.use_amp):
+        gt = batch[ACTION].to(device)[:, : policy.config.n_action_steps, :3]
+        pred = policy.predict_actions_batch(batch)[:, : policy.config.n_action_steps, :3]
+        return F.mse_loss(pred, gt, reduction="mean") / 1000.0
+
+
+# ─────────────────────────────────────────
+# update_policy（与官方实现一致）
+# ─────────────────────────────────────────
 def update_policy(
     train_metrics: MetricsTracker,
     policy: PreTrainedPolicy,
@@ -110,8 +129,22 @@ def train(cfg: TrainPipelineConfig):
     cfg.validate()
     logging.info(pformat(cfg.to_dict()))
 
+    args = sys.argv
+    args = [x for x in args if "output_dir" not in x ]
+    command = " ".join(args)
+    if cfg.resume == False:
+        command = command + f" --resume=true --config_path={cfg.output_dir.joinpath('checkpoints/last/pretrained_model/'+TRAIN_CONFIG_NAME)}"
+    logging.info("resume command: "+colored(f"python {command}", "yellow", attrs=["bold"]))
+
+    logger = logging.getLogger(__name__)
+    logger.propagate = False
+    os.makedirs(cfg.output_dir, exist_ok=True)
+    logger.addHandler(logging.FileHandler(cfg.output_dir.joinpath("resume_command.log"), mode="w"))
+    logger.info(f"resume command: python {command}")
+
     if cfg.wandb.enable and cfg.wandb.project:
         wandb_logger = WandBLogger(cfg)
+        logger.info(f"Track this run --> {wandb_logger._wandb.run.get_url()}")
     else:
         wandb_logger = None
         logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
@@ -184,8 +217,7 @@ def train(cfg: TrainPipelineConfig):
         drop_last=False,
     )
     dl_iter = cycle(dataloader)
-
-    policy.train()
+    epoch_size = len(dataloader)
 
     train_metrics = {
         "loss": AverageMeter("loss", ":.3f"),
@@ -193,11 +225,14 @@ def train(cfg: TrainPipelineConfig):
         "lr": AverageMeter("lr", ":0.1e"),
         "update_s": AverageMeter("updt_s", ":.3f"),
         "dataloading_s": AverageMeter("data_s", ":.3f"),
+        "action_mse": AverageMeter("mse", ":.4f"),
     }
 
     train_tracker = MetricsTracker(
         cfg.batch_size, dataset.num_frames, dataset.num_episodes, train_metrics, initial_step=step
     )
+    # ---------- 轨迹缓存 ----------
+    traj_pool: List[tuple[torch.Tensor, torch.Tensor]] = []
 
     logging.info("Start offline training on a fixed dataset")
     for _ in range(step, cfg.steps):
@@ -220,8 +255,21 @@ def train(cfg: TrainPipelineConfig):
             use_amp=cfg.policy.use_amp,
         )
 
-        # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
-        # increment `step` here.
+        # ---------- action‑MSE ----------
+        mse_val = compute_action_mse(policy, batch, device)
+        train_tracker.metrics["action_mse"].update(mse_val.item(), n=1)
+        train_tracker.action_mse = mse_val.item()
+
+        # ---------- 轨迹样本 ----------
+        if len(traj_pool) < 3:
+            # ground truth: shape (B, T, D)
+            gt_full = batch[ACTION][:, : cfg.policy.n_action_steps, :].detach().cpu()
+           # predicted: same shape
+            pred_full = policy.predict_actions_batch(batch)[:, : cfg.policy.n_action_steps, :].detach().cpu()
+           # store the first sample of this batch
+            traj_pool.append((gt_full[0], pred_full[0]))
+
+        # ========== logging ==========
         step += 1
         train_tracker.step()
         is_log_step = cfg.log_freq > 0 and step % cfg.log_freq == 0
@@ -242,9 +290,23 @@ def train(cfg: TrainPipelineConfig):
             checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, cfg.steps, step)
             save_checkpoint(checkpoint_dir, step, cfg, policy, optimizer, lr_scheduler)
             update_last_checkpoint(checkpoint_dir)
+            # Save trajectory samples
+            gt_arr   = torch.stack([p[0] for p in traj_pool])
+            pred_arr = torch.stack([p[1] for p in traj_pool])
+            paths = plot_epoch_trajectories(
+                gt_all=gt_arr,
+                pred_all=pred_arr,
+                save_dir=cfg.output_dir / "trajectory_plots",
+                index=step,
+                naming='step',
+                one_hand=False,
+                rotation=False,
+                n_samples=3,
+            )
             if wandb_logger:
                 wandb_logger.log_policy(checkpoint_dir)
-
+                wandb_logger.log_images(paths, step)
+            traj_pool.clear()
         if cfg.env and is_eval_step:
             step_id = get_step_identifier(step, cfg.steps)
             logging.info(f"Eval policy at step {step}")

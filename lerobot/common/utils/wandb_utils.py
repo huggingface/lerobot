@@ -114,9 +114,9 @@ class WandBLogger:
 
         for k, v in d.items():
             if not isinstance(v, (int, float, str)):
-                logging.warning(
-                    f'WandB logging of key "{k}" was ignored as its type is not handled by this wrapper.'
-                )
+                # logging.warning(
+                #     f'WandB logging of key "{k}" was ignored as its type is not handled by this wrapper.'
+                # )
                 continue
             self._wandb.log({f"{mode}/{k}": v}, step=step)
 
@@ -126,3 +126,18 @@ class WandBLogger:
 
         wandb_video = self._wandb.Video(video_path, fps=self.env_fps, format="mp4")
         self._wandb.log({f"{mode}/video": wandb_video}, step=step)
+
+    def log_images(self, img_paths, step: int, caption: str = "trajectory"):
+        """
+        把若干图片一次性上传到 WandB.
+        """
+        import wandb, PIL.Image
+
+        # 1) 兼容不同 LeRobot 版本：run 变量名可能是 self._run 或 self.run
+        run = getattr(self, "_run", None) or getattr(self, "run", None)
+        if run is None:
+            # 如果还没有初始化（unlikely），直接返回不抛错
+            return
+
+        imgs = [wandb.Image(PIL.Image.open(str(p)), caption=Path(p).stem) for p in img_paths]
+        run.log({caption: imgs}, step=step)
