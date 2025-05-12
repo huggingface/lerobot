@@ -145,7 +145,7 @@ def main(
 
     # Print statistics
     differences = record_length - chunk_length
-    for i, microphone in enumerate(microphones.values()):
+    for i, (microphone_key, microphone) in enumerate(microphones.items()):
         print(
             f"Average recorded duration for {microphone_key} : {np.mean(record_length[:, i]) / microphone.sample_rate:.3f} seconds"
         )
