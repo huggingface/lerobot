@@ -53,12 +53,12 @@ def pose_difference_se3(pose1, pose2):
     Calculates the SE(3) difference between two 4x4 homogeneous transformation matrices.
     SE(3) (Special Euclidean Group) represents rigid body transformations in 3D space, combining rotation (SO(3)) and translation.
     Each 4x4 matrix has the following structure, a 3x3 rotation matrix in the top-left and a 3x1 translation vector in the top-right:
-    
+
     [R11 R12 R13 tx]
     [R21 R22 R23 ty]
     [R31 R32 R33 tz]
     [ 0   0   0   1]
-    
+
     where Rij is the 3x3 rotation matrix and [tx,ty,tz] is the translation vector.
 
     pose1 - pose2
