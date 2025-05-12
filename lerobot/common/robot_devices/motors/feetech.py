@@ -116,6 +116,8 @@ SCS_SERIES_BAUDRATE_TABLE = {
 CALIBRATION_REQUIRED = ["Goal_Position", "Present_Position"]
 CONVERT_UINT32_TO_INT32_REQUIRED = ["Goal_Position", "Present_Position"]
 
+BIT10_MASK = 1 << 10
+CONVERT_UINT32_TO_INT10_REQUIRED = ["Present_Load"]
 
 MODEL_CONTROL_TABLE = {
     "scs_series": SCS_SERIES_CONTROL_TABLE,
@@ -764,6 +766,9 @@ class FeetechMotorsBus:
         if data_name in CONVERT_UINT32_TO_INT32_REQUIRED:
             values = values.astype(np.int32)
 
+        if data_name in CONVERT_UINT32_TO_INT10_REQUIRED:
+            values = self.convert_to_int10(values)
+
         if data_name in CALIBRATION_REQUIRED:
             values = self.avoid_rotation_reset(values, motor_names, data_name)
 
@@ -778,6 +783,12 @@ class FeetechMotorsBus:
         ts_utc_name = get_log_name("timestamp_utc", "read", data_name, motor_names)
         self.logs[ts_utc_name] = capture_timestamp_utc()
 
+        return values
+
+    # Convert to signed int by checking the bit mask, for values expected to be in the range [-1000, +1000]
+    def convert_to_int10(self, values):
+        negative = (values & BIT10_MASK).astype(bool)
+        values[negative] = -(values[negative] & ~BIT10_MASK)
         return values
 
     def write_with_motor_ids(self, motor_models, motor_ids, data_name, values, num_retry=NUM_WRITE_RETRY):
