@@ -259,19 +259,17 @@ class RealSenseCamera(Camera):
             rs_config.enable_stream(
                 rs.stream.color, self.prerotated_width, self.prerotated_height, rs.format.rgb8, self.fps
             )
-        else:
-            logger.debug(f"Requesting Color Stream: Default settings, Format: {rs.stream.color}")
-            rs_config.enable_stream(rs.stream.color)
-
-        if self.use_depth:
-            if self.width and self.height and self.fps:
+            if self.use_depth:
                 logger.debug(
                     f"Requesting Depth Stream: {self.prerotated_width}x{self.prerotated_height} @ {self.fps} FPS, Format: {rs.format.z16}"
                 )
                 rs_config.enable_stream(
                     rs.stream.depth, self.prerotated_width, self.prerotated_height, rs.format.z16, self.fps
                 )
-            else:
+        else:
+            logger.debug(f"Requesting Color Stream: Default settings, Format: {rs.stream.color}")
+            rs_config.enable_stream(rs.stream.color)
+            if self.use_depth:
                 logger.debug(f"Requesting Depth Stream: Default settings, Format: {rs.stream.depth}")
                 rs_config.enable_stream(rs.stream.depth)
 
@@ -294,35 +292,14 @@ class RealSenseCamera(Camera):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"Cannot validate settings for {self} as it is not connected.")
 
-        self._validate_fps()
-        self._validate_width_and_height()
+        self._validate_fps(self.rs_profile.get_stream(rs.stream.color).as_video_stream_profile())
+        self._validate_width_and_height(self.rs_profile.get_stream(rs.stream.color).as_video_stream_profile())
 
         if self.use_depth:
-            try:
-                depth_stream = self.rs_profile.get_stream(rs.stream.depth).as_video_stream_profile()
-                actual_depth_width = depth_stream.width()
-                actual_depth_height = depth_stream.height()
-                actual_depth_fps = depth_stream.fps()
-                logger.info(
-                    f"Actual Depth Stream: {actual_depth_width}x{actual_depth_height} @ {actual_depth_fps} FPS"
-                )
-
-                # NOTE(Steven): This could be better, we could call the _set_XXX methods but those potentially modify the capture value of the color profile
-                if self.capture_width and self.capture_width != actual_depth_width:
-                    logger.warning(
-                        f"Depth width ({actual_depth_width}) differs from requested color width ({self.capture_width}) for {self}."
-                    )
-                if self.capture_height and self.capture_height != actual_depth_height:
-                    logger.warning(
-                        f"Depth height ({actual_depth_height}) differs from requested color height ({self.capture_height}) for {self}."
-                    )
-                if self.fps and self.fps != actual_depth_fps:
-                    logger.warning(
-                        f"Depth FPS ({actual_depth_fps}) differs from requested color FPS ({self.fps}) for {self}."
-                    )
-
-            except Exception as e:
-                logger.error(f"Failed to get or validate active depth stream profile on {self}: {e}")
+            self._validate_fps(self.rs_profile.get_stream(rs.stream.depth).as_video_stream_profile())
+            self._validate_width_and_height(
+                self.rs_profile.get_stream(rs.stream.depth).as_video_stream_profile()
+            )
 
     # NOTE(Steven): Add a wamr-up period time config
     def connect(self):
@@ -361,11 +338,10 @@ class RealSenseCamera(Camera):
         self._validate_capture_settings()
         logger.info(f"Camera {self.serial_number} connected and configured successfully.")
 
-    def _validate_fps(self) -> None:
+    def _validate_fps(self, stream) -> None:
         """Validates and sets the internal FPS based on actual stream FPS."""
 
-        color_stream = self.rs_profile.get_stream(rs.stream.color).as_video_stream_profile()
-        actual_fps = color_stream.fps()
+        actual_fps = stream.fps()
 
         if self.fps is None:
             self.fps = actual_fps
@@ -383,12 +359,11 @@ class RealSenseCamera(Camera):
             )
         logger.debug(f"FPS set to {actual_fps} for {self}.")
 
-    def _validate_width_and_height(self) -> None:
+    def _validate_width_and_height(self, stream) -> None:
         """Validates and sets the internal capture width and height based on actual stream width."""
 
-        color_stream = self.rs_profile.get_stream(rs.stream.color).as_video_stream_profile()
-        actual_width = int(round(color_stream.width()))
-        actual_height = int(round(color_stream.height()))
+        actual_width = int(round(stream.width()))
+        actual_height = int(round(stream.height()))
 
         if self.width is None or self.height is None:
             if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
@@ -469,23 +444,13 @@ class RealSenseCamera(Camera):
             depth_frame = frame.get_depth_frame()
             depth_map = np.asanyarray(depth_frame.get_data())
 
-            # NOTE(Steven): Simplified version of _postprocess_image() for depth image
-            h, w = depth_map.shape
-
-            if h != self.prerotated_height or w != self.prerotated_width:
-                raise RuntimeError(
-                    f"Captured frame dimensions ({h}x{w}) do not match configured capture dimensions ({self.prerotated_height}x{self.prerotated_width}) for {self}."
-                )
-
-            if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
-                depth_map = cv2.rotate(depth_map, self.rotation)
-                logger.debug(f"Rotated frame by {self.config.rotation} degrees for {self}.")
+            depth_map_processed = self._postprocess_image(depth_map)
 
             read_duration_ms = (time.perf_counter() - start_time) * 1e3
             logger.debug(f"{self} synchronous read took: {read_duration_ms:.1f}ms")
 
             self.logs["timestamp_utc"] = capture_timestamp_utc()
-            return color_image_processed, depth_map
+            return color_image_processed, depth_map_processed
         else:
             read_duration_ms = (time.perf_counter() - start_time) * 1e3
             logger.debug(f"{self} synchronous read took: {read_duration_ms:.1f}ms")
@@ -510,11 +475,10 @@ class RealSenseCamera(Camera):
             RuntimeError: If the raw frame dimensions do not match the configured
                           `width` and `height`.
         """
-        requested_color_mode = self.color_mode if color_mode is None else color_mode
 
-        if requested_color_mode not in (ColorMode.RGB, ColorMode.BGR):
+        if color_mode and color_mode not in (ColorMode.RGB, ColorMode.BGR):
             raise ValueError(
-                f"Invalid requested color mode '{requested_color_mode}'. Expected {ColorMode.RGB} or {ColorMode.BGR}."
+                f"Invalid requested color mode '{color_mode}'. Expected {ColorMode.RGB} or {ColorMode.BGR}."
             )
 
         h, w, c = image.shape
