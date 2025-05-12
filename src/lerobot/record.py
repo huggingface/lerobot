@@ -57,6 +57,7 @@ python -m lerobot.record \
 ```
 """
 
+from copy import copy
 import logging
 import time
 from dataclasses import asdict, dataclass
@@ -266,16 +267,17 @@ def record_loop(
         if policy is not None:
 
             # Transform instantaneous audio samples into a buffer of fixed size
+            buffered_observation_frame = copy(observation_frame)
             for name in audio_buffer:
                 # Remove as many old audio samples as needed
-                audio_buffer[name] = audio_buffer[name][len(observation_frame[name]) :]
+                audio_buffer[name] = audio_buffer[name][len(buffered_observation_frame[name]) :]
                 # Add new audio samples
-                audio_buffer[name] = np.vstack((audio_buffer[name], observation_frame[name]))
+                audio_buffer[name] = np.vstack((audio_buffer[name], buffered_observation_frame[name]))
                 # Add the audio buffer to the observation
-                observation_frame[name] = audio_buffer[name]
+                buffered_observation_frame[name] = audio_buffer[name]
 
             action_values = predict_action(
-                observation_frame,
+                buffered_observation_frame,
                 policy,
                 get_safe_torch_device(policy.config.device),
                 policy.config.use_amp,
