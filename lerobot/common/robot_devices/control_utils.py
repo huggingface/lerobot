@@ -314,16 +314,20 @@ def control_loop(
 
             if policy is not None:
                 # Transform instantaneous audio samples into a buffer of fixed size
+                buffered_observation = copy(observation)
                 for name in audio_buffer:
                     # Remove as many old audio samples as needed
-                    audio_buffer[name] = audio_buffer[name][len(observation[name]) :]
+                    audio_buffer[name] = audio_buffer[name][len(buffered_observation[name]) :]
                     # Add new audio samples
-                    audio_buffer[name] = torch.cat((audio_buffer[name], observation[name]), dim=0)
+                    audio_buffer[name] = torch.cat((audio_buffer[name], buffered_observation[name]), dim=0)
                     # Add the audio buffer to the observation
-                    observation[name] = audio_buffer[name]
+                    buffered_observation[name] = audio_buffer[name]
 
                 pred_action = predict_action(
-                    observation, policy, get_safe_torch_device(policy.config.device), policy.config.use_amp
+                    buffered_observation,
+                    policy,
+                    get_safe_torch_device(policy.config.device),
+                    policy.config.use_amp,
                 )
                 # Action can eventually be clipped using `max_relative_target`,
                 # so action actually sent is saved in the dataset.
