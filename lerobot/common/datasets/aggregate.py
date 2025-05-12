@@ -17,6 +17,7 @@ from lerobot.common.datasets.utils import (
     concat_video_files,
     get_parquet_file_size_in_mb,
     get_video_size_in_mb,
+    safe_write_dataframe_to_parquet,
     update_chunk_file_indices,
     write_info,
     write_stats,
@@ -97,6 +98,7 @@ def aggregate_datasets(repo_ids: list[str], aggr_repo_id: str, roots: list[Path]
 
     fps, robot_type, features = validate_all_metadata(all_metadata)
     video_keys = [key for key in features if features[key]["dtype"] == "video"]
+    image_keys = [key for key in features if features[key]["dtype"] == "image"]
 
     # Create resulting dataset folder
     aggr_meta = LeRobotDatasetMetadata.create(
@@ -259,7 +261,7 @@ def aggregate_datasets(repo_ids: list[str], aggr_repo_id: str, roots: list[Path]
                     # Update the existing parquet file with new rows
                     aggr_df = pd.read_parquet(aggr_path)
                     df = pd.concat([aggr_df, df], ignore_index=True)
-                    df.to_parquet(aggr_path)
+                    safe_write_dataframe_to_parquet(df, aggr_path, image_keys)
 
         num_episodes += meta.total_episodes
         num_frames += meta.total_frames

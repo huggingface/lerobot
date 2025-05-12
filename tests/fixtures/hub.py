@@ -22,6 +22,7 @@ from lerobot.common.datasets.utils import (
     DEFAULT_DATA_PATH,
     DEFAULT_EPISODES_PATH,
     DEFAULT_TASKS_PATH,
+    DEFAULT_VIDEO_PATH,
     INFO_PATH,
     STATS_PATH,
 )
@@ -40,6 +41,7 @@ def mock_snapshot_download_factory(
     create_episodes,
     hf_dataset_factory,
     create_hf_dataset,
+    create_videos,
 ):
     """
     This factory allows to patch snapshot_download such that when called, it will create expected files rather
@@ -91,40 +93,48 @@ def mock_snapshot_download_factory(
                 DEFAULT_DATA_PATH.format(chunk_index=0, file_index=0),
             ]
 
+            video_keys = [key for key, feats in info["features"].items() if feats["dtype"] == "video"]
+            for key in video_keys:
+                all_files.append(DEFAULT_VIDEO_PATH.format(video_key=key, chunk_index=0, file_index=0))
+
             allowed_files = filter_repo_objects(
                 all_files, allow_patterns=allow_patterns, ignore_patterns=ignore_patterns
             )
 
-            has_info = False
-            has_tasks = False
-            has_episodes = False
-            has_stats = False
-            has_data = False
+            request_info = False
+            request_tasks = False
+            request_episodes = False
+            request_stats = False
+            request_data = False
+            request_videos = False
             for rel_path in allowed_files:
                 if rel_path.startswith("meta/info.json"):
-                    has_info = True
+                    request_info = True
                 elif rel_path.startswith("meta/stats"):
-                    has_stats = True
+                    request_stats = True
                 elif rel_path.startswith("meta/tasks"):
-                    has_tasks = True
+                    request_tasks = True
                 elif rel_path.startswith("meta/episodes"):
-                    has_episodes = True
+                    request_episodes = True
                 elif rel_path.startswith("data/"):
-                    has_data = True
+                    request_data = True
+                elif rel_path.startswith("videos/"):
+                    request_videos = True
                 else:
                     raise ValueError(f"{rel_path} not supported.")
 
-            if has_info:
+            if request_info:
                 create_info(local_dir, info)
-            if has_stats:
+            if request_stats:
                 create_stats(local_dir, stats)
-            if has_tasks:
+            if request_tasks:
                 create_tasks(local_dir, tasks)
-            if has_episodes:
+            if request_episodes:
                 create_episodes(local_dir, episodes)
-            # TODO(rcadene): create_videos?
-            if has_data:
+            if request_data:
                 create_hf_dataset(local_dir, hf_dataset)
+            if request_videos:
+                create_videos(root=local_dir, info=info)
 
             return str(local_dir)
 
