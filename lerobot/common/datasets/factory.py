@@ -81,11 +81,27 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
     image_transforms = (
         ImageTransforms(cfg.dataset.image_transforms) if cfg.dataset.image_transforms.enable else None
     )
-
-    if isinstance(cfg.dataset.repo_id, str):
-        ds_meta = LeRobotDatasetMetadata(
-            cfg.dataset.repo_id, root=cfg.dataset.root, revision=cfg.dataset.revision
+    if cfg.dataset.repo_id.startswith("["):
+        datasets = cfg.dataset.repo_id.strip("[]").split(",")
+        datasets = [x.strip() for x in datasets]
+        delta_timestamps = {}
+        for ds in datasets:
+            ds_meta = LeRobotDatasetMetadata(ds)
+            d_ts = resolve_delta_timestamps(cfg.policy, ds_meta)
+            delta_timestamps[ds] = d_ts
+        dataset = MultiLeRobotDataset(
+            datasets,
+            # TODO(aliberts): add proper support for multi dataset
+            delta_timestamps=delta_timestamps,
+            image_transforms=image_transforms,
+            video_backend=cfg.dataset.video_backend,
         )
+        logging.info(
+            "Multiple datasets were provided. Applied the following index mapping to the provided datasets: "
+            f"{pformat(dataset.repo_id_to_index, indent=2)}"
+        )
+    else:
+        ds_meta = LeRobotDatasetMetadata(cfg.dataset.repo_id)
         delta_timestamps = resolve_delta_timestamps(cfg.policy, ds_meta)
         dataset = LeRobotDataset(
             cfg.dataset.repo_id,
@@ -96,23 +112,16 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             revision=cfg.dataset.revision,
             video_backend=cfg.dataset.video_backend,
         )
-    else:
-        raise NotImplementedError("The MultiLeRobotDataset isn't supported for now.")
-        dataset = MultiLeRobotDataset(
-            cfg.dataset.repo_id,
-            # TODO(aliberts): add proper support for multi dataset
-            # delta_timestamps=delta_timestamps,
-            image_transforms=image_transforms,
-            video_backend=cfg.dataset.video_backend,
-        )
-        logging.info(
-            "Multiple datasets were provided. Applied the following index mapping to the provided datasets: "
-            f"{pformat(dataset.repo_id_to_index, indent=2)}"
-        )
 
     if cfg.dataset.use_imagenet_stats:
-        for key in dataset.meta.camera_keys:
-            for stats_type, stats in IMAGENET_STATS.items():
-                dataset.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
+        if isinstance(dataset, MultiLeRobotDataset):
+            for ds in dataset._datasets:
+                for key in ds.meta.camera_keys:
+                    for stats_type, stats in IMAGENET_STATS.items():
+                        ds.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
+        else:
+            for key in dataset.meta.camera_keys:
+                for stats_type, stats in IMAGENET_STATS.items():
+                    dataset.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
 
     return dataset
