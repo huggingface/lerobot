@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..configs import CameraConfig, ColorMode, Cv2Rotation
@@ -9,7 +9,7 @@ from ..configs import CameraConfig, ColorMode, Cv2Rotation
 class OpenCVCameraConfig(CameraConfig):
     """
     Example of tested options for Intel Real Sense D405:
-
+    #NOTE(Steven): update this doc
     ```python
     OpenCVCameraConfig(0, 30, 640, 480)
     OpenCVCameraConfig(0, 60, 640, 480)
@@ -18,10 +18,9 @@ class OpenCVCameraConfig(CameraConfig):
     ```
     """
 
-    index_or_path: int | Path
-    fps: int | None = None
-    width: int | None = None
-    height: int | None = None
+    index_or_path: int | Path = field(
+        default=...,
+    )
     color_mode: ColorMode = ColorMode.RGB
     channels: int = 3  # NOTE(Steven): Why is this a config?
     rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION
