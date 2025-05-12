@@ -62,6 +62,7 @@ lerobot-record \
 
 import logging
 import time
+from copy import copy
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from pprint import pformat
@@ -354,16 +355,17 @@ def record_loop(
         # Get action from either policy or teleop
         if policy is not None and preprocessor is not None and postprocessor is not None:
             # Transform instantaneous audio samples into a buffer of fixed size
+            buffered_observation_frame = copy(observation_frame)
             for name in audio_buffer:
                 # Remove as many old audio samples as needed
-                audio_buffer[name] = audio_buffer[name][len(observation_frame[name]) :]
+                audio_buffer[name] = audio_buffer[name][len(buffered_observation_frame[name]) :]
                 # Add new audio samples
-                audio_buffer[name] = np.vstack((audio_buffer[name], observation_frame[name]))
+                audio_buffer[name] = np.vstack((audio_buffer[name], buffered_observation_frame[name]))
                 # Add the audio buffer to the observation
-                observation_frame[name] = audio_buffer[name]
+                buffered_observation_frame[name] = audio_buffer[name]
 
             action_values = predict_action(
-                observation=observation_frame,
+                observation=buffered_observation_frame,
                 policy=policy,
                 device=get_safe_torch_device(policy.config.device),
                 preprocessor=preprocessor,
