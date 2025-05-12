@@ -28,7 +28,7 @@ class RobotClient:
         policy_device: str = "mps",
         chunk_size_threshold: float = 0.5,
         robot: str = "so100",
-        mock: bool = True,
+        mock: bool = False,
     ):
         # Use environment variable if server_address is not provided
         if server_address is None:
@@ -41,6 +41,9 @@ class RobotClient:
         self.logger.info(f"Initializing client to connect to server at {server_address}")
 
         self.running = False
+        self.must_go = (
+            True  # does the observation qualify for direct processing on the policy server (skipping checks)?
+        )
 
         self.latest_action = -1
         self.action_chunk_size = -1
@@ -282,6 +285,10 @@ class RobotClient:
                     self._update_action_queue(timed_actions)
                     queue_update_time = time.time() - start_time
 
+                    self.must_go = (
+                        True  # after receiving actions, next empty queue triggers must-go processing!
+                    )
+
                     # Get queue state after changes
                     new_size, new_timesteps = self._inspect_action_queue()
 
@@ -421,6 +428,13 @@ class RobotClient:
             observation = get_observation_fn()
             obs_capture_time = time.time() - start_time
 
+            # If there are no actions left in the queue, the observation must go through processing!
+            observation.must_go = self.must_go and self.action_queue.empty()
+            self.logger.debug(f"QUEUE SIZE: {self.action_queue.qsize()} (Must go: {observation.must_go})")
+            if observation.must_go:
+                # must-go flag will be set again after receiving new actions
+                self.must_go = False
+
             if not hasattr(self, "last_obs_timestamp"):
                 self.last_obs_timestamp = observation.get_timestamp()
 
@@ -474,6 +488,8 @@ def async_client(verbose=0):
         def get_observation():
             observation_content = None
             observation_content = client.robot.capture_observation()
+
+            observation_content["task"] = ["Pick up the cube and place it in the box"]
 
             observation = TimedObservation(
                 timestamp=time.time(), observation=observation_content, timestep=max(client.latest_action, 0)

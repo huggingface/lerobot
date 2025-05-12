@@ -13,7 +13,13 @@ from datasets import load_dataset
 
 from lerobot.common.policies.factory import get_policy_class
 from lerobot.scripts.server.constants import environment_dt, idle_wait, inference_latency, supported_policies
-from lerobot.scripts.server.helpers import TimedAction, TimedObservation, TinyPolicyConfig, setup_logging
+from lerobot.scripts.server.helpers import (
+    TimedAction,
+    TimedObservation,
+    TinyPolicyConfig,
+    observations_similar,
+    setup_logging,
+)
 
 
 class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
@@ -37,6 +43,7 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
         # only running inference on the latest observation received by the server
         self.observation_queue = Queue(maxsize=1)
         self._predicted_timesteps = set()
+        self._predicted_observations = Queue(maxsize=1)
 
     def Ready(self, request, context):  # noqa: N802
         client_id = context.peer()
@@ -89,33 +96,24 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
             timed_observation = pickle.loads(observation.data)  # nosec
             deserialize_time = time.time()
 
-            if timed_observation.get_timestep() in self._predicted_timesteps:
-                self.logger.debug(
-                    f"Skipping observation #{timed_observation.get_timestep()} - Already predicted!"
-                )
+            self.logger.debug(f"Received observation #{timed_observation.get_timestep()}")
+
+            if not self._maybe_enqueue_observation(timed_observation):
                 continue
 
-            # If queue is full, get the old observation to make room
-            if self.observation_queue.full():
-                # pops from queue
-                _ = self.observation_queue.get_nowait()
-                self.logger.debug("Observation queue was full, removed oldest observation")
-
-            # Now put the new observation (never blocks as queue is non-full here)
-            self.observation_queue.put(timed_observation)
             queue_time = time.time()
 
             obs_timestep = timed_observation.get_timestep()
             obs_timestamp = timed_observation.get_timestamp()
-
-            if not hasattr(self, "previous_obs_timestamp"):
-                self.previous_obs_timestamp = obs_timestamp
 
             self.logger.info(
                 f"Received observation #{obs_timestep} | "
                 f"Client timestamp: {obs_timestamp:.6f} | "
                 f"Server timestamp: {receive_time:.6f} | "
             )
+
+            if not hasattr(self, "previous_obs_timestamp"):
+                self.previous_obs_timestamp = obs_timestamp
 
             self.logger.debug(
                 f"1/DeltaObsT (~frequency): {1 / (1e-6 + obs_timestamp - self.previous_obs_timestamp):.6f} Hz| "
@@ -136,9 +134,12 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
         # Generate action based on the most recent observation and its timestep
         try:
             obs = self.observation_queue.get()
-            self.logger.info(f"Running inference for observation #{obs.get_timestep()}")
+            self.logger.info(
+                f"Running inference for observation #{obs.get_timestep()} (must_go: {obs.must_go})"
+            )
 
             if obs:
+                self.last_predicted_obs = obs
                 self._predicted_timesteps.add(obs.get_timestep())
                 start_time = time.time()
                 action_chunk = self._predict_action_chunk(obs)
@@ -167,10 +168,50 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
             else:
                 self.logger.warning("No observation in queue yet!")
                 time.sleep(idle_wait)
+
         except Exception as e:
             self.logger.error(f"Error in StreamActions: {e}")
 
         return async_inference_pb2.Empty()
+
+    def _enqueue_and_go(self, obs: TimedObservation):
+        # If queue is full, get the old observation to make room
+        if self.observation_queue.full():
+            # pops from queue
+            _ = self.observation_queue.get_nowait()
+            self.logger.debug("Observation queue was full, removed oldest observation")
+
+        # Now put the new observation (never blocks as queue is non-full here)
+        self.observation_queue.put(obs)
+        return True
+
+    def _obs_sanity_checks(self, obs: TimedObservation, previous_obs: TimedObservation) -> bool:
+        if obs.get_timestep() in self._predicted_timesteps:
+            self.logger.debug(f"Skipping observation #{obs.get_timestep()} - Timestep predicted already!")
+            return False
+
+        elif observations_similar(obs, previous_obs, atol=1):
+            self.logger.debug(
+                f"Skipping observation #{obs.get_timestep()} - Observation too similar to last obs predicted!"
+            )
+            return False
+
+        else:
+            return True
+
+    def _maybe_enqueue_observation(self, obs: TimedObservation) -> bool:
+        """Enqueue an observation if it must go through processing, otherwise skip it.
+        Observations not in queue are never run through the policy network"""
+
+        if obs.must_go or not hasattr(self, "last_predicted_obs"):
+            self.logger.info(f"[MUST GO] Enqueued observation #{obs.get_timestep()} for direct processing!")
+            return self._enqueue_and_go(obs)
+
+        else:
+            if self._obs_sanity_checks(obs, self.last_predicted_obs):
+                return self._enqueue_and_go(obs)
+            else:
+                return False
 
     def _time_action_chunk(self, t_0: float, action_chunk: list[torch.Tensor], i_0: int) -> list[TimedAction]:
         """Turn a chunk of actions into a list of TimedAction instances,
@@ -226,13 +267,15 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
         """1. Prepare observation"""
         start_time = time.time()
 
-        observation = {}
+        observation = {
+            "robot_type": [self.policy.config.robot_type],
+        }
         for k, v in observation_t.get_observation().items():
             if isinstance(v, torch.Tensor):  # VLAs present natural-language instructions
                 if "image" in k:
                     # Add batch dimension first, then reorder to NCHW format, then normalize to [0, 1]
                     observation[k] = (
-                        v.unsqueeze(0).permute(0, 3, 1, 2).to(self.device, non_blocking=True) / 255
+                        v.unsqueeze(0).permute(0, 3, 1, 2).to(self.device, non_blocking=True) / 255.0
                     )
                 else:
                     observation[k] = v.unsqueeze(0).to(self.device, non_blocking=True)

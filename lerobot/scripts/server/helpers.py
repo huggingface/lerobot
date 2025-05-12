@@ -88,10 +88,16 @@ class TimedAction(TimedData):
 
 class TimedObservation(TimedData):
     def __init__(
-        self, timestamp: float, observation: dict[str, torch.Tensor], timestep: int, transfer_state: int = 0
+        self,
+        timestamp: float,
+        observation: dict[str, torch.Tensor],
+        timestep: int,
+        transfer_state: int = 0,
+        must_go: bool = False,
     ):
         super().__init__(timestamp=timestamp, data=observation, timestep=timestep)
         self.transfer_state = transfer_state
+        self.must_go = must_go
 
     def get_observation(self):
         return self.get_data()
@@ -107,3 +113,16 @@ class TinyPolicyConfig:
         self.policy_type = policy_type
         self.pretrained_name_or_path = pretrained_name_or_path
         self.device = device
+
+
+def _compare_observation_states(obs1_state: torch.Tensor, obs2_state: torch.Tensor, atol: float) -> bool:
+    """Check if two observation states are similar, under a tolerance threshold"""
+    return torch.allclose(obs1_state, obs2_state, atol=atol)
+
+
+def observations_similar(obs1: TimedObservation, obs2: TimedObservation, atol: float = 1) -> bool:
+    """Check if two observations are similar, under a tolerance threshold"""
+    obs1_state = obs1.get_observation()["observation.state"]
+    obs2_state = obs2.get_observation()["observation.state"]
+
+    return _compare_observation_states(obs1_state, obs2_state, atol=atol)
