@@ -47,7 +47,9 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
             # TODO(aliberts, rcadene): use transforms.ToTensor()?
             img = torch.from_numpy(img)
 
-            if img.dim() == 3:
+            # When preprocessing observations in a non-vectorized environment, we need to add a batch dimension.
+            # This is the case for human-in-the-loop RL where there is only one environment.
+            if img.ndim == 3:
                 img = img.unsqueeze(0)
             # sanity check that images are channel last
             _, h, w, c = img.shape
