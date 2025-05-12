@@ -41,7 +41,7 @@ import torch
 
 from lerobot.common.robot_devices.robots.utils import make_robot
 from lerobot.common.robot_devices.utils import RobotDeviceAlreadyConnectedError, RobotDeviceNotConnectedError
-from tests.utils import TEST_ROBOT_TYPES, mock_calibration_dir, require_robot
+from tests.testutils import TEST_ROBOT_TYPES, mock_calibration_dir, require_robot
 
 
 @pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)

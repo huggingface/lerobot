@@ -15,7 +15,7 @@
 # limitations under the License.
 import inspect
 from copy import deepcopy
-from pathlib import Path
+from importlib.resources import files
 
 import einops
 import pytest
@@ -41,7 +41,7 @@ from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from tests.artifacts.policies.save_policy_to_safetensors import get_policy_stats
-from tests.utils import DEVICE, require_cpu, require_env, require_x86_64_kernel
+from tests.testutils import DEVICE, require_cpu, require_env, require_x86_64_kernel
 
 
 @pytest.fixture
@@ -59,16 +59,33 @@ def dummy_dataset_metadata(lerobot_dataset_metadata_factory, info_factory, tmp_p
         "action": {
             "dtype": "float32",
             "shape": (6,),
-            "names": ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"],
+            "names": [
+                "shoulder_pan",
+                "shoulder_lift",
+                "elbow_flex",
+                "wrist_flex",
+                "wrist_roll",
+                "gripper",
+            ],
         },
         "observation.state": {
             "dtype": "float32",
             "shape": (6,),
-            "names": ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"],
+            "names": [
+                "shoulder_pan",
+                "shoulder_lift",
+                "elbow_flex",
+                "wrist_flex",
+                "wrist_roll",
+                "gripper",
+            ],
         },
     }
     info = info_factory(
-        total_episodes=1, total_frames=1, camera_features=camera_features, motor_features=motor_features
+        total_episodes=1,
+        total_frames=1,
+        camera_features=camera_features,
+        motor_features=motor_features,
     )
     ds_meta = lerobot_dataset_metadata_factory(root=tmp_path / "init", info=info)
     return ds_meta
@@ -81,7 +98,8 @@ def test_get_policy_and_config_classes(policy_name: str):
     policy_cfg = make_policy_config(policy_name)
     assert policy_cls.name == policy_name
     assert issubclass(
-        policy_cfg.__class__, inspect.signature(policy_cls.__init__).parameters["config"].annotation
+        policy_cfg.__class__,
+        inspect.signature(policy_cls.__init__).parameters["config"].annotation,
     )
 
 
@@ -92,7 +110,13 @@ def test_get_policy_and_config_classes(policy_name: str):
         ("lerobot/pusht", "pusht", {}, "diffusion", {}),
         ("lerobot/pusht", "pusht", {}, "vqbet", {}),
         ("lerobot/pusht", "pusht", {}, "act", {}),
-        ("lerobot/aloha_sim_insertion_human", "aloha", {"task": "AlohaInsertion-v0"}, "act", {}),
+        (
+            "lerobot/aloha_sim_insertion_human",
+            "aloha",
+            {"task": "AlohaInsertion-v0"},
+            "act",
+            {},
+        ),
         (
             "lerobot/aloha_sim_insertion_scripted",
             "aloha",
@@ -174,7 +198,7 @@ def test_policy(ds_repo_id, env_name, env_kwargs, policy_name, policy_kwargs):
     policy.forward(batch)
     assert set(batch) == set(batch_), "Batch keys are not the same after a forward pass."
     assert all(
-        torch.equal(batch[k], batch_[k]) if isinstance(batch[k], torch.Tensor) else batch[k] == batch_[k]
+        (torch.equal(batch[k], batch_[k]) if isinstance(batch[k], torch.Tensor) else batch[k] == batch_[k])
         for k in batch
     ), "Batch values are not the same after a forward pass."
 
@@ -410,7 +434,7 @@ def test_backward_compatibility(ds_repo_id: str, policy_name: str, policy_kwargs
         6. Remember to stage and commit the resulting changes to `tests/artifacts`.
     """
     ds_name = ds_repo_id.split("/")[-1]
-    artifact_dir = Path("tests/artifacts/policies") / f"{ds_name}_{policy_name}_{file_name_extra}"
+    artifact_dir = files("tests.artifacts.policies").joinpath(f"{ds_name}_{policy_name}_{file_name_extra}")
     saved_output_dict = load_file(artifact_dir / "output_dict.safetensors")
     saved_grad_stats = load_file(artifact_dir / "grad_stats.safetensors")
     saved_param_stats = load_file(artifact_dir / "param_stats.safetensors")

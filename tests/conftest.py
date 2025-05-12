@@ -21,7 +21,7 @@ from serial import SerialException
 
 from lerobot import available_cameras, available_motors, available_robots
 from lerobot.common.robot_devices.robots.utils import make_robot
-from tests.utils import DEVICE, make_camera, make_motors_bus
+from tests.testutils import DEVICE, make_camera, make_motors_bus
 
 # Import fixture modules as plugins
 pytest_plugins = [

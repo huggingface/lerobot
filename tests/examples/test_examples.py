@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 from tests.fixtures.constants import DUMMY_REPO_ID
-from tests.utils import require_package
+from tests.testutils import require_package
 
 
 def _find_and_replace(text: str, finds_and_replaces: list[tuple[str, str]]) -> str:

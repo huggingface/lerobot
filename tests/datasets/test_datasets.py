@@ -17,8 +17,8 @@ import json
 import logging
 import re
 from copy import deepcopy
+from importlib.resources import files
 from itertools import chain
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -45,7 +45,7 @@ from lerobot.common.robot_devices.robots.utils import make_robot
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
 from tests.fixtures.constants import DUMMY_CHW, DUMMY_HWC, DUMMY_REPO_ID
-from tests.utils import require_x86_64_kernel
+from tests.testutils import require_x86_64_kernel
 
 
 @pytest.fixture
@@ -104,7 +104,8 @@ def test_add_frame_missing_task(tmp_path, empty_lerobot_dataset_factory):
     features = {"state": {"dtype": "float32", "shape": (1,), "names": None}}
     dataset = empty_lerobot_dataset_factory(root=tmp_path / "test", features=features)
     with pytest.raises(
-        ValueError, match="Feature mismatch in `frame` dictionary:\nMissing features: {'task'}\n"
+        ValueError,
+        match="Feature mismatch in `frame` dictionary:\nMissing features: {'task'}\n",
     ):
         dataset.add_frame({"state": torch.randn(1)})
 
@@ -113,7 +114,8 @@ def test_add_frame_missing_feature(tmp_path, empty_lerobot_dataset_factory):
     features = {"state": {"dtype": "float32", "shape": (1,), "names": None}}
     dataset = empty_lerobot_dataset_factory(root=tmp_path / "test", features=features)
     with pytest.raises(
-        ValueError, match="Feature mismatch in `frame` dictionary:\nMissing features: {'state'}\n"
+        ValueError,
+        match="Feature mismatch in `frame` dictionary:\nMissing features: {'state'}\n",
     ):
         dataset.add_frame({"task": "Dummy task"})
 
@@ -122,7 +124,8 @@ def test_add_frame_extra_feature(tmp_path, empty_lerobot_dataset_factory):
     features = {"state": {"dtype": "float32", "shape": (1,), "names": None}}
     dataset = empty_lerobot_dataset_factory(root=tmp_path / "test", features=features)
     with pytest.raises(
-        ValueError, match="Feature mismatch in `frame` dictionary:\nExtra features: {'extra'}\n"
+        ValueError,
+        match="Feature mismatch in `frame` dictionary:\nExtra features: {'extra'}\n",
     ):
         dataset.add_frame({"state": torch.randn(1), "task": "Dummy task", "extra": "dummy_extra"})
 
@@ -131,7 +134,8 @@ def test_add_frame_wrong_type(tmp_path, empty_lerobot_dataset_factory):
     features = {"state": {"dtype": "float32", "shape": (1,), "names": None}}
     dataset = empty_lerobot_dataset_factory(root=tmp_path / "test", features=features)
     with pytest.raises(
-        ValueError, match="The feature 'state' of dtype 'float16' is not of the expected dtype 'float32'.\n"
+        ValueError,
+        match="The feature 'state' of dtype 'float16' is not of the expected dtype 'float32'.\n",
     ):
         dataset.add_frame({"state": torch.randn(1, dtype=torch.float16), "task": "Dummy task"})
 
@@ -478,7 +482,7 @@ def test_backward_compatibility(repo_id):
     # TODO(rcadene, aliberts): remove dataset download
     dataset = LeRobotDataset(repo_id, episodes=[0])
 
-    test_dir = Path("tests/artifacts/datasets") / repo_id
+    test_dir = files("tests.artifacts.datasets").joinpath(repo_id)
 
     def load_and_compare(i):
         new_frame = dataset[i]  # noqa: B023
