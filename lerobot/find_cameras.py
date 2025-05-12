@@ -157,28 +157,21 @@ def create_camera_instance(cam_meta: Dict[str, Any]) -> Optional[Dict[str, Any]]
     """Create and connect to a camera instance based on metadata."""
     cam_type = cam_meta.get("type")
     cam_id = cam_meta.get("id")
-    default_profile = cam_meta.get("default_stream_profile")
-    width = default_profile.get("width")
-    height = default_profile.get("height")
     instance = None
 
-    logger.info(f"Preparing {cam_type} ID {cam_id} with profile: Width={width}, Height={height}")
+    logger.info(f"Preparing {cam_type} ID {cam_id} with default profile")
 
     try:
         if cam_type == "OpenCV":
             cv_config = OpenCVCameraConfig(
                 index_or_path=cam_id,
                 color_mode=ColorMode.RGB,
-                width=width,
-                height=height,
             )
             instance = OpenCVCamera(cv_config)
         elif cam_type == "RealSense":
             rs_config = RealSenseCameraConfig(
                 serial_number=str(cam_id),
                 color_mode=ColorMode.RGB,
-                width=width,
-                height=height,
             )
             instance = RealSenseCamera(rs_config)
         else:
@@ -270,6 +263,7 @@ def save_images_from_all_cameras(
     logger.info(f"Starting image capture for {record_time_s} seconds from {len(cameras_to_use)} cameras.")
     start_time = time.perf_counter()
 
+    # NOTE(Steven): This seems like an overkill to me
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(cameras_to_use) * 2) as executor:
         try:
             while time.perf_counter() - start_time < record_time_s:
