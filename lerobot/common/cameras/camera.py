@@ -34,7 +34,7 @@ class Camera(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def connect(self) -> None:
+    def connect(self, do_warmup_read: bool = True) -> None:
         pass
 
     @abc.abstractmethod

@@ -19,14 +19,14 @@
 # pytest tests/cameras/test_opencv.py::test_connect
 # ```
 
+import os
+
 import numpy as np
 import pytest
 
 from lerobot.common.cameras.configs import Cv2Rotation
 from lerobot.common.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-
-# NOTE(Steven): Patch get/set calls
 
 
 def test_base_class_implementation():
@@ -36,21 +36,21 @@ def test_base_class_implementation():
 
 
 def test_connect():
-    config = OpenCVCameraConfig(index_or_path="tests/artifacts/cameras/fake_cam.png")
+    config = OpenCVCameraConfig(index_or_path="tests/artifacts/cameras/fakecam_sd_640x480.png")
     camera = OpenCVCamera(config)
 
-    camera.connect()
+    camera.connect(do_warmup_read=False)
 
     assert camera.is_connected
 
 
 def test_connect_already_connected():
-    config = OpenCVCameraConfig(index_or_path="tests/artifacts/cameras/fake_cam.png")
+    config = OpenCVCameraConfig(index_or_path="tests/artifacts/cameras/fakecam_sd_640x480.png")
     camera = OpenCVCamera(config)
-    camera.connect()
+    camera.connect(do_warmup_read=False)
 
     with pytest.raises(DeviceAlreadyConnectedError):
-        camera.connect()
+        camera.connect(do_warmup_read=False)
 
 
 def test_connect_invalid_camera_path():
@@ -58,25 +58,34 @@ def test_connect_invalid_camera_path():
     camera = OpenCVCamera(config)
 
     with pytest.raises(ConnectionError):
-        camera.connect()
+        camera.connect(do_warmup_read=False)
 
 
 def test_invalid_width_connect():
     config = OpenCVCameraConfig(
-        index_or_path="tests/artifacts/cameras/fake_cam.png",
+        index_or_path="tests/artifacts/cameras/fakecam_sd_640x480.png",
         width=99999,  # Invalid width to trigger error
         height=480,
     )
     camera = OpenCVCamera(config)
 
     with pytest.raises(RuntimeError):
-        camera.connect()
+        camera.connect(do_warmup_read=False)
 
 
-def test_read():
-    config = OpenCVCameraConfig(index_or_path="tests/artifacts/cameras/fake_cam.png")
+@pytest.mark.parametrize(
+    "index_or_path",
+    [
+        "tests/artifacts/cameras/fakecam_sd_640x480.png",
+        "tests/artifacts/cameras/fakecam_hd_1280x720.png",
+        "tests/artifacts/cameras/fakecam_fullhd_1920x1080.png",
+        "tests/artifacts/cameras/fakecam_square_512x512.png",
+    ],
+)
+def test_read(index_or_path):
+    config = OpenCVCameraConfig(index_or_path=index_or_path)
     camera = OpenCVCamera(config)
-    camera.connect()
+    camera.connect(do_warmup_read=False)
 
     img = camera.read()
 
@@ -84,7 +93,7 @@ def test_read():
 
 
 def test_read_before_connect():
-    config = OpenCVCameraConfig(index_or_path="tests/artifacts/cameras/fake_cam.png")
+    config = OpenCVCameraConfig(index_or_path="tests/artifacts/cameras/fakecam_sd_640x480.png")
     camera = OpenCVCamera(config)
 
     with pytest.raises(DeviceNotConnectedError):
@@ -92,9 +101,9 @@ def test_read_before_connect():
 
 
 def test_disconnect():
-    config = OpenCVCameraConfig(index_or_path="tests/artifacts/cameras/fake_cam.png")
+    config = OpenCVCameraConfig(index_or_path="tests/artifacts/cameras/fakecam_sd_640x480.png")
     camera = OpenCVCamera(config)
-    camera.connect()
+    camera.connect(do_warmup_read=False)
 
     camera.disconnect()
 
@@ -102,17 +111,26 @@ def test_disconnect():
 
 
 def test_disconnect_before_connect():
-    config = OpenCVCameraConfig(index_or_path="tests/artifacts/cameras/fake_cam.png")
+    config = OpenCVCameraConfig(index_or_path="tests/artifacts/cameras/fakecam_sd_640x480.png")
     camera = OpenCVCamera(config)
 
     with pytest.raises(DeviceNotConnectedError):
         _ = camera.disconnect()
 
 
-def test_async_read():
-    config = OpenCVCameraConfig(index_or_path="tests/artifacts/cameras/fake_cam.png")
+@pytest.mark.parametrize(
+    "index_or_path",
+    [
+        "tests/artifacts/cameras/fakecam_sd_640x480.png",
+        "tests/artifacts/cameras/fakecam_hd_1280x720.png",
+        "tests/artifacts/cameras/fakecam_fullhd_1920x1080.png",
+        "tests/artifacts/cameras/fakecam_square_512x512.png",
+    ],
+)
+def test_async_read(index_or_path):
+    config = OpenCVCameraConfig(index_or_path=index_or_path)
     camera = OpenCVCamera(config)
-    camera.connect()
+    camera.connect(do_warmup_read=False)
 
     img = camera.async_read()
 
@@ -123,9 +141,9 @@ def test_async_read():
 
 
 def test_async_read_timeout():
-    config = OpenCVCameraConfig(index_or_path="tests/artifacts/cameras/fake_cam.png")
+    config = OpenCVCameraConfig(index_or_path="tests/artifacts/cameras/fakecam_sd_640x480.png")
     camera = OpenCVCamera(config)
-    camera.connect()
+    camera.connect(do_warmup_read=False)
 
     with pytest.raises(TimeoutError):
         camera.async_read(timeout_ms=0)
@@ -134,13 +152,22 @@ def test_async_read_timeout():
 
 
 def test_async_read_before_connect():
-    config = OpenCVCameraConfig(index_or_path="tests/artifacts/cameras/fake_cam.png")
+    config = OpenCVCameraConfig(index_or_path="tests/artifacts/cameras/fakecam_sd_640x480.png")
     camera = OpenCVCamera(config)
 
     with pytest.raises(DeviceNotConnectedError):
         _ = camera.async_read()
 
 
+@pytest.mark.parametrize(
+    "index_or_path",
+    [
+        "tests/artifacts/cameras/fakecam_sd_640x480.png",
+        "tests/artifacts/cameras/fakecam_hd_1280x720.png",
+        "tests/artifacts/cameras/fakecam_fullhd_1920x1080.png",
+        "tests/artifacts/cameras/fakecam_square_512x512.png",
+    ],
+)
 @pytest.mark.parametrize(
     "rotation",
     [
@@ -150,21 +177,25 @@ def test_async_read_before_connect():
         Cv2Rotation.ROTATE_270,
     ],
 )
-def test_all_rotations(rotation):
-    config = OpenCVCameraConfig(index_or_path="tests/artifacts/cameras/fake_cam.png", rotation=rotation)
+def test_all_rotations(rotation, index_or_path):
+    filename = os.path.basename(index_or_path)
+    dimensions = filename.split("_")[-1].split(".")[0]  # Assumes filenames format (_wxh.png)
+    original_width, original_height = map(int, dimensions.split("x"))
+
+    config = OpenCVCameraConfig(index_or_path=index_or_path, rotation=rotation)
     camera = OpenCVCamera(config)
-    camera.connect()
+    camera.connect(do_warmup_read=False)
 
     img = camera.read()
     assert isinstance(img, np.ndarray)
 
     if rotation in (Cv2Rotation.ROTATE_90, Cv2Rotation.ROTATE_270):
-        assert camera.width == 480
-        assert camera.height == 640
-        assert img.shape[:2] == (640, 480)
+        assert camera.width == original_height
+        assert camera.height == original_width
+        assert img.shape[:2] == (original_width, original_height)
     else:
-        assert camera.width == 640
-        assert camera.height == 480
-        assert img.shape[:2] == (480, 640)
+        assert camera.width == original_width
+        assert camera.height == original_height
+        assert img.shape[:2] == (original_height, original_width)
 
     camera.disconnect()
