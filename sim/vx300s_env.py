@@ -21,9 +21,10 @@ class VX300sEnv(gym.Env):
         self.is_running = True
         self.goal = self._sample_goal()
         self.ee_site_name = "pinch"
+        self.deg_max = 180
         self.action_space = spaces.Box(
-            low=-np.deg2rad(10),
-            high=np.deg2rad(10),
+            low=-np.deg2rad(self.deg_max),
+            high=np.deg2rad(self.deg_max),
             shape=(self.n_joints,),
             dtype=np.float32,
         )
@@ -50,16 +51,26 @@ class VX300sEnv(gym.Env):
             self.is_running = False
             print("Finish!")
 
+    # def _sample_goal(self):
+    #     # XYZ 方向に適当な範囲でゴールをサンプリング
+    #     scale = 0.5
+    #     x = random.uniform(0.3, 0.6)
+    #     y = scale * random.uniform(-1, 1)
+    #     z = scale * random.uniform(0.3, 1)
+    #     return np.array([x, y, z])
+
     def _sample_goal(self):
         # XYZ 方向に適当な範囲でゴールをサンプリング
-        scale = 0.5
-        x = 0.4
-        y = scale * random.uniform(-1, 1)
-        z = scale * random.uniform(0.3, 1)
+        range = 30
+        dir = random.uniform(270 - range, 270 + range)
+        radius = 0.53
+        x = radius * np.cos(np.deg2rad(dir))
+        y = radius * np.sin(np.deg2rad(dir))
+        z = random.uniform(0.3, 0.7)
         return np.array([x, y, z])
 
     def _fixed_goal(self):
-        return np.array([0.55, 0.0, 0.3])
+        return np.array([0.55, 0.0, 0.15])
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)

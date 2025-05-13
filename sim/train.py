@@ -39,7 +39,7 @@ if not os.path.exists(f"{MODELNAME}.zip"):
         tensorboard_log="./ppo_tensorboard/",
     )
     # model.learn(total_timesteps=100_000)
-    model.learn(total_timesteps=50_000)
+    model.learn(total_timesteps=500_000)
     model.save(MODELNAME)
 else:
     model = PPO.load(MODELNAME, env=env)
