@@ -15,7 +15,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import math
 from dataclasses import asdict
 from typing import Callable, List, Literal, Optional, Tuple
 
@@ -237,7 +236,7 @@ class SACPolicy(
                 )
 
     def update_temperature(self):
-        self.temperature = self.log_alpha.exp().item()
+        self.temperature = F.softplus(self.log_alpha).item()
 
     def compute_loss_critic(
         self,
@@ -365,7 +364,7 @@ class SACPolicy(
         # calculate temperature loss
         with torch.no_grad():
             _, log_probs, _ = self.actor(observations, observation_features)
-        temperature_loss = (-self.log_alpha.exp() * (log_probs + self.config.target_entropy)).mean()
+        temperature_loss = (-F.softplus(self.log_alpha) * (log_probs + self.config.target_entropy)).mean()
         return temperature_loss
 
     def compute_loss_actor(
@@ -480,8 +479,8 @@ class SACPolicy(
     def _init_temperature(self):
         """Set up temperature parameter and initial log_alpha."""
         temp_init = self.config.temperature_init
-        self.log_alpha = nn.Parameter(torch.tensor([math.log(temp_init)]))
-        self.temperature = self.log_alpha.exp().item()
+        self.log_alpha = nn.Parameter(torch.tensor([_inv_softplus(temp_init)]))
+        self.temperature = F.softplus(self.log_alpha).item()
 
 
 class SACObservationEncoder(nn.Module):
@@ -1109,6 +1108,19 @@ class TanhMultivariateNormalDiag(TransformedDistribution):
             x = transform(x)
 
         return x
+
+
+def _inv_softplus(x: float | torch.Tensor) -> float | torch.Tensor:
+    """
+    Numerically stable inverse of the softplus function.
+    For scalar input, returns a float.
+    For tensor input, returns a tensor.
+    Borrowed from TorchRl implementation. https://pytorch.org/rl/0.6/reference/generated/torchrl.modules.utils.inv_softplus.html
+    """
+    is_tensor = isinstance(x, torch.Tensor)
+    x_tensor = torch.as_tensor(x)
+    out = torch.log(torch.expm1(x_tensor).clamp(min=1e-6))
+    return out if is_tensor else out.item()
 
 
 def _convert_normalization_params_to_tensor(normalization_params: dict) -> dict:
