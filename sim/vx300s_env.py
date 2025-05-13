@@ -14,15 +14,16 @@ class VX300sEnv(gym.Env):
         self.model = MjModel.from_xml_path(xml_path)
         self.data = MjData(self.model)
         self.n_joints = 6
-        self.max_step = 100
+        self.max_step = 1000
         self.step_count = 0
         self.success_dist = 0.03
+        self.prev_distance = -np.inf
         self.is_running = True
         self.goal = self._sample_goal()
         self.ee_site_name = "pinch"
         self.action_space = spaces.Box(
-            low=-np.deg2rad(2),
-            high=np.deg2rad(2),
+            low=-np.deg2rad(10),
+            high=np.deg2rad(10),
             shape=(self.n_joints,),
             dtype=np.float32,
         )
@@ -57,10 +58,14 @@ class VX300sEnv(gym.Env):
         z = scale * random.uniform(0.3, 1)
         return np.array([x, y, z])
 
+    def _fixed_goal(self):
+        return np.array([0.55, 0.0, 0.3])
+
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         self.step_count = 0
-        self.goal = self._sample_goal()
+        # self.goal = self._sample_goal()
+        self.goal = self._fixed_goal()
 
         # ゴール位置に目標オブジェクトを置く
         goal_site_id = int(self.model.site("goal_site").id)
@@ -79,7 +84,10 @@ class VX300sEnv(gym.Env):
     def get_reward(self):
         ee_pos = self._get_ee_position()
         distance = np.linalg.norm(ee_pos - self.goal)
-        reward = 1.0 if distance <= self.success_dist else -distance
+        # reward = 1.0 if distance <= self.success_dist else -distance
+        reward = -distance
+        if distance <= 0.05:
+            reward += 10.0
         return reward, distance
 
     def step(self, action):
