@@ -19,8 +19,8 @@ Example:
 
 ```shell
 python -m lerobot.setup_motors \
-    --device.type=so100_leader \
-    --device.port=/dev/tty.usbmodem575E0031751
+    --teleop.type=so100_leader \
+    --teleop.port=/dev/tty.usbmodem575E0031751
 ```
 """
 
@@ -46,7 +46,14 @@ COMPATIBLE_DEVICES = [
 
 @dataclass
 class SetupConfig:
-    device: RobotConfig | TeleoperatorConfig
+    teleop: TeleoperatorConfig | None = None
+    robot: RobotConfig | None = None
+
+    def __post_init__(self):
+        if bool(self.teleop) == bool(self.robot):
+            raise ValueError("Choose either a teleop or a robot.")
+
+        self.device = self.robot if self.robot else self.teleop
 
 
 @draccus.wrap()
