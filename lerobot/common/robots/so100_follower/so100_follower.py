@@ -45,7 +45,7 @@ class SO100Follower(Robot):
     def __init__(self, config: SO100FollowerConfig):
         super().__init__(config)
         self.config = config
-        self.arm = FeetechMotorsBus(
+        self.bus = FeetechMotorsBus(
             port=self.config.port,
             motors={
                 "shoulder_pan": Motor(1, "sts3215", MotorNormMode.RANGE_M100_100),
@@ -61,7 +61,7 @@ class SO100Follower(Robot):
 
     @property
     def _motors_ft(self) -> dict[str, type]:
-        return {f"{motor}.pos": float for motor in self.arm.motors}
+        return {f"{motor}.pos": float for motor in self.bus.motors}
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
@@ -80,7 +80,7 @@ class SO100Follower(Robot):
     @property
     def is_connected(self) -> bool:
         # TODO(aliberts): add cam.is_connected for cam in self.cameras
-        return self.arm.is_connected
+        return self.bus.is_connected
 
     def connect(self, calibrate: bool = True) -> None:
         """
@@ -90,7 +90,7 @@ class SO100Follower(Robot):
         if self.is_connected:
             raise DeviceAlreadyConnectedError(f"{self} already connected")
 
-        self.arm.connect()
+        self.bus.connect()
         if not self.is_calibrated and calibrate:
             self.calibrate()
 
@@ -103,29 +103,29 @@ class SO100Follower(Robot):
 
     @property
     def is_calibrated(self) -> bool:
-        return self.arm.is_calibrated
+        return self.bus.is_calibrated
 
     def calibrate(self) -> None:
         logger.info(f"\nRunning calibration of {self}")
-        self.arm.disable_torque()
-        for motor in self.arm.motors:
-            self.arm.write("Operating_Mode", motor, OperatingMode.POSITION.value)
+        self.bus.disable_torque()
+        for motor in self.bus.motors:
+            self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
 
         input(f"Move {self} to the middle of its range of motion and press ENTER....")
-        homing_offsets = self.arm.set_half_turn_homings()
+        homing_offsets = self.bus.set_half_turn_homings()
 
         full_turn_motor = "wrist_roll"
-        unknown_range_motors = [motor for motor in self.arm.motors if motor != full_turn_motor]
+        unknown_range_motors = [motor for motor in self.bus.motors if motor != full_turn_motor]
         print(
             f"Move all joints except '{full_turn_motor}' sequentially through their "
             "entire ranges of motion.\nRecording positions. Press ENTER to stop..."
         )
-        range_mins, range_maxes = self.arm.record_ranges_of_motion(unknown_range_motors)
+        range_mins, range_maxes = self.bus.record_ranges_of_motion(unknown_range_motors)
         range_mins[full_turn_motor] = 0
         range_maxes[full_turn_motor] = 4095
 
         self.calibration = {}
-        for motor, m in self.arm.motors.items():
+        for motor, m in self.bus.motors.items():
             self.calibration[motor] = MotorCalibration(
                 id=m.id,
                 drive_mode=0,
@@ -134,26 +134,26 @@ class SO100Follower(Robot):
                 range_max=range_maxes[motor],
             )
 
-        self.arm.write_calibration(self.calibration)
+        self.bus.write_calibration(self.calibration)
         self._save_calibration()
         print("Calibration saved to", self.calibration_fpath)
 
     def configure(self) -> None:
-        with self.arm.torque_disabled():
-            self.arm.configure_motors()
-            for motor in self.arm.motors:
-                self.arm.write("Operating_Mode", motor, OperatingMode.POSITION.value)
+        with self.bus.torque_disabled():
+            self.bus.configure_motors()
+            for motor in self.bus.motors:
+                self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
                 # Set P_Coefficient to lower value to avoid shakiness (Default is 32)
-                self.arm.write("P_Coefficient", motor, 16)
+                self.bus.write("P_Coefficient", motor, 16)
                 # Set I_Coefficient and D_Coefficient to default value 0 and 32
-                self.arm.write("I_Coefficient", motor, 0)
-                self.arm.write("D_Coefficient", motor, 32)
+                self.bus.write("I_Coefficient", motor, 0)
+                self.bus.write("D_Coefficient", motor, 32)
 
     def setup_motors(self) -> None:
-        for motor in reversed(self.arm.motors):
+        for motor in reversed(self.bus.motors):
             input(f"Connect the controller board to the '{motor}' motor only and press enter.")
-            self.arm.setup_motor(motor)
-            print(f"'{motor}' motor id set to {self.arm.motors[motor].id}")
+            self.bus.setup_motor(motor)
+            print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
 
     def get_observation(self) -> dict[str, Any]:
         if not self.is_connected:
@@ -161,7 +161,7 @@ class SO100Follower(Robot):
 
         # Read arm position
         start = time.perf_counter()
-        obs_dict = self.arm.sync_read("Present_Position")
+        obs_dict = self.bus.sync_read("Present_Position")
         obs_dict = {f"{motor}.pos": val for motor, val in obs_dict.items()}
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
@@ -196,19 +196,19 @@ class SO100Follower(Robot):
         # Cap goal position when too far away from present position.
         # /!\ Slower fps expected due to reading from the follower.
         if self.config.max_relative_target is not None:
-            present_pos = self.arm.sync_read("Present_Position")
+            present_pos = self.bus.sync_read("Present_Position")
             goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in goal_pos.items()}
             goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
 
         # Send goal position to the arm
-        self.arm.sync_write("Goal_Position", goal_pos)
+        self.bus.sync_write("Goal_Position", goal_pos)
         return {f"{motor}.pos": val for motor, val in goal_pos.items()}
 
     def disconnect(self):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        self.arm.disconnect(self.config.disable_torque_on_disconnect)
+        self.bus.disconnect(self.config.disable_torque_on_disconnect)
         for cam in self.cameras.values():
             cam.disconnect()
 

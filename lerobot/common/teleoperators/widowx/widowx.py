@@ -42,7 +42,7 @@ class WidowX(Teleoperator):
     def __init__(self, config: WidowXConfig):
         super().__init__(config)
         self.config = config
-        self.arm = DynamixelMotorsBus(
+        self.bus = DynamixelMotorsBus(
             port=self.config.port,
             motors={
                 "waist": Motor(1, "xm430-w350", MotorNormMode.RANGE_M100_100),
@@ -59,7 +59,7 @@ class WidowX(Teleoperator):
 
     @property
     def action_features(self) -> dict[str, type]:
-        return {f"{motor}.pos": float for motor in self.arm.motors}
+        return {f"{motor}.pos": float for motor in self.bus.motors}
 
     @property
     def feedback_features(self) -> dict[str, type]:
@@ -67,13 +67,13 @@ class WidowX(Teleoperator):
 
     @property
     def is_connected(self) -> bool:
-        return self.arm.is_connected
+        return self.bus.is_connected
 
     def connect(self, calibrate: bool = True):
         if self.is_connected:
             raise DeviceAlreadyConnectedError(f"{self} already connected")
 
-        self.arm.connect()
+        self.bus.connect()
         if not self.is_calibrated and calibrate:
             self.calibrate()
 
@@ -82,34 +82,34 @@ class WidowX(Teleoperator):
 
     @property
     def is_calibrated(self) -> bool:
-        return self.arm.is_calibrated
+        return self.bus.is_calibrated
 
     def calibrate(self) -> None:
         raise NotImplementedError  # TODO(aliberts): adapt code below (copied from koch)
         logger.info(f"\nRunning calibration of {self}")
-        self.arm.disable_torque()
-        for motor in self.arm.motors:
-            self.arm.write("Operating_Mode", motor, OperatingMode.EXTENDED_POSITION.value)
+        self.bus.disable_torque()
+        for motor in self.bus.motors:
+            self.bus.write("Operating_Mode", motor, OperatingMode.EXTENDED_POSITION.value)
 
-        self.arm.write("Drive_Mode", "elbow_flex", DriveMode.INVERTED.value)
-        drive_modes = {motor: 1 if motor == "elbow_flex" else 0 for motor in self.arm.motors}
+        self.bus.write("Drive_Mode", "elbow_flex", DriveMode.INVERTED.value)
+        drive_modes = {motor: 1 if motor == "elbow_flex" else 0 for motor in self.bus.motors}
 
         input("Move robot to the middle of its range of motion and press ENTER....")
-        homing_offsets = self.arm.set_half_turn_homings()
+        homing_offsets = self.bus.set_half_turn_homings()
 
         full_turn_motors = ["shoulder_pan", "wrist_roll"]
-        unknown_range_motors = [motor for motor in self.arm.motors if motor not in full_turn_motors]
+        unknown_range_motors = [motor for motor in self.bus.motors if motor not in full_turn_motors]
         print(
             f"Move all joints except {full_turn_motors} sequentially through their "
             "entire ranges of motion.\nRecording positions. Press ENTER to stop..."
         )
-        range_mins, range_maxes = self.arm.record_ranges_of_motion(unknown_range_motors)
+        range_mins, range_maxes = self.bus.record_ranges_of_motion(unknown_range_motors)
         for motor in full_turn_motors:
             range_mins[motor] = 0
             range_maxes[motor] = 4095
 
         self.calibration = {}
-        for motor, m in self.arm.motors.items():
+        for motor, m in self.bus.motors.items():
             self.calibration[motor] = MotorCalibration(
                 id=m.id,
                 drive_mode=drive_modes[motor],
@@ -118,26 +118,26 @@ class WidowX(Teleoperator):
                 range_max=range_maxes[motor],
             )
 
-        self.arm.write_calibration(self.calibration)
+        self.bus.write_calibration(self.calibration)
         self._save_calibration()
         logger.info(f"Calibration saved to {self.calibration_fpath}")
 
     def configure(self) -> None:
-        self.arm.disable_torque()
-        self.arm.configure_motors()
+        self.bus.disable_torque()
+        self.bus.configure_motors()
 
         # Set secondary/shadow ID for shoulder and elbow. These joints have two motors.
         # As a result, if only one of them is required to move to a certain position,
         # the other will follow. This is to avoid breaking the motors.
-        self.arm.write("Secondary_ID", "shoulder_shadow", 2)
-        self.arm.write("Secondary_ID", "elbow_shadow", 4)
+        self.bus.write("Secondary_ID", "shoulder_shadow", 2)
+        self.bus.write("Secondary_ID", "elbow_shadow", 4)
 
     def get_action(self) -> dict[str, float]:
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
         start = time.perf_counter()
-        action = self.arm.sync_read("Present_Position")
+        action = self.bus.sync_read("Present_Position")
         action = {f"{motor}.pos": val for motor, val in action.items()}
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read action: {dt_ms:.1f}ms")
@@ -150,5 +150,5 @@ class WidowX(Teleoperator):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        self.arm.disconnect()
+        self.bus.disconnect()
         logger.info(f"{self} disconnected.")
