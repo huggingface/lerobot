@@ -16,17 +16,41 @@ from xarm.wrapper import XArmAPI
 # Global variables for caching speed and acceleration limits
 MAX_SPEED_LIMIT = None
 MAX_ACC_LIMIT = None
+GRIP_CLOSE_WIDTH = -10
+GRIP_OPEN_WIDTH = 600
 
+# Initialize xARM with velocity control mode
+def init_xarm(ip):
+    arm = XArmAPI(ip)
+    #arm.reset()
+    arm.clean_error()
+    arm.clean_warn()
+    arm.clean_gripper_error()
+    arm.set_collision_tool_model(1) # xarm gripper
+    arm.set_gripper_enable(enable=True)
+    arm.set_gripper_mode(0)
+    arm.motion_enable(enable=True)
+    arm.set_mode(0)
+    arm.set_state(0)
+    time.sleep(2)
+    _, init_pos = tuple(arm.get_initial_point())
+    arm.set_servo_angle(angle=init_pos,wait=True,is_radian=False)
+    return arm
 
 def initialize_limits(arm):
     global MAX_SPEED_LIMIT, MAX_ACC_LIMIT
-    MAX_SPEED_LIMIT = max(arm.joint_speed_limit)/3
+    MAX_SPEED_LIMIT = max(arm.joint_speed_limit)/5
     MAX_ACC_LIMIT = max(arm.joint_acc_limit)/3
 
 
 def mimic_arm(arm_source, arm_target, stop_event):
     while not stop_event.is_set():
         code, angles = arm_source.get_servo_angle()
+        # # offset for difference between lite6 and x850
+        # angles[1] = -angles[1]
+        # angles[2] = -angles[2]
+        # angles[4] = -angles[4]
+        # angles[5] = angles[5] + 180
         code_gripper, pos_gripper = arm_source.get_gripper_position()
         if code == 0:
             # Command the target arm to move to the source arm's joint angles
@@ -103,16 +127,16 @@ def monitor_digital_input(arm, stop_event):
                             elif click_count == 2:
                                 if current_time - last_click_time < DOUBLE_CLICK_TIME:
                                     print("Double click detected -> Open gripper")
-                                    arm.set_gripper_position(pos=600, wait=False)  # Open gripper
+                                    arm.set_gripper_position(pos=GRIP_OPEN_WIDTH, wait=False)  # Open gripper
                                     click_count = 0
                                 else:
                                     print("Single click detected -> Close gripper")
-                                    arm.set_gripper_position(pos=50, wait=False)  # Close gripper
+                                    arm.set_gripper_position(pos=-GRIP_CLOSE_WIDTH, wait=False)  # Close gripper
                                     click_count = 1
                                     last_click_time = current_time
                         else:
                             print("Single click detected -> Close gripper")
-                            arm.set_gripper_position(pos=50, wait=False)  # Close gripper
+                            arm.set_gripper_position(pos=GRIP_CLOSE_WIDTH, wait=False)  # Close gripper
                             click_count = 0
 
                     last_release_time = current_time
@@ -122,39 +146,28 @@ def monitor_digital_input(arm, stop_event):
             # Reset click count if too much time has passed since last click
             if click_count == 1 and current_time - last_click_time >= DOUBLE_CLICK_TIME:
                 print("Single click detected -> Close gripper")
-                arm.set_gripper_position(pos=50, wait=False)  # Close gripper
+                arm.set_gripper_position(pos=GRIP_CLOSE_WIDTH, wait=False)  # Close gripper
                 click_count = 0
 
         time.sleep(0.01)  # Check every 10ms for more precise detection
 
 # IP addresses of the arms
-ipL = "192.168.1.236"
-ipR = "192.168.1.218"
+ipL = "172.16.0.11"
+ipR = "172.16.0.13"
 
 # Initialize both arms
-armL = XArmAPI(ipL)
-armR = XArmAPI(ipR)
+armL = init_xarm(ipL)
+armR = init_xarm(ipR)
 
 # Enable both arms, and grippers
 ## L
-armL.motion_enable(enable=True)
-armL.clean_error()
 armL.set_mode(0)
 armL.set_state(state=0)
-#
-armL.set_gripper_mode(0)
-armL.set_gripper_enable(True)
 armL.set_gripper_speed(5000)  # default speed, as there's no way to fetch gripper speed from API
 
-
 ## R
-armR.motion_enable(enable=True)
-armR.clean_error()
 armR.set_mode(1)
 armR.set_state(state=0)
-#
-armR.set_gripper_mode(0)
-armR.set_gripper_enable(True)
 armR.set_gripper_speed(5000)  # default speed, as there's no way to fetch gripper speed from API
                               # According to User Manual, should range in 1000-5000
                               #
@@ -176,9 +189,9 @@ stop_event = threading.Event()
 mimic_thread = threading.Thread(target=mimic_arm, args=(armL, armR, stop_event))
 mimic_thread.start()
 
-# # Create and start the digital output monitoring thread
-# monitor_output_thread = threading.Thread(target=monitor_digital_output, args=(armL, stop_event))
-# monitor_output_thread.start()
+# Create and start the digital output monitoring thread
+monitor_output_thread = threading.Thread(target=monitor_digital_output, args=(armL, stop_event))
+monitor_output_thread.start()
 
 # Create and start the digital input monitoring thread
 monitor_input_thread = threading.Thread(target=monitor_digital_input, args=(armL, stop_event))

@@ -1,4 +1,5 @@
 import time
+import cv2
 import tqdm
 from lerobot.common.robot_devices.motors.ufactory import xArmWrapper
 from lerobot.common.robot_devices.robots.manipulator import ManipulatorRobot
@@ -7,7 +8,7 @@ from lerobot.common.robot_devices.cameras.opencv import OpenCVCamera
 # Defines how to communicate with the motors of the leader and follower arms
 leader_arms = {
     "main": xArmWrapper(
-        port="192.168.1.236",
+        port="172.16.0.11",
         motors={
             # name: (index, model)
             "joint1": (1, "ufactory-850"),
@@ -22,7 +23,7 @@ leader_arms = {
 }
 follower_arms = {
     "main": xArmWrapper(
-        port="192.168.1.218",
+        port="172.16.0.13",
         motors={
             # name: (index, model)
             "joint1": (1, "ufactory-850"),
@@ -38,12 +39,12 @@ follower_arms = {
 robot = ManipulatorRobot(
     robot_type="u850",
     calibration_dir=".cache/calibration/u850",
+    cameras={
+        "top": OpenCVCamera(8, fps=30, width=640, height=480),
+        "wrist": OpenCVCamera(6, fps=30, width=640, height=480),
+    },    
     leader_arms=leader_arms,
     follower_arms=follower_arms,
-    cameras={
-        "top": OpenCVCamera(4, fps=30, width=640, height=480),
-        "wrist": OpenCVCamera(10, fps=30, width=640, height=480),
-    },    
 )
 
 # Connect motors buses and cameras if any (Required)
@@ -52,7 +53,7 @@ robot.connect()
 try:
     while True:
         # robot.teleop_step()
-        # time.sleep(0.004)  # 250 Hz
+        time.sleep(0.004)  # 250 Hz
 
         # # Recording data, only joints
         # leader_pos = robot.leader_arms["main"].get_position()
@@ -69,10 +70,16 @@ try:
         observation, action = robot.teleop_step(record_data=True)
         print(observation["observation.images.top"].shape)
         print(observation["observation.images.wrist"].shape)
-        print(observation["observation.images.top"].min().item())
-        print(observation["observation.images.top"].max().item())
+        image_keys = [key for key in observation if "image" in key]
+        for key in image_keys:
+            print("trying to cv show")
+            cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
+            cv2.waitKey(1)
+        print(observation["observation.images.wrist"][0][0][2])
+        print(observation["observation.images.wrist"].min().item())
+        print(observation["observation.images.wrist"].max().item())
         print("---")
-        time.sleep(0.033)  # 30 Hz -> barely smooth
+        #time.sleep(0.033)  # 30 Hz -> barely smooth
 
 except KeyboardInterrupt:
     print('Operation interrupted by user.')

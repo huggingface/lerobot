@@ -59,6 +59,7 @@ class xArmWrapper:
 
     def connect(self):
         print("Connecting to xArm")  # Debug print
+        print(self.port)
         if self.is_connected:
             raise RobotDeviceAlreadyConnectedError(
                 f"DynamixelMotorsBus({self.port}) is already connected. Do not call `motors_bus.connect()` twice."
@@ -94,6 +95,11 @@ class xArmWrapper:
     def enable(self, follower: bool = False):
         self.api.motion_enable(enable=True)
         self.api.clean_error()
+        self.api.set_mode(0)
+        self.api.set_state(0)
+        time.sleep(2)
+        _, init_pos = tuple(self.api.get_initial_point())
+        self.api.set_servo_angle(angle=init_pos,wait=True,is_radian=False)
         if follower:
             self.api.set_mode(1)
         else:

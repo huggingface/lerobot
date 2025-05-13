@@ -245,7 +245,6 @@ def control_loop(
 
     if events is None:
         events = {"exit_early": False}
-
     if control_time_s is None:
         control_time_s = float("inf")
 
@@ -258,6 +257,7 @@ def control_loop(
     timestamp = 0
     start_episode_t = time.perf_counter()
     while timestamp < control_time_s:
+        print(timestamp)
         start_loop_t = time.perf_counter()
 
         if teleoperate:
@@ -274,13 +274,15 @@ def control_loop(
 
         if dataset is not None:
             add_frame(dataset, observation, action)
-
+        print("Now in display camerss")
         if display_cameras and not is_headless():
             image_keys = [key for key in observation if "image" in key]
             for key in image_keys:
+                print("trying to cv show")
                 cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
-            cv2.waitKey(1)
-
+                cv2.waitKey(1)
+                print("Key showed")
+        print("CV show done")
         if fps is not None:
             dt_s = time.perf_counter() - start_loop_t
             busy_wait(1 / fps - dt_s)

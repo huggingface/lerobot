@@ -255,6 +255,10 @@ class ManipulatorRobot:
             raise ValueError(
                 "ManipulatorRobot doesn't have any device to connect. See example of usage in docstring of the class."
             )
+        
+        # Connect the cameras
+        for name in self.cameras:
+            self.cameras[name].connect()
 
         # Connect the arms
         for name in self.follower_arms:
@@ -314,10 +318,6 @@ class ManipulatorRobot:
             self.follower_arms[name].read("Present_Position")
         for name in self.leader_arms:
             self.leader_arms[name].read("Present_Position")
-
-        # Connect the cameras
-        for name in self.cameras:
-            self.cameras[name].connect()
 
         self.is_connected = True
 
@@ -511,24 +511,35 @@ class ManipulatorRobot:
         for name in self.follower_arms:
             before_fwrite_t = time.perf_counter()
             goal_pos = leader_pos[name]
-
             # Cap goal position when too far away from present position.
             # Slower fps expected due to reading from the follower.
-            if self.config.max_relative_target is not None:
-                if self.robot_type == "u850":
-                    leader_pos[name] = np.array(self.leader_arms[name].get_position())
-                else:
+            # print("Pose read from leader:", [f"{x:.2}" for x in goal_pos.tolist()])
+            if self.robot_type == "u850":
+                leader_pos[name] = np.array(self.leader_arms[name].get_position())
+                self.follower_arms[name].set_position(goal_pos)
+            else:
+                if self.config.max_relative_target is not None:
                     leader_pos[name] = self.leader_arms[name].read("Present_Position")
                 present_pos = torch.from_numpy(present_pos)
                 goal_pos = ensure_safe_goal_position(goal_pos, present_pos, self.config.max_relative_target)
-
+            # if self.config.max_relative_target is not None:
+            #     if self.robot_type == "u850":
+            #         leader_pos[name] = np.array(self.leader_arms[name].get_position())
+            #         self.follower_arms[name].set_position(goal_pos)
+            #     else:
+            #         leader_pos[name] = self.leader_arms[name].read("Present_Position")
+            #     present_pos = torch.from_numpy(present_pos)
+            #     goal_pos = ensure_safe_goal_position(goal_pos, present_pos, self.config.max_relative_target)
+            # print("Updated:", [f"{x:.2}" for x in goal_pos.tolist()])
             # Used when record_data=True
             follower_goal_pos[name] = goal_pos
 
             goal_pos = goal_pos.numpy().astype(np.int32)
-            if self.robot_type == "u850":
-                self.follower_arms[name].set_position(goal_pos)
-            else:
+            # if self.robot_type == "u850":
+            #     self.follower_arms[name].set_position(goal_pos)
+            # else:
+            #     self.follower_arms[name].write("Goal_Position", goal_pos)
+            if not(self.robot_type == "u850"):
                 self.follower_arms[name].write("Goal_Position", goal_pos)
             self.logs[f"write_follower_{name}_goal_pos_dt_s"] = time.perf_counter() - before_fwrite_t
 

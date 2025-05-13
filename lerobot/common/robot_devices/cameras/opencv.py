@@ -12,6 +12,7 @@ import time
 from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import Thread
+import subprocess
 
 import numpy as np
 from PIL import Image
@@ -30,6 +31,18 @@ from lerobot.common.utils.utils import capture_timestamp_utc
 # treat the same cameras as new devices. Thus we select a higher bound to search indices.
 MAX_OPENCV_INDEX = 60
 
+def get_camera_manufacturer(port: str) -> str:
+    try:
+        udevadm_output = subprocess.check_output(
+            ["udevadm", "info", "--query=property", "--name", port],
+            text=True
+        )
+        for line in udevadm_output.split("\n"):
+            if line.startswith("ID_VENDOR="):
+                return line.split("=")[1]
+    except Exception as e:
+        print(f"Error retrieving manufacturer for {port}: {e}")
+    return "Unknown"
 
 def find_cameras(raise_when_empty=False, max_index_search_range=MAX_OPENCV_INDEX, mock=False) -> list[dict]:
     cameras = []
@@ -42,6 +55,7 @@ def find_cameras(raise_when_empty=False, max_index_search_range=MAX_OPENCV_INDEX
                 {
                     "port": port,
                     "index": int(port.removeprefix("/dev/video")),
+                    "manufacturer": get_camera_manufacturer(port),
                 }
             )
     else:
@@ -56,6 +70,7 @@ def find_cameras(raise_when_empty=False, max_index_search_range=MAX_OPENCV_INDEX
                 {
                     "port": None,
                     "index": index,
+                    "manufacturer": get_camera_manufacturer(port),
                 }
             )
 
@@ -77,7 +92,8 @@ def _find_cameras(
         camera.release()
 
         if is_open:
-            print(f"Camera found at index {camera_idx}")
+            manufacturer = get_camera_manufacturer(str(camera_idx)) if isinstance(camera_idx, str) else "Unknown"
+            print(f"Camera found at index {camera_idx}, Manufacturer: {manufacturer}")
             camera_ids.append(camera_idx)
 
     if raise_when_empty and len(camera_ids) == 0:

@@ -264,6 +264,8 @@ def record(
         robot.teleop_safety_stop()
 
     while True:
+        print("In the loop")
+        print(dataset["num_episodes"])
         if dataset["num_episodes"] >= num_episodes:
             break
 
@@ -319,9 +321,10 @@ def replay(
 ):
     # TODO(rcadene, aliberts): refactor with control_loop, once `dataset` is an instance of LeRobotDataset
     # TODO(rcadene): Add option to record logs
-    local_dir = Path(root) / repo_id
-    if not local_dir.exists():
-        raise ValueError(local_dir)
+    # local_dir = Path(root) / repo_id
+    # print(local_dir)
+    # if not local_dir.exists():
+    #     raise ValueError(local_dir)
 
     dataset = LeRobotDataset(repo_id, root=root)
     items = dataset.hf_dataset.select_columns("action")
@@ -354,7 +357,7 @@ if __name__ == "__main__":
     base_parser.add_argument(
         "--robot-path",
         type=str,
-        default="lerobot/configs/robot/koch.yaml",
+        default="lerobot/configs/robot/u850.yaml",
         help="Path to robot yaml file used to instantiate the robot using `make_robot` factory function.",
     )
     base_parser.add_argument(
@@ -390,7 +393,7 @@ if __name__ == "__main__":
     parser_record.add_argument(
         "--root",
         type=Path,
-        default="data",
+        default="",
         help="Root directory where the dataset will be stored locally at '{root}/{repo_id}' (e.g. 'data/hf_username/dataset_name').",
     )
     parser_record.add_argument(
@@ -486,7 +489,7 @@ if __name__ == "__main__":
     parser_replay.add_argument(
         "--root",
         type=Path,
-        default="data",
+        default="",
         help="Root directory where the dataset will be stored locally at '{root}/{repo_id}' (e.g. 'data/hf_username/dataset_name').",
     )
     parser_replay.add_argument(
