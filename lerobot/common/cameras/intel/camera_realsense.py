@@ -399,33 +399,75 @@ class RealSenseCamera(Camera):
             )
         logger.debug(f"Capture height set to {actual_height} for {self}.")
 
-    def read(
-        self, color_mode: ColorMode | None = None, timeout_ms: int = 5000
-    ) -> np.ndarray | Tuple[np.ndarray, np.ndarray]:
+    def read_depth(self, timeout_ms: int = 5000) -> np.ndarray:
         """
-        Reads a single frame (color and optionally depth) synchronously from the camera.
+        Reads a single frame (depth) synchronously from the camera.
 
-        This is a blocking call. It waits for a coherent set of frames (color, depth if enabled)
+        This is a blocking call. It waits for a coherent set of frames (depth)
         from the camera hardware via the RealSense pipeline.
 
         Args:
             timeout_ms (int): Maximum time in milliseconds to wait for a frame. Defaults to 5000ms.
 
         Returns:
-            Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
-            - If `use_depth` is False: The captured color frame as a NumPy array
+            np.ndarray: The depth map as a NumPy array (height, width)
+                  of type `np.uint16` (raw depth values in millimeters) and rotation.
+
+        Raises:
+            DeviceNotConnectedError: If the camera is not connected.
+            RuntimeError: If reading frames from the pipeline fails or frames are invalid.
+        """
+
+        if not self.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+
+        if not self.use_depth:
+            raise RuntimeError(
+                f"Failed to capture depth frame from {self}. '.read_depth()'. Depth stream is not enabled."
+            )
+
+        start_time = time.perf_counter()
+
+        ret, frame = self.rs_pipeline.try_wait_for_frames(
+            timeout_ms=timeout_ms
+        )  # NOTE(Steven): This read has a timeout
+
+        if not ret or frame is None:
+            raise RuntimeError(
+                f"Failed to capture frame from {self}. '.read_depth()' returned status={ret} and frame is None."
+            )
+
+        depth_frame = frame.get_depth_frame()
+        depth_map = np.asanyarray(depth_frame.get_data())
+
+        depth_map_processed = self._postprocess_image(depth_map)
+
+        read_duration_ms = (time.perf_counter() - start_time) * 1e3
+        logger.debug(f"{self} synchronous read took: {read_duration_ms:.1f}ms")
+
+        self.logs["timestamp_utc"] = capture_timestamp_utc()
+        return depth_map_processed
+
+    def read(self, color_mode: ColorMode | None = None, timeout_ms: int = 5000) -> np.ndarray:
+        """
+        Reads a single frame (color) synchronously from the camera.
+
+        This is a blocking call. It waits for a coherent set of frames (color)
+        from the camera hardware via the RealSense pipeline.
+
+        Args:
+            timeout_ms (int): Maximum time in milliseconds to wait for a frame. Defaults to 5000ms.
+
+        Returns:
+            np.ndarray: The captured color frame as a NumPy array
               (height, width, channels), processed according to `color_mode` and rotation.
-            - If `use_depth` is True: A tuple containing:
-                - color_image (np.ndarray): The processed color frame.
-                - depth_map (np.ndarray): The depth map as a NumPy array (height, width)
-                  of type `np.uint16` (raw depth values in millimeters, before rotation).
-                  Depth map is NOT rotated by this method.
 
         Raises:
             DeviceNotConnectedError: If the camera is not connected.
             RuntimeError: If reading frames from the pipeline fails or frames are invalid.
             ValueError: If an invalid `color_mode` is requested.
         """
+
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
@@ -445,23 +487,11 @@ class RealSenseCamera(Camera):
 
         color_image_processed = self._postprocess_image(color_image_raw, color_mode)
 
-        if self.use_depth:
-            depth_frame = frame.get_depth_frame()
-            depth_map = np.asanyarray(depth_frame.get_data())
+        read_duration_ms = (time.perf_counter() - start_time) * 1e3
+        logger.debug(f"{self} synchronous read took: {read_duration_ms:.1f}ms")
 
-            depth_map_processed = self._postprocess_image(depth_map)
-
-            read_duration_ms = (time.perf_counter() - start_time) * 1e3
-            logger.debug(f"{self} synchronous read took: {read_duration_ms:.1f}ms")
-
-            self.logs["timestamp_utc"] = capture_timestamp_utc()
-            return color_image_processed, depth_map_processed
-        else:
-            read_duration_ms = (time.perf_counter() - start_time) * 1e3
-            logger.debug(f"{self} synchronous read took: {read_duration_ms:.1f}ms")
-
-            self.logs["timestamp_utc"] = capture_timestamp_utc()
-            return color_image_processed
+        self.logs["timestamp_utc"] = capture_timestamp_utc()
+        return color_image_processed
 
     def _postprocess_image(self, image: np.ndarray, color_mode: ColorMode | None = None) -> np.ndarray:
         """
@@ -549,6 +579,7 @@ class RealSenseCamera(Camera):
         self.thread.start()
         logger.debug(f"Read thread started for {self}.")
 
+    # NOTE(Steven): Missing implementation for depth
     def async_read(self, timeout_ms: float = 2000) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
         """
         Reads the latest available frame data (color or color+depth) asynchronously.
