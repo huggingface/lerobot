@@ -82,11 +82,7 @@ class HomonculusGlove(Teleoperator):
 
     @property
     def action_feature(self) -> dict:
-        return {
-            "dtype": "float32",
-            "shape": (len(self.joints),),
-            "names": {"motors": self.joints},
-        }
+        return {f"{joint}.pos": float for joint in self.joints}
 
     @property
     def feedback_feature(self) -> dict:
@@ -192,34 +188,14 @@ class HomonculusGlove(Teleoperator):
                 vals = vals.split(" ")
                 if len(vals) != 17:
                     continue
-                vals = [int(val) for val in vals]
 
-                d = {
-                    "thumb_0": vals[0],
-                    "thumb_1": vals[1],
-                    "thumb_2": vals[2],
-                    "thumb_3": vals[3],
-                    "index_0": vals[4],
-                    "index_1": vals[5],
-                    "index_2": vals[6],
-                    "middle_0": vals[7],
-                    "middle_1": vals[8],
-                    "middle_2": vals[9],
-                    "ring_0": vals[10],
-                    "ring_1": vals[11],
-                    "ring_2": vals[12],
-                    "pinky_0": vals[13],
-                    "pinky_1": vals[14],
-                    "pinky_2": vals[15],
-                    "battery_voltage": vals[16],
+                self.last_d = {
+                    joint: int(val) for joint, val in zip(self.joints, self.joint_names, strict=True)
                 }
 
-                # Update the last_d dictionary
-                self.last_d = d
-
                 # Also push these new values into the rolling buffers
-                for joint_name, joint_val in d.items():
-                    self.joints_buffer[joint_name].append(joint_val)
+                for joint, val in self.last_d.items():
+                    self.joints_buffer[joint].append(val)
 
     def run_calibration(self):
         print("\nMove hand to open position")

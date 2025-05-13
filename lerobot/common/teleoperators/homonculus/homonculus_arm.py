@@ -76,11 +76,7 @@ class HomonculusArm(Teleoperator):
 
     @property
     def action_feature(self) -> dict:
-        return {
-            "dtype": "float32",
-            "shape": (len(self.joints),),
-            "names": {"motors": self.joints},
-        }
+        return {f"{joint}.pos": float for joint in self.joints}
 
     @property
     def feedback_feature(self) -> dict:
