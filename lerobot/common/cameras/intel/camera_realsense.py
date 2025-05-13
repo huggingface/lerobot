@@ -302,7 +302,7 @@ class RealSenseCamera(Camera):
             )
 
     # NOTE(Steven): Add a wamr-up period time config
-    def connect(self):
+    def connect(self, do_warmup_read: bool = True):
         """
         Connects to the RealSense camera specified in the configuration.
 
@@ -337,8 +337,9 @@ class RealSenseCamera(Camera):
         logger.debug(f"Validating stream configuration for {self.serial_number}...")
         self._validate_capture_settings()
 
-        logger.debug(f"Reading a warm-up frame for {self.serial_number}...")
-        self.read()  # NOTE(Steven): For now we just read one frame, we could also loop for X secs
+        if do_warmup_read:
+            logger.debug(f"Reading a warm-up frame for {self.serial_number}...")
+            self.read()  # NOTE(Steven): For now we just read one frame, we could also loop for X secs
 
         logger.info(f"Camera {self.serial_number} connected and configured successfully.")
 

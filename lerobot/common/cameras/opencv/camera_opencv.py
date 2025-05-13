@@ -172,7 +172,7 @@ class OpenCVCamera(Camera):
         self._validate_fps()
         self._validate_width_and_height()
 
-    def connect(self):
+    def connect(self, do_warmup_read: bool = True):
         """
         Connects to the OpenCV camera specified in the configuration.
 
@@ -206,8 +206,9 @@ class OpenCVCamera(Camera):
         logger.debug(f"Successfully opened camera {self.index_or_path}. Applying configuration...")
         self._configure_capture_settings()
 
-        logger.debug(f"Reading a warm-up frame for {self.serial_number}...")
-        self.read()  # NOTE(Steven): For now we just read one frame, we could also loop for X secs\
+        if do_warmup_read:
+            logger.debug(f"Reading a warm-up frame for {self.index_or_path}...")
+            self.read()  # NOTE(Steven): For now we just read one frame, we could also loop for X secs\
 
         logger.debug(f"Camera {self.index_or_path} connected and configured successfully.")
 

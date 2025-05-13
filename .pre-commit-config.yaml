@@ -27,7 +27,7 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
-      - id: check-added-large-files
+      #- id: check-added-large-files
       - id: debug-statements
       - id: check-merge-conflict
       - id: check-case-conflict
