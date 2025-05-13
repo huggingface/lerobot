@@ -1,3 +1,17 @@
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import logging
 from pprint import pformat
 
@@ -14,12 +28,6 @@ def make_robot_config(robot_type: str, **kwargs) -> RobotConfig:
         from .koch_follower.config_koch_follower import KochFollowerConfig
 
         return KochFollowerConfig(**kwargs)
-    # elif robot_type == "koch_bimanual":
-    #     return KochBimanualRobotConfig(**kwargs)
-    elif robot_type == "moss_follower":
-        from .moss_follower.configuration_moss import MossRobotConfig
-
-        return MossRobotConfig(**kwargs)
     elif robot_type == "so100_follower":
         from .so100_follower.config_so100_follower import SO100FollowerConfig
 

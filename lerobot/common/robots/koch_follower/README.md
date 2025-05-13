@@ -90,8 +90,7 @@ Connect the usb cable from your computer and the 5V power supply to the leader a
 ```bash
 python -m lerobot.setup_motors \
     --device.type=so100_leader \
-    --device.port=/dev/tty.usbmodem575E0031751 \  # <- paste here the port found at previous step
-    --device.id=my_awesome_leader_arm  # <- give it a nice, unique name
+    --device.port=/dev/tty.usbmodem575E0031751  # <- paste here the port found at previous step
 ```
 
 Note that the command above is equivalent to running the following script:
@@ -103,7 +102,6 @@ Note that the command above is equivalent to running the following script:
 
   config = KochLeaderConfig(
       port="/dev/tty.usbmodem575E0031751",
-      id="my_awesome_leader_arm",
   )
   leader = KochLeader(config)
   leader.setup_motors()
@@ -319,7 +317,7 @@ python lerobot/scripts/control_robot.py \
 ```
 
 As you can see, it's almost the same command as previously used to record your training dataset. Two things changed:
-1. There is an additional `--control.policy.path` argument which indicates the path to your policy checkpoint with  (e.g. `outputs/train/eval_act_so100_test/checkpoints/last/pretrained_model`). You can also use the model repository if you uploaded a model checkpoint to the hub (e.g. `${HF_USER}/act_so100_test`).
+1. There is an additional `--control.policy.path` argument which indicates the path to your policy checkpoint with (e.g. `outputs/train/eval_act_so100_test/checkpoints/last/pretrained_model`). You can also use the model repository if you uploaded a model checkpoint to the hub (e.g. `${HF_USER}/act_so100_test`).
 2. The name of dataset begins by `eval` to reflect that you are running inference (e.g. `${HF_USER}/eval_act_so100_test`).
 
 ## K. More Information

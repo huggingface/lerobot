@@ -19,9 +19,9 @@ Example:
 
 ```shell
 python -m lerobot.calibrate \
-    --device.type=so100_leader \
-    --device.port=/dev/tty.usbmodem58760431551 \
-    --device.id=blue
+    --teleop.type=so100_leader \
+    --teleop.port=/dev/tty.usbmodem58760431551 \
+    --teleop.id=blue
 ```
 """
 
@@ -51,7 +51,14 @@ from .common.teleoperators import koch_leader, so100_leader  # noqa: F401
 
 @dataclass
 class CalibrateConfig:
-    device: RobotConfig | TeleoperatorConfig
+    teleop: TeleoperatorConfig | None = None
+    robot: RobotConfig | None = None
+
+    def __post_init__(self):
+        if bool(self.teleop) == bool(self.robot):
+            raise ValueError("Choose either a teleop or a robot.")
+
+        self.device = self.robot if self.robot else self.teleop
 
 
 @draccus.wrap()
