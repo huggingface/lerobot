@@ -15,8 +15,9 @@ check_env(env)
 
 if not os.path.exists(f"{MODELNAME}.zip"):
     # モデル定義＆学習
-    model = PPO("MlpPolicy", env, verbose=1)
-    model.learn(total_timesteps=100_000)
+    model = PPO("MlpPolicy", env, verbose=1, device="cpu")
+    # model.learn(total_timesteps=100_000)
+    model.learn(total_timesteps=10_000)
     model.save(MODELNAME)
 else:
     model = PPO.load(MODELNAME, env=env)

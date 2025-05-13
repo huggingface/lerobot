@@ -14,18 +14,24 @@ class VX300sEnv(gym.Env):
         self.model = MjModel.from_xml_path(xml_path)
         self.data = MjData(self.model)
         self.n_joints = 6
+        self.max_step = 100
+        self.step_count = 0
+        self.success_dist = 0.03
         self.is_running = True
         self.goal = self._sample_goal()
         self.ee_site_name = "pinch"
         self.action_space = spaces.Box(
-            low=-3.14, high=3.14, shape=(self.n_joints,), dtype=np.float32
+            low=-np.deg2rad(2),
+            high=np.deg2rad(2),
+            shape=(self.n_joints,),
+            dtype=np.float32,
         )
         # 6つのサーボがある
         # 現在の関節位置(1 * 6)
         # 現在の関節速度(1 * 6)
         # エンドエフェクタの現在位置(3)とゴール位置の差分
         self.observation_space = spaces.Box(
-            low=-np.inf, high=np.inf, shape=(6 + 6 + 3,), dtype=np.float32
+            low=-np.inf, high=np.inf, shape=(6 + 6 + 3 + 3,), dtype=np.float32
         )
 
         self.viewer = None
@@ -53,6 +59,7 @@ class VX300sEnv(gym.Env):
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
+        self.step_count = 0
         self.goal = self._sample_goal()
 
         # ゴール位置に目標オブジェクトを置く
@@ -69,16 +76,20 @@ class VX300sEnv(gym.Env):
 
         return self._get_obs(), {}
 
+    def get_reward(self):
+        ee_pos = self._get_ee_position()
+        distance = np.linalg.norm(ee_pos - self.goal)
+        reward = 1.0 if distance <= self.success_dist else -distance
+        return reward, distance
+
     def step(self, action):
         self.data.ctrl[: self.n_joints] = action
         mujoco.mj_step(self.model, self.data)
 
-        ee_pos = self._get_ee_position()
-        distance = np.linalg.norm(ee_pos - self.goal)
-
-        reward = -(distance**2)
-        terminated = distance < 0.05
-        truncated = False
+        reward, distance = self.get_reward()
+        terminated = distance <= self.success_dist
+        truncated = self.step_count >= self.max_step
+        self.step_count += 1
         info = {"distance": distance}
 
         return self._get_obs(), float(reward), bool(terminated), bool(truncated), info
@@ -90,8 +101,8 @@ class VX300sEnv(gym.Env):
     def _get_obs(self):
         qpos = self.data.qpos[: self.n_joints]
         qvel = self.data.qvel[: self.n_joints]
-        error = self.goal - self._get_ee_position()
-        return np.concatenate([qpos, qvel, error]).astype(np.float32)
+        ee_pos = self._get_ee_position()
+        return np.concatenate([qpos, qvel, ee_pos, self.goal]).astype(np.float32)
 
     def render(self):
         # エンドエフェクタの位置を取得しボールの位置を変える
