@@ -23,6 +23,7 @@ import datasets
 import numpy as np
 import packaging.version
 import PIL.Image
+import pyarrow.dataset as pyarrow_ds
 import torch
 import torch.utils
 from datasets import concatenate_datasets, load_dataset
@@ -615,12 +616,24 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
     def load_hf_dataset(self) -> datasets.Dataset:
         """hf_dataset contains all the observations, states, actions, rewards, etc."""
+
         if self.episodes is None:
-            path = str(self.root / "data")
-            hf_dataset = load_dataset("parquet", data_dir=path, split="train")
+            path_or_files = str(self.root / "data")
         else:
-            files = [str(self.root / self.meta.get_data_file_path(ep_idx)) for ep_idx in self.episodes]
-            hf_dataset = load_dataset("parquet", data_files=files, split="train")
+            path_or_files = [
+                str(self.root / self.meta.get_data_file_path(ep_idx)) for ep_idx in self.episodes
+            ]
+
+        # HACK: load_dataset does not directly support hive partitioning
+        # however, it is needed to sync the local cache with the hub
+        # here we use load_dataset to sync the local cache, and then reload
+        # with hive partitioning
+        load_dataset("parquet", data_dir=path_or_files, split="train")
+
+        # now that the cache is synced, we can load the dataset with hive partitioning
+        pa_dataset = pyarrow_ds.dataset(path_or_files, format="parquet", partitioning="hive")
+        table = pa_dataset.to_table()
+        hf_dataset = datasets.Dataset(arrow_table=table)
 
         # TODO(aliberts): hf_dataset.set_format("torch")
         hf_dataset.set_transform(hf_transform_to_torch)
