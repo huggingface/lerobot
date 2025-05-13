@@ -14,12 +14,6 @@ def make_robot_config(robot_type: str, **kwargs) -> RobotConfig:
         from .koch_follower.config_koch_follower import KochFollowerConfig
 
         return KochFollowerConfig(**kwargs)
-    # elif robot_type == "koch_bimanual":
-    #     return KochBimanualRobotConfig(**kwargs)
-    elif robot_type == "moss_follower":
-        from .moss_follower.configuration_moss import MossRobotConfig
-
-        return MossRobotConfig(**kwargs)
     elif robot_type == "so100_follower":
         from .so100_follower.config_so100_follower import SO100FollowerConfig
 
