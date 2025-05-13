@@ -16,10 +16,10 @@
 
 import logging
 import time
+from functools import cached_property
 from typing import Any
 
 from lerobot.common.cameras.utils import make_cameras_from_configs
-from lerobot.common.constants import OBS_IMAGES, OBS_STATE
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.common.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.common.motors.feetech import (
@@ -40,7 +40,7 @@ class HopeJrHand(Robot):
     def __init__(self, config: HopeJrHandConfig):
         super().__init__(config)
         self.config = config
-        self.hand = FeetechMotorsBus(
+        self.bus = FeetechMotorsBus(
             port=self.config.port,
             motors={
                 # Thumb
@@ -71,38 +71,33 @@ class HopeJrHand(Robot):
         self.cameras = make_cameras_from_configs(config.cameras)
 
     @property
-    def state_feature(self) -> dict:
+    def _motors_ft(self) -> dict[str, type]:
+        return {f"{motor}.pos": float for motor in self.bus.motors}
+
+    @property
+    def _cameras_ft(self) -> dict[str, tuple]:
         return {
-            "dtype": "float32",
-            "shape": (len(self.hand),),
-            "names": {"motors": list(self.hand.motors)},
+            cam: (self.config.cameras[cam].height, self.config.cameras[cam].width, 3) for cam in self.cameras
         }
 
-    @property
-    def action_feature(self) -> dict:
-        return self.state_feature
+    @cached_property
+    def observation_features(self) -> dict[str, type | tuple]:
+        return {**self._motors_ft, **self._cameras_ft}
 
-    @property
-    def camera_features(self) -> dict[str, dict]:
-        cam_ft = {}
-        for cam_key, cam in self.cameras.items():
-            cam_ft[cam_key] = {
-                "shape": (cam.height, cam.width, cam.channels),
-                "names": ["height", "width", "channels"],
-                "info": None,
-            }
-        return cam_ft
+    @cached_property
+    def action_features(self) -> dict[str, type]:
+        return self._motors_ft
 
     @property
     def is_connected(self) -> bool:
         # TODO(aliberts): add cam.is_connected for cam in self.cameras
-        return self.hand.is_connected
+        return self.bus.is_connected
 
     def connect(self) -> None:
         if self.is_connected:
             raise DeviceAlreadyConnectedError(f"{self} already connected")
 
-        self.hand.connect()
+        self.bus.connect()
         if not self.is_calibrated:
             self.calibrate()
 
@@ -115,30 +110,30 @@ class HopeJrHand(Robot):
 
     @property
     def is_calibrated(self) -> bool:
-        return self.hand.is_calibrated
+        return self.bus.is_calibrated
 
     def calibrate(self) -> None:
         raise NotImplementedError  # TODO(aliberts): adapt code below (copied from koch)
         logger.info(f"\nRunning calibration of {self}")
-        self.hand.disable_torque()
-        for name in self.hand.names:
-            self.hand.write("Operating_Mode", name, OperatingMode.POSITION.value)
+        self.bus.disable_torque()
+        for name in self.bus.names:
+            self.bus.write("Operating_Mode", name, OperatingMode.POSITION.value)
 
         input("Move robot to the middle of its range of motion and press ENTER....")
-        homing_offsets = self.hand.set_half_turn_homings()
+        homing_offsets = self.bus.set_half_turn_homings()
 
         full_turn_motor = "wrist_roll"
-        unknown_range_motors = [name for name in self.hand.names if name != full_turn_motor]
+        unknown_range_motors = [name for name in self.bus.names if name != full_turn_motor]
         logger.info(
             f"Move all joints except '{full_turn_motor}' sequentially through their "
             "entire ranges of motion.\nRecording positions. Press ENTER to stop..."
         )
-        range_mins, range_maxes = self.hand.record_ranges_of_motion(unknown_range_motors)
+        range_mins, range_maxes = self.bus.record_ranges_of_motion(unknown_range_motors)
         range_mins[full_turn_motor] = 0
         range_maxes[full_turn_motor] = 4095
 
         self.calibration = {}
-        for name, motor in self.hand.motors.items():
+        for name, motor in self.bus.motors.items():
             self.calibration[name] = MotorCalibration(
                 id=motor.id,
                 drive_mode=0,
@@ -147,13 +142,13 @@ class HopeJrHand(Robot):
                 range_max=range_maxes[name],
             )
 
-        self.hand.write_calibration(self.calibration)
+        self.bus.write_calibration(self.calibration)
         self._save_calibration()
         print("Calibration saved to", self.calibration_fpath)
 
     def configure(self) -> None:
-        with self.hand.torque_disabled():
-            self.hand.configure_motors()
+        with self.bus.torque_disabled():
+            self.bus.configure_motors()
             # TODO
 
     def get_observation(self) -> dict[str, Any]:
@@ -164,15 +159,15 @@ class HopeJrHand(Robot):
 
         # Read hand position
         start = time.perf_counter()
-        for motor in self.hand.motors:
-            obs_dict[f"{OBS_STATE}.{motor}"] = self.hand.read("Present_Position", motor, normalize=False)
+        for motor in self.bus.motors:
+            obs_dict[f"{motor}.pos"] = self.bus.read("Present_Position", motor, normalize=False)
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
 
         # Capture images from cameras
         for cam_key, cam in self.cameras.items():
             start = time.perf_counter()
-            obs_dict[f"{OBS_IMAGES}.{cam_key}"] = cam.async_read()
+            obs_dict[cam_key] = cam.async_read()
             dt_ms = (time.perf_counter() - start) * 1e3
             logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
 
@@ -182,14 +177,15 @@ class HopeJrHand(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        self.hand.sync_write("Goal_Position", action)
+        goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
+        self.bus.sync_write("Goal_Position", goal_pos)
         return action
 
     def disconnect(self):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        self.hand.disconnect(self.config.disable_torque_on_disconnect)
+        self.bus.disconnect(self.config.disable_torque_on_disconnect)
         for cam in self.cameras.values():
             cam.disconnect()
 
