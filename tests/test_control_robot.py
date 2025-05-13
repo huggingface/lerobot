@@ -11,7 +11,7 @@ from tests.mocks.mock_teleop import MockTeleopConfig
 
 def test_calibrate():
     robot_cfg = MockRobotConfig()
-    cfg = CalibrateConfig(device=robot_cfg)
+    cfg = CalibrateConfig(robot=robot_cfg)
     calibrate(cfg)
 
 
