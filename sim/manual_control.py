@@ -5,7 +5,6 @@ import traceback
 import mujoco
 import mujoco.viewer
 from stable_baselines3.common.env_checker import check_env
-
 from vx300s_env import VX300sEnv
 
 FILEPATH = "./MJCF/so-arm101/scene.xml"

@@ -5,7 +5,6 @@ import traceback
 
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_checker import check_env
-
 from vx300s_env import VX300sEnv
 
 FILEPATH = "./MJCF/so-arm101/scene.xml"
@@ -16,9 +15,7 @@ check_env(env)
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument(
-    "--delete", action="store_true", help="既存モデルを削除して再学習する"
-)
+parser.add_argument("--delete", action="store_true", help="既存モデルを削除して再学習する")
 args = parser.parse_args()
 
 if args.delete and os.path.exists(MODELFILE):
