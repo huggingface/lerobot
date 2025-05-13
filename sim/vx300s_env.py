@@ -82,12 +82,9 @@ class VX300sEnv(gym.Env):
         goal_site_id = int(self.model.site("goal_site").id)
         self.model.site_pos[goal_site_id] = self.goal
 
-        self.data.qpos[: self.n_joints] = np.random.uniform(
-            -0.1,
-            0.1,
-            size=self.n_joints,
-        )
-        self.data.qvel[: self.n_joints] = 0
+        # 初期ポジション
+        key_index = self.model.key("home").id
+        mujoco.mj_resetDataKeyframe(self.model, self.data, key_index)
         mujoco.mj_forward(self.model, self.data)
 
         return self._get_obs(), {}

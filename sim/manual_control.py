@@ -10,6 +10,7 @@ from vx300s_env import VX300sEnv
 
 FILEPATH = "./MJCF/so-arm101/scene.xml"
 env = VX300sEnv(FILEPATH)
+
 check_env(env)
 
 obs, _ = env.reset()
