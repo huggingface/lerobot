@@ -134,7 +134,13 @@ def make_optimizers(policy: SACPolicy) -> dict[str, torch.optim.Optimizer]:
     return optimizers
 
 
-def create_default_config(state_dim: int, action_dim: int) -> SACConfig:
+def create_default_config(
+    state_dim: int, continuous_action_dim: int, has_discrete_action: bool = False
+) -> SACConfig:
+    action_dim = continuous_action_dim
+    if has_discrete_action:
+        action_dim += 1
+
     config = SACConfig(
         input_features={"observation.state": PolicyFeature(type=FeatureType.STATE, shape=(state_dim,))},
         output_features={"action": PolicyFeature(type=FeatureType.ACTION, shape=(action_dim,))},
@@ -144,8 +150,8 @@ def create_default_config(state_dim: int, action_dim: int) -> SACConfig:
                 "max": [1.0] * state_dim,
             },
             "action": {
-                "min": [0.0] * action_dim,
-                "max": [1.0] * action_dim,
+                "min": [0.0] * continuous_action_dim,
+                "max": [1.0] * continuous_action_dim,
             },
         },
     )
@@ -153,8 +159,14 @@ def create_default_config(state_dim: int, action_dim: int) -> SACConfig:
     return config
 
 
-def create_config_with_visual_input(state_dim: int, action_dim: int) -> SACConfig:
-    config = create_default_config(state_dim=state_dim, action_dim=action_dim)
+def create_config_with_visual_input(
+    state_dim: int, continuous_action_dim: int, has_discrete_action: bool = False
+) -> SACConfig:
+    config = create_default_config(
+        state_dim=state_dim,
+        continuous_action_dim=continuous_action_dim,
+        has_discrete_action=has_discrete_action,
+    )
     config.input_features["observation.image"] = PolicyFeature(type=FeatureType.VISUAL, shape=(3, 84, 84))
     config.dataset_stats["observation.image"] = {
         "mean": torch.randn(3, 1, 1),
@@ -314,8 +326,11 @@ def test_sac_policy_with_discrete_critic():
     batch_size = 2
     action_dim = 10
     state_dim = 10
-    config = create_config_with_visual_input(state_dim=state_dim, action_dim=action_dim)
+    config = create_config_with_visual_input(
+        state_dim=state_dim, continuous_action_dim=action_dim, has_discrete_action=True
+    )
     config.num_discrete_actions = 3
+    config.use_torch_compile = False
 
     policy = SACPolicy(config=config)
     policy.train()
