@@ -62,11 +62,11 @@ class VX300sEnv(gym.Env):
     def _sample_goal(self):
         # XYZ 方向に適当な範囲でゴールをサンプリング
         range = 30
-        dir = random.uniform(270 - range, 270 + range)
+        dir = random.uniform(0 - range, 0 + range)
         radius = 0.53
         x = radius * np.cos(np.deg2rad(dir))
         y = radius * np.sin(np.deg2rad(dir))
-        z = random.uniform(0.3, 0.7)
+        z = random.uniform(0.15, 0.5)
         return np.array([x, y, z])
 
     def _fixed_goal(self):
@@ -75,8 +75,8 @@ class VX300sEnv(gym.Env):
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         self.step_count = 0
-        # self.goal = self._sample_goal()
-        self.goal = self._fixed_goal()
+        self.goal = self._sample_goal()
+        # self.goal = self._fixed_goal()
 
         # ゴール位置に目標オブジェクトを置く
         goal_site_id = int(self.model.site("goal_site").id)
