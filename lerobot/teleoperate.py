@@ -38,7 +38,6 @@ import draccus
 import numpy as np
 import rerun as rr
 
-from lerobot.common.cameras import intel, opencv  # noqa: F401
 from lerobot.common.robots import (  # noqa: F401
     Robot,
     RobotConfig,
