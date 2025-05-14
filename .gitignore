@@ -20,6 +20,7 @@ wandb
 # Data
 data
 outputs
+datasets
 
 # Apple
 .DS_Store
