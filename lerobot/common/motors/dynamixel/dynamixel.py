@@ -140,7 +140,7 @@ class DynamixelMotorsBus(MotorsBus):
     def _handshake(self) -> None:
         self._assert_motors_exist()
 
-    def _find_single_motor(self, motor: str, initial_baudrate: int | None) -> tuple[int, int]:
+    def _find_single_motor(self, motor: str, initial_baudrate: int | None = None) -> tuple[int, int]:
         model = self.motors[motor].model
         search_baudrates = (
             [initial_baudrate] if initial_baudrate is not None else self.model_baudrate_table[model]
