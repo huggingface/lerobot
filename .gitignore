@@ -171,9 +171,3 @@ dmypy.json
 
 # Cython debug symbols
 cython_debug/
-
-# realsense data-recording format
-*.bag
-
-# opencv test images
-fakecam*
