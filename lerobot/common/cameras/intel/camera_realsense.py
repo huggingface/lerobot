@@ -22,7 +22,7 @@ import math
 import queue
 import time
 from threading import Event, Thread
-from typing import Any, Dict, List, Tuple, Union
+from typing import Any, Dict, List
 
 import cv2
 import numpy as np
@@ -48,6 +48,11 @@ class RealSenseCamera(Camera):
     unique serial number for identification, offering more stability than device
     indices, especially on Linux. It also supports capturing depth maps alongside
     color frames.
+
+    Use the provided utility script to find available camera indices and default profiles:
+    ```bash
+    python -m lerobot.find_cameras
+    ```
 
     A `RealSenseCamera` instance requires a configuration object specifying the
     camera's serial number or a unique device name. If using the name, ensure only
@@ -120,7 +125,7 @@ class RealSenseCamera(Camera):
 
         self.config = config
 
-        if config.name is not None:  # TODO(Steven): Do we want to continue supporting this?
+        if config.name is not None:  # NOTE(Steven): Do we want to continue supporting this?
             self.serial_number = self._find_serial_number_from_name(config.name)
         elif config.serial_number is not None:
             self.serial_number = str(config.serial_number)
@@ -143,8 +148,6 @@ class RealSenseCamera(Camera):
 
         self.rotation: int | None = get_cv2_rotation(config.rotation)
 
-        # NOTE(Steven): What happens if rotation is specified but we leave width and height to None?
-        # NOTE(Steven): Should we enforce these parameters if rotation is set?
         if self.height and self.width:
             if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
                 self.prerotated_width, self.prerotated_height = self.height, self.width
@@ -301,7 +304,6 @@ class RealSenseCamera(Camera):
                 self.rs_profile.get_stream(rs.stream.depth).as_video_stream_profile()
             )
 
-    # NOTE(Steven): Add a wamr-up period time config
     def connect(self, do_warmup_read: bool = True):
         """
         Connects to the RealSense camera specified in the configuration.
@@ -339,13 +341,12 @@ class RealSenseCamera(Camera):
 
         if do_warmup_read:
             logger.debug(f"Reading a warm-up frame for {self.serial_number}...")
-            self.read()  # NOTE(Steven): For now we just read one frame, we could also loop for X secs
+            self.read()  # NOTE(Steven): For now we just read one frame, we could also loop for X frames/secs
 
         logger.info(f"Camera {self.serial_number} connected and configured successfully.")
 
     def _validate_fps(self, stream) -> None:
         """Validates and sets the internal FPS based on actual stream FPS."""
-
         actual_fps = stream.fps()
 
         if self.fps is None:
@@ -366,7 +367,6 @@ class RealSenseCamera(Camera):
 
     def _validate_width_and_height(self, stream) -> None:
         """Validates and sets the internal capture width and height based on actual stream width."""
-
         actual_width = int(round(stream.width()))
         actual_height = int(round(stream.height()))
 
@@ -475,7 +475,7 @@ class RealSenseCamera(Camera):
 
         ret, frame = self.rs_pipeline.try_wait_for_frames(
             timeout_ms=timeout_ms
-        )  # NOTE(Steven): This read has a timeout
+        )  # NOTE(Steven): This read has a timeout while opencv doesn't
 
         if not ret or frame is None:
             raise RuntimeError(
@@ -579,8 +579,8 @@ class RealSenseCamera(Camera):
         self.thread.start()
         logger.debug(f"Read thread started for {self}.")
 
-    # NOTE(Steven): Missing implementation for depth
-    def async_read(self, timeout_ms: float = 2000) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
+    # NOTE(Steven): Missing implementation for depth for now
+    def async_read(self, timeout_ms: float = 2000) -> np.ndarray:
         """
         Reads the latest available frame data (color or color+depth) asynchronously.
 
@@ -594,10 +594,8 @@ class RealSenseCamera(Camera):
                 to become available in the queue. Defaults to 2000ms (2 seconds).
 
         Returns:
-            Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
-            The latest captured frame data (color image or tuple of color image
-            and depth map), processed according to configuration. Format depends
-            on `self.use_depth`.
+            np.ndarray:
+            The latest captured frame data (color image), processed according to configuration.
 
         Raises:
             DeviceNotConnectedError: If the camera is not connected.
@@ -628,7 +626,6 @@ class RealSenseCamera(Camera):
                 f"Error getting frame data from queue for camera {self.serial_number}: {e}"
             ) from e
 
-    # NOTE(Steven): There are multiple functions that are the same between realsense and opencv. We should consider moving them to the parent class
     def _shutdown_read_thread(self):
         """Signals the background read thread to stop and waits for it to join."""
         if self.stop_event is not None:

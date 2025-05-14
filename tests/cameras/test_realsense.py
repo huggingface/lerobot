@@ -36,7 +36,9 @@ except (ImportError, ModuleNotFoundError):
 TEST_ARTIFACTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "artifacts", "cameras")
 BAG_FILE_PATH = os.path.join(TEST_ARTIFACTS_DIR, "test_rs.bag")
 
-
+# NOTE(Steven): Missing tests for depth
+# NOTE(Steven): Takes 20sec, the patch being the biggest bottleneck
+# NOTE(Steven): more tests + assertions?
 if not os.path.exists(BAG_FILE_PATH):
     print(f"Warning: Bag file not found at {BAG_FILE_PATH}. Some tests might fail or be skipped.")
 

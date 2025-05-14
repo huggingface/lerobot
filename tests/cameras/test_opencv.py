@@ -28,7 +28,7 @@ from lerobot.common.cameras.configs import Cv2Rotation
 from lerobot.common.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
-# NOTE(Steven): Consider improving the assert coverage
+# NOTE(Steven): more tests + assertions?
 TEST_ARTIFACTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "artifacts", "cameras")
 DEFAULT_PNG_FILE_PATH = os.path.join(TEST_ARTIFACTS_DIR, "fakecam_sd_160x120.png")
 TEST_IMAGE_PATHS = [

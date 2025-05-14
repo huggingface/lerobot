@@ -20,7 +20,7 @@ import logging
 import shutil
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List
 
 import numpy as np
 from PIL import Image
@@ -77,7 +77,7 @@ def find_all_realsense_cameras() -> List[Dict[str, Any]]:
     return all_realsense_cameras_info
 
 
-def find_and_print_cameras(camera_type_filter: Optional[str] = None) -> List[Dict[str, Any]]:
+def find_and_print_cameras(camera_type_filter: str | None = None) -> List[Dict[str, Any]]:
     """
     Finds available cameras based on an optional filter and prints their information.
 
@@ -106,7 +106,7 @@ def find_and_print_cameras(camera_type_filter: Optional[str] = None) -> List[Dic
     else:
         print("\n--- Detected Cameras ---")
         for i, cam_info in enumerate(all_cameras_info):
-            print(f"Camera #{i + 1}:")
+            print(f"Camera #{i}:")
             for key, value in cam_info.items():
                 if key == "default_stream_profile" and isinstance(value, dict):
                     print(f"  {key.replace('_', ' ').capitalize()}:")
@@ -120,7 +120,7 @@ def find_and_print_cameras(camera_type_filter: Optional[str] = None) -> List[Dic
 
 def save_image(
     img_array: np.ndarray,
-    camera_identifier: Union[str, int],
+    camera_identifier: str | int,
     images_dir: Path,
     camera_type: str,
 ):
@@ -142,7 +142,7 @@ def save_image(
         logger.error(f"Failed to save image for camera {camera_identifier} (type {camera_type}): {e}")
 
 
-def initialize_output_directory(output_dir: Union[str, Path]) -> Path:
+def initialize_output_directory(output_dir: str | Path) -> Path:
     """Initialize and clean the output directory."""
     output_dir = Path(output_dir)
     if output_dir.exists():
@@ -153,7 +153,7 @@ def initialize_output_directory(output_dir: Union[str, Path]) -> Path:
     return output_dir
 
 
-def create_camera_instance(cam_meta: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def create_camera_instance(cam_meta: Dict[str, Any]) -> Dict[str, Any] | None:
     """Create and connect to a camera instance based on metadata."""
     cam_type = cam_meta.get("type")
     cam_id = cam_meta.get("id")
@@ -180,7 +180,7 @@ def create_camera_instance(cam_meta: Dict[str, Any]) -> Optional[Dict[str, Any]]
 
         if instance:
             logger.info(f"Connecting to {cam_type} camera: {cam_id}...")
-            instance.connect()
+            instance.connect(do_warmup_read=False)
             return {"instance": instance, "meta": cam_meta}
     except Exception as e:
         logger.error(f"Failed to connect or configure {cam_type} camera {cam_id}: {e}")
@@ -191,7 +191,7 @@ def create_camera_instance(cam_meta: Dict[str, Any]) -> Optional[Dict[str, Any]]
 
 def process_camera_image(
     cam_dict: Dict[str, Any], output_dir: Path, current_time: float
-) -> Optional[concurrent.futures.Future]:
+) -> concurrent.futures.Future | None:
     """Capture and process an image from a single camera."""
     cam = cam_dict["instance"]
     meta = cam_dict["meta"]
@@ -228,9 +228,9 @@ def cleanup_cameras(cameras_to_use: List[Dict[str, Any]]):
 
 
 def save_images_from_all_cameras(
-    output_dir: Union[str, Path],
+    output_dir: str | Path,
     record_time_s: float = 2.0,
-    camera_type_filter: Optional[str] = None,
+    camera_type_filter: str | None = None,
 ):
     """
     Connects to detected cameras (optionally filtered by type) and saves images from each.
@@ -249,7 +249,6 @@ def save_images_from_all_cameras(
         logger.warning("No cameras detected matching the criteria. Cannot save images.")
         return
 
-    # Create and connect to all cameras
     cameras_to_use = []
     for cam_meta in all_camera_metadata:
         camera_instance = create_camera_instance(cam_meta)
@@ -263,7 +262,6 @@ def save_images_from_all_cameras(
     logger.info(f"Starting image capture for {record_time_s} seconds from {len(cameras_to_use)} cameras.")
     start_time = time.perf_counter()
 
-    # NOTE(Steven): This seems like an overkill to me
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(cameras_to_use) * 2) as executor:
         try:
             while time.perf_counter() - start_time < record_time_s:
@@ -287,6 +285,10 @@ def save_images_from_all_cameras(
             logger.info(f"Image capture finished. Images saved to {output_dir}")
 
 
+# NOTE(Steven):
+# * realsense identified as opencv -> consistent in linux, we can even capture images
+# * opencv mac cams reporting different fps at init, not an issue as we don't enforce fps here
+# * opencv not opening in linux if we specify a backend
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Unified camera utility script for listing cameras and capturing images."
@@ -329,8 +331,8 @@ if __name__ == "__main__":
     capture_parser.add_argument(
         "--record-time-s",
         type=float,
-        default=5.0,
-        help="Time duration to attempt capturing frames. Default: 0.5 seconds (usually enough for one frame).",
+        default=6.0,
+        help="Time duration to attempt capturing frames. Default: 6 seconds.",
     )
     capture_parser.set_defaults(
         func=lambda args: save_images_from_all_cameras(

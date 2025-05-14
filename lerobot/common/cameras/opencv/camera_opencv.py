@@ -36,7 +36,7 @@ from ..camera import Camera
 from ..utils import IndexOrPath, get_cv2_backend, get_cv2_rotation
 from .configuration_opencv import ColorMode, OpenCVCameraConfig
 
-# The maximum opencv device index depends on your operating system. For instance,
+# NOTE(Steven): The maximum opencv device index depends on your operating system. For instance,
 # if you have 3 cameras, they should be associated to index 0, 1, and 2. This is the case
 # on MacOS. However, on Ubuntu, the indices are different like 6, 16, 23.
 # When you change the USB port or reboot the computer, the operating system might
@@ -129,10 +129,8 @@ class OpenCVCamera(Camera):
         self.logs: dict = {}  # NOTE(Steven): Might be removed in the future
 
         self.rotation: int | None = get_cv2_rotation(config.rotation)
-        self.backend: int = get_cv2_backend()  # NOTE(Steven): If I specify backend the opencv open fails
+        self.backend: int = get_cv2_backend()  # NOTE(Steven): If we specify backend the opencv open fails
 
-        # NOTE(Steven): What happens if rotation is specified but we leave width and height to None?
-        # NOTE(Steven): Should we enforce these parameters if rotation is set?
         if self.height and self.width:
             if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
                 self.prerotated_width, self.prerotated_height = self.height, self.width
@@ -208,7 +206,7 @@ class OpenCVCamera(Camera):
 
         if do_warmup_read:
             logger.debug(f"Reading a warm-up frame for {self.index_or_path}...")
-            self.read()  # NOTE(Steven): For now we just read one frame, we could also loop for X secs\
+            self.read()  # NOTE(Steven): For now we just read one frame, we could also loop for X frames/secs
 
         logger.debug(f"Camera {self.index_or_path} connected and configured successfully.")
 
@@ -239,7 +237,6 @@ class OpenCVCamera(Camera):
         actual_width = int(round(self.videocapture_camera.get(cv2.CAP_PROP_FRAME_WIDTH)))
         actual_height = int(round(self.videocapture_camera.get(cv2.CAP_PROP_FRAME_HEIGHT)))
 
-        # NOTE(Steven): When do we constraint the possibility of only setting one?
         if self.width is None or self.height is None:
             if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
                 self.width, self.height = actual_height, actual_width

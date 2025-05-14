@@ -21,7 +21,6 @@ import numpy as np
 from .configs import CameraConfig, ColorMode
 
 
-# NOTE(Steven): Consider something like configure() if makes sense for both cameras
 class Camera(abc.ABC):
     def __init__(self, config: CameraConfig):
         self.fps: int | None = config.fps
