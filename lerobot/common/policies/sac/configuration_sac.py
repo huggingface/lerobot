@@ -140,7 +140,6 @@ class SACConfig(PreTrainedConfig):
     )
 
     # Architecture specifics
-    camera_number: int = 1
     device: str = "cpu"
     storage_device: str = "cpu"
     # Set to "helper2424/resnet10" for hil serl
@@ -183,6 +182,9 @@ class SACConfig(PreTrainedConfig):
     discrete_critic_network_kwargs: CriticNetworkConfig = field(default_factory=CriticNetworkConfig)
     actor_learner_config: ActorLearnerConfig = field(default_factory=ActorLearnerConfig)
     concurrency: ConcurrencyConfig = field(default_factory=ConcurrencyConfig)
+
+    # Optimizations
+    use_torch_compile: bool = True
 
     def __post_init__(self):
         super().__post_init__()
