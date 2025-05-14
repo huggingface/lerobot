@@ -366,7 +366,7 @@ class SACPolicy(
         # calculate temperature loss
         with torch.no_grad():
             _, log_probs, _ = self.actor(observations, observation_features)
-        temperature_loss = (-self.log_alpha.exp() * (log_probs + self.config.target_entropy)).mean()
+        temperature_loss = (-self.log_alpha.exp() * (log_probs + self.target_entropy)).mean()
         return temperature_loss
 
     def compute_loss_actor(
@@ -476,9 +476,11 @@ class SACPolicy(
             encoder_is_shared=self.shared_encoder,
             **asdict(self.config.policy_kwargs),
         )
-        if self.config.target_entropy is None:
+
+        self.target_entropy = self.config.target_entropy
+        if self.target_entropy is None:
             dim = continuous_action_dim + (1 if self.config.num_discrete_actions is not None else 0)
-            self.config.target_entropy = -np.prod(dim) / 2
+            self.target_entropy = -np.prod(dim) / 2
 
     def _init_temperature(self):
         """Set up temperature parameter and initial log_alpha."""
