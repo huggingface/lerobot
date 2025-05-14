@@ -136,12 +136,15 @@ def test_async_read(mock_enable_device):
     camera = RealSenseCamera(config)
     camera.connect(do_warmup_read=False)
 
-    img = camera.async_read()
+    try:
+        img = camera.async_read()
 
-    assert camera.thread is not None
-    assert camera.thread.is_alive()
-    assert isinstance(img, np.ndarray)
-    camera.disconnect()  # To stop/join the thread. Otherwise get warnings when the test ends
+        assert camera.thread is not None
+        assert camera.thread.is_alive()
+        assert isinstance(img, np.ndarray)
+    finally:
+        if camera.is_connected:
+            camera.disconnect()  # To stop/join the thread. Otherwise get warnings when the test ends
 
 
 @patch("pyrealsense2.config.enable_device", side_effect=mock_rs_config_enable_device_from_file)
@@ -150,10 +153,12 @@ def test_async_read_timeout(mock_enable_device):
     camera = RealSenseCamera(config)
     camera.connect(do_warmup_read=False)
 
-    with pytest.raises(TimeoutError):
-        camera.async_read(timeout_ms=0)
-
-    camera.disconnect()
+    try:
+        with pytest.raises(TimeoutError):
+            camera.async_read(timeout_ms=0)
+    finally:
+        if camera.is_connected:
+            camera.disconnect()
 
 
 def test_async_read_before_connect():

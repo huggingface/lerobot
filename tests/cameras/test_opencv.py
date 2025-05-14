@@ -126,12 +126,15 @@ def test_async_read(index_or_path):
     camera = OpenCVCamera(config)
     camera.connect(do_warmup_read=False)
 
-    img = camera.async_read()
+    try:
+        img = camera.async_read()
 
-    assert camera.thread is not None
-    assert camera.thread.is_alive()
-    assert isinstance(img, np.ndarray)
-    camera.disconnect()  # To stop/join the thread. Otherwise get warnings when the test ends
+        assert camera.thread is not None
+        assert camera.thread.is_alive()
+        assert isinstance(img, np.ndarray)
+    finally:
+        if camera.is_connected:
+            camera.disconnect()  # To stop/join the thread. Otherwise get warnings when the test ends
 
 
 def test_async_read_timeout():
@@ -139,10 +142,12 @@ def test_async_read_timeout():
     camera = OpenCVCamera(config)
     camera.connect(do_warmup_read=False)
 
-    with pytest.raises(TimeoutError):
-        camera.async_read(timeout_ms=0)
-
-    camera.disconnect()
+    try:
+        with pytest.raises(TimeoutError):
+            camera.async_read(timeout_ms=0)
+    finally:
+        if camera.is_connected:
+            camera.disconnect()
 
 
 def test_async_read_before_connect():
@@ -183,5 +188,3 @@ def test_all_rotations(rotation, index_or_path):
         assert camera.width == original_width
         assert camera.height == original_height
         assert img.shape[:2] == (original_height, original_width)
-
-    camera.disconnect()
