@@ -1588,19 +1588,20 @@ class GamepadControlWrapper(gym.Wrapper):
             input_threshold: Minimum movement delta to consider as active input.
         """
         super().__init__(env)
-        from lerobot.scripts.server.end_effector_control_utils import (
-            GamepadController,
-            GamepadControllerHID,
-        )
 
         # use HidApi for macos
         if sys.platform == "darwin":
+            # NOTE: On macOS, pygame doesn’t reliably detect input from some controllers so we fall back to hidapi
+            from lerobot.scripts.server.end_effector_control_utils import GamepadControllerHID
+
             self.controller = GamepadControllerHID(
                 x_step_size=x_step_size,
                 y_step_size=y_step_size,
                 z_step_size=z_step_size,
             )
         else:
+            from lerobot.scripts.server.end_effector_control_utils import GamepadController
+
             self.controller = GamepadController(
                 x_step_size=x_step_size,
                 y_step_size=y_step_size,
@@ -1748,6 +1749,8 @@ class GymHilDeviceWrapper(gym.Wrapper):
         for k in obs:
             obs[k] = obs[k].to(self.device)
         if "action_intervention" in info:
+            # NOTE: This is a hack to ensure the action intervention is a float32 tensor and supported on MPS device
+            info["action_intervention"] = info["action_intervention"].astype(np.float32)
             info["action_intervention"] = torch.from_numpy(info["action_intervention"]).to(self.device)
         return obs, reward, terminated, truncated, info
 
@@ -1756,6 +1759,8 @@ class GymHilDeviceWrapper(gym.Wrapper):
         for k in obs:
             obs[k] = obs[k].to(self.device)
         if "action_intervention" in info:
+            # NOTE: This is a hack to ensure the action intervention is a float32 tensor and supported on MPS device
+            info["action_intervention"] = info["action_intervention"].astype(np.float32)
             info["action_intervention"] = torch.from_numpy(info["action_intervention"]).to(self.device)
         return obs, info
 

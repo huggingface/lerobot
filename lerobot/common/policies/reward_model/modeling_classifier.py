@@ -9,9 +9,6 @@ from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.policies.reward_model.configuration_classifier import RewardClassifierConfig
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-logger = logging.getLogger(__name__)
-
 
 class ClassifierOutput:
     """Wrapper for classifier outputs with additional metadata."""

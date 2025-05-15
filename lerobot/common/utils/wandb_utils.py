@@ -123,9 +123,9 @@ class WandBLogger:
         if step is None and custom_step_key is None:
             raise ValueError("Either step or custom_step_key must be provided.")
 
-        # NOTE: This is not simple. Wandb step is it must always monotonically increase and it
+        # NOTE: This is not simple. Wandb step must always monotonically increase and it
         # increases with each wandb.log call, but in the case of asynchronous RL for example,
-        # multiple time steps is possible for example, the interaction step with the environment,
+        # multiple time steps is possible. For example, the interaction step with the environment,
         # the training step, the evaluation step, etc. So we need to define a custom step key
         # to log the correct step for each metric.
         if custom_step_key is not None:

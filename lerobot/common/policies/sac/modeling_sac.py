@@ -27,7 +27,7 @@ import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
 from torch.distributions import MultivariateNormal, TanhTransform, Transform, TransformedDistribution
 
-from lerobot.common.policies.normalize import Normalize, Unnormalize
+from lerobot.common.policies.normalize import NormalizeBuffer, UnnormalizeBuffer
 from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.policies.sac.configuration_sac import SACConfig
 from lerobot.common.policies.utils import get_device_from_parameters
@@ -394,17 +394,16 @@ class SACPolicy(
         self.normalize_inputs = nn.Identity()
         self.normalize_targets = nn.Identity()
         self.unnormalize_outputs = nn.Identity()
-
-        if self.config.dataset_stats:
+        if self.config.dataset_stats is not None:
             params = _convert_normalization_params_to_tensor(self.config.dataset_stats)
-            self.normalize_inputs = Normalize(
+            self.normalize_inputs = NormalizeBuffer(
                 self.config.input_features, self.config.normalization_mapping, params
             )
             stats = dataset_stats or params
-            self.normalize_targets = Normalize(
+            self.normalize_targets = NormalizeBuffer(
                 self.config.output_features, self.config.normalization_mapping, stats
             )
-            self.unnormalize_outputs = Unnormalize(
+            self.unnormalize_outputs = UnnormalizeBuffer(
                 self.config.output_features, self.config.normalization_mapping, stats
             )
 
@@ -506,7 +505,7 @@ class SACObservationEncoder(nn.Module):
         if not self.has_images:
             return
 
-        if self.config.vision_encoder_name:
+        if self.config.vision_encoder_name is not None:
             self.image_encoder = PretrainedImageEncoder(self.config)
         else:
             self.image_encoder = DefaultImageEncoder(self.config)
