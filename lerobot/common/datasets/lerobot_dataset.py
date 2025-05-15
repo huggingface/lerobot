@@ -911,11 +911,16 @@ class LeRobotDataset(torch.utils.data.Dataset):
         episode_dict = {key: episode_buffer[key] for key in self.hf_features}
         ep_dataset = datasets.Dataset.from_dict(episode_dict, features=self.hf_features, split="train")
         ep_dataset = embed_images(ep_dataset)
-        self.hf_dataset = concatenate_datasets([self.hf_dataset, ep_dataset])
-        self.hf_dataset.set_transform(hf_transform_to_torch)
+        
+        # Save the current episode data to disk
         ep_data_path = self.root / self.meta.get_data_file_path(ep_index=episode_index)
         ep_data_path.parent.mkdir(parents=True, exist_ok=True)
         ep_dataset.to_parquet(ep_data_path)
+        
+        # Reset self.Hf_dataset to avoid memory accumulation
+        empty_dict = {k: [] for k in self.hf_features}
+        self.hf_dataset = datasets.Dataset.from_dict(empty_dict, features=self.hf_features, split="train")
+        self.hf_dataset.set_transform(hf_transform_to_torch)
 
     def clear_episode_buffer(self) -> None:
         episode_index = self.episode_buffer["episode_index"]
