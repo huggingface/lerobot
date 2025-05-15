@@ -25,7 +25,7 @@ import packaging.version
 import PIL.Image
 import torch
 import torch.utils
-from datasets import concatenate_datasets, load_dataset
+from datasets import load_dataset
 from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.constants import REPOCARD_NAME
 from huggingface_hub.errors import RevisionNotFoundError
@@ -911,12 +911,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
         episode_dict = {key: episode_buffer[key] for key in self.hf_features}
         ep_dataset = datasets.Dataset.from_dict(episode_dict, features=self.hf_features, split="train")
         ep_dataset = embed_images(ep_dataset)
-        
+
         # Save the current episode data to disk
         ep_data_path = self.root / self.meta.get_data_file_path(ep_index=episode_index)
         ep_data_path.parent.mkdir(parents=True, exist_ok=True)
         ep_dataset.to_parquet(ep_data_path)
-        
+
         # Reset self.Hf_dataset to avoid memory accumulation
         empty_dict = {k: [] for k in self.hf_features}
         self.hf_dataset = datasets.Dataset.from_dict(empty_dict, features=self.hf_features, split="train")
