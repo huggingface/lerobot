@@ -79,47 +79,28 @@ def create_stats_buffers(
             )
 
         # TODO(aliberts, rcadene): harmonize this to only use one framework (np or torch)
-        if stats and key in stats:
-            # Therefore, we don't access to full stats of the data, some elements either have min-max or mean-std only
-            if norm_mode is NormalizationMode.MEAN_STD:
-                if "mean" not in stats[key] or "std" not in stats[key]:
-                    raise ValueError(
-                        f"Missing 'mean' or 'std' in stats for key {key} with MEAN_STD normalization"
-                    )
-
-                if isinstance(stats[key]["mean"], np.ndarray):
+        if stats:
+            if isinstance(stats[key]["mean"], np.ndarray):
+                if norm_mode is NormalizationMode.MEAN_STD:
                     buffer["mean"].data = torch.from_numpy(stats[key]["mean"]).to(dtype=torch.float32)
                     buffer["std"].data = torch.from_numpy(stats[key]["std"]).to(dtype=torch.float32)
-                elif isinstance(stats[key]["mean"], torch.Tensor):
-                    # Note: The clone is needed to make sure that the logic in save_pretrained doesn't see duplicated
-                    # tensors anywhere (for example, when we use the same stats for normalization and
-                    # unnormalization). See the logic here
-                    # https://github.com/huggingface/safetensors/blob/079781fd0dc455ba0fe851e2b4507c33d0c0d407/bindings/python/py_src/safetensors/torch.py#L97.
-                    buffer["mean"].data = stats[key]["mean"].clone().to(dtype=torch.float32)
-                    buffer["std"].data = stats[key]["std"].clone().to(dtype=torch.float32)
-                else:
-                    type_ = type(stats[key]["mean"])
-                    raise ValueError(
-                        f"np.ndarray or torch.Tensor expected for 'mean', but type is '{type_}' instead."
-                    )
-
-            elif norm_mode is NormalizationMode.MIN_MAX:
-                if "min" not in stats[key] or "max" not in stats[key]:
-                    raise ValueError(
-                        f"Missing 'min' or 'max' in stats for key {key} with MIN_MAX normalization"
-                    )
-
-                if isinstance(stats[key]["min"], np.ndarray):
+                elif norm_mode is NormalizationMode.MIN_MAX:
                     buffer["min"].data = torch.from_numpy(stats[key]["min"]).to(dtype=torch.float32)
                     buffer["max"].data = torch.from_numpy(stats[key]["max"]).to(dtype=torch.float32)
-                elif isinstance(stats[key]["min"], torch.Tensor):
+            elif isinstance(stats[key]["mean"], torch.Tensor):
+                # Note: The clone is needed to make sure that the logic in save_pretrained doesn't see duplicated
+                # tensors anywhere (for example, when we use the same stats for normalization and
+                # unnormalization). See the logic here
+                # https://github.com/huggingface/safetensors/blob/079781fd0dc455ba0fe851e2b4507c33d0c0d407/bindings/python/py_src/safetensors/torch.py#L97.
+                if norm_mode is NormalizationMode.MEAN_STD:
+                    buffer["mean"].data = stats[key]["mean"].clone().to(dtype=torch.float32)
+                    buffer["std"].data = stats[key]["std"].clone().to(dtype=torch.float32)
+                elif norm_mode is NormalizationMode.MIN_MAX:
                     buffer["min"].data = stats[key]["min"].clone().to(dtype=torch.float32)
                     buffer["max"].data = stats[key]["max"].clone().to(dtype=torch.float32)
-                else:
-                    type_ = type(stats[key]["min"])
-                    raise ValueError(
-                        f"np.ndarray or torch.Tensor expected for 'min', but type is '{type_}' instead."
-                    )
+            else:
+                type_ = type(stats[key]["mean"])
+                raise ValueError(f"np.ndarray or torch.Tensor expected, but type is '{type_}' instead.")
 
         stats_buffers[key] = buffer
     return stats_buffers
@@ -130,73 +111,6 @@ def _no_stats_error_str(name: str) -> str:
         f"`{name}` is infinity. You should either initialize with `stats` as an argument, or use a "
         "pretrained model."
     )
-
-
-def _initialize_stats_buffers(
-    module: nn.Module,
-    features: dict[str, PolicyFeature],
-    norm_map: dict[str, NormalizationMode],
-    stats: dict[str, dict[str, Tensor]] | None = None,
-) -> None:
-    """Register statistics buffers (mean/std or min/max) on the given *module*.
-
-    The logic matches the previous constructors of `NormalizeBuffer` and `UnnormalizeBuffer`,
-    but is factored out so it can be reused by both classes and stay in sync.
-    """
-    for key, ft in features.items():
-        norm_mode = norm_map.get(ft.type, NormalizationMode.IDENTITY)
-        if norm_mode is NormalizationMode.IDENTITY:
-            continue
-
-        shape: tuple[int, ...] = tuple(ft.shape)
-        if ft.type is FeatureType.VISUAL:
-            # reduce spatial dimensions, keep channel dimension only
-            c, *_ = shape
-            shape = (c, 1, 1)
-
-        prefix = key.replace(".", "_")
-
-        if norm_mode is NormalizationMode.MEAN_STD:
-            mean = torch.full(shape, torch.inf, dtype=torch.float32)
-            std = torch.full(shape, torch.inf, dtype=torch.float32)
-
-            if stats and key in stats and "mean" in stats[key] and "std" in stats[key]:
-                mean_data = stats[key]["mean"]
-                std_data = stats[key]["std"]
-                if isinstance(mean_data, np.ndarray):
-                    mean = torch.from_numpy(mean_data).to(dtype=torch.float32)
-                    std = torch.from_numpy(std_data).to(dtype=torch.float32)
-                elif isinstance(mean_data, torch.Tensor):
-                    mean = mean_data.clone().to(dtype=torch.float32)
-                    std = std_data.clone().to(dtype=torch.float32)
-                else:
-                    raise ValueError(f"Unsupported stats type for key '{key}' (expected ndarray or Tensor).")
-
-            module.register_buffer(f"{prefix}_mean", mean)
-            module.register_buffer(f"{prefix}_std", std)
-            continue
-
-        if norm_mode is NormalizationMode.MIN_MAX:
-            min_val = torch.full(shape, torch.inf, dtype=torch.float32)
-            max_val = torch.full(shape, torch.inf, dtype=torch.float32)
-
-            if stats and key in stats and "min" in stats[key] and "max" in stats[key]:
-                min_data = stats[key]["min"]
-                max_data = stats[key]["max"]
-                if isinstance(min_data, np.ndarray):
-                    min_val = torch.from_numpy(min_data).to(dtype=torch.float32)
-                    max_val = torch.from_numpy(max_data).to(dtype=torch.float32)
-                elif isinstance(min_data, torch.Tensor):
-                    min_val = min_data.clone().to(dtype=torch.float32)
-                    max_val = max_data.clone().to(dtype=torch.float32)
-                else:
-                    raise ValueError(f"Unsupported stats type for key '{key}' (expected ndarray or Tensor).")
-
-            module.register_buffer(f"{prefix}_min", min_val)
-            module.register_buffer(f"{prefix}_max", max_val)
-            continue
-
-        raise ValueError(norm_mode)
 
 
 class Normalize(nn.Module):
@@ -338,6 +252,73 @@ class Unnormalize(nn.Module):
             else:
                 raise ValueError(norm_mode)
         return batch
+
+
+def _initialize_stats_buffers(
+    module: nn.Module,
+    features: dict[str, PolicyFeature],
+    norm_map: dict[str, NormalizationMode],
+    stats: dict[str, dict[str, Tensor]] | None = None,
+) -> None:
+    """Register statistics buffers (mean/std or min/max) on the given *module*.
+
+    The logic matches the previous constructors of `NormalizeBuffer` and `UnnormalizeBuffer`,
+    but is factored out so it can be reused by both classes and stay in sync.
+    """
+    for key, ft in features.items():
+        norm_mode = norm_map.get(ft.type, NormalizationMode.IDENTITY)
+        if norm_mode is NormalizationMode.IDENTITY:
+            continue
+
+        shape: tuple[int, ...] = tuple(ft.shape)
+        if ft.type is FeatureType.VISUAL:
+            # reduce spatial dimensions, keep channel dimension only
+            c, *_ = shape
+            shape = (c, 1, 1)
+
+        prefix = key.replace(".", "_")
+
+        if norm_mode is NormalizationMode.MEAN_STD:
+            mean = torch.full(shape, torch.inf, dtype=torch.float32)
+            std = torch.full(shape, torch.inf, dtype=torch.float32)
+
+            if stats and key in stats and "mean" in stats[key] and "std" in stats[key]:
+                mean_data = stats[key]["mean"]
+                std_data = stats[key]["std"]
+                if isinstance(mean_data, np.ndarray):
+                    mean = torch.from_numpy(mean_data).to(dtype=torch.float32)
+                    std = torch.from_numpy(std_data).to(dtype=torch.float32)
+                elif isinstance(mean_data, torch.Tensor):
+                    mean = mean_data.clone().to(dtype=torch.float32)
+                    std = std_data.clone().to(dtype=torch.float32)
+                else:
+                    raise ValueError(f"Unsupported stats type for key '{key}' (expected ndarray or Tensor).")
+
+            module.register_buffer(f"{prefix}_mean", mean)
+            module.register_buffer(f"{prefix}_std", std)
+            continue
+
+        if norm_mode is NormalizationMode.MIN_MAX:
+            min_val = torch.full(shape, torch.inf, dtype=torch.float32)
+            max_val = torch.full(shape, torch.inf, dtype=torch.float32)
+
+            if stats and key in stats and "min" in stats[key] and "max" in stats[key]:
+                min_data = stats[key]["min"]
+                max_data = stats[key]["max"]
+                if isinstance(min_data, np.ndarray):
+                    min_val = torch.from_numpy(min_data).to(dtype=torch.float32)
+                    max_val = torch.from_numpy(max_data).to(dtype=torch.float32)
+                elif isinstance(min_data, torch.Tensor):
+                    min_val = min_data.clone().to(dtype=torch.float32)
+                    max_val = max_data.clone().to(dtype=torch.float32)
+                else:
+                    raise ValueError(f"Unsupported stats type for key '{key}' (expected ndarray or Tensor).")
+
+            module.register_buffer(f"{prefix}_min", min_val)
+            module.register_buffer(f"{prefix}_max", max_val)
+            continue
+
+        raise ValueError(norm_mode)
 
 
 class NormalizeBuffer(nn.Module):
