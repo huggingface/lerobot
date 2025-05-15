@@ -24,7 +24,6 @@ from ..config import TeleoperatorConfig
 class HomonculusGloveConfig(TeleoperatorConfig):
     port: str  # Port to connect to the glove
     baud_rate: int = 115_200
-    buffer_size: int = 10  # Number of past values to keep in memory
 
 
 @TeleoperatorConfig.register_subclass("homonculus_arm")
@@ -32,4 +31,3 @@ class HomonculusGloveConfig(TeleoperatorConfig):
 class HomonculusArmConfig(TeleoperatorConfig):
     port: str  # Port to connect to the arm
     baud_rate: int = 115_200
-    buffer_size: int = 10  # Number of past values to keep in memory
