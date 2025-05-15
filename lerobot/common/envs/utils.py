@@ -81,35 +81,6 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
     return return_observations
 
 
-class ObservationProcessorWrapper(gym.vector.VectorEnvWrapper):
-    def __init__(self, env: gym.vector.VectorEnv):
-        super().__init__(env)
-
-    def _observations(self, observations: dict[str, Any]) -> dict[str, Any]:
-        return preprocess_observation(observations)
-
-    def reset(
-        self,
-        *,
-        seed: int | list[int] | None = None,
-        options: dict[str, Any] | None = None,
-    ):
-        """Modifies the observation returned from the environment ``reset`` using the :meth:`observation`."""
-        observations, infos = self.env.reset(seed=seed, options=options)
-        return self._observations(observations), infos
-
-    def step(self, actions):
-        """Modifies the observation returned from the environment ``step`` using the :meth:`observation`."""
-        observations, rewards, terminations, truncations, infos = self.env.step(actions)
-        return (
-            self._observations(observations),
-            rewards,
-            terminations,
-            truncations,
-            infos,
-        )
-
-
 def env_to_policy_features(env_cfg: EnvConfig) -> dict[str, PolicyFeature]:
     # TODO(aliberts, rcadene): remove this hardcoding of keys and just use the nested keys as is
     # (need to also refactor preprocess_observation and externalize normalization from policies)
