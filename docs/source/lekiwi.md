@@ -80,6 +80,7 @@ python lerobot/scripts/control_robot.py \
 > **NOTE:** To visualize the data, enable `--control.display_data=true`. This streams the data using `rerun`. For the `--control.type=remote_robot` you will also need to set `--control.viewer_ip` and `--control.viewer_port`
 
 You should see on your laptop something like this: ```[INFO] Connected to remote robot at tcp://172.17.133.91:5555 and video stream at tcp://172.17.133.91:5556.``` Now you can move the leader arm and use the keyboard (w,a,s,d) to drive forward, left, backwards, right. And use (z,x) to turn left or turn right. You can use (r,f) to increase and decrease the speed of the mobile robot. There are three speed modes, see the table below:
+
 | Speed Mode | Linear Speed (m/s) | Rotation Speed (deg/s) |
 | ---------- | ------------------ | ---------------------- |
 | Fast       | 0.4                | 90                     |
