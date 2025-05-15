@@ -254,6 +254,8 @@ class Unnormalize(nn.Module):
         return batch
 
 
+# TODO: We should replace all normalization on the policies with register_buffer normalization
+#       and remove the `Normalize` and `Unnormalize` classes.
 def _initialize_stats_buffers(
     module: nn.Module,
     features: dict[str, PolicyFeature],
