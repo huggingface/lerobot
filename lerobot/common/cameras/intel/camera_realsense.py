@@ -440,7 +440,7 @@ class RealSenseCamera(Camera):
         depth_frame = frame.get_depth_frame()
         depth_map = np.asanyarray(depth_frame.get_data())
 
-        depth_map_processed = self._postprocess_image(depth_map)
+        depth_map_processed = self._postprocess_image(depth_map, depth_frame=True)
 
         read_duration_ms = (time.perf_counter() - start_time) * 1e3
         logger.debug(f"{self} synchronous read took: {read_duration_ms:.1f}ms")
@@ -493,7 +493,9 @@ class RealSenseCamera(Camera):
         self.logs["timestamp_utc"] = capture_timestamp_utc()
         return color_image_processed
 
-    def _postprocess_image(self, image: np.ndarray, color_mode: ColorMode | None = None) -> np.ndarray:
+    def _postprocess_image(
+        self, image: np.ndarray, color_mode: ColorMode | None = None, depth_frame: bool = False
+    ) -> np.ndarray:
         """
         Applies color conversion, dimension validation, and rotation to a raw color frame.
 
@@ -516,15 +518,18 @@ class RealSenseCamera(Camera):
                 f"Invalid requested color mode '{color_mode}'. Expected {ColorMode.RGB} or {ColorMode.BGR}."
             )
 
-        h, w, c = image.shape
+        if depth_frame:
+            h, w = image.shape
+        else:
+            h, w, c = image.shape
+            if c != self.channels:
+                logger.warning(
+                    f"Captured frame channels ({c}) do not match configured channels ({self.channels}) for {self}."
+                )
 
         if h != self.prerotated_height or w != self.prerotated_width:
             raise RuntimeError(
                 f"Captured frame dimensions ({h}x{w}) do not match configured capture dimensions ({self.prerotated_height}x{self.prerotated_width}) for {self}."
-            )
-        if c != self.channels:
-            logger.warning(
-                f"Captured frame channels ({c}) do not match configured channels ({self.channels}) for {self}."
             )
 
         processed_image = image
