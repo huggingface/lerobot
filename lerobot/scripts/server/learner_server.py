@@ -14,6 +14,66 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""
+Learner server runner for distributed HILSerl robot policy training.
+
+This script implements the learner component of the distributed HILSerl architecture.
+It initializes the policy network, maintains replay buffers, and updates
+the policy based on transitions received from the actor server.
+
+Examples of usage:
+
+- Start a learner server for training:
+```bash
+python lerobot/scripts/server/learner_server.py --config_path lerobot/configs/train_config_hilserl_so100.json
+```
+
+- Run with specific SAC hyperparameters:
+```bash
+python lerobot/scripts/server/learner_server.py \
+    --config_path lerobot/configs/train_config_hilserl_so100.json \
+    --learner.sac.alpha=0.1 \
+    --learner.sac.gamma=0.99
+```
+
+- Run with a specific dataset and wandb logging:
+```bash
+python lerobot/scripts/server/learner_server.py \
+    --config_path lerobot/configs/train_config_hilserl_so100.json \
+    --dataset.repo_id=username/pick_lift_cube \
+    --wandb.enable=true \
+    --wandb.project=hilserl_training
+```
+
+- Run with a pretrained policy for fine-tuning:
+```bash
+python lerobot/scripts/server/learner_server.py \
+    --config_path lerobot/configs/train_config_hilserl_so100.json \
+    --pretrained_policy_name_or_path=outputs/previous_training/checkpoints/080000/pretrained_model
+```
+
+- Run with a reward classifier model:
+```bash
+python lerobot/scripts/server/learner_server.py \
+    --config_path lerobot/configs/train_config_hilserl_so100.json \
+    --reward_classifier_pretrained_path=outputs/reward_model/best_model
+```
+
+**NOTE**: Start the learner server before launching the actor server. The learner opens a gRPC server
+to communicate with actors.
+
+**NOTE**: Training progress can be monitored through Weights & Biases if wandb.enable is set to true
+in your configuration.
+
+**WORKFLOW**:
+1. Create training configuration with proper policy, dataset, and environment settings
+2. Start this learner server with the configuration
+3. Start an actor server with the same configuration
+4. Monitor training progress through wandb dashboard
+
+For more details on the complete HILSerl training workflow, see:
+https://github.com/michel-aractingi/lerobot-hilserl-guide
+"""
 
 import logging
 import os

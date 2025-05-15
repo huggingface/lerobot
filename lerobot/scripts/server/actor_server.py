@@ -13,6 +13,61 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""
+Actor server runner for distributed HILSerl robot policy training.
+
+This script implements the actor component of the distributed HILSerl architecture.
+It executes the policy in the robot environment, collects experience,
+and sends transitions to the learner server for policy updates.
+
+Examples of usage:
+
+- Start an actor server for real robot training with human-in-the-loop intervention:
+```bash
+python lerobot/scripts/server/actor_server.py --config_path lerobot/configs/train_config_hilserl_so100.json
+```
+
+- Run with a specific robot type for a pick and place task:
+```bash
+python lerobot/scripts/server/actor_server.py \
+    --config_path lerobot/configs/train_config_hilserl_so100.json \
+    --robot.type=so100 \
+    --task=pick_and_place
+```
+
+- Set a custom workspace bound for the robot's end-effector:
+```bash
+python lerobot/scripts/server/actor_server.py \
+    --config_path lerobot/configs/train_config_hilserl_so100.json \
+    --env.ee_action_space_params.bounds.max="[0.24, 0.20, 0.10]" \
+    --env.ee_action_space_params.bounds.min="[0.16, -0.08, 0.03]"
+```
+
+- Run with specific camera crop parameters:
+```bash
+python lerobot/scripts/server/actor_server.py \
+    --config_path lerobot/configs/train_config_hilserl_so100.json \
+    --env.crop_params_dict="{'observation.images.side': [180, 207, 180, 200], 'observation.images.front': [180, 250, 120, 150]}"
+```
+
+**NOTE**: The actor server requires a running learner server to connect to. Ensure the learner
+server is started before launching the actor.
+
+**NOTE**: Human intervention is key to HILSerl training. Press the upper right trigger button on the
+gamepad to take control of the robot during training. Initially intervene frequently, then gradually
+reduce interventions as the policy improves.
+
+**WORKFLOW**:
+1. Determine robot workspace bounds using `find_joint_limits.py`
+2. Record demonstrations with `gym_manipulator.py` in record mode
+3. Process the dataset and determine camera crops with `crop_dataset_roi.py`
+4. Start the learner server with the training configuration
+5. Start this actor server with the same configuration
+6. Use human interventions to guide policy learning
+
+For more details on the complete HILSerl training workflow, see:
+https://github.com/michel-aractingi/lerobot-hilserl-guide
+"""
 
 import logging
 import os
