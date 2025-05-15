@@ -256,19 +256,8 @@ def control_loop(
     if dataset is not None and fps is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset['fps']} != {fps}).")
 
-    timestamp = 0
-    start_episode_t = time.perf_counter()
-
-    if (
-        dataset is not None and not robot.robot_type.startswith("lekiwi")
-    ):  # For now, LeKiwi only supports frame audio recording (which may lead to audio chunks loss, extended post-processing, increased memory usage)
-        dataset.add_microphones_recordings(robot.microphones)
-
-    else:
-        # Start recording only in data reading mode
-        async_microphones_start_recording(robot.microphones)
-
     # Create a buffer for audio observations (shifting window of fixed size over audio samples)
+    # TODO(CarolinePascal): Fill buffers with actual recordings by starting to record audio earlier and add a start_timestamp parameter for camera/microphone synchronization
     audio_buffer = {
         f"observation.audio.{microphone_name}": torch.zeros(
             (int(microphone.sample_rate * DEFAULT_AUDIO_CHUNK_DURATION), len(microphone.channels))
@@ -301,7 +290,18 @@ def control_loop(
             default_blueprint=blueprint,
         )
         rr.set_time_seconds("episode_time", seconds=0.0)
-        rerun_start_time = time.perf_counter()
+
+    timestamp = 0
+    start_episode_t = time.perf_counter()
+
+    if (
+        dataset is not None and not robot.robot_type.startswith("lekiwi")
+    ):  # For now, LeKiwi only supports frame audio recording (which may lead to audio chunks loss, extended post-processing, increased memory usage)
+        dataset.add_microphones_recordings(robot.microphones)
+
+    else:
+        # Start recording only in data reading mode
+        async_microphones_start_recording(robot.microphones)
 
     while timestamp < control_time_s:
         start_loop_t = time.perf_counter()
@@ -316,10 +316,13 @@ def control_loop(
                 # Transform instantaneous audio samples into a buffer of fixed size
                 buffered_observation = copy(observation)
                 for name in audio_buffer:
+                    buffer_size = audio_buffer[name].shape[0]
                     # Remove as many old audio samples as needed
                     audio_buffer[name] = audio_buffer[name][len(buffered_observation[name]) :]
-                    # Add new audio samples
-                    audio_buffer[name] = torch.cat((audio_buffer[name], buffered_observation[name]), dim=0)
+                    # Add new audio samples, only the newest if the buffer is already full
+                    audio_buffer[name] = torch.cat(
+                        (audio_buffer[name], buffered_observation[name][-buffer_size:]), dim=0
+                    )
                     # Add the audio buffer to the observation
                     buffered_observation[name] = audio_buffer[name]
 
@@ -340,7 +343,7 @@ def control_loop(
 
         # TODO(Steven): This should be more general (for RemoteRobot instead of checking the name, but anyways it will change soon)
         if (display_data and not is_headless()) or (display_data and robot.robot_type.startswith("lekiwi")):
-            rerun_current_time = time.perf_counter() - rerun_start_time
+            rerun_current_time = time.perf_counter() - start_episode_t
             rr.set_time_seconds("episode_time", seconds=rerun_current_time)
 
             if action is not None:
