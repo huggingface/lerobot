@@ -327,12 +327,6 @@ def record_loop(
         preprocessor.reset()
         postprocessor.reset()
 
-    if dataset is not None and robot.name != "lekiwi":
-        for microphone_key, microphone in robot.microphones.items():
-            dataset.add_microphone_recording(microphone, microphone_key)
-    else:
-        async_microphones_start_recording(robot.microphones)
-
     # Create a buffer for audio observations (shifting window of fixed size over audio samples)
     audio_buffer = {
         microphone_name: np.zeros(
@@ -340,6 +334,14 @@ def record_loop(
         )
         for microphone_name, microphone in robot.microphones.items()
     }
+
+    if (
+        dataset is not None and robot.name != "lekiwi"
+    ):  # For now, LeKiwi only supports frame audio recording (which may lead to audio chunks loss, extended post-processing, increased memory usage)
+        for microphone_key, microphone in robot.microphones.items():
+            dataset.add_microphone_recording(microphone, microphone_key)
+    else:
+        async_microphones_start_recording(robot.microphones)
 
     timestamp = 0
     start_episode_t = time.perf_counter()
@@ -364,10 +366,13 @@ def record_loop(
             # Transform instantaneous audio samples into a buffer of fixed size
             buffered_observation_frame = copy(observation_frame)
             for name in audio_buffer:
+                buffer_size = audio_buffer[name].shape[0]
                 # Remove as many old audio samples as needed
                 audio_buffer[name] = audio_buffer[name][len(buffered_observation_frame[name]) :]
                 # Add new audio samples
-                audio_buffer[name] = np.vstack((audio_buffer[name], buffered_observation_frame[name]))
+                audio_buffer[name] = np.vstack(
+                    (audio_buffer[name], buffered_observation_frame[name][-buffer_size:])
+                )
                 # Add the audio buffer to the observation
                 buffered_observation_frame[name] = audio_buffer[name]
 
@@ -427,7 +432,10 @@ def record_loop(
 
         if display_data:
             log_rerun_data(
-                observation=obs_processed, action=action_values, compress_images=display_compressed_images
+                observation=obs_processed,
+                action=action_values,
+                compress_images=display_compressed_images,
+                log_time=time.perf_counter() - start_episode_t,
             )
 
         dt_s = time.perf_counter() - start_loop_t
