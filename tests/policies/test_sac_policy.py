@@ -9,6 +9,13 @@ from lerobot.common.policies.sac.modeling_sac import MLP, SACPolicy
 from lerobot.common.utils.random_utils import seeded_context
 from lerobot.configs.types import FeatureType, PolicyFeature
 
+try:
+    import transformers  # noqa: F401
+
+    TRANSFORMERS_AVAILABLE = True
+except ImportError:
+    TRANSFORMERS_AVAILABLE = False
+
 
 def test_mlp_with_default_args():
     mlp = MLP(input_dim=10, hidden_dims=[256, 256])
@@ -274,6 +281,7 @@ def test_sac_policy_with_visual_input(batch_size: int, state_dim: int, action_di
     "batch_size,state_dim,action_dim,vision_encoder_name",
     [(1, 6, 6, "helper2424/resnet10"), (1, 6, 6, "facebook/convnext-base-224")],
 )
+@pytest.mark.skipif(not TRANSFORMERS_AVAILABLE, reason="Transformers are not installed")
 def test_sac_policy_with_pretrained_encoder(
     batch_size: int, state_dim: int, action_dim: int, vision_encoder_name: str
 ):
