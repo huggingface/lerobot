@@ -257,8 +257,8 @@ class TimerManager:
     def __init__(
         self,
         label: str = "Elapsed-time",
-        log: bool = True,  # keep b-compat with current code
-        logger: logging.Logger | None = None,  # NEW
+        log: bool = True,
+        logger: logging.Logger | None = None,
     ):
         self.label = label
         self.log = log
