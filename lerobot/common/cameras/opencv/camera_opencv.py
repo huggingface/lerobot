@@ -198,7 +198,7 @@ class OpenCVCamera(Camera):
             self.videocapture_camera = None
             raise ConnectionError(
                 f"Failed to open OpenCV camera {self.index_or_path}."
-                f"Run 'python -m find_cameras list-cameras' for details."
+                f"Run 'python -m lerobot/find_cameras list-cameras' for details."
             )
 
         logger.debug(f"Successfully opened camera {self.index_or_path}. Applying configuration...")

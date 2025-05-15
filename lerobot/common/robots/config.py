@@ -31,7 +31,7 @@ class RobotConfig(draccus.ChoiceRegistry, abc.ABC):
             cameras = self.cameras
             if cameras:
                 for cam_name, cam_config in cameras.items():
-                    for attr in ["width", "height", "fps"]:
+                    for attr in ["width", "height"]:
                         if getattr(cam_config, attr) is None:
                             raise ValueError(
                                 f"Camera config for '{cam_name}' has None value for required attribute '{attr}'"
