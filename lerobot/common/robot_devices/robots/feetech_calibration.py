@@ -149,6 +149,8 @@ def apply_offset(calib, offset):
 def run_arm_auto_calibration(arm: MotorsBus, robot_type: str, arm_name: str, arm_type: str):
     if robot_type == "so100":
         return run_arm_auto_calibration_so100(arm, robot_type, arm_name, arm_type)
+    elif robot_type == "so100_shared_port":
+        return run_arm_auto_calibration_so100(arm, robot_type, arm_name, arm_type)
     elif robot_type == "moss":
         return run_arm_auto_calibration_moss(arm, robot_type, arm_name, arm_type)
     else:
