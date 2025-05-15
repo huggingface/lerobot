@@ -16,7 +16,6 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
-from typing import Literal
 
 from lerobot.common.optim.optimizers import MultiAdamConfig
 from lerobot.configs.policies import PreTrainedConfig
@@ -25,8 +24,14 @@ from lerobot.configs.types import NormalizationMode
 
 @dataclass
 class ConcurrencyConfig:
-    actor: Literal["threads", "processes"] = "threads"
-    learner: Literal["threads", "processes"] = "threads"
+    """Configuration for the concurrency of the actor and learner.
+    Possible values are:
+    - "threads": Use threads for the actor and learner.
+    - "processes": Use processes for the actor and learner.
+    """
+
+    actor: str = "threads"
+    learner: str = "threads"
 
 
 @dataclass
@@ -174,7 +179,7 @@ class SACConfig(PreTrainedConfig):
     discrete_critic_network_kwargs: CriticNetworkConfig = field(default_factory=CriticNetworkConfig)
     # Configuration for actor-learner architecture
     actor_learner_config: ActorLearnerConfig = field(default_factory=ActorLearnerConfig)
-    # Configuration for concurrency settings
+    # Configuration for concurrency settings (you can use threads or processes for the actor and learner)
     concurrency: ConcurrencyConfig = field(default_factory=ConcurrencyConfig)
 
     # Optimizations
