@@ -87,7 +87,7 @@ class RecordControlConfig(ControlConfig):
     play_sounds: bool = True
     # Resume recording on an existing dataset.
     resume: bool = False
-    # Reset follower arms to an initial configuration.
+    # Reset follower arms to an initial position.
     reset_follower_arms: bool = False
 
     def __post_init__(self):
