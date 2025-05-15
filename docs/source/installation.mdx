@@ -55,7 +55,7 @@ conda install ffmpeg -c conda-forge
 
 Install 🤗 LeRobot:
 ```bash
-cd lerobot && pip install ".[feetech]"
+cd lerobot && pip install
 ```
 
 ## Troubleshooting
@@ -76,6 +76,22 @@ For instance, to install 🤗 LeRobot with aloha and pusht, use:
 ```bash
 pip install -e ".[aloha, pusht]"
 ```
+
+## Motor SDK
+For Koch v1.1 install the Dynamixel sdk, for SO100/SO101/Moss install the Feetech sdk.
+
+<hfoptions id="install motors">
+<hfoption id="Feetech">
+```bash
+pip install -e ".[feetech]"
+```
+</hfoption>
+<hfoption id="Dynamixel">
+```bash
+pip install -e ".[dynamixel]"
+```
+</hfoption>
+</hfoptions>
 
 ## W&B
 To use [Weights and Biases](https://docs.wandb.ai/quickstart) for experiment tracking, log in with
