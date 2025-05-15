@@ -30,7 +30,7 @@ class MotorsBus(Protocol):
     def write(self): ...
 
 
-def make_motors_buses_from_configs(motors_bus_configs: dict[str, MotorsBusConfig]) -> list[MotorsBus]:
+def make_motors_buses_from_configs(motors_bus_configs: dict[str, MotorsBusConfig], reuse_port=None) -> list[MotorsBus]:
     motors_buses = {}
 
     for key, cfg in motors_bus_configs.items():
@@ -41,14 +41,15 @@ def make_motors_buses_from_configs(motors_bus_configs: dict[str, MotorsBusConfig
 
         elif cfg.type == "feetech":
             from lerobot.common.robot_devices.motors.feetech import FeetechMotorsBus
-
-            motors_buses[key] = FeetechMotorsBus(cfg)
+            if reuse_port is not None:
+                motors_buses[key] = FeetechMotorsBus(cfg, reuse_port=reuse_port)
+            else:
+                motors_buses[key] = FeetechMotorsBus(cfg)
 
         else:
             raise ValueError(f"The motor type '{cfg.type}' is not valid.")
 
     return motors_buses
-
 
 def make_motors_bus(motor_type: str, **kwargs) -> MotorsBus:
     if motor_type == "dynamixel":
