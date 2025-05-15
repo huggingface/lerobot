@@ -289,7 +289,10 @@ def control_loop(
             break
 
 
-def reset_environment(robot, events, reset_time_s, fps):
+def reset_environment(robot, events, reset_time_s, fps, policy):
+    if policy is not None:
+        policy._action_queue.clear()
+
     # TODO(rcadene): refactor warmup_record and reset_environment
     if has_method(robot, "teleop_safety_stop"):
         robot.teleop_safety_stop()
