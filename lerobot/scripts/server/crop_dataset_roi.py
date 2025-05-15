@@ -203,6 +203,7 @@ def convert_lerobot_dataset_to_cropper_lerobot_dataset(
         if key in new_dataset.meta.info["features"]:
             new_dataset.meta.info["features"][key]["shape"] = [3] + list(resize_size)
 
+    # TODO:  Directly modify the mp4 video + meta info features, instead of recreating a dataset
     prev_episode_index = 0
     for frame_idx in tqdm(range(len(original_dataset))):
         frame = original_dataset[frame_idx]

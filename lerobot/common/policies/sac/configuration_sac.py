@@ -24,6 +24,12 @@ from lerobot.configs.types import NormalizationMode
 
 @dataclass
 class ConcurrencyConfig:
+    """Configuration for the concurrency of the actor and learner.
+    Possible values are:
+    - "threads": Use threads for the actor and learner.
+    - "processes": Use processes for the actor and learner.
+    """
+
     actor: str = "threads"
     learner: str = "threads"
 
@@ -68,51 +74,9 @@ class SACConfig(PreTrainedConfig):
     This configuration class contains all the parameters needed to define a SAC agent,
     including network architectures, optimization settings, and algorithm-specific
     hyperparameters.
-
-    Args:
-        actor_network_kwargs: Configuration for the actor network architecture.
-        critic_network_kwargs: Configuration for the critic network architecture.
-        discrete_critic_network_kwargs: Configuration for the discrete critic network.
-        policy_kwargs: Configuration for the policy parameters.
-        n_obs_steps: Number of observation steps to consider.
-        normalization_mapping: Mapping of feature types to normalization modes.
-        dataset_stats: Statistics for normalizing different types of inputs.
-        input_features: Dictionary of input features with their types and shapes.
-        output_features: Dictionary of output features with their types and shapes.
-        camera_number: Number of cameras used for visual observations.
-        device: Device to run the model on (e.g., "cuda", "cpu").
-        storage_device: Device to store the model on.
-        vision_encoder_name: Name of the vision encoder model.
-        freeze_vision_encoder: Whether to freeze the vision encoder during training.
-        image_encoder_hidden_dim: Hidden dimension size for the image encoder.
-        shared_encoder: Whether to use a shared encoder for actor and critic.
-        num_discrete_actions: Number of discrete actions, eg for gripper actions.
-        image_embedding_pooling_dim: Dimension of the image embedding pooling.
-        concurrency: Configuration for concurrency settings.
-        actor_learner_config: Configuration for actor-learner architecture.
-        online_steps: Number of steps for online training.
-        online_env_seed: Seed for the online environment.
-        online_buffer_capacity: Capacity of the online replay buffer.
-        offline_buffer_capacity: Capacity of the offline replay buffer.
-        async_prefetch: Whether to use asynchronous prefetching for the buffers.
-        online_step_before_learning: Number of steps before learning starts.
-        policy_update_freq: Frequency of policy updates.
-        discount: Discount factor for the SAC algorithm.
-        temperature_init: Initial temperature value.
-        num_critics: Number of critics in the ensemble.
-        num_subsample_critics: Number of subsampled critics for training.
-        critic_lr: Learning rate for the critic network.
-        actor_lr: Learning rate for the actor network.
-        temperature_lr: Learning rate for the temperature parameter.
-        critic_target_update_weight: Weight for the critic target update.
-        utd_ratio: Update-to-data ratio for the UTD algorithm.
-        state_encoder_hidden_dim: Hidden dimension size for the state encoder.
-        latent_dim: Dimension of the latent space.
-        target_entropy: Target entropy for the SAC algorithm.
-        use_backup_entropy: Whether to use backup entropy for the SAC algorithm.
-        grad_clip_norm: Gradient clipping norm for the SAC algorithm.
     """
 
+    # Mapping of feature types to normalization modes
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.MEAN_STD,
@@ -122,6 +86,7 @@ class SACConfig(PreTrainedConfig):
         }
     )
 
+    # Statistics for normalizing different types of inputs
     dataset_stats: dict[str, dict[str, list[float]]] | None = field(
         default_factory=lambda: {
             "observation.image": {
@@ -140,47 +105,81 @@ class SACConfig(PreTrainedConfig):
     )
 
     # Architecture specifics
+    # Device to run the model on (e.g., "cuda", "cpu")
     device: str = "cpu"
+    # Device to store the model on
     storage_device: str = "cpu"
-    # Set to "helper2424/resnet10" for hil serl
+    # Name of the vision encoder model (Set to "helper2424/resnet10" for hil serl resnet10)
     vision_encoder_name: str | None = None
+    # Whether to freeze the vision encoder during training
     freeze_vision_encoder: bool = True
+    # Hidden dimension size for the image encoder
     image_encoder_hidden_dim: int = 32
+    # Whether to use a shared encoder for actor and critic
     shared_encoder: bool = True
+    # Number of discrete actions, eg for gripper actions
     num_discrete_actions: int | None = None
+    # Dimension of the image embedding pooling
     image_embedding_pooling_dim: int = 8
 
     # Training parameter
+    # Number of steps for online training
     online_steps: int = 1000000
+    # Seed for the online environment
     online_env_seed: int = 10000
+    # Capacity of the online replay buffer
     online_buffer_capacity: int = 100000
+    # Capacity of the offline replay buffer
     offline_buffer_capacity: int = 100000
+    # Whether to use asynchronous prefetching for the buffers
     async_prefetch: bool = False
+    # Number of steps before learning starts
     online_step_before_learning: int = 100
+    # Frequency of policy updates
     policy_update_freq: int = 1
 
     # SAC algorithm parameters
+    # Discount factor for the SAC algorithm
     discount: float = 0.99
+    # Initial temperature value
     temperature_init: float = 1.0
+    # Number of critics in the ensemble
     num_critics: int = 2
+    # Number of subsampled critics for training
     num_subsample_critics: int | None = None
+    # Learning rate for the critic network
     critic_lr: float = 3e-4
+    # Learning rate for the actor network
     actor_lr: float = 3e-4
+    # Learning rate for the temperature parameter
     temperature_lr: float = 3e-4
+    # Weight for the critic target update
     critic_target_update_weight: float = 0.005
-    utd_ratio: int = 1  # If you want enable utd_ratio, you need to set it to >1
+    # Update-to-data ratio for the UTD algorithm (If you want enable utd_ratio, you need to set it to >1)
+    utd_ratio: int = 1
+    # Hidden dimension size for the state encoder
     state_encoder_hidden_dim: int = 256
+    # Dimension of the latent space
     latent_dim: int = 256
+    # Target entropy for the SAC algorithm
     target_entropy: float | None = None
+    # Whether to use backup entropy for the SAC algorithm
     use_backup_entropy: bool = True
+    # Gradient clipping norm for the SAC algorithm
     grad_clip_norm: float = 40.0
 
     # Network configuration
+    # Configuration for the critic network architecture
     critic_network_kwargs: CriticNetworkConfig = field(default_factory=CriticNetworkConfig)
+    # Configuration for the actor network architecture
     actor_network_kwargs: ActorNetworkConfig = field(default_factory=ActorNetworkConfig)
+    # Configuration for the policy parameters
     policy_kwargs: PolicyConfig = field(default_factory=PolicyConfig)
+    # Configuration for the discrete critic network
     discrete_critic_network_kwargs: CriticNetworkConfig = field(default_factory=CriticNetworkConfig)
+    # Configuration for actor-learner architecture
     actor_learner_config: ActorLearnerConfig = field(default_factory=ActorLearnerConfig)
+    # Configuration for concurrency settings (you can use threads or processes for the actor and learner)
     concurrency: ConcurrencyConfig = field(default_factory=ConcurrencyConfig)
 
     # Optimizations

@@ -13,13 +13,67 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""
+Actor server runner for distributed HILSerl robot policy training.
+
+This script implements the actor component of the distributed HILSerl architecture.
+It executes the policy in the robot environment, collects experience,
+and sends transitions to the learner server for policy updates.
+
+Examples of usage:
+
+- Start an actor server for real robot training with human-in-the-loop intervention:
+```bash
+python lerobot/scripts/server/actor_server.py --config_path lerobot/configs/train_config_hilserl_so100.json
+```
+
+- Run with a specific robot type for a pick and place task:
+```bash
+python lerobot/scripts/server/actor_server.py \
+    --config_path lerobot/configs/train_config_hilserl_so100.json \
+    --robot.type=so100 \
+    --task=pick_and_place
+```
+
+- Set a custom workspace bound for the robot's end-effector:
+```bash
+python lerobot/scripts/server/actor_server.py \
+    --config_path lerobot/configs/train_config_hilserl_so100.json \
+    --env.ee_action_space_params.bounds.max="[0.24, 0.20, 0.10]" \
+    --env.ee_action_space_params.bounds.min="[0.16, -0.08, 0.03]"
+```
+
+- Run with specific camera crop parameters:
+```bash
+python lerobot/scripts/server/actor_server.py \
+    --config_path lerobot/configs/train_config_hilserl_so100.json \
+    --env.crop_params_dict="{'observation.images.side': [180, 207, 180, 200], 'observation.images.front': [180, 250, 120, 150]}"
+```
+
+**NOTE**: The actor server requires a running learner server to connect to. Ensure the learner
+server is started before launching the actor.
+
+**NOTE**: Human intervention is key to HILSerl training. Press the upper right trigger button on the
+gamepad to take control of the robot during training. Initially intervene frequently, then gradually
+reduce interventions as the policy improves.
+
+**WORKFLOW**:
+1. Determine robot workspace bounds using `find_joint_limits.py`
+2. Record demonstrations with `gym_manipulator.py` in record mode
+3. Process the dataset and determine camera crops with `crop_dataset_roi.py`
+4. Start the learner server with the training configuration
+5. Start this actor server with the same configuration
+6. Use human interventions to guide policy learning
+
+For more details on the complete HILSerl training workflow, see:
+https://github.com/michel-aractingi/lerobot-hilserl-guide
+"""
 
 import logging
 import os
 import time
 from functools import lru_cache
 from queue import Empty
-from statistics import mean, quantiles
 
 import grpc
 import torch
@@ -65,10 +119,12 @@ ACTOR_SHUTDOWN_TIMEOUT = 30
 @parser.wrap()
 def actor_cli(cfg: TrainPipelineConfig):
     cfg.validate()
+    display_pid = False
     if not use_threads(cfg):
         import torch.multiprocessing as mp
 
         mp.set_start_method("spawn")
+        display_pid = True
 
     # Create logs directory to ensure it exists
     log_dir = os.path.join(cfg.output_dir, "logs")
@@ -76,7 +132,7 @@ def actor_cli(cfg: TrainPipelineConfig):
     log_file = os.path.join(log_dir, f"actor_{cfg.job_name}.log")
 
     # Initialize logging with explicit log file
-    init_logging(log_file=log_file)
+    init_logging(log_file=log_file, display_pid=display_pid)
     logging.info(f"Actor logging initialized, writing to {log_file}")
 
     shutdown_event = setup_process_handlers(use_threads(cfg))
@@ -193,7 +249,7 @@ def act_with_policy(
         log_dir = os.path.join(cfg.output_dir, "logs")
         os.makedirs(log_dir, exist_ok=True)
         log_file = os.path.join(log_dir, f"actor_policy_{os.getpid()}.log")
-        init_logging(log_file=log_file)
+        init_logging(log_file=log_file, display_pid=True)
         logging.info("Actor policy process logging initialized")
 
     logging.info("make_env online")
@@ -223,11 +279,12 @@ def act_with_policy(
     # NOTE: For the moment we will solely handle the case of a single environment
     sum_reward_episode = 0
     list_transition_to_send_to_learner = []
-    list_policy_time = []
     episode_intervention = False
     # Add counters for intervention rate calculation
     episode_intervention_steps = 0
     episode_total_steps = 0
+
+    policy_timer = TimerManager("Policy inference", log=False)
 
     for interaction_step in range(cfg.policy.online_steps):
         start_time = time.perf_counter()
@@ -237,13 +294,9 @@ def act_with_policy(
 
         if interaction_step >= cfg.policy.online_step_before_learning:
             # Time policy inference and check if it meets FPS requirement
-            with TimerManager(
-                elapsed_time_list=list_policy_time,
-                label="Policy inference time",
-                log=False,
-            ) as timer:  # noqa: F841
+            with policy_timer:
                 action = policy.select_action(batch=obs)
-            policy_fps = 1.0 / (list_policy_time[-1] + 1e-9)
+            policy_fps = policy_timer.fps_last
 
             log_policy_frequency_issue(policy_fps=policy_fps, cfg=cfg, interaction_step=interaction_step)
 
@@ -291,8 +344,8 @@ def act_with_policy(
                 )
                 list_transition_to_send_to_learner = []
 
-            stats = get_frequency_stats(list_policy_time)
-            list_policy_time.clear()
+            stats = get_frequency_stats(policy_timer)
+            policy_timer.reset()
 
             # Calculate intervention rate
             intervention_rate = 0.0
@@ -429,7 +482,7 @@ def receive_policy(
         log_file = os.path.join(log_dir, f"actor_receive_policy_{os.getpid()}.log")
 
         # Initialize logging with explicit log file
-        init_logging(log_file=log_file)
+        init_logging(log_file=log_file, display_pid=True)
         logging.info("Actor receive policy process logging initialized")
 
         # Setup process handlers to handle shutdown signal
@@ -484,7 +537,7 @@ def send_transitions(
         log_file = os.path.join(log_dir, f"actor_transitions_{os.getpid()}.log")
 
         # Initialize logging with explicit log file
-        init_logging(log_file=log_file)
+        init_logging(log_file=log_file, display_pid=True)
         logging.info("Actor transitions process logging initialized")
 
         # Setup process handlers to handle shutdown signal
@@ -533,7 +586,7 @@ def send_interactions(
         log_file = os.path.join(log_dir, f"actor_interactions_{os.getpid()}.log")
 
         # Initialize logging with explicit log file
-        init_logging(log_file=log_file)
+        init_logging(log_file=log_file, display_pid=True)
         logging.info("Actor interactions process logging initialized")
 
         # Setup process handlers to handle shutdown signal
@@ -632,25 +685,24 @@ def push_transitions_to_transport_queue(transitions: list, transitions_queue):
     transitions_queue.put(transitions_to_bytes(transition_to_send_to_learner))
 
 
-def get_frequency_stats(list_policy_time: list[float]) -> dict[str, float]:
+def get_frequency_stats(timer: TimerManager) -> dict[str, float]:
     """Get the frequency statistics of the policy.
 
     Args:
-        list_policy_time (list[float]): The list of policy times.
+        timer (TimerManager): The timer with collected metrics.
 
     Returns:
         dict[str, float]: The frequency statistics of the policy.
     """
     stats = {}
-    list_policy_fps = [1.0 / t for t in list_policy_time]
-    if len(list_policy_fps) > 1:
-        policy_fps = mean(list_policy_fps)
-        quantiles_90 = quantiles(list_policy_fps, n=10)[-1]
-        logging.debug(f"[ACTOR] Average policy frame rate: {policy_fps}")
-        logging.debug(f"[ACTOR] Policy frame rate 90th percentile: {quantiles_90}")
+    if timer.count > 1:
+        avg_fps = timer.fps_avg
+        p90_fps = timer.fps_percentile(90)
+        logging.debug(f"[ACTOR] Average policy frame rate: {avg_fps}")
+        logging.debug(f"[ACTOR] Policy frame rate 90th percentile: {p90_fps}")
         stats = {
-            "Policy frequency [Hz]": policy_fps,
-            "Policy frequency 90th-p [Hz]": quantiles_90,
+            "Policy frequency [Hz]": avg_fps,
+            "Policy frequency 90th-p [Hz]": p90_fps,
         }
     return stats
 

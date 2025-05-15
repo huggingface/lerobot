@@ -59,7 +59,6 @@ def test_sac_config_default_initialization():
     assert config.num_critics == 2
 
     # Architecture specifics
-    assert config.camera_number == 1
     assert config.vision_encoder_name is None
     assert config.freeze_vision_encoder is True
     assert config.image_encoder_hidden_dim == 32
