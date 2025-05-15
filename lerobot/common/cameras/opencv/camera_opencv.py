@@ -234,21 +234,22 @@ class OpenCVCamera(Camera):
     def _validate_width_and_height(self) -> None:
         """Validates and sets the camera's frame capture width and height."""
 
-        actual_width = int(round(self.videocapture_camera.get(cv2.CAP_PROP_FRAME_WIDTH)))
-        actual_height = int(round(self.videocapture_camera.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+        default_width = int(round(self.videocapture_camera.get(cv2.CAP_PROP_FRAME_WIDTH)))
+        default_height = int(round(self.videocapture_camera.get(cv2.CAP_PROP_FRAME_HEIGHT)))
 
         if self.width is None or self.height is None:
             if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
-                self.width, self.height = actual_height, actual_width
-                self.prerotated_width, self.prerotated_height = actual_width, actual_height
+                self.width, self.height = default_height, default_width
+                self.prerotated_width, self.prerotated_height = default_width, default_height
             else:
-                self.width, self.height = actual_width, actual_height
-                self.prerotated_width, self.prerotated_height = actual_width, actual_height
+                self.width, self.height = default_width, default_height
+                self.prerotated_width, self.prerotated_height = default_width, default_height
             logger.info(f"Capture width set to camera default: {self.width}.")
             logger.info(f"Capture height set to camera default: {self.height}.")
             return
 
         success = self.videocapture_camera.set(cv2.CAP_PROP_FRAME_WIDTH, float(self.prerotated_width))
+        actual_width = int(round(self.videocapture_camera.get(cv2.CAP_PROP_FRAME_WIDTH)))
         if not success or self.prerotated_width != actual_width:
             logger.warning(
                 f"Requested capture width {self.prerotated_width} for {self}, but camera reported {actual_width} (set success: {success})."
@@ -259,6 +260,7 @@ class OpenCVCamera(Camera):
         logger.debug(f"Capture width set to {actual_width} for {self}.")
 
         success = self.videocapture_camera.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self.prerotated_height))
+        actual_height = int(round(self.videocapture_camera.get(cv2.CAP_PROP_FRAME_HEIGHT)))
         if not success or self.prerotated_height != actual_height:
             logger.warning(
                 f"Requested capture height {self.prerotated_height} for {self}, but camera reported {actual_height} (set success: {success})."
