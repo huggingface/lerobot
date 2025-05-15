@@ -16,6 +16,7 @@
 
 import logging
 import time
+from itertools import chain
 from typing import Any
 
 from lerobot.common.cameras.utils import make_cameras_from_configs
@@ -182,6 +183,12 @@ class LeKiwi(Robot):
             self.bus.write("Operating_Mode", name, OperatingMode.VELOCITY.value)
 
         self.bus.enable_torque()
+
+    def setup_motors(self) -> None:
+        for motor in chain(reversed(self.arm_motors), reversed(self.base_motors)):
+            input(f"Connect the controller board to the '{motor}' motor only and press enter.")
+            self.bus.setup_motor(motor)
+            print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
 
     def get_observation(self) -> dict[str, Any]:
         if not self.is_connected:

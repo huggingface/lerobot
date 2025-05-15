@@ -30,10 +30,9 @@ import cv2
 import numpy as np
 
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from lerobot.common.utils.utils import capture_timestamp_utc
 
 from ..camera import Camera
-from ..utils import IndexOrPath, get_cv2_backend, get_cv2_rotation
+from ..utils import get_cv2_backend, get_cv2_rotation
 from .configuration_opencv import ColorMode, OpenCVCameraConfig
 
 # NOTE(Steven): The maximum opencv device index depends on your operating system. For instance,
@@ -59,20 +58,16 @@ class OpenCVCamera(Camera):
     or port changes, especially on Linux. Use the provided utility script to find
     available camera indices or paths:
     ```bash
-    python -m lerobot.find_cameras
+    python -m lerobot.find_cameras opencv
     ```
 
     The camera's default settings (FPS, resolution, color mode) are used unless
     overridden in the configuration.
 
-    Args:
-        config (OpenCVCameraConfig): Configuration object containing settings like
-            camera index/path, desired FPS, width, height, color mode, and rotation.
-
     Example:
         ```python
         from lerobot.common.cameras.opencv import OpenCVCamera
-        from lerobot.common.cameras.configuration_opencv import OpenCVCameraConfig, ColorMode
+        from lerobot.common.cameras.configuration_opencv import OpenCVCameraConfig, ColorMode, Cv2Rotation
 
         # Basic usage with camera index 0
         config = OpenCVCameraConfig(index_or_path=0)
@@ -97,7 +92,7 @@ class OpenCVCamera(Camera):
             width=1280,
             height=720,
             color_mode=ColorMode.RGB,
-            rotation=90
+            rotation=Cv2Rotation.ROTATE_90
         )
         custom_camera = OpenCVCamera(custom_config)
         # ... connect, read, disconnect ...
@@ -114,37 +109,79 @@ class OpenCVCamera(Camera):
         super().__init__(config)
 
         self.config = config
-        self.index_or_path: IndexOrPath = config.index_or_path
+        self.index_or_path = config.index_or_path
 
-        self.fps: int | None = config.fps
-        self.channels: int = config.channels
-        self.color_mode: ColorMode = config.color_mode
+        self.fps = config.fps
+        self.color_mode = config.color_mode
+        self.warmup_time = config.warmup_time
 
-        self.videocapture_camera: cv2.VideoCapture | None = None
+        self.videocapture: cv2.VideoCapture | None = None
 
         self.thread: Thread | None = None
         self.stop_event: Event | None = None
         self.frame_queue: queue.Queue = queue.Queue(maxsize=1)
 
-        self.logs: dict = {}  # NOTE(Steven): Might be removed in the future
-
         self.rotation: int | None = get_cv2_rotation(config.rotation)
-        self.backend: int = get_cv2_backend()  # NOTE(Steven): If we specify backend the opencv open fails
+        self.backend: int = get_cv2_backend()
 
         if self.height and self.width:
             if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
-                self.prerotated_width, self.prerotated_height = self.height, self.width
+                self.capture_width, self.capture_height = self.height, self.width
             else:
-                self.prerotated_width, self.prerotated_height = self.width, self.height
+                self.capture_width, self.capture_height = self.width, self.height
 
     def __str__(self) -> str:
-        """Returns a string representation of the camera instance."""
         return f"{self.__class__.__name__}({self.index_or_path})"
 
     @property
     def is_connected(self) -> bool:
         """Checks if the camera is currently connected and opened."""
-        return isinstance(self.videocapture_camera, cv2.VideoCapture) and self.videocapture_camera.isOpened()
+        return isinstance(self.videocapture, cv2.VideoCapture) and self.videocapture.isOpened()
+
+    def connect(self, warmup: bool = True):
+        """
+        Connects to the OpenCV camera specified in the configuration.
+
+        Initializes the OpenCV VideoCapture object, sets desired camera properties
+        (FPS, width, height), and performs initial checks.
+
+        Raises:
+            DeviceAlreadyConnectedError: If the camera is already connected.
+            ValueError: If the specified camera index/path is not found or accessible.
+            ConnectionError: If the camera is found but fails to open.
+            RuntimeError: If the camera opens but fails to apply requested FPS/resolution settings.
+        """
+        if self.is_connected:
+            raise DeviceAlreadyConnectedError(f"{self} is already connected.")
+
+        # Use 1 thread for OpenCV operations to avoid potential conflicts or
+        # blocking in multi-threaded applications, especially during data collection.
+        cv2.setNumThreads(1)
+
+        self.videocapture = cv2.VideoCapture(self.index_or_path, self.backend)
+
+        if not self.videocapture.isOpened():
+            self.videocapture.release()
+            self.videocapture = None
+            raise ConnectionError(
+                f"Failed to open OpenCV camera {self.index_or_path}."
+                f"Run 'python -m lerobot.find_cameras opencv' for details about the available cameras in your system."
+            )
+
+        self._configure_capture_settings()
+
+        if warmup:
+            if self.warmup_time is None:
+                raise ValueError(
+                    f"Warmup time is not set for {self}. Please set a warmup time in the configuration."
+                )
+            logger.debug(f"Reading a warm-up frames for {self} for {self.warmup_time} seconds...")
+            start_time = time.time()
+            while time.time() - start_time < self.warmup_time:
+                self.read()
+                time.sleep(0.1)
+
+        logger.debug(f"Camera {self.index_or_path} connected and configured successfully.")
 
     def _configure_capture_settings(self) -> None:
         """
@@ -167,120 +204,65 @@ class OpenCVCamera(Camera):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"Cannot configure settings for {self} as it is not connected.")
 
-        self._validate_fps()
-        self._validate_width_and_height()
+        if self.fps is None:
+            self.fps = self.videocapture.get(cv2.CAP_PROP_FPS)
+            logger.info(f"FPS set to camera default: {self.fps}.")
+        else:
+            self._validate_fps()
 
-    def connect(self, do_warmup_read: bool = True):
-        """
-        Connects to the OpenCV camera specified in the configuration.
+        default_width = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_WIDTH)))
+        default_height = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_HEIGHT)))
 
-        Initializes the OpenCV VideoCapture object, sets desired camera properties
-        (FPS, width, height), and performs initial checks.
-
-        Raises:
-            DeviceAlreadyConnectedError: If the camera is already connected.
-            ValueError: If the specified camera index/path is not found or accessible.
-            ConnectionError: If the camera is found but fails to open.
-            RuntimeError: If the camera opens but fails to apply requested FPS/resolution settings.
-        """
-        if self.is_connected:
-            raise DeviceAlreadyConnectedError(f"{self} is already connected.")
-
-        # Use 1 thread for OpenCV operations to avoid potential conflicts or
-        # blocking in multi-threaded applications, especially during data collection.
-        cv2.setNumThreads(1)
-
-        logger.debug(f"Attempting to connect to camera {self.index_or_path} using backend {self.backend}...")
-        self.videocapture_camera = cv2.VideoCapture(self.index_or_path)
-
-        if not self.videocapture_camera.isOpened():
-            self.videocapture_camera.release()
-            self.videocapture_camera = None
-            raise ConnectionError(
-                f"Failed to open OpenCV camera {self.index_or_path}."
-                f"Run 'python -m find_cameras list-cameras' for details."
-            )
-
-        logger.debug(f"Successfully opened camera {self.index_or_path}. Applying configuration...")
-        self._configure_capture_settings()
-
-        if do_warmup_read:
-            logger.debug(f"Reading a warm-up frame for {self.index_or_path}...")
-            self.read()  # NOTE(Steven): For now we just read one frame, we could also loop for X frames/secs
-
-        logger.debug(f"Camera {self.index_or_path} connected and configured successfully.")
+        if self.width is None or self.height is None:
+            if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
+                self.width, self.height = default_height, default_width
+                self.capture_width, self.capture_height = default_width, default_height
+            else:
+                self.width, self.height = default_width, default_height
+                self.capture_width, self.capture_height = default_width, default_height
+            logger.info(f"Capture width set to camera default: {self.width}.")
+            logger.info(f"Capture height set to camera default: {self.height}.")
+        else:
+            self._validate_width_and_height()
 
     def _validate_fps(self) -> None:
         """Validates and sets the camera's frames per second (FPS)."""
 
-        if self.fps is None:
-            self.fps = self.videocapture_camera.get(cv2.CAP_PROP_FPS)
-            logger.info(f"FPS set to camera default: {self.fps}.")
-            return
-
-        success = self.videocapture_camera.set(cv2.CAP_PROP_FPS, float(self.fps))
-        actual_fps = self.videocapture_camera.get(cv2.CAP_PROP_FPS)
+        success = self.videocapture.set(cv2.CAP_PROP_FPS, float(self.fps))
+        actual_fps = self.videocapture.get(cv2.CAP_PROP_FPS)
         # Use math.isclose for robust float comparison
         if not success or not math.isclose(self.fps, actual_fps, rel_tol=1e-3):
-            logger.warning(
-                f"Requested FPS {self.fps} for {self}, but camera reported {actual_fps} (set success: {success}). "
-                "This might be due to camera limitations."
-            )
             raise RuntimeError(
-                f"Failed to set requested FPS {self.fps} for {self}. Actual value reported: {actual_fps}."
+                f"Failed to set requested FPS {self.fps} for {self}. Actual value reported: {actual_fps} set success: {success})."
             )
         logger.debug(f"FPS set to {actual_fps} for {self}.")
 
     def _validate_width_and_height(self) -> None:
         """Validates and sets the camera's frame capture width and height."""
 
-        actual_width = int(round(self.videocapture_camera.get(cv2.CAP_PROP_FRAME_WIDTH)))
-        actual_height = int(round(self.videocapture_camera.get(cv2.CAP_PROP_FRAME_HEIGHT)))
-
-        if self.width is None or self.height is None:
-            if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
-                self.width, self.height = actual_height, actual_width
-                self.prerotated_width, self.prerotated_height = actual_width, actual_height
-            else:
-                self.width, self.height = actual_width, actual_height
-                self.prerotated_width, self.prerotated_height = actual_width, actual_height
-            logger.info(f"Capture width set to camera default: {self.width}.")
-            logger.info(f"Capture height set to camera default: {self.height}.")
-            return
-
-        success = self.videocapture_camera.set(cv2.CAP_PROP_FRAME_WIDTH, float(self.prerotated_width))
-        if not success or self.prerotated_width != actual_width:
-            logger.warning(
-                f"Requested capture width {self.prerotated_width} for {self}, but camera reported {actual_width} (set success: {success})."
-            )
+        success = self.videocapture.set(cv2.CAP_PROP_FRAME_WIDTH, float(self.capture_width))
+        actual_width = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_WIDTH)))
+        if not success or self.capture_width != actual_width:
             raise RuntimeError(
-                f"Failed to set requested capture width {self.prerotated_width} for {self}. Actual value: {actual_width}."
+                f"Failed to set requested capture width {self.capture_width} for {self}. Actual value: {actual_width} (set success: {success})."
             )
         logger.debug(f"Capture width set to {actual_width} for {self}.")
 
-        success = self.videocapture_camera.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self.prerotated_height))
-        if not success or self.prerotated_height != actual_height:
-            logger.warning(
-                f"Requested capture height {self.prerotated_height} for {self}, but camera reported {actual_height} (set success: {success})."
-            )
+        success = self.videocapture.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self.capture_height))
+        actual_height = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+        if not success or self.capture_height != actual_height:
             raise RuntimeError(
-                f"Failed to set requested capture height {self.prerotated_height} for {self}. Actual value: {actual_height}."
+                f"Failed to set requested capture height {self.capture_height} for {self}. Actual value: {actual_height} (set success: {success})."
             )
         logger.debug(f"Capture height set to {actual_height} for {self}.")
 
     @staticmethod
-    def find_cameras(
-        max_index_search_range=MAX_OPENCV_INDEX, raise_when_empty: bool = True
-    ) -> List[Dict[str, Any]]:
+    def find_cameras() -> List[Dict[str, Any]]:
         """
         Detects available OpenCV cameras connected to the system.
 
         On Linux, it scans '/dev/video*' paths. On other systems (like macOS, Windows),
-        it checks indices from 0 up to `max_index_search_range`.
-
-        Args:
-            max_index_search_range (int): The maximum index to check on non-Linux systems.
-            raise_when_empty (bool): If True, raises an OSError if no cameras are found.
+        it checks indices from 0 up to `MAX_OPENCV_INDEX`.
 
         Returns:
             List[Dict[str, Any]]: A list of dictionaries,
@@ -290,16 +272,12 @@ class OpenCVCamera(Camera):
         found_cameras_info = []
 
         if platform.system() == "Linux":
-            logger.info("Linux detected. Scanning '/dev/video*' device paths...")
             possible_paths = sorted(Path("/dev").glob("video*"), key=lambda p: p.name)
             targets_to_scan = [str(p) for p in possible_paths]
-            logger.debug(f"Found potential paths: {targets_to_scan}")
         else:
-            logger.info(
-                f"{platform.system()} system detected. Scanning indices from 0 to {max_index_search_range}..."
-            )
-            targets_to_scan = list(range(max_index_search_range))
+            targets_to_scan = list(range(MAX_OPENCV_INDEX))
 
+        logger.debug(f"Found potential paths: {targets_to_scan}")
         for target in targets_to_scan:
             camera = cv2.VideoCapture(target)
             if camera.isOpened():
@@ -321,13 +299,10 @@ class OpenCVCamera(Camera):
                 }
 
                 found_cameras_info.append(camera_info)
-                logger.debug(f"Found OpenCV camera:: {camera_info}")
                 camera.release()
 
         if not found_cameras_info:
             logger.warning("No OpenCV devices detected.")
-            if raise_when_empty:
-                raise OSError("No OpenCV devices detected. Ensure cameras are connected.")
 
         logger.info(f"Detected OpenCV cameras: {[cam['id'] for cam in found_cameras_info]}")
         return found_cameras_info
@@ -361,7 +336,7 @@ class OpenCVCamera(Camera):
         start_time = time.perf_counter()
 
         # NOTE(Steven): Are we okay with this blocking an undefined amount of time?
-        ret, frame = self.videocapture_camera.read()
+        ret, frame = self.videocapture.read()
 
         if not ret or frame is None:
             raise RuntimeError(
@@ -374,7 +349,6 @@ class OpenCVCamera(Camera):
         read_duration_ms = (time.perf_counter() - start_time) * 1e3
         logger.debug(f"{self} synchronous read took: {read_duration_ms:.1f}ms")
 
-        self.logs["timestamp_utc"] = capture_timestamp_utc()
         return processed_frame
 
     def _postprocess_image(self, image: np.ndarray, color_mode: ColorMode | None = None) -> np.ndarray:
@@ -403,13 +377,9 @@ class OpenCVCamera(Camera):
 
         h, w, c = image.shape
 
-        if h != self.prerotated_height or w != self.prerotated_width:
+        if h != self.capture_height or w != self.capture_width:
             raise RuntimeError(
-                f"Captured frame dimensions ({h}x{w}) do not match configured capture dimensions ({self.prerotated_height}x{self.prerotated_width}) for {self}."
-            )
-        if c != self.channels:
-            logger.warning(
-                f"Captured frame channels ({c}) do not match configured channels ({self.channels}) for {self}."
+                f"Captured frame dimensions ({h}x{w}) do not match configured capture dimensions ({self.capture_height}x{self.capture_width}) for {self}."
             )
 
         processed_image = image
@@ -449,7 +419,7 @@ class OpenCVCamera(Camera):
 
         logger.debug(f"Stopping read loop thread for {self}.")
 
-    def _ensure_read_thread_running(self):
+    def _start_read_thread(self) -> None:
         """Starts or restarts the background read thread if it's not running."""
         if self.thread is not None and self.thread.is_alive():
             self.thread.join(timeout=0.1)
@@ -463,6 +433,22 @@ class OpenCVCamera(Camera):
         self.thread.daemon = True
         self.thread.start()
         logger.debug(f"Read thread started for {self}.")
+
+    def _stop_read_thread(self) -> None:
+        """Signals the background read thread to stop and waits for it to join."""
+        if self.stop_event is not None:
+            self.stop_event.set()
+
+        if self.thread is not None and self.thread.is_alive():
+            self.thread.join(timeout=2.0)
+            if self.thread.is_alive():
+                logger.warning(f"Read thread for {self} did not terminate gracefully after 2 seconds.")
+            else:
+                logger.debug(f"Read thread for {self} joined successfully.")
+
+        self.thread = None
+        self.stop_event = None
+        logger.debug(f"Read thread stopped for {self}.")
 
     def async_read(self, timeout_ms: float = 2000) -> np.ndarray:
         """
@@ -490,40 +476,19 @@ class OpenCVCamera(Camera):
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
         if self.thread is None or not self.thread.is_alive():
-            self._ensure_read_thread_running()
+            self._start_read_thread()
 
         try:
             return self.frame_queue.get(timeout=timeout_ms / 1000.0)
         except queue.Empty as e:
             thread_alive = self.thread is not None and self.thread.is_alive()
-            logger.error(
-                f"Timeout waiting for frame from {self} queue after {timeout_ms}ms. "
-                f"(Read thread alive: {thread_alive})"
-            )
             raise TimeoutError(
-                f"Timed out waiting for frame from camera {self.index_or_path} after {timeout_ms} ms. "
+                f"Timed out waiting for frame from camera {self} after {timeout_ms} ms. "
                 f"Read thread alive: {thread_alive}."
             ) from e
         except Exception as e:
             logger.exception(f"Unexpected error getting frame from queue for {self}: {e}")
             raise RuntimeError(f"Error getting frame from queue for camera {self.index_or_path}: {e}") from e
-
-    def _shutdown_read_thread(self):
-        """Signals the background read thread to stop and waits for it to join."""
-        if self.stop_event is not None:
-            logger.debug(f"Signaling stop event for read thread of {self}.")
-            self.stop_event.set()
-
-        if self.thread is not None and self.thread.is_alive():
-            logger.debug(f"Waiting for read thread of {self} to join...")
-            self.thread.join(timeout=2.0)
-            if self.thread.is_alive():
-                logger.warning(f"Read thread for {self} did not terminate gracefully after 2 seconds.")
-            else:
-                logger.debug(f"Read thread for {self} joined successfully.")
-
-        self.thread = None
-        self.stop_event = None
 
     def disconnect(self):
         """
@@ -536,18 +501,13 @@ class OpenCVCamera(Camera):
             DeviceNotConnectedError: If the camera is already disconnected.
         """
         if not self.is_connected and self.thread is None:
-            raise DeviceNotConnectedError(
-                f"Attempted to disconnect {self}, but it appears already disconnected."
-            )
-
-        logger.debug(f"Disconnecting from camera {self.index_or_path}...")
+            raise DeviceNotConnectedError(f"{self} not connected.")
 
         if self.thread is not None:
-            self._shutdown_read_thread()
+            self._stop_read_thread()
 
-        if self.videocapture_camera is not None:
-            logger.debug(f"Releasing OpenCV VideoCapture object for {self}.")
-            self.videocapture_camera.release()
-            self.videocapture_camera = None
+        if self.videocapture is not None:
+            self.videocapture.release()
+            self.videocapture = None
 
-        logger.info(f"Camera {self.index_or_path} disconnected successfully.")
+        logger.info(f"{self} disconnected.")

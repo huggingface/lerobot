@@ -38,6 +38,8 @@ import draccus
 import numpy as np
 import rerun as rr
 
+from lerobot.common.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
+from lerobot.common.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.common.robots import (  # noqa: F401
     Robot,
     RobotConfig,

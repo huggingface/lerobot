@@ -223,7 +223,7 @@ def make_camera(camera_type: str, **kwargs) -> Camera:
     elif camera_type == "intelrealsense":
         serial_number = kwargs.pop("serial_number", INTELREALSENSE_SERIAL_NUMBER)
         kwargs["serial_number"] = serial_number
-        from lerobot.common.cameras.intel import RealSenseCamera, RealSenseCameraConfig
+        from lerobot.common.cameras.realsense import RealSenseCamera, RealSenseCameraConfig
 
         config = RealSenseCameraConfig(**kwargs)
         return RealSenseCamera(config)

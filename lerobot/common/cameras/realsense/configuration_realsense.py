@@ -40,25 +40,20 @@ class RealSenseCameraConfig(CameraConfig):
         fps: Requested frames per second for the color stream.
         width: Requested frame width in pixels for the color stream.
         height: Requested frame height in pixels for the color stream.
-        name: Optional human-readable name to identify the camera.
-        serial_number: Optional unique serial number to identify the camera.
-                      Either name or serial_number must be provided.
+        serial_number_or_name: Unique serial number or human-readable name to identify the camera.
         color_mode: Color mode for image output (RGB or BGR). Defaults to RGB.
-        channels: Number of color channels (currently only 3 is supported).
         use_depth: Whether to enable depth stream. Defaults to False.
         rotation: Image rotation setting (0°, 90°, 180°, or 270°). Defaults to no rotation.
 
     Note:
-        - Either name or serial_number must be specified, but not both.
+        - Either name or serial_number must be specified.
         - Depth stream configuration (if enabled) will use the same FPS as the color stream.
         - The actual resolution and FPS may be adjusted by the camera to the nearest supported mode.
-        - Only 3-channel color output (RGB/BGR) is currently supported.
+        - For `fps`, `width` and `height`, either all of them need to be set, or none of them.
     """
 
-    name: str | None = None
-    serial_number: int | None = None
+    serial_number_or_name: int | str
     color_mode: ColorMode = ColorMode.RGB
-    channels: int | None = 3
     use_depth: bool = False
     rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION  # NOTE(Steven): Check if draccus can parse to an enum
 
@@ -78,10 +73,8 @@ class RealSenseCameraConfig(CameraConfig):
                 f"`rotation` is expected to be in {(Cv2Rotation.NO_ROTATION, Cv2Rotation.ROTATE_90, Cv2Rotation.ROTATE_180, Cv2Rotation.ROTATE_270)}, but {self.rotation} is provided."
             )
 
-        if self.channels != 3:
-            raise NotImplementedError(f"Unsupported number of channels: {self.channels}")
-
-        if bool(self.name) and bool(self.serial_number):
+        values = (self.fps, self.width, self.height)
+        if any(v is not None for v in values) and any(v is None for v in values):
             raise ValueError(
-                f"One of them must be set: name or serial_number, but {self.name=} and {self.serial_number=} provided."
+                "For `fps`, `width` and `height`, either all of them need to be set, or none of them."
             )
