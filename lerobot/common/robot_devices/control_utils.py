@@ -23,16 +23,22 @@ import traceback
 from contextlib import nullcontext
 from copy import copy
 from functools import cache
+from uuid import uuid4
 
 import rerun as rr
 import torch
 from deepdiff import DeepDiff
+from numpy import linspace
 from termcolor import colored
 
 from lerobot.common.datasets.image_writer import safe_stop_image_writer
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.datasets.utils import get_features_from_robot
+from lerobot.common.datasets.utils import DEFAULT_AUDIO_CHUNK_DURATION, get_features_from_robot
 from lerobot.common.policies.pretrained import PreTrainedPolicy
+from lerobot.common.robot_devices.microphones.utils import (
+    async_microphones_start_recording,
+    async_microphones_stop_recording,
+)
 from lerobot.common.robot_devices.robots.utils import Robot
 from lerobot.common.robot_devices.utils import busy_wait
 from lerobot.common.utils.utils import get_safe_torch_device, has_method
@@ -78,6 +84,11 @@ def log_control_info(robot: Robot, dt_s, episode_index=None, frame_index=None, f
             if key in robot.logs:
                 log_dt(f"dtR{name}", robot.logs[key])
 
+        for name in robot.microphones:
+            key = f"read_microphone_{name}_dt_s"
+            if key in robot.logs:
+                log_dt(f"dtR{name}", robot.logs[key])
+
     info_str = " ".join(log_items)
     logging.info(info_str)
 
@@ -107,11 +118,15 @@ def predict_action(observation, policy, device, use_amp):
         torch.inference_mode(),
         torch.autocast(device_type=device.type) if device.type == "cuda" and use_amp else nullcontext(),
     ):
-        # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
         for name in observation:
+            # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
             if "image" in name:
                 observation[name] = observation[name].type(torch.float32) / 255
                 observation[name] = observation[name].permute(2, 0, 1).contiguous()
+            # Convert to pytorch format: channel first and float32 in [-1,1] with batch dimension
+            if "audio" in name:
+                observation[name] = observation[name].type(torch.float32)
+                observation[name] = observation[name].permute(1, 0).contiguous()
             observation[name] = observation[name].unsqueeze(0)
             observation[name] = observation[name].to(device)
 
@@ -241,8 +256,53 @@ def control_loop(
     if dataset is not None and fps is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset['fps']} != {fps}).")
 
+    # Create a buffer for audio observations (shifting window of fixed size over audio samples)
+    # TODO(CarolinePascal): Fill buffers with actual recordings by starting to record audio earlier and add a start_timestamp parameter for camera/microphone synchronization
+    audio_buffer = {
+        f"observation.audio.{microphone_name}": torch.zeros(
+            (int(microphone.sample_rate * DEFAULT_AUDIO_CHUNK_DURATION), len(microphone.channels))
+        )
+        for microphone_name, microphone in robot.microphones.items()
+    }
+
+    if (display_data and not is_headless()) or (display_data and robot.robot_type.startswith("lekiwi")):
+        # Create Rerun blueprint
+        blueprint = rr.blueprint.Grid(
+            contents=[
+                rr.blueprint.TimeSeriesView(
+                    origin=plot_path,
+                    plot_legend=rr.blueprint.PlotLegend(visible=True),
+                )
+                for plot_path in ["states_actions", "audio"]
+            ]
+            + [
+                rr.blueprint.Spatial2DView(
+                    origin=f"observation.images.{camera_name}",
+                )
+                for camera_name in robot.cameras
+            ],
+        )
+        # Flush rerun plots by calling init()
+        rr.init(
+            application_id="lerobot_control_loop",
+            recording_id=uuid4(),
+            spawn=True,
+            default_blueprint=blueprint,
+        )
+        rr.set_time_seconds("episode_time", seconds=0.0)
+
     timestamp = 0
     start_episode_t = time.perf_counter()
+
+    if (
+        dataset is not None and not robot.robot_type.startswith("lekiwi")
+    ):  # For now, LeKiwi only supports frame audio recording (which may lead to audio chunks loss, extended post-processing, increased memory usage)
+        dataset.add_microphones_recordings(robot.microphones)
+
+    else:
+        # Start recording only in data reading mode
+        async_microphones_start_recording(robot.microphones)
+
     while timestamp < control_time_s:
         start_loop_t = time.perf_counter()
 
@@ -253,8 +313,24 @@ def control_loop(
             action = None
 
             if policy is not None:
+                # Transform instantaneous audio samples into a buffer of fixed size
+                buffered_observation = copy(observation)
+                for name in audio_buffer:
+                    buffer_size = audio_buffer[name].shape[0]
+                    # Remove as many old audio samples as needed
+                    audio_buffer[name] = audio_buffer[name][len(buffered_observation[name]) :]
+                    # Add new audio samples, only the newest if the buffer is already full
+                    audio_buffer[name] = torch.cat(
+                        (audio_buffer[name], buffered_observation[name][-buffer_size:]), dim=0
+                    )
+                    # Add the audio buffer to the observation
+                    buffered_observation[name] = audio_buffer[name]
+
                 pred_action = predict_action(
-                    observation, policy, get_safe_torch_device(policy.config.device), policy.config.use_amp
+                    buffered_observation,
+                    policy,
+                    get_safe_torch_device(policy.config.device),
+                    policy.config.use_amp,
                 )
                 # Action can eventually be clipped using `max_relative_target`,
                 # so action actually sent is saved in the dataset.
@@ -267,14 +343,36 @@ def control_loop(
 
         # TODO(Steven): This should be more general (for RemoteRobot instead of checking the name, but anyways it will change soon)
         if (display_data and not is_headless()) or (display_data and robot.robot_type.startswith("lekiwi")):
+            rerun_current_time = time.perf_counter() - start_episode_t
+            rr.set_time_seconds("episode_time", seconds=rerun_current_time)
+
             if action is not None:
                 for k, v in action.items():
                     for i, vv in enumerate(v):
-                        rr.log(f"sent_{k}_{i}", rr.Scalar(vv.numpy()))
+                        rr.log(f"states_actions/sent_{k}_{i}", rr.Scalar(vv.numpy()))
 
             image_keys = [key for key in observation if "image" in key]
             for key in image_keys:
                 rr.log(key, rr.Image(observation[key].numpy()), static=True)
+
+            for microphone_key, microphone in robot.microphones.items():
+                observation_key = f"observation.audio.{microphone_key}"
+                rr.send_columns(
+                    "audio/" + observation_key,
+                    indexes=[
+                        rr.TimeSecondsColumn(
+                            "episode_time",
+                            times=rerun_current_time
+                            + linspace(
+                                -len(observation[observation_key]) / microphone.sample_rate,
+                                0,
+                                len(observation[observation_key]),
+                                endpoint=False,
+                            ),
+                        )
+                    ],
+                    columns=rr.Scalar.columns(scalar=observation[observation_key].numpy()),
+                )
 
         if fps is not None:
             dt_s = time.perf_counter() - start_loop_t
@@ -287,6 +385,8 @@ def control_loop(
         if events["exit_early"]:
             events["exit_early"] = False
             break
+
+    async_microphones_stop_recording(robot.microphones)
 
 
 def reset_environment(robot, events, reset_time_s, fps):

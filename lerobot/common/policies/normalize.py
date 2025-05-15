@@ -54,6 +54,14 @@ def create_stats_buffers(
             # override image shape to be invariant to height and width
             shape = (c, 1, 1)
 
+        if ft.type is FeatureType.AUDIO:
+            # sanity checks
+            assert len(shape) == 2, f"number of dimensions of {key} != 2 ({shape=}"
+            t, c = shape
+            assert c >= t, f"{key} is not channel first ({shape=})"
+            # override audio shape to be invariant to time
+            shape = (1, c)
+
         # Note: we initialize mean, std, min, max to infinity. They should be overwritten
         # downstream by `stats` or `policy.load_state_dict`, as expected. During forward,
         # we assert they are not infinity anymore.

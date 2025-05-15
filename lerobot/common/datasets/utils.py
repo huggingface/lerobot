@@ -33,6 +33,7 @@ from datasets.table import embed_table_storage
 from huggingface_hub import DatasetCard, DatasetCardData, HfApi
 from huggingface_hub.errors import RevisionNotFoundError
 from PIL import Image as PILImage
+from soundfile import read
 from torchvision import transforms
 
 from lerobot.common.datasets.backward_compatibility import (
@@ -55,6 +56,10 @@ TASKS_PATH = "meta/tasks.jsonl"
 DEFAULT_VIDEO_PATH = "videos/chunk-{episode_chunk:03d}/{video_key}/episode_{episode_index:06d}.mp4"
 DEFAULT_PARQUET_PATH = "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet"
 DEFAULT_IMAGE_PATH = "images/{image_key}/episode_{episode_index:06d}/frame_{frame_index:06d}.png"
+DEFAULT_RAW_AUDIO_PATH = "raw_audio/{audio_key}/episode_{episode_index:06d}.wav"
+DEFAULT_COMPRESSED_AUDIO_PATH = "audio/chunk-{episode_chunk:03d}/{audio_key}/episode_{episode_index:06d}.m4a"
+
+DEFAULT_AUDIO_CHUNK_DURATION = 0.5  # seconds
 
 DATASET_CARD_TEMPLATE = """
 ---
@@ -255,6 +260,16 @@ def load_image_as_numpy(
     return img_array
 
 
+def load_audio_from_path(fpath: str | Path) -> np.ndarray:
+    audio_data, _ = read(fpath, dtype="float32")
+
+    # Fill missing channel dimension when loading mono audio data
+    if audio_data.ndim == 1:
+        audio_data = np.expand_dims(audio_data, axis=1)
+
+    return audio_data
+
+
 def hf_transform_to_torch(items_dict: dict[torch.Tensor | None]):
     """Get a transform function that convert items from Hugging Face dataset (pyarrow)
     to torch tensors. Importantly, images are converted from PIL, which corresponds to
@@ -363,7 +378,7 @@ def get_safe_version(repo_id: str, version: str | packaging.version.Version) -> 
 def get_hf_features_from_features(features: dict) -> datasets.Features:
     hf_features = {}
     for key, ft in features.items():
-        if ft["dtype"] == "video":
+        if ft["dtype"] == "video" or ft["dtype"] == "audio":
             continue
         elif ft["dtype"] == "image":
             hf_features[key] = datasets.Image()
@@ -394,7 +409,7 @@ def get_features_from_robot(robot: Robot, use_videos: bool = True) -> dict:
             key: {"dtype": "video" if use_videos else "image", **ft}
             for key, ft in robot.camera_features.items()
         }
-    return {**robot.motor_features, **camera_ft, **DEFAULT_FEATURES}
+    return {**robot.motor_features, **camera_ft, **robot.microphone_features, **DEFAULT_FEATURES}
 
 
 def dataset_to_policy_features(features: dict[str, dict]) -> dict[str, PolicyFeature]:
@@ -411,6 +426,10 @@ def dataset_to_policy_features(features: dict[str, dict]) -> dict[str, PolicyFea
             # Backward compatibility for "channel" which is an error introduced in LeRobotDataset v2.0 for ported datasets.
             if names[2] in ["channel", "channels"]:  # (h, w, c) -> (c, h, w)
                 shape = (shape[2], shape[0], shape[1])
+        elif ft["dtype"] == "audio":
+            type = FeatureType.AUDIO
+            if len(shape) != 2:
+                raise ValueError(f"Number of dimensions of {key} != 2 (shape={shape})")
         elif key == "observation.environment_state":
             type = FeatureType.ENV
         elif key.startswith("observation"):
@@ -442,12 +461,14 @@ def create_empty_dataset_info(
         "total_frames": 0,
         "total_tasks": 0,
         "total_videos": 0,
+        "total_audio": 0,
         "total_chunks": 0,
         "chunks_size": DEFAULT_CHUNK_SIZE,
         "fps": fps,
         "splits": {},
         "data_path": DEFAULT_PARQUET_PATH,
         "video_path": DEFAULT_VIDEO_PATH if use_videos else None,
+        "audio_path": DEFAULT_COMPRESSED_AUDIO_PATH,
         "features": features,
     }
 
@@ -721,6 +742,7 @@ def validate_features_presence(
 ):
     error_message = ""
     missing_features = expected_features - actual_features
+    missing_features = {feature for feature in missing_features if "observation.audio" not in feature}
     extra_features = actual_features - (expected_features | optional_features)
 
     if missing_features or extra_features:
@@ -740,6 +762,8 @@ def validate_feature_dtype_and_shape(name: str, feature: dict, value: np.ndarray
         return validate_feature_numpy_array(name, expected_dtype, expected_shape, value)
     elif expected_dtype in ["image", "video"]:
         return validate_feature_image_or_video(name, expected_shape, value)
+    elif expected_dtype == "audio":
+        return validate_feature_audio(name, expected_shape, value)
     elif expected_dtype == "string":
         return validate_feature_string(name, value)
     else:
@@ -777,6 +801,21 @@ def validate_feature_image_or_video(name: str, expected_shape: list[str], value:
         pass
     else:
         error_message += f"The feature '{name}' is expected to be of type 'PIL.Image' or 'np.ndarray' channel first or channel last, but type '{type(value)}' provided instead.\n"
+
+    return error_message
+
+
+def validate_feature_audio(name: str, expected_shape: list[str], value: np.ndarray):
+    error_message = ""
+    if isinstance(value, np.ndarray):
+        actual_shape = value.shape
+        c = expected_shape
+        if len(actual_shape) != 2 or actual_shape[-1] != c[-1]:  # The number of frames might be different
+            error_message += (
+                f"The feature '{name}' of shape '{actual_shape}' does not have the expected shape '{c}'.\n"
+            )
+    else:
+        error_message += f"The feature '{name}' is expected to be of type 'np.ndarray', but type '{type(value)}' provided instead.\n"
 
     return error_message
 

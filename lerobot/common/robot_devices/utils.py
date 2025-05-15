@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import platform
 import time
 
@@ -23,6 +24,7 @@ def busy_wait(seconds):
         # TODO(rcadene): find an alternative: from python 11, time.sleep is precise
         end_time = time.perf_counter() + seconds
         while time.perf_counter() < end_time:
+            os.sched_yield()  # "To voluntarily relinquish the CPU"
             pass
     else:
         # On Linux time.sleep is accurate
@@ -60,6 +62,28 @@ class RobotDeviceAlreadyConnectedError(Exception):
     def __init__(
         self,
         message="This robot device is already connected. Try not calling `robot_device.connect()` twice.",
+    ):
+        self.message = message
+        super().__init__(self.message)
+
+
+class RobotDeviceNotRecordingError(Exception):
+    """Exception raised when the robot device is not recording."""
+
+    def __init__(
+        self,
+        message="This robot device is not recording. Try calling `robot_device.start_recording()` first.",
+    ):
+        self.message = message
+        super().__init__(self.message)
+
+
+class RobotDeviceAlreadyRecordingError(Exception):
+    """Exception raised when the robot device is already recording."""
+
+    def __init__(
+        self,
+        message="This robot device is already recording. Try not calling `robot_device.start_recording()` twice.",
     ):
         self.message = message
         super().__init__(self.message)

@@ -26,6 +26,7 @@ import torch
 from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset, LeRobotDatasetMetadata
 from lerobot.common.datasets.utils import (
     DEFAULT_CHUNK_SIZE,
+    DEFAULT_COMPRESSED_AUDIO_PATH,
     DEFAULT_FEATURES,
     DEFAULT_PARQUET_PATH,
     DEFAULT_VIDEO_PATH,
@@ -35,6 +36,7 @@ from lerobot.common.datasets.utils import (
 from tests.fixtures.constants import (
     DEFAULT_FPS,
     DUMMY_CAMERA_FEATURES,
+    DUMMY_MICROPHONE_FEATURES,
     DUMMY_MOTOR_FEATURES,
     DUMMY_REPO_ID,
     DUMMY_ROBOT_TYPE,
@@ -90,6 +92,7 @@ def features_factory():
     def _create_features(
         motor_features: dict = DUMMY_MOTOR_FEATURES,
         camera_features: dict = DUMMY_CAMERA_FEATURES,
+        audio_features: dict = DUMMY_MICROPHONE_FEATURES,
         use_videos: bool = True,
     ) -> dict:
         if use_videos:
@@ -101,6 +104,7 @@ def features_factory():
         return {
             **motor_features,
             **camera_ft,
+            **audio_features,
             **DEFAULT_FEATURES,
         }
 
@@ -117,15 +121,18 @@ def info_factory(features_factory):
         total_frames: int = 0,
         total_tasks: int = 0,
         total_videos: int = 0,
+        total_audio: int = 0,
         total_chunks: int = 0,
         chunks_size: int = DEFAULT_CHUNK_SIZE,
         data_path: str = DEFAULT_PARQUET_PATH,
         video_path: str = DEFAULT_VIDEO_PATH,
+        audio_path: str = DEFAULT_COMPRESSED_AUDIO_PATH,
         motor_features: dict = DUMMY_MOTOR_FEATURES,
         camera_features: dict = DUMMY_CAMERA_FEATURES,
+        audio_features: dict = DUMMY_MICROPHONE_FEATURES,
         use_videos: bool = True,
     ) -> dict:
-        features = features_factory(motor_features, camera_features, use_videos)
+        features = features_factory(motor_features, camera_features, audio_features, use_videos)
         return {
             "codebase_version": codebase_version,
             "robot_type": robot_type,
@@ -133,12 +140,14 @@ def info_factory(features_factory):
             "total_frames": total_frames,
             "total_tasks": total_tasks,
             "total_videos": total_videos,
+            "total_audio": total_audio,
             "total_chunks": total_chunks,
             "chunks_size": chunks_size,
             "fps": fps,
             "splits": {},
             "data_path": data_path,
             "video_path": video_path if use_videos else None,
+            "audio_path": audio_path,
             "features": features,
         }
 
@@ -160,6 +169,14 @@ def stats_factory():
                     "mean": np.full((3, 1, 1), 0.5, dtype=np.float32).tolist(),
                     "min": np.full((3, 1, 1), 0, dtype=np.float32).tolist(),
                     "std": np.full((3, 1, 1), 0.25, dtype=np.float32).tolist(),
+                    "count": [10],
+                }
+            elif dtype == "audio":
+                stats[key] = {
+                    "mean": np.full((shape[0],), 0.0, dtype=np.float32).tolist(),
+                    "max": np.full((shape[0],), 1, dtype=np.float32).tolist(),
+                    "min": np.full((shape[0],), -1, dtype=np.float32).tolist(),
+                    "std": np.full((shape[0],), 0.5, dtype=np.float32).tolist(),
                     "count": [10],
                 }
             else:

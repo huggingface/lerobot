@@ -16,6 +16,7 @@
 import json
 import logging
 import re
+import time
 from copy import deepcopy
 from itertools import chain
 from pathlib import Path
@@ -35,6 +36,7 @@ from lerobot.common.datasets.lerobot_dataset import (
     MultiLeRobotDataset,
 )
 from lerobot.common.datasets.utils import (
+    DEFAULT_AUDIO_CHUNK_DURATION,
     create_branch,
     flatten_dict,
     unflatten_dict,
@@ -44,8 +46,8 @@ from lerobot.common.policies.factory import make_policy_config
 from lerobot.common.robot_devices.robots.utils import make_robot
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
-from tests.fixtures.constants import DUMMY_CHW, DUMMY_HWC, DUMMY_REPO_ID
-from tests.utils import require_x86_64_kernel
+from tests.fixtures.constants import DUMMY_AUDIO_CHANNELS, DUMMY_CHW, DUMMY_HWC, DUMMY_REPO_ID
+from tests.utils import make_microphone, require_x86_64_kernel
 
 
 @pytest.fixture
@@ -58,6 +60,20 @@ def image_dataset(tmp_path, empty_lerobot_dataset_factory):
                 "channels",
                 "height",
                 "width",
+            ],
+        }
+    }
+    return empty_lerobot_dataset_factory(root=tmp_path / "test", features=features)
+
+
+@pytest.fixture
+def audio_dataset(tmp_path, empty_lerobot_dataset_factory):
+    features = {
+        "observation.audio.microphone": {
+            "dtype": "audio",
+            "shape": (1, DUMMY_AUDIO_CHANNELS),
+            "names": [
+                "channels",
             ],
         }
     }
@@ -322,6 +338,24 @@ def test_image_array_to_pil_image_wrong_range_float_0_255():
         image_array_to_pil_image(image)
 
 
+def test_add_frame_audio(audio_dataset):
+    dataset = audio_dataset
+
+    microphone = make_microphone(microphone_type="portaudio", mock=True)
+    microphone.connect()
+
+    dataset.add_microphone_recording("microphone", microphone)
+    time.sleep(1.0)
+    dataset.add_frame({"observation.audio.microphone": microphone.read(), "task": "Dummy task"})
+    microphone.stop_recording()
+
+    dataset.save_episode()
+
+    assert dataset[0]["observation.audio.microphone"].shape == torch.Size(
+        (int(DEFAULT_AUDIO_CHUNK_DURATION * microphone.sample_rate), DUMMY_AUDIO_CHANNELS)
+    )
+
+
 # TODO(aliberts):
 # - [ ] test various attributes & state from init and create
 # - [ ] test init with episodes and check num_frames
@@ -354,6 +388,7 @@ def test_factory(env_name, repo_id, policy_name):
     dataset = make_dataset(cfg)
     delta_timestamps = dataset.delta_timestamps
     camera_keys = dataset.meta.camera_keys
+    audio_keys = dataset.meta.audio_keys
 
     item = dataset[0]
 
@@ -395,6 +430,11 @@ def test_factory(env_name, repo_id, policy_name):
             else:
                 # test c,h,w
                 assert item[key].shape[0] == 3, f"{key}"
+
+        for key in audio_keys:
+            assert item[key].dtype == torch.float32, f"{key}"
+            assert item[key].max() <= 1.0, f"{key}"
+            assert item[key].min() >= -1.0, f"{key}"
 
     if delta_timestamps is not None:
         # test missing keys in delta_timestamps
