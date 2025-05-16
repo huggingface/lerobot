@@ -22,6 +22,18 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import NormalizationMode
 
 
+def is_image_feature(key: str) -> bool:
+    """Check if a feature key represents an image feature.
+
+    Args:
+        key: The feature key to check
+
+    Returns:
+        True if the key represents an image feature, False otherwise
+    """
+    return key.startswith("observation.image")
+
+
 @dataclass
 class ConcurrencyConfig:
     """Configuration for the concurrency of the actor and learner.
@@ -203,7 +215,7 @@ class SACConfig(PreTrainedConfig):
         return None
 
     def validate_features(self) -> None:
-        has_image = any(key.startswith("observation.image") for key in self.input_features)
+        has_image = any(is_image_feature(key) for key in self.input_features)
         has_state = "observation.state" in self.input_features
 
         if not (has_state or has_image):
@@ -216,7 +228,7 @@ class SACConfig(PreTrainedConfig):
 
     @property
     def image_features(self) -> list[str]:
-        return [key for key in self.input_features if "image" in key]
+        return [key for key in self.input_features if is_image_feature(key)]
 
     @property
     def observation_delta_indices(self) -> list:
