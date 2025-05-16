@@ -6,7 +6,6 @@ from datatrove.executor.slurm import SlurmPipelineExecutor
 from datatrove.pipeline.base import PipelineStep
 
 from examples.port_datasets.droid_rlds.port_droid import DROID_SHARDS
-from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
 
 
 class PortDroidShards(PipelineStep):
@@ -29,6 +28,12 @@ class PortDroidShards(PipelineStep):
         disable_progress_bars()
 
         shard_repo_id = f"{self.repo_id}_world_{world_size}_rank_{rank}"
+
+        try:
+            validate_dataset(shard_repo_id)
+            return
+        except:
+            pass
 
         port_droid(
             self.raw_dir,
