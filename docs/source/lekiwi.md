@@ -93,7 +93,7 @@ Make sure the arm is connected to the Raspberry Pi and run this script or API ex
 ```bash
 python -m lerobot.calibrate \
     --robot.type=lekiwi \
-    --robot.port=/dev/tty.usbmodem58760431551 \ # <- The port of your robot
+    --robot.port=/dev/ttyACM0 \ # <- The port of your robot
     --robot.id=my_awesome_kiwi # <- Give the robot a unique name
 ```
 </hfoption>
