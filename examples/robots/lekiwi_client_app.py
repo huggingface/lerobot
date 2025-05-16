@@ -41,7 +41,7 @@ def main():
     # The observations that we get are expected to be in body frame (x,y,theta)
     obs_dict = {f"{OBS_STATE}." + key: value for key, value in robot.state_feature.items()}
     # The actions that we send are expected to be in wheel frame (motor encoders)
-    act_dict = {"action." + key: value for key, value in robot.action_features.items()}
+    act_dict = {"action." + key: value for key, value in robot.action_feature.items()}
 
     features_dict = {
         **act_dict,
