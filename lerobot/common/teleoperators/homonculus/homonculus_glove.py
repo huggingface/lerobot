@@ -154,7 +154,8 @@ class HomonculusGlove(Teleoperator):
             display_values (bool, optional): When `True` (default) a live table is printed to the console.
 
         Raises:
-            TypeError: _description_
+            TypeError: `joints` is not `None` or a list.
+            ValueError: any joint's recorded min and max are the same.
 
         Returns:
             tuple[dict[str, int], dict[str, int]]: Two dictionaries *mins* and *maxes* with the extreme values
