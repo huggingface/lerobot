@@ -288,11 +288,12 @@ def control_loop(
             events["exit_early"] = False
             break
 
-
-def reset_environment(robot, events, reset_time_s, fps, policy):
+    # Controlling is over, if policy is given it needs cleaning up
     if policy is not None:
-        policy._action_queue.clear()
+        policy.reset()
 
+
+def reset_environment(robot, events, reset_time_s, fps):
     # TODO(rcadene): refactor warmup_record and reset_environment
     if has_method(robot, "teleop_safety_stop"):
         robot.teleop_safety_stop()
