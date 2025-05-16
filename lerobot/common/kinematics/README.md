@@ -9,13 +9,14 @@ This module provides an implementation of **forward and inverse kinematics** for
 ### `Robot`
 Defines a robot model from a predefined set (`"so100"`, `"koch"`, `"moss"`), with attributes:
 - `dh_table`: DH table as a list of $[ \theta, d, a, \alpha ]$ entries.
-- `dh2mech`: DH angles to mechanical angles conversion.
-- `mech2dh`: mechanical angles to DH angles conversion.
 - `mech_joint_limits_low`: mechanical joint position limits lower bound
 - `mech_joint_limits_up`: mechanical joint position limits upper bound
-- `worldTbase`: 4x4 homogeneous transform (default identity).
-- `nTtool`: 4x4 homogeneous transform (default identity).
-
+- `worldTbase`: 4x4 homogeneous transform.
+- `nTtool`: 4x4 homogeneous transform.
+- `from_dh_to_mech()`: DH angles to mechanical angles conversion.
+- `from_dh_to_mech()`: mechanical angles to DH angles conversion.
+- `check_joint_limits()`: check joint limits.
+  
 ---
 
 ### `RobotUtils`
