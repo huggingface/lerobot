@@ -16,7 +16,7 @@ Defines a robot model from a predefined set (`"so100"`, `"koch"`, `"moss"`), wit
 - `from_dh_to_mech()`: DH angles to mechanical angles conversion.
 - `from_dh_to_mech()`: mechanical angles to DH angles conversion.
 - `check_joint_limits()`: check joint limits.
-  
+
 ---
 
 ### `RobotUtils`
