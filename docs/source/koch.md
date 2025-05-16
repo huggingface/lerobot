@@ -1,8 +1,8 @@
 # Koch v1.1
 
-In the steps below we explain how to assemble the Koch v1.1 robot.
+In the steps below, we explain how to assemble the Koch v1.1 robot.
 
-## Order and Assemble the parts
+## Order and assemble the parts
 
 Follow the sourcing and assembling instructions provided in this [README](https://github.com/jess-moss/koch-v1-1). This will guide you through setting up both the follower and leader arms, as shown in the image below.
 
@@ -10,22 +10,22 @@ For a visual walkthrough of the assembly process, you can refer to [this video t
 
 > [!WARNING]
 > Since the production of this video, we simplified the configuration phase. Because of this, two things differ from the instructions in that video:
-> - Don't plug all the motors cables right away and wait for being instructed to do so in [Configure the motors](#configure-the-motors).
+> - Don't plug in all the motor cables right away and wait to be instructed to do so in [Configure the motors](#configure-the-motors).
 > - Don't screw in the controller board (PCB) to the base right away and wait for being instructed to do so in [Configure the motors](#configure-the-motors).
 
 
 ## Install LeRobot 🤗
 
-To install LeRobot follow our [Installation Guide](./installation)
+To install LeRobot follow, our [Installation Guide](./installation)
 
-In addition to these instructions, you need to install the Dynamixel sdk:
+In addition to these instructions, you need to install the Dynamixel SDK:
 ```bash
 pip install -e ".[dynamixel]"
 ```
 
 ## Configure the motors
 
-### 1. Find the USB ports associated to each arm
+### 1. Find the USB ports associated with each arm
 
 To find the port for each bus servo adapter, run this script:
 ```bash
@@ -83,7 +83,7 @@ Each motor is identified by a unique id on the bus. When brand new, motors usual
 
 To that end, we first need to connect to each motor individually with the controller in order to set these. Since we will write these parameters in the non-volatile section of the motors' internal memory (EEPROM), we'll only need to do this once.
 
-If you are repurposing motors from another robot, you will probably also need to perform this step as the ids and baudrate likely won't match.
+If you are repurposing motors from another robot, you will probably also need to perform this step, as the ids and baudrate likely won't match.
 
 #### Follower
 
@@ -113,17 +113,17 @@ follower.setup_motors()
 </hfoption>
 </hfoptions>
 
-You should see the following instruction
+You should see the following instruction.
 ```
 Connect the controller board to the 'gripper' motor only and press enter.
 ```
 
-As instructed, plug the gripper's motor. Make sure it's the only motor connected to the board, and that the motor itself is not yet daisy chained to any other motor. As you press `[Enter]`, the script will automatically set the id and baudrate for that motor.
+As instructed, plug the gripper's motor. Make sure it's the only motor connected to the board, and that the motor itself is not yet daisy-chained to any other motor. As you press `[Enter]`, the script will automatically set the id and baudrate for that motor.
 
 <details>
 <summary>Troubleshooting</summary>
 
-  If you get an error at that point, check your cables and make sure they are plugged-in properly:
+  If you get an error at that point, check your cables and make sure they are plugged in properly:
   <ul>
     <li>Power supply</li>
     <li>USB cable between your computer and the controller board</li>
@@ -143,12 +143,12 @@ Followed by the next instruction:
 Connect the controller board to the 'wrist_roll' motor only and press enter.
 ```
 
-You can disconnect the 3-pin cable from the controller board but you can leave it connected to the gripper motor on the other end as it will already be in the right place. Now, plug-in another 3-pin cable to the wrist roll motor and connect it to the controller board. As with the previous motor, make sure it is the only motor connected to the board and that the motor itself isn't connected to any other one.
+You can disconnect the 3-pin cable from the controller board but you can leave it connected to the gripper motor on the other end as it will already be in the right place. Now, plug in another 3-pin cable to the wrist roll motor and connect it to the controller board. As with the previous motor, make sure it is the only motor connected to the board and that the motor itself isn't connected to any other one.
 
 Repeat the operation for each motor as instructed.
 
 > [!TIP]
-> Check your cabling at each step before pressing Enter. For instance, as the power supply cable might disconnect as you manipulate the board.
+> Check your cabling at each step before pressing Enter. For instance, the power supply cable might disconnect as you manipulate the board.
 
 When you are done, the script will simply finish, at which point the motors are ready to be used. You can now plug the 3-pin cable from each motor to the next one, and the cable from the first motor (the 'shoulder pan' with id=1) to the controller board, which can now be attached to the base of the arm.
 
@@ -184,7 +184,7 @@ The calibration process is very important because it allows a neural network tra
 
 #### Follower
 
-Run the following command of API example to calbrate the follower arm:
+Run the following command or API example to calibrate the follower arm:
 
 <hfoptions id="calibrate_follower">
 <hfoption id="Command">
@@ -212,11 +212,11 @@ follower.disconnect()
 </hfoption>
 </hfoptions>
 
-We unified the calibration method for most robots, thus the calibration steps for this Koch arm are the same as the steps for the SO100 and SO101. First we have to move the robot to position where each joint is in the middle of its range, then we press `Enter`. Secondly we move all joints thru their full range of motion. A video of this same process for the SO101 as reference can be found [here](http://localhost:5173/so101#calibration-video)
+We unified the calibration method for most robots. Thus, the calibration steps for this Koch arm are the same as the steps for the SO100 and SO101. First, we have to move the robot to the position where each joint is in the middle of its range, then we press `Enter`. Secondly, we move all joints through their full range of motion. A video of this same process for the SO101 as reference can be found [here](http://localhost:5173/so101#calibration-video)
 
 #### Leader
 
-Run the following command of API example to calbrate the leader arm:
+Do the same steps to calibrate the leader arm, run the following command or API example:
 
 <hfoptions id="calibrate_leader">
 <hfoption id="Command">
