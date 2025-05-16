@@ -84,7 +84,7 @@ class LeKiwiClient(Robot):
         return state_ft
 
     @property
-    def action_feature(self) -> dict:
+    def action_features(self) -> dict:
         action_ft = {
             "arm_shoulder_pan": {"shape": (1,), "info": None, "dtype": "float32"},
             "arm_shoulder_lift": {"shape": (1,), "info": None, "dtype": "float32"},
@@ -466,7 +466,7 @@ class LeKiwiClient(Robot):
         common_keys = [
             key
             for key in action
-            if key in (motor.replace("arm_", "") for motor, _ in self.action_feature.items())
+            if key in (motor.replace("arm_", "") for motor, _ in self.action_features.items())
         ]
 
         arm_actions = {"arm_" + arm_motor: action[arm_motor] for arm_motor in common_keys}
