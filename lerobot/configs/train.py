@@ -34,7 +34,7 @@ TRAIN_CONFIG_NAME = "train_config.json"
 
 @dataclass
 class TrainPipelineConfig(HubMixin):
-    dataset: DatasetConfig | None = None  # NOTE: In RL, we don't need a dataset
+    dataset: DatasetConfig | None = None  # NOTE: In RL, we don't need an offline dataset
     env: envs.EnvConfig | None = None
     policy: PreTrainedConfig | None = None
     # Set `dir` to where you would like to save all of the run outputs. If you run another training session # with the same value for `dir` its contents will be overwritten unless you set `resume` to true.
@@ -124,10 +124,7 @@ class TrainPipelineConfig(HubMixin):
         return draccus.encode(self)
 
     def _save_pretrained(self, save_directory: Path) -> None:
-        with (
-            open(save_directory / TRAIN_CONFIG_NAME, "w") as f,
-            draccus.config_type("json"),
-        ):
+        with open(save_directory / TRAIN_CONFIG_NAME, "w") as f, draccus.config_type("json"):
             draccus.dump(self, f, indent=4)
 
     @classmethod
