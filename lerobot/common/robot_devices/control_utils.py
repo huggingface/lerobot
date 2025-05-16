@@ -24,6 +24,7 @@ from contextlib import nullcontext
 from copy import copy
 from functools import cache
 
+import numpy as np
 import rerun as rr
 import torch
 from deepdiff import DeepDiff
@@ -129,9 +130,11 @@ def predict_action(observation, policy, device, use_amp):
 
 
 def init_keyboard_listener():
-    # Allow to exit early while recording an episode or resetting the environment,
-    # by tapping the right arrow key '->'. This might require a sudo permission
-    # to allow your terminal to monitor keyboard events.
+    """
+    Initializes a keyboard listener to enable early termination of an episode
+    or environment reset by pressing the right arrow key ('->'). This may require
+    sudo permissions to allow the terminal to monitor keyboard events.
+    """
     events = {}
     events["exit_early"] = False
     events["rerecord_episode"] = False
@@ -160,6 +163,7 @@ def init_keyboard_listener():
                 print("Escape key pressed. Stopping data recording...")
                 events["stop_recording"] = True
                 events["exit_early"] = True
+
         except Exception as e:
             print(f"Error handling key press: {e}")
 
@@ -254,7 +258,10 @@ def control_loop(
 
             if policy is not None:
                 pred_action = predict_action(
-                    observation, policy, get_safe_torch_device(policy.config.device), policy.config.use_amp
+                    observation,
+                    policy,
+                    get_safe_torch_device(policy.config.device),
+                    policy.config.use_amp,
                 )
                 # Action can eventually be clipped using `max_relative_target`,
                 # so action actually sent is saved in the dataset.
@@ -303,7 +310,17 @@ def reset_environment(robot, events, reset_time_s, fps):
     )
 
 
-def stop_recording(robot, listener, display_data):
+def reset_follower_position(robot_arm, target_position):
+    current_position = robot_arm.read("Present_Position")
+    trajectory = torch.from_numpy(
+        np.linspace(current_position, target_position, 50)
+    )  # NOTE: 30 is just an arbitrary number
+    for pose in trajectory:
+        robot_arm.write("Goal_Position", pose)
+        busy_wait(0.015)
+
+
+def stop_recording(robot, listener, display_cameras):
     robot.disconnect()
 
     if not is_headless() and listener is not None:
@@ -329,12 +346,20 @@ def sanity_check_dataset_name(repo_id, policy_cfg):
 
 
 def sanity_check_dataset_robot_compatibility(
-    dataset: LeRobotDataset, robot: Robot, fps: int, use_videos: bool
+    dataset: LeRobotDataset,
+    robot: Robot,
+    fps: int,
+    use_videos: bool,
+    extra_features: dict = None,
 ) -> None:
+    features_from_robot = get_features_from_robot(robot, use_videos)
+    if extra_features is not None:
+        features_from_robot.update(extra_features)
+
     fields = [
         ("robot_type", dataset.meta.robot_type, robot.robot_type),
         ("fps", dataset.fps, fps),
-        ("features", dataset.features, get_features_from_robot(robot, use_videos)),
+        ("features", dataset.features, features_from_robot),
     ]
 
     mismatches = []
