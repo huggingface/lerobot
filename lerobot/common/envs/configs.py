@@ -168,13 +168,6 @@ class VideoRecordConfig:
 
 
 @dataclass
-class WrapperConfig:
-    """Configuration for environment wrappers."""
-
-    joint_masking_action_space: list[bool] | None = None
-
-
-@dataclass
 class EEActionSpaceConfig:
     """Configuration parameters for end-effector action space."""
 
@@ -186,7 +179,7 @@ class EEActionSpaceConfig:
 
 
 @dataclass
-class EnvWrapperConfig:
+class EnvTransformConfig:
     """Configuration for environment wrappers."""
 
     ee_action_space_params: EEActionSpaceConfig = field(default_factory=EEActionSpaceConfig)
@@ -211,7 +204,7 @@ class HILSerlRobotEnvConfig(EnvConfig):
     """Configuration for the HILSerlRobotEnv environment."""
 
     robot: Optional[RobotConfig] = None
-    wrapper: Optional[EnvWrapperConfig] = None
+    wrapper: Optional[EnvTransformConfig] = None
     fps: int = 10
     name: str = "real_robot"
     mode: str = None  # Either "record", "replay", None
@@ -224,9 +217,8 @@ class HILSerlRobotEnvConfig(EnvConfig):
     push_to_hub: bool = True
     pretrained_policy_name_or_path: Optional[str] = None
     reward_classifier_pretrained_path: Optional[str] = None
-    number_of_steps_after_success: int = (
-        0  # For the reward classifier, to record more positive examples after a success
-    )
+    # For the reward classifier, to record more positive examples after a success
+    number_of_steps_after_success: int = 0
 
     def gym_kwargs(self) -> dict:
         return {}
@@ -265,7 +257,7 @@ class HILEnvConfig(EnvConfig):
     ################# args from hilserlrobotenv
     reward_classifier_pretrained_path: Optional[str] = None
     robot: Optional[RobotConfig] = None
-    wrapper: Optional[EnvWrapperConfig] = None
+    wrapper: Optional[EnvTransformConfig] = None
     mode: str = None  # Either "record", "replay", None
     repo_id: Optional[str] = None
     dataset_root: Optional[str] = None

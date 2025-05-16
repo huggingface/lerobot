@@ -149,12 +149,8 @@ class WandBLogger:
 
             if custom_step_key is not None:
                 value_custom_step = d[custom_step_key]
-                self._wandb.log(
-                    {
-                        f"{mode}/{k}": v,
-                        f"{mode}/{custom_step_key}": value_custom_step,
-                    }
-                )
+                data = {f"{mode}/{k}": v, f"{mode}/{custom_step_key}": value_custom_step}
+                self._wandb.log(data)
                 continue
 
             self._wandb.log(data={f"{mode}/{k}": v}, step=step)
