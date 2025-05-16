@@ -14,58 +14,74 @@
 
 from dataclasses import dataclass
 
-from ..configs import CameraConfig
+from ..configs import CameraConfig, ColorMode, Cv2Rotation
 
 
 @CameraConfig.register_subclass("intelrealsense")
 @dataclass
 class RealSenseCameraConfig(CameraConfig):
-    """
-    Example of tested options for Intel Real Sense D405:
+    """Configuration class for Intel RealSense cameras.
 
+    This class provides specialized configuration options for Intel RealSense cameras,
+    including support for depth sensing and device identification via serial number or name.
+
+    Example configurations for Intel RealSense D405:
     ```python
-    RealSenseCameraConfig(128422271347, 30, 640, 480)
-    RealSenseCameraConfig(128422271347, 60, 640, 480)
-    RealSenseCameraConfig(128422271347, 90, 640, 480)
-    RealSenseCameraConfig(128422271347, 30, 1280, 720)
-    RealSenseCameraConfig(128422271347, 30, 640, 480, use_depth=True)
-    RealSenseCameraConfig(128422271347, 30, 640, 480, rotation=90)
+    # Basic configurations
+    RealSenseCameraConfig(128422271347, 30, 1280, 720)   # 1280x720 @ 30FPS
+    RealSenseCameraConfig(128422271347, 60, 640, 480)   # 640x480 @ 60FPS
+
+    # Advanced configurations
+    RealSenseCameraConfig(128422271347, 30, 640, 480, use_depth=True)  # With depth sensing
+    RealSenseCameraConfig(128422271347, 30, 640, 480, rotation=Cv2Rotation.ROTATE_90)     # With 90° rotation
     ```
+
+    Attributes:
+        fps: Requested frames per second for the color stream.
+        width: Requested frame width in pixels for the color stream.
+        height: Requested frame height in pixels for the color stream.
+        name: Optional human-readable name to identify the camera.
+        serial_number: Optional unique serial number to identify the camera.
+                      Either name or serial_number must be provided.
+        color_mode: Color mode for image output (RGB or BGR). Defaults to RGB.
+        channels: Number of color channels (currently only 3 is supported).
+        use_depth: Whether to enable depth stream. Defaults to False.
+        rotation: Image rotation setting (0°, 90°, 180°, or 270°). Defaults to no rotation.
+
+    Note:
+        - Either name or serial_number must be specified, but not both.
+        - Depth stream configuration (if enabled) will use the same FPS as the color stream.
+        - The actual resolution and FPS may be adjusted by the camera to the nearest supported mode.
+        - Only 3-channel color output (RGB/BGR) is currently supported.
     """
 
     name: str | None = None
     serial_number: int | None = None
-    fps: int | None = None
-    width: int | None = None
-    height: int | None = None
-    color_mode: str = "rgb"
-    channels: int | None = None
+    color_mode: ColorMode = ColorMode.RGB
+    channels: int | None = 3
     use_depth: bool = False
-    force_hardware_reset: bool = True
-    rotation: int | None = None
-    mock: bool = False
+    rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION  # NOTE(Steven): Check if draccus can parse to an enum
 
     def __post_init__(self):
-        # bool is stronger than is None, since it works with empty strings
+        if self.color_mode not in (ColorMode.RGB, ColorMode.BGR):
+            raise ValueError(
+                f"`color_mode` is expected to be {ColorMode.RGB.value} or {ColorMode.BGR.value}, but {self.color_mode} is provided."
+            )
+
+        if self.rotation not in (
+            Cv2Rotation.NO_ROTATION,
+            Cv2Rotation.ROTATE_90,
+            Cv2Rotation.ROTATE_180,
+            Cv2Rotation.ROTATE_270,
+        ):
+            raise ValueError(
+                f"`rotation` is expected to be in {(Cv2Rotation.NO_ROTATION, Cv2Rotation.ROTATE_90, Cv2Rotation.ROTATE_180, Cv2Rotation.ROTATE_270)}, but {self.rotation} is provided."
+            )
+
+        if self.channels != 3:
+            raise NotImplementedError(f"Unsupported number of channels: {self.channels}")
+
         if bool(self.name) and bool(self.serial_number):
             raise ValueError(
                 f"One of them must be set: name or serial_number, but {self.name=} and {self.serial_number=} provided."
             )
-
-        if self.color_mode not in ["rgb", "bgr"]:
-            raise ValueError(
-                f"`color_mode` is expected to be 'rgb' or 'bgr', but {self.color_mode} is provided."
-            )
-
-        self.channels = 3
-
-        at_least_one_is_not_none = self.fps is not None or self.width is not None or self.height is not None
-        at_least_one_is_none = self.fps is None or self.width is None or self.height is None
-        if at_least_one_is_not_none and at_least_one_is_none:
-            raise ValueError(
-                "For `fps`, `width` and `height`, either all of them need to be set, or none of them, "
-                f"but {self.fps=}, {self.width=}, {self.height=} were provided."
-            )
-
-        if self.rotation not in [-90, None, 90, 180]:
-            raise ValueError(f"`rotation` must be in [-90, None, 90, 180] (got {self.rotation})")

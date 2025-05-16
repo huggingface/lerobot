@@ -31,7 +31,6 @@ from pprint import pformat
 
 import draccus
 
-from lerobot.common.cameras import intel, opencv  # noqa: F401
 from lerobot.common.robots import (  # noqa: F401
     Robot,
     RobotConfig,
