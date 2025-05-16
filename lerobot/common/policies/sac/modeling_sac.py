@@ -29,7 +29,7 @@ from torch.distributions import MultivariateNormal, TanhTransform, Transform, Tr
 
 from lerobot.common.policies.normalize import NormalizeBuffer, UnnormalizeBuffer
 from lerobot.common.policies.pretrained import PreTrainedPolicy
-from lerobot.common.policies.sac.configuration_sac import SACConfig
+from lerobot.common.policies.sac.configuration_sac import SACConfig, is_image_feature
 from lerobot.common.policies.utils import get_device_from_parameters
 
 DISCRETE_DIMENSION_INDEX = -1  # Gripper is always the last dimension
@@ -264,6 +264,7 @@ class SACPolicy(
             )
 
             # subsample critics to prevent overfitting if use high UTD (update to date)
+            # TODO: Get indices before forward pass to avoid unnecessary computation
             if self.config.num_subsample_critics is not None:
                 indices = torch.randperm(self.config.num_critics)
                 indices = indices[: self.config.num_subsample_critics]
@@ -468,6 +469,7 @@ class SACPolicy(
 
     def _init_actor(self, continuous_action_dim):
         """Initialize policy actor network and default target entropy."""
+        # NOTE: The actor select only the continuous action part
         self.actor = Policy(
             encoder=self.encoder_actor,
             network=MLP(input_dim=self.encoder_actor.output_dim, **asdict(self.config.actor_network_kwargs)),
@@ -500,7 +502,7 @@ class SACObservationEncoder(nn.Module):
         self._compute_output_dim()
 
     def _init_image_layers(self) -> None:
-        self.image_keys = [k for k in self.config.input_features if k.startswith("observation.image")]
+        self.image_keys = [k for k in self.config.input_features if is_image_feature(k)]
         self.has_images = bool(self.image_keys)
         if not self.has_images:
             return
@@ -928,7 +930,7 @@ class Policy(nn.Module):
 class DefaultImageEncoder(nn.Module):
     def __init__(self, config: SACConfig):
         super().__init__()
-        image_key = next(key for key in config.input_features.keys() if key.startswith("observation.image"))  # noqa: SIM118
+        image_key = next(key for key in config.input_features if is_image_feature(key))
         self.image_enc_layers = nn.Sequential(
             nn.Conv2d(
                 in_channels=config.input_features[image_key].shape[0],
@@ -959,7 +961,6 @@ class DefaultImageEncoder(nn.Module):
             ),
             nn.ReLU(),
         )
-        # Get first image key from input features
 
     def forward(self, x):
         x = self.image_enc_layers(x)
