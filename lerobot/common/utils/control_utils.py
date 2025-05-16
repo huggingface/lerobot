@@ -38,6 +38,7 @@ from lerobot.common.utils.robot_utils import busy_wait
 from lerobot.common.utils.utils import get_safe_torch_device, has_method
 
 
+# NOTE(Steven): Consider integrating this in camera class
 def log_control_info(robot: Robot, dt_s, episode_index=None, frame_index=None, fps=None):
     log_items = []
     if episode_index is not None:
