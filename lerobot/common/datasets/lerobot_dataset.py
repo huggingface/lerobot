@@ -31,7 +31,7 @@ from datasets import Dataset
 from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.constants import REPOCARD_NAME
 from huggingface_hub.errors import RevisionNotFoundError
-from torch.profiler import record_function
+
 from lerobot.common.constants import HF_LEROBOT_HOME
 from lerobot.common.datasets.compute_stats import aggregate_stats, compute_episode_stats
 from lerobot.common.datasets.image_writer import AsyncImageWriter, write_image
@@ -63,6 +63,7 @@ from lerobot.common.datasets.utils import (
     load_nested_dataset,
     load_stats,
     load_tasks,
+    safe_write_dataframe_to_parquet,
     update_chunk_file_indices,
     validate_episode_buffer,
     validate_frame,
@@ -1008,10 +1009,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # Write the resulting dataframe from RAM to disk
         path = self.root / self.meta.data_path.format(chunk_index=chunk_idx, file_index=file_idx)
         path.parent.mkdir(parents=True, exist_ok=True)
-        if len(self.meta.image_keys) > 0:
-            datasets.Dataset.from_dict(df.to_dict(orient="list")).to_parquet(path)
-        else:
-            df.to_parquet(path)
+        safe_write_dataframe_to_parquet(df, path, self.meta.image_keys)
 
         # Update the Hugging Face dataset by reloading it.
         # This process should be fast because only the latest Parquet file has been modified.

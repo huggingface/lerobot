@@ -18,6 +18,7 @@ from lerobot.common.datasets.utils import (
     concat_video_files,
     get_parquet_file_size_in_mb,
     get_video_size_in_mb,
+    safe_write_dataframe_to_parquet,
     update_chunk_file_indices,
     write_info,
     write_stats,
@@ -100,7 +101,8 @@ def aggregate_datasets(repo_ids: list[str], aggr_repo_id: str, roots: list[Path]
         ]
     )
     fps, robot_type, features = validate_all_metadata(all_metadata)
-    video_keys = [k for k, v in features.items() if v["dtype"] == "video"]
+    video_keys = [key for key in features if features[key]["dtype"] == "video"]
+    image_keys = [key for key in features if features[key]["dtype"] == "image"]
 
     # Initialize output dataset metadata
     dst_meta = LeRobotDatasetMetadata.create(
@@ -203,9 +205,21 @@ def aggregate_videos(src_meta, dst_meta, videos_idx):
                     file_idx,
                 )
 
-        # Update the video index tracking
-        video_idx["chunk_idx"] = chunk_idx
-        video_idx["file_idx"] = file_idx
+                if aggr_size_in_mb + size_in_mb >= DEFAULT_DATA_FILE_SIZE_IN_MB:
+                    # Size limit is reached, prepare new parquet file
+                    aggr_data_chunk_idx, aggr_data_file_idx = update_chunk_file_indices(
+                        aggr_data_chunk_idx, aggr_data_file_idx, DEFAULT_CHUNK_SIZE
+                    )
+                    aggr_path = aggr_root / DEFAULT_DATA_PATH.format(
+                        chunk_index=aggr_data_chunk_idx, file_index=aggr_data_file_idx
+                    )
+                    aggr_path.parent.mkdir(parents=True, exist_ok=True)
+                    df.to_parquet(aggr_path)
+                else:
+                    # Update the existing parquet file with new rows
+                    aggr_df = pd.read_parquet(aggr_path)
+                    df = pd.concat([aggr_df, df], ignore_index=True)
+                    safe_write_dataframe_to_parquet(df, aggr_path, image_keys)
 
         return videos_idx
 
