@@ -115,8 +115,11 @@ def init_logging(log_file: Path | None = None, display_pid: bool = False):
         fnameline = f"{record.pathname}:{record.lineno}"
 
         # NOTE: Display PID is useful for multi-process logging.
-        pid_str = f"[PID: {os.getpid()}]" if display_pid else ""
-        message = f"{record.levelname} {pid_str} {dt} {fnameline[-15:]:>15} {record.msg}"
+        if display_pid:
+            pid_str = f"[PID: {os.getpid()}]"
+            message = f"{record.levelname} {pid_str} {dt} {fnameline[-15:]:>15} {record.msg}"
+        else:
+            message = f"{record.levelname} {dt} {fnameline[-15:]:>15} {record.msg}"
         return message
 
     logging.basicConfig(level=logging.INFO)
@@ -131,7 +134,7 @@ def init_logging(log_file: Path | None = None, display_pid: bool = False):
     logging.getLogger().addHandler(console_handler)
 
     if log_file is not None:
-        # File handler
+        # Additionally write logs to file
         file_handler = logging.FileHandler(log_file)
         file_handler.setFormatter(formatter)
         logging.getLogger().addHandler(file_handler)
@@ -247,11 +250,23 @@ class TimerManager:
 
     Examples
     --------
-    >>> timer = TimerManager("Policy", log=False)
-    >>> for _ in range(3):
-    ...     with timer:
-    ...         time.sleep(0.01)
-    >>> print(timer.last, timer.fps_avg, timer.percentile(90))
+    ```python
+    # Example 1: Using context manager
+    timer = TimerManager("Policy", log=False)
+    for _ in range(3):
+        with timer:
+            time.sleep(0.01)
+    print(timer.last, timer.fps_avg, timer.percentile(90))  # Prints: 0.01 100.0 0.01
+    ```
+
+    ```python
+    # Example 2: Using start/stop methods
+    timer = TimerManager("Policy", log=False)
+    timer.start()
+    time.sleep(0.01)
+    timer.stop()
+    print(timer.last, timer.fps_avg, timer.percentile(90))  # Prints: 0.01 100.0 0.01
+    ```
     """
 
     def __init__(
