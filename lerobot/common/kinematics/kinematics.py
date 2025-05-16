@@ -13,28 +13,26 @@ class Robot:
             [0, 0.0, 0.116, 0.0],
             [0, 0.0, 0.1347, 0.0],
             [0, 0.0, 0.0, -np.pi / 2],
-            [0, 0.0609, 0.0, 0.0],  # to increase length and include also gripper: [0, 0.155, 0.0, 0.0],
+            [0, 0.0609, 0.0, 0.0], # to increase length and include also gripper: [0, 0.155, 0.0, 0.0],
         ]
     }
 
-    # to be filled with correct numbers based on your motors assembly (here gripper is included)
-    MECH_JOINT_LIMITS_LOW = {"so100": np.array([-2.2000, -3.1416, 0.0000, -2.0000, -3.1416, -0.2000])}
+    # mechanical joint limitis
+    MECH_JOINT_LIMITS_LOW = {"so100": np.array([-2.2000, -3.1416,  0.0000, -2.0000, -3.1416, -0.2000])}
     MECH_JOINT_LIMITS_UP = {"so100": np.array([2.2000, 0.2000, 3.1416, 1.8000, 3.1416, 2.0000])}
-
+    
     # set worldTbase frame (base-frame DH aligned wrt SO100 simulator)
-    WORLD_T_TOOL = {
-        "so100": np.array(
-            [[0.0, 1.0, 0.0, 0.0], [-1.0, 0.0, 0.0, -0.0453], [0.0, 0.0, 1.0, 0.0647], [0.0, 0.0, 0.0, 1.0]]
-        )
-    }
-
+    WORLD_T_TOOL = {"so100": np.array([[ 0.0, 1.0, 0.0,  0.0],
+                                       [-1.0, 0.0, 0.0, -0.0453],
+                                       [ 0.0, 0.0, 1.0,  0.0647],
+                                       [ 0.0, 0.0, 0.0,  1.0]])}
+    
     # set nTtool frame (n-frame DH aligned wrt SO100 simulator)
-    N_T_TOOL = {
-        "so100": np.array(
-            [[0.0, 0.0, -1.0, 0.0], [1.0, 0.0, 0.0, 0.0], [0.0, -1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]]
-        )
-    }
-
+    N_T_TOOL = {"so100": np.array([[0.0,  0.0, -1.0, 0.0],
+                                   [1.0,  0.0,  0.0, 0.0],
+                                   [0.0, -1.0,  0.0, 0.0],
+                                   [0.0,  0.0,  0.0, 1.0]])}
+    
     def __init__(self, robot_type="so100"):
         if robot_type not in Robot.ROBOT_DH_TABLES:
             raise ValueError(
@@ -51,29 +49,29 @@ class Robot:
 
     def from_dh_to_mech(self, q_dh):
         """convert joint positions from DH to mechanical coordinates"""
-
-        beta = np.deg2rad(14.45)  # make reference to dh2.png in README.md
-
+        
+        beta = np.deg2rad(14.45) # make reference to dh2.png in README.md
+        
         q_mech = np.zeros_like(q_dh)
         q_mech[0] = q_dh[0]
         q_mech[1] = -q_dh[1] - beta
-        q_mech[2] = -q_dh[2] - beta
-        q_mech[3] = -q_dh[3] - np.pi / 2
-        q_mech[4] = q_dh[4] - np.pi / 2
+        q_mech[2] = -q_dh[2] + beta
+        q_mech[3] = -q_dh[3] -np.pi/2 
+        q_mech[4] = -q_dh[4] - np.pi/2
 
         return q_mech
 
     def from_mech_to_dh(self, q_mech):
         """convert joint positions from mechanical to DH coordinates"""
-
-        beta = np.deg2rad(14.45)  # make reference to dh2.png in README.md
-
+        
+        beta = np.deg2rad(14.45) # make reference to dh2.png in README.md
+        
         q_dh = np.zeros_like(q_mech)
-        q_dh[0] = q_mech[0]  # still under TESTING
-        q_dh[1] = -q_mech[1] - beta
+        q_dh[0] = q_mech[0]  
+        q_dh[1] = -q_mech[1] - beta 
         q_dh[2] = -q_mech[2] + beta
-        q_dh[3] = -q_mech[3] - np.pi / 2
-        q_dh[4] = q_mech[4] + np.pi / 2  # still under TESTING
+        q_dh[3] = -q_mech[3] - np.pi/2
+        q_dh[4] = -q_mech[4] - np.pi/2  
 
         return q_dh[:-1]  # skip last DOF because it is the gripper
 
@@ -272,10 +270,12 @@ class RobotKinematics:
 
     def _interp_init(self, T_start, T_final, delta=0.01):
         """Initialize interpolator parameters"""
-
+        
         # avoid division by zero
-        assert delta > 0, f"[ERROR] Delta = ({delta:.4f}). This value must be strictly greater than zero"
-
+        assert delta > 0, (
+            f"[ERROR] Delta = ({delta:.4f}). Delta must be strictly greater than zero"
+        )
+        
         # init
         self.t_start = T_start[:3, 3]
         self.t_final = T_final[:3, 3]
@@ -290,19 +290,19 @@ class RobotKinematics:
         # divide trajectory in steps
         dist = RobotUtils.calc_distance(self.t_final, self.t_start)
         self.n_steps = int(np.ceil(dist / delta))
-
+                
         return self.n_steps
 
     def _interp_execute(self, i):
         """Compute Cartesian pose setpoint for the current step"""
-
+        
         # n_steps == 0 means Tgoal == Tinit
         # In this way I also avoid division by zero
-        if self.n_steps == 0:
+        if (self.n_steps == 0):
             s = 1.0
         else:
-            s = i / self.n_steps  # compute current step
-
+            s = i / self.n_steps # compute current step
+        
         t_interp = (1 - s) * self.t_start + s * self.t_final
         R_interp = self.slerp(s).as_matrix()
 
@@ -315,37 +315,22 @@ class RobotKinematics:
 
 
 if __name__ == "__main__":
+    
     ## basic usage demo ##
-
-    ## SIMULATOR EXAMPLE FROM ALEXIS: TO BE DELETED
-
-    # qpos_start = [-np.pi/2, -np.pi/2, np.pi/2, np.pi/2, -np.pi/2, np.pi/2]
-    # ee_start = [-0.1936, -0.0452,  0.1743]
-    # ee_start_quat = tensor([ 0.4960,  0.5039, -0.5039, -0.4960])
-    # [  0.0  0.0 -1.0]
-    # [ -1.0  0.0  0.0]
-    # [  0.0  1.0  0.0]
-
-    # qpos_goal = [-1.5708, -1.7102,  1.1232,  1.3598, -1.5709,  1.5706]
-    # ee_goal = [-0.1952, -0.0452,  0.2714]
-    # ee_goal_quat = tensor([ 0.6550,  0.2665, -0.2665, -0.6550])
-    #  [ 0.          0.715 -0.698]
-    #  [-1.          0.     0.0]
-    #  [ 0.          0.698  0.715]
 
     # init
     robot = Robot(robot_type="so100")
     kin = RobotKinematics()
-
+    
     # get current joint positions
-    # q_init = np.array([0.0, 0.0, 0.0, -np.pi / 2, 0.0, 0.0])  # full extended arm (6th DOF is gripper)
-    q_init = np.array([-np.pi / 2, -np.pi / 2, np.pi / 2, np.pi / 2, -np.pi / 2, np.pi / 2])
+    q_init = np.array([-np.pi/2, -np.pi/2, np.pi/2, np.pi/2, -np.pi/2, np.pi/2]) 
     print("q_init_mechanical: ", np.rad2deg(q_init))
-
+    
     # convert from mechanical angle to dh angle
     q_init_dh = robot.from_mech_to_dh(q_init)
     print("q_init_dh: ", np.rad2deg(q_init_dh))
-
+    print("q_init_dh: ", q_init_dh)
+        
     # compute start pose
     T_start = kin.forward_kinematics(robot, q_init_dh)
     print("T_start = \n", T_start)
@@ -367,7 +352,7 @@ if __name__ == "__main__":
 
     # convert from dh angle to mechanical angle
     q_final_mech = robot.from_dh_to_mech(q_final_dh)
-    print("q_final_mech: ", q_final_mech)
+    print("q_final_mech: ", np.rad2deg(q_final_mech))
 
     # add gripper position
     gripper_pose = np.deg2rad(0.0)
@@ -375,3 +360,11 @@ if __name__ == "__main__":
 
     # raise an error in case joint limits are exceeded
     robot.check_joint_limits(q_final_mech)
+
+
+
+
+
+
+
+
