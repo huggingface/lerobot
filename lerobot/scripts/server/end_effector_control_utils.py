@@ -720,7 +720,7 @@ def teleoperate_gym_env(env, controller, fps: int = 30):
 
 
 if __name__ == "__main__":
-    from lerobot.common.envs.configs import EEActionSpaceConfig, EnvWrapperConfig, HILSerlRobotEnvConfig
+    from lerobot.common.envs.configs import EEActionSpaceConfig, EnvTransformConfig, HILSerlRobotEnvConfig
     from lerobot.common.robot_devices.robots.configs import RobotConfig
     from lerobot.common.robot_devices.robots.utils import make_robot_from_config
     from lerobot.scripts.server.gym_manipulator import make_robot_env
@@ -781,7 +781,7 @@ if __name__ == "__main__":
 
         elif args.mode in ["keyboard_gym", "gamepad_gym"]:
             # Gym environment control modes
-            cfg = HILSerlRobotEnvConfig(robot=robot_config, wrapper=EnvWrapperConfig())
+            cfg = HILSerlRobotEnvConfig(robot=robot_config, wrapper=EnvTransformConfig())
             cfg.wrapper.ee_action_space_params = EEActionSpaceConfig(
                 x_step_size=0.03, y_step_size=0.03, z_step_size=0.03, bounds=bounds
             )
