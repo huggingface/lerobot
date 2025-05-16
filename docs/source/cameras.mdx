@@ -1,19 +1,18 @@
 # Cameras
 
-Here we describe how to setup and use a camera with LeRobot. We support different ways of capturing videos in LeRobot such as using a phone camera, integrated laptop camera, external webcam or an Intel realsense camera.
-
-## Setup Cameras
+Here we describe how to set up and use a camera with LeRobot. We support different ways of capturing videos in LeRobot, such as using a phone camera, an integrated laptop camera, an external webcam, or an Intel realsense camera.
+## Set up Cameras
 
 There are three ways to connect and use a camera with LeRobot:
-1. Use [Camera Class](./setup_cameras?use+phone=Mac#use-opencvcamera) which allows you to use any camera: usb, realsense, laptop webcam
+1. Use [Camera Class](./setup_cameras?use+phone=Mac#use-opencvcamera), which allows you to use any camera: usb, realsense, laptop webcam
 2. Use [iPhone camera](./setup_cameras?use+phone=Mac#use-your-phone) with MacOS
 3. Use [Phone camera](./setup_cameras?use+phone=Linux#use-your-phone) on Linux
 
 ### Use Camera Class
 
-In LeRobot you can efficiently record frames from most cameras using either the OpenCVCamera class or the RealSenseCamera class. For more details on compatibility for the OpenCVCamera class, see [Video I/O with OpenCV Overview](https://docs.opencv.org/4.x/d0/da7/videoio_overview.html).
+In LeRobot, you can efficiently record frames from most cameras using either the OpenCVCamera class or the RealSenseCamera class. For more details on compatibility for the OpenCVCamera class, see [Video I/O with OpenCV Overview](https://docs.opencv.org/4.x/d0/da7/videoio_overview.html).
 
-To instantiate an camera, you need a camera index. When you only have one camera like a webcam of a laptop, the camera index is usually `0` but it might differ, and the camera index might change if you reboot your computer or re-plug your camera. This behavior depends on your operating system.
+To instantiate a camera, you need a camera index. When you only have one camera like a webcam of a laptop, the camera index is usually `0` but it might differ, and the camera index might change if you reboot your computer or re-plug your camera. This behavior depends on your operating system.
 
 To find the camera indices, run the following script:
 ```bash
@@ -48,10 +47,7 @@ Camera #1:
 ```
 
 > [!WARNING]
-> On MacOS you could get this error: `Error finding RealSense cameras: failed to set power state`, this can be solved by running the same command with `sudo` permissions.
-
-
-Now that you have the camera indexes, you should specify the camera's in the config.
+> On , you could get this error: `Error finding RealSense cameras: failed to set power state`, this can be solved by running the same command with `sudo` permissions.
 
 ### Use your phone
 <hfoptions id="use phone">
