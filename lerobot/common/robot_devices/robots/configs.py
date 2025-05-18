@@ -259,8 +259,8 @@ class KochRobotConfig(ManipulatorRobotConfig):
                 width=640,
                 height=480,
             ),
-            "phone": OpenCVCameraConfig(
-                camera_index=1,
+            "follower_wrist": OpenCVCameraConfig(
+                camera_index=2,  # /dev/video2
                 fps=30,
                 width=640,
                 height=480,
@@ -351,12 +351,12 @@ class KochBimanualRobotConfig(ManipulatorRobotConfig):
                 width=640,
                 height=480,
             ),
-            "phone": OpenCVCameraConfig(
-                camera_index=1,
-                fps=30,
-                width=640,
-                height=480,
-            ),
+            # "phone": OpenCVCameraConfig(
+            #     camera_index=1,
+            #     fps=30,
+            #     width=640,
+            #     height=480,
+            # ),
         }
     )
 
@@ -419,8 +419,8 @@ class MossRobotConfig(ManipulatorRobotConfig):
                 width=640,
                 height=480,
             ),
-            "phone": OpenCVCameraConfig(
-                camera_index=1,
+            "follower_wrist": OpenCVCameraConfig(
+                camera_index=2,  # /dev/video2
                 fps=30,
                 width=640,
                 height=480,
@@ -482,8 +482,9 @@ class So101RobotConfig(ManipulatorRobotConfig):
                 width=640,
                 height=480,
             ),
-            "phone": OpenCVCameraConfig(
-                camera_index=1,
+            "follower_wrist": OpenCVCameraConfig(
+                type="opencv",
+                camera_index=2,  # /dev/video2
                 fps=30,
                 width=640,
                 height=480,
@@ -545,8 +546,8 @@ class So100RobotConfig(ManipulatorRobotConfig):
                 width=640,
                 height=480,
             ),
-            "phone": OpenCVCameraConfig(
-                camera_index=1,
+            "follower_wrist": OpenCVCameraConfig(
+                camera_index=2,  # /dev/video2
                 fps=30,
                 width=640,
                 height=480,

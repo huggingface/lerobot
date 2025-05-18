@@ -171,6 +171,9 @@ from lerobot.common.robot_devices.utils import busy_wait, safe_disconnect
 from lerobot.common.utils.utils import has_method, init_logging, log_say
 from lerobot.configs import parser
 
+from rich import print # for debugging
+from lerobot.common.robot_devices.robots.configs import So101RobotConfig # for debugging
+
 ########################################################################################
 # Control modes
 ########################################################################################
@@ -406,6 +409,13 @@ def _init_rerun(control_config: ControlConfig, session_name: str = "lerobot_cont
 def control_robot(cfg: ControlPipelineConfig):
     init_logging()
     logging.info(pformat(asdict(cfg)))
+
+    print("\n[bold yellow]Loaded camera config:[/bold yellow]")
+    print(So101RobotConfig().cameras)
+    print("Active robot config class:", type(cfg.robot).__name__)
+
+    print(cfg.robot.cameras)
+
 
     robot = make_robot_from_config(cfg.robot)
 
