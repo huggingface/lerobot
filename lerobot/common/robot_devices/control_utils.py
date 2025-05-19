@@ -307,6 +307,9 @@ def control_loop(
         # Start recording only in data reading mode
         async_microphones_start_recording(robot.microphones)
 
+    # Fill audio buffers
+    busy_wait(DEFAULT_AUDIO_CHUNK_DURATION)
+
     while timestamp < control_time_s:
         start_loop_t = time.perf_counter()
 
