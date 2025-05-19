@@ -21,10 +21,10 @@ from typing import Any
 
 from lerobot.common.cameras.utils import make_cameras_from_configs
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from lerobot.common.motors import Motor, MotorCalibration, MotorNormMode
+from lerobot.common.motors import Motor, MotorNormMode
+from lerobot.common.motors.calibration_gui import RangeFinderGUI
 from lerobot.common.motors.feetech import (
     FeetechMotorsBus,
-    OperatingMode,
 )
 
 from ..robot import Robot
@@ -113,36 +113,11 @@ class HopeJrHand(Robot):
         return self.bus.is_calibrated
 
     def calibrate(self) -> None:
-        raise NotImplementedError  # TODO(aliberts): adapt code below (copied from koch)
-        logger.info(f"\nRunning calibration of {self}")
-        self.bus.disable_torque()
-        for name in self.bus.names:
-            self.bus.write("Operating_Mode", name, OperatingMode.POSITION.value)
+        fingers = {}
+        for finger in ["thumb", "index", "middle", "ring", "pinky"]:
+            fingers[finger] = [motor for motor in self.bus.motors if motor.startswith(finger)]
 
-        input("Move robot to the middle of its range of motion and press ENTER....")
-        homing_offsets = self.bus.set_half_turn_homings()
-
-        full_turn_motor = "wrist_roll"
-        unknown_range_motors = [name for name in self.bus.names if name != full_turn_motor]
-        logger.info(
-            f"Move all joints except '{full_turn_motor}' sequentially through their "
-            "entire ranges of motion.\nRecording positions. Press ENTER to stop..."
-        )
-        range_mins, range_maxes = self.bus.record_ranges_of_motion(unknown_range_motors)
-        range_mins[full_turn_motor] = 0
-        range_maxes[full_turn_motor] = 4095
-
-        self.calibration = {}
-        for name, motor in self.bus.motors.items():
-            self.calibration[name] = MotorCalibration(
-                id=motor.id,
-                drive_mode=0,
-                homing_offset=homing_offsets[name],
-                range_min=range_mins[name],
-                range_max=range_maxes[name],
-            )
-
-        self.bus.write_calibration(self.calibration)
+        self.calibration = RangeFinderGUI(self.bus, fingers).run()
         self._save_calibration()
         print("Calibration saved to", self.calibration_fpath)
 

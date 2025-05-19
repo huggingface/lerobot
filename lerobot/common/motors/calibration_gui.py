@@ -1,205 +1,379 @@
-#!/usr/bin/env python
-"""
-Hand + Arm slider GUI for HopeJr with optional --no-hand / --no-arm flags.
+import math
+from dataclasses import dataclass
 
-Run examples:
-    python sliders.py                 # hand + arm
-    python sliders.py --no-hand       # arm only
-    python sliders.py --no-arm        # hand only
-"""
-
-# ruff: noqa: N806
-
-import json
-import sys
-from pathlib import Path
-
-import numpy as np
 import pygame
 
-from lerobot.common.robots.hope_jr import HopeJrHand, HopeJrHandConfig
+from lerobot.common.motors import MotorsBus
 
-from .motors_bus import MotorsBus
+BAR_LEN, BAR_THICKNESS = 450, 8
+HANDLE_R = 10
+BRACKET_W, BRACKET_H = 6, 14
+TRI_W, TRI_H = 12, 14
+
+BTN_W, BTN_H = 60, 22
+SAVE_W, SAVE_H = 80, 28
+LOAD_W = 80
+DD_W, DD_H = 160, 28
+
+TOP_GAP = 50
+PADDING_Y, TOP_OFFSET = 70, 60
+FONT_SIZE, FPS = 20, 60
+
+BG_COLOR = (30, 30, 30)
+BAR_RED, BAR_GREEN = (200, 60, 60), (60, 200, 60)
+HANDLE_COLOR, TEXT_COLOR = (240, 240, 240), (250, 250, 250)
+TICK_COLOR = (250, 220, 40)
+BTN_COLOR, BTN_COLOR_HL = (80, 80, 80), (110, 110, 110)
+DD_COLOR, DD_COLOR_HL = (70, 70, 70), (100, 100, 100)
 
 
-# ────────────────────────────────────────────────────────────────────────────────
-#  Helpers for JSON range files
-# ────────────────────────────────────────────────────────────────────────────────
-def load_ranges(path: str):
-    d = json.loads(Path(path).read_text())
-    return d["start_pos"], d["end_pos"]
+def dist(a, b):
+    return math.hypot(a[0] - b[0], a[1] - b[1])
 
 
-def save_ranges(path: str, lo, hi):
-    d = {
-        "start_pos": lo,
-        "end_pos": hi,
-        "homing_offset": [],
-        "drive_mode": [],
-        "calib_mode": "LINEAR",
-    }
-    Path(path).write_text(json.dumps(d, indent=2))
+@dataclass
+class RangeValues:
+    min_v: int
+    pos_v: int
+    max_v: int
 
 
-def main(bus: MotorsBus, motors: list[str] | None = None):
-    motors = motors if motors else list(bus.motors)
+class RangeSlider:
+    """One motor = one slider row"""
 
-    if not bus.is_connected:
-        bus.connect()
+    def __init__(self, motor, idx, res, calibration, present, label_pad, base_y):
+        self.motor = motor
+        self.res = res
+        self.x0 = 40 + label_pad
+        self.x1 = self.x0 + BAR_LEN
+        self.y = base_y + idx * PADDING_Y
 
-    H_RANGE = "examples/hopejr/settings/hand_ranges.json"
-    hand_lo, hand_hi = load_ranges(H_RANGE) if motors else ([], [])
-    # arm_lo, arm_hi = load_ranges(A_RANGE) if arm_names else ([], [])
+        self.min_v = calibration.range_min
+        self.max_v = calibration.range_max
+        self.pos_v = max(self.min_v, min(present, self.max_v))
 
-    pygame.init()
-    screen = pygame.display.set_mode((1080, 720))
-    pygame.display.set_caption("Hand + Arm Sliders")
-    font = pygame.font.SysFont(None, 20)
-    big = pygame.font.SysFont(None, 24)
+        self.min_x = self._pos_from_val(self.min_v)
+        self.max_x = self._pos_from_val(self.max_v)
+        self.pos_x = self._pos_from_val(self.pos_v)
 
-    ROWS = len(motors)
-    TOP, BOT = 100, 20
-    ROW_H = (720 - TOP - BOT) // max(1, ROWS)
-    BAR_H = ROW_H - 25
+        self.min_btn = pygame.Rect(self.x0 - BTN_W - 6, self.y - BTN_H // 2, BTN_W, BTN_H)
+        self.max_btn = pygame.Rect(self.x1 + 6, self.y - BTN_H // 2, BTN_W, BTN_H)
 
-    HX, H_W = None, 0
+        self.drag_min = self.drag_max = self.drag_pos = False
+        self.tick_val = present
+        self.font = pygame.font.Font(None, FONT_SIZE)
 
-    H_MAX = 1024
-    h_vals = np.zeros(len(motors), int)
+    def _val_from_pos(self, x):
+        return round((x - self.x0) / BAR_LEN * self.res)
 
-    BTN_W, BTN_H = 120, 28
-    btns = [
-        {
-            "rect": pygame.Rect(HX, 20, BTN_W, BTN_H),
-            "txt": "Hand  LOWER",
-            "col": "hand",
-            "type": "low",
-        },
-        {
-            "rect": pygame.Rect(HX + BTN_W + 10, 20, BTN_W, BTN_H),
-            "txt": "Hand  UPPER",
-            "col": "hand",
-            "type": "high",
-        },
-    ]
-    edit_mode = None  # None or ("hand"/"arm","low"/"high")
-    toast = None
-    toast_timer = 0
+    def _pos_from_val(self, v):
+        return self.x0 + (v / self.res) * BAR_LEN
 
-    def bar(x, y, w, val, lo, hi, vmax, label):
-        lo, hi = sorted((lo, hi))
-        px_lo = int(w * lo / vmax)
-        px_hi = int(w * hi / vmax)
-        px_val = int(w * val / vmax)
-        bar_y = y + 5
-        pygame.draw.rect(screen, (200, 200, 200), (x, bar_y, w, BAR_H))
-        pygame.draw.rect(screen, (80, 200, 80), (x, bar_y, px_val, BAR_H))
-        pygame.draw.rect(screen, (255, 60, 60), (x, bar_y, px_lo, BAR_H))
-        pygame.draw.rect(screen, (255, 60, 60), (x + px_hi, bar_y, w - px_hi, BAR_H))
-        name = font.render(label, True, (255, 255, 255))
-        screen.blit(name, name.get_rect(midbottom=(x + w // 2, y - 3)))
-        screen.blit(font.render(str(lo), True, (80, 120, 255)), (x - 45, bar_y + BAR_H // 4))
-        screen.blit(font.render(str(hi), True, (80, 120, 255)), (x + w - 55, bar_y + BAR_H // 4))
-        screen.blit(font.render(str(val), True, (255, 255, 255)), (x + w + 10, bar_y + BAR_H // 4))
+    def set_tick(self, v):
+        self.tick_val = max(0, min(v, self.res))
 
-    def slider_at(pos):
-        x, y = pos
-        row = (y - TOP) // ROW_H
-        if not 0 <= row < ROWS:
-            return None
-        y0 = TOP + row * ROW_H
-        if not y0 <= y <= y0 + BAR_H + 5:
-            return None
-        if HX <= x <= HX + H_W and row < len(motors):
-            return (str(bus), row, HX, H_W, H_MAX)
-        return None
+    def _triangle_hit(self, pos):
+        tri_top = self.y - BAR_THICKNESS // 2 - 2
+        return pygame.Rect(self.pos_x - TRI_W // 2, tri_top - TRI_H, TRI_W, TRI_H).collidepoint(pos)
 
-    def toast_msg(txt):
-        nonlocal toast, toast_timer
-        toast = big.render(txt, True, (255, 255, 0))
-        toast_timer = 120
+    def handle_event(self, e):
+        if e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
+            if self.min_btn.collidepoint(e.pos):
+                self.min_x, self.min_v = self.pos_x, self.pos_v
+                return
+            if self.max_btn.collidepoint(e.pos):
+                self.max_x, self.max_v = self.pos_x, self.pos_v
+                return
+            if dist(e.pos, (self.min_x, self.y)) <= HANDLE_R:
+                self.drag_min = True
+            elif dist(e.pos, (self.max_x, self.y)) <= HANDLE_R:
+                self.drag_max = True
+            elif self._triangle_hit(e.pos):
+                self.drag_pos = True
 
-    clock = pygame.time.Clock()
-    dragging = None
-    while True:
-        screen.fill((20, 20, 20))
+        elif e.type == pygame.MOUSEBUTTONUP and e.button == 1:
+            self.drag_min = self.drag_max = self.drag_pos = False
 
-        for i, n in enumerate(motors):
-            bar(HX, TOP + i * ROW_H, H_W, h_vals[i], hand_lo[i], hand_hi[i], H_MAX, n)
+        elif e.type == pygame.MOUSEMOTION:
+            x = e.pos[0]
+            if self.drag_min:
+                self.min_x = max(self.x0, min(x, self.pos_x))
+            elif self.drag_max:
+                self.max_x = min(self.x1, max(x, self.pos_x))
+            elif self.drag_pos:
+                self.pos_x = max(self.min_x, min(x, self.max_x))
 
-        # for i, n in enumerate(arm_names):
-        #     bar(AX, TOP + i * ROW_H, A_W, a_vals[i], arm_lo[i], arm_hi[i], A_MAX, n)
+            self.min_v = self._val_from_pos(self.min_x)
+            self.max_v = self._val_from_pos(self.max_x)
+            self.pos_v = self._val_from_pos(self.pos_x)
+
+    def _draw_button(self, surf, rect, text):
+        clr = BTN_COLOR_HL if rect.collidepoint(pygame.mouse.get_pos()) else BTN_COLOR
+        pygame.draw.rect(surf, clr, rect, border_radius=4)
+        t = self.font.render(text, True, TEXT_COLOR)
+        surf.blit(t, (rect.centerx - t.get_width() // 2, rect.centery - t.get_height() // 2))
+
+    def draw(self, surf):
+        # motor name above set-min button (right-aligned)
+        name_surf = self.font.render(self.motor, True, TEXT_COLOR)
+        surf.blit(
+            name_surf,
+            (self.min_btn.right - name_surf.get_width(), self.min_btn.y - name_surf.get_height() - 4),
+        )
+
+        # bar + active section
+        pygame.draw.rect(surf, BAR_RED, (self.x0, self.y - BAR_THICKNESS // 2, BAR_LEN, BAR_THICKNESS))
+        pygame.draw.rect(
+            surf, BAR_GREEN, (self.min_x, self.y - BAR_THICKNESS // 2, self.max_x - self.min_x, BAR_THICKNESS)
+        )
+
+        # tick
+        tick_x = self._pos_from_val(self.tick_val)
+        pygame.draw.line(
+            surf,
+            TICK_COLOR,
+            (tick_x, self.y - BAR_THICKNESS // 2 - 4),
+            (tick_x, self.y + BAR_THICKNESS // 2 + 4),
+            2,
+        )
+
+        # brackets
+        for x, sign in ((self.min_x, +1), (self.max_x, -1)):
+            pygame.draw.line(
+                surf, HANDLE_COLOR, (x, self.y - BRACKET_H // 2), (x, self.y + BRACKET_H // 2), 2
+            )
+            pygame.draw.line(
+                surf,
+                HANDLE_COLOR,
+                (x, self.y - BRACKET_H // 2),
+                (x + sign * BRACKET_W, self.y - BRACKET_H // 2),
+                2,
+            )
+            pygame.draw.line(
+                surf,
+                HANDLE_COLOR,
+                (x, self.y + BRACKET_H // 2),
+                (x + sign * BRACKET_W, self.y + BRACKET_H // 2),
+                2,
+            )
+
+        # triangle ▼
+        tri_top = self.y - BAR_THICKNESS // 2 - 2
+        pygame.draw.polygon(
+            surf,
+            HANDLE_COLOR,
+            [
+                (self.pos_x, tri_top),
+                (self.pos_x - TRI_W // 2, tri_top - TRI_H),
+                (self.pos_x + TRI_W // 2, tri_top - TRI_H),
+            ],
+        )
+
+        # numeric labels
+        fh = self.font.get_height()
+        pos_y = tri_top - TRI_H - 4 - fh
+        txts = [
+            (self.min_v, self.min_x, self.y - BRACKET_H // 2 - 4 - fh),
+            (self.max_v, self.max_x, self.y - BRACKET_H // 2 - 4 - fh),
+            (self.pos_v, self.pos_x, pos_y),
+        ]
+        for v, x, y in txts:
+            s = self.font.render(str(v), True, TEXT_COLOR)
+            surf.blit(s, (x - s.get_width() // 2, y))
 
         # buttons
-        for b in btns:
-            col = (120, 120, 120) if edit_mode == (b["col"], b["type"]) else (60, 60, 60)
-            pygame.draw.rect(screen, col, b["rect"])
-            txt = font.render(b["txt"], True, (255, 255, 255))
-            screen.blit(txt, txt.get_rect(center=b["rect"].center))
+        self._draw_button(surf, self.min_btn, "set min")
+        self._draw_button(surf, self.max_btn, "set max")
 
-        if toast:
-            screen.blit(toast, toast.get_rect(center=(540, 55)))
-
-        pygame.display.flip()
-
-        # events
-        for ev in pygame.event.get():
-            if ev.type == pygame.QUIT:
-                bus.disconnect()
-                pygame.quit()
-                sys.exit()
-
-            if ev.type == pygame.MOUSEBUTTONDOWN:
-                # button toggle
-                for b in btns:
-                    if b["rect"].collidepoint(ev.pos):
-                        edit_mode = None if edit_mode == (b["col"], b["type"]) else (b["col"], b["type"])
-                        toast_msg(f"Editing: {edit_mode[0]} {edit_mode[1]}" if edit_mode else "Edit off")
-                        break
-                else:
-                    hit = slider_at(ev.pos)
-                    if hit:
-                        dragging = hit
-                    # bound edit
-                    if edit_mode and hit and hit[0] == edit_mode[0]:
-                        col, row, left, w, vmax = hit
-                        mx, _ = ev.pos
-                        new = int(np.clip((mx - left) / w * vmax, 0, vmax))
-                        if col == "hand":
-                            if edit_mode[1] == "low":
-                                hand_lo[row] = new
-                            else:
-                                hand_hi[row] = new
-                            save_ranges(H_RANGE, hand_lo, hand_hi)
-                        else:
-                            raise ValueError(col)
-                            # if edit_mode[1] == "low":
-                            #     arm_lo[row] = new
-                            # else:
-                            #     arm_hi[row] = new
-                            # save_ranges(A_RANGE, arm_lo, arm_hi)
-                        toast_msg(f"{col} {row} {edit_mode[1]}→{new}")
-
-            if ev.type == pygame.MOUSEBUTTONUP:
-                dragging = None
-            if ev.type == pygame.MOUSEMOTION and dragging:
-                col, row, left, w, vmax = dragging
-                mx, _ = ev.pos
-                new = int(np.clip((mx - left) / w * vmax, 0, vmax))
-                if h_vals[row] != new:
-                    h_vals[row] = new
-                    bus.write("Goal_Position", [new], [motors[row]])
-
-        if toast_timer > 0:
-            toast_timer -= 1
-        else:
-            toast = None
-        clock.tick(60)
+    # external
+    def values(self) -> RangeValues:
+        return RangeValues(self.min_v, self.pos_v, self.max_v)
 
 
-if __name__ == "__main__":
-    from lerobot.common.robots.hope_jr import HopeJrHand, HopeJrHandConfig
+class RangeFinderGUI:
+    def __init__(self, bus: MotorsBus, groups: dict[str, list[str]]):
+        self.bus = bus
+        self.groups = groups
+        self.group_names = list(groups.keys())
+        self.current_group = self.group_names[0]
 
-    cfg = HopeJrHandConfig("/dev/tty.usbmodem58760431541")
-    hand = HopeJrHand()
-    main(hand.bus)
+        if not bus.is_connected:
+            bus.connect()
+
+        self.calibration = bus.read_calibration()
+        self.res_table = bus.model_resolution_table
+        self.present_cache = {
+            m: bus.read("Present_Position", m, normalize=False) for motors in groups.values() for m in motors
+        }
+
+        # pygame init
+        pygame.init()
+        self.font = pygame.font.Font(None, FONT_SIZE)
+
+        label_pad = max(self.font.size(m)[0] for ms in groups.values() for m in ms)
+        self.label_pad = label_pad
+        width = 40 + label_pad + BAR_LEN + 6 + BTN_W + 10 + SAVE_W + 10
+        self.controls_bottom = 10 + SAVE_H
+        self.base_y = self.controls_bottom + TOP_GAP
+        height = self.base_y + PADDING_Y * len(groups[self.current_group]) + 40
+
+        self.screen = pygame.display.set_mode((width, height))
+        pygame.display.set_caption("Motors range finder")
+
+        # ui rects
+        self.save_btn = pygame.Rect(width - SAVE_W - 10, 10, SAVE_W, SAVE_H)
+        self.load_btn = pygame.Rect(self.save_btn.left - LOAD_W - 10, 10, LOAD_W, SAVE_H)
+        self.dd_btn = pygame.Rect(width // 2 - DD_W // 2, 10, DD_W, DD_H)
+        self.dd_open = False  # dropdown expanded?
+
+        self.clock = pygame.time.Clock()
+        self._build_sliders()
+        self._adjust_height()
+
+    def _adjust_height(self):
+        motors = self.groups[self.current_group]
+        new_h = self.base_y + PADDING_Y * len(motors) + 40
+        if new_h != self.screen.get_height():
+            w = self.screen.get_width()
+            self.screen = pygame.display.set_mode((w, new_h))
+
+    def _build_sliders(self):
+        self.sliders: list[RangeSlider] = []
+        motors = self.groups[self.current_group]
+        for i, m in enumerate(motors):
+            self.sliders.append(
+                RangeSlider(
+                    motor=m,
+                    idx=i,
+                    res=self.res_table[self.bus.motors[m].model],
+                    calibration=self.calibration[m],
+                    present=self.present_cache[m],
+                    label_pad=self.label_pad,
+                    base_y=self.base_y,
+                )
+            )
+
+    def _draw_dropdown(self):
+        # collapsed box
+        hover = self.dd_btn.collidepoint(pygame.mouse.get_pos())
+        pygame.draw.rect(self.screen, DD_COLOR_HL if hover else DD_COLOR, self.dd_btn, border_radius=6)
+
+        txt = self.font.render(self.current_group, True, TEXT_COLOR)
+        self.screen.blit(
+            txt, (self.dd_btn.centerx - txt.get_width() // 2, self.dd_btn.centery - txt.get_height() // 2)
+        )
+
+        tri_w, tri_h = 12, 6
+        cx = self.dd_btn.right - 14
+        cy = self.dd_btn.centery + 1
+        pygame.draw.polygon(
+            self.screen,
+            TEXT_COLOR,
+            [(cx - tri_w // 2, cy - tri_h // 2), (cx + tri_w // 2, cy - tri_h // 2), (cx, cy + tri_h // 2)],
+        )
+
+        if not self.dd_open:
+            return
+
+        # expanded list
+        for i, name in enumerate(self.group_names):
+            item_rect = pygame.Rect(self.dd_btn.left, self.dd_btn.bottom + i * DD_H, DD_W, DD_H)
+            clr = DD_COLOR_HL if item_rect.collidepoint(pygame.mouse.get_pos()) else DD_COLOR
+            pygame.draw.rect(self.screen, clr, item_rect)
+            t = self.font.render(name, True, TEXT_COLOR)
+            self.screen.blit(
+                t, (item_rect.centerx - t.get_width() // 2, item_rect.centery - t.get_height() // 2)
+            )
+
+    def _handle_dropdown_event(self, e):
+        if e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
+            if self.dd_btn.collidepoint(e.pos):
+                self.dd_open = not self.dd_open
+                return True
+            if self.dd_open:
+                for i, name in enumerate(self.group_names):
+                    item_rect = pygame.Rect(self.dd_btn.left, self.dd_btn.bottom + i * DD_H, DD_W, DD_H)
+                    if item_rect.collidepoint(e.pos):
+                        if name != self.current_group:
+                            self.current_group = name
+                            self._build_sliders()
+                            self._adjust_height()
+                        self.dd_open = False
+                        return True
+                self.dd_open = False
+        return False
+
+    def _save_current(self):
+        for s in self.sliders:
+            self.calibration[s.motor].range_min = s.min_v
+            self.calibration[s.motor].range_max = s.max_v
+
+        with self.bus.torque_disabled():
+            self.bus.write_calibration(self.calibration)
+
+    def _load_current(self):
+        self.calibration = self.bus.read_calibration()
+        for s in self.sliders:
+            s.min_v = self.calibration[s.motor].range_min
+            s.max_v = self.calibration[s.motor].range_max
+            s.min_x = s._pos_from_val(s.min_v)
+            s.max_x = s._pos_from_val(s.max_v)
+
+    def run(self):
+        # disp_len = max(len(m) for ms in self.groups.values() for m in ms)
+
+        while True:
+            for e in pygame.event.get():
+                if e.type == pygame.QUIT:
+                    self.bus.disconnect()
+                    pygame.quit()
+                    return self.calibration
+
+                if self._handle_dropdown_event(e):
+                    continue
+
+                if e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
+                    if self.save_btn.collidepoint(e.pos):
+                        self._save_current()
+                    elif self.load_btn.collidepoint(e.pos):
+                        self._load_current()
+
+                for s in self.sliders:
+                    s.handle_event(e)
+
+            # live goal write while dragging
+            for s in self.sliders:
+                if s.drag_pos:
+                    self.bus.write("Goal_Position", s.motor, s.pos_v, normalize=False)
+
+            # tick update
+            for s in self.sliders:
+                pos = self.bus.read("Present_Position", s.motor, normalize=False)
+                s.set_tick(pos)
+                self.present_cache[s.motor] = pos
+
+            # ─ drawing
+            self.screen.fill(BG_COLOR)
+            for s in self.sliders:
+                s.draw(self.screen)
+
+            self._draw_dropdown()
+
+            # load / save buttons
+            for rect, text in ((self.load_btn, "LOAD"), (self.save_btn, "SAVE")):
+                clr = BTN_COLOR_HL if rect.collidepoint(pygame.mouse.get_pos()) else BTN_COLOR
+                pygame.draw.rect(self.screen, clr, rect, border_radius=6)
+                t = self.font.render(text, True, TEXT_COLOR)
+                self.screen.blit(t, (rect.centerx - t.get_width() // 2, rect.centery - t.get_height() // 2))
+
+            pygame.display.flip()
+
+            # terminal table (optional)
+            # print("\n-----------------------------")
+            # print(f"{'NAME':<{disp_len}} | {'MIN':>6} | {'POS':>6} | {'MAX':>6}")
+            # for s in self.sliders:
+            #     vals = s.values()
+            #     print(f"{s.motor:<{disp_len}} | {vals.min_v:>6} | {vals.pos_v:>6} | {vals.max_v:>6}")
+            # move_cursor_up(len(self.sliders) + 3)
+
+            self.clock.tick(FPS)
