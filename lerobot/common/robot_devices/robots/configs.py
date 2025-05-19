@@ -431,6 +431,7 @@ class MossRobotConfig(ManipulatorRobotConfig):
     mock: bool = False
 
 
+# print("✅ So101RobotConfig module loaded")
 @RobotConfig.register_subclass("so101")
 @dataclass
 class So101RobotConfig(ManipulatorRobotConfig):
@@ -443,7 +444,7 @@ class So101RobotConfig(ManipulatorRobotConfig):
     leader_arms: dict[str, MotorsBusConfig] = field(
         default_factory=lambda: {
             "main": FeetechMotorsBusConfig(
-                port="/dev/ttyACM1",
+                port="/dev/ttyACM0",
                 motors={
                     # name: (index, model)
                     "shoulder_pan": [1, "sts3215"],
@@ -460,7 +461,7 @@ class So101RobotConfig(ManipulatorRobotConfig):
     follower_arms: dict[str, MotorsBusConfig] = field(
         default_factory=lambda: {
             "main": FeetechMotorsBusConfig(
-                port="/dev/ttyACM0",
+                port="/dev/ttyACM1",
                 motors={
                     # name: (index, model)
                     "shoulder_pan": [1, "sts3215"],
@@ -483,7 +484,7 @@ class So101RobotConfig(ManipulatorRobotConfig):
                 height=480,
             ),
             "follower_wrist": OpenCVCameraConfig(
-                type="opencv",
+                # type="opencv",
                 camera_index=2,  # /dev/video2
                 fps=30,
                 width=640,
@@ -492,6 +493,13 @@ class So101RobotConfig(ManipulatorRobotConfig):
         }
     )
 
+    def __post_init__(self):
+        import inspect
+        print("📄 So101RobotConfig loaded from:", inspect.getfile(type(self)))
+        print("✅ Loaded So101RobotConfig with ports:")
+        print("  Leader:", self.leader_arms["main"].port)
+        print("  Follower:", self.follower_arms["main"].port)
+    
     mock: bool = False
 
 
