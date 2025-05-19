@@ -749,7 +749,10 @@ class MotorsBus(abc.ABC):
                 # Move cursor up to overwrite the previous output
                 move_cursor_up(len(motors) + 3)
 
-        # TODO(Steven, aliberts): add check to ensure mins and maxes are different
+        same_min_max = [motor for motor in motors if mins[motor] == maxes[motor]]
+        if same_min_max:
+            raise ValueError(f"Some motors have the same min and max values:\n{pformat(same_min_max)}")
+
         return mins, maxes
 
     def _normalize(self, data_name: str, ids_values: dict[int, int]) -> dict[int, float]:
