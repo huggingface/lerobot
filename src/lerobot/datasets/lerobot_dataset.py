@@ -482,6 +482,7 @@ class LeRobotDatasetMetadata:
             if not self.features[key].get("info", None):
                 audio_path = self.root / self.audio_path.format(audio_key=key, chunk_index=0, file_index=0)
                 self.info["features"][key]["info"] = get_audio_info(audio_path)
+                self.info["features"][key]["info"]["start_time_s"] = DEFAULT_AUDIO_CHUNK_DURATION
 
     def update_chunk_settings(
         self,
@@ -1141,7 +1142,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
             shifted_query_ts = [from_timestamp + ts for ts in query_ts]
 
             audio_path = self.root / self.meta.get_audio_file_path(ep_idx, audio_key)
-            audio_chunk = decode_audio(audio_path, shifted_query_ts, query_duration, self.audio_backend)
+            start_time_s = self.meta.features[audio_key]["info"].get("start_time_s", 0.0)
+            audio_chunk = decode_audio(
+                audio_path, shifted_query_ts, query_duration, start_time_s, self.audio_backend
+            )
             item[audio_key] = audio_chunk.squeeze(0)
 
         return item

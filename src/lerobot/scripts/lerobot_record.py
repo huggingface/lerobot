@@ -336,6 +336,10 @@ def record_loop(
     else:
         async_microphones_start_recording(robot.microphones)
 
+    # Fill audio buffers if needed
+    if robot.microphones:
+        busy_wait(DEFAULT_AUDIO_CHUNK_DURATION)
+
     timestamp = 0
     start_episode_t = time.perf_counter()
     while timestamp < control_time_s:
