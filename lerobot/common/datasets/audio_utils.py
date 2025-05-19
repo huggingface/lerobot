@@ -40,6 +40,7 @@ def decode_audio(
     audio_path: Path | str,
     timestamps: list[float],
     duration: float,
+    start_time_s: float | None = 0.0,
     backend: str | None = "torchcodec",
 ) -> torch.Tensor:
     """
@@ -56,9 +57,9 @@ def decode_audio(
     Currently supports ffmpeg.
     """
     if backend == "torchcodec":
-        return decode_audio_torchcodec(audio_path, timestamps, duration)
+        return decode_audio_torchcodec(audio_path, timestamps, duration, start_time_s)
     elif backend == "torchaudio":
-        return decode_audio_torchaudio(audio_path, timestamps, duration)
+        return decode_audio_torchaudio(audio_path, timestamps, duration, start_time_s)
     else:
         raise ValueError(f"Unsupported video backend: {backend}")
 
@@ -67,6 +68,7 @@ def decode_audio_torchcodec(
     audio_path: Path | str,
     timestamps: list[float],
     duration: float,
+    start_time_s: float | None = 0.0,
     log_loaded_timestamps: bool = False,
 ) -> torch.Tensor:
     # TODO(CarolinePascal) : add channels selection
@@ -76,6 +78,9 @@ def decode_audio_torchcodec(
     # TODO(CarolinePascal) : assert ts < total record duration
 
     audio_chunks = []
+    timestamps = [
+        timestamp + start_time_s for timestamp in timestamps
+    ]  # Add an offset of start_time_s to each timestamp
     for ts in timestamps:
         current_audio_chunk = audio_decoder.get_samples_played_in_range(
             start_seconds=max(0.0, ts - duration), stop_seconds=ts
@@ -117,6 +122,7 @@ def decode_audio_torchaudio(
     audio_path: Path | str,
     timestamps: list[float],
     duration: float,
+    start_time_s: float | None = 0.0,
     log_loaded_timestamps: bool = False,
 ) -> torch.Tensor:
     # TODO(CarolinePascal) : add channels selection
@@ -135,6 +141,9 @@ def decode_audio_torchaudio(
     )
 
     audio_chunks = []
+    timestamps = [
+        timestamp + start_time_s for timestamp in timestamps
+    ]  # Add an offset of start_time_s to each timestamp
     for ts in timestamps:
         reader.seek(max(0.0, ts - duration))  # Default to closest audio sample. Needs to be non-negative !
         status = reader.fill_buffer()
