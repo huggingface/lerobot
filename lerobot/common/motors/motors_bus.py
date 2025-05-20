@@ -786,13 +786,19 @@ class MotorsBus(abc.ABC):
                 raise ValueError(f"Invalid calibration for motor '{motor}': min and max are equal.")
 
             bounded_val = min(max_, max(min_, val))
+            # TODO(Steven): normalization can go boom if max_ == min_, we should add a check probably in record_ranges_of_motions
+            # (which probably indicates the user forgot to move a motor, most likely a gripper-like one)
             if self.motors[motor].norm_mode is MotorNormMode.RANGE_M100_100:
                 norm = (((bounded_val - min_) / (max_ - min_)) * 200) - 100
                 normalized_values[id_] = -norm if drive_mode else norm
             elif self.motors[motor].norm_mode is MotorNormMode.RANGE_0_100:
                 norm = ((bounded_val - min_) / (max_ - min_)) * 100
                 normalized_values[id_] = 100 - norm if drive_mode else norm
-            else:
+            elif self.motors[motor].norm_mode is MotorNormMode.DEGREE:
+                if drive_mode:
+                    val *= -1
+                val += homing_offset
+                normalized_values[id_] = val / (self.model_resolution_table[self.motors[motor].model] // 2) * 180
                 # TODO(alibers): degree mode
                 raise NotImplementedError
 
@@ -819,6 +825,12 @@ class MotorsBus(abc.ABC):
                 val = 100 - val if drive_mode else val
                 bounded_val = min(100.0, max(0.0, val))
                 unnormalized_values[id_] = int((bounded_val / 100) * (max_ - min_) + min_)
+            elif self.motors[motor].norm_mode is MotorNormMode.DEGREE:
+                homing_offset = self.calibration[motor].homing_offset
+                unnormalized_values[id_] = int(val / 180 * (self.model_resolution_table[self.motors[motor].model] // 2))
+                unnormalized_values[id_] -= homing_offset
+                if drive_mode:
+                    unnormalized_values[id_] *= -1
             else:
                 # TODO(aliberts): degree mode
                 raise NotImplementedError
