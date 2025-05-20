@@ -18,7 +18,7 @@ from pathlib import Path
 from huggingface_hub.constants import HF_HOME
 
 OBS_ENV_STATE = "observation.environment_state"
-OBS_STATE = "observation.state"
+OBS_STATE = "observation.joints"
 OBS_IMAGE = "observation.camera"
 OBS_IMAGES = "observation.cameras"
 ACTION = "action"
