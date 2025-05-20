@@ -60,11 +60,6 @@ class RealSenseCamera(Camera):
     The camera's default settings (FPS, resolution, color mode) from the stream
     profile are used unless overridden in the configuration.
 
-    Args:
-        config (RealSenseCameraConfig): Configuration object containing settings like
-            serial number or name, desired FPS, width, height, color mode, rotation,
-            and whether to capture depth.
-
     Example:
         ```python
         from lerobot.common.cameras.realsense import RealSenseCamera, RealSenseCameraConfig

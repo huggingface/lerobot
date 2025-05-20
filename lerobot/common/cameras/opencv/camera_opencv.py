@@ -64,10 +64,6 @@ class OpenCVCamera(Camera):
     The camera's default settings (FPS, resolution, color mode) are used unless
     overridden in the configuration.
 
-    Args:
-        config (OpenCVCameraConfig): Configuration object containing settings like
-            camera index/path, desired FPS, width, height, color mode, and rotation.
-
     Example:
         ```python
         from lerobot.common.cameras.opencv import OpenCVCamera
