@@ -49,21 +49,25 @@ def make_cameras_from_configs(camera_configs: dict[str, CameraConfig]) -> dict[s
 def get_cv2_rotation(rotation: Cv2Rotation) -> int:
     import cv2
 
-    return {
+    available_rotation_dict = {
         Cv2Rotation.ROTATE_270: cv2.ROTATE_90_COUNTERCLOCKWISE,
         Cv2Rotation.ROTATE_90: cv2.ROTATE_90_CLOCKWISE,
         Cv2Rotation.ROTATE_180: cv2.ROTATE_180,
-    }.get(rotation)
+    }
+
+    return available_rotation_dict.get(rotation)
 
 
 def get_cv2_backend() -> int:
     import cv2
 
-    return {
+    available_cv2_backends = {
         "Linux": cv2.CAP_DSHOW,
         "Windows": cv2.CAP_AVFOUNDATION,
         "Darwin": cv2.CAP_ANY,
-    }.get(platform.system(), cv2.CAP_V4L2)
+    }
+
+    return available_cv2_backends.get(platform.system(), cv2.CAP_V4L2)
 
 
 def save_image(img_array: np.ndarray, camera_index: int, frame_index: int, images_dir: Path):
