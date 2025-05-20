@@ -131,4 +131,3 @@ def get_arm_id(name, arm_type):
     like Aloha, it could be left_follower, right_follower, left_leader, or right_leader.
     """
     return f"{name}_{arm_type}"
-

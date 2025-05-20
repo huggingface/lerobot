@@ -14,17 +14,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import argparse
 import logging
-import sys
 import time
 
 import numpy as np
 import torch
 
-from lerobot.common.utils.robot_utils import busy_wait
-from lerobot.common.utils.utils import init_logging
 from lerobot.common.robots.kinematics import RobotKinematics
+from lerobot.common.utils.robot_utils import busy_wait
 
 
 class InputController:

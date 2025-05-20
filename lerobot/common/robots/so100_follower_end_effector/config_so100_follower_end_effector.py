@@ -14,10 +14,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Dict, List, Optional
-
 from dataclasses import dataclass, field
+from typing import Dict, List
+
 from lerobot.common.cameras import CameraConfig
+
 from ..config import RobotConfig
 
 
@@ -25,6 +26,7 @@ from ..config import RobotConfig
 @dataclass
 class SO100FollowerEndEffectorConfig(RobotConfig):
     """Configuration for the SO100FollowerEndEffector robot."""
+
     # Port to connect to the arm
     port: str
 
@@ -39,7 +41,9 @@ class SO100FollowerEndEffectorConfig(RobotConfig):
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
 
     # Default bounds for the end-effector position (in meters)
-    bounds: Dict[str, List[float]] =  field(default_factory=lambda: {
-        "min": [0.1, -0.3, 0.0],  # min x, y, z
-        "max": [0.4, 0.3, 0.4],   # max x, y, z
-    } )
+    bounds: Dict[str, List[float]] = field(
+        default_factory=lambda: {
+            "min": [0.1, -0.3, 0.0],  # min x, y, z
+            "max": [0.4, 0.3, 0.4],  # max x, y, z
+        }
+    )
