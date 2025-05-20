@@ -98,8 +98,8 @@ class RealSenseCamera(Camera):
         depth_camera = RealSenseCamera(custom_config)
         try:
             depth_camera.connect()
-            color_image, depth_map = depth_camera.read() # Returns tuple
-            print(f"Color shape: {color_image.shape}, Depth shape: {depth_map.shape}")
+            depth_map = depth_camera.read_depth()
+            print(f"Depth shape: {depth_map.shape}")
         finally:
             depth_camera.disconnect()
 
