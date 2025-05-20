@@ -15,6 +15,7 @@
 import base64
 import json
 import logging
+from functools import cached_property
 from typing import Any, Dict, Optional, Tuple
 
 import cv2
@@ -55,7 +56,7 @@ class LeKiwiClient(Robot):
         self.last_frames = {}
 
         self.last_remote_arm_state = {}
-        self.last_remote_base_state = {"base_left_wheel": 0, "base_back_wheel": 0, "base_right_wheel": 0}
+        self.last_remote_base_state = {"x": 0, "y": 0, "theta": 0}
 
         # Define three speed levels and a current index
         self.speed_levels = [
@@ -69,37 +70,22 @@ class LeKiwiClient(Robot):
         self.logs = {}
 
     @property
-    def state_feature(self) -> dict:
-        state_ft = {
+    def _state_ft(self) -> dict:
+        states = {
             "arm_shoulder_pan": {"shape": (1,), "info": None, "dtype": "float32"},
             "arm_shoulder_lift": {"shape": (1,), "info": None, "dtype": "float32"},
             "arm_elbow_flex": {"shape": (1,), "info": None, "dtype": "float32"},
             "arm_wrist_flex": {"shape": (1,), "info": None, "dtype": "float32"},
             "arm_wrist_roll": {"shape": (1,), "info": None, "dtype": "float32"},
             "arm_gripper": {"shape": (1,), "info": None, "dtype": "float32"},
-            "x_cmd": {"shape": (1,), "info": None, "dtype": "float32"},
-            "y_cmd": {"shape": (1,), "info": None, "dtype": "float32"},
-            "theta_cmd": {"shape": (1,), "info": None, "dtype": "float32"},
+            "x": {"shape": (1,), "info": None, "dtype": "float32"},
+            "y": {"shape": (1,), "info": None, "dtype": "float32"},
+            "theta": {"shape": (1,), "info": None, "dtype": "float32"},
         }
-        return state_ft
+        return {f"{state}.pos": float for state in states}
 
     @property
-    def action_feature(self) -> dict:
-        action_ft = {
-            "arm_shoulder_pan": {"shape": (1,), "info": None, "dtype": "float32"},
-            "arm_shoulder_lift": {"shape": (1,), "info": None, "dtype": "float32"},
-            "arm_elbow_flex": {"shape": (1,), "info": None, "dtype": "float32"},
-            "arm_wrist_flex": {"shape": (1,), "info": None, "dtype": "float32"},
-            "arm_wrist_roll": {"shape": (1,), "info": None, "dtype": "float32"},
-            "arm_gripper": {"shape": (1,), "info": None, "dtype": "float32"},
-            "base_left_wheel": {"shape": (1,), "info": None, "dtype": "float32"},
-            "base_right_wheel": {"shape": (1,), "info": None, "dtype": "float32"},
-            "base_back_wheel": {"shape": (1,), "info": None, "dtype": "float32"},
-        }
-        return action_ft
-
-    @property
-    def camera_features(self) -> dict[str, dict]:
+    def _cameras_ft(self) -> dict[str, dict]:
         cam_ft = {
             f"{OBS_IMAGES}.front": {
                 "shape": (480, 640, 3),
@@ -115,6 +101,14 @@ class LeKiwiClient(Robot):
             },
         }
         return cam_ft
+
+    @cached_property
+    def observation_features(self) -> dict[str, type | tuple]:
+        return {**self._state_ft, **self._cameras_ft}
+
+    @cached_property
+    def action_features(self) -> dict[str, type]:
+        return self._state_ft
 
     @property
     def is_connected(self) -> bool:
@@ -153,130 +147,6 @@ class LeKiwiClient(Robot):
 
     def calibrate(self) -> None:
         pass
-
-    @staticmethod
-    def _degps_to_raw(degps: float) -> int:
-        steps_per_deg = 4096.0 / 360.0
-        speed_in_steps = degps * steps_per_deg
-        speed_int = int(round(speed_in_steps))
-        # Cap the value to fit within signed 16-bit range (-32768 to 32767)
-        if speed_int > 0x7FFF:
-            speed_int = 0x7FFF  # 32767 -> maximum positive value
-        elif speed_int < -0x8000:
-            speed_int = -0x8000  # -32768 -> minimum negative value
-        return speed_int
-
-    @staticmethod
-    def _raw_to_degps(raw_speed: int) -> float:
-        steps_per_deg = 4096.0 / 360.0
-        magnitude = raw_speed
-        degps = magnitude / steps_per_deg
-        return degps
-
-    def _body_to_wheel_raw(
-        self,
-        x_cmd: float,
-        y_cmd: float,
-        theta_cmd: float,
-        wheel_radius: float = 0.05,
-        base_radius: float = 0.125,
-        max_raw: int = 3000,
-    ) -> dict:
-        """
-        Convert desired body-frame velocities into wheel raw commands.
-
-        Parameters:
-          x_cmd      : Linear velocity in x (m/s).
-          y_cmd      : Linear velocity in y (m/s).
-          theta_cmd  : Rotational velocity (deg/s).
-          wheel_radius: Radius of each wheel (meters).
-          base_radius : Distance from the center of rotation to each wheel (meters).
-          max_raw    : Maximum allowed raw command (ticks) per wheel.
-
-        Returns:
-          A dictionary with wheel raw commands:
-             {"base_left_wheel": value, "base_back_wheel": value, "base_right_wheel": value}.
-
-        Notes:
-          - Internally, the method converts theta_cmd to rad/s for the kinematics.
-          - The raw command is computed from the wheels angular speed in deg/s
-            using _degps_to_raw(). If any command exceeds max_raw, all commands
-            are scaled down proportionally.
-        """
-        # Convert rotational velocity from deg/s to rad/s.
-        theta_rad = theta_cmd * (np.pi / 180.0)
-        # Create the body velocity vector [x, y, theta_rad].
-        velocity_vector = np.array([x_cmd, y_cmd, theta_rad])
-
-        # Define the wheel mounting angles with a -90° offset.
-        angles = np.radians(np.array([240, 120, 0]) - 90)
-        # Build the kinematic matrix: each row maps body velocities to a wheel’s linear speed.
-        # The third column (base_radius) accounts for the effect of rotation.
-        m = np.array([[np.cos(a), np.sin(a), base_radius] for a in angles])
-
-        # Compute each wheel’s linear speed (m/s) and then its angular speed (rad/s).
-        wheel_linear_speeds = m.dot(velocity_vector)
-        wheel_angular_speeds = wheel_linear_speeds / wheel_radius
-
-        # Convert wheel angular speeds from rad/s to deg/s.
-        wheel_degps = wheel_angular_speeds * (180.0 / np.pi)
-
-        # Scaling
-        steps_per_deg = 4096.0 / 360.0
-        raw_floats = [abs(degps) * steps_per_deg for degps in wheel_degps]
-        max_raw_computed = max(raw_floats)
-        if max_raw_computed > max_raw:
-            scale = max_raw / max_raw_computed
-            wheel_degps = wheel_degps * scale
-
-        # Convert each wheel’s angular speed (deg/s) to a raw integer.
-        wheel_raw = [self._degps_to_raw(deg) for deg in wheel_degps]
-
-        return {
-            "base_left_wheel": wheel_raw[0],
-            "base_back_wheel": wheel_raw[1],
-            "base_right_wheel": wheel_raw[2],
-        }
-
-    def _wheel_raw_to_body(
-        self, wheel_raw: dict[str, Any], wheel_radius: float = 0.05, base_radius: float = 0.125
-    ) -> dict[str, Any]:
-        """
-        Convert wheel raw command feedback back into body-frame velocities.
-
-        Parameters:
-          wheel_raw   : Vector with raw wheel commands ("base_left_wheel", "base_back_wheel", "base_right_wheel").
-          wheel_radius: Radius of each wheel (meters).
-          base_radius : Distance from the robot center to each wheel (meters).
-
-        Returns:
-          A dict (x_cmd, y_cmd, theta_cmd) where:
-             OBS_STATE.x_cmd      : Linear velocity in x (m/s).
-             OBS_STATE.y_cmd      : Linear velocity in y (m/s).
-             OBS_STATE.theta_cmd  : Rotational velocity in deg/s.
-        """
-
-        # Convert each raw command back to an angular speed in deg/s.
-        wheel_degps = np.array([LeKiwiClient._raw_to_degps(int(v)) for _, v in wheel_raw.items()])
-        # Convert from deg/s to rad/s.
-        wheel_radps = wheel_degps * (np.pi / 180.0)
-        # Compute each wheel’s linear speed (m/s) from its angular speed.
-        wheel_linear_speeds = wheel_radps * wheel_radius
-
-        # Define the wheel mounting angles with a -90° offset.
-        angles = np.radians(np.array([240, 120, 0]) - 90)
-        m = np.array([[np.cos(a), np.sin(a), base_radius] for a in angles])
-
-        # Solve the inverse kinematics: body_velocity = M⁻¹ · wheel_linear_speeds.
-        m_inv = np.linalg.inv(m)
-        velocity_vector = m_inv.dot(wheel_linear_speeds)
-        x_cmd, y_cmd, theta_rad = velocity_vector
-        theta_cmd = theta_rad * (180.0 / np.pi)
-        return {
-            f"{OBS_STATE}.x_cmd": x_cmd * 1000,
-            f"{OBS_STATE}.y_cmd": y_cmd * 1000,
-            f"{OBS_STATE}.theta_cmd": theta_cmd,
-        }  # Convert to mm/s
 
     def _poll_and_get_latest_message(self) -> Optional[str]:
         """Polls the ZMQ socket for a limited time and returns the latest message string."""
@@ -397,9 +267,8 @@ class LeKiwiClient(Robot):
             raise DeviceNotConnectedError("LeKiwiClient is not connected. You need to run `robot.connect()`.")
 
         frames, remote_arm_state, remote_base_state = self._get_data()
-        remote_body_state = self._wheel_raw_to_body(remote_base_state)
 
-        obs_dict = {**remote_arm_state, **remote_body_state}
+        obs_dict = {**remote_arm_state, **remote_base_state}
 
         # TODO(Steven): Remove this when it is possible to record a non-numpy array value
         obs_dict = {k: np.array([v], dtype=np.float32) for k, v in obs_dict.items()}
@@ -413,7 +282,7 @@ class LeKiwiClient(Robot):
 
         return obs_dict
 
-    def _from_keyboard_to_wheel_action(self, pressed_keys: np.ndarray):
+    def _from_keyboard_to_base_action(self, pressed_keys: np.ndarray):
         # Speed control
         if self.teleop_keys["speed_up"] in pressed_keys:
             self.speed_index = min(self.speed_index + 1, 2)
@@ -423,23 +292,27 @@ class LeKiwiClient(Robot):
         xy_speed = speed_setting["xy"]  # e.g. 0.1, 0.25, or 0.4
         theta_speed = speed_setting["theta"]  # e.g. 30, 60, or 90
 
-        x_cmd = 0.0  # m/s forward/backward
-        y_cmd = 0.0  # m/s lateral
-        theta_cmd = 0.0  # deg/s rotation
+        x = 0.0  # m/s forward/backward
+        y = 0.0  # m/s lateral
+        theta = 0.0  # deg/s rotation
 
         if self.teleop_keys["forward"] in pressed_keys:
-            x_cmd += xy_speed
+            x += xy_speed
         if self.teleop_keys["backward"] in pressed_keys:
-            x_cmd -= xy_speed
+            x -= xy_speed
         if self.teleop_keys["left"] in pressed_keys:
-            y_cmd += xy_speed
+            y += xy_speed
         if self.teleop_keys["right"] in pressed_keys:
-            y_cmd -= xy_speed
+            y -= xy_speed
         if self.teleop_keys["rotate_left"] in pressed_keys:
-            theta_cmd += theta_speed
+            theta += theta_speed
         if self.teleop_keys["rotate_right"] in pressed_keys:
-            theta_cmd -= theta_speed
-        return self._body_to_wheel_raw(x_cmd, y_cmd, theta_cmd)
+            theta -= theta_speed
+        return {
+            "x": x,
+            "y": y,
+            "theta": theta,
+        }
 
     def configure(self):
         pass
@@ -473,8 +346,8 @@ class LeKiwiClient(Robot):
         goal_pos = arm_actions
 
         keyboard_keys = np.array(list(set(action.keys()) - set(common_keys)))
-        wheel_actions = self._from_keyboard_to_wheel_action(keyboard_keys)
-        goal_pos = {**arm_actions, **wheel_actions}
+        base_actions = self._from_keyboard_to_base_action(keyboard_keys)
+        goal_pos = {**arm_actions, **base_actions}
 
         self.zmq_cmd_socket.send_string(json.dumps(goal_pos))  # action is in motor space
 
