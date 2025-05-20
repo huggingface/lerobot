@@ -142,7 +142,6 @@ class RealSenseCamera(Camera):
         self.stop_event: Event | None = None
         self.frame_queue: queue.Queue = queue.Queue(maxsize=1)
 
-
         self.rotation: int | None = get_cv2_rotation(config.rotation)
 
         if self.height and self.width:
@@ -176,7 +175,6 @@ class RealSenseCamera(Camera):
         found_cameras_info = []
         context = rs.context()
         devices = context.query_devices()
-
 
         for device in devices:
             camera_info = {
@@ -315,8 +313,7 @@ class RealSenseCamera(Camera):
             self.rs_profile = None
             self.rs_pipeline = None
             raise ConnectionError(
-                f"Failed to open {self} camera. "
-                f"Run 'python -m find_cameras list-cameras' for details."
+                f"Failed to open {self} camera. Run 'python -m find_cameras list-cameras' for details."
             ) from e
 
         logger.debug(f"Validating stream configuration for {self}...")
@@ -409,9 +406,7 @@ class RealSenseCamera(Camera):
         ret, frame = self.rs_pipeline.try_wait_for_frames(timeout_ms=timeout_ms)
 
         if not ret or frame is None:
-            raise RuntimeError(
-                f"{self} failed to capture frame. Returned status='{ret}'."
-            )
+            raise RuntimeError(f"{self} failed to capture frame. Returned status='{ret}'.")
 
         depth_frame = frame.get_depth_frame()
         depth_map = np.asanyarray(depth_frame.get_data())
@@ -553,9 +548,7 @@ class RealSenseCamera(Camera):
             self.stop_event.set()
 
         self.stop_event = Event()
-        self.thread = Thread(
-            target=self._read_loop, args=(), name=f"{self}_read_loop"
-        )
+        self.thread = Thread(target=self._read_loop, args=(), name=f"{self}_read_loop")
         self.thread.daemon = True
         self.thread.start()
         logger.debug(f"Read thread started for {self}.")
