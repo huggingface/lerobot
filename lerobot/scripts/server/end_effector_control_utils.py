@@ -22,7 +22,7 @@ import time
 import numpy as np
 import torch
 
-from lerobot.common.robot_devices.utils import busy_wait
+from lerobot.common.utils.robot_utils import busy_wait
 from lerobot.common.utils.utils import init_logging
 from lerobot.scripts.server.kinematics import RobotKinematics
 
@@ -95,7 +95,7 @@ class InputController:
     def gripper_command(self):
         """Return the current gripper command."""
         if self.open_gripper_command == self.close_gripper_command:
-            return "no-op"
+            return "stay"
         elif self.open_gripper_command:
             return "open"
         elif self.close_gripper_command:

@@ -14,10 +14,40 @@
 
 import logging
 from pprint import pformat
+from typing import Type
 
 from lerobot.common.robots import RobotConfig
 
 from .robot import Robot
+from .robot_wrapper import RobotWrapper
+
+
+def make_robot_config(robot_type: str, **kwargs) -> RobotConfig:
+    if robot_type == "aloha":
+        raise NotImplementedError  # TODO
+
+    elif robot_type == "koch_follower":
+        from .koch_follower.config_koch_follower import KochFollowerConfig
+
+        return KochFollowerConfig(**kwargs)
+    elif robot_type == "so100_follower":
+        from .so100_follower.config_so100_follower import SO100FollowerConfig
+
+        return SO100FollowerConfig(**kwargs)
+    elif robot_type == "so100_follower_end_effector":
+        from .so100_follower_end_effector.config_so100_follower_end_effector import SO100FollowerEndEffectorConfig
+
+        return SO100FollowerEndEffectorConfig(**kwargs)
+    elif robot_type == "stretch":
+        from .stretch3.configuration_stretch3 import Stretch3RobotConfig
+
+        return Stretch3RobotConfig(**kwargs)
+    elif robot_type == "lekiwi":
+        from .lekiwi.config_lekiwi import LeKiwiConfig
+
+        return LeKiwiConfig(**kwargs)
+    else:
+        raise ValueError(f"Robot type '{robot_type}' is not available.")
 
 
 def make_robot_from_config(config: RobotConfig) -> Robot:
@@ -29,6 +59,10 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from .so100_follower import SO100Follower
 
         return SO100Follower(config)
+    elif config.type == "so100_follower_end_effector":
+        from .so100_follower_end_effector import SO100FollowerEndEffector
+
+        return SO100FollowerEndEffector(config)
     elif config.type == "so101_follower":
         from .so101_follower import SO101Follower
 
