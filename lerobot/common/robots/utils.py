@@ -14,12 +14,10 @@
 
 import logging
 from pprint import pformat
-from typing import Type
 
 from lerobot.common.robots import RobotConfig
 
 from .robot import Robot
-from .robot_wrapper import RobotWrapper
 
 
 def make_robot_config(robot_type: str, **kwargs) -> RobotConfig:
@@ -35,7 +33,9 @@ def make_robot_config(robot_type: str, **kwargs) -> RobotConfig:
 
         return SO100FollowerConfig(**kwargs)
     elif robot_type == "so100_follower_end_effector":
-        from .so100_follower_end_effector.config_so100_follower_end_effector import SO100FollowerEndEffectorConfig
+        from .so100_follower_end_effector.config_so100_follower_end_effector import (
+            SO100FollowerEndEffectorConfig,
+        )
 
         return SO100FollowerEndEffectorConfig(**kwargs)
     elif robot_type == "stretch":
@@ -123,3 +123,12 @@ def ensure_safe_goal_position(
         )
 
     return safe_goal_positions
+
+
+# TODO(aliberts): Remove
+def get_arm_id(name, arm_type):
+    """Returns the string identifier of a robot arm. For instance, for a bimanual manipulator
+    like Aloha, it could be left_follower, right_follower, left_leader, or right_leader.
+    """
+    return f"{name}_{arm_type}"
+
