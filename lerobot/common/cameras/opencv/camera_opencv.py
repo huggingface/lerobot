@@ -33,7 +33,7 @@ from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnecte
 from lerobot.common.utils.utils import capture_timestamp_utc
 
 from ..camera import Camera
-from ..utils import IndexOrPath, get_cv2_backend, get_cv2_rotation
+from ..utils import get_cv2_backend, get_cv2_rotation
 from .configuration_opencv import ColorMode, OpenCVCameraConfig
 
 # NOTE(Steven): The maximum opencv device index depends on your operating system. For instance,
@@ -125,7 +125,6 @@ class OpenCVCamera(Camera):
         self.thread: Thread | None = None
         self.stop_event: Event | None = None
         self.frame_queue: queue.Queue = queue.Queue(maxsize=1)
-
 
         self.rotation: int | None = get_cv2_rotation(config.rotation)
         self.backend: int = get_cv2_backend()  # NOTE(Steven): If we specify backend the opencv open fails
@@ -267,9 +266,7 @@ class OpenCVCamera(Camera):
         logger.debug(f"Capture height set to {actual_height} for {self}.")
 
     @staticmethod
-    def find_cameras(
-        max_index_search_range=MAX_OPENCV_INDEX
-    ) -> List[Dict[str, Any]]:
+    def find_cameras(max_index_search_range=MAX_OPENCV_INDEX) -> List[Dict[str, Any]]:
         """
         Detects available OpenCV cameras connected to the system.
 
@@ -534,10 +531,7 @@ class OpenCVCamera(Camera):
             DeviceNotConnectedError: If the camera is already disconnected.
         """
         if not self.is_connected and self.thread is None:
-            raise DeviceNotConnectedError(
-                f"{self} not connected."
-            )
-
+            raise DeviceNotConnectedError(f"{self} not connected.")
 
         if self.thread is not None:
             self._shutdown_read_thread()
