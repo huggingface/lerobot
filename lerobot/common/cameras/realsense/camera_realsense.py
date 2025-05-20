@@ -66,7 +66,7 @@ class RealSenseCamera(Camera):
         from lerobot.common.cameras import ColorMode
 
         # Basic usage with serial number
-        config = RealSenseCameraConfig(serial_number="1234567890") # Replace with actual SN
+        config = RealSenseCameraConfig(serial_number_or_name="1234567890") # Replace with actual SN
         camera = RealSenseCamera(config)
         camera.connect()
 
@@ -82,7 +82,7 @@ class RealSenseCamera(Camera):
 
         # Example with depth capture and custom settings
         custom_config = RealSenseCameraConfig(
-            serial_number="1234567890", # Replace with actual SN
+            serial_number_or_name="1234567890", # Replace with actual SN
             fps=30,
             width=1280,
             height=720,
@@ -99,7 +99,7 @@ class RealSenseCamera(Camera):
             depth_camera.disconnect()
 
         # Example using a unique camera name
-        name_config = RealSenseCameraConfig(name="Intel RealSense D435") # If unique
+        name_config = RealSenseCameraConfig(serial_number_or_name="Intel RealSense D435") # If unique
         name_camera = RealSenseCamera(name_config)
         # ... connect, read, disconnect ...
         ```
@@ -117,12 +117,10 @@ class RealSenseCamera(Camera):
 
         self.config = config
 
-        if config.name is not None:  # NOTE(Steven): Do we want to continue supporting this?
-            self.serial_number = self._find_serial_number_from_name(config.name)
-        elif config.serial_number is not None:
-            self.serial_number = str(config.serial_number)
+        if isinstance(config.serial_number_or_name, int):
+            self.serial_number = str(config.serial_number_or_name)
         else:
-            raise ValueError("RealSenseCameraConfig must provide either 'serial_number' or 'name'.")
+            self.serial_number = self._find_serial_number_from_name(config.serial_number_or_name)
 
         self.fps = config.fps
         self.color_mode = config.color_mode

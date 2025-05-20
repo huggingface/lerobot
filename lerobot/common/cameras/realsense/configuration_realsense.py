@@ -40,9 +40,7 @@ class RealSenseCameraConfig(CameraConfig):
         fps: Requested frames per second for the color stream.
         width: Requested frame width in pixels for the color stream.
         height: Requested frame height in pixels for the color stream.
-        name: Optional human-readable name to identify the camera.
-        serial_number: Optional unique serial number to identify the camera.
-                      Either name or serial_number must be provided.
+        serial_number_or_name: unique serial number or human-readable name to identify the camera.
         color_mode: Color mode for image output (RGB or BGR). Defaults to RGB.
         use_depth: Whether to enable depth stream. Defaults to False.
         rotation: Image rotation setting (0°, 90°, 180°, or 270°). Defaults to no rotation.
@@ -54,8 +52,7 @@ class RealSenseCameraConfig(CameraConfig):
         - Only 3-channel color output (RGB/BGR) is currently supported.
     """
 
-    name: str | None = None
-    serial_number: int | None = None
+    serial_number_or_name: int | str
     color_mode: ColorMode = ColorMode.RGB
     use_depth: bool = False
     rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION  # NOTE(Steven): Check if draccus can parse to an enum
@@ -74,9 +71,4 @@ class RealSenseCameraConfig(CameraConfig):
         ):
             raise ValueError(
                 f"`rotation` is expected to be in {(Cv2Rotation.NO_ROTATION, Cv2Rotation.ROTATE_90, Cv2Rotation.ROTATE_180, Cv2Rotation.ROTATE_270)}, but {self.rotation} is provided."
-            )
-
-        if bool(self.name) and bool(self.serial_number):
-            raise ValueError(
-                f"One of them must be set: name or serial_number, but {self.name=} and {self.serial_number=} provided."
             )
