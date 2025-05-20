@@ -151,7 +151,7 @@ from lerobot.common.robot_devices.motors.configs import DynamixelMotorsBusConfig
 from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus
 
 leader_config = DynamixelMotorsBusConfig(
-    port="/dev/tty.usbmodem575E0031751",
+    port="/dev/ttyACM0",
     motors={
         # name: (index, model)
         "shoulder_pan": (1, "xl330-m077"),
