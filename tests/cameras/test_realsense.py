@@ -29,7 +29,7 @@ from lerobot.common.cameras.configs import Cv2Rotation
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 try:
-    from lerobot.common.cameras.intel import RealSenseCamera, RealSenseCameraConfig
+    from lerobot.common.cameras.realsense import RealSenseCamera, RealSenseCameraConfig
 except (ImportError, ModuleNotFoundError):
     pytest.skip("pyrealsense2 not available", allow_module_level=True)
 

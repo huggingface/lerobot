@@ -30,7 +30,7 @@ from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnecte
 
 # NOTE(Steven): more tests + assertions?
 TEST_ARTIFACTS_DIR = Path(__file__).parent.parent / "artifacts" / "cameras"
-DEFAULT_PNG_FILE_PATH = TEST_ARTIFACTS_DIR / "fakecam_sd_160x120.png"
+DEFAULT_PNG_FILE_PATH = TEST_ARTIFACTS_DIR / "image_160x120.png"
 TEST_IMAGE_PATHS = [
     TEST_ARTIFACTS_DIR / "image_160x120.png",
     TEST_ARTIFACTS_DIR / "image_320x180.png",

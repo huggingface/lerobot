@@ -67,7 +67,7 @@ class RealSenseCamera(Camera):
 
     Example:
         ```python
-        from lerobot.common.cameras.intel import RealSenseCamera, RealSenseCameraConfig
+        from lerobot.common.cameras.realsense import RealSenseCamera, RealSenseCameraConfig
         from lerobot.common.cameras import ColorMode
 
         # Basic usage with serial number
