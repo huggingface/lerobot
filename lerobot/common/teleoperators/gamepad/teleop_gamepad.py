@@ -15,19 +15,21 @@
 # limitations under the License.
 
 import sys
+from enum import IntEnum
 from queue import Queue
 from typing import Any
-from enum import IntEnum
 
-from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 import numpy as np
+
 from ..teleoperator import Teleoperator
 from .configuration_gamepad import GamepadTeleopConfig
+
 
 class GripperAction(IntEnum):
     CLOSE = 0
     STAY = 1
     OPEN = 2
+
 
 gripper_action_map = {
     "close": GripperAction.CLOSE.value,
@@ -58,7 +60,7 @@ class GamepadTeleop(Teleoperator):
 
     @property
     def action_features(self) -> dict:
-        if self.config.use_gripper: 
+        if self.config.use_gripper:
             return {
                 "dtype": "float32",
                 "shape": (4,),
@@ -88,7 +90,7 @@ class GamepadTeleop(Teleoperator):
         if sys.platform == "darwin":
             # NOTE: On macOS, pygame doesn’t reliably detect input from some controllers so we fall back to hidapi
             from lerobot.scripts.server.end_effector_control_utils import GamepadControllerHID as Gamepad
-        else: 
+        else:
             from lerobot.scripts.server.end_effector_control_utils import GamepadController as Gamepad
 
         self.gamepad = Gamepad(
