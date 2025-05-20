@@ -56,7 +56,7 @@ class LeKiwiClient(Robot):
         self.last_frames = {}
 
         self.last_remote_arm_state = {}
-        self.last_remote_base_state = {"x": 0, "y": 0, "theta": 0}
+        self.last_remote_base_state = {"x.vel": 0, "y.vel": 0, "theta.vel": 0}
 
         # Define three speed levels and a current index
         self.speed_levels = [
@@ -69,38 +69,34 @@ class LeKiwiClient(Robot):
         self._is_connected = False
         self.logs = {}
 
-    @property
-    def _state_ft(self) -> dict:
-        states = {
-            "arm_shoulder_pan": {"shape": (1,), "info": None, "dtype": "float32"},
-            "arm_shoulder_lift": {"shape": (1,), "info": None, "dtype": "float32"},
-            "arm_elbow_flex": {"shape": (1,), "info": None, "dtype": "float32"},
-            "arm_wrist_flex": {"shape": (1,), "info": None, "dtype": "float32"},
-            "arm_wrist_roll": {"shape": (1,), "info": None, "dtype": "float32"},
-            "arm_gripper": {"shape": (1,), "info": None, "dtype": "float32"},
-            "x": {"shape": (1,), "info": None, "dtype": "float32"},
-            "y": {"shape": (1,), "info": None, "dtype": "float32"},
-            "theta": {"shape": (1,), "info": None, "dtype": "float32"},
-        }
-        return {f"{state}.pos": float for state in states}
+    _states = [
+        "arm_shoulder_pan.pos",
+        "arm_shoulder_lift.pos",
+        "arm_elbow_flex.pos",
+        "arm_wrist_flex.pos",
+        "arm_wrist_roll.pos",
+        "arm_gripper.pos",
+        "x.vel",
+        "y.vel",
+        "theta.vel",
+    ]
 
     @property
-    def _cameras_ft(self) -> dict[str, dict]:
-        cam_ft = {
-            f"{OBS_IMAGES}.front": {
-                "shape": (480, 640, 3),
-                "names": ["height", "width", "channels"],
-                "info": None,
-                "dtype": "image",
-            },
-            f"{OBS_IMAGES}.wrist": {
-                "shape": (480, 640, 3),
-                "names": ["height", "width", "channels"],
-                "dtype": "image",
-                "info": None,
-            },
+    def _state_ft(self) -> dict[str, type]:
+        """
+        Hard-coded state features.
+        """
+        return dict.fromkeys(self._states, float)
+
+    @property
+    def _cameras_ft(self) -> dict[str, tuple[int, int, int]]:
+        """
+        Hard-coded camera features.
+        """
+        return {
+            "front": (480, 640, 3),
+            "wrist": (640, 480, 3),
         }
-        return cam_ft
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
@@ -268,10 +264,10 @@ class LeKiwiClient(Robot):
 
         frames, remote_arm_state, remote_base_state = self._get_data()
 
-        obs_dict = {**remote_arm_state, **remote_base_state}
+        flat_state = {**remote_arm_state, **remote_base_state}
+        states = np.array([flat_state.get(k, 0.0) for k in self._states], dtype=np.float32)
 
-        # TODO(Steven): Remove this when it is possible to record a non-numpy array value
-        obs_dict = {k: np.array([v], dtype=np.float32) for k, v in obs_dict.items()}
+        obs_dict = {"observation.joints": states}
 
         # Loop over each configured camera
         for cam_name, frame in frames.items():
@@ -309,9 +305,9 @@ class LeKiwiClient(Robot):
         if self.teleop_keys["rotate_right"] in pressed_keys:
             theta -= theta_speed
         return {
-            "x": x,
-            "y": y,
-            "theta": theta,
+            "x.vel": x,
+            "y.vel": y,
+            "theta.vel": theta,
         }
 
     def configure(self):
@@ -339,7 +335,7 @@ class LeKiwiClient(Robot):
         common_keys = [
             key
             for key in action
-            if key in (motor.replace("arm_", "") for motor, _ in self.action_feature.items())
+            if key in (motor.replace("arm_", "") for motor, _ in self.action_features.items())
         ]
 
         arm_actions = {"arm_" + arm_motor: action[arm_motor] for arm_motor in common_keys}
@@ -352,8 +348,8 @@ class LeKiwiClient(Robot):
         self.zmq_cmd_socket.send_string(json.dumps(goal_pos))  # action is in motor space
 
         # TODO(Steven): Remove the np conversion when it is possible to record a non-numpy array value
-        goal_pos = {"action." + k: np.array([v], dtype=np.float32) for k, v in goal_pos.items()}
-        return goal_pos
+        actions = np.array([goal_pos.get(k, 0.0) for k in self._states], dtype=np.float32)
+        return {"action.joints": actions}
 
     def disconnect(self):
         """Cleans ZMQ comms"""
