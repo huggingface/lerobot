@@ -22,7 +22,35 @@ from .configs import CameraConfig, ColorMode
 
 
 class Camera(abc.ABC):
+    """Base class for camera implementations.
+
+    Defines a standard interface for camera operations across different backends.
+    Subclasses must implement all abstract methods.
+
+    Manages basic camera properties (FPS, resolution) and core operations:
+    - Connection/disconnection
+    - Frame capture (sync/async)
+
+    Attributes:
+        fps (int | None): Configured frames per second
+        width (int | None): Frame width in pixels
+        height (int | None): Frame height in pixels
+
+    Example:
+        class MyCamera(Camera):
+            def __init__(self, config): ...
+            @property
+            def is_connected(self) -> bool: ...
+            def connect(self, warmup=True): ...
+            # Plus other required methods
+    """
+
     def __init__(self, config: CameraConfig):
+        """Initialize the camera with the given configuration.
+
+        Args:
+            config: Camera configuration containing FPS and resolution.
+        """
         self.fps: int | None = config.fps
         self.width: int | None = config.width
         self.height: int | None = config.height
@@ -30,20 +58,50 @@ class Camera(abc.ABC):
     @property
     @abc.abstractmethod
     def is_connected(self) -> bool:
+        """Check if the camera is currently connected.
+
+        Returns:
+            bool: True if the camera is connected and ready to capture frames,
+                  False otherwise.
+        """
         pass
 
     @abc.abstractmethod
     def connect(self, warmup: bool = True) -> None:
+        """Establish connection to the camera.
+
+        Args:
+            warmup: If True (default), captures a warmup frame before returning.
+        """
         pass
 
     @abc.abstractmethod
     def read(self, color_mode: ColorMode | None = None) -> np.ndarray:
+        """Capture and return a single frame from the camera.
+
+        Args:
+            color_mode: Desired color mode for the output frame. If None,
+                        uses the camera's default color mode.
+
+        Returns:
+            np.ndarray: Captured frame as a numpy array.
+        """
         pass
 
     @abc.abstractmethod
     def async_read(self, timeout_ms: float = ...) -> np.ndarray:
+        """Asynchronously capture and return a single frame from the camera.
+
+        Args:
+            timeout_ms: Maximum time to wait for a frame in milliseconds.
+                        Defaults to implementation-specific timeout.
+
+        Returns:
+            np.ndarray: Captured frame as a numpy array.
+        """
         pass
 
     @abc.abstractmethod
     def disconnect(self) -> None:
+        """Disconnect from the camera and release resources."""
         pass

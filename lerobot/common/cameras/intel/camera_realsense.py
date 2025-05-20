@@ -29,7 +29,6 @@ import numpy as np
 import pyrealsense2 as rs
 
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from lerobot.common.utils.utils import capture_timestamp_utc
 
 from ..camera import Camera
 from ..configs import ColorMode
@@ -131,7 +130,6 @@ class RealSenseCamera(Camera):
             raise ValueError("RealSenseCameraConfig must provide either 'serial_number' or 'name'.")
 
         self.fps = config.fps
-        self.channels = config.channels
         self.color_mode = config.color_mode
         self.use_depth = config.use_depth
 
@@ -213,7 +211,7 @@ class RealSenseCamera(Camera):
 
     def _find_serial_number_from_name(self, name: str) -> str:
         """Finds the serial number for a given unique camera name."""
-        camera_infos = self.find_cameras(raise_when_empty=True)
+        camera_infos = self.find_cameras()
         found_devices = [cam for cam in camera_infos if str(cam["name"]) == name]
 
         if not found_devices:
@@ -304,7 +302,7 @@ class RealSenseCamera(Camera):
             raise DeviceAlreadyConnectedError(f"{self} is already connected.")
 
         self.rs_pipeline = rs.pipeline()
-        rs_config = self._configure_realsense_settings()
+        rs_config = self._make_rs_pipeline_config()
 
         try:
             self.rs_profile = self.rs_pipeline.start(rs_config)
@@ -313,7 +311,7 @@ class RealSenseCamera(Camera):
             self.rs_profile = None
             self.rs_pipeline = None
             raise ConnectionError(
-                f"Failed to open {self} camera. Run 'python -m find_cameras list-cameras' for details."
+                f"Failed to open {self} camera. Run 'python -m find_cameras' for details about the available cameras in your system."
             ) from e
 
         logger.debug(f"Validating stream configuration for {self}...")
@@ -416,7 +414,6 @@ class RealSenseCamera(Camera):
         read_duration_ms = (time.perf_counter() - start_time) * 1e3
         logger.debug(f"{self} synchronous read took: {read_duration_ms:.1f}ms")
 
-        self.logs["timestamp_utc"] = capture_timestamp_utc()
         return depth_map_processed
 
     def read(self, color_mode: ColorMode | None = None, timeout_ms: int = 100) -> np.ndarray:
@@ -461,7 +458,6 @@ class RealSenseCamera(Camera):
         read_duration_ms = (time.perf_counter() - start_time) * 1e3
         logger.debug(f"{self} synchronous read took: {read_duration_ms:.1f}ms")
 
-        self.logs["timestamp_utc"] = capture_timestamp_utc()
         return color_image_processed
 
     def _postprocess_image(
@@ -492,11 +488,7 @@ class RealSenseCamera(Camera):
         if depth_frame:
             h, w = image.shape
         else:
-            h, w, c = image.shape
-            if c != self.channels:
-                logger.warning(
-                    f"Captured frame channels ({c}) do not match configured channels ({self.channels}) for {self}."
-                )
+            h, w, _c = image.shape
 
         if h != self.prerotated_height or w != self.prerotated_width:
             raise RuntimeError(
@@ -580,7 +572,7 @@ class RealSenseCamera(Camera):
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
         if self.thread is None or not self.thread.is_alive():
-            self._ensure_read_thread_running()
+            self._start_read_thread()
 
         try:
             return self.frame_queue.get(timeout=timeout_ms / 1000.0)
@@ -600,7 +592,7 @@ class RealSenseCamera(Camera):
                 f"Error getting frame data from queue for camera {self.serial_number}: {e}"
             ) from e
 
-    def _shutdown_read_thread(self):
+    def _stop_read_thread(self):
         """Signals the background read thread to stop and waits for it to join."""
         if self.stop_event is not None:
             logger.debug(f"Signaling stop event for read thread of {self}.")
@@ -633,7 +625,7 @@ class RealSenseCamera(Camera):
             )
 
         if self.thread is not None:
-            self._shutdown_read_thread()
+            self._stop_read_thread()
 
         if self.rs_pipeline is not None:
             logger.debug(f"Stopping RealSense pipeline object for {self}.")

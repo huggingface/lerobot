@@ -19,7 +19,7 @@
 # pytest tests/cameras/test_opencv.py::test_connect
 # ```
 
-import os
+from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
@@ -33,8 +33,8 @@ try:
 except (ImportError, ModuleNotFoundError):
     pytest.skip("pyrealsense2 not available", allow_module_level=True)
 
-TEST_ARTIFACTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "artifacts", "cameras")
-BAG_FILE_PATH = os.path.join(TEST_ARTIFACTS_DIR, "test_rs.bag")
+TEST_ARTIFACTS_DIR = Path(__file__).parent.parent / "artifacts" / "cameras"
+BAG_FILE_PATH = TEST_ARTIFACTS_DIR / "test_rs.bag"
 
 # NOTE(Steven): Missing tests for depth
 # NOTE(Steven): Takes 20sec, the patch being the biggest bottleneck
@@ -42,7 +42,7 @@ BAG_FILE_PATH = os.path.join(TEST_ARTIFACTS_DIR, "test_rs.bag")
 
 
 def mock_rs_config_enable_device_from_file(rs_config_instance, sn):
-    return rs_config_instance.enable_device_from_file(BAG_FILE_PATH, repeat_playback=True)
+    return rs_config_instance.enable_device_from_file(str(BAG_FILE_PATH), repeat_playback=True)
 
 
 def mock_rs_config_enable_device_bad_file(rs_config_instance, sn):
@@ -60,7 +60,7 @@ def test_connect(mock_enable_device):
     config = RealSenseCameraConfig(serial_number=42)
     camera = RealSenseCamera(config)
 
-    camera.connect(do_warmup_read=False)
+    camera.connect(warmup=False)
     assert camera.is_connected
 
 
@@ -68,10 +68,10 @@ def test_connect(mock_enable_device):
 def test_connect_already_connected(mock_enable_device):
     config = RealSenseCameraConfig(serial_number=42)
     camera = RealSenseCamera(config)
-    camera.connect(do_warmup_read=False)
+    camera.connect(warmup=False)
 
     with pytest.raises(DeviceAlreadyConnectedError):
-        camera.connect(do_warmup_read=False)
+        camera.connect(warmup=False)
 
 
 @patch("pyrealsense2.config.enable_device", side_effect=mock_rs_config_enable_device_bad_file)
@@ -80,7 +80,7 @@ def test_connect_invalid_camera_path(mock_enable_device):
     camera = RealSenseCamera(config)
 
     with pytest.raises(ConnectionError):
-        camera.connect(do_warmup_read=False)
+        camera.connect(warmup=False)
 
 
 @patch("pyrealsense2.config.enable_device", side_effect=mock_rs_config_enable_device_from_file)
@@ -89,14 +89,14 @@ def test_invalid_width_connect(mock_enable_device):
     camera = RealSenseCamera(config)
 
     with pytest.raises(ConnectionError):
-        camera.connect(do_warmup_read=False)
+        camera.connect(warmup=False)
 
 
 @patch("pyrealsense2.config.enable_device", side_effect=mock_rs_config_enable_device_from_file)
 def test_read(mock_enable_device):
     config = RealSenseCameraConfig(serial_number=42, width=640, height=480, fps=30)
     camera = RealSenseCamera(config)
-    camera.connect(do_warmup_read=False)
+    camera.connect(warmup=False)
 
     img = camera.read()
     assert isinstance(img, np.ndarray)
@@ -114,7 +114,7 @@ def test_read_before_connect():
 def test_disconnect(mock_enable_device):
     config = RealSenseCameraConfig(serial_number=42)
     camera = RealSenseCamera(config)
-    camera.connect(do_warmup_read=False)
+    camera.connect(warmup=False)
 
     camera.disconnect()
 
@@ -133,7 +133,7 @@ def test_disconnect_before_connect():
 def test_async_read(mock_enable_device):
     config = RealSenseCameraConfig(serial_number=42, width=640, height=480, fps=30)
     camera = RealSenseCamera(config)
-    camera.connect(do_warmup_read=False)
+    camera.connect(warmup=False)
 
     try:
         img = camera.async_read()
@@ -150,7 +150,7 @@ def test_async_read(mock_enable_device):
 def test_async_read_timeout(mock_enable_device):
     config = RealSenseCameraConfig(serial_number=42, width=640, height=480, fps=30)
     camera = RealSenseCamera(config)
-    camera.connect(do_warmup_read=False)
+    camera.connect(warmup=False)
 
     try:
         with pytest.raises(TimeoutError):
@@ -181,7 +181,7 @@ def test_async_read_before_connect():
 def test_rotation(mock_enable_device, rotation):
     config = RealSenseCameraConfig(serial_number=42, rotation=rotation)
     camera = RealSenseCamera(config)
-    camera.connect(do_warmup_read=False)
+    camera.connect(warmup=False)
 
     img = camera.read()
     assert isinstance(img, np.ndarray)

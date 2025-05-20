@@ -44,7 +44,6 @@ class RealSenseCameraConfig(CameraConfig):
         serial_number: Optional unique serial number to identify the camera.
                       Either name or serial_number must be provided.
         color_mode: Color mode for image output (RGB or BGR). Defaults to RGB.
-        channels: Number of color channels (currently only 3 is supported).
         use_depth: Whether to enable depth stream. Defaults to False.
         rotation: Image rotation setting (0°, 90°, 180°, or 270°). Defaults to no rotation.
 
@@ -58,7 +57,6 @@ class RealSenseCameraConfig(CameraConfig):
     name: str | None = None
     serial_number: int | None = None
     color_mode: ColorMode = ColorMode.RGB
-    channels: int | None = 3
     use_depth: bool = False
     rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION  # NOTE(Steven): Check if draccus can parse to an enum
 
@@ -77,9 +75,6 @@ class RealSenseCameraConfig(CameraConfig):
             raise ValueError(
                 f"`rotation` is expected to be in {(Cv2Rotation.NO_ROTATION, Cv2Rotation.ROTATE_90, Cv2Rotation.ROTATE_180, Cv2Rotation.ROTATE_270)}, but {self.rotation} is provided."
             )
-
-        if self.channels != 3:
-            raise NotImplementedError(f"Unsupported number of channels: {self.channels}")
 
         if bool(self.name) and bool(self.serial_number):
             raise ValueError(

@@ -19,7 +19,7 @@
 # pytest tests/cameras/test_opencv.py::test_connect
 # ```
 
-import os
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -29,13 +29,13 @@ from lerobot.common.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 # NOTE(Steven): more tests + assertions?
-TEST_ARTIFACTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "artifacts", "cameras")
-DEFAULT_PNG_FILE_PATH = os.path.join(TEST_ARTIFACTS_DIR, "fakecam_sd_160x120.png")
+TEST_ARTIFACTS_DIR = Path(__file__).parent.parent / "artifacts" / "cameras"
+DEFAULT_PNG_FILE_PATH = TEST_ARTIFACTS_DIR / "fakecam_sd_160x120.png"
 TEST_IMAGE_PATHS = [
-    os.path.join(TEST_ARTIFACTS_DIR, "fakecam_sd_160x120.png"),
-    os.path.join(TEST_ARTIFACTS_DIR, "fakecam_hd_320x180.png"),
-    os.path.join(TEST_ARTIFACTS_DIR, "fakecam_fullhd_480x270.png"),
-    os.path.join(TEST_ARTIFACTS_DIR, "fakecam_square_128x128.png"),
+    TEST_ARTIFACTS_DIR / "image_160x120.png",
+    TEST_ARTIFACTS_DIR / "image_320x180.png",
+    TEST_ARTIFACTS_DIR / "image_480x270.png",
+    TEST_ARTIFACTS_DIR / "image_128x128.png",
 ]
 
 
@@ -50,7 +50,7 @@ def test_connect():
     config = OpenCVCameraConfig(index_or_path=DEFAULT_PNG_FILE_PATH)
     camera = OpenCVCamera(config)
 
-    camera.connect(do_warmup_read=False)
+    camera.connect(warmup=False)
 
     assert camera.is_connected
 
@@ -58,10 +58,10 @@ def test_connect():
 def test_connect_already_connected():
     config = OpenCVCameraConfig(index_or_path=DEFAULT_PNG_FILE_PATH)
     camera = OpenCVCamera(config)
-    camera.connect(do_warmup_read=False)
+    camera.connect(warmup=False)
 
     with pytest.raises(DeviceAlreadyConnectedError):
-        camera.connect(do_warmup_read=False)
+        camera.connect(warmup=False)
 
 
 def test_connect_invalid_camera_path():
@@ -69,7 +69,7 @@ def test_connect_invalid_camera_path():
     camera = OpenCVCamera(config)
 
     with pytest.raises(ConnectionError):
-        camera.connect(do_warmup_read=False)
+        camera.connect(warmup=False)
 
 
 def test_invalid_width_connect():
@@ -81,14 +81,14 @@ def test_invalid_width_connect():
     camera = OpenCVCamera(config)
 
     with pytest.raises(RuntimeError):
-        camera.connect(do_warmup_read=False)
+        camera.connect(warmup=False)
 
 
 @pytest.mark.parametrize("index_or_path", TEST_IMAGE_PATHS)
 def test_read(index_or_path):
     config = OpenCVCameraConfig(index_or_path=index_or_path)
     camera = OpenCVCamera(config)
-    camera.connect(do_warmup_read=False)
+    camera.connect(warmup=False)
 
     img = camera.read()
 
@@ -106,7 +106,7 @@ def test_read_before_connect():
 def test_disconnect():
     config = OpenCVCameraConfig(index_or_path=DEFAULT_PNG_FILE_PATH)
     camera = OpenCVCamera(config)
-    camera.connect(do_warmup_read=False)
+    camera.connect(warmup=False)
 
     camera.disconnect()
 
@@ -125,7 +125,7 @@ def test_disconnect_before_connect():
 def test_async_read(index_or_path):
     config = OpenCVCameraConfig(index_or_path=index_or_path)
     camera = OpenCVCamera(config)
-    camera.connect(do_warmup_read=False)
+    camera.connect(warmup=False)
 
     try:
         img = camera.async_read()
@@ -141,7 +141,7 @@ def test_async_read(index_or_path):
 def test_async_read_timeout():
     config = OpenCVCameraConfig(index_or_path=DEFAULT_PNG_FILE_PATH)
     camera = OpenCVCamera(config)
-    camera.connect(do_warmup_read=False)
+    camera.connect(warmup=False)
 
     try:
         with pytest.raises(TimeoutError):
@@ -170,13 +170,13 @@ def test_async_read_before_connect():
     ],
 )
 def test_rotation(rotation, index_or_path):
-    filename = os.path.basename(index_or_path)
+    filename = Path(index_or_path).name
     dimensions = filename.split("_")[-1].split(".")[0]  # Assumes filenames format (_wxh.png)
     original_width, original_height = map(int, dimensions.split("x"))
 
     config = OpenCVCameraConfig(index_or_path=index_or_path, rotation=rotation)
     camera = OpenCVCamera(config)
-    camera.connect(do_warmup_read=False)
+    camera.connect(warmup=False)
 
     img = camera.read()
     assert isinstance(img, np.ndarray)

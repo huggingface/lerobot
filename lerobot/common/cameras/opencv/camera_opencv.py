@@ -30,7 +30,6 @@ import cv2
 import numpy as np
 
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from lerobot.common.utils.utils import capture_timestamp_utc
 
 from ..camera import Camera
 from ..utils import get_cv2_backend, get_cv2_rotation
@@ -117,7 +116,6 @@ class OpenCVCamera(Camera):
         self.index_or_path = config.index_or_path
 
         self.fps = config.fps
-        self.channels = config.channels
         self.color_mode = config.color_mode
 
         self.videocapture: cv2.VideoCapture | None = None
@@ -141,7 +139,7 @@ class OpenCVCamera(Camera):
     @property
     def is_connected(self) -> bool:
         """Checks if the camera is currently connected and opened."""
-        return isinstance(self.videocapture_camera, cv2.VideoCapture) and self.videocapture_camera.isOpened()
+        return isinstance(self.videocapture, cv2.VideoCapture) and self.videocapture.isOpened()
 
     def _configure_capture_settings(self) -> None:
         """
@@ -187,19 +185,19 @@ class OpenCVCamera(Camera):
         # blocking in multi-threaded applications, especially during data collection.
         cv2.setNumThreads(1)
 
-        self.videocapture_camera = cv2.VideoCapture(self.index_or_path)
+        self.videocapture = cv2.VideoCapture(self.index_or_path)
 
-        if not self.videocapture_camera.isOpened():
-            self.videocapture_camera.release()
-            self.videocapture_camera = None
+        if not self.videocapture.isOpened():
+            self.videocapture.release()
+            self.videocapture = None
             raise ConnectionError(
                 f"Failed to open OpenCV camera {self.index_or_path}."
-                f"Run 'python -m find_cameras list-cameras' for details."
+                f"Run 'python -m find_cameras Run 'python -m find_cameras' for details about the available cameras in your system."
             )
 
         self._configure_capture_settings()
 
-        if do_warmup_read:
+        if warmup:
             logger.debug(f"Reading a warm-up frame for {self.index_or_path}...")
             self.read()  # NOTE(Steven): For now we just read one frame, we could also loop for X frames/secs
 
@@ -209,12 +207,12 @@ class OpenCVCamera(Camera):
         """Validates and sets the camera's frames per second (FPS)."""
 
         if self.fps is None:
-            self.fps = self.videocapture_camera.get(cv2.CAP_PROP_FPS)
+            self.fps = self.videocapture.get(cv2.CAP_PROP_FPS)
             logger.info(f"FPS set to camera default: {self.fps}.")
             return
 
-        success = self.videocapture_camera.set(cv2.CAP_PROP_FPS, float(self.fps))
-        actual_fps = self.videocapture_camera.get(cv2.CAP_PROP_FPS)
+        success = self.videocapture.set(cv2.CAP_PROP_FPS, float(self.fps))
+        actual_fps = self.videocapture.get(cv2.CAP_PROP_FPS)
         # Use math.isclose for robust float comparison
         if not success or not math.isclose(self.fps, actual_fps, rel_tol=1e-3):
             logger.warning(
@@ -229,8 +227,8 @@ class OpenCVCamera(Camera):
     def _validate_width_and_height(self) -> None:
         """Validates and sets the camera's frame capture width and height."""
 
-        default_width = int(round(self.videocapture_camera.get(cv2.CAP_PROP_FRAME_WIDTH)))
-        default_height = int(round(self.videocapture_camera.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+        default_width = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_WIDTH)))
+        default_height = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_HEIGHT)))
 
         if self.width is None or self.height is None:
             if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
@@ -243,8 +241,8 @@ class OpenCVCamera(Camera):
             logger.info(f"Capture height set to camera default: {self.height}.")
             return
 
-        success = self.videocapture_camera.set(cv2.CAP_PROP_FRAME_WIDTH, float(self.prerotated_width))
-        actual_width = int(round(self.videocapture_camera.get(cv2.CAP_PROP_FRAME_WIDTH)))
+        success = self.videocapture.set(cv2.CAP_PROP_FRAME_WIDTH, float(self.prerotated_width))
+        actual_width = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_WIDTH)))
         if not success or self.prerotated_width != actual_width:
             logger.warning(
                 f"Requested capture width {self.prerotated_width} for {self}, but camera reported {actual_width} (set success: {success})."
@@ -254,8 +252,8 @@ class OpenCVCamera(Camera):
             )
         logger.debug(f"Capture width set to {actual_width} for {self}.")
 
-        success = self.videocapture_camera.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self.prerotated_height))
-        actual_height = int(round(self.videocapture_camera.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+        success = self.videocapture.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self.prerotated_height))
+        actual_height = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_HEIGHT)))
         if not success or self.prerotated_height != actual_height:
             logger.warning(
                 f"Requested capture height {self.prerotated_height} for {self}, but camera reported {actual_height} (set success: {success})."
@@ -275,7 +273,6 @@ class OpenCVCamera(Camera):
 
         Args:
             max_index_search_range (int): The maximum index to check on non-Linux systems.
-            raise_when_empty (bool): If True, raises an OSError if no cameras are found.
 
         Returns:
             List[Dict[str, Any]]: A list of dictionaries,
@@ -321,8 +318,6 @@ class OpenCVCamera(Camera):
 
         if not found_cameras_info:
             logger.warning("No OpenCV devices detected.")
-            if raise_when_empty:
-                raise OSError("No OpenCV devices detected. Ensure cameras are connected.")
 
         logger.info(f"Detected OpenCV cameras: {[cam['id'] for cam in found_cameras_info]}")
         return found_cameras_info
@@ -356,7 +351,7 @@ class OpenCVCamera(Camera):
         start_time = time.perf_counter()
 
         # NOTE(Steven): Are we okay with this blocking an undefined amount of time?
-        ret, frame = self.videocapture_camera.read()
+        ret, frame = self.videocapture.read()
 
         if not ret or frame is None:
             raise RuntimeError(
@@ -369,7 +364,6 @@ class OpenCVCamera(Camera):
         read_duration_ms = (time.perf_counter() - start_time) * 1e3
         logger.debug(f"{self} synchronous read took: {read_duration_ms:.1f}ms")
 
-        self.logs["timestamp_utc"] = capture_timestamp_utc()
         return processed_frame
 
     def _postprocess_image(self, image: np.ndarray, color_mode: ColorMode | None = None) -> np.ndarray:
@@ -401,10 +395,6 @@ class OpenCVCamera(Camera):
         if h != self.prerotated_height or w != self.prerotated_width:
             raise RuntimeError(
                 f"Captured frame dimensions ({h}x{w}) do not match configured capture dimensions ({self.prerotated_height}x{self.prerotated_width}) for {self}."
-            )
-        if c != self.channels:
-            logger.warning(
-                f"Captured frame channels ({c}) do not match configured channels ({self.channels}) for {self}."
             )
 
         processed_image = image
@@ -485,7 +475,7 @@ class OpenCVCamera(Camera):
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
         if self.thread is None or not self.thread.is_alive():
-            self._ensure_read_thread_running()
+            self._start_read_thread()
 
         try:
             return self.frame_queue.get(timeout=timeout_ms / 1000.0)
@@ -534,10 +524,10 @@ class OpenCVCamera(Camera):
             raise DeviceNotConnectedError(f"{self} not connected.")
 
         if self.thread is not None:
-            self._shutdown_read_thread()
+            self._stop_read_thread()
 
-        if self.videocapture_camera is not None:
-            self.videocapture_camera.release()
-            self.videocapture_camera = None
+        if self.videocapture is not None:
+            self.videocapture.release()
+            self.videocapture = None
 
         logger.info(f"{self} disconnected.")
