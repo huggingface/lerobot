@@ -15,6 +15,8 @@
 from queue import Queue
 from threading import Thread
 
+import numpy as np
+
 from .configs import MicrophoneConfig
 from .microphone import Microphone
 
@@ -38,7 +40,7 @@ def async_microphones_start_recording(
     output_files: list[str | None] | None = None,
     multiprocessing: bool = False,
     overwrite: bool = True,
-):
+) -> None:
     """
     Starts recording on multiple microphones asynchronously to avoid delays
     """
@@ -58,7 +60,7 @@ def async_microphones_start_recording(
         thread.join()
 
 
-def async_microphones_stop_recording(microphones: dict[str, Microphone]):
+def async_microphones_stop_recording(microphones: dict[str, Microphone]) -> None:
     """
     Stops recording on multiple microphones asynchronously to avoid delays
     """
@@ -74,7 +76,7 @@ def async_microphones_stop_recording(microphones: dict[str, Microphone]):
         thread.join()
 
 
-def async_microphones_read(microphones: dict[str, Microphone]):
+def async_microphones_read(microphones: dict[str, Microphone]) -> dict[str, np.ndarray]:
     """
     Reads from multiple microphones asynchronously to avoid delays
     """
