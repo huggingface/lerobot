@@ -14,12 +14,10 @@
 
 import logging
 from pprint import pformat
-from typing import Type
 
 from lerobot.common.robots import RobotConfig
 
 from .robot import Robot
-from .robot_wrapper import RobotWrapper
 
 
 def make_robot_config(robot_type: str, **kwargs) -> RobotConfig:
@@ -35,7 +33,9 @@ def make_robot_config(robot_type: str, **kwargs) -> RobotConfig:
 
         return SO100FollowerConfig(**kwargs)
     elif robot_type == "so100_follower_end_effector":
-        from .so100_follower_end_effector.config_so100_follower_end_effector import SO100FollowerEndEffectorConfig
+        from .so100_follower_end_effector.config_so100_follower_end_effector import (
+            SO100FollowerEndEffectorConfig,
+        )
 
         return SO100FollowerEndEffectorConfig(**kwargs)
     elif robot_type == "stretch":
@@ -132,8 +132,3 @@ def get_arm_id(name, arm_type):
     """
     return f"{name}_{arm_type}"
 
-def convert_joint_m100_100_to_degrees(joint_positions: dict[str, float], mins: dict[str, float], maxs: dict[str, float]) -> dict[str, float]:
-    return {key: ((value + 100) / 200) * (maxs[key] - mins[key]) + mins[key] for key, value in joint_positions.items()}
-
-def convert_joint_degrees_to_m100_100(joint_positions: dict[str, float], mins: dict[str, float], maxs: dict[str, float]) -> dict[str, float]:
-    return {key: (value - mins[key]) / (maxs[key] - mins[key]) * 200 - 100 for key, value in joint_positions.items()}

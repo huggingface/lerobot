@@ -17,10 +17,10 @@ import logging
 import os
 import os.path as osp
 import platform
-import subprocess
-import time
 import select
+import subprocess
 import sys
+import time
 from copy import copy, deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -253,6 +253,7 @@ def enter_pressed() -> bool:
 def move_cursor_up(lines):
     """Move the cursor up by a specified number of lines."""
     print(f"\033[{lines}A", end="")
+
 
 class TimerManager:
     """

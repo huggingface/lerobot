@@ -798,8 +798,11 @@ class MotorsBus(abc.ABC):
                 if drive_mode:
                     val *= -1
                 val += homing_offset
-                normalized_values[id_] = val / (self.model_resolution_table[self.motors[motor].model] // 2) * 180
-                # TODO(alibers): degree mode
+                normalized_values[id_] = (
+                    val / (self.model_resolution_table[self.motors[motor].model] // 2) * 180
+                )
+            else:
+                # TODO(alibers): velocity and degree modes
                 raise NotImplementedError
 
         return normalized_values
@@ -827,7 +830,9 @@ class MotorsBus(abc.ABC):
                 unnormalized_values[id_] = int((bounded_val / 100) * (max_ - min_) + min_)
             elif self.motors[motor].norm_mode is MotorNormMode.DEGREE:
                 homing_offset = self.calibration[motor].homing_offset
-                unnormalized_values[id_] = int(val / 180 * (self.model_resolution_table[self.motors[motor].model] // 2))
+                unnormalized_values[id_] = int(
+                    val / 180 * (self.model_resolution_table[self.motors[motor].model] // 2)
+                )
                 unnormalized_values[id_] -= homing_offset
                 if drive_mode:
                     unnormalized_values[id_] *= -1
