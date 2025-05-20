@@ -176,6 +176,7 @@ def test_async_read_before_connect():
         Cv2Rotation.ROTATE_180,
         Cv2Rotation.ROTATE_270,
     ],
+    ids=["no_rot", "rot90", "rot180", "rot270"],
 )
 @patch("pyrealsense2.config.enable_device", side_effect=mock_rs_config_enable_device_from_file)
 def test_rotation(mock_enable_device, rotation):

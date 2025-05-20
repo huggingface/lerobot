@@ -84,7 +84,7 @@ def test_invalid_width_connect():
         camera.connect(warmup=False)
 
 
-@pytest.mark.parametrize("index_or_path", TEST_IMAGE_PATHS)
+@pytest.mark.parametrize("index_or_path", TEST_IMAGE_PATHS, ids=[str(path.name) for path in TEST_IMAGE_PATHS])
 def test_read(index_or_path):
     config = OpenCVCameraConfig(index_or_path=index_or_path)
     camera = OpenCVCamera(config)
@@ -121,7 +121,7 @@ def test_disconnect_before_connect():
         _ = camera.disconnect()
 
 
-@pytest.mark.parametrize("index_or_path", TEST_IMAGE_PATHS)
+@pytest.mark.parametrize("index_or_path", TEST_IMAGE_PATHS, ids=[str(path.name) for path in TEST_IMAGE_PATHS])
 def test_async_read(index_or_path):
     config = OpenCVCameraConfig(index_or_path=index_or_path)
     camera = OpenCVCamera(config)
@@ -159,7 +159,7 @@ def test_async_read_before_connect():
         _ = camera.async_read()
 
 
-@pytest.mark.parametrize("index_or_path", TEST_IMAGE_PATHS)
+@pytest.mark.parametrize("index_or_path", TEST_IMAGE_PATHS, ids=[str(path.name) for path in TEST_IMAGE_PATHS])
 @pytest.mark.parametrize(
     "rotation",
     [
@@ -168,6 +168,7 @@ def test_async_read_before_connect():
         Cv2Rotation.ROTATE_180,
         Cv2Rotation.ROTATE_270,
     ],
+    ids=["no_rot", "rot90", "rot180", "rot270"],
 )
 def test_rotation(rotation, index_or_path):
     filename = Path(index_or_path).name
