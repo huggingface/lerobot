@@ -1,2 +1,2 @@
 from .config_so100_follower_end_effector import SO100FollowerEndEffectorConfig
-from .so100_follower_end_effector import SO100FollowerEndEffector 
+from .so100_follower_end_effector import SO100FollowerEndEffector
