@@ -73,20 +73,24 @@ class LeKiwi(Robot):
         self.base_motors = [motor for motor in self.bus.motors if motor.startswith("base")]
         self.cameras = make_cameras_from_configs(config.cameras)
 
+    _states = [
+        "arm_shoulder_pan.pos",
+        "arm_shoulder_lift.pos",
+        "arm_elbow_flex.pos",
+        "arm_wrist_flex.pos",
+        "arm_wrist_roll.pos",
+        "arm_gripper.pos",
+        "x.vel",
+        "y.vel",
+        "theta.vel",
+    ]
+
     @property
-    def _states_ft(self) -> dict[str, type]:
-        states = (
-            "arm_shoulder_pan",
-            "arm_shoulder_lift",
-            "arm_elbow_flex",
-            "arm_wrist_flex",
-            "arm_wrist_roll",
-            "arm_gripper",
-            "x",
-            "y",
-            "theta",
-        )
-        return {f"{state}.pos": float for state in states}
+    def _state_ft(self) -> dict[str, type]:
+        """
+        Hard-coded state features.
+        """
+        return dict.fromkeys(self._states, float)
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
@@ -311,9 +315,9 @@ class LeKiwi(Robot):
         x, y, theta_rad = velocity_vector
         theta = theta_rad * (180.0 / np.pi)
         return {
-            f"{OBS_STATE}.x": x * 1000,
-            f"{OBS_STATE}.y": y * 1000,
-            f"{OBS_STATE}.theta": theta,
+            f"{OBS_STATE}.x.vel": x * 1000,
+            f"{OBS_STATE}.y.vel": y * 1000,
+            f"{OBS_STATE}.theta.vel": theta,
         }  # Convert to mm/s
 
     def get_observation(self) -> dict[str, Any]:
@@ -359,11 +363,13 @@ class LeKiwi(Robot):
 
         print(f"actions: {action.items()}")
 
-        arm_goal_pos = {k: v for k, v in action.items() if k in self.arm_motors}
-        base_goal_vel = {k: v for k, v in action.items() if k in self.base_motors}
+        filtered_action = {k: v for k, v in action.items() if k in self._states}
+
+        arm_goal_pos = {k: v for k, v in filtered_action.items() if k.endswith(".pos")}
+        base_goal_vel = {k: v for k, v in filtered_action.items() if k.endswith(".vel")}
 
         base_wheel_goal_vel = self._body_to_wheel_raw(
-            base_goal_vel["x"], base_goal_vel["y"], base_goal_vel["theta"]
+            base_goal_vel["x.vel"], base_goal_vel["y.vel"], base_goal_vel["theta.vel"]
         )
 
         # Cap goal position when too far away from present position.
