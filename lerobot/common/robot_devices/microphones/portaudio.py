@@ -75,7 +75,7 @@ def find_microphones(raise_when_empty=False, mock=False) -> list[dict]:
 
 def record_audio_from_microphones(
     output_dir: Path, microphone_ids: list[int] | None = None, record_time_s: float = 2.0
-):
+) -> None:
     """
     Records audio from all the channels of the specified microphones for the specified duration.
     If no microphone ids are provided, all available microphones will be used.

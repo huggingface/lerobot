@@ -16,21 +16,23 @@ from queue import Queue
 from threading import Thread
 from typing import Protocol
 
+import numpy as np
+
 from lerobot.common.robot_devices.microphones.configs import MicrophoneConfig, PortAudioMicrophoneConfig
 
 
 # Defines a microphone type
 class Microphone(Protocol):
-    def connect(self): ...
-    def disconnect(self): ...
+    def connect(self) -> None: ...
+    def disconnect(self) -> None: ...
     def start_recording(
         self,
         output_file: str | None = None,
         multiprocessing: bool | None = False,
         overwrite: bool | None = True,
-    ): ...
-    def stop_recording(self): ...
-    def read(self): ...
+    ) -> None: ...
+    def stop_recording(self) -> None: ...
+    def read(self) -> np.ndarray: ...
 
 
 def make_microphones_from_configs(microphone_configs: dict[str, MicrophoneConfig]) -> list[Microphone]:
@@ -62,7 +64,7 @@ def async_microphones_start_recording(
     output_files: list[str | None] | None = None,
     multiprocessing: bool = False,
     overwrite: bool = True,
-):
+) -> None:
     """
     Starts recording on multiple microphones asynchronously to avoid delays
     """
@@ -82,7 +84,7 @@ def async_microphones_start_recording(
         thread.join()
 
 
-def async_microphones_stop_recording(microphones: dict[str, Microphone]):
+def async_microphones_stop_recording(microphones: dict[str, Microphone]) -> None:
     """
     Stops recording on multiple microphones asynchronously to avoid delays
     """
@@ -98,7 +100,7 @@ def async_microphones_stop_recording(microphones: dict[str, Microphone]):
         thread.join()
 
 
-def async_microphones_read(microphones: dict[str, Microphone]):
+def async_microphones_read(microphones: dict[str, Microphone]) -> dict[str, np.ndarray]:
     """
     Reads from multiple microphones asynchronously to avoid delays
     """
