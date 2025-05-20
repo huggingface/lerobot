@@ -401,7 +401,7 @@ def hw_to_dataset_features(
     cam_fts = {key: shape for key, shape in hw_features.items() if isinstance(shape, tuple)}
 
     if joint_fts:
-        features[f"{prefix}.joints"] = {
+        features[f"{prefix}.state"] = {
             "dtype": "float32",
             "shape": (len(joint_fts),),
             "names": list(joint_fts),

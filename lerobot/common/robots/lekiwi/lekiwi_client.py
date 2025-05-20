@@ -56,7 +56,7 @@ class LeKiwiClient(Robot):
         self.last_frames = {}
 
         self.last_remote_arm_state = {}
-        self.last_remote_base_state = {"x.vel": 0, "y.vel": 0, "theta.vel": 0}
+        self.last_remote_base_state = {}
 
         # Define three speed levels and a current index
         self.speed_levels = [
@@ -69,26 +69,28 @@ class LeKiwiClient(Robot):
         self._is_connected = False
         self.logs = {}
 
-    _states = [
-        "arm_shoulder_pan.pos",
-        "arm_shoulder_lift.pos",
-        "arm_elbow_flex.pos",
-        "arm_wrist_flex.pos",
-        "arm_wrist_roll.pos",
-        "arm_gripper.pos",
-        "x.vel",
-        "y.vel",
-        "theta.vel",
-    ]
-
-    @property
+    @cached_property
     def _state_ft(self) -> dict[str, type]:
-        """
-        Hard-coded state features.
-        """
-        return dict.fromkeys(self._states, float)
+        return dict.fromkeys(
+            (
+                "arm_shoulder_pan.pos",
+                "arm_shoulder_lift.pos",
+                "arm_elbow_flex.pos",
+                "arm_wrist_flex.pos",
+                "arm_wrist_roll.pos",
+                "arm_gripper.pos",
+                "x.vel",
+                "y.vel",
+                "theta.vel",
+            ),
+            float,
+        )
 
-    @property
+    @cached_property
+    def _state_order(self) -> tuple[str, ...]:
+        return tuple(self._state_ft.keys())
+
+    @cached_property
     def _cameras_ft(self) -> dict[str, tuple[int, int, int]]:
         """
         Hard-coded camera features.
@@ -213,7 +215,9 @@ class LeKiwiClient(Robot):
 
         # Extract state components
         current_arm_state = {k: v for k, v in state_observation.items() if k.startswith(f"{OBS_STATE}.arm")}
-        current_base_state = {k: v for k, v in state_observation.items() if k.startswith(f"{OBS_STATE}.base")}
+        current_base_state = {
+            k: v for k, v in state_observation.items() if not k.startswith(f"{OBS_STATE}.arm")
+        }
 
         return current_frames, current_arm_state, current_base_state
 
@@ -264,10 +268,7 @@ class LeKiwiClient(Robot):
 
         frames, remote_arm_state, remote_base_state = self._get_data()
 
-        flat_state = {**remote_arm_state, **remote_base_state}
-        states = np.array([flat_state.get(k, 0.0) for k in self._states], dtype=np.float32)
-
-        obs_dict = {"observation.joints": states}
+        obs_dict = {**remote_arm_state, **remote_base_state}
 
         # Loop over each configured camera
         for cam_name, frame in frames.items():
@@ -348,8 +349,8 @@ class LeKiwiClient(Robot):
         self.zmq_cmd_socket.send_string(json.dumps(goal_pos))  # action is in motor space
 
         # TODO(Steven): Remove the np conversion when it is possible to record a non-numpy array value
-        actions = np.array([goal_pos.get(k, 0.0) for k in self._states], dtype=np.float32)
-        return {"action.joints": actions}
+        actions = np.array([goal_pos.get(k, 0.0) for k in self._state_order], dtype=np.float32)
+        return {"action.state": actions}
 
     def disconnect(self):
         """Cleans ZMQ comms"""
