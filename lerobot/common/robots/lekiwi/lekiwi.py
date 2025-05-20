@@ -381,7 +381,8 @@ class LeKiwi(Robot):
             arm_goal_pos = arm_safe_goal_pos
 
         # Send goal position to the actuators
-        self.bus.sync_write("Goal_Position", arm_goal_pos)
+        arm_goal_pos_raw = {k.replace(".pos", ""): v for k, v in arm_goal_pos.items()}
+        self.bus.sync_write("Goal_Position", arm_goal_pos_raw)
         self.bus.sync_write("Goal_Velocity", base_wheel_goal_vel)
 
         return {**arm_goal_pos, **base_goal_vel}
