@@ -361,8 +361,6 @@ class LeKiwi(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        print(f"actions: {action.items()}")
-
         filtered_action = {k: v for k, v in action.items() if k in self._states}
 
         arm_goal_pos = {k: v for k, v in filtered_action.items() if k.endswith(".pos")}
