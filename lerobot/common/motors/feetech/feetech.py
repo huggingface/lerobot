@@ -222,8 +222,8 @@ class FeetechMotorsBus(MotorsBus):
             # the 'Return_Delay_Time' address). We ensure this is reduced to the minimum of 2µs (value of 0).
             self.write("Return_Delay_Time", motor, 0)
             # Set 'Maximum_Acceleration' to 254 to speedup acceleration and deceleration of the motors.
-            # Note: this address is not in the official STS3215 Memory Table
-            self.write("Maximum_Acceleration", motor, 254)
+            if self.protocol_version == 0:
+                self.write("Maximum_Acceleration", motor, 254)
             self.write("Acceleration", motor, 254)
 
     def read_calibration(self) -> dict[str, MotorCalibration]:
