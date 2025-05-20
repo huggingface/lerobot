@@ -73,24 +73,25 @@ class LeKiwi(Robot):
         self.base_motors = [motor for motor in self.bus.motors if motor.startswith("base")]
         self.cameras = make_cameras_from_configs(config.cameras)
 
-    _states = [
-        "arm_shoulder_pan.pos",
-        "arm_shoulder_lift.pos",
-        "arm_elbow_flex.pos",
-        "arm_wrist_flex.pos",
-        "arm_wrist_roll.pos",
-        "arm_gripper.pos",
-        "x.vel",
-        "y.vel",
-        "theta.vel",
-    ]
-
     @property
     def _state_ft(self) -> dict[str, type]:
         """
         Hard-coded state features.
         """
-        return dict.fromkeys(self._states, float)
+        return dict.fromkeys(
+            (
+                "arm_shoulder_pan.pos",
+                "arm_shoulder_lift.pos",
+                "arm_elbow_flex.pos",
+                "arm_wrist_flex.pos",
+                "arm_wrist_roll.pos",
+                "arm_gripper.pos",
+                "x.vel",
+                "y.vel",
+                "theta.vel",
+            ),
+            float,
+        )
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
@@ -315,9 +316,9 @@ class LeKiwi(Robot):
         x, y, theta_rad = velocity_vector
         theta = theta_rad * (180.0 / np.pi)
         return {
-            f"{OBS_STATE}.x.vel": x * 1000,
-            f"{OBS_STATE}.y.vel": y * 1000,
-            f"{OBS_STATE}.theta.vel": theta,
+            "x.vel": x * 1000,
+            "y.vel": y * 1000,
+            "theta.vel": theta,
         }  # Convert to mm/s
 
     def get_observation(self) -> dict[str, Any]:
@@ -331,8 +332,10 @@ class LeKiwi(Robot):
 
         base_vel = self._wheel_raw_to_body(base_wheel_vel)
 
-        obs_dict = {**arm_pos, **base_vel}
-        obs_dict = {f"{OBS_STATE}." + key: value for key, value in obs_dict.items()}
+        obs_state = {f"{k}.pos": v for k, v in arm_pos.items()}
+        obs_state.update(base_vel)  # base_vel already contains x.vel,  y.vel, theta.vel
+
+        obs_dict = {f"{OBS_STATE}.{k}": v for k, v in obs_state.items()}
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
 
@@ -361,10 +364,8 @@ class LeKiwi(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        filtered_action = {k: v for k, v in action.items() if k in self._states}
-
-        arm_goal_pos = {k: v for k, v in filtered_action.items() if k.endswith(".pos")}
-        base_goal_vel = {k: v for k, v in filtered_action.items() if k.endswith(".vel")}
+        arm_goal_pos = {k: v for k, v in action.items() if k.endswith(".pos")}
+        base_goal_vel = {k: v for k, v in action.items() if k.endswith(".vel")}
 
         base_wheel_goal_vel = self._body_to_wheel_raw(
             base_goal_vel["x.vel"], base_goal_vel["y.vel"], base_goal_vel["theta.vel"]
