@@ -259,15 +259,12 @@ class OpenCVCamera(Camera):
         logger.debug(f"Capture height set to {actual_height} for {self}.")
 
     @staticmethod
-    def find_cameras(max_index_search_range=MAX_OPENCV_INDEX) -> List[Dict[str, Any]]:
+    def find_cameras() -> List[Dict[str, Any]]:
         """
         Detects available OpenCV cameras connected to the system.
 
         On Linux, it scans '/dev/video*' paths. On other systems (like macOS, Windows),
-        it checks indices from 0 up to `max_index_search_range`.
-
-        Args:
-            max_index_search_range (int): The maximum index to check on non-Linux systems.
+        it checks indices from 0 up to `MAX_OPENCV_INDEX`.
 
         Returns:
             List[Dict[str, Any]]: A list of dictionaries,
@@ -283,9 +280,9 @@ class OpenCVCamera(Camera):
             logger.debug(f"Found potential paths: {targets_to_scan}")
         else:
             logger.info(
-                f"{platform.system()} system detected. Scanning indices from 0 to {max_index_search_range}..."
+                f"{platform.system()} system detected. Scanning indices from 0 to {MAX_OPENCV_INDEX}..."
             )
-            targets_to_scan = list(range(max_index_search_range))
+            targets_to_scan = list(range(MAX_OPENCV_INDEX))
 
         for target in targets_to_scan:
             camera = cv2.VideoCapture(target)

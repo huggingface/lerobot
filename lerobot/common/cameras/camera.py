@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import abc
+from typing import Any, Dict, List
 
 import numpy as np
 
@@ -63,6 +64,16 @@ class Camera(abc.ABC):
         Returns:
             bool: True if the camera is connected and ready to capture frames,
                   False otherwise.
+        """
+        pass
+
+    @staticmethod
+    @abc.abstractmethod
+    def find_cameras() -> List[Dict[str, Any]]:
+        """Detects available cameras connected to the system.
+        Returns:
+            List[Dict[str, Any]]: A list of dictionaries,
+            where each dictionary contains information about a detected camera.
         """
         pass
 
