@@ -200,16 +200,29 @@ class OpenCVCamera(Camera):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"Cannot configure settings for {self} as it is not connected.")
 
-        self._validate_fps()
-        self._validate_width_and_height()
-
-    def _validate_fps(self) -> None:
-        """Validates and sets the camera's frames per second (FPS)."""
-
         if self.fps is None:
             self.fps = self.videocapture.get(cv2.CAP_PROP_FPS)
             logger.info(f"FPS set to camera default: {self.fps}.")
-            return
+        else:
+            self._validate_fps()
+
+        default_width = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_WIDTH)))
+        default_height = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+
+        if self.width is None or self.height is None:
+            if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
+                self.width, self.height = default_height, default_width
+                self.prerotated_width, self.prerotated_height = default_width, default_height
+            else:
+                self.width, self.height = default_width, default_height
+                self.prerotated_width, self.prerotated_height = default_width, default_height
+            logger.info(f"Capture width set to camera default: {self.width}.")
+            logger.info(f"Capture height set to camera default: {self.height}.")
+        else:
+            self._validate_width_and_height()
+
+    def _validate_fps(self) -> None:
+        """Validates and sets the camera's frames per second (FPS)."""
 
         success = self.videocapture.set(cv2.CAP_PROP_FPS, float(self.fps))
         actual_fps = self.videocapture.get(cv2.CAP_PROP_FPS)
@@ -226,20 +239,6 @@ class OpenCVCamera(Camera):
 
     def _validate_width_and_height(self) -> None:
         """Validates and sets the camera's frame capture width and height."""
-
-        default_width = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_WIDTH)))
-        default_height = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_HEIGHT)))
-
-        if self.width is None or self.height is None:
-            if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
-                self.width, self.height = default_height, default_width
-                self.prerotated_width, self.prerotated_height = default_width, default_height
-            else:
-                self.width, self.height = default_width, default_height
-                self.prerotated_width, self.prerotated_height = default_width, default_height
-            logger.info(f"Capture width set to camera default: {self.width}.")
-            logger.info(f"Capture height set to camera default: {self.height}.")
-            return
 
         success = self.videocapture.set(cv2.CAP_PROP_FRAME_WIDTH, float(self.prerotated_width))
         actual_width = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_WIDTH)))

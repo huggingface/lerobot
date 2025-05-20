@@ -314,32 +314,12 @@ class RealSenseCamera(Camera):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"Cannot validate settings for {self} as it is not connected.")
 
-        self._validate_fps(self.rs_profile.get_stream(rs.stream.color).as_video_stream_profile())
-        self._validate_width_and_height(self.rs_profile.get_stream(rs.stream.color).as_video_stream_profile())
-
-        if self.use_depth:
-            self._validate_fps(self.rs_profile.get_stream(rs.stream.depth).as_video_stream_profile())
-            self._validate_width_and_height(
-                self.rs_profile.get_stream(rs.stream.depth).as_video_stream_profile()
-            )
-
-    def _validate_fps(self, stream: rs.video_stream_profile) -> None:
-        """Validates and sets the internal FPS based on actual stream FPS."""
-        actual_fps = stream.fps()
-
+        stream = self.rs_profile.get_stream(rs.stream.color).as_video_stream_profile()
         if self.fps is None:
-            self.fps = actual_fps
-            return
+            self.fps = stream.fps()
+        else:
+            self._validate_fps(stream)
 
-        # Use math.isclose for robust float comparison
-        if not math.isclose(self.fps, actual_fps, rel_tol=1e-3):
-            raise RuntimeError(
-                f"Failed to set requested FPS {self.fps} for {self}. Actual value reported: {actual_fps}."
-            )
-        logger.debug(f"FPS set to {actual_fps} for {self}.")
-
-    def _validate_width_and_height(self, stream) -> None:
-        """Validates and sets the internal capture width and height based on actual stream width."""
         actual_width = int(round(stream.width()))
         actual_height = int(round(stream.height()))
 
@@ -352,7 +332,29 @@ class RealSenseCamera(Camera):
                 self.prerotated_width, self.prerotated_height = actual_width, actual_height
             logger.info(f"Capture width set to camera default: {self.width}.")
             logger.info(f"Capture height set to camera default: {self.height}.")
-            return
+        else:
+            self._validate_width_and_height(stream)
+
+        if self.use_depth:
+            stream = self.rs_profile.get_stream(rs.stream.depth).as_video_stream_profile()
+            self._validate_fps(stream)
+            self._validate_width_and_height(stream)
+
+    def _validate_fps(self, stream: rs.video_stream_profile) -> None:
+        """Validates and sets the internal FPS based on actual stream FPS."""
+        actual_fps = stream.fps()
+
+        # Use math.isclose for robust float comparison
+        if not math.isclose(self.fps, actual_fps, rel_tol=1e-3):
+            raise RuntimeError(
+                f"Failed to set requested FPS {self.fps} for {self}. Actual value reported: {actual_fps}."
+            )
+        logger.debug(f"FPS set to {actual_fps} for {self}.")
+
+    def _validate_width_and_height(self, stream) -> None:
+        """Validates and sets the internal capture width and height based on actual stream width."""
+        actual_width = int(round(stream.width()))
+        actual_height = int(round(stream.height()))
 
         if self.prerotated_width != actual_width:
             logger.warning(
