@@ -141,30 +141,6 @@ class OpenCVCamera(Camera):
         """Checks if the camera is currently connected and opened."""
         return isinstance(self.videocapture, cv2.VideoCapture) and self.videocapture.isOpened()
 
-    def _configure_capture_settings(self) -> None:
-        """
-        Applies the specified FPS, width, and height settings to the connected camera.
-
-        This method attempts to set the camera properties via OpenCV. It checks if
-        the camera successfully applied the settings and raises an error if not.
-
-        Args:
-            fps: The desired frames per second. If None, the setting is skipped.
-            width: The desired capture width. If None, the setting is skipped.
-            height: The desired capture height. If None, the setting is skipped.
-
-        Raises:
-            RuntimeError: If the camera fails to set any of the specified properties
-                          to the requested value.
-            DeviceNotConnectedError: If the camera is not connected when attempting
-                                     to configure settings.
-        """
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"Cannot configure settings for {self} as it is not connected.")
-
-        self._validate_fps()
-        self._validate_width_and_height()
-
     def connect(self, warmup: bool = True):
         """
         Connects to the OpenCV camera specified in the configuration.
@@ -202,6 +178,30 @@ class OpenCVCamera(Camera):
             self.read()  # NOTE(Steven): For now we just read one frame, we could also loop for X frames/secs
 
         logger.debug(f"Camera {self.index_or_path} connected and configured successfully.")
+
+    def _configure_capture_settings(self) -> None:
+        """
+        Applies the specified FPS, width, and height settings to the connected camera.
+
+        This method attempts to set the camera properties via OpenCV. It checks if
+        the camera successfully applied the settings and raises an error if not.
+
+        Args:
+            fps: The desired frames per second. If None, the setting is skipped.
+            width: The desired capture width. If None, the setting is skipped.
+            height: The desired capture height. If None, the setting is skipped.
+
+        Raises:
+            RuntimeError: If the camera fails to set any of the specified properties
+                          to the requested value.
+            DeviceNotConnectedError: If the camera is not connected when attempting
+                                     to configure settings.
+        """
+        if not self.is_connected:
+            raise DeviceNotConnectedError(f"Cannot configure settings for {self} as it is not connected.")
+
+        self._validate_fps()
+        self._validate_width_and_height()
 
     def _validate_fps(self) -> None:
         """Validates and sets the camera's frames per second (FPS)."""
