@@ -308,15 +308,15 @@ class RealSenseCamera(Camera):
             raise DeviceNotConnectedError(f"Cannot validate settings for {self} as it is not connected.")
 
         stream = self.rs_profile.get_stream(rs.stream.color).as_video_stream_profile()
+
         if self.fps is None:
             self.fps = stream.fps()
         else:
             self._validate_fps(stream)
 
-        actual_width = int(round(stream.width()))
-        actual_height = int(round(stream.height()))
-
         if self.width is None or self.height is None:
+            actual_width = int(round(stream.width()))
+            actual_height = int(round(stream.height()))
             if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
                 self.width, self.height = actual_height, actual_width
                 self.capture_width, self.capture_height = actual_width, actual_height
@@ -540,6 +540,23 @@ class RealSenseCamera(Camera):
         self.thread.start()
         logger.debug(f"Read thread started for {self}.")
 
+    def _stop_read_thread(self):
+        """Signals the background read thread to stop and waits for it to join."""
+        if self.stop_event is not None:
+            logger.debug(f"Signaling stop event for read thread of {self}.")
+            self.stop_event.set()
+
+        if self.thread is not None and self.thread.is_alive():
+            logger.debug(f"Waiting for read thread of {self} to join...")
+            self.thread.join(timeout=2.0)
+            if self.thread.is_alive():
+                logger.warning(f"Read thread for {self} did not terminate gracefully after 2 seconds.")
+            else:
+                logger.debug(f"Read thread for {self} joined successfully.")
+
+        self.thread = None
+        self.stop_event = None
+
     # NOTE(Steven): Missing implementation for depth for now
     def async_read(self, timeout_ms: float = 100) -> np.ndarray:
         """
@@ -586,23 +603,6 @@ class RealSenseCamera(Camera):
             raise RuntimeError(
                 f"Error getting frame data from queue for camera {self.serial_number}: {e}"
             ) from e
-
-    def _stop_read_thread(self):
-        """Signals the background read thread to stop and waits for it to join."""
-        if self.stop_event is not None:
-            logger.debug(f"Signaling stop event for read thread of {self}.")
-            self.stop_event.set()
-
-        if self.thread is not None and self.thread.is_alive():
-            logger.debug(f"Waiting for read thread of {self} to join...")
-            self.thread.join(timeout=2.0)
-            if self.thread.is_alive():
-                logger.warning(f"Read thread for {self} did not terminate gracefully after 2 seconds.")
-            else:
-                logger.debug(f"Read thread for {self} joined successfully.")
-
-        self.thread = None
-        self.stop_event = None
 
     def disconnect(self):
         """

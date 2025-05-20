@@ -444,6 +444,23 @@ class OpenCVCamera(Camera):
         self.thread.start()
         logger.debug(f"Read thread started for {self}.")
 
+    def _stop_read_thread(self) -> None:
+        """Signals the background read thread to stop and waits for it to join."""
+        if self.stop_event is not None:
+            logger.debug(f"Signaling stop event for read thread of {self}.")
+            self.stop_event.set()
+
+        if self.thread is not None and self.thread.is_alive():
+            logger.debug(f"Waiting for read thread of {self} to join...")
+            self.thread.join(timeout=2.0)
+            if self.thread.is_alive():
+                logger.warning(f"Read thread for {self} did not terminate gracefully after 2 seconds.")
+            else:
+                logger.debug(f"Read thread for {self} joined successfully.")
+
+        self.thread = None
+        self.stop_event = None
+
     def async_read(self, timeout_ms: float = 2000) -> np.ndarray:
         """
         Reads the latest available frame asynchronously.
@@ -487,23 +504,6 @@ class OpenCVCamera(Camera):
         except Exception as e:
             logger.exception(f"Unexpected error getting frame from queue for {self}: {e}")
             raise RuntimeError(f"Error getting frame from queue for camera {self.index_or_path}: {e}") from e
-
-    def _stop_read_thread(self) -> None:
-        """Signals the background read thread to stop and waits for it to join."""
-        if self.stop_event is not None:
-            logger.debug(f"Signaling stop event for read thread of {self}.")
-            self.stop_event.set()
-
-        if self.thread is not None and self.thread.is_alive():
-            logger.debug(f"Waiting for read thread of {self} to join...")
-            self.thread.join(timeout=2.0)
-            if self.thread.is_alive():
-                logger.warning(f"Read thread for {self} did not terminate gracefully after 2 seconds.")
-            else:
-                logger.debug(f"Read thread for {self} joined successfully.")
-
-        self.thread = None
-        self.stop_event = None
 
     def disconnect(self):
         """
