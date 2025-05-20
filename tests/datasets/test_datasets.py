@@ -445,7 +445,10 @@ def test_add_frame_audio(audio_dataset):
     dataset.save_episode()
 
     assert dataset[0]["audio"].shape == torch.Size(
-        (int(DEFAULT_AUDIO_CHUNK_DURATION * DEFAULT_SAMPLE_RATE), DUMMY_AUDIO_CHANNELS)
+        (
+            DUMMY_AUDIO_CHANNELS,
+            int(DEFAULT_AUDIO_CHUNK_DURATION * DEFAULT_SAMPLE_RATE),
+        )  # Match pytorch channel-first format
     )
 
 
