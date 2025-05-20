@@ -125,9 +125,9 @@ class OpenCVCamera(Camera):
 
         if self.height and self.width:
             if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
-                self.prerotated_width, self.prerotated_height = self.height, self.width
+                self.capture_width, self.capture_height = self.height, self.width
             else:
-                self.prerotated_width, self.prerotated_height = self.width, self.height
+                self.capture_width, self.capture_height = self.width, self.height
 
     def __str__(self) -> str:
         return f"{self.__class__.__name__}({self.index_or_path})"
@@ -208,10 +208,10 @@ class OpenCVCamera(Camera):
         if self.width is None or self.height is None:
             if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
                 self.width, self.height = default_height, default_width
-                self.prerotated_width, self.prerotated_height = default_width, default_height
+                self.capture_width, self.capture_height = default_width, default_height
             else:
                 self.width, self.height = default_width, default_height
-                self.prerotated_width, self.prerotated_height = default_width, default_height
+                self.capture_width, self.capture_height = default_width, default_height
             logger.info(f"Capture width set to camera default: {self.width}.")
             logger.info(f"Capture height set to camera default: {self.height}.")
         else:
@@ -236,25 +236,25 @@ class OpenCVCamera(Camera):
     def _validate_width_and_height(self) -> None:
         """Validates and sets the camera's frame capture width and height."""
 
-        success = self.videocapture.set(cv2.CAP_PROP_FRAME_WIDTH, float(self.prerotated_width))
+        success = self.videocapture.set(cv2.CAP_PROP_FRAME_WIDTH, float(self.capture_width))
         actual_width = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_WIDTH)))
-        if not success or self.prerotated_width != actual_width:
+        if not success or self.capture_width != actual_width:
             logger.warning(
-                f"Requested capture width {self.prerotated_width} for {self}, but camera reported {actual_width} (set success: {success})."
+                f"Requested capture width {self.capture_width} for {self}, but camera reported {actual_width} (set success: {success})."
             )
             raise RuntimeError(
-                f"Failed to set requested capture width {self.prerotated_width} for {self}. Actual value: {actual_width}."
+                f"Failed to set requested capture width {self.capture_width} for {self}. Actual value: {actual_width}."
             )
         logger.debug(f"Capture width set to {actual_width} for {self}.")
 
-        success = self.videocapture.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self.prerotated_height))
+        success = self.videocapture.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self.capture_height))
         actual_height = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_HEIGHT)))
-        if not success or self.prerotated_height != actual_height:
+        if not success or self.capture_height != actual_height:
             logger.warning(
-                f"Requested capture height {self.prerotated_height} for {self}, but camera reported {actual_height} (set success: {success})."
+                f"Requested capture height {self.capture_height} for {self}, but camera reported {actual_height} (set success: {success})."
             )
             raise RuntimeError(
-                f"Failed to set requested capture height {self.prerotated_height} for {self}. Actual value: {actual_height}."
+                f"Failed to set requested capture height {self.capture_height} for {self}. Actual value: {actual_height}."
             )
         logger.debug(f"Capture height set to {actual_height} for {self}.")
 
@@ -387,9 +387,9 @@ class OpenCVCamera(Camera):
 
         h, w, c = image.shape
 
-        if h != self.prerotated_height or w != self.prerotated_width:
+        if h != self.capture_height or w != self.capture_width:
             raise RuntimeError(
-                f"Captured frame dimensions ({h}x{w}) do not match configured capture dimensions ({self.prerotated_height}x{self.prerotated_width}) for {self}."
+                f"Captured frame dimensions ({h}x{w}) do not match configured capture dimensions ({self.capture_height}x{self.capture_width}) for {self}."
             )
 
         processed_image = image
