@@ -40,6 +40,7 @@ BAG_FILE_PATH = os.path.join(TEST_ARTIFACTS_DIR, "test_rs.bag")
 # NOTE(Steven): Takes 20sec, the patch being the biggest bottleneck
 # NOTE(Steven): more tests + assertions?
 
+
 def mock_rs_config_enable_device_from_file(rs_config_instance, sn):
     return rs_config_instance.enable_device_from_file(BAG_FILE_PATH, repeat_playback=True)
 
