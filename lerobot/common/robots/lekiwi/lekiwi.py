@@ -360,7 +360,7 @@ class LeKiwi(Robot):
         arm_goal_pos = {k: v for k, v in action.items() if k in self.arm_motors}
         base_goal_vel = {k: v for k, v in action.items() if k in self.base_motors}
 
-        print("base_goal: ${base_goal_vel}")
+        print(f"base_goal: {base_goal_vel}")
         base_wheel_goal_vel = self._body_to_wheel_raw(
             base_goal_vel["x"], base_goal_vel["y"], base_goal_vel["theta"]
         )
