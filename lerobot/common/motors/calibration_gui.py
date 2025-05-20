@@ -1,9 +1,23 @@
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import math
 from dataclasses import dataclass
 
 import pygame
 
-from lerobot.common.motors import MotorsBus
+from lerobot.common.motors import MotorCalibration, MotorsBus
 
 BAR_LEN, BAR_THICKNESS = 450, 8
 HANDLE_R = 10
@@ -191,10 +205,10 @@ class RangeSlider:
 
 
 class RangeFinderGUI:
-    def __init__(self, bus: MotorsBus, groups: dict[str, list[str]]):
+    def __init__(self, bus: MotorsBus, groups: dict[str, list[str]] | None = None):
         self.bus = bus
-        self.groups = groups
-        self.group_names = list(groups.keys())
+        self.groups = groups if groups is not None else {"all": list(bus.motors)}
+        self.group_names = list(groups)
         self.current_group = self.group_names[0]
 
         if not bus.is_connected:
@@ -245,7 +259,7 @@ class RangeFinderGUI:
                 RangeSlider(
                     motor=m,
                     idx=i,
-                    res=self.res_table[self.bus.motors[m].model],
+                    res=self.res_table[self.bus.motors[m].model] - 1,
                     calibration=self.calibration[m],
                     present=self.present_cache[m],
                     label_pad=self.label_pad,
@@ -319,13 +333,10 @@ class RangeFinderGUI:
             s.min_x = s._pos_from_val(s.min_v)
             s.max_x = s._pos_from_val(s.max_v)
 
-    def run(self):
-        # disp_len = max(len(m) for ms in self.groups.values() for m in ms)
-
+    def run(self) -> dict[str, MotorCalibration]:
         while True:
             for e in pygame.event.get():
                 if e.type == pygame.QUIT:
-                    self.bus.disconnect()
                     pygame.quit()
                     return self.calibration
 
@@ -367,13 +378,4 @@ class RangeFinderGUI:
                 self.screen.blit(t, (rect.centerx - t.get_width() // 2, rect.centery - t.get_height() // 2))
 
             pygame.display.flip()
-
-            # terminal table (optional)
-            # print("\n-----------------------------")
-            # print(f"{'NAME':<{disp_len}} | {'MIN':>6} | {'POS':>6} | {'MAX':>6}")
-            # for s in self.sliders:
-            #     vals = s.values()
-            #     print(f"{s.motor:<{disp_len}} | {vals.min_v:>6} | {vals.pos_v:>6} | {vals.max_v:>6}")
-            # move_cursor_up(len(self.sliders) + 3)
-
             self.clock.tick(FPS)
