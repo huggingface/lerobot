@@ -71,7 +71,9 @@ class Camera(abc.ABC):
         """Establish connection to the camera.
 
         Args:
-            warmup: If True (default), captures a warmup frame before returning.
+            warmup: If True (default), captures a warmup frame before returning. Useful
+                   for cameras that require time to adjust capture settings.
+                   If False, skips the warmup frame.
         """
         pass
 
