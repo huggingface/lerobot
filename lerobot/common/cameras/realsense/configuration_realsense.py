@@ -40,16 +40,16 @@ class RealSenseCameraConfig(CameraConfig):
         fps: Requested frames per second for the color stream.
         width: Requested frame width in pixels for the color stream.
         height: Requested frame height in pixels for the color stream.
-        serial_number_or_name: unique serial number or human-readable name to identify the camera.
+        serial_number_or_name: Unique serial number or human-readable name to identify the camera.
         color_mode: Color mode for image output (RGB or BGR). Defaults to RGB.
         use_depth: Whether to enable depth stream. Defaults to False.
         rotation: Image rotation setting (0°, 90°, 180°, or 270°). Defaults to no rotation.
 
     Note:
-        - Either name or serial_number must be specified, but not both.
+        - Either name or serial_number must be specified.
         - Depth stream configuration (if enabled) will use the same FPS as the color stream.
         - The actual resolution and FPS may be adjusted by the camera to the nearest supported mode.
-        - Only 3-channel color output (RGB/BGR) is currently supported.
+        - For `fps`, `width` and `height`, either all of them need to be set, or none of them.
     """
 
     serial_number_or_name: int | str
@@ -71,4 +71,10 @@ class RealSenseCameraConfig(CameraConfig):
         ):
             raise ValueError(
                 f"`rotation` is expected to be in {(Cv2Rotation.NO_ROTATION, Cv2Rotation.ROTATE_90, Cv2Rotation.ROTATE_180, Cv2Rotation.ROTATE_270)}, but {self.rotation} is provided."
+            )
+
+        values = (self.fps, self.width, self.height)
+        if any(v is not None for v in values) and any(v is None for v in values):
+            raise ValueError(
+                "For `fps`, `width` and `height`, either all of them need to be set, or none of them."
             )
