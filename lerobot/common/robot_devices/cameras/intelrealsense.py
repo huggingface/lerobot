@@ -359,12 +359,12 @@ class IntelRealSenseCamera:
 
         self.is_connected = True
 
-    def read(self, temporary_color: str | None = None) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
+    def read(self, temporary_color: str | None = None) -> dict[str, np.ndarray]:
         """Read a frame from the camera returned in the format height x width x channels (e.g. 480 x 640 x 3)
         of type `np.uint8`, contrarily to the pytorch format which is float channel first.
 
-        When `use_depth=True`, returns a tuple `(color_image, depth_map)` with a depth map in the format
-        height x width (e.g. 480 x 640) of type np.uint16.
+        When `use_depth=True`, there is a `depth` key containing the depth map in the format
+        height x width (e.g. 480 x 640) of type `np.uint16`.
 
         Note: Reading a frame is done every `camera.fps` times per second, and it is blocking.
         If you are reading data from other sensors, we advise to use `camera.async_read()` which is non blocking version of `camera.read()`.
@@ -431,9 +431,9 @@ class IntelRealSenseCamera:
             if self.rotation is not None:
                 depth_map = cv2.rotate(depth_map, self.rotation)
 
-            return color_image, depth_map
+            return dict(rgb=color_image, depth=depth_map)
         else:
-            return color_image
+            return dict(rgb=color_image)
 
     def read_loop(self):
         while not self.stop_event.is_set():
@@ -442,7 +442,7 @@ class IntelRealSenseCamera:
             else:
                 self.color_image = self.read()
 
-    def async_read(self):
+    def async_read(self) -> dict[str, np.ndarray]:
         """Access the latest color image"""
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
@@ -466,9 +466,9 @@ class IntelRealSenseCamera:
                 )
 
         if self.use_depth:
-            return self.color_image, self.depth_map
+            return dict(rgb=self.color_image, depth=self.depth_map)
         else:
-            return self.color_image
+            return dict(rgb=self.color_image)
 
     def disconnect(self):
         if not self.is_connected:

@@ -367,7 +367,7 @@ class OpenCVCamera:
         self.capture_height = round(actual_height)
         self.is_connected = True
 
-    def read(self, temporary_color_mode: str | None = None) -> np.ndarray:
+    def read(self, temporary_color_mode: str | None = None) -> dict[str, np.ndarray]:
         """Read a frame from the camera returned in the format (height, width, channels)
         (e.g. 480 x 640 x 3), contrarily to the pytorch format which is channel first.
 
@@ -421,7 +421,7 @@ class OpenCVCamera:
 
         self.color_image = color_image
 
-        return color_image
+        return dict(rgb=color_image)
 
     def read_loop(self):
         while not self.stop_event.is_set():
@@ -430,7 +430,7 @@ class OpenCVCamera:
             except Exception as e:
                 print(f"Error reading in thread: {e}")
 
-    def async_read(self):
+    def async_read(self) -> dict[str, np.ndarray]:
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
                 f"OpenCVCamera({self.camera_index}) is not connected. Try running `camera.connect()` first."
@@ -445,7 +445,7 @@ class OpenCVCamera:
         num_tries = 0
         while True:
             if self.color_image is not None:
-                return self.color_image
+                return dict(rgb=self.color_image)
 
             time.sleep(1 / self.fps)
             num_tries += 1
