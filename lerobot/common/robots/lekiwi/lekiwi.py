@@ -101,11 +101,11 @@ class LeKiwi(Robot):
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
-        return {**self._states_ft, **self._cameras_ft}
+        return {**self._state_ft, **self._cameras_ft}
 
     @cached_property
     def action_features(self) -> dict[str, type]:
-        return self._states_ft
+        return self._state_ft
 
     @property
     def is_connected(self) -> bool:
@@ -332,10 +332,11 @@ class LeKiwi(Robot):
 
         base_vel = self._wheel_raw_to_body(base_wheel_vel)
 
-        obs_state = {f"{k}.pos": v for k, v in arm_pos.items()}
-        obs_state.update(base_vel)  # base_vel already contains x.vel,  y.vel, theta.vel
+        arm_state = {f"{k}.pos": v for k, v in arm_pos.items()}
 
-        obs_dict = {f"{OBS_STATE}.{k}": v for k, v in obs_state.items()}
+        flat_states = {**arm_state, **base_vel}
+
+        obs_dict = {f"{OBS_STATE}": flat_states}
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
 
