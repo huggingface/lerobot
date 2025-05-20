@@ -46,6 +46,7 @@ from lerobot.common.robots import (  # noqa: F401
     koch_follower,
     make_robot_from_config,
     so100_follower,
+    so100_follower_end_effector,
 )
 from lerobot.common.teleoperators import (
     Teleoperator,
@@ -55,7 +56,7 @@ from lerobot.common.teleoperators import (
 from lerobot.common.utils.utils import init_logging, move_cursor_up
 from lerobot.common.utils.visualization_utils import _init_rerun
 
-from .common.teleoperators import koch_leader, so100_leader  # noqa: F401
+from .common.teleoperators import koch_leader, so100_leader, gamepad  # noqa: F401
 
 
 @dataclass
