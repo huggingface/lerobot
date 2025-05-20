@@ -33,7 +33,7 @@ class Camera(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def connect(self, do_warmup_read: bool = True) -> None:
+    def connect(self, warmup: bool = True) -> None:
         pass
 
     @abc.abstractmethod
@@ -41,7 +41,7 @@ class Camera(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def async_read(self, timeout_ms: float = 2000) -> np.ndarray:
+    def async_read(self, timeout_ms: float = ...) -> np.ndarray:
         pass
 
     @abc.abstractmethod

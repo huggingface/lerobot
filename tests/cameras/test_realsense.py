@@ -39,13 +39,8 @@ BAG_FILE_PATH = os.path.join(TEST_ARTIFACTS_DIR, "test_rs.bag")
 # NOTE(Steven): Missing tests for depth
 # NOTE(Steven): Takes 20sec, the patch being the biggest bottleneck
 # NOTE(Steven): more tests + assertions?
-if not os.path.exists(BAG_FILE_PATH):
-    print(f"Warning: Bag file not found at {BAG_FILE_PATH}. Some tests might fail or be skipped.")
-
 
 def mock_rs_config_enable_device_from_file(rs_config_instance, sn):
-    if not os.path.exists(BAG_FILE_PATH):
-        raise FileNotFoundError(f"Test bag file not found: {BAG_FILE_PATH}")
     return rs_config_instance.enable_device_from_file(BAG_FILE_PATH, repeat_playback=True)
 
 
@@ -53,7 +48,8 @@ def mock_rs_config_enable_device_bad_file(rs_config_instance, sn):
     return rs_config_instance.enable_device_from_file("non_existent_file.bag", repeat_playback=True)
 
 
-def test_base_class_implementation():
+def test_abc_implementation():
+    """Instantiation should raise an error if the class doesn't implement abstract methods/properties."""
     config = RealSenseCameraConfig(serial_number=42)
     _ = RealSenseCamera(config)
 
@@ -181,7 +177,7 @@ def test_async_read_before_connect():
     ],
 )
 @patch("pyrealsense2.config.enable_device", side_effect=mock_rs_config_enable_device_from_file)
-def test_all_rotations(mock_enable_device, rotation):
+def test_rotation(mock_enable_device, rotation):
     config = RealSenseCameraConfig(serial_number=42, rotation=rotation)
     camera = RealSenseCamera(config)
     camera.connect(do_warmup_read=False)

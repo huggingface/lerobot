@@ -53,7 +53,6 @@ class OpenCVCameraConfig(CameraConfig):
 
     index_or_path: int | Path
     color_mode: ColorMode = ColorMode.RGB
-    channels: int = 3  # NOTE(Steven): Why is this a config?
     rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION
 
     def __post_init__(self):

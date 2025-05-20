@@ -39,7 +39,8 @@ TEST_IMAGE_PATHS = [
 ]
 
 
-def test_base_class_implementation():
+def test_abc_implementation():
+    """Instantiation should raise an error if the class doesn't implement abstract methods/properties."""
     config = OpenCVCameraConfig(index_or_path=0)
 
     _ = OpenCVCamera(config)
@@ -168,7 +169,7 @@ def test_async_read_before_connect():
         Cv2Rotation.ROTATE_270,
     ],
 )
-def test_all_rotations(rotation, index_or_path):
+def test_rotation(rotation, index_or_path):
     filename = os.path.basename(index_or_path)
     dimensions = filename.split("_")[-1].split(".")[0]  # Assumes filenames format (_wxh.png)
     original_width, original_height = map(int, dimensions.split("x"))

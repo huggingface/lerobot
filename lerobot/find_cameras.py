@@ -32,7 +32,6 @@ from lerobot.common.cameras.opencv.camera_opencv import OpenCVCamera
 from lerobot.common.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 
 logger = logging.getLogger(__name__)
-# logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(module)s - %(message)s")
 
 
 def find_all_opencv_cameras() -> List[Dict[str, Any]]:
