@@ -47,15 +47,18 @@ class Teleoperator(abc.ABC):
     def __str__(self) -> str:
         return f"{self.id} {self.__class__.__name__}"
 
-    @abc.abstractproperty
+    @property
+    @abc.abstractmethod
     def action_features(self) -> dict:
         pass
 
-    @abc.abstractproperty
+    @property
+    @abc.abstractmethod
     def feedback_features(self) -> dict:
         pass
 
-    @abc.abstractproperty
+    @property
+    @abc.abstractmethod
     def is_connected(self) -> bool:
         pass
 
@@ -64,7 +67,8 @@ class Teleoperator(abc.ABC):
         """Connects to the teleoperator."""
         pass
 
-    @abc.abstractproperty
+    @property
+    @abc.abstractmethod
     def is_calibrated(self) -> bool:
         pass
 
