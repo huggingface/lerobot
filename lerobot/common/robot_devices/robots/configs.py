@@ -431,6 +431,7 @@ class MossRobotConfig(ManipulatorRobotConfig):
     mock: bool = False
 
 
+# print("✅ So101RobotConfig module loaded")
 @RobotConfig.register_subclass("so101")
 @dataclass
 class So101RobotConfig(ManipulatorRobotConfig):
@@ -441,23 +442,6 @@ class So101RobotConfig(ManipulatorRobotConfig):
     max_relative_target: int | None = None
 
     leader_arms: dict[str, MotorsBusConfig] = field(
-        default_factory=lambda: {
-            "main": FeetechMotorsBusConfig(
-                port="/dev/ttyACM1",
-                motors={
-                    # name: (index, model)
-                    "shoulder_pan": [1, "sts3215"],
-                    "shoulder_lift": [2, "sts3215"],
-                    "elbow_flex": [3, "sts3215"],
-                    "wrist_flex": [4, "sts3215"],
-                    "wrist_roll": [5, "sts3215"],
-                    "gripper": [6, "sts3215"],
-                },
-            ),
-        }
-    )
-
-    follower_arms: dict[str, MotorsBusConfig] = field(
         default_factory=lambda: {
             "main": FeetechMotorsBusConfig(
                 port="/dev/ttyACM0",
@@ -474,16 +458,33 @@ class So101RobotConfig(ManipulatorRobotConfig):
         }
     )
 
+    follower_arms: dict[str, MotorsBusConfig] = field(
+        default_factory=lambda: {
+            "main": FeetechMotorsBusConfig(
+                port="/dev/ttyACM1",
+                motors={
+                    # name: (index, model)
+                    "shoulder_pan": [1, "sts3215"],
+                    "shoulder_lift": [2, "sts3215"],
+                    "elbow_flex": [3, "sts3215"],
+                    "wrist_flex": [4, "sts3215"],
+                    "wrist_roll": [5, "sts3215"],
+                    "gripper": [6, "sts3215"],
+                },
+            ),
+        }
+    )
+
     cameras: dict[str, CameraConfig] = field(
         default_factory=lambda: {
-            "laptop": OpenCVCameraConfig(
-                camera_index=0,
-                fps=30,
-                width=640,
-                height=480,
-            ),
+            # "laptop": OpenCVCameraConfig(
+            #     camera_index=0,
+            #     fps=30,
+            #     width=640,
+            #     height=480,
+            # ),
             "follower_wrist": OpenCVCameraConfig(
-                type="opencv",
+                # type="opencv",
                 camera_index=2,  # /dev/video2
                 fps=30,
                 width=640,
@@ -491,6 +492,14 @@ class So101RobotConfig(ManipulatorRobotConfig):
             ),
         }
     )
+
+    def __post_init__(self):
+        import inspect
+
+        print("📄 So101RobotConfig loaded from:", inspect.getfile(type(self)))
+        print("✅ Loaded So101RobotConfig with ports:")
+        print("  Leader:", self.leader_arms["main"].port)
+        print("  Follower:", self.follower_arms["main"].port)
 
     mock: bool = False
 
