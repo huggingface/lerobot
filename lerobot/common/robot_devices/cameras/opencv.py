@@ -126,6 +126,7 @@ def save_images_from_cameras(
     fps=None,
     width=None,
     height=None,
+    format=None,
     record_time_s=2,
     mock=False,
 ):
@@ -140,7 +141,7 @@ def save_images_from_cameras(
     print("Connecting cameras")
     cameras = []
     for cam_idx in camera_ids:
-        config = OpenCVCameraConfig(camera_index=cam_idx, fps=fps, width=width, height=height, mock=mock)
+        config = OpenCVCameraConfig(camera_index=cam_idx, fps=fps, width=width, height=height, format=format, mock=mock)
         camera = OpenCVCamera(config)
         camera.connect()
         print(
@@ -256,6 +257,7 @@ class OpenCVCamera:
             self.width = config.width
             self.height = config.height
 
+        self.capture_format = config.format
         self.fps = config.fps
         self.channels = config.channels
         self.color_mode = config.color_mode
@@ -338,6 +340,8 @@ class OpenCVCamera:
             self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, self.capture_width)
         if self.capture_height is not None:
             self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, self.capture_height)
+        if self.capture_format is not None:
+            self.camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*self.capture_format))
 
         actual_fps = self.camera.get(cv2.CAP_PROP_FPS)
         actual_width = self.camera.get(cv2.CAP_PROP_FRAME_WIDTH)
@@ -501,6 +505,12 @@ if __name__ == "__main__":
         type=str,
         default=None,
         help="Set the height for all cameras. If not provided, use the default height of each camera.",
+    )
+    parser.add_argument(
+        "--format",
+        type=str,
+        default=None,
+        help="Set the format for all cameras. If not provided, use the default format of each camera.",
     )
     parser.add_argument(
         "--images-dir",
