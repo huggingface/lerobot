@@ -56,22 +56,32 @@ class HomonculusGlove(Teleoperator):
         self.serial = serial.Serial(config.port, config.baud_rate, timeout=1)
 
         self.joints = [
-            "thumb_0",
-            "thumb_1",
-            "thumb_2",
-            "thumb_3",
-            "index_0",
-            "index_1",
-            "index_2",
-            "middle_0",
-            "middle_1",
-            "middle_2",
-            "ring_0",
-            "ring_1",
-            "ring_2",
-            "pinky_0",
-            "pinky_1",
-            "pinky_2",
+            "thumb_cmc",
+            "thumb_mcp",
+            "thumb_pip",
+            "thumb_dip",
+            "index_mcp_abduction",
+            "index_mcp_flexion",
+            "index_dip",
+            "middle_mcp_abduction",
+            "middle_mcp_flexion",
+            "middle_dip",
+            "ring_mcp_abduction",
+            "ring_mcp_flexion",
+            "ring_dip",
+            "pinky_mcp_abduction",
+            "pinky_mcp_flexion",
+            "pinky_dip",
+        ]
+
+        self.inverted_joints = [
+            "thumb_cmc",
+            "thumb_dip",
+            "index_mcp_abduction",
+            "index_dip",
+            "middle_dip",
+            "ring_dip",
+            "pinky_dip",
         ]
         # self._state = dict.fromkeys(self.joints, 100)
         self.thread = threading.Thread(target=self._async_read, daemon=True, name=f"{self} _async_read")
@@ -115,25 +125,11 @@ class HomonculusGlove(Teleoperator):
             range_mins.update(finger_mins)
             range_maxes.update(finger_maxes)
 
-        inverted_joints = [
-            "thumb_0",
-            "thumb_3",
-            "index_0",
-            "index_2",
-            "middle_2",
-            "ring_2",
-            "pinky_2",
-        ]
-        # for joint in inverted_joints:
-        #     tmp_pos = range_mins[joint]
-        #     range_mins[joint] = range_maxes[joint]
-        #     range_maxes[joint] = tmp_pos
-
         self.calibration = {}
         for id_, joint in enumerate(self.joints):
             self.calibration[joint] = MotorCalibration(
                 id=id_,
-                drive_mode=1 if joint in inverted_joints else 0,
+                drive_mode=1 if joint in self.inverted_joints else 0,
                 homing_offset=0,
                 range_min=range_mins[joint],
                 range_max=range_maxes[joint],
