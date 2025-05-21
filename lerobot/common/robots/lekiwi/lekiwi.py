@@ -302,7 +302,14 @@ class LeKiwi(Robot):
         """
 
         # Convert each raw command back to an angular speed in deg/s.
-        wheel_degps = np.array([left_wheel_speed, back_wheel_speed, right_wheel_speed])
+        wheel_degps = np.array(
+            [
+                self._raw_to_degps(left_wheel_speed),
+                self._raw_to_degps(back_wheel_speed),
+                self._raw_to_degps(right_wheel_speed),
+            ]
+        )
+
         # Convert from deg/s to rad/s.
         wheel_radps = wheel_degps * (np.pi / 180.0)
         # Compute each wheel’s linear speed (m/s) from its angular speed.
