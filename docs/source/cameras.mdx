@@ -16,7 +16,7 @@ To instantiate a camera, you need a camera index. When you only have one camera 
 
 To find the camera indices, run the following script:
 ```bash
-python lerobot/find_cameras.py list-cameras
+python lerobot/find_cameras.py
 ```
 
 The output will look something like this if you have two cameras connected:
@@ -47,7 +47,7 @@ Camera #1:
 ```
 
 > [!WARNING]
-> On , you could get this error: `Error finding RealSense cameras: failed to set power state`, this can be solved by running the same command with `sudo` permissions.
+> On , you could get this error: `Error finding RealSense cameras: failed to set power state`, this can be solved by running the same command with `sudo` permissions. Note that using RealSense cameras in macos is very unstable.
 
 ### Use your phone
 <hfoptions id="use phone">
@@ -144,11 +144,11 @@ config = OpenCVCameraConfig(
 )
 
 camera = OpenCVCamera(config)
-camera.connect(do_warmup_read=True)
+camera.connect()
 
 try:
     for i in range(10):
-        frame = camera.async_read(timeout_ms=1000)
+        frame = camera.async_read(timeout_ms=200)
         print(f"Async frame {i} shape:", frame.shape)
 finally:
     camera.disconnect()
@@ -178,7 +178,7 @@ config = RealSenseCameraConfig(
 )
 
 camera = RealSenseCamera(config)
-camera.connect(do_warmup_read=True)
+camera.connect()
 
 try:
     color_frame = camera.read()
