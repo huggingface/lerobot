@@ -30,7 +30,7 @@ from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnecte
 
 try:
     from lerobot.common.cameras.realsense import RealSenseCamera, RealSenseCameraConfig
-except (ImportError, ModuleNotFoundError):
+except (ImportError, ModuleNotFoundError, NameError):
     pytest.skip("pyrealsense2 not available", allow_module_level=True)
 
 TEST_ARTIFACTS_DIR = Path(__file__).parent.parent / "artifacts" / "cameras"
