@@ -16,6 +16,7 @@
 import importlib
 
 import gymnasium as gym
+from gymnasium.envs.registration import registry as gym_registry
 
 from lerobot.common.envs.configs import AlohaEnv, EnvConfig, PushtEnv, XarmEnv
 
@@ -50,20 +51,31 @@ def make_env(cfg: EnvConfig, n_envs: int = 1, use_async_envs: bool = False) -> g
     if n_envs < 1:
         raise ValueError("`n_envs must be at least 1")
 
-    package_name = f"gym_{cfg.type}"
+    if cfg.gym_id not in gym_registry:
+        print(
+            f"Gym id {cfg.gym_id} not found in gym registry. Attempting to import package {cfg.package_name}..."
+        )
+        try:
+            importlib.import_module(cfg.package_name)
+        except ModuleNotFoundError as e:
+            raise ModuleNotFoundError(
+                f"Required package '{cfg.package_name}' not found for environment '{cfg.type}'. "
+                f"Is it installed and discoverable?"
+            ) from e
 
-    try:
-        importlib.import_module(package_name)
-    except ModuleNotFoundError as e:
-        print(f"{package_name} is not installed. Please install it with `pip install 'lerobot[{cfg.type}]'`")
-        raise e
-
-    gym_handle = f"{package_name}/{cfg.task}"
+        if cfg.gym_id not in gym_registry:
+            raise gym.error.NameNotFound(
+                f"Environment '{cfg.gym_id}' not found. "
+                f"Package '{cfg.package_name}' was imported, but the environment ID "
+                f"was still not registered. Check the `gym.register()` call within the package."
+            )
+        else:
+            print(f"Successfully imported package {cfg.package_name} and registered gym id {cfg.gym_id}.")
 
     # batched version of the env that returns an observation of shape (b, c)
     env_cls = gym.vector.AsyncVectorEnv if use_async_envs else gym.vector.SyncVectorEnv
     env = env_cls(
-        [lambda: gym.make(gym_handle, disable_env_checker=True, **cfg.gym_kwargs) for _ in range(n_envs)]
+        [lambda: gym.make(cfg.gym_id, disable_env_checker=True, **cfg.gym_kwargs) for _ in range(n_envs)]
     )
 
     return env
