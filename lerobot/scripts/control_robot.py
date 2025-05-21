@@ -56,7 +56,7 @@ python lerobot/scripts/control_robot.py \
     --control.single_task="Grasp a lego block and put it in the bin." \
     --control.repo_id=$USER/koch_test \
     --control.num_episodes=1 \
-    --control.push_to_hub=True
+    --control.push_to_hub=true
 ```
 
 - Visualize dataset:
