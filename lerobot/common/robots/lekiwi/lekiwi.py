@@ -279,7 +279,12 @@ class LeKiwi(Robot):
         }
 
     def _wheel_raw_to_body(
-        self, wheel_raw: dict[str, Any], wheel_radius: float = 0.05, base_radius: float = 0.125
+        self,
+        left_wheel_speed,
+        back_wheel_speed,
+        right_wheel_speed,
+        wheel_radius: float = 0.05,
+        base_radius: float = 0.125,
     ) -> dict[str, Any]:
         """
         Convert wheel raw command feedback back into body-frame velocities.
@@ -297,7 +302,7 @@ class LeKiwi(Robot):
         """
 
         # Convert each raw command back to an angular speed in deg/s.
-        wheel_degps = np.array([self._raw_to_degps(int(v)) for _, v in wheel_raw.items()])
+        wheel_degps = np.array([left_wheel_speed, back_wheel_speed, right_wheel_speed])
         # Convert from deg/s to rad/s.
         wheel_radps = wheel_degps * (np.pi / 180.0)
         # Compute each wheel’s linear speed (m/s) from its angular speed.
@@ -328,8 +333,12 @@ class LeKiwi(Robot):
         base_wheel_vel = self.bus.sync_read("Present_Velocity", self.base_motors)
 
         base_vel = self._wheel_raw_to_body(
-            {k: base_wheel_vel[k] for k in ("base_left_wheel", "base_back_wheel", "base_right_wheel")}
+            base_wheel_vel["base_left_wheel"],
+            base_wheel_vel["base_back_wheel"],
+            base_wheel_vel["base_right_wheel"],
         )
+
+        print(f"Base vel: {base_vel}")
 
         arm_state = {f"{k}.pos": v for k, v in arm_pos.items()}
 
