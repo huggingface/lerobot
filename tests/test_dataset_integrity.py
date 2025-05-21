@@ -64,5 +64,3 @@ def test_no_duplicate_tasks(meta):
     for task, idx in meta.task_to_task_index.items():
         assert idx not in seen, f"Duplicate task_index: {idx} for {task}"
         seen[idx] = task
-
-
