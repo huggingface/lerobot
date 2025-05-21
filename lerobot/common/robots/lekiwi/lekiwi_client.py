@@ -321,8 +321,6 @@ class LeKiwiClient(Robot):
                 "ManipulatorRobot is not connected. You need to run `robot.connect()`."
             )
 
-        goal_pos = {}
-
         common_keys = [
             key
             for key in action
@@ -330,7 +328,6 @@ class LeKiwiClient(Robot):
         ]
 
         arm_actions = {"arm_" + arm_motor: action[arm_motor] for arm_motor in common_keys}
-        goal_pos = arm_actions
 
         keyboard_keys = np.array(list(set(action.keys()) - set(common_keys)))
         base_actions = self._from_keyboard_to_base_action(keyboard_keys)
