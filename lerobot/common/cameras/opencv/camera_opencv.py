@@ -224,12 +224,8 @@ class OpenCVCamera(Camera):
         actual_fps = self.videocapture.get(cv2.CAP_PROP_FPS)
         # Use math.isclose for robust float comparison
         if not success or not math.isclose(self.fps, actual_fps, rel_tol=1e-3):
-            logger.warning(
-                f"Requested FPS {self.fps} for {self}, but camera reported {actual_fps} (set success: {success}). "
-                "This might be due to camera limitations."
-            )
             raise RuntimeError(
-                f"Failed to set requested FPS {self.fps} for {self}. Actual value reported: {actual_fps}."
+                f"Failed to set requested FPS {self.fps} for {self}. Actual value reported: {actual_fps} set success: {success})."
             )
         logger.debug(f"FPS set to {actual_fps} for {self}.")
 
@@ -239,22 +235,16 @@ class OpenCVCamera(Camera):
         success = self.videocapture.set(cv2.CAP_PROP_FRAME_WIDTH, float(self.capture_width))
         actual_width = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_WIDTH)))
         if not success or self.capture_width != actual_width:
-            logger.warning(
-                f"Requested capture width {self.capture_width} for {self}, but camera reported {actual_width} (set success: {success})."
-            )
             raise RuntimeError(
-                f"Failed to set requested capture width {self.capture_width} for {self}. Actual value: {actual_width}."
+                f"Failed to set requested capture width {self.capture_width} for {self}. Actual value: {actual_width} (set success: {success})."
             )
         logger.debug(f"Capture width set to {actual_width} for {self}.")
 
         success = self.videocapture.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self.capture_height))
         actual_height = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_HEIGHT)))
         if not success or self.capture_height != actual_height:
-            logger.warning(
-                f"Requested capture height {self.capture_height} for {self}, but camera reported {actual_height} (set success: {success})."
-            )
             raise RuntimeError(
-                f"Failed to set requested capture height {self.capture_height} for {self}. Actual value: {actual_height}."
+                f"Failed to set requested capture height {self.capture_height} for {self}. Actual value: {actual_height} (set success: {success})."
             )
         logger.debug(f"Capture height set to {actual_height} for {self}.")
 
@@ -274,16 +264,12 @@ class OpenCVCamera(Camera):
         found_cameras_info = []
 
         if platform.system() == "Linux":
-            logger.info("Linux detected. Scanning '/dev/video*' device paths...")
             possible_paths = sorted(Path("/dev").glob("video*"), key=lambda p: p.name)
             targets_to_scan = [str(p) for p in possible_paths]
-            logger.debug(f"Found potential paths: {targets_to_scan}")
         else:
-            logger.info(
-                f"{platform.system()} system detected. Scanning indices from 0 to {MAX_OPENCV_INDEX}..."
-            )
             targets_to_scan = list(range(MAX_OPENCV_INDEX))
 
+        logger.debug(f"Found potential paths: {targets_to_scan}")
         for target in targets_to_scan:
             camera = cv2.VideoCapture(target)
             if camera.isOpened():
@@ -305,7 +291,6 @@ class OpenCVCamera(Camera):
                 }
 
                 found_cameras_info.append(camera_info)
-                logger.debug(f"Found OpenCV camera:: {camera_info}")
                 camera.release()
 
         if not found_cameras_info:
@@ -444,11 +429,9 @@ class OpenCVCamera(Camera):
     def _stop_read_thread(self) -> None:
         """Signals the background read thread to stop and waits for it to join."""
         if self.stop_event is not None:
-            logger.debug(f"Signaling stop event for read thread of {self}.")
             self.stop_event.set()
 
         if self.thread is not None and self.thread.is_alive():
-            logger.debug(f"Waiting for read thread of {self} to join...")
             self.thread.join(timeout=2.0)
             if self.thread.is_alive():
                 logger.warning(f"Read thread for {self} did not terminate gracefully after 2 seconds.")
@@ -457,6 +440,7 @@ class OpenCVCamera(Camera):
 
         self.thread = None
         self.stop_event = None
+        logger.debug(f"Read thread stopped for {self}.")
 
     def async_read(self, timeout_ms: float = 2000) -> np.ndarray:
         """
@@ -490,12 +474,8 @@ class OpenCVCamera(Camera):
             return self.frame_queue.get(timeout=timeout_ms / 1000.0)
         except queue.Empty as e:
             thread_alive = self.thread is not None and self.thread.is_alive()
-            logger.error(
-                f"Timeout waiting for frame from {self} queue after {timeout_ms}ms. "
-                f"(Read thread alive: {thread_alive})"
-            )
             raise TimeoutError(
-                f"Timed out waiting for frame from camera {self.index_or_path} after {timeout_ms} ms. "
+                f"Timed out waiting for frame from camera {self} after {timeout_ms} ms. "
                 f"Read thread alive: {thread_alive}."
             ) from e
         except Exception as e:

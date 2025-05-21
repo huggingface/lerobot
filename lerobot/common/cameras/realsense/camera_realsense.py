@@ -235,7 +235,6 @@ class RealSenseCamera(Camera):
                         camera_info["default_stream_profile"] = stream_info
 
             found_cameras_info.append(camera_info)
-            logger.debug(f"Found RealSense camera: {camera_info}")
 
         logger.info(f"Detected RealSense cameras: {[cam['id'] for cam in found_cameras_info]}")
         return found_cameras_info
@@ -350,18 +349,12 @@ class RealSenseCamera(Camera):
         actual_height = int(round(stream.height()))
 
         if self.capture_width != actual_width:
-            logger.warning(
-                f"Requested capture width {self.capture_width} for {self}, but camera reported {actual_width}."
-            )
             raise RuntimeError(
                 f"Failed to set requested capture width {self.capture_width} for {self}. Actual value: {actual_width}."
             )
         logger.debug(f"Capture width set to {actual_width} for {self}.")
 
         if self.capture_height != actual_height:
-            logger.warning(
-                f"Requested capture height {self.capture_height} for {self}, but camera reported {actual_height}."
-            )
             raise RuntimeError(
                 f"Failed to set requested capture height {self.capture_height} for {self}. Actual value: {actual_height}."
             )
@@ -542,11 +535,9 @@ class RealSenseCamera(Camera):
     def _stop_read_thread(self):
         """Signals the background read thread to stop and waits for it to join."""
         if self.stop_event is not None:
-            logger.debug(f"Signaling stop event for read thread of {self}.")
             self.stop_event.set()
 
         if self.thread is not None and self.thread.is_alive():
-            logger.debug(f"Waiting for read thread of {self} to join...")
             self.thread.join(timeout=2.0)
             if self.thread.is_alive():
                 logger.warning(f"Read thread for {self} did not terminate gracefully after 2 seconds.")
@@ -555,6 +546,7 @@ class RealSenseCamera(Camera):
 
         self.thread = None
         self.stop_event = None
+        logger.debug(f"Read thread stopped for {self}.")
 
     # NOTE(Steven): Missing implementation for depth for now
     def async_read(self, timeout_ms: float = 100) -> np.ndarray:
@@ -589,19 +581,12 @@ class RealSenseCamera(Camera):
             return self.frame_queue.get(timeout=timeout_ms / 1000.0)
         except queue.Empty as e:
             thread_alive = self.thread is not None and self.thread.is_alive()
-            logger.error(
-                f"Timeout waiting for frame from {self} queue after {timeout_ms}ms. "
-                f"(Read thread alive: {thread_alive})"
-            )
             raise TimeoutError(
-                f"Timed out waiting for frame from camera {self.serial_number} after {timeout_ms} ms. "
+                f"Timed out waiting for frame from camera {self} after {timeout_ms} ms. "
                 f"Read thread alive: {thread_alive}."
             ) from e
         except Exception as e:
-            logger.exception(f"Unexpected error getting frame data from queue for {self}: {e}")
-            raise RuntimeError(
-                f"Error getting frame data from queue for camera {self.serial_number}: {e}"
-            ) from e
+            raise RuntimeError(f"Error getting frame data from queue for camera {self}: {e}") from e
 
     def disconnect(self):
         """
