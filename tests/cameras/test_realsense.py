@@ -38,6 +38,7 @@ BAG_FILE_PATH = TEST_ARTIFACTS_DIR / "test_rs.bag"
 
 # NOTE(Steven): For some reason these tests take ~20sec in macOS but only ~2sec in Linux.
 
+
 def mock_rs_config_enable_device_from_file(rs_config_instance, _sn):
     return rs_config_instance.enable_device_from_file(str(BAG_FILE_PATH), repeat_playback=True)
 
