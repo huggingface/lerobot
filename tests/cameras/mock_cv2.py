@@ -23,6 +23,7 @@ CAP_ANY = -1
 CAP_PROP_FPS = 5
 CAP_PROP_FRAME_WIDTH = 3
 CAP_PROP_FRAME_HEIGHT = 4
+CAP_PROP_FOURCC = 6
 COLOR_RGB2BGR = 4
 COLOR_BGR2RGB = 4
 
@@ -62,6 +63,7 @@ class VideoCapture:
             CAP_PROP_FPS: 30,
             CAP_PROP_FRAME_WIDTH: 640,
             CAP_PROP_FRAME_HEIGHT: 480,
+            CAP_PROP_FOURCC: VideoWriter.fourcc("Y", "U", "Y", "V"),
         }
         self._is_opened = True
 
@@ -83,6 +85,8 @@ class VideoCapture:
                 value = 480
             elif propId == CAP_PROP_FRAME_WIDTH:
                 value = 640
+            elif propId == CAP_PROP_FOURCC:
+                value = VideoWriter.fourcc("Y", "U", "Y", "V")
         return value
 
     def read(self):
@@ -99,3 +103,11 @@ class VideoCapture:
     def __del__(self):
         if self._is_opened:
             self.release()
+
+class VideoWriter:
+    def __init__(self):
+        return None
+    
+    @staticmethod
+    def fourcc(c1: str, c2: str, c3: str, c4: str):
+        return (ord(c1) << 24) + (ord(c2) << 16) + (ord(c3) << 8) + ord(c4)

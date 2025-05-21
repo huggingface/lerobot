@@ -341,7 +341,7 @@ class OpenCVCamera:
         if self.capture_height is not None:
             self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, self.capture_height)
         if self.capture_format is not None:
-            self.camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*self.capture_format))
+            self.camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter.fourcc(*self.capture_format))
 
         actual_fps = self.camera.get(cv2.CAP_PROP_FPS)
         actual_width = self.camera.get(cv2.CAP_PROP_FRAME_WIDTH)
