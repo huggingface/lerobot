@@ -1,13 +1,13 @@
 import argparse
+import traceback
 from collections import defaultdict
+
 import numpy as np
 import torch
-import traceback
 
-from lerobot.common.robot_devices.robots.utils import make_robot
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.datasets.video_utils import decode_video_frames
-
+from lerobot.common.robot_devices.robots.utils import make_robot
 
 # === CONFIGURATION ===
 GOAL_SQUARE = "D4"
@@ -36,7 +36,7 @@ def normalize_frame(raw, image, cam_key):
         "observation.state": np.array(raw["observation.state"], dtype=np.float32),
         "timestamp": np.array([float(raw["timestamp"])], dtype=np.float32),
         "task": TASK_DESCRIPTION,
-        f"observation.images.follower_wrist": image  # fixed target key
+        "observation.images.follower_wrist": image,  # fixed target key
     }
 
 
@@ -83,12 +83,12 @@ def main():
             try:
                 # Decode image frame at timestamp
                 timestamp = raw["timestamp"].item() if hasattr(raw["timestamp"], "item") else raw["timestamp"]
-                
+
                 t_sec = int(timestamp)
                 if t_sec != last_logged_second:
                     print(f"  ⏱️  {t_sec}s... decoding frame {raw['frame_index']}")
                     last_logged_second = t_sec
-            
+
                 # Decode with a more forgiving tolerance
                 frames = decode_video_frames(
                     str(video_path),
@@ -105,24 +105,31 @@ def main():
 
                 if isinstance(image, torch.Tensor):
                     image = image.permute(1, 2, 0).numpy()  # convert from (C, H, W) → (H, W, C)
-                
+
                 frame = normalize_frame(raw, image, cam_key)
-                
+
                 assert isinstance(frame["timestamp"], np.ndarray)
                 assert frame["timestamp"].shape == (1,)
                 assert frame["timestamp"].dtype == np.float32
 
                 # Add metadata to the frame; include piece, color, start square, end square.
-                frame["task"] = f"Move the {'white' if IS_WHITE else 'black'} {PIECE_TYPE} from {start_square} to {GOAL_SQUARE} on the chessboard."
-                
+                frame["task"] = (
+                    f"Move the {'white' if IS_WHITE else 'black'} {PIECE_TYPE} from {start_square} to {GOAL_SQUARE} on the chessboard."
+                )
+
                 if added == 0:
                     print("🔍 Sample frame keys:", list(frame.keys()))
                     print("🔍 Sample image shape:", frame["observation.images.follower_wrist"].shape)
-                    print("🔍 Timestamp type:", type(frame["timestamp"]), "shape:", getattr(frame["timestamp"], "shape", None))
-                
+                    print(
+                        "🔍 Timestamp type:",
+                        type(frame["timestamp"]),
+                        "shape:",
+                        getattr(frame["timestamp"], "shape", None),
+                    )
+
                 labeled_ds.add_frame(frame)
                 added += 1
-            except Exception as e:
+            except Exception:
                 print(f"⚠️ Skipping frame {raw['frame_index']}")
                 traceback.print_exc()
 

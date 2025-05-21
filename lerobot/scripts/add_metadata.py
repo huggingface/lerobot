@@ -1,35 +1,38 @@
 #!/usr/bin/env python
 import argparse
 import json
-import numpy as np
-from pathlib import Path
-from datasets import load_dataset, Dataset
 
+import numpy as np
+from datasets import Dataset, load_dataset
+
+from lerobot.common.datasets.compute_stats import aggregate_stats, compute_episode_stats
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.datasets.utils import (
-    write_episode,
+    append_jsonlines,
     write_episode_stats,
     write_info,
-    append_jsonlines,
 )
-from lerobot.common.datasets.compute_stats import compute_episode_stats, aggregate_stats
 
 # === CONFIGURATION ===
 GOAL_SQUARE = "D4"
 PIECE_TYPE = "rook"
 IS_WHITE = True
 
+
 def update_episode_tasks(dataset):
     print("🔁 Updating episode task strings in memory...")
     for episode_index in dataset.meta.episodes:
         start_square = input(f"Enter start square for episode {episode_index} (e.g., 'A4'): ").strip().upper()
-        task_description = json.dumps({
-            "piece": PIECE_TYPE,
-            "color": "white" if IS_WHITE else "black",
-            "start_square": start_square,
-            "goal_square": GOAL_SQUARE
-        })
+        task_description = json.dumps(
+            {
+                "piece": PIECE_TYPE,
+                "color": "white" if IS_WHITE else "black",
+                "start_square": start_square,
+                "goal_square": GOAL_SQUARE,
+            }
+        )
         dataset.meta.episodes[episode_index]["tasks"] = [task_description]
+
 
 def rebuild_task_index_from_episodes(dataset):
     dataset.meta.task_to_task_index.clear()
@@ -47,6 +50,7 @@ def rebuild_task_index_from_episodes(dataset):
         dataset.meta.tasks[i] = task
         dataset.meta.info["total_tasks"] += 1
 
+
 def patch_episode_parquet(dataset: LeRobotDataset, episode_index: int):
     task_str = dataset.meta.episodes[episode_index]["tasks"][0]
     task_index = dataset.meta.task_to_task_index[task_str]
@@ -56,15 +60,13 @@ def patch_episode_parquet(dataset: LeRobotDataset, episode_index: int):
     ep_data["task_index"] = [task_index] * len(ep_data["index"])
     Dataset.from_dict(ep_data).to_parquet(file_path)
 
+
 def rebuild_all_stats(dataset: LeRobotDataset):
     print("\n📊 Recomputing stats for all episodes...")
     for ep_idx in dataset.meta.episodes.keys():
         path = dataset.meta.root / dataset.meta.get_data_file_path(ep_idx)
         ep_data = load_dataset("parquet", data_files=str(path), split="train").to_dict()
-        ep_array_data = {
-            k: np.array(v) for k, v in ep_data.items()
-            if k in dataset.meta.features
-        }
+        ep_array_data = {k: np.array(v) for k, v in ep_data.items() if k in dataset.meta.features}
         stats = compute_episode_stats(ep_array_data, dataset.meta.features)
         dataset.meta.episodes_stats[ep_idx] = stats
         write_episode_stats(ep_idx, stats, dataset.meta.root)
@@ -72,6 +74,7 @@ def rebuild_all_stats(dataset: LeRobotDataset):
     dataset.meta.stats = aggregate_stats(list(dataset.meta.episodes_stats.values()))
     write_info(dataset.meta.info, dataset.meta.root)
     print("✅ Stats recomputed.")
+
 
 def add_metadata_to_dataset(repo_id: str):
     dataset = LeRobotDataset(repo_id=repo_id, force_cache_sync=True)
@@ -101,8 +104,11 @@ def add_metadata_to_dataset(repo_id: str):
     dataset.push_to_hub(tags=["structured-tasks"])
     print("✅ All done.")
 
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Patch LeRobotDataset episodes with structured task metadata.")
+    parser = argparse.ArgumentParser(
+        description="Patch LeRobotDataset episodes with structured task metadata."
+    )
     parser.add_argument("--repo-id", type=str, required=True, help="Hugging Face dataset repo ID.")
     args = parser.parse_args()
 

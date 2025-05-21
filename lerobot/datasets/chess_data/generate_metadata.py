@@ -1,5 +1,5 @@
-import os
 import json
+import os
 import re
 
 # === CONFIGURATION ===
@@ -13,18 +13,19 @@ DEFAULT_GRASP_TYPE = "top"
 
 # === FUNCTIONS ===
 
+
 def is_valid_square(square):
     return re.match(r"^[A-H][1-8]$", square.upper()) is not None
 
+
 def get_existing_episodes(path):
-    return sorted([
-        f for f in os.listdir(path)
-        if f.startswith("episode_") and f.endswith(".parquet")
-    ])
+    return sorted([f for f in os.listdir(path) if f.startswith("episode_") and f.endswith(".parquet")])
+
 
 def load_existing_metadata(parquet_path):
     metadata_path = parquet_path.replace(".parquet", ".json")
     return os.path.exists(metadata_path)
+
 
 def write_metadata(parquet_path, start_square):
     metadata_path = parquet_path.replace(".parquet", ".json")
@@ -33,12 +34,14 @@ def write_metadata(parquet_path, start_square):
         "goal_square": GOAL_SQUARE,
         "piece_type": PIECE_TYPE,
         "grasp_type": DEFAULT_GRASP_TYPE,
-        "is_white": IS_WHITE
+        "is_white": IS_WHITE,
     }
     with open(metadata_path, "w") as f:
         json.dump(metadata, f, indent=2)
 
+
 # === MAIN LOOP ===
+
 
 def main():
     episodes = get_existing_episodes(DATASET_DIR)
@@ -60,6 +63,7 @@ def main():
 
         write_metadata(parquet_path, start_square)
         print(f"📦 Metadata saved for {ep_filename}: {start_square} → {GOAL_SQUARE}\n")
+
 
 if __name__ == "__main__":
     main()

@@ -495,11 +495,12 @@ class So101RobotConfig(ManipulatorRobotConfig):
 
     def __post_init__(self):
         import inspect
+
         print("📄 So101RobotConfig loaded from:", inspect.getfile(type(self)))
         print("✅ Loaded So101RobotConfig with ports:")
         print("  Leader:", self.leader_arms["main"].port)
         print("  Follower:", self.follower_arms["main"].port)
-    
+
     mock: bool = False
 
 
