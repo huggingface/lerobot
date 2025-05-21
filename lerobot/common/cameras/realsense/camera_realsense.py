@@ -26,7 +26,11 @@ from typing import Any, Dict, List
 
 import cv2
 import numpy as np
-import pyrealsense2 as rs
+
+try:
+    import pyrealsense2 as rs
+except Exception as e:
+    logging.info(f"Could not import realsense: {e}")
 
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
