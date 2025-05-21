@@ -50,7 +50,7 @@ class RealSenseCamera(Camera):
 
     Use the provided utility script to find available camera indices and default profiles:
     ```bash
-    python -m lerobot.find_cameras
+    python -m lerobot.find_cameras realsense
     ```
 
     A `RealSenseCamera` instance requires a configuration object specifying the
@@ -63,7 +63,7 @@ class RealSenseCamera(Camera):
     Example:
         ```python
         from lerobot.common.cameras.realsense import RealSenseCamera, RealSenseCameraConfig
-        from lerobot.common.cameras import ColorMode
+        from lerobot.common.cameras import ColorMode, Cv2Rotation
 
         # Basic usage with serial number
         config = RealSenseCameraConfig(serial_number_or_name="1234567890") # Replace with actual SN
@@ -87,7 +87,7 @@ class RealSenseCamera(Camera):
             width=1280,
             height=720,
             color_mode=ColorMode.BGR, # Request BGR output
-            rotation=0,
+            rotation=Cv2Rotation.NO_ROTATION,
             use_depth=True
         )
         depth_camera = RealSenseCamera(custom_config)
@@ -175,7 +175,7 @@ class RealSenseCamera(Camera):
             self.rs_profile = None
             self.rs_pipeline = None
             raise ConnectionError(
-                f"Failed to open {self} camera. Run 'python -m find_cameras' for details about the available cameras in your system."
+                f"Failed to open {self} camera. Run 'python -m lerobot.find_cameras realsense' for details about the available cameras in your system."
             ) from e
 
         logger.debug(f"Validating stream configuration for {self}...")
@@ -388,10 +388,9 @@ class RealSenseCamera(Camera):
 
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
-
         if not self.use_depth:
             raise RuntimeError(
-                f"Failed to capture depth frame from {self}. '.read_depth()'. Depth stream is not enabled."
+                f"Failed to capture depth frame '.read_depth()'. Depth stream is not enabled for {self}."
             )
 
         start_time = time.perf_counter()

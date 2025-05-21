@@ -58,7 +58,7 @@ class OpenCVCamera(Camera):
     or port changes, especially on Linux. Use the provided utility script to find
     available camera indices or paths:
     ```bash
-    python -m lerobot.find_cameras
+    python -m lerobot.find_cameras opencv
     ```
 
     The camera's default settings (FPS, resolution, color mode) are used unless
@@ -67,7 +67,7 @@ class OpenCVCamera(Camera):
     Example:
         ```python
         from lerobot.common.cameras.opencv import OpenCVCamera
-        from lerobot.common.cameras.configuration_opencv import OpenCVCameraConfig, ColorMode
+        from lerobot.common.cameras.configuration_opencv import OpenCVCameraConfig, ColorMode, Cv2Rotation
 
         # Basic usage with camera index 0
         config = OpenCVCameraConfig(index_or_path=0)
@@ -92,7 +92,7 @@ class OpenCVCamera(Camera):
             width=1280,
             height=720,
             color_mode=ColorMode.RGB,
-            rotation=90
+            rotation=Cv2Rotation.ROTATE_90
         )
         custom_camera = OpenCVCamera(custom_config)
         # ... connect, read, disconnect ...
@@ -164,7 +164,7 @@ class OpenCVCamera(Camera):
             self.videocapture = None
             raise ConnectionError(
                 f"Failed to open OpenCV camera {self.index_or_path}."
-                f"Run 'python -m find_cameras Run 'python -m find_cameras' for details about the available cameras in your system."
+                f"Run 'python -m lerobot.find_cameras opencv' for details about the available cameras in your system."
             )
 
         self._configure_capture_settings()
