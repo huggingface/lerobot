@@ -27,14 +27,14 @@ NB_CYCLES_CLIENT_CONNECTION = 250
 
 def main():
     logging.info("Configuring Teleop Devices")
-    leader_arm_config = SO100LeaderConfig(port="/dev/tty.usbmodem58760433331")
+    leader_arm_config = SO100LeaderConfig(port="/dev/tty.usbmodem58760434171")
     leader_arm = SO100Leader(leader_arm_config)
 
     keyboard_config = KeyboardTeleopConfig()
     keyboard = KeyboardTeleop(keyboard_config)
 
     logging.info("Configuring LeKiwi Client")
-    robot_config = LeKiwiClientConfig(remote_ip="172.18.134.136", id="lekiwi")
+    robot_config = LeKiwiClientConfig(remote_ip="192.0.2.42", id="lekiwi")
     robot = LeKiwiClient(robot_config)
 
     logging.info("Creating LeRobot Dataset")
