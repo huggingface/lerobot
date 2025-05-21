@@ -75,9 +75,6 @@ class LeKiwi(Robot):
 
     @property
     def _state_ft(self) -> dict[str, type]:
-        """
-        Hard-coded state features.
-        """
         return dict.fromkeys(
             (
                 "arm_shoulder_pan.pos",
@@ -330,7 +327,9 @@ class LeKiwi(Robot):
         arm_pos = self.bus.sync_read("Present_Position", self.arm_motors)
         base_wheel_vel = self.bus.sync_read("Present_Velocity", self.base_motors)
 
-        base_vel = self._wheel_raw_to_body(base_wheel_vel)
+        base_vel = self._wheel_raw_to_body(
+            {k: base_wheel_vel[k] for k in ("base_left_wheel", "base_back_wheel", "base_right_wheel")}
+        )
 
         arm_state = {f"{k}.pos": v for k, v in arm_pos.items()}
 

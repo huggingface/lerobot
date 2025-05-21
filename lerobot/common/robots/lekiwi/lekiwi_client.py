@@ -55,8 +55,7 @@ class LeKiwiClient(Robot):
 
         self.last_frames = {}
 
-        self.last_remote_arm_state = {}
-        self.last_remote_base_state = {}
+        self.last_remote_state = {}
 
         # Define three speed levels and a current index
         self.speed_levels = [
@@ -91,10 +90,7 @@ class LeKiwiClient(Robot):
         return tuple(self._state_ft.keys())
 
     @cached_property
-    def _cameras_ft(self) -> dict[str, tuple[int, int, int]]:
-        """
-        Hard-coded camera features.
-        """
+    def _cameras_ft(self) -> dict[str, tuple]:
         return {
             "front": (480, 640, 3),
             "wrist": (640, 480, 3),
@@ -199,27 +195,24 @@ class LeKiwiClient(Robot):
 
     def _remote_state_from_obs(
         self, observation: Dict[str, Any]
-    ) -> Tuple[Dict[str, np.ndarray], Dict[str, Any], Dict[str, Any]]:
-        """Extracts frames, speed, and arm state from the parsed observation."""
+    ) -> Tuple[Dict[str, np.ndarray], Dict[str, Any]]:
+        """Extracts frames, and state from the parsed observation."""
+        flat_state = observation[OBS_STATE]
 
-        # Separate image and state data
-        image_observation = {k: v for k, v in observation.items() if k.startswith(OBS_IMAGES)}
-        state_observation = {k: v for k, v in observation.items() if k.startswith(OBS_STATE)}
+        state_vec = np.array(
+            [flat_state.get(k, 0.0) for k in self._state_order],
+            dtype=np.float32,
+        )
 
         # Decode images
+        image_observation = {k: v for k, v in observation.items() if k.startswith(OBS_IMAGES)}
         current_frames: Dict[str, np.ndarray] = {}
         for cam_name, image_b64 in image_observation.items():
             frame = self._decode_image_from_b64(image_b64)
             if frame is not None:
                 current_frames[cam_name] = frame
 
-        # Extract state components
-        current_arm_state = {k: v for k, v in state_observation.items() if k.startswith(f"{OBS_STATE}.arm")}
-        current_base_state = {
-            k: v for k, v in state_observation.items() if not k.startswith(f"{OBS_STATE}.arm")
-        }
-
-        return current_frames, current_arm_state, current_base_state
+        return current_frames, {"observation.state": state_vec}
 
     def _get_data(self) -> Tuple[Dict[str, np.ndarray], Dict[str, Any], Dict[str, Any]]:
         """
@@ -235,27 +228,26 @@ class LeKiwiClient(Robot):
 
         # 2. If no message, return cached data
         if latest_message_str is None:
-            return self.last_frames, self.last_remote_arm_state, self.last_remote_base_state
+            return self.last_frames, self.last_remote_state
 
         # 3. Parse the JSON message
         observation = self._parse_observation_json(latest_message_str)
 
         # 4. If JSON parsing failed, return cached data
         if observation is None:
-            return self.last_frames, self.last_remote_arm_state, self.last_remote_base_state
+            return self.last_frames, self.last_remote_state
 
         # 5. Process the valid observation data
         try:
-            new_frames, new_arm_state, new_base_state = self._remote_state_from_obs(observation)
+            new_frames, new_state = self._remote_state_from_obs(observation)
         except Exception as e:
             logging.error(f"Error processing observation data, serving last observation: {e}")
-            return self.last_frames, self.last_remote_arm_state, self.last_remote_base_state
+            return self.last_frames, self.last_remote_state
 
         self.last_frames = new_frames
-        self.last_remote_arm_state = new_arm_state
-        self.last_remote_base_state = new_base_state
+        self.last_remote_state = new_state
 
-        return new_frames, new_arm_state, new_base_state
+        return new_frames, new_state
 
     def get_observation(self) -> dict[str, Any]:
         """
@@ -266,18 +258,16 @@ class LeKiwiClient(Robot):
         if not self._is_connected:
             raise DeviceNotConnectedError("LeKiwiClient is not connected. You need to run `robot.connect()`.")
 
-        frames, remote_arm_state, remote_base_state = self._get_data()
-
-        obs_dict = {**remote_arm_state, **remote_base_state}
+        frames, obs_state_dics = self._get_data()
 
         # Loop over each configured camera
         for cam_name, frame in frames.items():
             if frame is None:
                 logging.warning("Frame is None")
                 frame = np.zeros((640, 480, 3), dtype=np.uint8)
-            obs_dict[cam_name] = torch.from_numpy(frame)
+            obs_state_dics[cam_name] = torch.from_numpy(frame)
 
-        return obs_dict
+        return obs_state_dics
 
     def _from_keyboard_to_base_action(self, pressed_keys: np.ndarray):
         # Speed control
