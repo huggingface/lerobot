@@ -12,7 +12,7 @@ from lerobot.common.datasets.utils import (
     write_info,
     append_jsonlines,
 )
-from lerobot.common.datasets.compute_stats import compute_episode_stats
+from lerobot.common.datasets.compute_stats import compute_episode_stats, aggregate_stats
 
 # === CONFIGURATION ===
 GOAL_SQUARE = "D4"
@@ -56,39 +56,42 @@ def patch_episode_parquet(dataset: LeRobotDataset, episode_index: int):
     ep_data["task_index"] = [task_index] * len(ep_data["index"])
     Dataset.from_dict(ep_data).to_parquet(file_path)
 
-    # Update stats
-    ep_array_data = {
-        k: np.array(v) for k, v in ep_data.items()
-        if k in dataset.meta.features
-    }
-    stats = compute_episode_stats(ep_array_data, dataset.meta.features)
-    dataset.meta.episodes_stats[episode_index] = stats
-    write_episode_stats(episode_index, stats, dataset.meta.root)
+def rebuild_all_stats(dataset: LeRobotDataset):
+    print("\n📊 Recomputing stats for all episodes...")
+    for ep_idx in dataset.meta.episodes.keys():
+        path = dataset.meta.root / dataset.meta.get_data_file_path(ep_idx)
+        ep_data = load_dataset("parquet", data_files=str(path), split="train").to_dict()
+        ep_array_data = {
+            k: np.array(v) for k, v in ep_data.items()
+            if k in dataset.meta.features
+        }
+        stats = compute_episode_stats(ep_array_data, dataset.meta.features)
+        dataset.meta.episodes_stats[ep_idx] = stats
+        write_episode_stats(ep_idx, stats, dataset.meta.root)
 
-    print(f"✅ Episode {episode_index} set to task_index {task_index}")
+    dataset.meta.stats = aggregate_stats(list(dataset.meta.episodes_stats.values()))
+    write_info(dataset.meta.info, dataset.meta.root)
+    print("✅ Stats recomputed.")
 
 def add_metadata_to_dataset(repo_id: str):
     dataset = LeRobotDataset(repo_id=repo_id, force_cache_sync=True)
     print(f"📦 Loaded dataset from Hugging Face: {dataset}")
 
-    # Step 1: Prompt user and update task strings in memory
     update_episode_tasks(dataset)
-
-    # Step 2: Rebuild task-to-index mapping
     rebuild_task_index_from_episodes(dataset)
 
-    # Step 3: Patch each episode's parquet file
     for episode_index in dataset.meta.episodes:
         patch_episode_parquet(dataset, episode_index)
 
-    # Step 4: Overwrite metadata files
-    write_info(dataset.meta.info, dataset.meta.root)
+    rebuild_all_stats(dataset)
 
+    # Save updated episodes.jsonl
     episodes_path = dataset.meta.root / "meta/episodes.jsonl"
     episodes_path.write_text("")
     for episode in dataset.meta.episodes.values():
         append_jsonlines(episode, episodes_path)
 
+    # Save updated tasks.jsonl
     tasks_path = dataset.meta.root / "meta/tasks.jsonl"
     tasks_path.write_text("")
     for task, index in sorted(dataset.meta.task_to_task_index.items(), key=lambda kv: kv[1]):
