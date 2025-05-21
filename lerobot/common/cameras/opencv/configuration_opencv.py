@@ -44,7 +44,6 @@ class OpenCVCameraConfig(CameraConfig):
         width: Requested frame width in pixels for the color stream.
         height: Requested frame height in pixels for the color stream.
         color_mode: Color mode for image output (RGB or BGR). Defaults to RGB.
-        channels: Number of color channels (currently only 3 is supported).
         rotation: Image rotation setting (0°, 90°, 180°, or 270°). Defaults to no rotation.
 
     Note:
@@ -53,7 +52,6 @@ class OpenCVCameraConfig(CameraConfig):
 
     index_or_path: int | Path
     color_mode: ColorMode = ColorMode.RGB
-    channels: int = 3  # NOTE(Steven): Why is this a config?
     rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION
 
     def __post_init__(self):
@@ -71,6 +69,3 @@ class OpenCVCameraConfig(CameraConfig):
             raise ValueError(
                 f"`rotation` is expected to be in {(Cv2Rotation.NO_ROTATION, Cv2Rotation.ROTATE_90, Cv2Rotation.ROTATE_180, Cv2Rotation.ROTATE_270)}, but {self.rotation} is provided."
             )
-
-        if self.channels != 3:
-            raise NotImplementedError(f"Unsupported number of channels: {self.channels}")

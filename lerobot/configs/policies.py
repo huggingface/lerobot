@@ -78,15 +78,18 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     def type(self) -> str:
         return self.get_choice_name(self.__class__)
 
-    @abc.abstractproperty
+    @property
+    @abc.abstractmethod
     def observation_delta_indices(self) -> list | None:
         raise NotImplementedError
 
-    @abc.abstractproperty
+    @property
+    @abc.abstractmethod
     def action_delta_indices(self) -> list | None:
         raise NotImplementedError
 
-    @abc.abstractproperty
+    @property
+    @abc.abstractmethod
     def reward_delta_indices(self) -> list | None:
         raise NotImplementedError
 
