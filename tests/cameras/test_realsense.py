@@ -36,17 +36,24 @@ except (ImportError, ModuleNotFoundError):
 TEST_ARTIFACTS_DIR = Path(__file__).parent.parent / "artifacts" / "cameras"
 BAG_FILE_PATH = TEST_ARTIFACTS_DIR / "test_rs.bag"
 
-# NOTE(Steven): Missing tests for depth
 # NOTE(Steven): Takes 20sec, the patch being the biggest bottleneck
-# NOTE(Steven): more tests + assertions?
 
 
-def mock_rs_config_enable_device_from_file(rs_config_instance, sn):
+def mock_rs_config_enable_device_from_file(rs_config_instance, _sn):
     return rs_config_instance.enable_device_from_file(str(BAG_FILE_PATH), repeat_playback=True)
 
 
-def mock_rs_config_enable_device_bad_file(rs_config_instance, sn):
+def mock_rs_config_enable_device_bad_file(rs_config_instance, _sn):
     return rs_config_instance.enable_device_from_file("non_existent_file.bag", repeat_playback=True)
+
+
+@pytest.fixture(name="patch_realsense", autouse=True)
+def fixture_patch_realsense():
+    """Automatically mock pyrealsense2.config.enable_device for all tests."""
+    with patch(
+        "pyrealsense2.config.enable_device", side_effect=mock_rs_config_enable_device_from_file
+    ) as mock:
+        yield mock
 
 
 def test_abc_implementation():
@@ -55,8 +62,7 @@ def test_abc_implementation():
     _ = RealSenseCamera(config)
 
 
-@patch("pyrealsense2.config.enable_device", side_effect=mock_rs_config_enable_device_from_file)
-def test_connect(mock_enable_device):
+def test_connect():
     config = RealSenseCameraConfig(serial_number_or_name=42)
     camera = RealSenseCamera(config)
 
@@ -64,8 +70,7 @@ def test_connect(mock_enable_device):
     assert camera.is_connected
 
 
-@patch("pyrealsense2.config.enable_device", side_effect=mock_rs_config_enable_device_from_file)
-def test_connect_already_connected(mock_enable_device):
+def test_connect_already_connected():
     config = RealSenseCameraConfig(serial_number_or_name=42)
     camera = RealSenseCamera(config)
     camera.connect(warmup=False)
@@ -74,8 +79,8 @@ def test_connect_already_connected(mock_enable_device):
         camera.connect(warmup=False)
 
 
-@patch("pyrealsense2.config.enable_device", side_effect=mock_rs_config_enable_device_bad_file)
-def test_connect_invalid_camera_path(mock_enable_device):
+def test_connect_invalid_camera_path(patch_realsense):
+    patch_realsense.side_effect = mock_rs_config_enable_device_bad_file
     config = RealSenseCameraConfig(serial_number_or_name=42)
     camera = RealSenseCamera(config)
 
@@ -83,8 +88,7 @@ def test_connect_invalid_camera_path(mock_enable_device):
         camera.connect(warmup=False)
 
 
-@patch("pyrealsense2.config.enable_device", side_effect=mock_rs_config_enable_device_from_file)
-def test_invalid_width_connect(mock_enable_device):
+def test_invalid_width_connect():
     config = RealSenseCameraConfig(serial_number_or_name=42, width=99999, height=480, fps=30)
     camera = RealSenseCamera(config)
 
@@ -92,13 +96,21 @@ def test_invalid_width_connect(mock_enable_device):
         camera.connect(warmup=False)
 
 
-@patch("pyrealsense2.config.enable_device", side_effect=mock_rs_config_enable_device_from_file)
-def test_read(mock_enable_device):
+def test_read():
     config = RealSenseCameraConfig(serial_number_or_name=42, width=640, height=480, fps=30)
     camera = RealSenseCamera(config)
     camera.connect(warmup=False)
 
     img = camera.read()
+    assert isinstance(img, np.ndarray)
+
+
+def test_read_depth():
+    config = RealSenseCameraConfig(serial_number_or_name=42, width=640, height=480, fps=30, use_depth=True)
+    camera = RealSenseCamera(config)
+    camera.connect(warmup=False)
+
+    img = camera.read_depth(timeout_ms=500)  # NOTE(Steven): Reading depth takes longer
     assert isinstance(img, np.ndarray)
 
 
@@ -110,8 +122,7 @@ def test_read_before_connect():
         _ = camera.read()
 
 
-@patch("pyrealsense2.config.enable_device", side_effect=mock_rs_config_enable_device_from_file)
-def test_disconnect(mock_enable_device):
+def test_disconnect():
     config = RealSenseCameraConfig(serial_number_or_name=42)
     camera = RealSenseCamera(config)
     camera.connect(warmup=False)
@@ -129,8 +140,7 @@ def test_disconnect_before_connect():
         camera.disconnect()
 
 
-@patch("pyrealsense2.config.enable_device", side_effect=mock_rs_config_enable_device_from_file)
-def test_async_read(mock_enable_device):
+def test_async_read():
     config = RealSenseCameraConfig(serial_number_or_name=42, width=640, height=480, fps=30)
     camera = RealSenseCamera(config)
     camera.connect(warmup=False)
@@ -146,8 +156,7 @@ def test_async_read(mock_enable_device):
             camera.disconnect()  # To stop/join the thread. Otherwise get warnings when the test ends
 
 
-@patch("pyrealsense2.config.enable_device", side_effect=mock_rs_config_enable_device_from_file)
-def test_async_read_timeout(mock_enable_device):
+def test_async_read_timeout():
     config = RealSenseCameraConfig(serial_number_or_name=42, width=640, height=480, fps=30)
     camera = RealSenseCamera(config)
     camera.connect(warmup=False)
@@ -180,8 +189,7 @@ def test_async_read_before_connect():
     ],
     ids=["no_rot", "rot90", "rot180", "rot270"],
 )
-@patch("pyrealsense2.config.enable_device", side_effect=mock_rs_config_enable_device_from_file)
-def test_rotation(mock_enable_device, rotation):
+def test_rotation(rotation):
     config = RealSenseCameraConfig(serial_number_or_name=42, rotation=rotation)
     camera = RealSenseCamera(config)
     camera.connect(warmup=False)
