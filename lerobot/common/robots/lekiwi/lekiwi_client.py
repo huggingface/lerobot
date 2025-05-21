@@ -279,26 +279,26 @@ class LeKiwiClient(Robot):
         xy_speed = speed_setting["xy"]  # e.g. 0.1, 0.25, or 0.4
         theta_speed = speed_setting["theta"]  # e.g. 30, 60, or 90
 
-        x = 0.0  # m/s forward/backward
-        y = 0.0  # m/s lateral
-        theta = 0.0  # deg/s rotation
+        x_cmd = 0.0  # m/s forward/backward
+        y_cmd = 0.0  # m/s lateral
+        theta_cmd = 0.0  # deg/s rotation
 
         if self.teleop_keys["forward"] in pressed_keys:
-            x += xy_speed
+            x_cmd += xy_speed
         if self.teleop_keys["backward"] in pressed_keys:
-            x -= xy_speed
+            x_cmd -= xy_speed
         if self.teleop_keys["left"] in pressed_keys:
-            y += xy_speed
+            y_cmd += xy_speed
         if self.teleop_keys["right"] in pressed_keys:
-            y -= xy_speed
+            y_cmd -= xy_speed
         if self.teleop_keys["rotate_left"] in pressed_keys:
-            theta += theta_speed
+            theta_cmd += theta_speed
         if self.teleop_keys["rotate_right"] in pressed_keys:
-            theta -= theta_speed
+            theta_cmd -= theta_speed
         return {
-            "x.vel": x,
-            "y.vel": y,
-            "theta.vel": theta,
+            "x.vel": x_cmd,
+            "y.vel": y_cmd,
+            "theta.vel": theta_cmd,
         }
 
     def configure(self):
