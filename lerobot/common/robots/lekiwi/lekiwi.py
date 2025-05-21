@@ -332,6 +332,10 @@ class LeKiwi(Robot):
         arm_pos = self.bus.sync_read("Present_Position", self.arm_motors)
         base_wheel_vel = self.bus.sync_read("Present_Velocity", self.base_motors)
 
+        print(f"base_left_wheel: {base_wheel_vel['base_left_wheel']}")
+        print(f"base_back_wheel: {base_wheel_vel['base_back_wheel']}")
+        print(f"base_right_wheel: {base_wheel_vel['base_right_wheel']}")
+
         base_vel = self._wheel_raw_to_body(
             base_wheel_vel["base_left_wheel"],
             base_wheel_vel["base_back_wheel"],
