@@ -52,7 +52,7 @@ from lerobot.common.robot_devices.control_configs import (
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.scripts.control_robot import calibrate, record, replay, teleoperate
 from tests.robots.test_robots import make_robot
-from tests.utils import TEST_ROBOT_TYPES, mock_calibration_dir, require_robot
+from tests.testutils import TEST_ROBOT_TYPES, mock_calibration_dir, require_robot
 
 
 @pytest.mark.parametrize("robot_type, mock", TEST_ROBOT_TYPES)

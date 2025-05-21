@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from importlib.resources import files
 from pathlib import Path
 
 import torch
@@ -27,7 +28,7 @@ from lerobot.common.datasets.transforms import (
 )
 from lerobot.common.utils.random_utils import seeded_context
 
-ARTIFACT_DIR = Path("tests/artifacts/image_transforms")
+ARTIFACT_DIR = files(__package__)
 DATASET_REPO_ID = "lerobot/aloha_mobile_shrimp"
 
 
