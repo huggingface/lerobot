@@ -36,6 +36,7 @@ class Camera(abc.ABC):
         fps (int | None): Configured frames per second
         width (int | None): Frame width in pixels
         height (int | None): Frame height in pixels
+        warmup_time (int | None): Time reading frames before returning from connect (in seconds)
 
     Example:
         class MyCamera(Camera):
@@ -55,6 +56,7 @@ class Camera(abc.ABC):
         self.fps: int | None = config.fps
         self.width: int | None = config.width
         self.height: int | None = config.height
+        self.warmup_time: int | None = config.warmup_time
 
     @property
     @abc.abstractmethod

@@ -62,7 +62,7 @@ def get_cv2_backend() -> int:
     import cv2
 
     available_cv2_backends = {
-        "Linux": cv2.CAP_DSHOW,
+        "Linux": cv2.CAP_V4L2,
         "Windows": cv2.CAP_AVFOUNDATION,
         "Darwin": cv2.CAP_ANY,
     }

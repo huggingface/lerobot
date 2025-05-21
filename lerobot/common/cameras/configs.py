@@ -21,12 +21,12 @@ from enum import Enum
 import draccus
 
 
-class ColorMode(Enum):
+class ColorMode(str, Enum):
     RGB = "rgb"
     BGR = "bgr"
 
 
-class Cv2Rotation(Enum):
+class Cv2Rotation(int, Enum):
     NO_ROTATION = 0
     ROTATE_90 = 90
     ROTATE_180 = 180
@@ -38,6 +38,7 @@ class CameraConfig(draccus.ChoiceRegistry, abc.ABC):
     fps: int | None = None
     width: int | None = None
     height: int | None = None
+    warmup_time: int | None = None
 
     @property
     def type(self) -> str:

@@ -113,6 +113,7 @@ class OpenCVCamera(Camera):
 
         self.fps = config.fps
         self.color_mode = config.color_mode
+        self.warmup_time = config.warmup_time
 
         self.videocapture: cv2.VideoCapture | None = None
 
@@ -121,7 +122,7 @@ class OpenCVCamera(Camera):
         self.frame_queue: queue.Queue = queue.Queue(maxsize=1)
 
         self.rotation: int | None = get_cv2_rotation(config.rotation)
-        self.backend: int = get_cv2_backend()  # NOTE(Steven): If we specify backend the opencv open fails
+        self.backend: int = get_cv2_backend()
 
         if self.height and self.width:
             if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
@@ -157,7 +158,7 @@ class OpenCVCamera(Camera):
         # blocking in multi-threaded applications, especially during data collection.
         cv2.setNumThreads(1)
 
-        self.videocapture = cv2.VideoCapture(self.index_or_path)
+        self.videocapture = cv2.VideoCapture(self.index_or_path, self.backend)
 
         if not self.videocapture.isOpened():
             self.videocapture.release()
@@ -170,8 +171,15 @@ class OpenCVCamera(Camera):
         self._configure_capture_settings()
 
         if warmup:
-            logger.debug(f"Reading a warm-up frame for {self.index_or_path}...")
-            self.read()  # NOTE(Steven): For now we just read one frame, we could also loop for X frames/secs
+            if self.warmup_time is None:
+                raise ValueError(
+                    f"Warmup time is not set for {self}. Please set a warmup time in the configuration."
+                )
+            logger.debug(f"Reading a warm-up frames for {self} for {self.warmup_time} seconds...")
+            start_time = time.time()
+            while time.time() - start_time < self.warmup_time:
+                self.read()
+                time.sleep(0.1)
 
         logger.debug(f"Camera {self.index_or_path} connected and configured successfully.")
 

@@ -18,7 +18,6 @@ Provides the RealSenseCamera class for capturing frames from Intel RealSense cam
 
 import contextlib
 import logging
-import math
 import queue
 import time
 from threading import Event, Thread
@@ -129,6 +128,7 @@ class RealSenseCamera(Camera):
         self.fps = config.fps
         self.color_mode = config.color_mode
         self.use_depth = config.use_depth
+        self.warmup_time = config.warmup_time
 
         self.rs_pipeline: rs.pipeline | None = None
         self.rs_profile: rs.pipeline_profile | None = None
@@ -186,8 +186,15 @@ class RealSenseCamera(Camera):
         self._validate_capture_settings()
 
         if warmup:
-            logger.debug(f"Reading a warm-up frame for {self}...")
-            self.read()  # NOTE(Steven): For now we just read one frame, we could also loop for X frames/secs
+            if self.warmup_time is None:
+                raise ValueError(
+                    f"Warmup time is not set for {self}. Please set a warmup time in the configuration."
+                )
+            logger.debug(f"Reading a warm-up frames for {self} for {self.warmup_time} seconds...")
+            start_time = time.time()
+            while time.time() - start_time < self.warmup_time:
+                self.read()
+                time.sleep(0.1)
 
         logger.info(f"{self} connected.")
 
@@ -314,8 +321,6 @@ class RealSenseCamera(Camera):
 
         if self.fps is None:
             self.fps = stream.fps()
-        else:
-            self._validate_fps(stream)
 
         if self.width is None or self.height is None:
             actual_width = int(round(stream.width()))
@@ -333,19 +338,7 @@ class RealSenseCamera(Camera):
 
         if self.use_depth:
             stream = self.rs_profile.get_stream(rs.stream.depth).as_video_stream_profile()
-            self._validate_fps(stream)
             self._validate_width_and_height(stream)
-
-    def _validate_fps(self, stream: rs.video_stream_profile) -> None:
-        """Validates and sets the internal FPS based on actual stream FPS."""
-        actual_fps = stream.fps()
-
-        # Use math.isclose for robust float comparison
-        if not math.isclose(self.fps, actual_fps, rel_tol=1e-3):
-            raise RuntimeError(
-                f"Failed to set requested FPS {self.fps} for {self}. Actual value reported: {actual_fps}."
-            )
-        logger.debug(f"FPS set to {actual_fps} for {self}.")
 
     def _validate_width_and_height(self, stream) -> None:
         """Validates and sets the internal capture width and height based on actual stream width."""
