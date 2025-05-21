@@ -318,10 +318,10 @@ class LeKiwi(Robot):
         x, y, theta_rad = velocity_vector
         theta = theta_rad * (180.0 / np.pi)
         return {
-            "x.vel": x * 1000,
-            "y.vel": y * 1000,
+            "x.vel": x,
+            "y.vel": y,
             "theta.vel": theta,
-        }  # Convert to mm/s
+        }  # m/s and deg/s
 
     def get_observation(self) -> dict[str, Any]:
         if not self.is_connected:
