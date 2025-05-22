@@ -15,6 +15,9 @@
 import abc
 from dataclasses import dataclass, field
 from typing import Sequence
+import os
+from pathlib import Path
+from dotenv import load_dotenv
 
 import draccus
 
@@ -670,6 +673,157 @@ class LeKiwiRobotConfig(RobotConfig):
             "speed_down": "f",
             # quit teleop
             "quit": "q",
+        }
+    )
+
+    mock: bool = False
+
+
+@RobotConfig.register_subclass("livekit_manipulator")
+@dataclass
+class LivekitManipulatorRobotConfig(ManipulatorRobotConfig):
+    # LiveKit connection settings
+    livekit_url: str
+    livekit_token: str
+    is_leader: bool = False
+
+@RobotConfig.register_subclass("so100bimanual_livekit_leader")
+@dataclass
+class So100BimanualLivekitLeaderRobotConfig(LivekitManipulatorRobotConfig):
+    calibration_dir: str = ".cache/calibration/so100bimanual"
+    # `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
+    # Set this to a positive scalar to have the same value for all motors, or a list that is the same length as
+    # the number of motors in your follower arms.
+    max_relative_target: int | None = None
+
+    is_leader: bool = True
+
+    def __post_init__(self):
+        # Load environment variables from .env.leader file
+        env_path = Path(".env.leader")
+        if not env_path.exists():
+            raise FileNotFoundError("Could not find .env.leader file")
+        
+        load_dotenv(env_path)
+        
+        # Get LiveKit configuration from environment variables
+        self.livekit_url = os.getenv("LIVEKIT_URL")
+        self.livekit_token = os.getenv("LIVEKIT_TOKEN")
+        
+        if not self.livekit_url or not self.livekit_token:
+            raise ValueError("LIVEKIT_URL and LIVEKIT_TOKEN must be set in .env.leader file")
+        
+        # Call parent's __post_init__
+        super().__post_init__()
+
+    leader_arms: dict[str, MotorsBusConfig] = field(
+        default_factory=lambda: {
+            "left": FeetechMotorsBusConfig(
+                port="/dev/tty.usbmodem58FA1025471",
+                motors={
+                    # name: (index, model)
+                    "shoulder_pan": [1, "sts3215"],
+                    "shoulder_lift": [2, "sts3215"],
+                    "elbow_flex": [3, "sts3215"],
+                    "wrist_flex": [4, "sts3215"],
+                    "wrist_roll": [5, "sts3215"],
+                    "gripper": [6, "sts3215"],
+                },
+            ),
+            "right": FeetechMotorsBusConfig(
+                port="/dev/tty.usbmodem58FA1026071",
+                motors={
+                    # name: (index, model)
+                    "shoulder_pan": [1, "sts3215"],
+                    "shoulder_lift": [2, "sts3215"],
+                    "elbow_flex": [3, "sts3215"],
+                    "wrist_flex": [4, "sts3215"],
+                    "wrist_roll": [5, "sts3215"],
+                    "gripper": [6, "sts3215"],
+                },
+            ),
+        }
+    )
+
+    # No cameras for the leader
+    cameras: dict[str, CameraConfig] = field(
+        default_factory=lambda: {}
+    )
+
+    mock: bool = False
+
+@RobotConfig.register_subclass("so100bimanual_livekit_follower")
+@dataclass
+class So100BimanualLivekitFollowerRobotConfig(LivekitManipulatorRobotConfig):
+    calibration_dir: str = ".cache/calibration/so100bimanual"
+    # `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
+    # Set this to a positive scalar to have the same value for all motors, or a list that is the same length as
+    # the number of motors in your follower arms.
+    max_relative_target: int | None = None
+
+    is_leader: bool = False
+
+    def __post_init__(self):
+        # Load environment variables from .env.leader file
+        env_path = Path(".env.follower")
+        if not env_path.exists():
+            raise FileNotFoundError("Could not find .env.follower file")
+        
+        load_dotenv(env_path)
+        
+        # Get LiveKit configuration from environment variables
+        self.livekit_url = os.getenv("LIVEKIT_URL")
+        self.livekit_token = os.getenv("LIVEKIT_TOKEN")
+        
+        if not self.livekit_url or not self.livekit_token:
+            raise ValueError("LIVEKIT_URL and LIVEKIT_TOKEN must be set in .env.follower file")
+        
+        # Call parent's __post_init__
+        super().__post_init__()
+
+    follower_arms: dict[str, MotorsBusConfig] = field(
+        default_factory=lambda: {
+            "left": FeetechMotorsBusConfig(
+                port="/dev/tty.usbmodem58FA1025061",
+                motors={
+                    # name: (index, model)
+                    "shoulder_pan": [1, "sts3215"],
+                    "shoulder_lift": [2, "sts3215"],
+                    "elbow_flex": [3, "sts3215"],
+                    "wrist_flex": [4, "sts3215"],
+                    "wrist_roll": [5, "sts3215"],
+                    "gripper": [6, "sts3215"],
+                },
+            ),
+            "right": FeetechMotorsBusConfig(
+                port="/dev/tty.usbmodem58FA1024871",
+                motors={
+                    # name: (index, model)
+                    "shoulder_pan": [1, "sts3215"],
+                    "shoulder_lift": [2, "sts3215"],
+                    "elbow_flex": [3, "sts3215"],
+                    "wrist_flex": [4, "sts3215"],
+                    "wrist_roll": [5, "sts3215"],
+                    "gripper": [6, "sts3215"],
+                },
+            ),
+        }
+    )
+
+    cameras: dict[str, CameraConfig] = field(
+        default_factory=lambda: {
+            "laptop": OpenCVCameraConfig(
+                camera_index=0,
+                fps=30,
+                width=640,
+                height=480,
+            ),
+            "phone": OpenCVCameraConfig(
+                camera_index=1,
+                fps=30,
+                width=640,
+                height=480,
+            ),
         }
     )
 

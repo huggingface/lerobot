@@ -66,6 +66,7 @@ dependencies = [
     "pymunk>=6.6.0",
     "pynput>=1.7.7",
     "pyzmq>=26.2.1",
+    "python-dotenv>=1.1.0",
     "rerun-sdk>=0.21.0",
     "termcolor>=2.4.0",
     "torch>=2.2.1,<2.7",
