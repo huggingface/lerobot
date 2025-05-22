@@ -169,6 +169,10 @@ class DynamixelMotorsBus(MotorsBus):
         for motor in self.motors:
             self.write("Return_Delay_Time", motor, 0)
 
+    @property
+    def is_calibrated(self) -> bool:
+        return self.calibration == self.read_calibration()
+
     def read_calibration(self) -> dict[str, MotorCalibration]:
         offsets = self.sync_read("Homing_Offset", normalize=False)
         mins = self.sync_read("Min_Position_Limit", normalize=False)
