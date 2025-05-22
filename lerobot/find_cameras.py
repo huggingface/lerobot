@@ -321,14 +321,5 @@ if __name__ == "__main__":
         default=6.0,
         help="Time duration to attempt capturing frames. Default: 6 seconds.",
     )
-    parser.set_defaults(
-        func=lambda args: save_images_from_all_cameras(
-            output_dir=args.output_dir,
-            record_time_s=args.record_time_s,
-            camera_type_filter=args.camera_type,
-        )
-    )
-
     args = parser.parse_args()
-
-    args.func(args)
+    save_images_from_all_cameras(**vars(args))
