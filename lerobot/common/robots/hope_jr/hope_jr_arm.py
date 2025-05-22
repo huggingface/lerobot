@@ -44,17 +44,30 @@ class HopeJrArm(Robot):
         self.bus = FeetechMotorsBus(
             port=self.config.port,
             motors={
-                "shoulder_pitch": Motor(1, "sm8512bl", MotorNormMode.RANGE_M100_100),
-                "shoulder_yaw": Motor(2, "sts3250", MotorNormMode.RANGE_M100_100),
-                "shoulder_roll": Motor(3, "sts3250", MotorNormMode.RANGE_M100_100),
-                "elbow_flex": Motor(4, "sts3250", MotorNormMode.RANGE_M100_100),
-                "wrist_roll": Motor(5, "sts3215", MotorNormMode.RANGE_M100_100),
-                "wrist_yaw": Motor(6, "sts3215", MotorNormMode.RANGE_M100_100),
-                "wrist_pitch": Motor(7, "sts3215", MotorNormMode.RANGE_M100_100),
+                "shoulder_pitch": Motor(2, "sm8512bl", MotorNormMode.RANGE_M100_100),
+                "shoulder_yaw": Motor(3, "sts3250", MotorNormMode.RANGE_M100_100),
+                "shoulder_roll": Motor(4, "sts3250", MotorNormMode.RANGE_M100_100),
+                "elbow_flex": Motor(5, "sts3250", MotorNormMode.RANGE_M100_100),
+                "wrist_roll": Motor(6, "sts3250", MotorNormMode.RANGE_M100_100),
+                "wrist_yaw": Motor(7, "sts3250", MotorNormMode.RANGE_M100_100),
+                "wrist_pitch": Motor(8, "sts3250", MotorNormMode.RANGE_M100_100),
             },
+            # motors={
+            #     "shoulder_pitch": Motor(1, "sm8512bl", MotorNormMode.RANGE_M100_100),
+            #     "shoulder_yaw": Motor(2, "sts3250", MotorNormMode.RANGE_M100_100),
+            #     "shoulder_roll": Motor(3, "sts3250", MotorNormMode.RANGE_M100_100),
+            #     "elbow_flex": Motor(4, "sts3250", MotorNormMode.RANGE_M100_100),
+            #     "wrist_roll": Motor(5, "sts3250", MotorNormMode.RANGE_M100_100),
+            #     "wrist_yaw": Motor(6, "sts3250", MotorNormMode.RANGE_M100_100),
+            #     "wrist_pitch": Motor(7, "sts3250", MotorNormMode.RANGE_M100_100),
+            # },
             calibration=self.calibration,
         )
         self.cameras = make_cameras_from_configs(config.cameras)
+
+        # HACK
+        self.shoulder_pitch = "shoulder_pitch"
+        self.other_motors = [m for m in self.bus.motors if m != "shoulder_pitch"]
 
     @property
     def _motors_ft(self) -> dict[str, type]:
@@ -103,17 +116,19 @@ class HopeJrArm(Robot):
         return self.bus.is_calibrated
 
     def calibrate(self) -> None:
-        raise NotImplementedError  # TODO(aliberts): adapt code below (copied from koch)
         logger.info(f"\nRunning calibration of {self}")
         self.bus.disable_torque()
-        for name in self.bus.names:
-            self.bus.write("Operating_Mode", name, OperatingMode.POSITION.value)
+        for motor in self.bus.motors:
+            self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
 
-        input("Move robot to the middle of its range of motion and press ENTER....")
-        homing_offsets = self.bus.set_half_turn_homings()
+        full_turn_motor = self.shoulder_pitch
+        unknown_range_motors = self.other_motors
 
-        full_turn_motor = "wrist_roll"
-        unknown_range_motors = [name for name in self.bus.names if name != full_turn_motor]
+        input("Move arm to the middle of its range of motion and press ENTER....")
+        homing_offsets_full_turn = self.bus.set_half_turn_homings(full_turn_motor)
+        homing_offsets_unknown_range = self.bus.set_half_turn_homings(unknown_range_motors)
+        homing_offsets = {**homing_offsets_full_turn, **homing_offsets_unknown_range}
+
         logger.info(
             f"Move all joints except '{full_turn_motor}' sequentially through their "
             "entire ranges of motion.\nRecording positions. Press ENTER to stop..."
@@ -123,13 +138,13 @@ class HopeJrArm(Robot):
         range_maxes[full_turn_motor] = 4095
 
         self.calibration = {}
-        for name, motor in self.bus.motors.items():
-            self.calibration[name] = MotorCalibration(
-                id=motor.id,
+        for motor, m in self.bus.motors.items():
+            self.calibration[motor] = MotorCalibration(
+                id=m.id,
                 drive_mode=0,
-                homing_offset=homing_offsets[name],
-                range_min=range_mins[name],
-                range_max=range_maxes[name],
+                homing_offset=homing_offsets[motor],
+                range_min=range_mins[motor],
+                range_max=range_maxes[motor],
             )
 
         self.bus.write_calibration(self.calibration)
@@ -151,9 +166,12 @@ class HopeJrArm(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
+        obs_dict = {}
+
         # Read arm position
         start = time.perf_counter()
-        obs_dict = self.bus.sync_read("Present_Position")
+        obs_dict[self.shoulder_pitch] = self.bus.read("Present_Position", self.shoulder_pitch)
+        obs_dict.update(self.bus.sync_read("Present_Position", self.other_motors))
         obs_dict = {f"{motor}.pos": val for motor, val in obs_dict.items()}
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
