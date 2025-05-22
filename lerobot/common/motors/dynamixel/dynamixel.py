@@ -108,6 +108,7 @@ class DynamixelMotorsBus(MotorsBus):
     https://emanual.robotis.com/docs/en/software/dynamixel/dynamixel_sdk/sample_code/python_read_write_protocol_2_0/#python-read-write-protocol-20
     """
 
+    apply_drive_mode = False
     available_baudrates = deepcopy(AVAILABLE_BAUDRATES)
     default_baudrate = DEFAULT_BAUDRATE
     default_timeout = DEFAULT_TIMEOUT_MS

@@ -20,30 +20,6 @@ from lerobot.common.robots import RobotConfig
 from .robot import Robot
 
 
-def make_robot_config(robot_type: str, **kwargs) -> RobotConfig:
-    if robot_type == "aloha":
-        raise NotImplementedError  # TODO
-
-    elif robot_type == "koch_follower":
-        from .koch_follower.config_koch_follower import KochFollowerConfig
-
-        return KochFollowerConfig(**kwargs)
-    elif robot_type == "so100_follower":
-        from .so100_follower.config_so100_follower import SO100FollowerConfig
-
-        return SO100FollowerConfig(**kwargs)
-    elif robot_type == "stretch":
-        from .stretch3.configuration_stretch3 import Stretch3RobotConfig
-
-        return Stretch3RobotConfig(**kwargs)
-    elif robot_type == "lekiwi":
-        from .lekiwi.config_lekiwi import LeKiwiConfig
-
-        return LeKiwiConfig(**kwargs)
-    else:
-        raise ValueError(f"Robot type '{robot_type}' is not available.")
-
-
 def make_robot_from_config(config: RobotConfig) -> Robot:
     if config.type == "koch_follower":
         from .koch_follower import KochFollower

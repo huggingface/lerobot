@@ -49,15 +49,18 @@ class Robot(abc.ABC):
         return f"{self.id} {self.__class__.__name__}"
 
     # TODO(aliberts): create a proper Feature class for this that links with datasets
-    @abc.abstractproperty
+    @property
+    @abc.abstractmethod
     def observation_features(self) -> dict:
         pass
 
-    @abc.abstractproperty
+    @property
+    @abc.abstractmethod
     def action_features(self) -> dict:
         pass
 
-    @abc.abstractproperty
+    @property
+    @abc.abstractmethod
     def is_connected(self) -> bool:
         pass
 
@@ -66,7 +69,8 @@ class Robot(abc.ABC):
         """Connects to the robot."""
         pass
 
-    @abc.abstractproperty
+    @property
+    @abc.abstractmethod
     def is_calibrated(self) -> bool:
         pass
 
