@@ -91,7 +91,7 @@ $$
 
 ---
 
-## Example (in `__main__`)
+## Usage (example.py)
 
 - Initializes the `"so100"` robot model.
 - **Transform mechanical angles in DH angles**
