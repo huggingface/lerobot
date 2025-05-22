@@ -241,7 +241,7 @@ def cleanup_cameras(cameras_to_use: List[Dict[str, Any]]):
 def save_images_from_all_cameras(
     output_dir: Path,
     record_time_s: float = 2.0,
-    camera_type_filter: str | None = None,
+    camera_type: str | None = None,
 ):
     """
     Connects to detected cameras (optionally filtered by type) and saves images from each.
@@ -250,11 +250,11 @@ def save_images_from_all_cameras(
     Args:
         output_dir: Directory to save images.
         record_time_s: Duration in seconds to record images.
-        camera_type_filter: Optional string to filter cameras ("realsense" or "opencv").
+        camera_type: Optional string to filter cameras ("realsense" or "opencv").
                             If None, uses all detected cameras.
     """
     output_dir = initialize_output_directory(output_dir)
-    all_camera_metadata = find_and_print_cameras(camera_type_filter=camera_type_filter)
+    all_camera_metadata = find_and_print_cameras(camera_type_filter=camera_type)
 
     if not all_camera_metadata:
         logger.warning("No cameras detected matching the criteria. Cannot save images.")
