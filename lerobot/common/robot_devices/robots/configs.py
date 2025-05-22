@@ -488,6 +488,12 @@ class So101RobotConfig(ManipulatorRobotConfig):
                 width=640,
                 height=480,
             ),
+            # "Orbbec": OrbbecCameraConfig(    # Configuration for Orbbec camera
+            #     fps=30,                     # Frame rate (30 FPS)
+            #     use_depth=True,             # Whether to use depth data
+            #     width=640,                  # Auto-adjusts resolution based on width. Must be either 640 or 1280 (untested)
+            #     hi_resolution_mode=False    # High-resolution mode (may degrade visualization quality but improves depth data resolution
+            # ),
         }
     )
 
