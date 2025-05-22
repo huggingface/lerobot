@@ -1,4 +1,4 @@
-# Robot Kinematics Module – PR request
+# Robot Kinematics Module
 
 This module provides an implementation of **forward and inverse kinematics** for robotic manipulators exploiting Denavit-Hartenberg (DH) parameters. It includes pose interpolation (position + orientation) and DLS Jacobian method for inverse kinematics.
 
@@ -91,7 +91,7 @@ $$
 
 ---
 
-## Usage (example.py)
+## Usage (main.py)
 
 - Initializes the `"so100"` robot model.
 - **Transform mechanical angles in DH angles**
