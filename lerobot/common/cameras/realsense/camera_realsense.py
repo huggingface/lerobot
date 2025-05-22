@@ -184,10 +184,6 @@ class RealSenseCamera(Camera):
         self._validate_capture_settings()
 
         if warmup:
-            if self.warmup_s is None:
-                raise ValueError(
-                    f"Warmup time is not set for {self}. Please set a warmup time in the configuration."
-                )
             start_time = time.time()
             while time.time() - start_time < self.warmup_s:
                 self.read()
