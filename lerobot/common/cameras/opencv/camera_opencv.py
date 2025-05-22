@@ -72,18 +72,17 @@ class OpenCVCamera(Camera):
         # Basic usage with camera index 0
         config = OpenCVCameraConfig(index_or_path=0)
         camera = OpenCVCamera(config)
-        try:
-            camera.connect()
-            print(f"Connected to {camera}")
-            color_image = camera.read() # Synchronous read
-            print(f"Read frame shape: {color_image.shape}")
-            async_image = camera.async_read() # Asynchronous read
-            print(f"Async read frame shape: {async_image.shape}")
-        except Exception as e:
-            print(f"An error occurred: {e}")
-        finally:
-            camera.disconnect()
-            print(f"Disconnected from {camera}")
+        camera.connect()
+
+        # Read 1 frame synchronously
+        color_image = camera.read()
+        print(color_image.shape)
+
+        # Read 1 frame asynchronously
+        async_image = camera.async_read()
+
+        # When done, properly disconnect the camera using
+        camera.disconnect()
 
         # Example with custom settings
         custom_config = OpenCVCameraConfig(
@@ -147,8 +146,7 @@ class OpenCVCamera(Camera):
 
         Raises:
             DeviceAlreadyConnectedError: If the camera is already connected.
-            ValueError: If the specified camera index/path is not found or accessible.
-            ConnectionError: If the camera is found but fails to open.
+            ConnectionError: If the specified camera index/path is not found or the camera is found but fails to open.
             RuntimeError: If the camera opens but fails to apply requested FPS/resolution settings.
         """
         if self.is_connected:
@@ -164,8 +162,8 @@ class OpenCVCamera(Camera):
             self.videocapture.release()
             self.videocapture = None
             raise ConnectionError(
-                f"Failed to open OpenCV camera {self.index_or_path}."
-                f"Run 'python -m lerobot.find_cameras opencv' for details about the available cameras in your system."
+                f"Failed to open {self}."
+                f"Run `python -m lerobot.find_cameras opencv` to find available cameras."
             )
 
         self._configure_capture_settings()
@@ -175,13 +173,12 @@ class OpenCVCamera(Camera):
                 raise ValueError(
                     f"Warmup time is not set for {self}. Please set a warmup time in the configuration."
                 )
-            logger.debug(f"Reading a warm-up frames for {self} for {self.warmup_time} seconds...")
             start_time = time.time()
             while time.time() - start_time < self.warmup_time:
                 self.read()
                 time.sleep(0.1)
 
-        logger.debug(f"Camera {self.index_or_path} connected and configured successfully.")
+        logger.debug(f"{self} connected.")
 
     def _configure_capture_settings(self) -> None:
         """
@@ -206,7 +203,6 @@ class OpenCVCamera(Camera):
 
         if self.fps is None:
             self.fps = self.videocapture.get(cv2.CAP_PROP_FPS)
-            logger.info(f"FPS set to camera default: {self.fps}.")
         else:
             self._validate_fps()
 
@@ -220,8 +216,6 @@ class OpenCVCamera(Camera):
             else:
                 self.width, self.height = default_width, default_height
                 self.capture_width, self.capture_height = default_width, default_height
-            logger.info(f"Capture width set to camera default: {self.width}.")
-            logger.info(f"Capture height set to camera default: {self.height}.")
         else:
             self._validate_width_and_height()
 
@@ -233,9 +227,8 @@ class OpenCVCamera(Camera):
         # Use math.isclose for robust float comparison
         if not success or not math.isclose(self.fps, actual_fps, rel_tol=1e-3):
             raise RuntimeError(
-                f"Failed to set requested FPS {self.fps} for {self}. Actual value reported: {actual_fps} set success: {success})."
+                f"{self} failed to set fps={self.fps} ({actual_fps=})."
             )
-        logger.debug(f"FPS set to {actual_fps} for {self}.")
 
     def _validate_width_and_height(self) -> None:
         """Validates and sets the camera's frame capture width and height."""
@@ -244,17 +237,15 @@ class OpenCVCamera(Camera):
         actual_width = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_WIDTH)))
         if not success or self.capture_width != actual_width:
             raise RuntimeError(
-                f"Failed to set requested capture width {self.capture_width} for {self}. Actual value: {actual_width} (set success: {success})."
+                f"{self} failed to set capture_width={self.capture_width} ({actual_width=})."
             )
-        logger.debug(f"Capture width set to {actual_width} for {self}.")
 
         success = self.videocapture.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self.capture_height))
         actual_height = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_HEIGHT)))
         if not success or self.capture_height != actual_height:
             raise RuntimeError(
-                f"Failed to set requested capture height {self.capture_height} for {self}. Actual value: {actual_height} (set success: {success})."
+                f"{self} failed to set capture_height={self.capture_height} ({actual_height})."
             )
-        logger.debug(f"Capture height set to {actual_height} for {self}.")
 
     @staticmethod
     def find_cameras() -> List[Dict[str, Any]]:
@@ -277,7 +268,6 @@ class OpenCVCamera(Camera):
         else:
             targets_to_scan = list(range(MAX_OPENCV_INDEX))
 
-        logger.debug(f"Found potential paths: {targets_to_scan}")
         for target in targets_to_scan:
             camera = cv2.VideoCapture(target)
             if camera.isOpened():
@@ -301,10 +291,7 @@ class OpenCVCamera(Camera):
                 found_cameras_info.append(camera_info)
                 camera.release()
 
-        if not found_cameras_info:
-            logger.warning("No OpenCV devices detected.")
 
-        logger.info(f"Detected OpenCV cameras: {[cam['id'] for cam in found_cameras_info]}")
         return found_cameras_info
 
     def read(self, color_mode: ColorMode | None = None) -> np.ndarray:
@@ -335,19 +322,18 @@ class OpenCVCamera(Camera):
 
         start_time = time.perf_counter()
 
-        # NOTE(Steven): Are we okay with this blocking an undefined amount of time?
         ret, frame = self.videocapture.read()
 
         if not ret or frame is None:
             raise RuntimeError(
-                f"Failed to capture frame from {self}. '.read()' returned status={ret} and frame is None."
+                f"{self} read failed (status={ret})."
             )
 
         # Post-process the frame (color conversion, dimension check, rotation)
         processed_frame = self._postprocess_image(frame, color_mode)
 
         read_duration_ms = (time.perf_counter() - start_time) * 1e3
-        logger.debug(f"{self} synchronous read took: {read_duration_ms:.1f}ms")
+        logger.debug(f"{self} read took: {read_duration_ms:.1f}ms")
 
         return processed_frame
 
@@ -372,24 +358,22 @@ class OpenCVCamera(Camera):
 
         if requested_color_mode not in (ColorMode.RGB, ColorMode.BGR):
             raise ValueError(
-                f"Invalid requested color mode '{requested_color_mode}'. Expected {ColorMode.RGB} or {ColorMode.BGR}."
+                f"Invalid color mode '{requested_color_mode}'. Expected {ColorMode.RGB} or {ColorMode.BGR}."
             )
 
         h, w, c = image.shape
 
         if h != self.capture_height or w != self.capture_width:
             raise RuntimeError(
-                f"Captured frame dimensions ({h}x{w}) do not match configured capture dimensions ({self.capture_height}x{self.capture_width}) for {self}."
+                f"{self} frame width={w} or height={h} do not match configured width={self.capture_width} or height={self.capture_height}."
             )
 
         processed_image = image
         if requested_color_mode == ColorMode.RGB:
             processed_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-            logger.debug(f"Converted frame from BGR to RGB for {self}.")
 
         if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
             processed_image = cv2.rotate(processed_image, self.rotation)
-            logger.debug(f"Rotated frame by {self.config.rotation} degrees for {self}.")
 
         return processed_image
 
@@ -401,7 +385,6 @@ class OpenCVCamera(Camera):
         method and places the latest frame into the `frame_queue`. It overwrites
         any previous frame in the queue.
         """
-        logger.debug(f"Starting read loop thread for {self}.")
         while not self.stop_event.is_set():
             try:
                 color_image = self.read()
@@ -409,15 +392,12 @@ class OpenCVCamera(Camera):
                 with contextlib.suppress(queue.Empty):
                     _ = self.frame_queue.get_nowait()
                 self.frame_queue.put(color_image)
-                logger.debug(f"Frame placed in queue for {self}.")
 
             except DeviceNotConnectedError:
-                logger.error(f"Read loop for {self} stopped: Camera disconnected.")
                 break
             except Exception as e:
                 logger.warning(f"Error reading frame in background thread for {self}: {e}")
 
-        logger.debug(f"Stopping read loop thread for {self}.")
 
     def _start_read_thread(self) -> None:
         """Starts or restarts the background read thread if it's not running."""
@@ -428,11 +408,10 @@ class OpenCVCamera(Camera):
 
         self.stop_event = Event()
         self.thread = Thread(
-            target=self._read_loop, args=(), name=f"OpenCVCameraReadLoop-{self}-{self.index_or_path}"
+            target=self._read_loop, args=(), name=f"{self}_read_loop"
         )
         self.thread.daemon = True
         self.thread.start()
-        logger.debug(f"Read thread started for {self}.")
 
     def _stop_read_thread(self) -> None:
         """Signals the background read thread to stop and waits for it to join."""
@@ -441,14 +420,9 @@ class OpenCVCamera(Camera):
 
         if self.thread is not None and self.thread.is_alive():
             self.thread.join(timeout=2.0)
-            if self.thread.is_alive():
-                logger.warning(f"Read thread for {self} did not terminate gracefully after 2 seconds.")
-            else:
-                logger.debug(f"Read thread for {self} joined successfully.")
 
         self.thread = None
         self.stop_event = None
-        logger.debug(f"Read thread stopped for {self}.")
 
     def async_read(self, timeout_ms: float = 2000) -> np.ndarray:
         """
