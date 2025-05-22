@@ -154,9 +154,8 @@ def save_image(
         logger.error(f"Failed to save image for camera {camera_identifier} (type {camera_type}): {e}")
 
 
-def initialize_output_directory(output_dir: str | Path) -> Path:
+def initialize_output_directory(output_dir: Path) -> Path:
     """Initialize and clean the output directory."""
-    output_dir = Path(output_dir)
     if output_dir.exists():
         logger.info(f"Output directory {output_dir} exists. Removing previous content.")
         shutil.rmtree(output_dir)
