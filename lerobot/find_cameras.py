@@ -24,6 +24,9 @@ python -m lerobot.find_cameras
 ```
 """
 
+# NOTE(Steven): RealSense can also be identified/opened as OpenCV cameras. If you know the camera is a RealSense, use the `lerobot.find_cameras realsense` flag to avoid confusion.
+# NOTE(Steven): macOS cameras sometimes report different FPS at init time, not an issue here as we don't specify FPS when opening the cameras, but the information displayed might not be truthful.
+
 import argparse
 import concurrent.futures
 import logging
@@ -237,7 +240,7 @@ def cleanup_cameras(cameras_to_use: List[Dict[str, Any]]):
 
 
 def save_images_from_all_cameras(
-    output_dir: str | Path,
+    output_dir: Path,
     record_time_s: float = 2.0,
     camera_type_filter: str | None = None,
 ):
@@ -294,10 +297,6 @@ def save_images_from_all_cameras(
             logger.info(f"Image capture finished. Images saved to {output_dir}")
 
 
-# NOTE(Steven):
-# * realsense identified as opencv -> consistent in linux, we can even capture images
-# * opencv mac cams reporting different fps at init, not an issue as we don't enforce fps here
-# * opencv not opening in linux if we specify a backend
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Unified camera utility script for listing cameras and capturing images."

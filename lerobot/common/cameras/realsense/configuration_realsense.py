@@ -44,6 +44,7 @@ class RealSenseCameraConfig(CameraConfig):
         color_mode: Color mode for image output (RGB or BGR). Defaults to RGB.
         use_depth: Whether to enable depth stream. Defaults to False.
         rotation: Image rotation setting (0°, 90°, 180°, or 270°). Defaults to no rotation.
+        warmup_s: Time reading frames before returning from connect (in seconds)
 
     Note:
         - Either name or serial_number must be specified.
@@ -55,7 +56,8 @@ class RealSenseCameraConfig(CameraConfig):
     serial_number_or_name: int | str
     color_mode: ColorMode = ColorMode.RGB
     use_depth: bool = False
-    rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION  # NOTE(Steven): Check if draccus can parse to an enum
+    rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION
+    warmup_s: int = 1
 
     def __post_init__(self):
         if self.color_mode not in (ColorMode.RGB, ColorMode.BGR):

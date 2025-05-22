@@ -126,7 +126,7 @@ class RealSenseCamera(Camera):
         self.fps = config.fps
         self.color_mode = config.color_mode
         self.use_depth = config.use_depth
-        self.warmup_time = config.warmup_time
+        self.warmup_s = config.warmup_s
 
         self.rs_pipeline: rs.pipeline | None = None
         self.rs_profile: rs.pipeline_profile | None = None
@@ -184,12 +184,12 @@ class RealSenseCamera(Camera):
         self._validate_capture_settings()
 
         if warmup:
-            if self.warmup_time is None:
+            if self.warmup_s is None:
                 raise ValueError(
                     f"Warmup time is not set for {self}. Please set a warmup time in the configuration."
                 )
             start_time = time.time()
-            while time.time() - start_time < self.warmup_time:
+            while time.time() - start_time < self.warmup_s:
                 self.read()
                 time.sleep(0.1)
 
@@ -328,9 +328,7 @@ class RealSenseCamera(Camera):
         actual_height = int(round(stream.height()))
 
         if self.capture_width != actual_width:
-            raise RuntimeError(
-                f"{self} failed to set capture_width={self.capture_width} ({actual_width=})."
-            )
+            raise RuntimeError(f"{self} failed to set capture_width={self.capture_width} ({actual_width=}).")
 
         if self.capture_height != actual_height:
             raise RuntimeError(
@@ -408,9 +406,7 @@ class RealSenseCamera(Camera):
         ret, frame = self.rs_pipeline.try_wait_for_frames(timeout_ms=timeout_ms)
 
         if not ret or frame is None:
-            raise RuntimeError(
-                f"{self} read failed (status={ret})."
-            )
+            raise RuntimeError(f"{self} read failed (status={ret}).")
 
         color_frame = frame.get_color_frame()
         color_image_raw = np.asanyarray(color_frame.get_data())
@@ -450,11 +446,14 @@ class RealSenseCamera(Camera):
         if depth_frame:
             h, w = image.shape
         else:
-            h, w, _c = image.shape
+            h, w, c = image.shape
+
+            if c != 3:
+                raise RuntimeError(f"{self} frame channels={c} do not match expected 3 channels (RGB/BGR).")
 
         if h != self.capture_height or w != self.capture_width:
             raise RuntimeError(
-                f"{self} frame width={w} or height={h} do not match configured width={self.capture_width} or height={self.capture_height}.
+                f"{self} frame width={w} or height={h} do not match configured width={self.capture_width} or height={self.capture_height}."
             )
 
         processed_image = image
@@ -486,7 +485,6 @@ class RealSenseCamera(Camera):
                 break
             except Exception as e:
                 logger.warning(f"Error reading frame in background thread for {self}: {e}")
-
 
     def _start_read_thread(self) -> None:
         """Starts or restarts the background read thread if it's not running."""

@@ -112,7 +112,7 @@ class OpenCVCamera(Camera):
 
         self.fps = config.fps
         self.color_mode = config.color_mode
-        self.warmup_time = config.warmup_time
+        self.warmup_s = config.warmup_s
 
         self.videocapture: cv2.VideoCapture | None = None
 
@@ -169,12 +169,8 @@ class OpenCVCamera(Camera):
         self._configure_capture_settings()
 
         if warmup:
-            if self.warmup_time is None:
-                raise ValueError(
-                    f"Warmup time is not set for {self}. Please set a warmup time in the configuration."
-                )
             start_time = time.time()
-            while time.time() - start_time < self.warmup_time:
+            while time.time() - start_time < self.warmup_s:
                 self.read()
                 time.sleep(0.1)
 
@@ -360,6 +356,9 @@ class OpenCVCamera(Camera):
             raise RuntimeError(
                 f"{self} frame width={w} or height={h} do not match configured width={self.capture_width} or height={self.capture_height}."
             )
+
+        if c != 3:
+            raise RuntimeError(f"{self} frame channels={c} do not match expected 3 channels (RGB/BGR).")
 
         processed_image = image
         if requested_color_mode == ColorMode.RGB:
