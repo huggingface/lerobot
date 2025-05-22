@@ -243,6 +243,11 @@ def control_loop(
 
     timestamp = 0
     start_episode_t = time.perf_counter()
+
+    # Controls starts, if policy is given it needs cleaning up
+    if policy is not None:
+        policy.reset()
+
     while timestamp < control_time_s:
         start_loop_t = time.perf_counter()
 
@@ -287,10 +292,6 @@ def control_loop(
         if events["exit_early"]:
             events["exit_early"] = False
             break
-
-    # Controlling is over, if policy is given it needs cleaning up
-    if policy is not None:
-        policy.reset()
 
 
 def reset_environment(robot, events, reset_time_s, fps):
