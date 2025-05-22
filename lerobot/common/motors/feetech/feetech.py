@@ -250,20 +250,14 @@ class FeetechMotorsBus(MotorsBus):
         return same_ranges and same_offsets
 
     def read_calibration(self) -> dict[str, MotorCalibration]:
-        if self.protocol_version == 0:
-            offsets = self.sync_read("Homing_Offset", normalize=False)
-            mins = self.sync_read("Min_Position_Limit", normalize=False)
-            maxes = self.sync_read("Max_Position_Limit", normalize=False)
-            drive_modes = dict.fromkeys(self.motors, 0)
-        else:
-            offsets, mins, maxes, drive_modes = {}, {}, {}, {}
-            for motor in self.motors:
-                offsets[motor] = 0
-                mins[motor] = self.read("Min_Position_Limit", motor, normalize=False)
-                maxes[motor] = self.read("Max_Position_Limit", motor, normalize=False)
-                drive_modes[motor] = 0
-
-        # TODO(aliberts): add set/get_drive_mode?
+        offsets, mins, maxes = {}, {}, {}
+        drive_modes = dict.fromkeys(self.motors, 0)
+        for motor in self.motors:
+            mins[motor] = self.read("Min_Position_Limit", motor, normalize=False)
+            maxes[motor] = self.read("Max_Position_Limit", motor, normalize=False)
+            offsets[motor] = (
+                self.read("Homing_Offset", motor, normalize=False) if self.protocol_version == 0 else 0
+            )
 
         calibration = {}
         for motor, m in self.motors.items():
