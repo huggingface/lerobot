@@ -66,6 +66,8 @@ def make_camera(camera_type, **kwargs) -> Camera:
 
         config = IntelRealSenseCameraConfig(**kwargs)
         return IntelRealSenseCamera(config)
-
+    elif cfg.type == "OrbbecCamera":
+            from lerobot.common.robot_devices.cameras.OrbbecCamera import OrbbecCamera
+            cameras[key] = OrbbecCamera(cfg)
     else:
         raise ValueError(f"The camera type '{camera_type}' is not valid.")
