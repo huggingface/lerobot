@@ -2,11 +2,9 @@
 
 import argparse
 import json
-import numpy as np
-import pandas as pd
-import pyarrow.parquet as pq
+
 import pyarrow as pa
-from pathlib import Path
+import pyarrow.parquet as pq
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.datasets.utils import append_jsonlines, write_info
@@ -16,14 +14,18 @@ GOAL_SQUARE = "D4"
 PIECE_TYPE = "rook"
 COLOR = "white"
 
+
 def prompt_and_build_task(start_square: str):
     """Construct a structured task string (as JSON) from user input."""
-    return json.dumps({
-        "piece": PIECE_TYPE,
-        "color": COLOR,
-        "start_square": start_square.upper(),
-        "goal_square": GOAL_SQUARE,
-    })
+    return json.dumps(
+        {
+            "piece": PIECE_TYPE,
+            "color": COLOR,
+            "start_square": start_square.upper(),
+            "goal_square": GOAL_SQUARE,
+        }
+    )
+
 
 def update_task_mappings(dataset: LeRobotDataset):
     """Rebuilds task-to-index mappings from episode metadata."""
@@ -42,6 +44,7 @@ def update_task_mappings(dataset: LeRobotDataset):
         dataset.meta.tasks[i] = task
         dataset.meta.info["total_tasks"] += 1
 
+
 def patch_parquet_task_index(dataset: LeRobotDataset, episode_index: int):
     """Updates only the 'task_index' column in the .parquet file for one episode."""
     task_str = dataset.meta.episodes[episode_index]["tasks"][0]
@@ -59,6 +62,7 @@ def patch_parquet_task_index(dataset: LeRobotDataset, episode_index: int):
     new_table = pa.Table.from_pandas(df, preserve_index=False)
     pq.write_table(new_table, file_path)
 
+
 def save_metadata(dataset: LeRobotDataset):
     """Writes updated episodes.jsonl and tasks.jsonl to disk."""
     episodes_path = dataset.meta.root / "meta/episodes.jsonl"
@@ -72,6 +76,7 @@ def save_metadata(dataset: LeRobotDataset):
         append_jsonlines({"task_index": index, "task": task}, tasks_path)
 
     write_info(dataset.meta.info, dataset.meta.root)
+
 
 def main(repo_id: str):
     dataset = LeRobotDataset(repo_id=repo_id, force_cache_sync=True)
@@ -99,8 +104,11 @@ def main(repo_id: str):
     dataset.push_to_hub(tags=["structured-tasks"])
     print("✅ Done pushing!")
 
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Add structured tasks and task_index to an existing LeRobot dataset.")
+    parser = argparse.ArgumentParser(
+        description="Add structured tasks and task_index to an existing LeRobot dataset."
+    )
     parser.add_argument("--repo-id", type=str, required=True, help="Hugging Face dataset repo ID.")
     args = parser.parse_args()
     main(args.repo_id)

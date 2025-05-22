@@ -1,12 +1,11 @@
 #!/usr/bin/env python
 import argparse
 import json
-import numpy as np
-import pandas as pd
-import pyarrow.parquet as pq
-import pyarrow as pa
 
-from datasets import load_dataset
+import numpy as np
+import pyarrow as pa
+import pyarrow.parquet as pq
+
 from lerobot.common.datasets.compute_stats import aggregate_stats, compute_episode_stats
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.datasets.utils import (
@@ -25,12 +24,14 @@ def update_episode_tasks(dataset):
     print("🔁 Updating episode task strings in memory...")
     for episode_index in dataset.meta.episodes:
         start_square = input(f"Enter start square for episode {episode_index} (e.g., 'A4'): ").strip().upper()
-        task_description = json.dumps({
-            "piece": PIECE_TYPE,
-            "color": "white" if IS_WHITE else "black",
-            "start_square": start_square,
-            "goal_square": GOAL_SQUARE,
-        })
+        task_description = json.dumps(
+            {
+                "piece": PIECE_TYPE,
+                "color": "white" if IS_WHITE else "black",
+                "start_square": start_square,
+                "goal_square": GOAL_SQUARE,
+            }
+        )
         dataset.meta.episodes[episode_index]["tasks"] = [task_description]
 
 
@@ -73,11 +74,11 @@ def rebuild_all_stats(dataset: LeRobotDataset):
     print("\n📊 Recomputing stats for all episodes...")
     for ep_idx in dataset.meta.episodes.keys():
         path = dataset.meta.root / dataset.meta.get_data_file_path(ep_idx)
-        print(f"ep_idx={ep_idx} {pq.read_table(path).column_names}")#debugging
+        print(f"ep_idx={ep_idx} {pq.read_table(path).column_names}")  # debugging
         table = pq.read_table(path)
         df = table.to_pandas()
         ep_array_data = {k: np.array(v) for k, v in df.items() if k in dataset.meta.features}
-        print(dataset.meta.features)#debugging
+        print(dataset.meta.features)  # debugging
         stats = compute_episode_stats(ep_array_data, dataset.meta.features)
         dataset.meta.episodes_stats[ep_idx] = stats
         write_episode_stats(ep_idx, stats, dataset.meta.root)
@@ -117,7 +118,9 @@ def add_metadata_to_dataset(repo_id: str):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Patch LeRobotDataset episodes with structured task metadata.")
+    parser = argparse.ArgumentParser(
+        description="Patch LeRobotDataset episodes with structured task metadata."
+    )
     parser.add_argument("--repo-id", type=str, required=True, help="Hugging Face dataset repo ID.")
     args = parser.parse_args()
 
