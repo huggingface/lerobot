@@ -1,8 +1,5 @@
 from kinematics import *
 
-
-
-
 # init
 robot = Robot(robot_type="so100")
 kin = RobotKinematics()

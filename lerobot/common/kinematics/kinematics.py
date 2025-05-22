@@ -312,5 +312,3 @@ class RobotKinematics:
         T_interp[:3, 3] = t_interp
 
         return T_interp
-
-
