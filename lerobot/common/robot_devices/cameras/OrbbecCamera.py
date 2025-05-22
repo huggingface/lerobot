@@ -51,15 +51,7 @@ def frame_to_bgr_image(frame: OB.VideoFrame) -> Union[Optional[np.array], Any]:
         return None
     return image
 
-def print_image_info(name, image):
-    print(f"【{name} 图像信息】")
-    print(f"- shape: {image.shape}")
-    print(f"- 高度: {image.shape[0]} 像素")
-    print(f"- 宽度: {image.shape[1]} 像素")
-    print(f"- 通道数: {image.shape[2] if image.ndim == 3 else 1}")
-    print(f"- 每个像素占 {image.itemsize} 字节")
-    print(f"- 总大小: {image.nbytes / 1024:.2f} KB")
-    print("-" * 40)
+
 
 class TemporalFilter:
     def __init__(self, alpha):
@@ -90,7 +82,7 @@ class OrbbecCamera:
         self.height = config.height
         self.color_mode = config.color_mode
         self.use_depth = config.use_depth
-        self.mock = config.mock#暂时不可用
+        self.mock = config.mock
         self.index = None
         self.channels = 3
         self.Hi_resolution_mode = config.Hi_resolution_mode
@@ -124,8 +116,8 @@ class OrbbecCamera:
     def fuse_color_and_depth(self,color_image, depth_rgb_packed) -> np.ndarray:
         if color_image.shape[1] != depth_rgb_packed.shape[1]:
             raise ValueError("Width mismatch between color and depth images.")
-        #print_image_info(color_image,depth_rgb_packed)
-        stacked = np.vstack((color_image, depth_rgb_packed))  # shape: (880, 640, 3)
+
+        stacked = np.vstack((color_image, depth_rgb_packed)) 
         return stacked
     def load_depth_config(self):
         try:
@@ -170,7 +162,7 @@ class OrbbecCamera:
 
         self.load_color_config()
         
-        self.camera.start(self.OBconfig)#camera实际上是pipeline
+        self.camera.start(self.OBconfig)
 
         self.is_connected = True
         print("\033[32mCAMERA CONNECTED\033[0m ")
@@ -190,19 +182,17 @@ class OrbbecCamera:
 
         # Apply temporal filter
         filtered_depth_data = self.temporal_filter.process(depth_data)
-        print_image_info("nihao", filtered_depth_data)
         # Convert to float32 and apply scale
         #filtered_depth_data = filtered_depth_data.astype(np.float32) * scale
         filtered_depth_data = filtered_depth_data.astype(np.uint16)
         
-        # depth_mm = (filtered_depth_data * 1000).astype(np.uint32)  # 保留毫米级无损精度
+        # depth_mm = (filtered_depth_data * 1000).astype(np.uint32)  
         if self.Hi_resolution_mode:
-        # # ====== 2. 打包为 RGB 图像（无损）======
-            R = ((filtered_depth_data >> 8) & 0xFF).astype(np.uint8)  # 取高8位（R通道）
-            G = (filtered_depth_data & 0xFF).astype(np.uint8)         # 取低8位（G通道）
-            B = np.zeros_like(R, dtype=np.uint8)              # B通道置0
+            R = ((filtered_depth_data >> 8) & 0xFF).astype(np.uint8)  
+            G = (filtered_depth_data & 0xFF).astype(np.uint8)        
+            B = np.zeros_like(R, dtype=np.uint8)            
 
-            filtered_depth_data = cv2.merge([B, G, R])  # shape = (H, W, 3), dtype=uint8
+            filtered_depth_data = cv2.merge([B, G, R])
 
         else:
             filtered_depth_data = cv2.normalize(filtered_depth_data, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
@@ -219,7 +209,7 @@ class OrbbecCamera:
                 if depth_frame is None:
                     print("No depth frame received")
                     
-                self.depth_map = self.HandleDepth(depth_frame)#这一步得到的是宽640，高400”,单位为float32的numpy数组
+                self.depth_map = self.HandleDepth(depth_frame)
 
             color_frame = frames.get_color_frame()
          
@@ -244,7 +234,7 @@ class OrbbecCamera:
                 self.read()
             except Exception as e:
                 print(e)
-                break  # 防止一直报错
+                break  
 
     def async_read(self):
         if self.thread is None or not self.thread.is_alive():
