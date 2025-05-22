@@ -45,6 +45,7 @@ class OpenCVCameraConfig(CameraConfig):
         height: Requested frame height in pixels for the color stream.
         color_mode: Color mode for image output (RGB or BGR). Defaults to RGB.
         rotation: Image rotation setting (0°, 90°, 180°, or 270°). Defaults to no rotation.
+        warmup_s: Time reading frames before returning from connect (in seconds)
 
     Note:
         - Only 3-channel color output (RGB/BGR) is currently supported.
@@ -53,6 +54,7 @@ class OpenCVCameraConfig(CameraConfig):
     index_or_path: int | Path
     color_mode: ColorMode = ColorMode.RGB
     rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION
+    warmup_s: int = 1
 
     def __post_init__(self):
         if self.color_mode not in (ColorMode.RGB, ColorMode.BGR):

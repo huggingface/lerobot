@@ -94,12 +94,10 @@ class RealSenseCamera(Camera):
             use_depth=True
         )
         depth_camera = RealSenseCamera(custom_config)
-        try:
-            depth_camera.connect()
-            depth_map = depth_camera.read_depth()
-            print(f"Depth shape: {depth_map.shape}")
-        finally:
-            depth_camera.disconnect()
+        depth_camera.connect()
+
+        # Read 1 depth frame
+        depth_map = depth_camera.read_depth()
 
         # Example using a unique camera name
         name_config = RealSenseCameraConfig(serial_number_or_name="Intel RealSense D435") # If unique
@@ -128,7 +126,7 @@ class RealSenseCamera(Camera):
         self.fps = config.fps
         self.color_mode = config.color_mode
         self.use_depth = config.use_depth
-        self.warmup_time = config.warmup_time
+        self.warmup_s = config.warmup_s
 
         self.rs_pipeline: rs.pipeline | None = None
         self.rs_profile: rs.pipeline_profile | None = None
@@ -175,25 +173,19 @@ class RealSenseCamera(Camera):
 
         try:
             self.rs_profile = self.rs_pipeline.start(rs_config)
-            logger.debug(f"Successfully started pipeline for camera {self.serial_number}.")
         except RuntimeError as e:
             self.rs_profile = None
             self.rs_pipeline = None
             raise ConnectionError(
-                f"Failed to open {self} camera. Run 'python -m lerobot.find_cameras realsense' for details about the available cameras in your system."
+                f"Failed to open {self}."
+                "Run `python -m lerobot.find_cameras realsense` to find available cameras."
             ) from e
 
-        logger.debug(f"Validating stream configuration for {self}...")
         self._validate_capture_settings()
 
         if warmup:
-            if self.warmup_time is None:
-                raise ValueError(
-                    f"Warmup time is not set for {self}. Please set a warmup time in the configuration."
-                )
-            logger.debug(f"Reading a warm-up frames for {self} for {self.warmup_time} seconds...")
             start_time = time.time()
-            while time.time() - start_time < self.warmup_time:
+            while time.time() - start_time < self.warmup_s:
                 self.read()
                 time.sleep(0.1)
 
@@ -248,7 +240,6 @@ class RealSenseCamera(Camera):
 
             found_cameras_info.append(camera_info)
 
-        logger.info(f"Detected RealSense cameras: {[cam['id'] for cam in found_cameras_info]}")
         return found_cameras_info
 
     def _find_serial_number_from_name(self, name: str) -> str:
@@ -270,7 +261,6 @@ class RealSenseCamera(Camera):
             )
 
         serial_number = str(found_devices[0]["serial_number"])
-        logger.info(f"Found serial number '{serial_number}' for camera name '{name}'.")
         return serial_number
 
     def _configure_rs_pipeline_config(self, rs_config):
@@ -278,24 +268,16 @@ class RealSenseCamera(Camera):
         rs.config.enable_device(rs_config, self.serial_number)
 
         if self.width and self.height and self.fps:
-            logger.debug(
-                f"Requesting Color Stream: {self.capture_width}x{self.capture_height} @ {self.fps} FPS, Format: {rs.format.rgb8}"
-            )
             rs_config.enable_stream(
                 rs.stream.color, self.capture_width, self.capture_height, rs.format.rgb8, self.fps
             )
             if self.use_depth:
-                logger.debug(
-                    f"Requesting Depth Stream: {self.capture_width}x{self.capture_height} @ {self.fps} FPS, Format: {rs.format.z16}"
-                )
                 rs_config.enable_stream(
                     rs.stream.depth, self.capture_width, self.capture_height, rs.format.z16, self.fps
                 )
         else:
-            logger.debug(f"Requesting Color Stream: Default settings, Format: {rs.stream.color}")
             rs_config.enable_stream(rs.stream.color)
             if self.use_depth:
-                logger.debug(f"Requesting Depth Stream: Default settings, Format: {rs.stream.depth}")
                 rs_config.enable_stream(rs.stream.depth)
 
     def _validate_capture_settings(self) -> None:
@@ -329,8 +311,6 @@ class RealSenseCamera(Camera):
             else:
                 self.width, self.height = actual_width, actual_height
                 self.capture_width, self.capture_height = actual_width, actual_height
-            logger.info(f"Capture width set to camera default: {self.width}.")
-            logger.info(f"Capture height set to camera default: {self.height}.")
         else:
             self._validate_width_and_height(stream)
 
@@ -344,16 +324,12 @@ class RealSenseCamera(Camera):
         actual_height = int(round(stream.height()))
 
         if self.capture_width != actual_width:
-            raise RuntimeError(
-                f"Failed to set requested capture width {self.capture_width} for {self}. Actual value: {actual_width}."
-            )
-        logger.debug(f"Capture width set to {actual_width} for {self}.")
+            raise RuntimeError(f"{self} failed to set capture_width={self.capture_width} ({actual_width=}).")
 
         if self.capture_height != actual_height:
             raise RuntimeError(
-                f"Failed to set requested capture height {self.capture_height} for {self}. Actual value: {actual_height}."
+                f"{self} failed to set capture_height={self.capture_height} ({actual_height=})."
             )
-        logger.debug(f"Capture height set to {actual_height} for {self}.")
 
     def read_depth(self, timeout_ms: int = 100) -> np.ndarray:
         """
@@ -386,7 +362,7 @@ class RealSenseCamera(Camera):
         ret, frame = self.rs_pipeline.try_wait_for_frames(timeout_ms=timeout_ms)
 
         if not ret or frame is None:
-            raise RuntimeError(f"{self} failed to capture frame. Returned status='{ret}'.")
+            raise RuntimeError(f"{self} read_depth failed (status={ret}).")
 
         depth_frame = frame.get_depth_frame()
         depth_map = np.asanyarray(depth_frame.get_data())
@@ -394,7 +370,7 @@ class RealSenseCamera(Camera):
         depth_map_processed = self._postprocess_image(depth_map, depth_frame=True)
 
         read_duration_ms = (time.perf_counter() - start_time) * 1e3
-        logger.debug(f"{self} synchronous read took: {read_duration_ms:.1f}ms")
+        logger.debug(f"{self} read took: {read_duration_ms:.1f}ms")
 
         return depth_map_processed
 
@@ -423,14 +399,10 @@ class RealSenseCamera(Camera):
 
         start_time = time.perf_counter()
 
-        ret, frame = self.rs_pipeline.try_wait_for_frames(
-            timeout_ms=timeout_ms
-        )  # NOTE(Steven): This read has a timeout while opencv doesn't
+        ret, frame = self.rs_pipeline.try_wait_for_frames(timeout_ms=timeout_ms)
 
         if not ret or frame is None:
-            raise RuntimeError(
-                f"Failed to capture frame from {self}. '.read()' returned status={ret} and frame is None."
-            )
+            raise RuntimeError(f"{self} read failed (status={ret}).")
 
         color_frame = frame.get_color_frame()
         color_image_raw = np.asanyarray(color_frame.get_data())
@@ -438,7 +410,7 @@ class RealSenseCamera(Camera):
         color_image_processed = self._postprocess_image(color_image_raw, color_mode)
 
         read_duration_ms = (time.perf_counter() - start_time) * 1e3
-        logger.debug(f"{self} synchronous read took: {read_duration_ms:.1f}ms")
+        logger.debug(f"{self} read took: {read_duration_ms:.1f}ms")
 
         return color_image_processed
 
@@ -470,21 +442,22 @@ class RealSenseCamera(Camera):
         if depth_frame:
             h, w = image.shape
         else:
-            h, w, _c = image.shape
+            h, w, c = image.shape
+
+            if c != 3:
+                raise RuntimeError(f"{self} frame channels={c} do not match expected 3 channels (RGB/BGR).")
 
         if h != self.capture_height or w != self.capture_width:
             raise RuntimeError(
-                f"Captured frame dimensions ({h}x{w}) do not match configured capture dimensions ({self.capture_height}x{self.capture_width}) for {self}."
+                f"{self} frame width={w} or height={h} do not match configured width={self.capture_width} or height={self.capture_height}."
             )
 
         processed_image = image
         if self.color_mode == ColorMode.BGR:
             processed_image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-            logger.debug(f"Converted frame from RGB to BGR for {self}.")
 
         if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
             processed_image = cv2.rotate(processed_image, self.rotation)
-            logger.debug(f"Rotated frame by {self.config.rotation} degrees for {self}.")
 
         return processed_image
 
@@ -496,7 +469,6 @@ class RealSenseCamera(Camera):
         and places the latest result (single image or tuple) into the `frame_queue`.
         It overwrites any previous frame in the queue.
         """
-        logger.debug(f"Starting read loop thread for {self}.")
         while not self.stop_event.is_set():
             try:
                 frame_data = self.read(timeout_ms=500)
@@ -504,15 +476,11 @@ class RealSenseCamera(Camera):
                 with contextlib.suppress(queue.Empty):
                     _ = self.frame_queue.get_nowait()
                 self.frame_queue.put(frame_data)
-                logger.debug(f"Frame data placed in queue for {self}.")
 
             except DeviceNotConnectedError:
-                logger.error(f"Read loop for {self} stopped: Camera disconnected.")
                 break
             except Exception as e:
                 logger.warning(f"Error reading frame in background thread for {self}: {e}")
-
-        logger.debug(f"Stopping read loop thread for {self}.")
 
     def _start_read_thread(self) -> None:
         """Starts or restarts the background read thread if it's not running."""
@@ -525,7 +493,6 @@ class RealSenseCamera(Camera):
         self.thread = Thread(target=self._read_loop, args=(), name=f"{self}_read_loop")
         self.thread.daemon = True
         self.thread.start()
-        logger.debug(f"Read thread started for {self}.")
 
     def _stop_read_thread(self):
         """Signals the background read thread to stop and waits for it to join."""
@@ -534,14 +501,9 @@ class RealSenseCamera(Camera):
 
         if self.thread is not None and self.thread.is_alive():
             self.thread.join(timeout=2.0)
-            if self.thread.is_alive():
-                logger.warning(f"Read thread for {self} did not terminate gracefully after 2 seconds.")
-            else:
-                logger.debug(f"Read thread for {self} joined successfully.")
 
         self.thread = None
         self.stop_event = None
-        logger.debug(f"Read thread stopped for {self}.")
 
     # NOTE(Steven): Missing implementation for depth for now
     def async_read(self, timeout_ms: float = 100) -> np.ndarray:
@@ -602,7 +564,6 @@ class RealSenseCamera(Camera):
             self._stop_read_thread()
 
         if self.rs_pipeline is not None:
-            logger.debug(f"Stopping RealSense pipeline object for {self}.")
             self.rs_pipeline.stop()
             self.rs_pipeline = None
             self.rs_profile = None

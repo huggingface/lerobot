@@ -24,6 +24,9 @@ python -m lerobot.find_cameras
 ```
 """
 
+# NOTE(Steven): RealSense can also be identified/opened as OpenCV cameras. If you know the camera is a RealSense, use the `lerobot.find_cameras realsense` flag to avoid confusion.
+# NOTE(Steven): macOS cameras sometimes report different FPS at init time, not an issue here as we don't specify FPS when opening the cameras, but the information displayed might not be truthful.
+
 import argparse
 import concurrent.futures
 import logging
@@ -151,9 +154,8 @@ def save_image(
         logger.error(f"Failed to save image for camera {camera_identifier} (type {camera_type}): {e}")
 
 
-def initialize_output_directory(output_dir: str | Path) -> Path:
+def initialize_output_directory(output_dir: Path) -> Path:
     """Initialize and clean the output directory."""
-    output_dir = Path(output_dir)
     if output_dir.exists():
         logger.info(f"Output directory {output_dir} exists. Removing previous content.")
         shutil.rmtree(output_dir)
@@ -237,9 +239,9 @@ def cleanup_cameras(cameras_to_use: List[Dict[str, Any]]):
 
 
 def save_images_from_all_cameras(
-    output_dir: str | Path,
+    output_dir: Path,
     record_time_s: float = 2.0,
-    camera_type_filter: str | None = None,
+    camera_type: str | None = None,
 ):
     """
     Connects to detected cameras (optionally filtered by type) and saves images from each.
@@ -248,11 +250,11 @@ def save_images_from_all_cameras(
     Args:
         output_dir: Directory to save images.
         record_time_s: Duration in seconds to record images.
-        camera_type_filter: Optional string to filter cameras ("realsense" or "opencv").
+        camera_type: Optional string to filter cameras ("realsense" or "opencv").
                             If None, uses all detected cameras.
     """
     output_dir = initialize_output_directory(output_dir)
-    all_camera_metadata = find_and_print_cameras(camera_type_filter=camera_type_filter)
+    all_camera_metadata = find_and_print_cameras(camera_type_filter=camera_type)
 
     if not all_camera_metadata:
         logger.warning("No cameras detected matching the criteria. Cannot save images.")
@@ -294,10 +296,6 @@ def save_images_from_all_cameras(
             logger.info(f"Image capture finished. Images saved to {output_dir}")
 
 
-# NOTE(Steven):
-# * realsense identified as opencv -> consistent in linux, we can even capture images
-# * opencv mac cams reporting different fps at init, not an issue as we don't enforce fps here
-# * opencv not opening in linux if we specify a backend
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Unified camera utility script for listing cameras and capturing images."
@@ -323,14 +321,5 @@ if __name__ == "__main__":
         default=6.0,
         help="Time duration to attempt capturing frames. Default: 6 seconds.",
     )
-    parser.set_defaults(
-        func=lambda args: save_images_from_all_cameras(
-            output_dir=args.output_dir,
-            record_time_s=args.record_time_s,
-            camera_type_filter=args.camera_type,
-        )
-    )
-
     args = parser.parse_args()
-
-    args.func(args)
+    save_images_from_all_cameras(**vars(args))

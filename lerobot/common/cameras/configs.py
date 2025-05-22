@@ -38,7 +38,6 @@ class CameraConfig(draccus.ChoiceRegistry, abc.ABC):
     fps: int | None = None
     width: int | None = None
     height: int | None = None
-    warmup_time: int | None = None
 
     @property
     def type(self) -> str:
