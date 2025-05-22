@@ -221,7 +221,7 @@ dataset attributes:
   │  ├ episode_index (int64): index of the episode for this sample
   │  ├ frame_index (int64): index of the frame for this sample in the episode ; starts at 0 for each episode
   │  ├ timestamp (float32): timestamp in the episode
-  │  ├ next.done (bool): indicates the end of en episode ; True for the last frame in each episode
+  │  ├ next.done (bool): indicates the end of an episode ; True for the last frame in each episode
   │  └ index (int64): general index in the whole dataset
   ├ episode_data_index: contains 2 tensors with the start and end indices of each episode
   │  ├ from (1D int64 tensor): first frame index for each episode — shape (num episodes,) starts with 0
@@ -270,7 +270,7 @@ See `python lerobot/scripts/eval.py --help` for more instructions.
 
 ### Train your own policy
 
-Check out [example 3](./examples/3_train_policy.py) that illustrate how to train a model using our core library in python, and [example 4](./examples/4_train_policy_with_script.md) that shows how to use our training script from command line.
+Check out [example 3](./examples/3_train_policy.py) that illustrates how to train a model using our core library in python, and [example 4](./examples/4_train_policy_with_script.md) that shows how to use our training script from command line.
 
 To use wandb for logging training and evaluation curves, make sure you've run `wandb login` as a one-time setup step. Then, when running the training command above, enable WandB in the configuration by adding `--wandb.enable=true`.
 
@@ -321,7 +321,7 @@ Once you have trained a policy you may upload it to the Hugging Face hub using a
 You first need to find the checkpoint folder located inside your experiment directory (e.g. `outputs/train/2024-05-05/20-21-12_aloha_act_default/checkpoints/002500`). Within that there is a `pretrained_model` directory which should contain:
 - `config.json`: A serialized version of the policy configuration (following the policy's dataclass config).
 - `model.safetensors`: A set of `torch.nn.Module` parameters, saved in [Hugging Face Safetensors](https://huggingface.co/docs/safetensors/index) format.
-- `train_config.json`: A consolidated configuration containing all parameter userd for training. The policy configuration should match `config.json` exactly. Thisis useful for anyone who wants to evaluate your policy or for reproducibility.
+- `train_config.json`: A consolidated configuration containing all parameters used for training. The policy configuration should match `config.json` exactly. This is useful for anyone who wants to evaluate your policy or for reproducibility.
 
 To upload these to the hub, run the following:
 ```bash
