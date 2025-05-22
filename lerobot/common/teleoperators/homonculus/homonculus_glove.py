@@ -24,6 +24,7 @@ import serial
 
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.common.motors import MotorCalibration
+from lerobot.common.motors.motors_bus import MotorNormMode
 from lerobot.common.utils.utils import enter_pressed, move_cursor_up
 
 from ..teleoperator import Teleoperator
@@ -55,32 +56,33 @@ class HomonculusGlove(Teleoperator):
         self.config = config
         self.serial = serial.Serial(config.port, config.baud_rate, timeout=1)
 
-        self.joints = [
-            "thumb_cmc",
-            "thumb_mcp",
-            "thumb_pip",
-            "thumb_dip",
-            "index_mcp_abduction",
-            "index_mcp_flexion",
-            "index_dip",
-            "middle_mcp_abduction",
-            "middle_mcp_flexion",
-            "middle_dip",
-            "ring_mcp_abduction",
-            "ring_mcp_flexion",
-            "ring_dip",
-            "pinky_mcp_abduction",
-            "pinky_mcp_flexion",
-            "pinky_dip",
-        ]
+        self.joints = {
+            "thumb_cmc": MotorNormMode.RANGE_0_100,
+            "thumb_mcp": MotorNormMode.RANGE_0_100,
+            "thumb_pip": MotorNormMode.RANGE_0_100,
+            "thumb_dip": MotorNormMode.RANGE_0_100,
+            "index_mcp_abduction": MotorNormMode.RANGE_M100_100,
+            "index_mcp_flexion": MotorNormMode.RANGE_0_100,
+            "index_dip": MotorNormMode.RANGE_0_100,
+            "middle_mcp_abduction": MotorNormMode.RANGE_M100_100,
+            "middle_mcp_flexion": MotorNormMode.RANGE_0_100,
+            "middle_dip": MotorNormMode.RANGE_0_100,
+            "ring_mcp_abduction": MotorNormMode.RANGE_M100_100,
+            "ring_mcp_flexion": MotorNormMode.RANGE_0_100,
+            "ring_dip": MotorNormMode.RANGE_0_100,
+            "pinky_mcp_abduction": MotorNormMode.RANGE_M100_100,
+            "pinky_mcp_flexion": MotorNormMode.RANGE_0_100,
+            "pinky_dip": MotorNormMode.RANGE_0_100,
+        }
 
         self.inverted_joints = [
             "thumb_cmc",
             "thumb_dip",
-            "index_mcp_abduction",
             "index_dip",
+            "middle_mcp_abduction",
             "middle_dip",
             "ring_dip",
+            "pinky_mcp_abduction",
             "pinky_dip",
         ]
         # self._state = dict.fromkeys(self.joints, 100)
@@ -187,7 +189,6 @@ class HomonculusGlove(Teleoperator):
         if same_min_max:
             raise ValueError(f"Some joints have the same min and max values:\n{pformat(same_min_max)}")
 
-        # TODO(Steven, aliberts): add check to ensure mins and maxes are different
         return mins, maxes
 
     def configure(self) -> None:
@@ -207,11 +208,6 @@ class HomonculusGlove(Teleoperator):
         To harmonize between motors of the same model, different robots, or even models of different brands, we propose to work
         in the centered nominal degree range ]-180, 180[.
         """
-        # if joints is None:
-        #     joints = self.motor_names
-
-        # # Convert from unsigned int32 original range [0, 2**32] to signed float32 range
-        # values = values.astype(np.float32)
 
         if not self.calibration:
             raise RuntimeError(f"{self} has no calibration registered.")
@@ -220,9 +216,15 @@ class HomonculusGlove(Teleoperator):
         for joint, val in values.items():
             min_ = self.calibration[joint].range_min
             max_ = self.calibration[joint].range_max
+            drive_mode = self.calibration[joint].drive_mode
             bounded_val = min(max_, max(min_, val))
 
-            normalized_values[joint] = ((bounded_val - min_) / (max_ - min_)) * 100
+            if self.joints[joint] is MotorNormMode.RANGE_M100_100:
+                norm = (((bounded_val - min_) / (max_ - min_)) * 200) - 100
+                normalized_values[joint] = -norm if drive_mode else norm
+            elif self.joints[joint] is MotorNormMode.RANGE_0_100:
+                norm = ((bounded_val - min_) / (max_ - min_)) * 100
+                normalized_values[joint] = 100 - norm if drive_mode else norm
 
         return normalized_values
 
