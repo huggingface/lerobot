@@ -20,7 +20,7 @@ GRIP_CLOSE_WIDTH = -10
 GRIP_OPEN_WIDTH = 600
 
 # Initialize xARM with velocity control mode
-def init_xarm(ip):
+def init_xarm(ip,init_pos=None):
     arm = XArmAPI(ip)
     #arm.reset()
     arm.clean_error()
@@ -33,9 +33,10 @@ def init_xarm(ip):
     arm.set_mode(0)
     arm.set_state(0)
     time.sleep(2)
-    _, init_pos = tuple(arm.get_initial_point())
+    if init_pos == None:
+        _, init_pos = tuple(arm.get_initial_point())
     arm.set_servo_angle(angle=init_pos,wait=True,is_radian=False)
-    return arm
+    return arm, init_pos
 
 def initialize_limits(arm):
     global MAX_SPEED_LIMIT, MAX_ACC_LIMIT
@@ -152,26 +153,27 @@ def monitor_digital_input(arm, stop_event):
         time.sleep(0.01)  # Check every 10ms for more precise detection
 
 # IP addresses of the arms
-ipL = "172.16.0.11"
-ipR = "172.16.0.13"
+ipL = "172.16.0.13"
+ipR = "172.16.0.11"
 
 # Initialize both arms
-armL = init_xarm(ipL)
-armR = init_xarm(ipR)
+armL, init_pos = init_xarm(ipL)
+armR, init_pos = init_xarm(ipR,init_pos)
 
 # Enable both arms, and grippers
 ## L
 armL.set_mode(0)
-armL.set_state(state=0)
+armL.set_state(0)
 armL.set_gripper_speed(5000)  # default speed, as there's no way to fetch gripper speed from API
 
 ## R
 armR.set_mode(1)
-armR.set_state(state=0)
+armR.set_state(0)
 armR.set_gripper_speed(5000)  # default speed, as there's no way to fetch gripper speed from API
                               # According to User Manual, should range in 1000-5000
                               #
                               # see https://www.ufactory.cc/wp-content/uploads/2023/05/xArm-User-Manual-V2.0.0.pdf
+
 
 # Initialize the global speed and acceleration limits
 initialize_limits(armR)
@@ -180,6 +182,7 @@ initialize_limits(armR)
 armL.set_mode(2)
 armL.set_state(0)
 # Light up the digital output 2 (button), to signal manual mode
+time.sleep(2)
 armL.set_tgpio_digital(ionum=2, value=1)
 
 # Create a stop event for synchronization
@@ -204,6 +207,8 @@ try:
         time.sleep(1)
 except KeyboardInterrupt:
     print("Operation interrupted by user.")
+    # _,_ = init_xarm(armL,init_pos)
+    # _,_ = init_xarm(armR,init_pos)
 
 # Stop the mimic operation and monitoring
 stop_event.set()

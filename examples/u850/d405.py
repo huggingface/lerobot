@@ -26,10 +26,10 @@ def capture_realsense_color():
             # Convert images to numpy arrays
             color_image = np.asanyarray(color_frame.get_data())
 
-            # Show image
-            cv2.imshow('RealSense Color Stream', color_image)
-            cv2.waitKey(0)  # Wait for a key press
-            cv2.destroyAllWindows()
+            # # Show image
+            # cv2.imshow('RealSense Color Stream', color_image)
+            # cv2.waitKey(0)  # Wait for a key press
+            # cv2.destroyAllWindows()
 
     finally:
         # Stop streaming
