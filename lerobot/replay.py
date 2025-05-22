@@ -78,16 +78,16 @@ def replay(cfg: ReplayConfig):
 
     robot = make_robot_from_config(cfg.robot)
     dataset = LeRobotDataset(cfg.dataset.repo_id, root=cfg.dataset.root, episodes=[cfg.dataset.episode])
-    actions = dataset.hf_dataset.select_columns("action.joints")
+    actions = dataset.hf_dataset.select_columns("action.state")
     robot.connect()
 
     log_say("Replaying episode", cfg.play_sounds, blocking=True)
     for idx in range(dataset.num_frames):
         start_episode_t = time.perf_counter()
 
-        action_array = actions[idx]["action.joints"]
+        action_array = actions[idx]["action.state"]
         action = {}
-        for i, name in enumerate(dataset.features["action.joints"]["names"]):
+        for i, name in enumerate(dataset.features["action.state"]["names"]):
             action[name] = action_array[i]
 
         robot.send_action(action)
