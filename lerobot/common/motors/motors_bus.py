@@ -765,7 +765,7 @@ class MotorsBus(abc.ABC):
             motor = self._id_to_name(id_)
             min_ = self.calibration[motor].range_min
             max_ = self.calibration[motor].range_max
-            drive_mode = self.calibration[motor].drive_mode and self.apply_drive_mode
+            drive_mode = self.apply_drive_mode and self.calibration[motor].drive_mode
             if max_ == min_:
                 raise ValueError(f"Invalid calibration for motor '{motor}': min and max are equal.")
 
@@ -791,7 +791,7 @@ class MotorsBus(abc.ABC):
             motor = self._id_to_name(id_)
             min_ = self.calibration[motor].range_min
             max_ = self.calibration[motor].range_max
-            drive_mode = self.calibration[motor].drive_mode and self.apply_drive_mode
+            drive_mode = self.apply_drive_mode and self.calibration[motor].drive_mode
             if max_ == min_:
                 raise ValueError(f"Invalid calibration for motor '{motor}': min and max are equal.")
 
