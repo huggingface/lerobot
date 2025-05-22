@@ -168,7 +168,12 @@ if __name__ == "__main__":
     parser.add_argument("--brand", type=str, required=True, help="Motor brand (e.g. dynamixel,feetech)")
     parser.add_argument("--model", type=str, required=True, help="Motor model (e.g. xl330-m077,sts3215)")
     parser.add_argument("--ID", type=int, required=True, help="Desired ID of the current motor (e.g. 1,2,3)")
-    parser.add_argument("--oldID", type=int, default=None, help="ID of the current motor (e.g. 1), if provided, will speed up scanning")
+    parser.add_argument(
+        "--oldID",
+        type=int,
+        default=None,
+        help="ID of the current motor (e.g. 1), if provided, will speed up scanning",
+    )
     parser.add_argument(
         "--baudrate", type=int, default=1000000, help="Desired baudrate for the motor (default: 1000000)"
     )
