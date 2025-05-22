@@ -625,9 +625,10 @@ class MotorsBus(abc.ABC):
                 raise RuntimeError("Failed to write bus baud rate.")
 
     @property
+    @abc.abstractmethod
     def is_calibrated(self) -> bool:
         """bool: ``True`` if the cached calibration matches the motors."""
-        return self.calibration == self.read_calibration()
+        pass
 
     @abc.abstractmethod
     def read_calibration(self) -> dict[str, MotorCalibration]:

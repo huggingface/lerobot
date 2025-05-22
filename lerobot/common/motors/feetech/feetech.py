@@ -227,6 +227,26 @@ class FeetechMotorsBus(MotorsBus):
             self.write("Maximum_Acceleration", motor, 254)
             self.write("Acceleration", motor, 254)
 
+    @property
+    def is_calibrated(self) -> bool:
+        motors_calibration = self.read_calibration()
+        if set(motors_calibration) != set(self.calibration):
+            return False
+
+        same_ranges = all(
+            self.calibration[motor].range_min == cal.range_min
+            and self.calibration[motor].range_max == cal.range_max
+            for motor, cal in motors_calibration.items()
+        )
+        if self.protocol_version == 1:
+            return same_ranges
+
+        same_offsets = all(
+            self.calibration[motor].homing_offset == cal.homing_offset
+            for motor, cal in motors_calibration.items()
+        )
+        return same_ranges and same_offsets
+
     def read_calibration(self) -> dict[str, MotorCalibration]:
         if self.protocol_version == 0:
             offsets = self.sync_read("Homing_Offset", normalize=False)
