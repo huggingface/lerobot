@@ -18,10 +18,12 @@ This creates:
 Make sure you're logged in via `huggingface-cli login` before running this script.
 """
 
-from huggingface_hub import HfApi, snapshot_download, upload_folder
+import argparse
 import shutil
 import tempfile
-import argparse
+
+from huggingface_hub import snapshot_download, upload_folder
+
 
 def duplicate_repo(source_repo: str, user: str):
     target_repo = f"{user}/{source_repo.split('/')[-1]}_labeled"
@@ -29,7 +31,7 @@ def duplicate_repo(source_repo: str, user: str):
     print(f"📥 Downloading snapshot from: {source_repo}")
     src_dir = snapshot_download(repo_id=source_repo, repo_type="dataset", local_dir_use_symlinks=False)
 
-    print(f"📦 Creating local copy in a temp folder")
+    print("📦 Creating local copy in a temp folder")
     with tempfile.TemporaryDirectory() as tmp_dir:
         shutil.copytree(src_dir, f"{tmp_dir}/copy")
 
@@ -43,9 +45,12 @@ def duplicate_repo(source_repo: str, user: str):
 
     print(f"✅ Done! New dataset: https://huggingface.co/datasets/{target_repo}")
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--source", type=str, required=True, help="Source HF dataset repo (e.g. 7jep7/rook_to_d4_v6)")
+    parser.add_argument(
+        "--source", type=str, required=True, help="Source HF dataset repo (e.g. 7jep7/rook_to_d4_v6)"
+    )
     parser.add_argument("--user", type=str, required=True, help="Your HF username (e.g. 7jep7)")
     args = parser.parse_args()
 
