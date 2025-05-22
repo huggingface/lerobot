@@ -553,6 +553,7 @@ class ManipulatorRobot:
         for name in self.follower_arms:
             before_fread_t = time.perf_counter()
             if self.robot_type == "u850":
+                #print(self.follower_arms[name].get_position())
                 follower_pos[name] = np.array(self.follower_arms[name].get_position())
             else:
                 follower_pos[name] = self.follower_arms[name].read("Present_Position")
