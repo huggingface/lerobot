@@ -13,8 +13,10 @@
 # limitations under the License.
 
 import math
+import os
 from dataclasses import dataclass
 
+os.environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"
 import pygame
 
 from lerobot.common.motors import MotorCalibration, MotorsBus
@@ -220,7 +222,6 @@ class RangeFinderGUI:
             m: bus.read("Present_Position", m, normalize=False) for motors in groups.values() for m in motors
         }
 
-        # pygame init
         pygame.init()
         self.font = pygame.font.Font(None, FONT_SIZE)
 
