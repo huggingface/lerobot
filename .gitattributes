@@ -18,4 +18,4 @@
 *.arrow filter=lfs diff=lfs merge=lfs -text
 *.json !text !filter !merge !diff
 tests/artifacts/cameras/*.png filter=lfs diff=lfs merge=lfs -text
-tests/artifacts/cameras/*.bag filter=lfs diff=lfs merge=lfs -text
+*.bag filter=lfs diff=lfs merge=lfs -text

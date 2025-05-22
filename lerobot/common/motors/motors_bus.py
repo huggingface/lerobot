@@ -252,6 +252,7 @@ class MotorsBus(abc.ABC):
     ```
     """
 
+    apply_drive_mode: bool
     available_baudrates: list[int]
     default_baudrate: int
     default_timeout: int
@@ -749,10 +750,13 @@ class MotorsBus(abc.ABC):
                 # Move cursor up to overwrite the previous output
                 move_cursor_up(len(motors) + 3)
 
-        # TODO(Steven, aliberts): add check to ensure mins and maxes are different
+        same_min_max = [motor for motor in motors if mins[motor] == maxes[motor]]
+        if same_min_max:
+            raise ValueError(f"Some motors have the same min and max values:\n{pformat(same_min_max)}")
+
         return mins, maxes
 
-    def _normalize(self, data_name: str, ids_values: dict[int, int]) -> dict[int, float]:
+    def _normalize(self, ids_values: dict[int, int]) -> dict[int, float]:
         if not self.calibration:
             raise RuntimeError(f"{self} has no calibration registered.")
 
@@ -761,20 +765,24 @@ class MotorsBus(abc.ABC):
             motor = self._id_to_name(id_)
             min_ = self.calibration[motor].range_min
             max_ = self.calibration[motor].range_max
+            drive_mode = self.apply_drive_mode and self.calibration[motor].drive_mode
+            if max_ == min_:
+                raise ValueError(f"Invalid calibration for motor '{motor}': min and max are equal.")
+
             bounded_val = min(max_, max(min_, val))
-            # TODO(Steven): normalization can go boom if max_ == min_, we should add a check probably in record_ranges_of_motions
-            # (which probably indicates the user forgot to move a motor, most likely a gripper-like one)
             if self.motors[motor].norm_mode is MotorNormMode.RANGE_M100_100:
-                normalized_values[id_] = (((bounded_val - min_) / (max_ - min_)) * 200) - 100
+                norm = (((bounded_val - min_) / (max_ - min_)) * 200) - 100
+                normalized_values[id_] = -norm if drive_mode else norm
             elif self.motors[motor].norm_mode is MotorNormMode.RANGE_0_100:
-                normalized_values[id_] = ((bounded_val - min_) / (max_ - min_)) * 100
+                norm = ((bounded_val - min_) / (max_ - min_)) * 100
+                normalized_values[id_] = 100 - norm if drive_mode else norm
             else:
-                # TODO(alibers): velocity and degree modes
+                # TODO(alibers): degree mode
                 raise NotImplementedError
 
         return normalized_values
 
-    def _unnormalize(self, data_name: str, ids_values: dict[int, float]) -> dict[int, int]:
+    def _unnormalize(self, ids_values: dict[int, float]) -> dict[int, int]:
         if not self.calibration:
             raise RuntimeError(f"{self} has no calibration registered.")
 
@@ -783,14 +791,20 @@ class MotorsBus(abc.ABC):
             motor = self._id_to_name(id_)
             min_ = self.calibration[motor].range_min
             max_ = self.calibration[motor].range_max
+            drive_mode = self.apply_drive_mode and self.calibration[motor].drive_mode
+            if max_ == min_:
+                raise ValueError(f"Invalid calibration for motor '{motor}': min and max are equal.")
+
             if self.motors[motor].norm_mode is MotorNormMode.RANGE_M100_100:
+                val = -val if drive_mode else val
                 bounded_val = min(100.0, max(-100.0, val))
                 unnormalized_values[id_] = int(((bounded_val + 100) / 200) * (max_ - min_) + min_)
             elif self.motors[motor].norm_mode is MotorNormMode.RANGE_0_100:
+                val = 100 - val if drive_mode else val
                 bounded_val = min(100.0, max(0.0, val))
                 unnormalized_values[id_] = int((bounded_val / 100) * (max_ - min_) + min_)
             else:
-                # TODO(alibers): velocity and degree modes
+                # TODO(aliberts): degree mode
                 raise NotImplementedError
 
         return unnormalized_values
@@ -911,7 +925,7 @@ class MotorsBus(abc.ABC):
         id_value = self._decode_sign(data_name, {id_: value})
 
         if normalize and data_name in self.normalized_data:
-            id_value = self._normalize(data_name, id_value)
+            id_value = self._normalize(id_value)
 
         return id_value[id_]
 
@@ -978,7 +992,7 @@ class MotorsBus(abc.ABC):
         addr, length = get_address(self.model_ctrl_table, model, data_name)
 
         if normalize and data_name in self.normalized_data:
-            value = self._unnormalize(data_name, {id_: value})[id_]
+            value = self._unnormalize({id_: value})[id_]
 
         value = self._encode_sign(data_name, {id_: value})[id_]
 
@@ -1057,7 +1071,7 @@ class MotorsBus(abc.ABC):
         ids_values = self._decode_sign(data_name, ids_values)
 
         if normalize and data_name in self.normalized_data:
-            ids_values = self._normalize(data_name, ids_values)
+            ids_values = self._normalize(ids_values)
 
         return {self._id_to_name(id_): value for id_, value in ids_values.items()}
 
@@ -1143,7 +1157,7 @@ class MotorsBus(abc.ABC):
         addr, length = get_address(self.model_ctrl_table, model, data_name)
 
         if normalize and data_name in self.normalized_data:
-            ids_values = self._unnormalize(data_name, ids_values)
+            ids_values = self._unnormalize(ids_values)
 
         ids_values = self._encode_sign(data_name, ids_values)
 

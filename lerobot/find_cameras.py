@@ -14,6 +14,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""
+Helper to find the camera devices available in your system.
+
+Example:
+
+```shell
+python -m lerobot.find_cameras
+```
+"""
+
+# NOTE(Steven): RealSense can also be identified/opened as OpenCV cameras. If you know the camera is a RealSense, use the `lerobot.find_cameras realsense` flag to avoid confusion.
+# NOTE(Steven): macOS cameras sometimes report different FPS at init time, not an issue here as we don't specify FPS when opening the cameras, but the information displayed might not be truthful.
+
 import argparse
 import concurrent.futures
 import logging
@@ -26,13 +39,12 @@ import numpy as np
 from PIL import Image
 
 from lerobot.common.cameras.configs import ColorMode
-from lerobot.common.cameras.intel.camera_realsense import RealSenseCamera
-from lerobot.common.cameras.intel.configuration_realsense import RealSenseCameraConfig
 from lerobot.common.cameras.opencv.camera_opencv import OpenCVCamera
 from lerobot.common.cameras.opencv.configuration_opencv import OpenCVCameraConfig
+from lerobot.common.cameras.realsense.camera_realsense import RealSenseCamera
+from lerobot.common.cameras.realsense.configuration_realsense import RealSenseCameraConfig
 
 logger = logging.getLogger(__name__)
-# logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(module)s - %(message)s")
 
 
 def find_all_opencv_cameras() -> List[Dict[str, Any]]:
@@ -45,7 +57,7 @@ def find_all_opencv_cameras() -> List[Dict[str, Any]]:
     all_opencv_cameras_info: List[Dict[str, Any]] = []
     logger.info("Searching for OpenCV cameras...")
     try:
-        opencv_cameras = OpenCVCamera.find_cameras(raise_when_empty=False)
+        opencv_cameras = OpenCVCamera.find_cameras()
         for cam_info in opencv_cameras:
             all_opencv_cameras_info.append(cam_info)
         logger.info(f"Found {len(opencv_cameras)} OpenCV cameras.")
@@ -65,7 +77,7 @@ def find_all_realsense_cameras() -> List[Dict[str, Any]]:
     all_realsense_cameras_info: List[Dict[str, Any]] = []
     logger.info("Searching for RealSense cameras...")
     try:
-        realsense_cameras = RealSenseCamera.find_cameras(raise_when_empty=False)
+        realsense_cameras = RealSenseCamera.find_cameras()
         for cam_info in realsense_cameras:
             all_realsense_cameras_info.append(cam_info)
         logger.info(f"Found {len(realsense_cameras)} RealSense cameras.")
@@ -142,9 +154,8 @@ def save_image(
         logger.error(f"Failed to save image for camera {camera_identifier} (type {camera_type}): {e}")
 
 
-def initialize_output_directory(output_dir: str | Path) -> Path:
+def initialize_output_directory(output_dir: Path) -> Path:
     """Initialize and clean the output directory."""
-    output_dir = Path(output_dir)
     if output_dir.exists():
         logger.info(f"Output directory {output_dir} exists. Removing previous content.")
         shutil.rmtree(output_dir)
@@ -170,7 +181,7 @@ def create_camera_instance(cam_meta: Dict[str, Any]) -> Dict[str, Any] | None:
             instance = OpenCVCamera(cv_config)
         elif cam_type == "RealSense":
             rs_config = RealSenseCameraConfig(
-                serial_number=str(cam_id),
+                serial_number_or_name=int(cam_id),
                 color_mode=ColorMode.RGB,
             )
             instance = RealSenseCamera(rs_config)
@@ -180,7 +191,7 @@ def create_camera_instance(cam_meta: Dict[str, Any]) -> Dict[str, Any] | None:
 
         if instance:
             logger.info(f"Connecting to {cam_type} camera: {cam_id}...")
-            instance.connect(do_warmup_read=False)
+            instance.connect(warmup=False)
             return {"instance": instance, "meta": cam_meta}
     except Exception as e:
         logger.error(f"Failed to connect or configure {cam_type} camera {cam_id}: {e}")
@@ -228,9 +239,9 @@ def cleanup_cameras(cameras_to_use: List[Dict[str, Any]]):
 
 
 def save_images_from_all_cameras(
-    output_dir: str | Path,
+    output_dir: Path,
     record_time_s: float = 2.0,
-    camera_type_filter: str | None = None,
+    camera_type: str | None = None,
 ):
     """
     Connects to detected cameras (optionally filtered by type) and saves images from each.
@@ -239,11 +250,11 @@ def save_images_from_all_cameras(
     Args:
         output_dir: Directory to save images.
         record_time_s: Duration in seconds to record images.
-        camera_type_filter: Optional string to filter cameras ("realsense" or "opencv").
+        camera_type: Optional string to filter cameras ("realsense" or "opencv").
                             If None, uses all detected cameras.
     """
     output_dir = initialize_output_directory(output_dir)
-    all_camera_metadata = find_and_print_cameras(camera_type_filter=camera_type_filter)
+    all_camera_metadata = find_and_print_cameras(camera_type_filter=camera_type)
 
     if not all_camera_metadata:
         logger.warning("No cameras detected matching the criteria. Cannot save images.")
@@ -285,36 +296,12 @@ def save_images_from_all_cameras(
             logger.info(f"Image capture finished. Images saved to {output_dir}")
 
 
-# NOTE(Steven):
-# * realsense identified as opencv -> consistent in linux, we can even capture images
-# * opencv mac cams reporting different fps at init, not an issue as we don't enforce fps here
-# * opencv not opening in linux if we specify a backend
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Unified camera utility script for listing cameras and capturing images."
     )
-    subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
-    # List cameras command
-    list_parser = subparsers.add_parser(
-        "list-cameras", help="Shows connected cameras. Optionally filter by type (realsense or opencv)."
-    )
-    list_parser.add_argument(
-        "camera_type",
-        type=str,
-        nargs="?",
-        default=None,
-        choices=["realsense", "opencv"],
-        help="Specify camera type to list (e.g., 'realsense', 'opencv'). Lists all if omitted.",
-    )
-    list_parser.set_defaults(func=lambda args: find_and_print_cameras(args.camera_type))
-
-    # Capture images command
-    capture_parser = subparsers.add_parser(
-        "capture-images",
-        help="Saves images from detected cameras (optionally filtered by type) using their default stream profiles.",
-    )
-    capture_parser.add_argument(
+    parser.add_argument(
         "camera_type",
         type=str,
         nargs="?",
@@ -322,36 +309,17 @@ if __name__ == "__main__":
         choices=["realsense", "opencv"],
         help="Specify camera type to capture from (e.g., 'realsense', 'opencv'). Captures from all if omitted.",
     )
-    capture_parser.add_argument(
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default="outputs/captured_images",
         help="Directory to save images. Default: outputs/captured_images",
     )
-    capture_parser.add_argument(
+    parser.add_argument(
         "--record-time-s",
         type=float,
         default=6.0,
         help="Time duration to attempt capturing frames. Default: 6 seconds.",
     )
-    capture_parser.set_defaults(
-        func=lambda args: save_images_from_all_cameras(
-            output_dir=args.output_dir,
-            record_time_s=args.record_time_s,
-            camera_type_filter=args.camera_type,
-        )
-    )
-
     args = parser.parse_args()
-
-    if args.command is None:
-        default_output_dir = capture_parser.get_default("output_dir")
-        default_record_time_s = capture_parser.get_default("record_time_s")
-
-        save_images_from_all_cameras(
-            output_dir=default_output_dir,
-            record_time_s=default_record_time_s,
-            camera_type_filter=None,
-        )
-    else:
-        args.func(args)
+    save_images_from_all_cameras(**vars(args))

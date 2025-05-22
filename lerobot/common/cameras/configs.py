@@ -21,12 +21,12 @@ from enum import Enum
 import draccus
 
 
-class ColorMode(Enum):
+class ColorMode(str, Enum):
     RGB = "rgb"
     BGR = "bgr"
 
 
-class Cv2Rotation(Enum):
+class Cv2Rotation(int, Enum):
     NO_ROTATION = 0
     ROTATE_90 = 90
     ROTATE_180 = 180

@@ -102,6 +102,7 @@ class FeetechMotorsBus(MotorsBus):
     python feetech sdk to communicate with the motors, which is itself based on the dynamixel sdk.
     """
 
+    apply_drive_mode = True
     available_baudrates = deepcopy(SCAN_BAUDRATES)
     default_baudrate = DEFAULT_BAUDRATE
     default_timeout = DEFAULT_TIMEOUT_MS

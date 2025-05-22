@@ -27,15 +27,13 @@ class RobotConfig(draccus.ChoiceRegistry, abc.ABC):
     calibration_dir: Path | None = None
 
     def __post_init__(self):
-        if hasattr(self, "cameras"):
-            cameras = self.cameras
-            if cameras:
-                for cam_name, cam_config in cameras.items():
-                    for attr in ["width", "height"]:
-                        if getattr(cam_config, attr) is None:
-                            raise ValueError(
-                                f"Camera config for '{cam_name}' has None value for required attribute '{attr}'"
-                            )
+        if hasattr(self, "cameras") and self.cameras:
+            for _, config in self.cameras.items():
+                for attr in ["width", "height", "fps"]:
+                    if getattr(config, attr) is None:
+                        raise ValueError(
+                            f"Specifying '{attr}' is required for the camera to be used in a robot"
+                        )
 
     @property
     def type(self) -> str:

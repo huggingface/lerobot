@@ -19,7 +19,7 @@
 # pytest tests/cameras/test_opencv.py::test_connect
 # ```
 
-import os
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -29,17 +29,14 @@ from lerobot.common.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 # NOTE(Steven): more tests + assertions?
-TEST_ARTIFACTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "artifacts", "cameras")
-DEFAULT_PNG_FILE_PATH = os.path.join(TEST_ARTIFACTS_DIR, "fakecam_sd_160x120.png")
-TEST_IMAGE_PATHS = [
-    os.path.join(TEST_ARTIFACTS_DIR, "fakecam_sd_160x120.png"),
-    os.path.join(TEST_ARTIFACTS_DIR, "fakecam_hd_320x180.png"),
-    os.path.join(TEST_ARTIFACTS_DIR, "fakecam_fullhd_480x270.png"),
-    os.path.join(TEST_ARTIFACTS_DIR, "fakecam_square_128x128.png"),
-]
+TEST_ARTIFACTS_DIR = Path(__file__).parent.parent / "artifacts" / "cameras"
+DEFAULT_PNG_FILE_PATH = TEST_ARTIFACTS_DIR / "image_160x120.png"
+TEST_IMAGE_SIZES = ["128x128", "160x120", "320x180", "480x270"]
+TEST_IMAGE_PATHS = [TEST_ARTIFACTS_DIR / f"image_{size}.png" for size in TEST_IMAGE_SIZES]
 
 
-def test_base_class_implementation():
+def test_abc_implementation():
+    """Instantiation should raise an error if the class doesn't implement abstract methods/properties."""
     config = OpenCVCameraConfig(index_or_path=0)
 
     _ = OpenCVCamera(config)
@@ -49,7 +46,7 @@ def test_connect():
     config = OpenCVCameraConfig(index_or_path=DEFAULT_PNG_FILE_PATH)
     camera = OpenCVCamera(config)
 
-    camera.connect(do_warmup_read=False)
+    camera.connect(warmup=False)
 
     assert camera.is_connected
 
@@ -57,10 +54,10 @@ def test_connect():
 def test_connect_already_connected():
     config = OpenCVCameraConfig(index_or_path=DEFAULT_PNG_FILE_PATH)
     camera = OpenCVCamera(config)
-    camera.connect(do_warmup_read=False)
+    camera.connect(warmup=False)
 
     with pytest.raises(DeviceAlreadyConnectedError):
-        camera.connect(do_warmup_read=False)
+        camera.connect(warmup=False)
 
 
 def test_connect_invalid_camera_path():
@@ -68,7 +65,7 @@ def test_connect_invalid_camera_path():
     camera = OpenCVCamera(config)
 
     with pytest.raises(ConnectionError):
-        camera.connect(do_warmup_read=False)
+        camera.connect(warmup=False)
 
 
 def test_invalid_width_connect():
@@ -80,14 +77,14 @@ def test_invalid_width_connect():
     camera = OpenCVCamera(config)
 
     with pytest.raises(RuntimeError):
-        camera.connect(do_warmup_read=False)
+        camera.connect(warmup=False)
 
 
-@pytest.mark.parametrize("index_or_path", TEST_IMAGE_PATHS)
+@pytest.mark.parametrize("index_or_path", TEST_IMAGE_PATHS, ids=TEST_IMAGE_SIZES)
 def test_read(index_or_path):
     config = OpenCVCameraConfig(index_or_path=index_or_path)
     camera = OpenCVCamera(config)
-    camera.connect(do_warmup_read=False)
+    camera.connect(warmup=False)
 
     img = camera.read()
 
@@ -105,7 +102,7 @@ def test_read_before_connect():
 def test_disconnect():
     config = OpenCVCameraConfig(index_or_path=DEFAULT_PNG_FILE_PATH)
     camera = OpenCVCamera(config)
-    camera.connect(do_warmup_read=False)
+    camera.connect(warmup=False)
 
     camera.disconnect()
 
@@ -120,11 +117,11 @@ def test_disconnect_before_connect():
         _ = camera.disconnect()
 
 
-@pytest.mark.parametrize("index_or_path", TEST_IMAGE_PATHS)
+@pytest.mark.parametrize("index_or_path", TEST_IMAGE_PATHS, ids=TEST_IMAGE_SIZES)
 def test_async_read(index_or_path):
     config = OpenCVCameraConfig(index_or_path=index_or_path)
     camera = OpenCVCamera(config)
-    camera.connect(do_warmup_read=False)
+    camera.connect(warmup=False)
 
     try:
         img = camera.async_read()
@@ -140,11 +137,13 @@ def test_async_read(index_or_path):
 def test_async_read_timeout():
     config = OpenCVCameraConfig(index_or_path=DEFAULT_PNG_FILE_PATH)
     camera = OpenCVCamera(config)
-    camera.connect(do_warmup_read=False)
+    camera.connect(warmup=False)
 
     try:
         with pytest.raises(TimeoutError):
-            camera.async_read(timeout_ms=0)
+            camera.async_read(
+                timeout_ms=0
+            )  # NOTE(Steven): This is flaky as sdometimes we actually get a frame
     finally:
         if camera.is_connected:
             camera.disconnect()
@@ -158,7 +157,7 @@ def test_async_read_before_connect():
         _ = camera.async_read()
 
 
-@pytest.mark.parametrize("index_or_path", TEST_IMAGE_PATHS)
+@pytest.mark.parametrize("index_or_path", TEST_IMAGE_PATHS, ids=TEST_IMAGE_SIZES)
 @pytest.mark.parametrize(
     "rotation",
     [
@@ -167,15 +166,16 @@ def test_async_read_before_connect():
         Cv2Rotation.ROTATE_180,
         Cv2Rotation.ROTATE_270,
     ],
+    ids=["no_rot", "rot90", "rot180", "rot270"],
 )
-def test_all_rotations(rotation, index_or_path):
-    filename = os.path.basename(index_or_path)
+def test_rotation(rotation, index_or_path):
+    filename = Path(index_or_path).name
     dimensions = filename.split("_")[-1].split(".")[0]  # Assumes filenames format (_wxh.png)
     original_width, original_height = map(int, dimensions.split("x"))
 
     config = OpenCVCameraConfig(index_or_path=index_or_path, rotation=rotation)
     camera = OpenCVCamera(config)
-    camera.connect(do_warmup_read=False)
+    camera.connect(warmup=False)
 
     img = camera.read()
     assert isinstance(img, np.ndarray)

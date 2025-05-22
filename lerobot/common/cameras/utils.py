@@ -37,7 +37,7 @@ def make_cameras_from_configs(camera_configs: dict[str, CameraConfig]) -> dict[s
             cameras[key] = OpenCVCamera(cfg)
 
         elif cfg.type == "intelrealsense":
-            from .intel.camera_realsense import RealSenseCamera
+            from .realsense.camera_realsense import RealSenseCamera
 
             cameras[key] = RealSenseCamera(cfg)
         else:
@@ -46,24 +46,26 @@ def make_cameras_from_configs(camera_configs: dict[str, CameraConfig]) -> dict[s
     return cameras
 
 
-def get_cv2_rotation(rotation: Cv2Rotation) -> int:
+def get_cv2_rotation(rotation: Cv2Rotation) -> int | None:
     import cv2
 
-    return {
-        Cv2Rotation.ROTATE_270: cv2.ROTATE_90_COUNTERCLOCKWISE,
-        Cv2Rotation.ROTATE_90: cv2.ROTATE_90_CLOCKWISE,
-        Cv2Rotation.ROTATE_180: cv2.ROTATE_180,
-    }.get(rotation)
+    if rotation == Cv2Rotation.ROTATE_90:
+        return cv2.ROTATE_90_CLOCKWISE
+    elif rotation == Cv2Rotation.ROTATE_180:
+        return cv2.ROTATE_180
+    elif rotation == Cv2Rotation.ROTATE_270:
+        return cv2.ROTATE_90_COUNTERCLOCKWISE
+    else:
+        return None
 
 
 def get_cv2_backend() -> int:
     import cv2
 
-    return {
-        "Linux": cv2.CAP_DSHOW,
-        "Windows": cv2.CAP_AVFOUNDATION,
-        "Darwin": cv2.CAP_ANY,
-    }.get(platform.system(), cv2.CAP_V4L2)
+    if platform.system() == "Windows":
+        return cv2.CAP_AVFOUNDATION
+    else:
+        return cv2.CAP_ANY
 
 
 def save_image(img_array: np.ndarray, camera_index: int, frame_index: int, images_dir: Path):
