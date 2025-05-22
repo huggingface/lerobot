@@ -117,8 +117,6 @@ class IntelRealSenseCameraConfig(CameraConfig):
 @CameraConfig.register_subclass("OrbbecCamera")
 @dataclass
 class OrbbecCameraConfig(CameraConfig):
-
-
     fps: int | None = None
     width: int | None = None
     height: int | None = None
@@ -126,9 +124,9 @@ class OrbbecCameraConfig(CameraConfig):
     use_depth: bool = True
     mock: bool = False
     index: int = 0
-    channels:int = 3
-    TemporalFilter_alpha:float = 0.5
-    Hi_resolution_mode:bool = False
+    channels: int = 3
+    TemporalFilter_alpha: float = 0.5
+    Hi_resolution_mode: bool = False
 
     def __post_init__(self):
         # bool is stronger than is None, since it works with empty strings
@@ -138,23 +136,20 @@ class OrbbecCameraConfig(CameraConfig):
                 f"`color_mode` is expected to be 'rgb' or 'bgr', but {self.color_mode} is provided."
             )
         if self.width is None:
-            raise ValueError(
-                f"`height` is expected to be 'None' ."
-            )
-        if  self.use_depth:
+            raise ValueError("`height` is expected to be 'None' .")
+        if self.use_depth:
             match self.width:
                 case 640:
                     self.height = 480 + 400
                 case 1280:
                     self.height = 720 + 800
-        if  not self.use_depth:
+        if not self.use_depth:
             match self.width:
                 case 640:
                     self.height = 480
                 case 1280:
                     self.height = 720
 
-                
         at_least_one_is_not_none = self.fps is not None or self.width is not None or self.height is not None
         at_least_one_is_none = self.fps is None or self.width is None or self.height is None
         if at_least_one_is_not_none and at_least_one_is_none:

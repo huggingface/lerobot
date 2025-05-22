@@ -139,6 +139,7 @@ import os
 import time
 from dataclasses import asdict
 from pprint import pformat
+
 import cv2
 
 cv2.namedWindow("i")
