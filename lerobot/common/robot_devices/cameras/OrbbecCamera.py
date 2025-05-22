@@ -1,22 +1,20 @@
 import threading
-from threading import Thread
-
-import numpy as np
-import cv2
-import pyorbbecsdk as OB
-from typing import Union, Any, Optional
 import time
+from threading import Thread
+from typing import Any, Optional, Union
+
+import cv2
+import numpy as np
+import pyorbbecsdk as OB
 
 from lerobot.common.robot_devices.cameras.configs import OrbbecCameraConfig
 from lerobot.common.robot_devices.utils import (
     RobotDeviceAlreadyConnectedError,
+    RobotDeviceNotConnectedError,
 )
 from lerobot.common.utils.utils import capture_timestamp_utc
-from lerobot.common.robot_devices.utils import (
-    RobotDeviceAlreadyConnectedError,
-    RobotDeviceNotConnectedError,
-    busy_wait,
-)
+
+
 def frame_to_bgr_image(frame: OB.VideoFrame) -> Union[Optional[np.array], Any]:
     width = frame.get_width()
     height = frame.get_height()
@@ -52,7 +50,6 @@ def frame_to_bgr_image(frame: OB.VideoFrame) -> Union[Optional[np.array], Any]:
     return image
 
 
-
 class TemporalFilter:
     def __init__(self, alpha):
         self.alpha = alpha
@@ -66,10 +63,12 @@ class TemporalFilter:
         self.previous_frame = result
         return result
 
+
 SERIAL_NUMBER_INDEX = 1
 
 MIN_DEPTH = 20  # 20mm
 MAX_DEPTH = 10000  # 10000mm
+
 
 class OrbbecCamera:
     def __init__(
@@ -86,8 +85,8 @@ class OrbbecCamera:
         self.index = None
         self.channels = 3
         self.Hi_resolution_mode = config.Hi_resolution_mode
-        
-        self.depth_height = None 
+
+        self.depth_height = None
         self.color_height = None
         if self.use_depth:
             match self.width:
@@ -107,51 +106,52 @@ class OrbbecCamera:
         self.logs = {}
         self.temporal_filter = TemporalFilter(config.TemporalFilter_alpha)
         if self.mock:
-            import tests.mock_cv2 as cv2
+            pass
         else:
-            import cv2
+            pass
 
-
-
-    def fuse_color_and_depth(self,color_image, depth_rgb_packed) -> np.ndarray:
+    def fuse_color_and_depth(self, color_image, depth_rgb_packed) -> np.ndarray:
         if color_image.shape[1] != depth_rgb_packed.shape[1]:
             raise ValueError("Width mismatch between color and depth images.")
 
-        stacked = np.vstack((color_image, depth_rgb_packed)) 
+        stacked = np.vstack((color_image, depth_rgb_packed))
         return stacked
+
     def load_depth_config(self):
         try:
             profile_list = self.camera.get_stream_profile_list(OB.OBSensorType.DEPTH_SENSOR)
             assert profile_list is not None
-            depth_profile = profile_list.get_video_stream_profile(self.width, self.depth_height, OB.OBFormat.Y16, self.fps)
+            depth_profile = profile_list.get_video_stream_profile(
+                self.width, self.depth_height, OB.OBFormat.Y16, self.fps
+            )
             assert depth_profile is not None
             print("\033[32mDEPTH Profile Loaded:\033[0m", depth_profile)
             self.OBconfig.enable_stream(depth_profile)
         except Exception as e:
             print(e)
             return
-        
+
     def load_color_config(self):
         try:
             profile_list = self.camera.get_stream_profile_list(OB.OBSensorType.COLOR_SENSOR)
             assert profile_list is not None
-            color_profile = profile_list.get_video_stream_profile(self.width, self.color_height, OB.OBFormat.RGB, self.fps)
+            color_profile = profile_list.get_video_stream_profile(
+                self.width, self.color_height, OB.OBFormat.RGB, self.fps
+            )
             assert color_profile is not None
             print("\033[32mCOLOR Profile Loaded:\033[0m ", color_profile)
             self.OBconfig.enable_stream(color_profile)
         except Exception as e:
             print(e)
             return
-        
+
     def connect(self):
         if self.is_connected:
-            raise RobotDeviceAlreadyConnectedError(
-               "OrbbecCamera is readyConnected"
-            )
+            raise RobotDeviceAlreadyConnectedError("OrbbecCamera is readyConnected")
         if self.mock:
             print("Waring!!MockMode is under repairing")
             return
-            
+
         print("\033[32mHello! Orbbec!\033[0m")
 
         self.OBconfig = OB.Config()
@@ -161,7 +161,7 @@ class OrbbecCamera:
             self.load_depth_config()
 
         self.load_color_config()
-        
+
         self.camera.start(self.OBconfig)
 
         self.is_connected = True
@@ -183,50 +183,51 @@ class OrbbecCamera:
         # Apply temporal filter
         filtered_depth_data = self.temporal_filter.process(depth_data)
         # Convert to float32 and apply scale
-        #filtered_depth_data = filtered_depth_data.astype(np.float32) * scale
+        # filtered_depth_data = filtered_depth_data.astype(np.float32) * scale
         filtered_depth_data = filtered_depth_data.astype(np.uint16)
-        
-        # depth_mm = (filtered_depth_data * 1000).astype(np.uint32)  
+
+        # depth_mm = (filtered_depth_data * 1000).astype(np.uint32)
         if self.Hi_resolution_mode:
-            R = ((filtered_depth_data >> 8) & 0xFF).astype(np.uint8)  
-            G = (filtered_depth_data & 0xFF).astype(np.uint8)        
-            B = np.zeros_like(R, dtype=np.uint8)            
+            R = ((filtered_depth_data >> 8) & 0xFF).astype(np.uint8)
+            G = (filtered_depth_data & 0xFF).astype(np.uint8)
+            B = np.zeros_like(R, dtype=np.uint8)
 
             filtered_depth_data = cv2.merge([B, G, R])
 
         else:
-            filtered_depth_data = cv2.normalize(filtered_depth_data, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+            filtered_depth_data = cv2.normalize(
+                filtered_depth_data, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U
+            )
             filtered_depth_data = cv2.applyColorMap(filtered_depth_data, cv2.COLORMAP_JET)
         return filtered_depth_data
 
     def read(self):
-            start_time = time.perf_counter()
-            frames = self.camera.wait_for_frames(1000)
-            if frames is None:
-                print("No frames received")
-            if self.use_depth:
-                depth_frame = frames.get_depth_frame()
-                if depth_frame is None:
-                    print("No depth frame received")
-                    
-                self.depth_map = self.HandleDepth(depth_frame)
+        start_time = time.perf_counter()
+        frames = self.camera.wait_for_frames(1000)
+        if frames is None:
+            print("No frames received")
+        if self.use_depth:
+            depth_frame = frames.get_depth_frame()
+            if depth_frame is None:
+                print("No depth frame received")
 
-            color_frame = frames.get_color_frame()
-         
-            if color_frame is None:
-                print("No color frame received")
-                
-            self.color_image = frame_to_bgr_image(color_frame)
-            
-            if self.color_image is None:
-                print("failed to convert frame to image")
+            self.depth_map = self.HandleDepth(depth_frame)
 
-            self.logs["delta_timestamp_s"] = time.perf_counter() - start_time
+        color_frame = frames.get_color_frame()
 
-            # log the utc time at which the image was received
-            self.logs["timestamp_utc"] = capture_timestamp_utc()
+        if color_frame is None:
+            print("No color frame received")
 
-        
+        self.color_image = frame_to_bgr_image(color_frame)
+
+        if self.color_image is None:
+            print("failed to convert frame to image")
+
+        self.logs["delta_timestamp_s"] = time.perf_counter() - start_time
+
+        # log the utc time at which the image was received
+        self.logs["timestamp_utc"] = capture_timestamp_utc()
+
     def read_loop(self):
         print("开始尝试")
         while not self.stop_event.is_set():
@@ -234,29 +235,29 @@ class OrbbecCamera:
                 self.read()
             except Exception as e:
                 print(e)
-                break  
+                break
 
     def async_read(self):
         if self.thread is None or not self.thread.is_alive():
             self.stop_event = threading.Event()
-            self.thread = Thread(target=self.read_loop, args=(),daemon=True)
+            self.thread = Thread(target=self.read_loop, args=(), daemon=True)
             self.thread.start()
 
         num_tries = 0
         while self.color_image is None:
-           
             # TODO(rcadene, aliberts): intelrealsense has diverged compared to opencv over here
             num_tries += 1
             time.sleep(1 / self.fps)
-            #if num_tries > self.fps and (self.thread.ident is None or not self.thread.is_alive()):
-                #raise Exception(
-                #print(   "The thread responsible for `self.async_read()` took too much time to start. There might be an issue. Verify that `self.thread.start()` has been called.")######可能一直报错
-        
+            # if num_tries > self.fps and (self.thread.ident is None or not self.thread.is_alive()):
+            # raise Exception(
+            # print(   "The thread responsible for `self.async_read()` took too much time to start. There might be an issue. Verify that `self.thread.start()` has been called.")######可能一直报错
+
         if self.use_depth:
             return self.fuse_color_and_depth(self.color_image, self.depth_map)
 
         else:
             return self.color_image
+
     def disconnect(self):
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
@@ -274,14 +275,16 @@ class OrbbecCamera:
         self.camera = None
 
         self.is_connected = False
+
     def test_read(self):
         if self.thread is None:
             self.stop_event = threading.Event()
             self.thread = Thread(target=self.test_loop, args=())
             self.thread.daemon = True
             self.thread.start()
+
+
 if __name__ == "__main__":
-    
     # Create a configuration for the OrbbecCamera
     config = OrbbecCameraConfig(
         fps=30,
@@ -302,6 +305,3 @@ if __name__ == "__main__":
     # Start asynchronous reading
     while True:
         camera.async_read()
-        
-
-   

@@ -97,23 +97,23 @@
 # pose_index= 3
 
 # # 取消自锁
-# robot.follower_arms["main"].write("Torque_Enable", TorqueMode.DISABLED.value) 
+# robot.follower_arms["main"].write("Torque_Enable", TorqueMode.DISABLED.value)
 
 # # 手动操作三次
 # for i in range(pose_index):
 #     input(f"第 {i+1} 次手动操作，请按回车记录当前位置...")
-    
+
 #     # 读取当前位置
 #     follower_pos = robot.follower_arms["main"].read("Present_Position")
-    
+
 #     # 打印当前位置
 #     print(f"当前机械臂角度：{np.array2string(follower_pos, precision=3, suppress_small=True)}")
-    
+
 #     # 将当前位置添加到列表中
 #     positions.append(follower_pos)
-    
+
 # # 开启自锁
-# robot.follower_arms["main"].write("Torque_Enable", TorqueMode.ENABLED.value) 
+# robot.follower_arms["main"].write("Torque_Enable", TorqueMode.ENABLED.value)
 
 # # 显示记录的所有位置，并执行
 # print("\n所有记录的角度：")
@@ -123,6 +123,6 @@
 #     print(f"\n机械臂将自动移动到目标位置：{np.array2string(pos, precision=3, suppress_small=True)}")
 #     # 让机械臂移动到目标位置
 #     robot.follower_arms["main"].write("Goal_Position", pos)
-    
+
 # # 断开连接
 # robot.disconnect()

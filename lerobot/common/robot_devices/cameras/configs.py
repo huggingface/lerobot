@@ -112,13 +112,11 @@ class IntelRealSenseCameraConfig(CameraConfig):
 
         if self.rotation not in [-90, None, 90, 180]:
             raise ValueError(f"`rotation` must be in [-90, None, 90, 180] (got {self.rotation})")
-            
+
 
 @CameraConfig.register_subclass("OrbbecCamera")
 @dataclass
 class OrbbecCameraConfig(CameraConfig):
-
-
     fps: int | None = None
     width: int | None = None
     height: int | None = None
@@ -126,9 +124,9 @@ class OrbbecCameraConfig(CameraConfig):
     use_depth: bool = True
     mock: bool = False
     index: int = 0
-    channels:int = 3
-    TemporalFilter_alpha:float = 0.5
-    Hi_resolution_mode:bool = False
+    channels: int = 3
+    TemporalFilter_alpha: float = 0.5
+    Hi_resolution_mode: bool = False
 
     def __post_init__(self):
         # bool is stronger than is None, since it works with empty strings
@@ -138,16 +136,14 @@ class OrbbecCameraConfig(CameraConfig):
                 f"`color_mode` is expected to be 'rgb' or 'bgr', but {self.color_mode} is provided."
             )
         if self.width is None:
-            raise ValueError(
-                f"`height` is expected to be 'None' ."
-            )
-        if  self.use_depth:
+            raise ValueError("`height` is expected to be 'None' .")
+        if self.use_depth:
             match self.width:
                 case 640:
                     self.height = 480 + 400
                 case 1280:
                     self.height = 720 + 800
-        if  not self.use_depth:
+        if not self.use_depth:
             match self.width:
                 case 640:
                     self.height = 480
