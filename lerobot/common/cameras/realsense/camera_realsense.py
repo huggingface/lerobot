@@ -170,7 +170,8 @@ class RealSenseCamera(Camera):
             raise DeviceAlreadyConnectedError(f"{self} is already connected.")
 
         self.rs_pipeline = rs.pipeline()
-        rs_config = self._make_rs_pipeline_config()
+        rs_config = rs.config()
+        self._configure_rs_pipeline_config(rs_config)
 
         try:
             self.rs_profile = self.rs_pipeline.start(rs_config)
@@ -272,9 +273,8 @@ class RealSenseCamera(Camera):
         logger.info(f"Found serial number '{serial_number}' for camera name '{name}'.")
         return serial_number
 
-    def _make_rs_pipeline_config(self) -> rs.config:
+    def _configure_rs_pipeline_config(self, rs_config):
         """Creates and configures the RealSense pipeline configuration object."""
-        rs_config = rs.config()
         rs.config.enable_device(rs_config, self.serial_number)
 
         if self.width and self.height and self.fps:
@@ -297,8 +297,6 @@ class RealSenseCamera(Camera):
             if self.use_depth:
                 logger.debug(f"Requesting Depth Stream: Default settings, Format: {rs.stream.depth}")
                 rs_config.enable_stream(rs.stream.depth)
-
-        return rs_config
 
     def _validate_capture_settings(self) -> None:
         """

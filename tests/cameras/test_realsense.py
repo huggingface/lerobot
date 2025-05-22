@@ -28,10 +28,9 @@ import pytest
 from lerobot.common.cameras.configs import Cv2Rotation
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
-try:
-    from lerobot.common.cameras.realsense import RealSenseCamera, RealSenseCameraConfig
-except (ImportError, ModuleNotFoundError, NameError):
-    pytest.skip("pyrealsense2 not available", allow_module_level=True)
+pytest.importorskip("pyrealsense2")
+
+from lerobot.common.cameras.realsense import RealSenseCamera, RealSenseCameraConfig
 
 TEST_ARTIFACTS_DIR = Path(__file__).parent.parent / "artifacts" / "cameras"
 BAG_FILE_PATH = TEST_ARTIFACTS_DIR / "test_rs.bag"
