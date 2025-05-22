@@ -157,7 +157,9 @@ class FeetechMotorsBus(MotorsBus):
         firmware_versions = self._read_firmware_version(self.ids)
         if len(set(firmware_versions.values())) != 1:
             raise RuntimeError(
-                "Some Motors use different firmware versions. Update their firmware first using Feetech's software. "
+                "Some Motors use different firmware versions:"
+                f"\n{pformat(firmware_versions)}\n"
+                "Update their firmware first using Feetech's software. "
                 "Visit https://www.feetechrc.com/software."
             )
 
