@@ -77,11 +77,9 @@ class HomonculusGlove(Teleoperator):
 
         self.inverted_joints = [
             "thumb_cmc",
-            "thumb_dip",
             "index_dip",
             "middle_mcp_abduction",
             "middle_dip",
-            "ring_dip",
             "pinky_mcp_abduction",
             "pinky_dip",
         ]

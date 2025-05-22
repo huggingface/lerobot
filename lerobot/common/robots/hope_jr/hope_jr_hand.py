@@ -44,31 +44,42 @@ class HopeJrHand(Robot):
             port=self.config.port,
             motors={
                 # Thumb
-                "thumb_cmc": Motor(1, "scs0009", MotorNormMode.RANGE_M100_100),
-                "thumb_mcp": Motor(2, "scs0009", MotorNormMode.RANGE_M100_100),
-                "thumb_pip": Motor(3, "scs0009", MotorNormMode.RANGE_M100_100),
-                "thumb_dip": Motor(4, "scs0009", MotorNormMode.RANGE_M100_100),
+                "thumb_cmc": Motor(1, "scs0009", MotorNormMode.RANGE_0_100),
+                "thumb_mcp": Motor(2, "scs0009", MotorNormMode.RANGE_0_100),
+                "thumb_pip": Motor(3, "scs0009", MotorNormMode.RANGE_0_100),
+                "thumb_dip": Motor(4, "scs0009", MotorNormMode.RANGE_0_100),
                 # Index
-                "index_radial_flexor": Motor(5, "scs0009", MotorNormMode.RANGE_M100_100),
-                "index_ulnar_flexor": Motor(6, "scs0009", MotorNormMode.RANGE_M100_100),
-                "index_pip_dip": Motor(7, "scs0009", MotorNormMode.RANGE_M100_100),
+                "index_radial_flexor": Motor(5, "scs0009", MotorNormMode.RANGE_0_100),
+                "index_ulnar_flexor": Motor(6, "scs0009", MotorNormMode.RANGE_0_100),
+                "index_pip_dip": Motor(7, "scs0009", MotorNormMode.RANGE_0_100),
                 # Middle
-                "middle_radial_flexor": Motor(8, "scs0009", MotorNormMode.RANGE_M100_100),
-                "middle_ulnar_flexor": Motor(9, "scs0009", MotorNormMode.RANGE_M100_100),
-                "middle_pip_dip": Motor(10, "scs0009", MotorNormMode.RANGE_M100_100),
+                "middle_radial_flexor": Motor(8, "scs0009", MotorNormMode.RANGE_0_100),
+                "middle_ulnar_flexor": Motor(9, "scs0009", MotorNormMode.RANGE_0_100),
+                "middle_pip_dip": Motor(10, "scs0009", MotorNormMode.RANGE_0_100),
                 # Ring
-                "ring_radial_flexor": Motor(11, "scs0009", MotorNormMode.RANGE_M100_100),
-                "ring_ulnar_flexor": Motor(12, "scs0009", MotorNormMode.RANGE_M100_100),
-                "ring_pip_dip": Motor(13, "scs0009", MotorNormMode.RANGE_M100_100),
+                "ring_radial_flexor": Motor(11, "scs0009", MotorNormMode.RANGE_0_100),
+                "ring_ulnar_flexor": Motor(12, "scs0009", MotorNormMode.RANGE_0_100),
+                "ring_pip_dip": Motor(13, "scs0009", MotorNormMode.RANGE_0_100),
                 # Pinky
-                "pinky_radial_flexor": Motor(14, "scs0009", MotorNormMode.RANGE_M100_100),
-                "pinky_ulnar_flexor": Motor(15, "scs0009", MotorNormMode.RANGE_M100_100),
-                "pinky_pip_dip": Motor(16, "scs0009", MotorNormMode.RANGE_M100_100),
+                "pinky_radial_flexor": Motor(14, "scs0009", MotorNormMode.RANGE_0_100),
+                "pinky_ulnar_flexor": Motor(15, "scs0009", MotorNormMode.RANGE_0_100),
+                "pinky_pip_dip": Motor(16, "scs0009", MotorNormMode.RANGE_0_100),
             },
             calibration=self.calibration,
             protocol_version=1,
         )
         self.cameras = make_cameras_from_configs(config.cameras)
+
+        self.inverted_motors = [
+            "thumb_mcp",
+            "thumb_dip",
+            "index_ulnar_flexor",
+            "middle_ulnar_flexor",
+            "ring_ulnar_flexor",
+            "ring_pip_dip",
+            "pinky_ulnar_flexor",
+            "pinky_pip_dip",
+        ]
 
     @property
     def _motors_ft(self) -> dict[str, type]:
@@ -118,6 +129,8 @@ class HopeJrHand(Robot):
             fingers[finger] = [motor for motor in self.bus.motors if motor.startswith(finger)]
 
         self.calibration = RangeFinderGUI(self.bus, fingers).run()
+        for motor in self.inverted_motors:
+            self.calibration[motor].drive_mode = 1
         self._save_calibration()
         print("Calibration saved to", self.calibration_fpath)
 

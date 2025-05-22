@@ -1,15 +1,17 @@
-INDEX_SPLAY = 0.1
+INDEX_SPLAY = 0.2
 MIDDLE_SPLAY = 0.1
 RING_SPLAY = 0.1
 PINKY_SPLAY = -0.1
 
 
 def get_ulnar_flexion(flexion: float, abduction: float, splay: float):
-    return (100 - abduction) * splay + flexion * (1 - splay)
+    ulnar_component = max(-abduction, 0)
+    return ulnar_component * splay + flexion * (1 - splay)
 
 
 def get_radial_flexion(flexion: float, abduction: float, splay: float):
-    return abduction * splay + flexion * (1 - splay)
+    radial_component = max(abduction, 0)
+    return radial_component * splay + flexion * (1 - splay)
 
 
 def homonculus_glove_to_hope_jr_hand(glove_action: dict[str, float]) -> dict[str, float]:
