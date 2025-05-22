@@ -226,9 +226,7 @@ class OpenCVCamera(Camera):
         actual_fps = self.videocapture.get(cv2.CAP_PROP_FPS)
         # Use math.isclose for robust float comparison
         if not success or not math.isclose(self.fps, actual_fps, rel_tol=1e-3):
-            raise RuntimeError(
-                f"{self} failed to set fps={self.fps} ({actual_fps=})."
-            )
+            raise RuntimeError(f"{self} failed to set fps={self.fps} ({actual_fps=}).")
 
     def _validate_width_and_height(self) -> None:
         """Validates and sets the camera's frame capture width and height."""
@@ -236,9 +234,7 @@ class OpenCVCamera(Camera):
         success = self.videocapture.set(cv2.CAP_PROP_FRAME_WIDTH, float(self.capture_width))
         actual_width = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_WIDTH)))
         if not success or self.capture_width != actual_width:
-            raise RuntimeError(
-                f"{self} failed to set capture_width={self.capture_width} ({actual_width=})."
-            )
+            raise RuntimeError(f"{self} failed to set capture_width={self.capture_width} ({actual_width=}).")
 
         success = self.videocapture.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self.capture_height))
         actual_height = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_HEIGHT)))
@@ -291,7 +287,6 @@ class OpenCVCamera(Camera):
                 found_cameras_info.append(camera_info)
                 camera.release()
 
-
         return found_cameras_info
 
     def read(self, color_mode: ColorMode | None = None) -> np.ndarray:
@@ -325,9 +320,7 @@ class OpenCVCamera(Camera):
         ret, frame = self.videocapture.read()
 
         if not ret or frame is None:
-            raise RuntimeError(
-                f"{self} read failed (status={ret})."
-            )
+            raise RuntimeError(f"{self} read failed (status={ret}).")
 
         # Post-process the frame (color conversion, dimension check, rotation)
         processed_frame = self._postprocess_image(frame, color_mode)
@@ -398,7 +391,6 @@ class OpenCVCamera(Camera):
             except Exception as e:
                 logger.warning(f"Error reading frame in background thread for {self}: {e}")
 
-
     def _start_read_thread(self) -> None:
         """Starts or restarts the background read thread if it's not running."""
         if self.thread is not None and self.thread.is_alive():
@@ -407,9 +399,7 @@ class OpenCVCamera(Camera):
             self.stop_event.set()
 
         self.stop_event = Event()
-        self.thread = Thread(
-            target=self._read_loop, args=(), name=f"{self}_read_loop"
-        )
+        self.thread = Thread(target=self._read_loop, args=(), name=f"{self}_read_loop")
         self.thread.daemon = True
         self.thread.start()
 
