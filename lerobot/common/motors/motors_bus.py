@@ -373,28 +373,43 @@ class MotorsBus(abc.ABC):
         return error != self._no_error
 
     def _assert_motors_exist(self) -> None:
-        # TODO(aliberts): collect all wrong ids/models and display them at once
+        expected_models = {m.id: self.model_number_table[m.model] for m in self.motors.values()}
+
         found_models = {}
         for id_ in self.ids:
             model_nb = self.ping(id_)
             if model_nb is not None:
                 found_models[id_] = model_nb
-        expected_models = {m.id: self.model_number_table[m.model] for m in self.motors.values()}
-        if set(found_models) != set(self.ids):
-            raise RuntimeError(
-                f"{self.__class__.__name__} is supposed to have these motors: ({{id: model_nb}})"
-                f"\n{pformat(expected_models, indent=4, sort_dicts=False)}\n"
-                f"But it found these motors on port '{self.port}':"
-                f"\n{pformat(found_models, indent=4, sort_dicts=False)}\n"
-            )
 
-        for id_, model in expected_models.items():
-            if found_models[id_] != model:
-                raise RuntimeError(
-                    f"Motor '{self._id_to_name(id_)}' (id={id_}) is supposed to be of model_number={model} "
-                    f"('{self._id_to_model(id_)}') but a model_number={found_models[id_]} "
-                    "was found instead for that id."
+        missing_ids = [id_ for id_ in self.ids if id_ not in found_models]
+        wrong_models = {
+            id_: (expected_models[id_], found_models[id_])
+            for id_ in found_models
+            if expected_models.get(id_) != found_models[id_]
+        }
+
+        if missing_ids or wrong_models:
+            error_lines = [f"{self.__class__.__name__} motor check failed on port '{self.port}':"]
+
+            if missing_ids:
+                error_lines.append("\nMissing motor IDs:")
+                error_lines.extend(
+                    f"  - {id_} (expected model: {expected_models[id_]})" for id_ in missing_ids
                 )
+
+            if wrong_models:
+                error_lines.append("\nMotors with incorrect model numbers:")
+                error_lines.extend(
+                    f"  - {id_} ({self._id_to_name(id_)}): expected {expected}, found {found}"
+                    for id_, (expected, found) in wrong_models.items()
+                )
+
+            error_lines.append("\nFull expected motor list (id: model_number):")
+            error_lines.append(pformat(expected_models, indent=4, sort_dicts=False))
+            error_lines.append("\nFull found motor list (id: model_number):")
+            error_lines.append(pformat(found_models, indent=4, sort_dicts=False))
+
+            raise RuntimeError("\n".join(error_lines))
 
     @abc.abstractmethod
     def _assert_protocol_is_compatible(self, instruction_name: str) -> None:

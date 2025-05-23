@@ -44,9 +44,9 @@ import rerun as rr
 
 from lerobot.common.cameras import (  # noqa: F401
     CameraConfig,  # noqa: F401
-    intel,
-    opencv,
 )
+from lerobot.common.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
+from lerobot.common.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.common.datasets.image_writer import safe_stop_image_writer
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.datasets.utils import build_dataset_frame, hw_to_dataset_features
@@ -166,6 +166,10 @@ def record_loop(
 ):
     if dataset is not None and fps is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
+
+    # if policy is given it needs cleaning up
+    if policy is not None:
+        policy.reset()
 
     timestamp = 0
     start_episode_t = time.perf_counter()

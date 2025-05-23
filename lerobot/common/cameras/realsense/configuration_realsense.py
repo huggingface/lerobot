@@ -13,46 +13,49 @@
 # limitations under the License.
 
 from dataclasses import dataclass
-from pathlib import Path
 
 from ..configs import CameraConfig, ColorMode, Cv2Rotation
 
 
-@CameraConfig.register_subclass("opencv")
+@CameraConfig.register_subclass("intelrealsense")
 @dataclass
-class OpenCVCameraConfig(CameraConfig):
-    """Configuration class for OpenCV-based camera devices or video files.
+class RealSenseCameraConfig(CameraConfig):
+    """Configuration class for Intel RealSense cameras.
 
-    This class provides configuration options for cameras accessed through OpenCV,
-    supporting both physical camera devices and video files. It includes settings
-    for resolution, frame rate, color mode, and image rotation.
+    This class provides specialized configuration options for Intel RealSense cameras,
+    including support for depth sensing and device identification via serial number or name.
 
-    Example configurations:
+    Example configurations for Intel RealSense D405:
     ```python
     # Basic configurations
-    OpenCVCameraConfig(0, 30, 1280, 720)   # 1280x720 @ 30FPS
-    OpenCVCameraConfig(/dev/video4, 60, 640, 480)   # 640x480 @ 60FPS
+    RealSenseCameraConfig(128422271347, 30, 1280, 720)   # 1280x720 @ 30FPS
+    RealSenseCameraConfig(128422271347, 60, 640, 480)   # 640x480 @ 60FPS
 
     # Advanced configurations
-    OpenCVCameraConfig(128422271347, 30, 640, 480, rotation=Cv2Rotation.ROTATE_90)     # With 90° rotation
+    RealSenseCameraConfig(128422271347, 30, 640, 480, use_depth=True)  # With depth sensing
+    RealSenseCameraConfig(128422271347, 30, 640, 480, rotation=Cv2Rotation.ROTATE_90)     # With 90° rotation
     ```
 
     Attributes:
-        index_or_path: Either an integer representing the camera device index,
-                      or a Path object pointing to a video file.
         fps: Requested frames per second for the color stream.
         width: Requested frame width in pixels for the color stream.
         height: Requested frame height in pixels for the color stream.
+        serial_number_or_name: Unique serial number or human-readable name to identify the camera.
         color_mode: Color mode for image output (RGB or BGR). Defaults to RGB.
+        use_depth: Whether to enable depth stream. Defaults to False.
         rotation: Image rotation setting (0°, 90°, 180°, or 270°). Defaults to no rotation.
         warmup_s: Time reading frames before returning from connect (in seconds)
 
     Note:
-        - Only 3-channel color output (RGB/BGR) is currently supported.
+        - Either name or serial_number must be specified.
+        - Depth stream configuration (if enabled) will use the same FPS as the color stream.
+        - The actual resolution and FPS may be adjusted by the camera to the nearest supported mode.
+        - For `fps`, `width` and `height`, either all of them need to be set, or none of them.
     """
 
-    index_or_path: int | Path
+    serial_number_or_name: int | str
     color_mode: ColorMode = ColorMode.RGB
+    use_depth: bool = False
     rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION
     warmup_s: int = 1
 
@@ -70,4 +73,10 @@ class OpenCVCameraConfig(CameraConfig):
         ):
             raise ValueError(
                 f"`rotation` is expected to be in {(Cv2Rotation.NO_ROTATION, Cv2Rotation.ROTATE_90, Cv2Rotation.ROTATE_180, Cv2Rotation.ROTATE_270)}, but {self.rotation} is provided."
+            )
+
+        values = (self.fps, self.width, self.height)
+        if any(v is not None for v in values) and any(v is None for v in values):
+            raise ValueError(
+                "For `fps`, `width` and `height`, either all of them need to be set, or none of them."
             )
