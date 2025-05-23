@@ -400,7 +400,14 @@ def hw_to_dataset_features(
     joint_fts = {key: ftype for key, ftype in hw_features.items() if ftype is float}
     cam_fts = {key: shape for key, shape in hw_features.items() if isinstance(shape, tuple)}
 
-    if joint_fts:
+    if joint_fts and prefix == "action":
+        features[f"{prefix}"] = {
+            "dtype": "float32",
+            "shape": (len(joint_fts),),
+            "names": list(joint_fts),
+        }
+
+    if joint_fts and prefix == "observation":
         features[f"{prefix}.state"] = {
             "dtype": "float32",
             "shape": (len(joint_fts),),
