@@ -33,7 +33,11 @@ from termcolor import colored
 
 from lerobot.common.datasets.image_writer import safe_stop_image_writer
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.datasets.utils import DEFAULT_AUDIO_CHUNK_DURATION, get_features_from_robot
+from lerobot.common.datasets.utils import (
+    DEFAULT_AUDIO_CHUNK_DURATION,
+    DEFAULT_INITIAL_AUDIO_BUFFER_DURATION,
+    get_features_from_robot,
+)
 from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.robot_devices.microphones.utils import (
     async_microphones_start_recording,
@@ -308,7 +312,7 @@ def control_loop(
         async_microphones_start_recording(robot.microphones)
 
     # Fill audio buffers
-    busy_wait(DEFAULT_AUDIO_CHUNK_DURATION)
+    busy_wait(DEFAULT_INITIAL_AUDIO_BUFFER_DURATION)
 
     while timestamp < control_time_s:
         start_loop_t = time.perf_counter()

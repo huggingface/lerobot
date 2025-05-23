@@ -60,6 +60,7 @@ DEFAULT_RAW_AUDIO_PATH = "raw_audio/{audio_key}/episode_{episode_index:06d}.wav"
 DEFAULT_COMPRESSED_AUDIO_PATH = "audio/chunk-{episode_chunk:03d}/{audio_key}/episode_{episode_index:06d}.m4a"
 
 DEFAULT_AUDIO_CHUNK_DURATION = 0.5  # seconds
+DEFAULT_INITIAL_AUDIO_BUFFER_DURATION = 1.0  # seconds
 
 DATASET_CARD_TEMPLATE = """
 ---
