@@ -58,6 +58,7 @@ available_tasks_per_env = {
     ],
     "pusht": ["PushT-v0"],
     "xarm": ["XarmLift-v0"],
+    "genesis": ["CubePick-v0", "CubeStack-v0"],
 }
 available_envs = list(available_tasks_per_env.keys())
 

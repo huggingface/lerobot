@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import warnings
-from typing import Any
+from typing import Any, Protocol, Union
 
 import einops
 import gymnasium as gym
@@ -25,6 +25,16 @@ from torch import Tensor
 from lerobot.common.envs.configs import EnvConfig
 from lerobot.common.utils.utils import get_channel_first_image_shape
 from lerobot.configs.types import FeatureType, PolicyFeature
+
+
+class BatchedEnv(Protocol):
+    """A protocol for any natively batched environment."""
+
+    num_envs: int
+
+    def reset(self, *, seed=None, options=None) -> tuple[Any, dict]: ...
+
+    def step(self, action) -> tuple[Any, Any, Any, Any, dict]: ...
 
 
 def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Tensor]:
@@ -62,13 +72,19 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
             return_observations[imgkey] = img
 
     if "environment_state" in observations:
-        return_observations["observation.environment_state"] = torch.from_numpy(
-            observations["environment_state"]
-        ).float()
+        if isinstance(observations["environment_state"], np.ndarray):
+            return_observations["observation.environment_state"] = torch.from_numpy(
+                observations["environment_state"]
+            ).float()
+        else:
+            return_observations["observation.environment_state"] = observations["environment_state"]
 
     # TODO(rcadene): enable pixels only baseline with `obs_type="pixels"` in environment by removing
     # requirement for "agent_pos"
-    return_observations["observation.state"] = torch.from_numpy(observations["agent_pos"]).float()
+    if isinstance(observations["agent_pos"], np.ndarray):
+        return_observations["observation.state"] = torch.from_numpy(observations["agent_pos"]).float()
+    else:
+        return_observations["observation.state"] = observations["agent_pos"]
     return return_observations
 
 
@@ -97,7 +113,17 @@ def are_all_envs_same_type(env: gym.vector.VectorEnv) -> bool:
     return all(type(e) is first_type for e in env.envs)  # Fast type check
 
 
-def check_env_attributes_and_types(env: gym.vector.VectorEnv) -> None:
+def check_env_attributes_and_types(env: Union[gym.vector.VectorEnv, BatchedEnv]) -> None:
+    # Dispatch to the right function depending on env type
+    if isinstance(env, gym.vector.VectorEnv):
+        # Standard Gym VectorEnv pattern
+        return check_env_attributes_and_types_vector(env)
+    else:
+        # Genesis native batched env
+        return check_env_attributes_and_types_batched(env)
+
+
+def check_env_attributes_and_types_vector(env: gym.vector.VectorEnv) -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("once", UserWarning)  # Apply filter only in this function
 
@@ -115,13 +141,38 @@ def check_env_attributes_and_types(env: gym.vector.VectorEnv) -> None:
             )
 
 
-def add_envs_task(env: gym.vector.VectorEnv, observation: dict[str, Any]) -> dict[str, Any]:
+def check_env_attributes_and_types_batched(env: Union[gym.vector.VectorEnv, BatchedEnv]) -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("once", UserWarning)  # Apply filter only in this function
+
+        if not (hasattr(env, "task_description") and hasattr(env, "task")):
+            warnings.warn(
+                "The environment does not have 'task_description' and 'task'. Some policies require these features.",
+                UserWarning,
+                stacklevel=2,
+            )
+
+
+def add_envs_task(
+    env: Union[gym.vector.VectorEnv, BatchedEnv], observation: dict[str, Any]
+) -> dict[str, Any]:
     """Adds task feature to the observation dict with respect to the first environment attribute."""
-    if hasattr(env.envs[0], "task_description"):
-        observation["task"] = env.call("task_description")
-    elif hasattr(env.envs[0], "task"):
-        observation["task"] = env.call("task")
-    else:  #  For envs without language instructions, e.g. aloha transfer cube and etc.
-        num_envs = observation[list(observation.keys())[0]].shape[0]
-        observation["task"] = ["" for _ in range(num_envs)]
+    num_envs = observation[list(observation.keys())[0]].shape[0]
+    if isinstance(env, gym.vector.VectorEnv):
+        if hasattr(env.envs[0], "task_description"):
+            observation["task"] = env.call("task_description")
+        elif hasattr(env.envs[0], "task"):
+            observation["task"] = env.call("task")
+        else:  #  For envs without language instructions, e.g. aloha transfer cube and etc.
+            num_envs = observation[list(observation.keys())[0]].shape[0]
+            observation["task"] = ["" for _ in range(num_envs)]
+    else:
+        # natively batched env (Genesis, IsaacLab, etc.)
+        if hasattr(env, "task_description"):
+            observation["task"] = [env.task_description] * num_envs
+        elif hasattr(env, "task"):
+            observation["task"] = [env.task] * num_envs
+        else:
+            observation["task"] = ["" for _ in range(num_envs)]
+
     return observation

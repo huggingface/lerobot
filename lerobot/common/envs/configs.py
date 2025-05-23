@@ -154,3 +154,52 @@ class XarmEnv(EnvConfig):
             "visualization_height": self.visualization_height,
             "max_episode_steps": self.episode_length,
         }
+
+
+@EnvConfig.register_subclass("genesis")
+@dataclass
+class GenesisEnv(EnvConfig):
+    task: str = "CubePick-v0"
+    fps: int = 60
+    episode_length: int = 200
+    obs_type: str = "pixels_agent_pos"
+    render_mode: str = "rgb_array"
+    enable_pixels: bool = True
+    num_envs: int = 10
+    observation_height: int = 480
+    observation_width: int = 640
+    env_spacing: tuple = (1.0, 1.0)
+    camera_capture_mode: str = "per_env"
+
+    features: dict[str, PolicyFeature] = field(
+        default_factory=lambda: {
+            "action": PolicyFeature(type=FeatureType.ACTION, shape=(9,)),
+            "agent_pos": PolicyFeature(type=FeatureType.STATE, shape=(9,)),
+        }
+    )
+
+    features_map: dict[str, str] = field(
+        default_factory=lambda: {
+            "action": ACTION,
+            "agent_pos": OBS_ROBOT,
+            "environment_state": OBS_ENV,
+            "pixels": OBS_IMAGE,
+        }
+    )
+
+    def __post_init__(self):
+        if self.obs_type == "pixels_agent_pos":
+            self.features["pixels"] = PolicyFeature(type=FeatureType.VISUAL, shape=(480, 640, 3))
+        elif self.obs_type == "environment_state_agent_pos":
+            env_shape = 14 if self.task == "CubeStack-v0" else 11
+            self.features["environment_state"] = PolicyFeature(type=FeatureType.ENV, shape=(env_shape,))
+
+    @property
+    def gym_kwargs(self) -> dict:
+        return {
+            "enable_pixels": self.enable_pixels,
+            "observation_height": self.observation_height,
+            "observation_width": self.observation_width,
+            "env_spacing": self.env_spacing,
+            "camera_capture_mode": self.camera_capture_mode,
+        }

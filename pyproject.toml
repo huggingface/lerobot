@@ -84,6 +84,7 @@ dora = [
 ]
 dynamixel = ["dynamixel-sdk>=3.7.31", "pynput>=1.7.7"]
 feetech = ["feetech-servo-sdk>=1.0.0", "pynput>=1.7.7"]
+genesis = ["gym-genesis @ git+https://github.com/huggingface/gym-genesis.git"]
 intelrealsense = ["pyrealsense2>=2.55.1.6486 ; sys_platform != 'darwin'"]
 pi0 = ["transformers>=4.48.0"]
 pusht = ["gym-pusht>=0.1.5 ; python_version < '4.0'"]
