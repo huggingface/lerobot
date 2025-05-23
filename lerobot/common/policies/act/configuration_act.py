@@ -98,7 +98,7 @@ class ACTConfig(PreTrainedConfig):
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.MEAN_STD,
-            "AUDIO": NormalizationMode.MIN_MAX,
+            "AUDIO": NormalizationMode.IDENTITY,
             "STATE": NormalizationMode.MEAN_STD,
             "ACTION": NormalizationMode.MEAN_STD,
         }
@@ -111,6 +111,8 @@ class ACTConfig(PreTrainedConfig):
     replace_final_stride_with_dilation: int = False
     # Audio backbone.
     audio_backbone: str = vision_backbone
+    pretrained_backbone_weights_audio: str | None = ""
+    replace_final_stride_with_dilation_audio: int = False
     # Transformer layers.
     pre_norm: bool = False
     dim_model: int = 512
