@@ -17,7 +17,6 @@
 import logging
 import threading
 import time
-from enum import Enum
 from pprint import pformat
 
 import serial
@@ -32,20 +31,10 @@ from .config_homonculus import HomonculusGloveConfig
 
 logger = logging.getLogger(__name__)
 
-LOWER_BOUND_LINEAR = -100
-UPPER_BOUND_LINEAR = 200
-
-
-class CalibrationMode(Enum):
-    # Joints with rotational motions are expressed in degrees in nominal range of [-180, 180]
-    DEGREE = 0
-    # Joints with linear motions (like gripper of Aloha) are expressed in nominal range of [0, 100]
-    LINEAR = 1
-
 
 class HomonculusGlove(Teleoperator):
     """
-    HomonculusGlove designed by Hugging Face.
+    Homonculus Glove designed by Hugging Face.
     """
 
     config_class = HomonculusGloveConfig
@@ -193,20 +182,6 @@ class HomonculusGlove(Teleoperator):
         pass
 
     def _normalize(self, values: dict[str, int], joints: list[str] | None = None):
-        """Convert from unsigned int32 joint position range [0, 2**32[ to the universal float32 nominal degree range ]-180.0, 180.0[ with
-        a "zero position" at 0 degree.
-
-        Note: We say "nominal degree range" since the motors can take values outside this range. For instance, 190 degrees, if the motor
-        rotate more than a half a turn from the zero position. However, most motors can't rotate more than 180 degrees and will stay in this range.
-
-        Joints values are original in [0, 2**32[ (unsigned int32). Each motor are expected to complete a full rotation
-        when given a goal position that is + or - their resolution. For instance, feetech xl330-m077 have a resolution of 4096, and
-        at any position in their original range, let's say the position 56734, they complete a full rotation clockwise by moving to 60830,
-        or anticlockwise by moving to 52638. The position in the original range is arbitrary and might change a lot between each motor.
-        To harmonize between motors of the same model, different robots, or even models of different brands, we propose to work
-        in the centered nominal degree range ]-180, 180[.
-        """
-
         if not self.calibration:
             raise RuntimeError(f"{self} has no calibration registered.")
 
