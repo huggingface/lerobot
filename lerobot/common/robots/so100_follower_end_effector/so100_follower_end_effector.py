@@ -59,13 +59,13 @@ class SO100FollowerEndEffector(SO100Follower):
         self.config = config
 
         # Initialize the kinematics module for the so100 robot
-        self.kinematics = RobotKinematics(robot_type="so100")
+        self.kinematics = RobotKinematics(robot_type="so101")
 
         # Set the forward kinematics function
         self.fk_function = self.kinematics.fk_gripper_tip
 
         # Store the bounds for end-effector position
-        self.bounds = self.config.bounds
+        self.end_effector_bounds = self.config.end_effector_bounds
 
         # Store the joint mins and maxs
         self.joint_mins = None
@@ -115,13 +115,16 @@ class SO100FollowerEndEffector(SO100Follower):
                 )
                 action = np.zeros(4, dtype=np.float32)
 
+        self.bus.sync_write("Torque_Enable", 0)
         # Read current joint positions
         current_joint_pos = self.bus.sync_read("Present_Position")
+
 
         # Convert dict to ordered list without gripper
         joint_names = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"]
         # Convert the joint positions from min-max to degrees
         current_joint_pos = np.array([current_joint_pos[name] for name in joint_names])
+        print(current_joint_pos)
 
         # Calculate current end-effector position using forward kinematics
         current_ee_pos = self.fk_function(current_joint_pos)
@@ -132,11 +135,11 @@ class SO100FollowerEndEffector(SO100Follower):
 
         # Add delta to position and clip to bounds
         desired_ee_pos[:3, 3] = current_ee_pos[:3, 3] + action[:3]
-        if self.bounds is not None:
+        if self.end_effector_bounds is not None:
             desired_ee_pos[:3, 3] = np.clip(
                 desired_ee_pos[:3, 3],
-                self.bounds["min"],
-                self.bounds["max"],
+                self.end_effector_bounds["min"],
+                self.end_effector_bounds["max"],
             )
 
         # Compute inverse kinematics to get joint positions
@@ -154,14 +157,10 @@ class SO100FollowerEndEffector(SO100Follower):
         }
 
         # Handle gripper separately if included in action
-        if "gripper.pos" in action:
-            joint_action["gripper.pos"] = action["gripper.pos"]
-        else:
-            # Keep current gripper position
-            joint_action["gripper.pos"] = current_joint_pos[-1]
-
-        import time
-
-        time.sleep(0.001)
+        joint_action["gripper.pos"] = np.clip(
+            current_joint_pos[-1] + (action[-1] - 1) * self.config.max_gripper_pos,
+            0,
+            self.config.max_gripper_pos,
+        )
         # Send joint space action to parent class
         return super().send_action(joint_action)

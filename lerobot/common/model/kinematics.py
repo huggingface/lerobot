@@ -125,6 +125,14 @@ class RobotKinematics:
             "shoulder": [0, 0, 0],
             "base": [0, 0, 0.02],
         },
+        "so101": {
+            "gripper": [0.33, 0.0, 0.285],
+            "wrist": [0.30, 0.0, 0.267],
+            "forearm": [0.25, 0.0, 0.266],
+            "humerus": [0.06, 0.0, 0.264],
+            "shoulder": [0.0, 0.0, 0.238],
+            "base": [0.0, 0.0, 0.12],
+        },
     }
 
     def __init__(self, robot_type="so100"):
@@ -308,10 +316,15 @@ class RobotKinematics:
     def fk_humerus(self, robot_pos_deg):
         """Forward kinematics for the humerus frame."""
         robot_pos_rad = robot_pos_deg / 180 * np.pi
+
+        theta_shoulder_pan = robot_pos_rad[0]
+        # NOTE: Negate shoulder lift angle for all robot types
+        theta_shoulder_lift = -robot_pos_rad[1]
+
         return (
             self.X_WoBo
-            @ screw_axis_to_transform(self.S_BS, robot_pos_rad[0])
-            @ screw_axis_to_transform(self.S_BH, robot_pos_rad[1])
+            @ screw_axis_to_transform(self.S_BS, theta_shoulder_pan)
+            @ screw_axis_to_transform(self.S_BH, theta_shoulder_lift)
             @ self.X_HoHc
             @ self.X_BH
         )
@@ -319,11 +332,17 @@ class RobotKinematics:
     def fk_forearm(self, robot_pos_deg):
         """Forward kinematics for the forearm frame."""
         robot_pos_rad = robot_pos_deg / 180 * np.pi
+
+        theta_shoulder_pan = robot_pos_rad[0]
+        # NOTE: Negate shoulder lift angle for all robot types
+        theta_shoulder_lift = -robot_pos_rad[1]
+        theta_elbow_flex = robot_pos_rad[2]
+
         return (
             self.X_WoBo
-            @ screw_axis_to_transform(self.S_BS, robot_pos_rad[0])
-            @ screw_axis_to_transform(self.S_BH, robot_pos_rad[1])
-            @ screw_axis_to_transform(self.S_BF, robot_pos_rad[2])
+            @ screw_axis_to_transform(self.S_BS, theta_shoulder_pan)
+            @ screw_axis_to_transform(self.S_BH, theta_shoulder_lift)
+            @ screw_axis_to_transform(self.S_BF, theta_elbow_flex)
             @ self.X_FoFc  # spellchecker:disable-line
             @ self.X_BF
         )
@@ -331,12 +350,19 @@ class RobotKinematics:
     def fk_wrist(self, robot_pos_deg):
         """Forward kinematics for the wrist frame."""
         robot_pos_rad = robot_pos_deg / 180 * np.pi
+
+        theta_shoulder_pan = robot_pos_rad[0]
+        # NOTE: Negate shoulder lift angle for all robot types
+        theta_shoulder_lift = -robot_pos_rad[1]
+        theta_elbow_flex = robot_pos_rad[2]
+        theta_wrist_flex = robot_pos_rad[3]
+
         return (
             self.X_WoBo
-            @ screw_axis_to_transform(self.S_BS, robot_pos_rad[0])
-            @ screw_axis_to_transform(self.S_BH, robot_pos_rad[1])
-            @ screw_axis_to_transform(self.S_BF, robot_pos_rad[2])
-            @ screw_axis_to_transform(self.S_BR, robot_pos_rad[3])
+            @ screw_axis_to_transform(self.S_BS, theta_shoulder_pan)
+            @ screw_axis_to_transform(self.S_BH, theta_shoulder_lift)
+            @ screw_axis_to_transform(self.S_BF, theta_elbow_flex)
+            @ screw_axis_to_transform(self.S_BR, theta_wrist_flex)
             @ self.X_RoRc
             @ self.X_BR
             @ self.wrist_X0
@@ -345,26 +371,42 @@ class RobotKinematics:
     def fk_gripper(self, robot_pos_deg):
         """Forward kinematics for the gripper frame."""
         robot_pos_rad = robot_pos_deg / 180 * np.pi
+
+        theta_shoulder_pan = robot_pos_rad[0]
+        # NOTE: Negate shoulder lift angle for all robot types
+        theta_shoulder_lift = -robot_pos_rad[1]
+        theta_elbow_flex = robot_pos_rad[2]
+        theta_wrist_flex = robot_pos_rad[3]
+        theta_wrist_roll = robot_pos_rad[4]
+
         return (
             self.X_WoBo
-            @ screw_axis_to_transform(self.S_BS, robot_pos_rad[0])
-            @ screw_axis_to_transform(self.S_BH, robot_pos_rad[1])
-            @ screw_axis_to_transform(self.S_BF, robot_pos_rad[2])
-            @ screw_axis_to_transform(self.S_BR, robot_pos_rad[3])
-            @ screw_axis_to_transform(self.S_BG, robot_pos_rad[4])
+            @ screw_axis_to_transform(self.S_BS, theta_shoulder_pan)
+            @ screw_axis_to_transform(self.S_BH, theta_shoulder_lift)
+            @ screw_axis_to_transform(self.S_BF, theta_elbow_flex)
+            @ screw_axis_to_transform(self.S_BR, theta_wrist_flex)
+            @ screw_axis_to_transform(self.S_BG, theta_wrist_roll)
             @ self._fk_gripper_post
         )
 
     def fk_gripper_tip(self, robot_pos_deg):
         """Forward kinematics for the gripper tip frame."""
         robot_pos_rad = robot_pos_deg / 180 * np.pi
+
+        theta_shoulder_pan = robot_pos_rad[0]
+        # Negate shoulder lift angle for all robot types
+        theta_shoulder_lift = -robot_pos_rad[1]
+        theta_elbow_flex = robot_pos_rad[2]
+        theta_wrist_flex = robot_pos_rad[3]
+        theta_wrist_roll = robot_pos_rad[4]
+
         return (
             self.X_WoBo
-            @ screw_axis_to_transform(self.S_BS, robot_pos_rad[0])
-            @ screw_axis_to_transform(self.S_BH, robot_pos_rad[1])
-            @ screw_axis_to_transform(self.S_BF, robot_pos_rad[2])
-            @ screw_axis_to_transform(self.S_BR, robot_pos_rad[3])
-            @ screw_axis_to_transform(self.S_BG, robot_pos_rad[4])
+            @ screw_axis_to_transform(self.S_BS, theta_shoulder_pan)
+            @ screw_axis_to_transform(self.S_BH, theta_shoulder_lift)
+            @ screw_axis_to_transform(self.S_BF, theta_elbow_flex)
+            @ screw_axis_to_transform(self.S_BR, theta_wrist_flex)
+            @ screw_axis_to_transform(self.S_BG, theta_wrist_roll)
             @ self.X_GoGt
             @ self.X_BoGo
             @ self.gripper_X0
@@ -422,7 +464,7 @@ class RobotKinematics:
             jac[:, el_ix] = Sdot
         return jac
 
-    def ik(self, current_joint_state, desired_ee_pose, position_only=True, fk_func=None):
+    def ik(self, current_joint_pos, desired_ee_pose, position_only=True, fk_func=None):
         """Inverse kinematics using gradient descent.
 
         Args:
@@ -438,6 +480,7 @@ class RobotKinematics:
             fk_func = self.fk_gripper
 
         # Do gradient descent.
+        current_joint_state = current_joint_pos.copy()
         max_iterations = 5
         learning_rate = 1
         for _ in range(max_iterations):
@@ -535,7 +578,7 @@ if __name__ == "__main__":
 
     # Run tests for all robot types
     results = {}
-    for robot_type in ["koch", "so100", "moss"]:
+    for robot_type in ["koch", "so100", "moss", "so101"]:
         results[robot_type] = run_test(robot_type)
 
     # Print overall summary
