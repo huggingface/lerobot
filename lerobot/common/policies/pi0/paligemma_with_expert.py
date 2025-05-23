@@ -20,6 +20,7 @@ from pytest import Cache
 from torch import nn
 from transformers import (
     AutoConfig,
+    AutoModel,
     GemmaForCausalLM,
     PaliGemmaForConditionalGeneration,
     PretrainedConfig,
@@ -66,11 +67,13 @@ class PaliGemmaWithExpertConfig(PretrainedConfig):
         gemma_expert_config: dict | None = None,
         freeze_vision_encoder: bool = True,
         train_expert_only: bool = True,
+        paligemma_pretrained_path: str | None = "google/paligemma-3b-pt-224",
         attention_implementation: str = "eager",
         **kwargs,
     ):
         self.freeze_vision_encoder = freeze_vision_encoder
         self.train_expert_only = train_expert_only
+        self.paligemma_pretrained_path = paligemma_pretrained_path
         self.attention_implementation = attention_implementation
 
         if paligemma_config is None:
@@ -167,6 +170,11 @@ class PaliGemmaWithExpertConfig(PretrainedConfig):
                 f"Wrong value provided for `attention_implementation` ({self.attention_implementation}). Expected 'eager', 'fa2' or 'flex'."
             )
 
+        if self.paligemma_pretrained_path is not None and self.paligemma_config is not None:
+            raise ValueError(
+                "When 'paligemma_pretrained_path' is provided, 'paligemma_config' needs to be None."
+            )
+
 
 class PaliGemmaWithExpertModel(PreTrainedModel):
     config_class = PaliGemmaWithExpertConfig
@@ -174,7 +182,10 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
     def __init__(self, config: PaliGemmaWithExpertConfig):
         super().__init__(config=config)
         self.config = config
-        self.paligemma = PaliGemmaForConditionalGeneration(config=config.paligemma_config)
+        if config.paligemma_pretrained_path is not None:
+            self.paligemma = AutoModel(config.paligemma_pretrained_path)
+        else:
+            self.paligemma = PaliGemmaForConditionalGeneration(config=config.paligemma_config)
         self.gemma_expert = GemmaForCausalLM(config=config.gemma_expert_config)
         # Remove unused embed_tokens
         self.gemma_expert.model.embed_tokens = None
