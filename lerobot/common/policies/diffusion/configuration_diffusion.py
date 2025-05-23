@@ -104,9 +104,9 @@ class DiffusionConfig(PreTrainedConfig):
     """
 
     # Inputs / output structure.
-    n_obs_steps: int = 2
-    horizon: int = 16
-    n_action_steps: int = 8
+    n_obs_steps: int = 1
+    horizon: int = 128
+    n_action_steps: int = 128
 
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
@@ -118,12 +118,12 @@ class DiffusionConfig(PreTrainedConfig):
 
     # The original implementation doesn't sample frames for the last 7 steps,
     # which avoids excessive padding and leads to improved training results.
-    drop_n_last_frames: int = 7  # horizon - n_action_steps - n_obs_steps + 1
+    drop_n_last_frames: int = 0  # horizon - n_action_steps - n_obs_steps + 1
 
     # Architecture / modeling.
     # Vision backbone.
     vision_backbone: str = "resnet18"
-    crop_shape: tuple[int, int] | None = (84, 84)
+    crop_shape: tuple[int, int] | None = None
     crop_is_random: bool = True
     pretrained_backbone_weights: str | None = None
     use_group_norm: bool = True
@@ -146,13 +146,14 @@ class DiffusionConfig(PreTrainedConfig):
     clip_sample_range: float = 1.0
 
     # Inference
-    num_inference_steps: int | None = None
+    num_inference_steps: int | None = 10
+    inference_noise_scheduler_type: str = "DDIM"
 
     # Loss computation
     do_mask_loss_for_padding: bool = False
 
     # Training presets
-    optimizer_lr: float = 1e-4
+    optimizer_lr: float = 1e-5
     optimizer_betas: tuple = (0.95, 0.999)
     optimizer_eps: float = 1e-8
     optimizer_weight_decay: float = 1e-6

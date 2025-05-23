@@ -151,6 +151,7 @@ class DiffusionPolicy(PreTrainedPolicy):
             batch["observation.images"] = torch.stack(
                 [batch[key] for key in self.config.image_features], dim=-4
             )
+            if len(batch['observation.images'].shape) == 5: batch["observation.images"] = batch["observation.images"].unsqueeze(1)
         batch = self.normalize_targets(batch)
         loss = self.diffusion.compute_loss(batch)
         # no output_dict so returning None
@@ -203,9 +204,21 @@ class DiffusionModel(nn.Module):
         )
 
         if config.num_inference_steps is None:
-            self.num_inference_steps = self.noise_scheduler.config.num_train_timesteps
+            self.num_inference_steps = config.num_train_timesteps
         else:
             self.num_inference_steps = config.num_inference_steps
+
+        self.inference_noise_scheduler = _make_noise_scheduler(
+            config.inference_noise_scheduler_type,
+            num_train_timesteps=config.num_train_timesteps,
+            beta_start=config.beta_start,
+            beta_end=config.beta_end,
+            beta_schedule=config.beta_schedule,
+            clip_sample=config.clip_sample,
+            clip_sample_range=config.clip_sample_range,
+            prediction_type=config.prediction_type,
+        )
+
 
     # ========= inference  ============
     def conditional_sample(
@@ -222,9 +235,9 @@ class DiffusionModel(nn.Module):
             generator=generator,
         )
 
-        self.noise_scheduler.set_timesteps(self.num_inference_steps)
+        self.inference_noise_scheduler.set_timesteps(self.num_inference_steps)
 
-        for t in self.noise_scheduler.timesteps:
+        for t in self.inference_noise_scheduler.timesteps:
             # Predict model output.
             model_output = self.unet(
                 sample,
@@ -232,7 +245,7 @@ class DiffusionModel(nn.Module):
                 global_cond=global_cond,
             )
             # Compute previous image: x_t -> x_t-1
-            sample = self.noise_scheduler.step(model_output, t, sample, generator=generator).prev_sample
+            sample = self.inference_noise_scheduler.step(model_output, t, sample, generator=generator).prev_sample
 
         return sample
 
