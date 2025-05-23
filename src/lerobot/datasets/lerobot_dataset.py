@@ -38,6 +38,7 @@ from lerobot.datasets.image_writer import AsyncImageWriter, write_image
 from lerobot.datasets.utils import (
     DEFAULT_FEATURES,
     DEFAULT_IMAGE_PATH,
+    DEFAULT_INITIAL_AUDIO_BUFFER_DURATION,
     DEFAULT_RAW_AUDIO_PATH,
     INFO_PATH,
     TASKS_PATH,
@@ -324,7 +325,7 @@ class LeRobotDatasetMetadata:
             if not self.features[key].get("info", None):
                 audio_path = self.root / self.get_compressed_audio_file_path(0, key)
                 self.info["features"][key]["info"] = get_audio_info(audio_path)
-                self.info["features"][key]["info"]["starting_time_s"] = DEFAULT_AUDIO_CHUNK_DURATION
+                self.info["features"][key]["info"]["starting_time_s"] = DEFAULT_INITIAL_AUDIO_BUFFER_DURATION
 
     def __repr__(self):
         feature_keys = list(self.features)
