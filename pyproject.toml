@@ -58,6 +58,7 @@ dependencies = [
     "huggingface-hub[hf-transfer,cli]>=0.27.1 ; python_version < '4.0'",
     "imageio[ffmpeg]>=2.34.0",
     "jsonlines>=4.0.0",
+    "nats-py>=2.3.0,<3.0.0",
     "numba>=0.59.0",
     "omegaconf>=2.3.0",
     "opencv-python-headless>=4.9.0",

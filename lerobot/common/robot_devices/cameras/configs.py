@@ -60,6 +60,30 @@ class OpenCVCameraConfig(CameraConfig):
             raise ValueError(f"`rotation` must be in [-90, None, 90, 180] (got {self.rotation})")
 
 
+@CameraConfig.register_subclass("nats")
+@dataclass
+class NatsCameraConfig(CameraConfig):
+    nats_server_ip: str
+    nats_server_port: int
+    subject: str
+    width: int
+    height: int
+    channels: int = 3
+    color_mode: str = "rgb"
+    rotation: int | None = None
+    timeout: float = 5.0
+    mock: bool = False
+
+    def __post_init__(self):
+        if self.color_mode not in ["rgb", "bgr"]:
+            raise ValueError(
+                f"`color_mode` is expected to be 'rgb' or 'bgr', but {self.color_mode} is provided."
+            )
+
+        if self.rotation not in [-90, None, 90, 180]:
+            raise ValueError(f"`rotation` must be in [-90, None, 90, 180] (got {self.rotation})")
+
+
 @CameraConfig.register_subclass("intelrealsense")
 @dataclass
 class IntelRealSenseCameraConfig(CameraConfig):
