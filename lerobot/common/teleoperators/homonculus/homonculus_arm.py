@@ -45,13 +45,13 @@ class HomonculusArm(Teleoperator):
         self.serial = serial.Serial(config.port, config.baud_rate, timeout=1)
 
         self.joints = {
-            "wrist_roll": MotorNormMode.RANGE_M100_100,
-            "wrist_pitch": MotorNormMode.RANGE_M100_100,
-            "wrist_yaw": MotorNormMode.RANGE_M100_100,
-            "elbow_flex": MotorNormMode.RANGE_M100_100,
-            "shoulder_roll": MotorNormMode.RANGE_M100_100,
-            "shoulder_yaw": MotorNormMode.RANGE_M100_100,
             "shoulder_pitch": MotorNormMode.RANGE_M100_100,
+            "shoulder_yaw": MotorNormMode.RANGE_M100_100,
+            "shoulder_roll": MotorNormMode.RANGE_M100_100,
+            "elbow_flex": MotorNormMode.RANGE_M100_100,
+            "wrist_roll": MotorNormMode.RANGE_M100_100,
+            "wrist_yaw": MotorNormMode.RANGE_M100_100,
+            "wrist_pitch": MotorNormMode.RANGE_M100_100,
         }
         self.thread = threading.Thread(target=self._async_read, daemon=True, name=f"{self} _async_read")
         self._lock = threading.Lock()
@@ -206,8 +206,13 @@ class HomonculusArm(Teleoperator):
 
                 try:
                     joint_angles = {
-                        joint: int(pos)
-                        for joint, pos in zip(self.joints, raw_values[:2] + raw_values[16:], strict=True)
+                        "shoulder_pitch": int(raw_values[19]),
+                        "shoulder_yaw": int(raw_values[18]),
+                        "shoulder_roll": int(raw_values[20]),
+                        "elbow_flex": int(raw_values[17]),
+                        "wrist_roll": int(raw_values[16]),
+                        "wrist_yaw": int(raw_values[1]),
+                        "wrist_pitch": int(raw_values[0]),
                     }
                 except ValueError:
                     continue
