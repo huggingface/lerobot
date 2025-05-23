@@ -35,12 +35,11 @@ from tqdm import tqdm
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.common.utils.utils import enter_pressed, move_cursor_up
 
-import math 
-
 NameOrID: TypeAlias = str | int
 Value: TypeAlias = int | float
 
 logger = logging.getLogger(__name__)
+
 
 def get_ctrl_table(model_ctrl_table: dict[str, dict], model: str) -> dict[str, tuple[int, int]]:
     ctrl_table = model_ctrl_table.get(model)

@@ -15,11 +15,12 @@
 # limitations under the License.
 
 import logging
+import time
 from typing import Any, Dict
 
 import numpy as np
-import time
 
+from lerobot.common.cameras import make_cameras_from_configs
 from lerobot.common.errors import DeviceNotConnectedError
 from lerobot.common.model.kinematics import RobotKinematics
 from lerobot.common.motors import Motor, MotorNormMode
@@ -27,7 +28,6 @@ from lerobot.common.motors.feetech import FeetechMotorsBus
 
 from ..so100_follower import SO100Follower
 from .config_so100_follower_end_effector import SO100FollowerEndEffectorConfig
-from lerobot.common.cameras import make_cameras_from_configs
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +123,6 @@ class SO100FollowerEndEffector(SO100Follower):
         # Read current joint positions
         current_joint_pos = self.bus.sync_read("Present_Position")
 
-
         # Convert dict to ordered list without gripper
         joint_names = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"]
         # Convert the joint positions from min-max to degrees
@@ -168,7 +167,6 @@ class SO100FollowerEndEffector(SO100Follower):
         )
         # Send joint space action to parent class
         return super().send_action(joint_action)
-    
 
     def get_observation(self) -> dict[str, Any]:
         if not self.is_connected:
