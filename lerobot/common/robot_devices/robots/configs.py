@@ -259,8 +259,8 @@ class KochRobotConfig(ManipulatorRobotConfig):
                 width=640,
                 height=480,
             ),
-            "phone": OpenCVCameraConfig(
-                camera_index=1,
+            "follower_wrist": OpenCVCameraConfig(
+                camera_index=2,  # /dev/video2
                 fps=30,
                 width=640,
                 height=480,
@@ -351,12 +351,12 @@ class KochBimanualRobotConfig(ManipulatorRobotConfig):
                 width=640,
                 height=480,
             ),
-            "phone": OpenCVCameraConfig(
-                camera_index=1,
-                fps=30,
-                width=640,
-                height=480,
-            ),
+            # "phone": OpenCVCameraConfig(
+            #     camera_index=1,
+            #     fps=30,
+            #     width=640,
+            #     height=480,
+            # ),
         }
     )
 
@@ -419,8 +419,8 @@ class MossRobotConfig(ManipulatorRobotConfig):
                 width=640,
                 height=480,
             ),
-            "phone": OpenCVCameraConfig(
-                camera_index=1,
+            "follower_wrist": OpenCVCameraConfig(
+                camera_index=2,  # /dev/video2
                 fps=30,
                 width=640,
                 height=480,
@@ -431,6 +431,7 @@ class MossRobotConfig(ManipulatorRobotConfig):
     mock: bool = False
 
 
+# print("✅ So101RobotConfig module loaded")
 @RobotConfig.register_subclass("so101")
 @dataclass
 class So101RobotConfig(ManipulatorRobotConfig):
@@ -443,7 +444,7 @@ class So101RobotConfig(ManipulatorRobotConfig):
     leader_arms: dict[str, MotorsBusConfig] = field(
         default_factory=lambda: {
             "main": FeetechMotorsBusConfig(
-                port="/dev/tty.usbmodem58760431091",
+                port="/dev/ttyACM0",
                 motors={
                     # name: (index, model)
                     "shoulder_pan": [1, "sts3215"],
@@ -460,7 +461,7 @@ class So101RobotConfig(ManipulatorRobotConfig):
     follower_arms: dict[str, MotorsBusConfig] = field(
         default_factory=lambda: {
             "main": FeetechMotorsBusConfig(
-                port="/dev/tty.usbmodem585A0076891",
+                port="/dev/ttyACM1",
                 motors={
                     # name: (index, model)
                     "shoulder_pan": [1, "sts3215"],
@@ -476,20 +477,29 @@ class So101RobotConfig(ManipulatorRobotConfig):
 
     cameras: dict[str, CameraConfig] = field(
         default_factory=lambda: {
-            "laptop": OpenCVCameraConfig(
-                camera_index=0,
-                fps=30,
-                width=640,
-                height=480,
-            ),
-            "phone": OpenCVCameraConfig(
-                camera_index=1,
+            # "laptop": OpenCVCameraConfig(
+            #     camera_index=0,
+            #     fps=30,
+            #     width=640,
+            #     height=480,
+            # ),
+            "follower_wrist": OpenCVCameraConfig(
+                # type="opencv",
+                camera_index=2,  # /dev/video2
                 fps=30,
                 width=640,
                 height=480,
             ),
         }
     )
+
+    def __post_init__(self):
+        import inspect
+
+        print("📄 So101RobotConfig loaded from:", inspect.getfile(type(self)))
+        print("✅ Loaded So101RobotConfig with ports:")
+        print("  Leader:", self.leader_arms["main"].port)
+        print("  Follower:", self.follower_arms["main"].port)
 
     mock: bool = False
 
@@ -545,8 +555,8 @@ class So100RobotConfig(ManipulatorRobotConfig):
                 width=640,
                 height=480,
             ),
-            "phone": OpenCVCameraConfig(
-                camera_index=1,
+            "follower_wrist": OpenCVCameraConfig(
+                camera_index=2,  # /dev/video2
                 fps=30,
                 width=640,
                 height=480,

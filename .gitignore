@@ -21,6 +21,10 @@ wandb
 data
 outputs
 
+#Hugging Face repo (datasets) local copies:
+/rook_to_d4_v6/
+/rook_to_d4_v6_labeled/
+
 # Apple
 .DS_Store
 

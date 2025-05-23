@@ -411,3 +411,6 @@ Additionally, if you are using any of the particular policy architecture, pretra
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=huggingface/lerobot&type=Timeline)](https://star-history.com/#huggingface/lerobot&Timeline)
+
+
+First time rook picked up successfully!! (A7 -> D4).
