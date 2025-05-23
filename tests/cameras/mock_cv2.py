@@ -104,10 +104,11 @@ class VideoCapture:
         if self._is_opened:
             self.release()
 
+
 class VideoWriter:
     def __init__(self):
         return None
-    
+
     @staticmethod
     def fourcc(c1: str, c2: str, c3: str, c4: str):
         return (ord(c1) << 24) + (ord(c2) << 16) + (ord(c3) << 8) + ord(c4)
