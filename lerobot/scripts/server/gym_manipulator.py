@@ -220,15 +220,22 @@ class RobotEnv(gym.Env):
         self.current_step = 0
         self.episode_data = None
 
+        self._joint_names = [f"{key}.pos" for key in self.robot.bus.motors.keys()]
+        self._image_keys = self.robot.cameras.keys()
+
         # Read initial joint positions using the bus
-        self.current_joint_positions = self._get_observation()
+        self.current_joint_positions = self._get_observation()["agent_pos"]
+
 
         self._setup_spaces()
 
     def _get_observation(self) -> np.ndarray:
         """Helper to convert a dictionary from bus.sync_read to an ordered numpy array."""
-        joint_positions_dict = self.robot.bus.sync_read("Present_Position")
-        return np.array([joint_positions_dict[name] for name in joint_positions_dict.keys()], dtype=np.float32)
+        obs_dict = self.robot.get_observation()
+        joint_positions = np.array([obs_dict[name] for name in self._joint_names], dtype=np.float32)
+ 
+        images = {key: obs_dict[key] for key in self._image_keys}
+        return {"agent_pos": joint_positions, "pixels": images}
 
     def _setup_spaces(self):
         """
@@ -244,16 +251,20 @@ class RobotEnv(gym.Env):
         """
         example_obs = self._get_observation()
 
+        observation_spaces = {}
+
         # Define observation spaces for images and other states.
-        image_keys = [key for key in example_obs if "image" in key]
-        observation_spaces = {
-            key: gym.spaces.Box(low=0, high=255, shape=example_obs[key].shape, dtype=np.uint8)
-            for key in image_keys
-        }
+        if "pixels" in example_obs:
+            prefix = "observation.images" if len(example_obs["pixels"]) > 1 else "observation.image"
+            observation_spaces = {
+                f"{prefix}.{key}": gym.spaces.Box(low=0, high=255, shape=example_obs["pixels"][key].shape, dtype=np.uint8)
+                for key in example_obs["pixels"]
+            }
+
         observation_spaces["observation.state"] = gym.spaces.Box(
             low=0,
             high=10,
-            shape=example_obs["observation.state"].shape,
+            shape=example_obs["agent_pos"].shape,
             dtype=np.float32,
         )
 
@@ -315,10 +326,10 @@ class RobotEnv(gym.Env):
                 - truncated (bool): True if the episode was truncated (e.g., time constraints).
                 - info (dict): Additional debugging information including intervention status.
         """
-        self.current_joint_positions = self._get_observation()
+        self.current_joint_positions = self._get_observation()["observation.state"]
 
         self.robot.send_action(torch.from_numpy(action))
-        observation = self._get_observation()
+        observation = self._get_observation()["observation.state"]
 
         if self.display_cameras:
             self.render()
@@ -412,11 +423,9 @@ class AddJointVelocityToObservation(gym.ObservationWrapper):
         Returns:
             The modified observation with joint velocities.
         """
-        joint_velocities = (observation["observation.state"] - self.last_joint_positions) / self.dt
-        self.last_joint_positions = observation["observation.state"].clone()
-        observation["observation.state"] = torch.cat(
-            [observation["observation.state"], joint_velocities], dim=-1
-        )
+        joint_velocities = (observation["agent_pos"] - self.last_joint_positions) / self.dt
+        self.last_joint_positions = observation["agent_pos"]
+        observation["agent_pos"] = np.concatenate([observation["agent_pos"], joint_velocities], axis=-1)
         return observation
 
 
@@ -466,12 +475,8 @@ class AddCurrentToObservation(gym.ObservationWrapper):
         Returns:
             The modified observation with current values.
         """
-        present_current_dict = self.unwrapped.robot.bus.sync_read("Present_Current")
-        present_current_observation = torch.tensor([present_current_dict[name] for name in present_current_dict.keys()], dtype=np.float32)
-        
-        observation["observation.state"] = torch.cat(
-            [observation["observation.state"], present_current_observation], dim=-1
-        )
+        present_current_observation = self.unwrapped._get_observation()["agent_pos"]
+        observation["agent_pos"] = np.concatenate([observation["agent_pos"], present_current_observation], axis=-1)
         return observation
 
 
@@ -740,16 +745,8 @@ class ConvertToLeRobotObservation(gym.ObservationWrapper):
         Returns:
             The processed observation with normalized images and proper tensor formats.
         """
-        for key in observation:
-            observation[key] = observation[key].float()
-            if "image" in key:
-                observation[key] = observation[key].permute(2, 0, 1)
-                observation[key] /= 255.0
-        observation = {
-            key: observation[key].to(self.device, non_blocking=self.device.type == "cuda")
-            for key in observation
-        }
-
+        observation = preprocess_observation(observation)
+        observation = {key: observation[key].to(self.device, non_blocking=self.device.type == "cuda") for key in observation}
         return observation
 
 
@@ -1078,7 +1075,7 @@ class EEActionWrapper(gym.ActionWrapper):
             gripper_command = action[-1]
             action = action[:-1]
 
-        current_joint_pos = self.unwrapped._get_observation()
+        current_joint_pos = self.unwrapped._get_observation()["observation.state"]
 
         current_ee_pos = self.fk_function(current_joint_pos)
         desired_ee_pos[:3, 3] = np.clip(
@@ -1141,7 +1138,7 @@ class EEObservationWrapper(gym.ObservationWrapper):
         Returns:
             Enhanced observation with end-effector pose information.
         """
-        current_joint_pos = self.unwrapped._get_observation()
+        current_joint_pos = self.unwrapped._get_observation()["observation.state"]
 
         current_ee_pos = self.fk_function(current_joint_pos)
         observation["observation.state"] = torch.cat(
@@ -1881,9 +1878,7 @@ def make_robot_env(cfg: EnvConfig) -> gym.Env:
             env = AddJointVelocityToObservation(env=env, fps=cfg.fps)
         if cfg.wrapper.add_current_to_observation:
             env = AddCurrentToObservation(env=env)
-        if cfg.wrapper.add_ee_pose_to_observation:
-            if cfg.wrapper.ee_action_space_params is None or cfg.wrapper.ee_action_space_params.bounds is None:
-                raise ValueError("EEActionSpaceConfig with bounds must be provided for EEObservationWrapper.")
+        if False and cfg.wrapper.add_ee_pose_to_observation:
             env = EEObservationWrapper(env=env, ee_pose_limits=cfg.wrapper.ee_action_space_params.bounds)
 
     env = ConvertToLeRobotObservation(env=env, device=cfg.device)
@@ -1917,7 +1912,7 @@ def make_robot_env(cfg: EnvConfig) -> gym.Env:
         # )
 
         # Control mode specific wrappers
-        control_mode = cfg.wrapper.ee_action_space_params.control_mode
+        control_mode = cfg.wrapper.control_mode
         if control_mode == "gamepad":
             if teleop_device is None:
                     raise ValueError("A teleop_device must be instantiated for gamepad control mode.")
