@@ -69,7 +69,7 @@ from flask import Flask, redirect, render_template, request, url_for
 
 from lerobot import available_datasets
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.datasets.utils import IterableNamespace
+from lerobot.common.datasets.utils import IterableNamespace, translate_episode_index_to_position
 from lerobot.common.utils.utils import init_logging
 
 
@@ -210,7 +210,9 @@ def run_server(
 
         if episodes is None:
             episodes = list(
-                range(dataset.num_episodes if isinstance(dataset, LeRobotDataset) else dataset.total_episodes)
+                dataset.meta.episodes
+                if isinstance(dataset, LeRobotDataset)
+                else range(dataset.total_episodes)
             )
 
         return render_template(
@@ -271,8 +273,9 @@ def get_episode_data(dataset: LeRobotDataset | IterableNamespace, episode_index)
     selected_columns.insert(0, "timestamp")
 
     if isinstance(dataset, LeRobotDataset):
-        from_idx = dataset.episode_data_index["from"][episode_index]
-        to_idx = dataset.episode_data_index["to"][episode_index]
+        index_position = translate_episode_index_to_position(dataset.meta.episodes, episode_index)
+        from_idx = dataset.episode_data_index["from"][index_position]
+        to_idx = dataset.episode_data_index["to"][index_position]
         data = (
             dataset.hf_dataset.select(range(from_idx, to_idx))
             .select_columns(selected_columns)
@@ -308,7 +311,8 @@ def get_episode_data(dataset: LeRobotDataset | IterableNamespace, episode_index)
 
 def get_episode_video_paths(dataset: LeRobotDataset, ep_index: int) -> list[str]:
     # get first frame of episode (hack to get video_path of the episode)
-    first_frame_idx = dataset.episode_data_index["from"][ep_index].item()
+    index_position = translate_episode_index_to_position(dataset.meta.episodes, ep_index)
+    first_frame_idx = dataset.episode_data_index["from"][index_position].item()
     return [
         dataset.hf_dataset.select_columns(key)[first_frame_idx][key]["path"]
         for key in dataset.meta.video_keys
@@ -321,7 +325,8 @@ def get_episode_language_instruction(dataset: LeRobotDataset, ep_index: int) -> 
         return None
 
     # get first frame index
-    first_frame_idx = dataset.episode_data_index["from"][ep_index].item()
+    index_position = translate_episode_index_to_position(dataset.meta.episodes, ep_index)
+    first_frame_idx = dataset.episode_data_index["from"][index_position].item()
 
     language_instruction = dataset.hf_dataset[first_frame_idx]["language_instruction"]
     # TODO (michel-aractingi) hack to get the sentence, some strings in openx are badly stored
