@@ -447,17 +447,14 @@ class OpenCVCamera(Camera):
                 f"Read thread alive: {thread_alive}."
             )
 
-        try:
-            with self.frame_lock:
-                frame = self.latest_frame
-                self.new_frame_event.clear()
+        with self.frame_lock:
+            frame = self.latest_frame
+            self.new_frame_event.clear()
 
-            if frame is None:
-                raise RuntimeError(f"Internal error: Event set but no frame available for {self}.")
+        if frame is None:
+            raise RuntimeError(f"Internal error: Event set but no frame available for {self}.")
 
-            return frame
-        except Exception as e:
-            raise RuntimeError(f"Error getting frame from camera {self}: {e}") from e
+        return frame
 
     def disconnect(self):
         """
