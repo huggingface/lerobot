@@ -332,7 +332,7 @@ class LeRobotDatasetMetadata:
             ):  # Overwrite if info is empty or only contains sample rate (necessary to correctly save audio files recorded by LeKiwi)
                 audio_path = self.root / self.get_compressed_audio_file_path(0, key)
                 self.info["features"][key]["info"] = get_audio_info(audio_path)
-                self.info["features"][key]["info"]["starting_time_s"] = DEFAULT_INITIAL_AUDIO_BUFFER_DURATION
+                self.info["features"][key]["info"]["start_time_s"] = DEFAULT_INITIAL_AUDIO_BUFFER_DURATION
 
     def __repr__(self):
         feature_keys = list(self.features)
@@ -821,10 +821,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         item = {}
         for audio_key, query_ts in query_timestamps.items():
             audio_path = self.root / self.meta.get_compressed_audio_file_path(ep_idx, audio_key)
-            starting_time_s = self.meta.features[audio_key]["info"].get("starting_time_s", 0.0)
-            audio_chunk = decode_audio(
-                audio_path, query_ts, query_duration, starting_time_s, self.audio_backend
-            )
+            start_time_s = self.meta.features[audio_key]["info"].get("start_time_s", 0.0)
+            audio_chunk = decode_audio(audio_path, query_ts, query_duration, start_time_s, self.audio_backend)
             item[audio_key] = audio_chunk.squeeze(0)
         return item
 
