@@ -81,7 +81,7 @@ class DiffusionConfig(PreTrainedConfig):
         n_groups: Number of groups used in the group norm of the Unet's convolutional blocks.
         diffusion_step_embed_dim: The Unet is conditioned on the diffusion timestep via a small non-linear
             network. This is the output dimension of that network, i.e., the embedding dimension.
-        use_film_scale_modulation: FiLM (https://arxiv.org/abs/1709.07871) is used for the Unet conditioning.
+        use_film_scale_modulation: FiLM (https://huggingface.co/papers/1709.07871) is used for the Unet conditioning.
             Bias modulation is used be default, while this parameter indicates whether to also use scale
             modulation.
         noise_scheduler_type: Name of the noise scheduler to use. Supported options: ["DDPM", "DDIM"].

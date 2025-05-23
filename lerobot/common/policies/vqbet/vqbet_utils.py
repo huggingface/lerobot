@@ -336,7 +336,7 @@ class ResidualVQ(nn.Module):
     """
     Residual VQ is composed of multiple VectorQuantize layers.
 
-    Follows Algorithm 1. in https://arxiv.org/pdf/2107.03312.pdf
+    Follows Algorithm 1. in https://huggingface.co/papers/2107.03312
         "Residual Vector Quantizer (a.k.a. multi-stage vector quantizer [36]) cascades Nq layers of VQ as follows. The unquantized input vector is
         passed through a first VQ and quantization residuals are computed. The residuals are then iteratively quantized by a sequence of additional
         Nq -1 vector quantizers, as described in Algorithm 1."
@@ -1006,7 +1006,7 @@ def gumbel_sample(
     if not straight_through or temperature <= 0.0 or not training:
         return ind, one_hot
 
-    # use reinmax for better second-order accuracy - https://arxiv.org/abs/2304.08612
+    # use reinmax for better second-order accuracy - https://huggingface.co/papers/2304.08612
     # algorithm 2
 
     if reinmax:
@@ -1156,7 +1156,7 @@ def batched_embedding(indices, embeds):
 
 
 def orthogonal_loss_fn(t):
-    # eq (2) from https://arxiv.org/abs/2112.00384
+    # eq (2) from https://huggingface.co/papers/2112.00384
     h, n = t.shape[:2]
     normed_codes = F.normalize(t, p=2, dim=-1)
     cosine_sim = einsum("h i d, h j d -> h i j", normed_codes, normed_codes)
