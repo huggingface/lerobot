@@ -208,16 +208,16 @@ class DiffusionModel(nn.Module):
         else:
             self.num_inference_steps = config.num_inference_steps
 
-        self.inference_noise_scheduler = _make_noise_scheduler(
-            config.inference_noise_scheduler_type,
-            num_train_timesteps=config.num_train_timesteps,
-            beta_start=config.beta_start,
-            beta_end=config.beta_end,
-            beta_schedule=config.beta_schedule,
-            clip_sample=config.clip_sample,
-            clip_sample_range=config.clip_sample_range,
-            prediction_type=config.prediction_type,
-        )
+        # self.inference_noise_scheduler = _make_noise_scheduler(
+        #     config.inference_noise_scheduler_type,
+        #     num_train_timesteps=config.num_train_timesteps,
+        #     beta_start=config.beta_start,
+        #     beta_end=config.beta_end,
+        #     beta_schedule=config.beta_schedule,
+        #     clip_sample=config.clip_sample,
+        #     clip_sample_range=config.clip_sample_range,
+        #     prediction_type=config.prediction_type,
+        # )
 
 
     # ========= inference  ============
@@ -235,9 +235,10 @@ class DiffusionModel(nn.Module):
             generator=generator,
         )
 
-        self.inference_noise_scheduler.set_timesteps(self.num_inference_steps)
+        # self.inference_noise_scheduler.set_timesteps(self.num_inference_steps)
 
-        for t in self.inference_noise_scheduler.timesteps:
+        # for t in self.inference_noise_scheduler.timesteps:
+        for t in self.noise_scheduler.timesteps:
             # Predict model output.
             model_output = self.unet(
                 sample,
@@ -245,7 +246,8 @@ class DiffusionModel(nn.Module):
                 global_cond=global_cond,
             )
             # Compute previous image: x_t -> x_t-1
-            sample = self.inference_noise_scheduler.step(model_output, t, sample, generator=generator).prev_sample
+            # sample = self.inference_noise_scheduler.step(model_output, t, sample, generator=generator).prev_sample
+            sample = self.noise_scheduler.step(model_output, t, sample, generator=generator).prev_sample
 
         return sample
 
