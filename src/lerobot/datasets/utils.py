@@ -71,6 +71,7 @@ DEFAULT_IMAGE_PATH = "images/{image_key}/episode-{episode_index:06d}/frame-{fram
 DEFAULT_RAW_AUDIO_PATH = "raw_audio/{audio_key}/episode_{episode_index:06d}.wav"
 
 DEFAULT_AUDIO_CHUNK_DURATION = 0.5  # seconds
+DEFAULT_INITIAL_AUDIO_BUFFER_DURATION = 1.0  # seconds
 
 LEGACY_EPISODES_PATH = "meta/episodes.jsonl"
 LEGACY_EPISODES_STATS_PATH = "meta/episodes_stats.jsonl"

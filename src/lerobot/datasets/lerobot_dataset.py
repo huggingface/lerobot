@@ -41,6 +41,7 @@ from lerobot.datasets.utils import (
     DEFAULT_EPISODES_PATH,
     DEFAULT_FEATURES,
     DEFAULT_IMAGE_PATH,
+    DEFAULT_INITIAL_AUDIO_BUFFER_DURATION,
     DEFAULT_RAW_AUDIO_PATH,
     INFO_PATH,
     _validate_feature_names,
@@ -482,7 +483,7 @@ class LeRobotDatasetMetadata:
             if not self.features[key].get("info", None):
                 audio_path = self.root / self.audio_path.format(audio_key=key, chunk_index=0, file_index=0)
                 self.info["features"][key]["info"] = get_audio_info(audio_path)
-                self.info["features"][key]["info"]["start_time_s"] = DEFAULT_AUDIO_CHUNK_DURATION
+                self.info["features"][key]["info"]["start_time_s"] = DEFAULT_INITIAL_AUDIO_BUFFER_DURATION
 
     def update_chunk_settings(
         self,
