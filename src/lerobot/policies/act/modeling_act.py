@@ -335,9 +335,9 @@ class ACT(nn.Module):
 
         # Backbone for audio feature extraction.
         if self.config.audio_features:
-            audio_backbone_model = getattr(torchvision.models, config.vision_backbone)(
-                replace_stride_with_dilation=[False, False, config.replace_final_stride_with_dilation],
-                weights=config.pretrained_backbone_weights,
+            audio_backbone_model = getattr(torchvision.models, config.audio_backbone)(
+                replace_stride_with_dilation=[False, False, config.replace_final_stride_with_dilation_audio],
+                weights=config.pretrained_backbone_weights_audio,
                 norm_layer=FrozenBatchNorm2d,
             )
             # Note: The assumption here is that we are using a ResNet model (and hence layer4 is the final
