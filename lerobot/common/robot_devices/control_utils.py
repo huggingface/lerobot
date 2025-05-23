@@ -263,7 +263,7 @@ def control_loop(
     # Controls starts, if policy is given it needs cleaning up
     if policy is not None:
         policy.reset()
-        
+
     # Create a buffer for audio observations (shifting window of fixed size over audio samples)
     # TODO(CarolinePascal): Fill buffers with actual recordings by starting to record audio earlier and add a start_timestamp parameter for camera/microphone synchronization
     audio_buffer = {
