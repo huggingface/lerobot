@@ -35,14 +35,13 @@ from tqdm import tqdm
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.common.utils.utils import enter_pressed, move_cursor_up
 
-import math 
-
 NameOrID: TypeAlias = str | int
 Value: TypeAlias = int | float
 
 MAX_ID_RANGE = 252
 
 logger = logging.getLogger(__name__)
+
 
 def get_ctrl_table(model_ctrl_table: dict[str, dict], model: str) -> dict[str, tuple[int, int]]:
     ctrl_table = model_ctrl_table.get(model)
@@ -833,7 +832,7 @@ class MotorsBus(abc.ABC):
                 homing_offset = self.calibration[motor].homing_offset
                 resolution = self.model_resolution_table[self.motors[motor].model]
                 middle_pos = homing_offset + resolution // 2
-                unnormalized_values[id_] = int((val / 180) * resolution//2) + middle_pos
+                unnormalized_values[id_] = int((val / 180) * resolution // 2) + middle_pos
                 if drive_mode:
                     unnormalized_values[id_] *= -1
 

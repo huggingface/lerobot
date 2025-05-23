@@ -31,10 +31,12 @@ python -m lerobot.scripts.server.find_joint_limits \
 """
 
 import time
+from dataclasses import dataclass
 
-import numpy as np
 import draccus
+import numpy as np
 
+from lerobot.common.model.kinematics import RobotKinematics
 from lerobot.common.robots import (  # noqa: F401
     RobotConfig,
     koch_follower,
@@ -42,14 +44,13 @@ from lerobot.common.robots import (  # noqa: F401
     so100_follower,
     so100_follower_end_effector,
 )
-from lerobot.common.teleoperators import (
+from lerobot.common.teleoperators import (  # noqa: F401
     TeleoperatorConfig,
+    gamepad,
+    koch_leader,
     make_teleoperator_from_config,
+    so100_leader,
 )
-
-from dataclasses import dataclass
-from lerobot.common.teleoperators import gamepad, koch_leader, so100_leader  # noqa: F401
-from lerobot.common.model.kinematics import RobotKinematics
 
 
 @dataclass
@@ -61,6 +62,7 @@ class FindJointLimitsConfig:
     teleop_time_s: float | None = None
     # Display all cameras on screen
     display_data: bool = False
+
 
 @draccus.wrap()
 def find_joint_and_ee_bounds(cfg: FindJointLimitsConfig):
