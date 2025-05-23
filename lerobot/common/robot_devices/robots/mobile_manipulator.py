@@ -24,6 +24,7 @@ import torch
 import zmq
 
 from lerobot.common.robot_devices.cameras.utils import make_cameras_from_configs
+from lerobot.common.robot_devices.microphones.utils import make_microphones_from_configs
 from lerobot.common.robot_devices.motors.feetech import TorqueMode
 from lerobot.common.robot_devices.motors.utils import MotorsBus, make_motors_buses_from_configs
 from lerobot.common.robot_devices.robots.configs import LeKiwiRobotConfig
@@ -79,6 +80,7 @@ class MobileManipulator:
         self.follower_arms = make_motors_buses_from_configs(self.config.follower_arms)
 
         self.cameras = make_cameras_from_configs(self.config.cameras)
+        self.microphones = make_microphones_from_configs(self.config.microphones)
 
         self.is_connected = False
 
@@ -133,6 +135,7 @@ class MobileManipulator:
                 "shape": (cam.height, cam.width, cam.channels),
                 "names": ["height", "width", "channels"],
                 "info": None,
+                "audio": "observation.audio." + cam.microphone if cam.microphone is not None else None,
             }
         return cam_ft
 
@@ -162,8 +165,21 @@ class MobileManipulator:
         }
 
     @property
+    def microphone_features(self) -> dict:
+        mic_ft = {}
+        for mic_key, mic in self.microphones.items():
+            key = f"observation.audio.{mic_key}"
+            mic_ft[key] = {
+                "dtype": "audio",
+                "shape": (1, len(mic.channels)),
+                "names": "channels",
+                "info": {"sample_rate": mic.sample_rate},
+            }
+        return mic_ft
+
+    @property
     def features(self):
-        return {**self.motor_features, **self.camera_features}
+        return {**self.motor_features, **self.camera_features, **self.microphone_features}
 
     @property
     def has_camera(self):
@@ -172,6 +188,14 @@ class MobileManipulator:
     @property
     def num_cameras(self):
         return len(self.cameras)
+
+    @property
+    def has_microphone(self):
+        return len(self.microphones) > 0
+
+    @property
+    def num_microphones(self):
+        return len(self.microphones)
 
     @property
     def available_arms(self):
@@ -344,6 +368,7 @@ class MobileManipulator:
             observation = json.loads(last_msg)
 
             images_dict = observation.get("images", {})
+            audio_dict = observation.get("audio", {})
             new_speed = observation.get("present_speed", {})
             new_arm_state = observation.get("follower_arm_state", None)
 
@@ -355,6 +380,11 @@ class MobileManipulator:
                     frame_candidate = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
                     if frame_candidate is not None:
                         frames[cam_name] = frame_candidate
+
+            # Receive audio
+            for microphone_name, audio_data in audio_dict.items():
+                if audio_data:
+                    frames[microphone_name] = audio_data
 
             # If remote_arm_state is None and frames is None there is no message then use the previous message
             if new_arm_state is not None and frames is not None:
@@ -474,6 +504,14 @@ class MobileManipulator:
                 # Create a black image using the camera's configured width, height, and channels
                 frame = np.zeros((cam.height, cam.width, cam.channels), dtype=np.uint8)
             obs_dict[f"observation.images.{cam_name}"] = torch.from_numpy(frame)
+
+        # Loop over each configured microphone
+        for microphone_name, microphone in self.microphones.items():
+            frame = frames.get(microphone_name, None)
+            if frame is None:
+                # Create silence using the microphone's configured channels
+                frame = np.zeros((1, len(microphone.channels)), dtype=np.float32)
+            obs_dict[f"observation.audio.{microphone_name}"] = torch.from_numpy(frame)
 
         return obs_dict
 
