@@ -316,14 +316,26 @@ def test__sync_write(addr, length, ids_values, mock_motors, dummy_motors):
 
 
 def test_is_calibrated(mock_motors, dummy_motors, dummy_calibration):
-    encoded_homings = {m.id: encode_sign_magnitude(m.homing_offset, 11) for m in dummy_calibration.values()}
-    mins = {m.id: m.range_min for m in dummy_calibration.values()}
-    maxes = {m.id: m.range_max for m in dummy_calibration.values()}
-    offsets_stub = mock_motors.build_sync_read_stub(
-        *STS_SMS_SERIES_CONTROL_TABLE["Homing_Offset"], encoded_homings
-    )
-    mins_stub = mock_motors.build_sync_read_stub(*STS_SMS_SERIES_CONTROL_TABLE["Min_Position_Limit"], mins)
-    maxes_stub = mock_motors.build_sync_read_stub(*STS_SMS_SERIES_CONTROL_TABLE["Max_Position_Limit"], maxes)
+    mins_stubs, maxes_stubs, homings_stubs = [], [], []
+    for cal in dummy_calibration.values():
+        mins_stubs.append(
+            mock_motors.build_read_stub(
+                *STS_SMS_SERIES_CONTROL_TABLE["Min_Position_Limit"], cal.id, cal.range_min
+            )
+        )
+        maxes_stubs.append(
+            mock_motors.build_read_stub(
+                *STS_SMS_SERIES_CONTROL_TABLE["Max_Position_Limit"], cal.id, cal.range_max
+            )
+        )
+        homings_stubs.append(
+            mock_motors.build_read_stub(
+                *STS_SMS_SERIES_CONTROL_TABLE["Homing_Offset"],
+                cal.id,
+                encode_sign_magnitude(cal.homing_offset, 11),
+            )
+        )
+
     bus = FeetechMotorsBus(
         port=mock_motors.port,
         motors=dummy_motors,
@@ -334,9 +346,9 @@ def test_is_calibrated(mock_motors, dummy_motors, dummy_calibration):
     is_calibrated = bus.is_calibrated
 
     assert is_calibrated
-    assert mock_motors.stubs[offsets_stub].called
-    assert mock_motors.stubs[mins_stub].called
-    assert mock_motors.stubs[maxes_stub].called
+    assert all(mock_motors.stubs[stub].called for stub in mins_stubs)
+    assert all(mock_motors.stubs[stub].called for stub in maxes_stubs)
+    assert all(mock_motors.stubs[stub].called for stub in homings_stubs)
 
 
 def test_reset_calibration(mock_motors, dummy_motors):
