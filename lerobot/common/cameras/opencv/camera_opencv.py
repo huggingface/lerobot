@@ -174,7 +174,7 @@ class OpenCVCamera(Camera):
                 self.read()
                 time.sleep(0.1)
 
-        logger.debug(f"{self} connected.")
+        logger.info(f"{self} connected.")
 
     def _configure_capture_settings(self) -> None:
         """
@@ -318,7 +318,6 @@ class OpenCVCamera(Camera):
         if not ret or frame is None:
             raise RuntimeError(f"{self} read failed (status={ret}).")
 
-        # Post-process the frame (color conversion, dimension check, rotation)
         processed_frame = self._postprocess_image(frame, color_mode)
 
         read_duration_ms = (time.perf_counter() - start_time) * 1e3
@@ -441,26 +440,21 @@ class OpenCVCamera(Camera):
         if self.thread is None or not self.thread.is_alive():
             self._start_read_thread()
 
-        event_was_set = self.new_frame_event.wait(timeout=timeout_ms / 1000.0)
-
-        if not event_was_set:
+        if not self.new_frame_event.wait(timeout=timeout_ms / 1000.0):
             thread_alive = self.thread is not None and self.thread.is_alive()
             raise TimeoutError(
                 f"Timed out waiting for frame from camera {self} after {timeout_ms} ms. "
                 f"Read thread alive: {thread_alive}."
             )
 
-        try:
-            with self.frame_lock:
-                frame = self.latest_frame
-                self.new_frame_event.clear()
+        with self.frame_lock:
+            frame = self.latest_frame
+            self.new_frame_event.clear()
 
-            if frame is None:
-                raise RuntimeError(f"Internal error: Event set but no frame available for {self}.")
+        if frame is None:
+            raise RuntimeError(f"Internal error: Event set but no frame available for {self}.")
 
-            return frame
-        except Exception as e:
-            raise RuntimeError(f"Error getting frame from camera {self}: {e}") from e
+        return frame
 
     def disconnect(self):
         """
