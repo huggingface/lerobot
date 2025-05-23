@@ -45,8 +45,8 @@ import rerun as rr
 from lerobot.common.cameras import (  # noqa: F401
     CameraConfig,  # noqa: F401
 )
-from lerobot.common.cameras.intel import RealSenseCameraConfig  # noqa: F401
-from lerobot.common.cameras.opencv import OpenCVCameraConfig  # noqa: F401
+from lerobot.common.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
+from lerobot.common.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.common.datasets.image_writer import safe_stop_image_writer
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.datasets.utils import build_dataset_frame, hw_to_dataset_features
