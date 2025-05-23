@@ -379,15 +379,15 @@ def _init_rerun(control_config: ControlConfig, session_name: str = "lerobot_cont
         ValueError: If viewer IP is missing for non-remote configurations with display enabled.
     """
     if (control_config.display_data and not is_headless()) or (
-        control_config.display_data and isinstance(control_config, RemoteRobotConfig)
-    ):
+        control_config.display_data and isinstance(control_config, RemoteRobotConfig)) or (
+        control_config.display_data and isinstance(control_config, TeleoperateControlConfig)):
         # Configure Rerun flush batch size default to 8KB if not set
         batch_size = os.getenv("RERUN_FLUSH_NUM_BYTES", "8000")
         os.environ["RERUN_FLUSH_NUM_BYTES"] = batch_size
 
         # Initialize Rerun based on configuration
         rr.init(session_name)
-        if isinstance(control_config, RemoteRobotConfig):
+        if isinstance(control_config, RemoteRobotConfig) or isinstance(control_config, TeleoperateControlConfig):
             viewer_ip = control_config.viewer_ip
             viewer_port = control_config.viewer_port
             if not viewer_ip or not viewer_port:
@@ -395,7 +395,7 @@ def _init_rerun(control_config: ControlConfig, session_name: str = "lerobot_cont
                     "Viewer IP & Port are required for remote config. Set via config file/CLI or disable control_config.display_data."
                 )
             logging.info(f"Connecting to viewer at {viewer_ip}:{viewer_port}")
-            rr.connect_tcp(f"{viewer_ip}:{viewer_port}")
+            rr.connect_grpc(f"{viewer_ip}:{viewer_port}")
         else:
             # Get memory limit for rerun viewer parameters
             memory_limit = os.getenv("LEROBOT_RERUN_MEMORY_LIMIT", "10%")

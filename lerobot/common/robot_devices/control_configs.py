@@ -42,6 +42,8 @@ class TeleoperateControlConfig(ControlConfig):
     teleop_time_s: float | None = None
     # Display all cameras on screen
     display_data: bool = False
+    viewer_ip: str | None = None
+    viewer_port: str | None = None
 
 
 @ControlConfig.register_subclass("record")

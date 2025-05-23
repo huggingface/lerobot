@@ -266,7 +266,8 @@ def control_loop(
             dataset.add_frame(frame)
 
         # TODO(Steven): This should be more general (for RemoteRobot instead of checking the name, but anyways it will change soon)
-        if (display_data and not is_headless()) or (display_data and robot.robot_type.startswith("lekiwi")):
+        # if (display_data and not is_headless()) or (display_data and robot.robot_type.startswith("lekiwi")):
+        if display_data:
             if action is not None:
                 for k, v in action.items():
                     for i, vv in enumerate(v):
@@ -274,7 +275,7 @@ def control_loop(
 
             image_keys = [key for key in observation if "image" in key]
             for key in image_keys:
-                rr.log(key, rr.Image(observation[key].numpy()), static=True)
+                rr.log(key, rr.Image(observation[key].numpy()))
 
         if fps is not None:
             dt_s = time.perf_counter() - start_loop_t
