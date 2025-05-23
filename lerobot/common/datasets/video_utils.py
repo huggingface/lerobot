@@ -101,7 +101,7 @@ def decode_video_frames_torchvision(
     keyframes_only = False
     torchvision.set_video_backend(backend)
     if backend == "pyav":
-        keyframes_only = True  # pyav doesnt support accuracte seek
+        keyframes_only = True  # pyav doesn't support accurate seek
 
     # set a video stream reader
     # TODO(rcadene): also load audio stream at the same time

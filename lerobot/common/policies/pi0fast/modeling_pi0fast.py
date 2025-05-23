@@ -516,7 +516,7 @@ class PI0FAST(nn.Module):
                         interpolate_like_pi=self.config.interpolate_like_pi,
                     )
 
-                # Normalize from range [0,1] to [-1,1] as expacted by siglip
+                # Normalize from range [0,1] to [-1,1] as expected by siglip
                 img = img * 2.0 - 1.0
 
                 bsize = img.shape[0]

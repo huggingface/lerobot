@@ -106,7 +106,7 @@ def worker_process(queue: queue.Queue, num_threads: int):
 class AsyncImageWriter:
     """
     This class abstract away the initialisation of processes or/and threads to
-    save images on disk asynchrounously, which is critical to control a robot and record data
+    save images on disk asynchronously, which is critical to control a robot and record data
     at a high frame rate.
 
     When `num_processes=0`, it creates a threads pool of size `num_threads`.
