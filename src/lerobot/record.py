@@ -74,7 +74,7 @@ from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.datasets.image_writer import safe_stop_image_writer
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.utils import build_dataset_frame, hw_to_dataset_features, DEFAULT_AUDIO_CHUNK_DURATION
+from lerobot.datasets.utils import build_dataset_frame, hw_to_dataset_features, DEFAULT_AUDIO_CHUNK_DURATION, DEFAULT_INITIAL_AUDIO_BUFFER_DURATION
 from lerobot.datasets.video_utils import VideoEncodingManager
 from lerobot.policies.factory import make_policy
 from lerobot.policies.pretrained import PreTrainedPolicy
@@ -252,7 +252,7 @@ def record_loop(
 
     # Fill audio buffers if needed
     if robot.microphones:
-        busy_wait(DEFAULT_AUDIO_CHUNK_DURATION)
+        busy_wait(DEFAULT_INITIAL_AUDIO_BUFFER_DURATION)
 
     timestamp = 0
     start_episode_t = time.perf_counter()
