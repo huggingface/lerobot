@@ -855,8 +855,6 @@ python lerobot/scripts/visualize_dataset_html.py \
   --repo-id ${HF_USER}/koch_test
 ```
 
-Note: You might need to add `--local-files-only 1` if your dataset was not uploaded to hugging face hub.
-
 This will launch a local web server that looks like this:
 <div style="text-align:center;">
   <img src="../media/tutorial/visualize_dataset_html.webp?raw=true" alt="Koch v1.1 leader and follower arms" title="Koch v1.1 leader and follower arms" width="100%">
