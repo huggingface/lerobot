@@ -16,11 +16,9 @@
 Provides the RealSenseCamera class for capturing frames from Intel RealSense cameras.
 """
 
-import contextlib
 import logging
-import queue
 import time
-from threading import Event, Thread
+from threading import Event, Lock, Thread
 from typing import Any, Dict, List
 
 import cv2
@@ -69,7 +67,7 @@ class RealSenseCamera(Camera):
         from lerobot.common.cameras import ColorMode, Cv2Rotation
 
         # Basic usage with serial number
-        config = RealSenseCameraConfig(serial_number_or_name="1234567890") # Replace with actual SN
+        config = RealSenseCameraConfig(serial_number_or_name=1234567890) # Replace with actual SN
         camera = RealSenseCamera(config)
         camera.connect()
 
@@ -85,7 +83,7 @@ class RealSenseCamera(Camera):
 
         # Example with depth capture and custom settings
         custom_config = RealSenseCameraConfig(
-            serial_number_or_name="1234567890", # Replace with actual SN
+            serial_number_or_name=1234567890, # Replace with actual SN
             fps=30,
             width=1280,
             height=720,
@@ -133,7 +131,9 @@ class RealSenseCamera(Camera):
 
         self.thread: Thread | None = None
         self.stop_event: Event | None = None
-        self.frame_queue: queue.Queue = queue.Queue(maxsize=1)
+        self.frame_lock: Lock = Lock()
+        self.latest_frame: np.ndarray | None = None
+        self.new_frame_event: Event = Event()
 
         self.rotation: int | None = get_cv2_rotation(config.rotation)
 
@@ -181,9 +181,12 @@ class RealSenseCamera(Camera):
                 "Run `python -m lerobot.find_cameras realsense` to find available cameras."
             ) from e
 
-        self._validate_capture_settings()
+        self._configure_capture_settings()
 
         if warmup:
+            time.sleep(
+                1
+            )  # NOTE(Steven): RS cameras need a bit of time to warm up before the first read. If we don't wait, the first read from the warmup will raise.
             start_time = time.time()
             while time.time() - start_time < self.warmup_s:
                 self.read()
@@ -280,19 +283,14 @@ class RealSenseCamera(Camera):
             if self.use_depth:
                 rs_config.enable_stream(rs.stream.depth)
 
-    def _validate_capture_settings(self) -> None:
-        """
-        Validates if the actual stream settings match the requested configuration.
+    def _configure_capture_settings(self) -> None:
+        """Sets fps, width, and height from device stream if not already configured.
 
-        This method compares the requested FPS, width, and height against the
-        actual settings obtained from the active RealSense profile after the
-        pipeline has started.
+        Uses the color stream profile to update unset attributes. Handles rotation by
+        swapping width/height when needed. Original capture dimensions are always stored.
 
         Raises:
-            RuntimeError: If the actual camera settings significantly deviate
-                          from the requested ones.
-            DeviceNotConnectedError: If the camera is not connected when attempting
-                                     to validate settings.
+            DeviceNotConnectedError: If device is not connected.
         """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"Cannot validate settings for {self} as it is not connected.")
@@ -311,25 +309,6 @@ class RealSenseCamera(Camera):
             else:
                 self.width, self.height = actual_width, actual_height
                 self.capture_width, self.capture_height = actual_width, actual_height
-        else:
-            self._validate_width_and_height(stream)
-
-        if self.use_depth:
-            stream = self.rs_profile.get_stream(rs.stream.depth).as_video_stream_profile()
-            self._validate_width_and_height(stream)
-
-    def _validate_width_and_height(self, stream) -> None:
-        """Validates and sets the internal capture width and height based on actual stream width."""
-        actual_width = int(round(stream.width()))
-        actual_height = int(round(stream.height()))
-
-        if self.capture_width != actual_width:
-            raise RuntimeError(f"{self} failed to set capture_width={self.capture_width} ({actual_width=}).")
-
-        if self.capture_height != actual_height:
-            raise RuntimeError(
-                f"{self} failed to set capture_height={self.capture_height} ({actual_height=})."
-            )
 
     def read_depth(self, timeout_ms: int = 100) -> np.ndarray:
         """
@@ -471,11 +450,11 @@ class RealSenseCamera(Camera):
         """
         while not self.stop_event.is_set():
             try:
-                frame_data = self.read(timeout_ms=500)
+                color_image = self.read(timeout_ms=500)
 
-                with contextlib.suppress(queue.Empty):
-                    _ = self.frame_queue.get_nowait()
-                self.frame_queue.put(frame_data)
+                with self.frame_lock:
+                    self.latest_frame = color_image
+                self.new_frame_event.set()
 
             except DeviceNotConnectedError:
                 break
@@ -534,16 +513,26 @@ class RealSenseCamera(Camera):
         if self.thread is None or not self.thread.is_alive():
             self._start_read_thread()
 
-        try:
-            return self.frame_queue.get(timeout=timeout_ms / 1000.0)
-        except queue.Empty as e:
+        event_was_set = self.new_frame_event.wait(timeout=timeout_ms / 1000.0)
+
+        if not event_was_set:
             thread_alive = self.thread is not None and self.thread.is_alive()
             raise TimeoutError(
                 f"Timed out waiting for frame from camera {self} after {timeout_ms} ms. "
                 f"Read thread alive: {thread_alive}."
-            ) from e
+            )
+
+        try:
+            with self.frame_lock:
+                frame = self.latest_frame
+                self.new_frame_event.clear()
+
+            if frame is None:
+                raise RuntimeError(f"Internal error: Event set but no frame available for {self}.")
+
+            return frame
         except Exception as e:
-            raise RuntimeError(f"Error getting frame data from queue for camera {self}: {e}") from e
+            raise RuntimeError(f"Error getting frame from camera {self}: {e}") from e
 
     def disconnect(self):
         """

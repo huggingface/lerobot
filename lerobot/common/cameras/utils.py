@@ -18,9 +18,6 @@ import platform
 from pathlib import Path
 from typing import TypeAlias
 
-import numpy as np
-from PIL import Image
-
 from .camera import Camera
 from .configs import CameraConfig, Cv2Rotation
 
@@ -66,10 +63,3 @@ def get_cv2_backend() -> int:
         return cv2.CAP_AVFOUNDATION
     else:
         return cv2.CAP_ANY
-
-
-def save_image(img_array: np.ndarray, camera_index: int, frame_index: int, images_dir: Path):
-    img = Image.fromarray(img_array)
-    path = images_dir / f"camera_{camera_index:02d}_frame_{frame_index:06d}.png"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    img.save(str(path), quality=100)

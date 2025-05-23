@@ -16,14 +16,12 @@
 Provides the OpenCVCamera class for capturing frames from cameras using OpenCV.
 """
 
-import contextlib
 import logging
 import math
 import platform
-import queue
 import time
 from pathlib import Path
-from threading import Event, Thread
+from threading import Event, Lock, Thread
 from typing import Any, Dict, List
 
 import cv2
@@ -118,7 +116,9 @@ class OpenCVCamera(Camera):
 
         self.thread: Thread | None = None
         self.stop_event: Event | None = None
-        self.frame_queue: queue.Queue = queue.Queue(maxsize=1)
+        self.frame_lock: Lock = Lock()
+        self.latest_frame: np.ndarray | None = None
+        self.new_frame_event: Event = Event()
 
         self.rotation: int | None = get_cv2_rotation(config.rotation)
         self.backend: int = get_cv2_backend()
@@ -381,9 +381,9 @@ class OpenCVCamera(Camera):
             try:
                 color_image = self.read()
 
-                with contextlib.suppress(queue.Empty):
-                    _ = self.frame_queue.get_nowait()
-                self.frame_queue.put(color_image)
+                with self.frame_lock:
+                    self.latest_frame = color_image
+                self.new_frame_event.set()
 
             except DeviceNotConnectedError:
                 break
@@ -441,17 +441,26 @@ class OpenCVCamera(Camera):
         if self.thread is None or not self.thread.is_alive():
             self._start_read_thread()
 
-        try:
-            return self.frame_queue.get(timeout=timeout_ms / 1000.0)
-        except queue.Empty as e:
+        event_was_set = self.new_frame_event.wait(timeout=timeout_ms / 1000.0)
+
+        if not event_was_set:
             thread_alive = self.thread is not None and self.thread.is_alive()
             raise TimeoutError(
                 f"Timed out waiting for frame from camera {self} after {timeout_ms} ms. "
                 f"Read thread alive: {thread_alive}."
-            ) from e
+            )
+
+        try:
+            with self.frame_lock:
+                frame = self.latest_frame
+                self.new_frame_event.clear()
+
+            if frame is None:
+                raise RuntimeError(f"Internal error: Event set but no frame available for {self}.")
+
+            return frame
         except Exception as e:
-            logger.exception(f"Unexpected error getting frame from queue for {self}: {e}")
-            raise RuntimeError(f"Error getting frame from queue for camera {self.index_or_path}: {e}") from e
+            raise RuntimeError(f"Error getting frame from camera {self}: {e}") from e
 
     def disconnect(self):
         """
