@@ -122,7 +122,8 @@ class GamepadTeleop(Teleoperator):
             "delta_z": gamepad_action[2],
         }
 
-        gripper_action = None
+        # Default gripper action is to stay
+        gripper_action = GripperAction.STAY.value
         if self.config.use_gripper:
             gripper_command = self.gamepad.gripper_command()
             gripper_action = gripper_action_map[gripper_command]

@@ -18,8 +18,9 @@ from typing import Any, Dict, Optional, Tuple
 
 import draccus
 
-from lerobot.common.constants import ACTION, OBS_ENV, OBS_IMAGE, OBS_IMAGES, OBS_ROBOT
-from lerobot.common.robots.config import RobotConfig
+from lerobot.common.constants import ACTION, OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
+from lerobot.common.robots import RobotConfig
+from lerobot.common.teleoperators.config import TeleoperatorConfig
 from lerobot.configs.types import FeatureType, PolicyFeature
 
 
@@ -97,8 +98,8 @@ class PushtEnv(EnvConfig):
     features_map: dict[str, str] = field(
         default_factory=lambda: {
             "action": ACTION,
-            "agent_pos": OBS_ROBOT,
-            "environment_state": OBS_ENV,
+            "agent_pos": OBS_STATE,
+            "environment_state": OBS_ENV_STATE,
             "pixels": OBS_IMAGE,
         }
     )
@@ -139,7 +140,7 @@ class XarmEnv(EnvConfig):
     features_map: dict[str, str] = field(
         default_factory=lambda: {
             "action": ACTION,
-            "agent_pos": OBS_ROBOT,
+            "agent_pos": OBS_STATE,
             "pixels": OBS_IMAGE,
         }
     )
@@ -168,22 +169,23 @@ class VideoRecordConfig:
     trajectory_name: str = "trajectory"
 
 
-@dataclass
-class EEActionSpaceConfig:
-    """Configuration parameters for end-effector action space."""
+# @dataclass
+# class EEActionSpaceConfig:
+#     """Configuration parameters for end-effector action space."""
 
-    x_step_size: float
-    y_step_size: float
-    z_step_size: float
-    bounds: Dict[str, Any]  # Contains 'min' and 'max' keys with position bounds
-    control_mode: str = "gamepad"
+#     x_step_size: float
+#     y_step_size: float
+#     z_step_size: float
+#     bounds: Dict[str, Any]  # Contains 'min' and 'max' keys with position bounds
+#     control_mode: str = "gamepad"
 
 
 @dataclass
 class EnvTransformConfig:
     """Configuration for environment wrappers."""
 
-    ee_action_space_params: EEActionSpaceConfig = field(default_factory=EEActionSpaceConfig)
+    # ee_action_space_params: EEActionSpaceConfig = field(default_factory=EEActionSpaceConfig)
+    control_mode: str = "gamepad"
     display_cameras: bool = False
     add_joint_velocity_to_observation: bool = False
     add_current_to_observation: bool = False
@@ -205,6 +207,7 @@ class HILSerlRobotEnvConfig(EnvConfig):
     """Configuration for the HILSerlRobotEnv environment."""
 
     robot: Optional[RobotConfig] = None
+    teleop: Optional[TeleoperatorConfig] = None
     wrapper: Optional[EnvTransformConfig] = None
     fps: int = 10
     name: str = "real_robot"
@@ -252,12 +255,13 @@ class HILEnvConfig(EnvConfig):
         default_factory=lambda: {
             "action": ACTION,
             "observation.image": OBS_IMAGE,
-            "observation.state": OBS_ROBOT,
+            "observation.state": OBS_STATE,
         }
     )
     ################# args from hilserlrobotenv
     reward_classifier_pretrained_path: Optional[str] = None
-    robot: Optional[RobotConfig] = None
+    robot_config: Optional[RobotConfig] = None
+    teleop_config: Optional[TeleoperatorConfig] = None
     wrapper: Optional[EnvTransformConfig] = None
     mode: str = None  # Either "record", "replay", None
     repo_id: Optional[str] = None
