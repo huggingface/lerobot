@@ -18,6 +18,7 @@ import logging
 from typing import Any, Dict
 
 import numpy as np
+import time
 
 from lerobot.common.errors import DeviceNotConnectedError
 from lerobot.common.model.kinematics import RobotKinematics
@@ -26,6 +27,7 @@ from lerobot.common.motors.feetech import FeetechMotorsBus
 
 from ..so100_follower import SO100Follower
 from .config_so100_follower_end_effector import SO100FollowerEndEffectorConfig
+from lerobot.common.cameras import make_cameras_from_configs
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +57,8 @@ class SO100FollowerEndEffector(SO100Follower):
             },
             calibration=self.calibration,
         )
+
+        self.cameras = make_cameras_from_configs(config.cameras)
 
         self.config = config
 
@@ -164,3 +168,24 @@ class SO100FollowerEndEffector(SO100Follower):
         )
         # Send joint space action to parent class
         return super().send_action(joint_action)
+    
+
+    def get_observation(self) -> dict[str, Any]:
+        if not self.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+
+        # Read arm position
+        start = time.perf_counter()
+        obs_dict = self.bus.sync_read("Present_Position")
+        obs_dict = {f"{motor}.pos": val for motor, val in obs_dict.items()}
+        dt_ms = (time.perf_counter() - start) * 1e3
+        logger.debug(f"{self} read state: {dt_ms:.1f}ms")
+
+        # Capture images from cameras
+        for cam_key, cam in self.cameras.items():
+            start = time.perf_counter()
+            obs_dict[cam_key] = cam.async_read()
+            dt_ms = (time.perf_counter() - start) * 1e3
+            logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
+
+        return obs_dict
