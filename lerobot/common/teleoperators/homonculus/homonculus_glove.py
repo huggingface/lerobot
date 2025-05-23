@@ -100,6 +100,9 @@ class HomonculusGlove(Teleoperator):
         if not self.new_state_event.wait(timeout=2):
             raise TimeoutError(f"{self}: Timed out waiting for state after 2s.")
 
+        if not self.is_calibrated:
+            self.calibrate()
+
         logger.info(f"{self} connected.")
 
     @property
@@ -253,7 +256,7 @@ class HomonculusGlove(Teleoperator):
                     self.new_state_event.set()
 
             except Exception as e:
-                logger.warning(f"Error reading frame in background thread for {self}: {e}")
+                logger.debug(f"Error reading frame in background thread for {self}: {e}")
 
     def get_action(self) -> dict[str, float]:
         joint_positions = self._read()
