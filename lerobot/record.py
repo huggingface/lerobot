@@ -179,9 +179,12 @@ def record_loop(
 
         observation = robot.get_observation()
 
+        if policy is not None or dataset is not None:
+            observation_frame = build_dataset_frame(dataset.features, observation, prefix="observation")
+
         if policy is not None:
             action = predict_action(
-                observation, policy, get_safe_torch_device(policy.config.device), policy.config.use_amp
+                observation_frame, policy, get_safe_torch_device(policy.config.device), policy.config.use_amp
             )
         else:
             action = teleop.get_action()
@@ -191,7 +194,6 @@ def record_loop(
         sent_action = robot.send_action(action)
 
         if dataset is not None:
-            observation_frame = build_dataset_frame(dataset.features, observation, prefix="observation")
             action_frame = build_dataset_frame(dataset.features, sent_action, prefix="action")
             frame = {**observation_frame, **action_frame}
             dataset.add_frame(frame, task=single_task)
