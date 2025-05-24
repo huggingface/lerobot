@@ -23,15 +23,38 @@
 </div>
 
 <h2 align="center">
-    <p><a href="https://github.com/huggingface/lerobot/blob/main/examples/10_use_so100.md">New robot in town: SO-100</a></p>
+    <p><a href="https://github.com/huggingface/lerobot/blob/main/examples/12_use_so101.md">
+        Build Your Own SO-101 Robot!</a></p>
 </h2>
 
 <div align="center">
-    <img src="media/so100/leader_follower.webp?raw=true" alt="SO-100 leader and follower arms" title="SO-100 leader and follower arms" width="50%">
-    <p>We just added a new tutorial on how to build a more affordable robot, at the price of $110 per arm!</p>
-    <p>Teach it new skills by showing it a few moves with just a laptop.</p>
-    <p>Then watch your homemade robot act autonomously 🤯</p>
-    <p>Follow the link to the <a href="https://github.com/huggingface/lerobot/blob/main/examples/10_use_so100.md">full tutorial for SO-100</a>.</p>
+  <div style="display: flex; gap: 1rem; justify-content: center; align-items: center;" >
+    <img
+      src="media/so101/so101.webp?raw=true"
+      alt="SO-101 follower arm"
+      title="SO-101 follower arm"
+      style="width: 40%;"
+    />
+    <img
+      src="media/so101/so101-leader.webp?raw=true"
+      alt="SO-101 leader arm"
+      title="SO-101 leader arm"
+      style="width: 40%;"
+    />
+  </div>
+
+
+  <p><strong>Meet the updated SO100, the SO-101 – Just €114 per arm!</strong></p>
+  <p>Train it in minutes with a few simple moves on your laptop.</p>
+  <p>Then sit back and watch your creation act autonomously! 🤯</p>
+
+  <p><a href="https://github.com/huggingface/lerobot/blob/main/examples/12_use_so101.md">
+      See the full SO-101 tutorial here.</a></p>
+
+  <p>Want to take it to the next level? Make your SO-101 mobile by building LeKiwi!</p>
+  <p>Check out the <a href="https://github.com/huggingface/lerobot/blob/main/examples/11_use_lekiwi.md">LeKiwi tutorial</a> and bring your robot to life on wheels.</p>
+
+  <img src="media/lekiwi/kiwi.webp?raw=true" alt="LeKiwi mobile robot" title="LeKiwi mobile robot" width="50%">
 </div>
 
 <br/>
@@ -41,7 +64,6 @@
 </h3>
 
 ---
-
 
 🤗 LeRobot aims to provide models, datasets, and tools for real-world robotics in PyTorch. The goal is to lower the barrier to entry to robotics so that everyone can contribute and benefit from sharing datasets and pretrained models.
 
@@ -89,14 +111,25 @@ conda create -y -n lerobot python=3.10
 conda activate lerobot
 ```
 
+When using `miniconda`, install `ffmpeg` in your environment:
+```bash
+conda install ffmpeg -c conda-forge
+```
+
+> **NOTE:** This usually installs `ffmpeg 7.X` for your platform compiled with the `libsvtav1` encoder. If `libsvtav1` is not supported (check supported encoders with `ffmpeg -encoders`), you can:
+>  - _[On any platform]_ Explicitly install `ffmpeg 7.X` using:
+>  ```bash
+>  conda install ffmpeg=7.1.1 -c conda-forge
+>  ```
+>  - _[On Linux only]_ Install [ffmpeg build dependencies](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#GettheDependencies) and [compile ffmpeg from source with libsvtav1](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#libsvtav1), and make sure you use the corresponding ffmpeg binary to your install with `which ffmpeg`.
+
 Install 🤗 LeRobot:
 ```bash
 pip install -e .
 ```
 
-> **NOTE:** Depending on your platform, If you encounter any build errors during this step
-you may need to install `cmake` and `build-essential` for building some of our dependencies.
-On linux: `sudo apt-get install cmake build-essential`
+> **NOTE:** If you encounter build errors, you may need to install additional dependencies (`cmake`, `build-essential`, and `ffmpeg libs`). On Linux, run:
+`sudo apt-get install cmake build-essential python3-dev pkg-config libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev libswscale-dev libswresample-dev libavfilter-dev pkg-config`. For other systems, see: [Compiling PyAV](https://pyav.org/docs/develop/overview/installation.html#bring-your-own-ffmpeg)
 
 For simulations, 🤗 LeRobot comes with gymnasium environments that can be installed as extras:
 - [aloha](https://github.com/huggingface/gym-aloha)
@@ -188,7 +221,7 @@ dataset attributes:
   │  ├ episode_index (int64): index of the episode for this sample
   │  ├ frame_index (int64): index of the frame for this sample in the episode ; starts at 0 for each episode
   │  ├ timestamp (float32): timestamp in the episode
-  │  ├ next.done (bool): indicates the end of en episode ; True for the last frame in each episode
+  │  ├ next.done (bool): indicates the end of an episode ; True for the last frame in each episode
   │  └ index (int64): general index in the whole dataset
   ├ episode_data_index: contains 2 tensors with the start and end indices of each episode
   │  ├ from (1D int64 tensor): first frame index for each episode — shape (num episodes,) starts with 0
@@ -210,7 +243,7 @@ A `LeRobotDataset` is serialised using several widespread file formats for each 
 - videos are stored in mp4 format to save space
 - metadata are stored in plain json/jsonl files
 
-Dataset can be uploaded/downloaded from the HuggingFace hub seamlessly. To work on a local dataset, you can use the `local_files_only` argument and specify its location with the `root` argument if it's not in the default `~/.cache/huggingface/lerobot` location.
+Dataset can be uploaded/downloaded from the HuggingFace hub seamlessly. To work on a local dataset, you can specify its location with the `root` argument if it's not in the default `~/.cache/huggingface/lerobot` location.
 
 ### Evaluate a pretrained policy
 
@@ -223,8 +256,8 @@ python lerobot/scripts/eval.py \
     --env.type=pusht \
     --eval.batch_size=10 \
     --eval.n_episodes=10 \
-    --use_amp=false \
-    --device=cuda
+    --policy.use_amp=false \
+    --policy.device=cuda
 ```
 
 Note: After training your own policy, you can re-evaluate the checkpoints with:
@@ -237,7 +270,7 @@ See `python lerobot/scripts/eval.py --help` for more instructions.
 
 ### Train your own policy
 
-Check out [example 3](./examples/3_train_policy.py) that illustrate how to train a model using our core library in python, and [example 4](./examples/4_train_policy_with_script.md) that shows how to use our training script from command line.
+Check out [example 3](./examples/3_train_policy.py) that illustrates how to train a model using our core library in python, and [example 4](./examples/4_train_policy_with_script.md) that shows how to use our training script from command line.
 
 To use wandb for logging training and evaluation curves, make sure you've run `wandb login` as a one-time setup step. Then, when running the training command above, enable WandB in the configuration by adding `--wandb.enable=true`.
 
@@ -288,7 +321,7 @@ Once you have trained a policy you may upload it to the Hugging Face hub using a
 You first need to find the checkpoint folder located inside your experiment directory (e.g. `outputs/train/2024-05-05/20-21-12_aloha_act_default/checkpoints/002500`). Within that there is a `pretrained_model` directory which should contain:
 - `config.json`: A serialized version of the policy configuration (following the policy's dataclass config).
 - `model.safetensors`: A set of `torch.nn.Module` parameters, saved in [Hugging Face Safetensors](https://huggingface.co/docs/safetensors/index) format.
-- `train_config.json`: A consolidated configuration containing all parameter userd for training. The policy configuration should match `config.json` exactly. Thisis useful for anyone who wants to evaluate your policy or for reproducibility.
+- `train_config.json`: A consolidated configuration containing all parameters used for training. The policy configuration should match `config.json` exactly. This is useful for anyone who wants to evaluate your policy or for reproducibility.
 
 To upload these to the hub, run the following:
 ```bash
@@ -375,3 +408,6 @@ Additionally, if you are using any of the particular policy architecture, pretra
   year={2024}
 }
 ```
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=huggingface/lerobot&type=Timeline)](https://star-history.com/#huggingface/lerobot&Timeline)

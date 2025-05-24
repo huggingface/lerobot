@@ -109,7 +109,7 @@ def visualize_image_transforms(cfg: DatasetConfig, output_dir: Path = OUTPUT_DIR
     dataset = LeRobotDataset(
         repo_id=cfg.repo_id,
         episodes=cfg.episodes,
-        local_files_only=cfg.local_files_only,
+        revision=cfg.revision,
         video_backend=cfg.video_backend,
     )
 

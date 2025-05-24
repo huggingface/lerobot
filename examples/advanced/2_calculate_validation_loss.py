@@ -1,3 +1,17 @@
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """This script demonstrates how to slice a dataset and calculate the loss on a subset of the data.
 
 This technique can be useful for debugging and testing purposes, as well as identifying whether a policy
@@ -52,7 +66,7 @@ def main():
     print(f"Number of episodes in full dataset: {total_episodes}")
     print(f"Number of episodes in training dataset (90% subset): {len(train_episodes)}")
     print(f"Number of episodes in validation dataset (10% subset): {len(val_episodes)}")
-    # - Load train an val datasets
+    # - Load train and val datasets
     train_dataset = LeRobotDataset(
         "lerobot/pusht", episodes=train_episodes, delta_timestamps=delta_timestamps
     )
@@ -75,9 +89,9 @@ def main():
     n_examples_evaluated = 0
     for batch in val_dataloader:
         batch = {k: v.to(device, non_blocking=True) for k, v in batch.items()}
-        output_dict = policy.forward(batch)
+        loss, _ = policy.forward(batch)
 
-        loss_cumsum += output_dict["loss"].item()
+        loss_cumsum += loss.item()
         n_examples_evaluated += batch["index"].shape[0]
 
     # Calculate the average loss over the validation set.

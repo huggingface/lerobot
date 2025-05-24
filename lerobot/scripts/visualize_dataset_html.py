@@ -150,7 +150,7 @@ def run_server(
                 400,
             )
         dataset_version = (
-            dataset.meta._version if isinstance(dataset, LeRobotDataset) else dataset.codebase_version
+            str(dataset.meta._version) if isinstance(dataset, LeRobotDataset) else dataset.codebase_version
         )
         match = re.search(r"v(\d+)\.", dataset_version)
         if match:
@@ -158,7 +158,7 @@ def run_server(
             if major_version < 2:
                 return "Make sure to convert your LeRobotDataset to v2 & above."
 
-        episode_data_csv_str, columns = get_episode_data(dataset, episode_id)
+        episode_data_csv_str, columns, ignored_columns = get_episode_data(dataset, episode_id)
         dataset_info = {
             "repo_id": f"{dataset_namespace}/{dataset_name}",
             "num_samples": dataset.num_frames
@@ -174,7 +174,10 @@ def run_server(
                 dataset.meta.get_video_file_path(episode_id, key) for key in dataset.meta.video_keys
             ]
             videos_info = [
-                {"url": url_for("static", filename=video_path), "filename": video_path.parent.name}
+                {
+                    "url": url_for("static", filename=str(video_path).replace("\\", "/")),
+                    "filename": video_path.parent.name,
+                }
                 for video_path in video_paths
             ]
             tasks = dataset.meta.episodes[episode_id]["tasks"]
@@ -194,7 +197,7 @@ def run_server(
             ]
 
             response = requests.get(
-                f"https://huggingface.co/datasets/{repo_id}/resolve/main/meta/episodes.jsonl"
+                f"https://huggingface.co/datasets/{repo_id}/resolve/main/meta/episodes.jsonl", timeout=5
             )
             response.raise_for_status()
             # Split into lines and parse each line as JSON
@@ -218,6 +221,7 @@ def run_server(
             videos_info=videos_info,
             episode_data_csv_str=episode_data_csv_str,
             columns=columns,
+            ignored_columns=ignored_columns,
         )
 
     app.run(host=host, port=port)
@@ -233,8 +237,16 @@ def get_episode_data(dataset: LeRobotDataset | IterableNamespace, episode_index)
     This file will be loaded by Dygraph javascript to plot data in real time."""
     columns = []
 
-    selected_columns = [col for col, ft in dataset.features.items() if ft["dtype"] == "float32"]
+    selected_columns = [col for col, ft in dataset.features.items() if ft["dtype"] in ["float32", "int32"]]
     selected_columns.remove("timestamp")
+
+    ignored_columns = []
+    for column_name in selected_columns:
+        shape = dataset.features[column_name]["shape"]
+        shape_dim = len(shape)
+        if shape_dim > 1:
+            selected_columns.remove(column_name)
+            ignored_columns.append(column_name)
 
     # init header of csv with state and action names
     header = ["timestamp"]
@@ -245,15 +257,16 @@ def get_episode_data(dataset: LeRobotDataset | IterableNamespace, episode_index)
             if isinstance(dataset, LeRobotDataset)
             else dataset.features[column_name].shape[0]
         )
-        header += [f"{column_name}_{i}" for i in range(dim_state)]
 
         if "names" in dataset.features[column_name] and dataset.features[column_name]["names"]:
             column_names = dataset.features[column_name]["names"]
             while not isinstance(column_names, list):
                 column_names = list(column_names.values())[0]
         else:
-            column_names = [f"motor_{i}" for i in range(dim_state)]
+            column_names = [f"{column_name}_{i}" for i in range(dim_state)]
         columns.append({"key": column_name, "value": column_names})
+
+        header += column_names
 
     selected_columns.insert(0, "timestamp")
 
@@ -290,7 +303,7 @@ def get_episode_data(dataset: LeRobotDataset | IterableNamespace, episode_index)
     csv_writer.writerows(rows)
     csv_string = csv_buffer.getvalue()
 
-    return csv_string, columns
+    return csv_string, columns, ignored_columns
 
 
 def get_episode_video_paths(dataset: LeRobotDataset, ep_index: int) -> list[str]:
@@ -317,7 +330,9 @@ def get_episode_language_instruction(dataset: LeRobotDataset, ep_index: int) -> 
 
 
 def get_dataset_info(repo_id: str) -> IterableNamespace:
-    response = requests.get(f"https://huggingface.co/datasets/{repo_id}/resolve/main/meta/info.json")
+    response = requests.get(
+        f"https://huggingface.co/datasets/{repo_id}/resolve/main/meta/info.json", timeout=5
+    )
     response.raise_for_status()  # Raises an HTTPError for bad responses
     dataset_info = response.json()
     dataset_info["repo_id"] = repo_id
@@ -364,12 +379,12 @@ def visualize_dataset_html(
                 template_folder=template_dir,
             )
     else:
-        # Create a simlink from the dataset video folder containg mp4 files to the output directory
+        # Create a simlink from the dataset video folder containing mp4 files to the output directory
         # so that the http server can get access to the mp4 files.
         if isinstance(dataset, LeRobotDataset):
             ln_videos_dir = static_dir / "videos"
             if not ln_videos_dir.exists():
-                ln_videos_dir.symlink_to((dataset.root / "videos").resolve())
+                ln_videos_dir.symlink_to((dataset.root / "videos").resolve().as_posix())
 
         if serve:
             run_server(dataset, episodes, host, port, static_dir, template_dir)
@@ -383,12 +398,6 @@ def main():
         type=str,
         default=None,
         help="Name of hugging face repositery containing a LeRobotDataset dataset (e.g. `lerobot/pusht` for https://huggingface.co/datasets/lerobot/pusht).",
-    )
-    parser.add_argument(
-        "--local-files-only",
-        type=int,
-        default=0,
-        help="Use local files only. By default, this script will try to fetch the dataset from the hub if it exists.",
     )
     parser.add_argument(
         "--root",
@@ -440,17 +449,28 @@ def main():
         help="Delete the output directory if it exists already.",
     )
 
+    parser.add_argument(
+        "--tolerance-s",
+        type=float,
+        default=1e-4,
+        help=(
+            "Tolerance in seconds used to ensure data timestamps respect the dataset fps value"
+            "This is argument passed to the constructor of LeRobotDataset and maps to its tolerance_s constructor argument"
+            "If not given, defaults to 1e-4."
+        ),
+    )
+
     args = parser.parse_args()
     kwargs = vars(args)
     repo_id = kwargs.pop("repo_id")
     load_from_hf_hub = kwargs.pop("load_from_hf_hub")
     root = kwargs.pop("root")
-    local_files_only = kwargs.pop("local_files_only")
+    tolerance_s = kwargs.pop("tolerance_s")
 
     dataset = None
     if repo_id:
         dataset = (
-            LeRobotDataset(repo_id, root=root, local_files_only=local_files_only)
+            LeRobotDataset(repo_id, root=root, tolerance_s=tolerance_s)
             if not load_from_hf_hub
             else get_dataset_info(repo_id)
         )
