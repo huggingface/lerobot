@@ -19,11 +19,12 @@ This file contains utilities for recording frames from cameras. For more info lo
 import argparse
 import concurrent.futures
 import math
+import os
 import platform
 import shutil
 import threading
 import time
-import os
+from contextlib import suppress
 from pathlib import Path
 from threading import Thread
 
@@ -44,14 +45,63 @@ from lerobot.common.utils.utils import capture_timestamp_utc
 # When you change the USB port or reboot the computer, the operating system might
 # treat the same cameras as new devices. Thus we select a higher bound to search indices.
 MAX_OPENCV_INDEX = 60
+_PROBE_TIMEOUT_SECONDS = 3.0  # Timeout for probing individual cameras
+
+
+class _ProbeResult:
+    """Helper class to store results from the camera probing thread."""
+
+    def __init__(self):
+        self.opened = False
+        self.exception = None
+
+
+def _attempt_open_camera_in_thread(camera_id_to_probe, result_obj, cv2_module_to_use):
+    """
+    Attempts to open and verify a camera in a separate thread.
+    Modifies result_obj in place.
+    Ensures the camera is released if opened.
+    """
+    temp_cam = None
+    try:
+        opened_successfully = False
+        if platform.system() == "Linux" and isinstance(camera_id_to_probe, str):
+            # First, try with explicit V4L2 backend on Linux for /dev/video* paths
+            # print(f"      (Probe) Attempting {camera_id_to_probe} with V4L2 backend...") # Optional debug
+            temp_cam = cv2_module_to_use.VideoCapture(camera_id_to_probe, cv2_module_to_use.CAP_V4L2)
+            if temp_cam is not None and temp_cam.isOpened():
+                opened_successfully = True
+            else:
+                # print(f"      (Probe) V4L2 attempt failed for {camera_id_to_probe}. Trying default backend...") # Optional debug
+                if temp_cam is not None:  # Release the failed attempt before trying again
+                    with suppress(Exception):
+                        temp_cam.release()
+                # Fallback to default backend if V4L2 failed
+                temp_cam = cv2_module_to_use.VideoCapture(camera_id_to_probe)
+                if temp_cam is not None and temp_cam.isOpened():
+                    opened_successfully = True
+        else:
+            # For non-Linux or non-string IDs (e.g., integer indices on Windows/macOS)
+            temp_cam = cv2_module_to_use.VideoCapture(camera_id_to_probe)
+            if temp_cam is not None and temp_cam.isOpened():
+                opened_successfully = True
+
+        result_obj.opened = opened_successfully
+
+    except Exception as e:
+        result_obj.exception = e
+    finally:
+        if temp_cam is not None:
+            with suppress(Exception):
+                temp_cam.release()
 
 
 def check_video_device_permissions(port: str) -> bool:
     """Check if the current user has read/write permissions for a video device.
-    
+
     Args:
         port: Path to the video device (e.g. '/dev/video0')
-        
+
     Returns:
         bool: True if user has proper permissions, False otherwise
     """
@@ -59,7 +109,7 @@ def check_video_device_permissions(port: str) -> bool:
         # Check if file exists and is a character device
         if not Path(port).is_char_device():
             return False
-            
+
         # Check if user has read/write permissions
         return os.access(port, os.R_OK | os.W_OK)
     except Exception:
@@ -71,7 +121,7 @@ def find_cameras(raise_when_empty=False, max_index_search_range=MAX_OPENCV_INDEX
     if platform.system() == "Linux":
         print("Linux detected. Finding available camera indices through scanning '/dev/video*' ports")
         possible_ports = [str(port) for port in Path("/dev").glob("video*")]
-        
+
         # First check permissions for all video devices
         inaccessible_ports = [port for port in possible_ports if not check_video_device_permissions(port)]
         if inaccessible_ports:
@@ -84,7 +134,7 @@ def find_cameras(raise_when_empty=False, max_index_search_range=MAX_OPENCV_INDEX
                 "3. Or run the script with sudo (not recommended)"
             )
             raise PermissionError(error_msg)
-            
+
         ports = _find_cameras(possible_ports, mock=mock)
         for port in ports:
             cameras.append(
@@ -108,6 +158,11 @@ def find_cameras(raise_when_empty=False, max_index_search_range=MAX_OPENCV_INDEX
                 }
             )
 
+    if raise_when_empty and not cameras:
+        raise OSError(
+            "Not a single camera was detected after probing. Try re-plugging, or re-installing `opencv2`, "
+            "or your camera driver, or make sure your camera is compatible with opencv2."
+        )
     return cameras
 
 
@@ -115,27 +170,49 @@ def _find_cameras(
     possible_camera_ids: list[int | str], raise_when_empty=False, mock=False
 ) -> list[int | str]:
     if mock:
-        import tests.cameras.mock_cv2 as cv2
+        import tests.cameras.mock_cv2 as active_cv2_module
     else:
-        import cv2
+        import cv2 as active_cv2_module
 
-    camera_ids = []
+    found_camera_ids = []
+    if not possible_camera_ids:
+        print("No possible camera IDs/ports found to check (e.g., no /dev/video* entries).")
+
     for camera_idx in possible_camera_ids:
-        camera = cv2.VideoCapture(camera_idx)
-        is_open = camera.isOpened()
-        camera.release()
+        print(f"Probing camera: {camera_idx}...")
 
-        if is_open:
-            print(f"Camera found at index {camera_idx}")
-            camera_ids.append(camera_idx)
+        probe_result_obj = _ProbeResult()
 
-    if raise_when_empty and len(camera_ids) == 0:
+        probe_thread = threading.Thread(
+            target=_attempt_open_camera_in_thread, args=(camera_idx, probe_result_obj, active_cv2_module)
+        )
+        probe_thread.daemon = True
+        probe_thread.start()
+        probe_thread.join(timeout=_PROBE_TIMEOUT_SECONDS)
+
+        if probe_thread.is_alive():
+            print(f"  Probe for camera {camera_idx} timed out after {_PROBE_TIMEOUT_SECONDS}s. Skipping.")
+        else:
+            if probe_result_obj.exception:
+                print(f"  Exception while probing camera {camera_idx}: {probe_result_obj.exception}")
+            elif probe_result_obj.opened:
+                print(f"  Successfully opened and verified camera: {camera_idx}")
+                found_camera_ids.append(camera_idx)
+            else:
+                print(f"  Failed to open or verify camera: {camera_idx}")
+
+    if raise_when_empty and len(found_camera_ids) == 0:
         raise OSError(
             "Not a single camera was detected. Try re-plugging, or re-installing `opencv2`, "
             "or your camera driver, or make sure your camera is compatible with opencv2."
         )
 
-    return camera_ids
+    if not found_camera_ids:
+        print("No working cameras found from the probed list.")
+    else:
+        print(f"Found working cameras at: {found_camera_ids}")
+
+    return found_camera_ids
 
 
 def is_valid_unix_path(path: str) -> bool:
@@ -170,6 +247,9 @@ def save_images_from_cameras(
     """
     if camera_ids is None or len(camera_ids) == 0:
         camera_infos = find_cameras(mock=mock)
+        if not camera_infos:
+            print("No cameras found. Exiting save_images_from_cameras.")
+            return
         camera_ids = [cam["index"] for cam in camera_infos]
 
     print("Connecting cameras")
@@ -221,6 +301,10 @@ def save_images_from_cameras(
                 break
 
             frame_index += 1
+
+    # Disconnect cameras after use
+    for camera in cameras:
+        camera.disconnect()
 
     print(f"Images have been saved to {images_dir}")
 
@@ -303,18 +387,9 @@ class OpenCVCamera:
         self.color_image = None
         self.logs = {}
 
-        if self.mock:
-            import tests.cameras.mock_cv2 as cv2
-        else:
-            import cv2
-
+        # cv2 module will be imported dynamically based on self.mock
         self.rotation = None
-        if config.rotation == -90:
-            self.rotation = cv2.ROTATE_90_COUNTERCLOCKWISE
-        elif config.rotation == 90:
-            self.rotation = cv2.ROTATE_90_CLOCKWISE
-        elif config.rotation == 180:
-            self.rotation = cv2.ROTATE_180
+        # Actual cv2.ROTATE_* constants will be set in connect() after cv2 is imported.
 
     def connect(self):
         if self.is_connected:
@@ -328,6 +403,14 @@ class OpenCVCamera:
             # Use 1 thread to avoid blocking the main thread. Especially useful during data collection
             # when other threads are used to save the images.
             cv2.setNumThreads(1)
+
+        # Set rotation constants after cv2 is imported
+        if self.config.rotation == -90:
+            self.rotation = cv2.ROTATE_90_COUNTERCLOCKWISE
+        elif self.config.rotation == 90:
+            self.rotation = cv2.ROTATE_90_CLOCKWISE
+        elif self.config.rotation == 180:
+            self.rotation = cv2.ROTATE_180
 
         backend = (
             cv2.CAP_V4L2
@@ -352,7 +435,7 @@ class OpenCVCamera:
         # valid cameras.
         if not is_camera_open:
             # Verify that the provided `camera_index` is valid before printing the traceback
-            cameras_info = find_cameras()
+            cameras_info = find_cameras(mock=self.mock)  # Pass mock status
             available_cam_ids = [cam["index"] for cam in cameras_info]
             if self.camera_index not in available_cam_ids:
                 raise ValueError(
@@ -366,6 +449,10 @@ class OpenCVCamera:
         # Note: For some unknown reason, calling `isOpened` blocks the camera which then
         # needs to be re-created.
         self.camera = cv2.VideoCapture(camera_idx, backend)
+        if not self.camera.isOpened():  # Add a final check
+            raise OSError(
+                f"Failed to open OpenCVCamera({camera_idx}) for use, even after initial checks passed."
+            )
 
         if self.fps is not None:
             self.camera.set(cv2.CAP_PROP_FPS, self.fps)
@@ -382,24 +469,33 @@ class OpenCVCamera:
         if self.fps is not None and not math.isclose(self.fps, actual_fps, rel_tol=1e-3):
             # Using `OSError` since it's a broad that encompasses issues related to device communication
             raise OSError(
-                f"Can't set {self.fps=} for OpenCVCamera({self.camera_index}). Actual value is {actual_fps}."
+                f"Can't set fps={self.fps} for OpenCVCamera({self.camera_index}). Actual value is {actual_fps}."
             )
         if self.capture_width is not None and not math.isclose(
             self.capture_width, actual_width, rel_tol=1e-3
         ):
             raise OSError(
-                f"Can't set {self.capture_width=} for OpenCVCamera({self.camera_index}). Actual value is {actual_width}."
+                f"Can't set capture_width={self.capture_width} for OpenCVCamera({self.camera_index}). Actual value is {actual_width}."
             )
         if self.capture_height is not None and not math.isclose(
             self.capture_height, actual_height, rel_tol=1e-3
         ):
             raise OSError(
-                f"Can't set {self.capture_height=} for OpenCVCamera({self.camera_index}). Actual value is {actual_height}."
+                f"Can't set capture_height={self.capture_height} for OpenCVCamera({self.camera_index}). Actual value is {actual_height}."
             )
 
         self.fps = round(actual_fps)
         self.capture_width = round(actual_width)
         self.capture_height = round(actual_height)
+
+        # Re-evaluate self.width and self.height if capture dimensions were adjusted
+        if self.config.rotation in [-90, 90]:
+            self.width = self.capture_height
+            self.height = self.capture_width
+        else:
+            self.width = self.capture_width
+            self.height = self.capture_height
+
         self.is_connected = True
 
     def read(self, temporary_color_mode: str | None = None) -> np.ndarray:
@@ -440,13 +536,19 @@ class OpenCVCamera:
             color_image = cv2.cvtColor(color_image, cv2.COLOR_BGR2RGB)
 
         h, w, _ = color_image.shape
+        # Check against capture_height/width before rotation
         if h != self.capture_height or w != self.capture_width:
             raise OSError(
                 f"Can't capture color image with expected height and width ({self.height} x {self.width}). ({h} x {w}) returned instead."
             )
 
         if self.rotation is not None:
-            color_image = cv2.rotate(color_image, self.rotation)
+            # cv2 module needs to be the one loaded in connect() or re-imported if not stored
+            if self.mock:
+                import tests.cameras.mock_cv2 as cv2_rot
+            else:
+                import cv2 as cv2_rot
+            color_image = cv2_rot.rotate(color_image, self.rotation)
 
         # log the number of seconds it took to read the image
         self.logs["delta_timestamp_s"] = time.perf_counter() - start_time
@@ -464,6 +566,8 @@ class OpenCVCamera:
                 self.color_image = self.read()
             except Exception as e:
                 print(f"Error reading in thread: {e}")
+                # Add a small sleep to avoid tight loop on continuous error
+                time.sleep(0.1)
 
     def async_read(self):
         if not self.is_connected:
@@ -478,14 +582,21 @@ class OpenCVCamera:
             self.thread.start()
 
         num_tries = 0
-        while True:
-            if self.color_image is not None:
-                return self.color_image
-
-            time.sleep(1 / self.fps)
+        while self.color_image is None:  # Wait for self.color_image to be populated by read_loop
+            time.sleep(1 / self.fps if self.fps > 0 else 0.01)  # Avoid division by zero if fps is 0 or None
             num_tries += 1
-            if num_tries > self.fps * 2:
-                raise TimeoutError("Timed out waiting for async_read() to start.")
+            if self.fps > 0 and num_tries > self.fps * 2:  # Max 2 seconds worth of frames
+                raise TimeoutError(
+                    f"OpenCVCamera({self.camera_index}): Timed out waiting for async_read() to provide the first frame."
+                )
+            elif (
+                self.fps <= 0 and num_tries > 200
+            ):  # Fallback for fps <= 0, approx 2 seconds if sleep is 0.01
+                raise TimeoutError(
+                    f"OpenCVCamera({self.camera_index}): Timed out waiting for async_read() (fps={self.fps})."
+                )
+
+        return self.color_image
 
     def disconnect(self):
         if not self.is_connected:
@@ -499,13 +610,24 @@ class OpenCVCamera:
             self.thread = None
             self.stop_event = None
 
-        self.camera.release()
-        self.camera = None
+        if self.camera is not None:  # Check if camera object exists
+            self.camera.release()
+            self.camera = None
         self.is_connected = False
 
     def __del__(self):
         if getattr(self, "is_connected", False):
-            self.disconnect()
+            try:
+                self.disconnect()
+            except (
+                RobotDeviceNotConnectedError
+            ):  # Can happen if disconnect called twice or state inconsistent
+                pass
+            except Exception as e:
+                # Suppress other exceptions during __del__
+                print(
+                    f"Exception during OpenCVCamera({getattr(self, 'camera_index', 'N/A')}) __del__ disconnect: {e}"
+                )
 
 
 if __name__ == "__main__":
@@ -547,7 +669,7 @@ if __name__ == "__main__":
         "--record-time-s",
         type=float,
         default=4.0,
-        help="Set the number of seconds used to record the frames. By default, 2 seconds.",
+        help="Set the number of seconds used to record the frames. By default, 4 seconds.",
     )
     args = parser.parse_args()
     save_images_from_cameras(**vars(args))
