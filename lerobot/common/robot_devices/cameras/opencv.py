@@ -23,6 +23,7 @@ import platform
 import shutil
 import threading
 import time
+import os
 from pathlib import Path
 from threading import Thread
 
@@ -45,11 +46,45 @@ from lerobot.common.utils.utils import capture_timestamp_utc
 MAX_OPENCV_INDEX = 60
 
 
+def check_video_device_permissions(port: str) -> bool:
+    """Check if the current user has read/write permissions for a video device.
+    
+    Args:
+        port: Path to the video device (e.g. '/dev/video0')
+        
+    Returns:
+        bool: True if user has proper permissions, False otherwise
+    """
+    try:
+        # Check if file exists and is a character device
+        if not Path(port).is_char_device():
+            return False
+            
+        # Check if user has read/write permissions
+        return os.access(port, os.R_OK | os.W_OK)
+    except Exception:
+        return False
+
+
 def find_cameras(raise_when_empty=False, max_index_search_range=MAX_OPENCV_INDEX, mock=False) -> list[dict]:
     cameras = []
     if platform.system() == "Linux":
         print("Linux detected. Finding available camera indices through scanning '/dev/video*' ports")
         possible_ports = [str(port) for port in Path("/dev").glob("video*")]
+        
+        # First check permissions for all video devices
+        inaccessible_ports = [port for port in possible_ports if not check_video_device_permissions(port)]
+        if inaccessible_ports:
+            error_msg = (
+                "No permission to access video devices. The following devices are inaccessible:\n"
+                + "\n".join(f"- {port}" for port in inaccessible_ports)
+                + "\n\nTo fix this, either:\n"
+                "1. Add your user to the 'video' group: sudo usermod -a -G video $USER\n"
+                "2. Then log out and log back in for the changes to take effect\n"
+                "3. Or run the script with sudo (not recommended)"
+            )
+            raise PermissionError(error_msg)
+            
         ports = _find_cameras(possible_ports, mock=mock)
         for port in ports:
             cameras.append(
