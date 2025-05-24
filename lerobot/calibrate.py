@@ -37,17 +37,20 @@ from lerobot.common.robots import (  # noqa: F401
     Robot,
     RobotConfig,
     koch_follower,
+    lekiwi,
     make_robot_from_config,
     so100_follower,
+    so101_follower,
 )
 from lerobot.common.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
+    koch_leader,
     make_teleoperator_from_config,
+    so100_leader,
+    so101_leader,
 )
 from lerobot.common.utils.utils import init_logging
-
-from .common.teleoperators import koch_leader, so100_leader  # noqa: F401
 
 
 @dataclass

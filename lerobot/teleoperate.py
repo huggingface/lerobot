@@ -19,13 +19,14 @@ Example:
 
 ```shell
 python -m lerobot.teleoperate \
-    --robot.type=so100_follower \
+    --robot.type=so101_follower \
     --robot.port=/dev/tty.usbmodem58760431541 \
-    --robot.cameras="{laptop: {type: opencv, camera_index: 0}}" \
+    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \
     --robot.id=black \
-    --teleop.type=so100_leader \
+    --teleop.type=so101_leader \
     --teleop.port=/dev/tty.usbmodem58760431551 \
-    --teleop.id=blue
+    --teleop.id=blue \
+    --display_data=true
 ```
 """
 
@@ -46,6 +47,7 @@ from lerobot.common.robots import (  # noqa: F401
     koch_follower,
     make_robot_from_config,
     so100_follower,
+    so101_follower,
 )
 from lerobot.common.teleoperators import (
     Teleoperator,
@@ -55,7 +57,7 @@ from lerobot.common.teleoperators import (
 from lerobot.common.utils.utils import init_logging, move_cursor_up
 from lerobot.common.utils.visualization_utils import _init_rerun
 
-from .common.teleoperators import koch_leader, so100_leader  # noqa: F401
+from .common.teleoperators import koch_leader, so100_leader, so101_leader  # noqa: F401
 
 
 @dataclass

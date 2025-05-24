@@ -28,12 +28,20 @@ from dataclasses import dataclass
 
 import draccus
 
-from .common.robots import RobotConfig, koch_follower, make_robot_from_config, so100_follower  # noqa: F401
+from .common.robots import (  # noqa: F401
+    RobotConfig,
+    koch_follower,
+    lekiwi,
+    make_robot_from_config,
+    so100_follower,
+    so101_follower,
+)
 from .common.teleoperators import (  # noqa: F401
     TeleoperatorConfig,
     koch_leader,
     make_teleoperator_from_config,
     so100_leader,
+    so101_leader,
 )
 
 COMPATIBLE_DEVICES = [
@@ -41,6 +49,9 @@ COMPATIBLE_DEVICES = [
     "koch_leader",
     "so100_follower",
     "so100_leader",
+    "so101_follower",
+    "so101_leader",
+    "lekiwi",
 ]
 
 
