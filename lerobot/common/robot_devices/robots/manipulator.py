@@ -186,7 +186,7 @@ class ManipulatorRobot:
     def motor_features(self) -> dict:
         action_names = self.get_motor_names(self.leader_arms)
         state_names = self.get_motor_names(self.leader_arms)
-        return {
+        motor_features = {
             "action": {
                 "dtype": "float32",
                 "shape": (len(action_names),),
@@ -198,6 +198,21 @@ class ManipulatorRobot:
                 "names": state_names,
             },
         }
+
+        USE_EEF = True
+        if USE_EEF:
+            eef_names = ["rot_6d_0", "rot_6d_1", "rot_6d_2", "rot_6d_3", "rot_6d_4", "rot_6d_5", "trans_0", "trans_1", "trans_2", "gripper_articulation"] 
+            motor_features["observation.right_eef_pose"] = {
+                "dtype": "float32",
+                "shape": (len(eef_names),),
+                "names": eef_names,
+            }
+            motor_features["action.right_eef_pose"] = {
+                "dtype": "float32",
+                "shape": (len(eef_names),),
+                "names": eef_names,
+            }
+        return motor_features
 
     @property
     def features(self):

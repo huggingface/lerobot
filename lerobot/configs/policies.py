@@ -104,10 +104,8 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
 
     @property
     def robot_state_feature(self) -> PolicyFeature | None:
-        for _, ft in self.input_features.items():
-            if ft.type is FeatureType.STATE:
-                return ft
-        return None
+        robot_state_feature = {name: ft for name, ft in self.input_features.items() if ft.type is FeatureType.STATE}
+        return robot_state_feature
 
     @property
     def env_state_feature(self) -> PolicyFeature | None:
@@ -122,10 +120,8 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
 
     @property
     def action_feature(self) -> PolicyFeature | None:
-        for _, ft in self.output_features.items():
-            if ft.type is FeatureType.ACTION:
-                return ft
-        return None
+        action_feature = {name: ft for name, ft in self.output_features.items() if ft.type is FeatureType.ACTION}
+        return action_feature
 
     def _save_pretrained(self, save_directory: Path) -> None:
         with open(save_directory / CONFIG_NAME, "w") as f, draccus.config_type("json"):

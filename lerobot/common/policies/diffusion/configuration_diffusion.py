@@ -104,7 +104,7 @@ class DiffusionConfig(PreTrainedConfig):
     """
 
     # Inputs / output structure.
-    n_obs_steps: int = 2
+    n_obs_steps: int = 4
     horizon: int = 128
     n_action_steps: int = 64
 
@@ -118,7 +118,7 @@ class DiffusionConfig(PreTrainedConfig):
 
     # The original implementation doesn't sample frames for the last 7 steps,
     # which avoids excessive padding and leads to improved training results.
-    drop_n_last_frames: int = 63  # horizon - n_action_steps - n_obs_steps + 1
+    drop_n_last_frames: int = 61  # horizon - n_action_steps - n_obs_steps + 1
 
     # Architecture / modeling.
     # Vision backbone.
@@ -144,6 +144,8 @@ class DiffusionConfig(PreTrainedConfig):
     prediction_type: str = "epsilon"
     clip_sample: bool = True
     clip_sample_range: float = 1.0
+
+    action_space: str = "right_eef"
 
     # Inference
     num_inference_steps: int | None = None
