@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List
 
-import draccus        # pip install draccus
+import draccus  # pip install draccus
 
 
 # ─────────────────────────────────── Config ────────────────────────────────── #
@@ -88,8 +88,9 @@ def merge_episodes_stats(p1: Path, p2: Path, out: Path, offset: int) -> None:
         if isinstance(epi, list):
             shifted = [x + offset for x in epi]
         elif isinstance(epi, dict):
-            shifted = {k: ([x + offset for x in v] if isinstance(v, list) else v + offset)
-                       for k, v in epi.items()}
+            shifted = {
+                k: ([x + offset for x in v] if isinstance(v, list) else v + offset) for k, v in epi.items()
+            }
         else:
             shifted = epi + offset
         r["stats"]["episode_index"] = shifted
@@ -166,18 +167,24 @@ def run(cfg: MergeConfig) -> None:
         n2 = copy_parquet(cfg.dataset2, data_dst, start_idx=n1, chunk=chunk)
 
     # 2-4 Meta
-    merge_episodes_stats(cfg.dataset1 / "meta" / "episodes_stats.jsonl",
-                         cfg.dataset2 / "meta" / "episodes_stats.jsonl",
-                         meta_dst / "episodes_stats.jsonl", offset=n1)
-    merge_episodes(cfg.dataset1 / "meta" / "episodes.jsonl",
-                   cfg.dataset2 / "meta" / "episodes.jsonl",
-                   meta_dst / "episodes.jsonl", offset=n1)
-    merge_tasks(cfg.dataset1 / "meta" / "tasks.jsonl",
-                cfg.dataset2 / "meta" / "tasks.jsonl",
-                meta_dst / "tasks.jsonl")
-    merge_info(cfg.dataset1 / "meta" / "info.json",
-               cfg.dataset2 / "meta" / "info.json",
-               meta_dst / "info.json")
+    merge_episodes_stats(
+        cfg.dataset1 / "meta" / "episodes_stats.jsonl",
+        cfg.dataset2 / "meta" / "episodes_stats.jsonl",
+        meta_dst / "episodes_stats.jsonl",
+        offset=n1,
+    )
+    merge_episodes(
+        cfg.dataset1 / "meta" / "episodes.jsonl",
+        cfg.dataset2 / "meta" / "episodes.jsonl",
+        meta_dst / "episodes.jsonl",
+        offset=n1,
+    )
+    merge_tasks(
+        cfg.dataset1 / "meta" / "tasks.jsonl", cfg.dataset2 / "meta" / "tasks.jsonl", meta_dst / "tasks.jsonl"
+    )
+    merge_info(
+        cfg.dataset1 / "meta" / "info.json", cfg.dataset2 / "meta" / "info.json", meta_dst / "info.json"
+    )
 
     # 5 – Videos
     if cfg.copy_videos:
