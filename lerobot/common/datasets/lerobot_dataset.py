@@ -944,7 +944,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def stop_image_writer(self) -> None:
         """
         Whenever wrapping this dataset inside a parallelized DataLoader, this needs to be called first to
-        remove the image_writer in order for the LeRobotDataset object to be pickleable and parallelized.
+        remove the image_writer in order for the LeRobotDataset object to be picklable and parallelized.
         """
         if self.image_writer is not None:
             self.image_writer.stop()
