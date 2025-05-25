@@ -59,13 +59,6 @@ python lerobot/scripts/control_robot.py \
     --control.push_to_hub=True
 ```
 
-- Visualize dataset:
-```bash
-python lerobot/scripts/visualize_dataset.py \
-    --repo-id $USER/koch_test \
-    --episode-index 0
-```
-
 - Replay this test episode:
 ```bash
 python lerobot/scripts/control_robot.py replay \
