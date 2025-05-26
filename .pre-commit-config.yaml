@@ -37,18 +37,18 @@ repos:
       - id: trailing-whitespace
 
   - repo: https://github.com/adhtruong/mirrors-typos
-    rev: v1.31.1
+    rev: v1.32.0
     hooks:
       - id: typos
         args: [--force-exclude]
 
   - repo: https://github.com/asottile/pyupgrade
-    rev: v3.19.1
+    rev: v3.20.0
     hooks:
     -   id: pyupgrade
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.11.5
+    rev: v0.11.11
     hooks:
       - id: ruff
         args: [--fix]
@@ -57,12 +57,12 @@ repos:
 
   ##### Security #####
   - repo: https://github.com/gitleaks/gitleaks
-    rev: v8.24.3
+    rev: v8.26.0
     hooks:
       - id: gitleaks
 
   - repo: https://github.com/woodruffw/zizmor-pre-commit
-    rev: v1.5.2
+    rev: v1.8.0
     hooks:
       - id: zizmor
 
