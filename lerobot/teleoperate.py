@@ -89,7 +89,6 @@ def teleop_loop(
                 if isinstance(val, float):
                     rr.log(f"action_{act}", rr.Scalar(val))
 
-        breakpoint()
         robot.send_action(action)
         loop_s = time.perf_counter() - loop_start
 

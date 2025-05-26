@@ -799,7 +799,8 @@ class MotorsBus(abc.ABC):
                 resolution = self.model_resolution_table[self.motors[motor].model]
                 if drive_mode:
                     val *= -1
-                middle_pos = homing_offset + resolution // 2
+                # middle_pos = homing_offset + (resolution - 1) // 2
+                middle_pos = int((max_ + min_) / 2)
                 normalized_values[id_] = ((val - middle_pos) / (resolution // 2)) * 180
             else:
                 # TODO(alibers): velocity and degree modes
@@ -831,7 +832,8 @@ class MotorsBus(abc.ABC):
             elif self.motors[motor].norm_mode is MotorNormMode.DEGREE:
                 homing_offset = self.calibration[motor].homing_offset
                 resolution = self.model_resolution_table[self.motors[motor].model]
-                middle_pos = homing_offset + resolution // 2
+                # middle_pos = homing_offset + resolution // 2
+                middle_pos = int((max_ + min_) / 2)
                 unnormalized_values[id_] = int((val / 180) * resolution // 2) + middle_pos
                 if drive_mode:
                     unnormalized_values[id_] *= -1

@@ -25,8 +25,8 @@ class GamepadTeleopConfig(TeleoperatorConfig):
     # TODO(Steven): Consider setting in here the keys that we want to capture/listen
     mock: bool = False
 
-    x_step_size: float = 0.1
-    y_step_size: float = 0.1
-    z_step_size: float = 0.1
+    x_step_size: float = 0.02
+    y_step_size: float = 0.02
+    z_step_size: float = 0.02
 
     use_gripper: bool = True
