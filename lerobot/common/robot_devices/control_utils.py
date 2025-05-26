@@ -189,15 +189,16 @@ def predict_action(observation, policy, device, use_amp):
 
         # Compute the next action with the policy
         # based on the current observation
-        action = policy.select_action(observation)
+        action, action_eef = policy.select_action(observation)
 
         # Remove batch dimension
-        action = action.squeeze(0)
+        action, action_eef = action.squeeze(0), action_eef.squeeze(0)
 
         # Move to cpu, if not already the case
         action = action.to("cpu")
+        action_eef = action_eef.to("cpu")
 
-    return action
+    return action, action_eef
 
 
 def init_keyboard_listener():
@@ -333,13 +334,13 @@ def control_loop(
             action = None
 
             if policy is not None:
-                pred_action = predict_action(
+                pred_action, pred_action_eef = predict_action(
                     observation, policy, get_safe_torch_device(policy.config.device), policy.config.use_amp
                 )
                 # Action can eventually be clipped using `max_relative_target`,
                 # so action actually sent is saved in the dataset.
                 action = robot.send_action(pred_action)
-                action = {"action": action}
+                action = {"action": action, "action.right_eef_pose": pred_action_eef}
 
         if dataset is not None:
             frame = {**observation, **action, "task": single_task}
