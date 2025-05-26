@@ -100,6 +100,9 @@ def test_robot(tmp_path, request, robot_type, mock):
     robot.teleop_step()
 
     # Test data recorded during teleop are well formatted
+    for _, microphone in robot.microphones.items():
+        microphone.start_recording()
+
     observation, action = robot.teleop_step(record_data=True)
     # State
     assert "observation.state" in observation
@@ -112,6 +115,11 @@ def test_robot(tmp_path, request, robot_type, mock):
         assert f"observation.images.{name}" in observation
         assert isinstance(observation[f"observation.images.{name}"], torch.Tensor)
         assert observation[f"observation.images.{name}"].ndim == 3
+    # Microphones
+    for name in robot.microphones:
+        assert f"observation.audio.{name}" in observation
+        assert isinstance(observation[f"observation.audio.{name}"], torch.Tensor)
+        assert observation[f"observation.audio.{name}"].ndim == 2
     # Action
     assert "action" in action
     assert isinstance(action["action"], torch.Tensor)
@@ -124,8 +132,9 @@ def test_robot(tmp_path, request, robot_type, mock):
     captured_observation = robot.capture_observation()
     assert set(captured_observation.keys()) == set(observation.keys())
     for name in captured_observation:
-        if "image" in name:
+        if "image" in name or "audio" in name:
             # TODO(rcadene): skipping image for now as it's challenging to assess equality between two consecutive frames
+            # Also skipping for audio as audio chunks may be of different length
             continue
         torch.testing.assert_close(captured_observation[name], observation[name], rtol=1e-4, atol=1)
         assert captured_observation[name].shape == observation[name].shape
@@ -134,7 +143,7 @@ def test_robot(tmp_path, request, robot_type, mock):
     robot.send_action(action["action"])
 
     # Test disconnecting
-    robot.disconnect()
+    robot.disconnect()  # Also handles microphone recording stop, life is beautiful
     assert not robot.is_connected
     for name in robot.follower_arms:
         assert not robot.follower_arms[name].is_connected
@@ -142,3 +151,5 @@ def test_robot(tmp_path, request, robot_type, mock):
         assert not robot.leader_arms[name].is_connected
     for name in robot.cameras:
         assert not robot.cameras[name].is_connected
+    for name in robot.microphones:
+        assert not robot.microphones[name].is_connected

@@ -23,6 +23,7 @@ from lerobot.common.robot_devices.cameras.configs import (
     IntelRealSenseCameraConfig,
     OpenCVCameraConfig,
 )
+from lerobot.common.robot_devices.microphones.configs import MicrophoneConfig, PortAudioMicrophoneConfig
 from lerobot.common.robot_devices.motors.configs import (
     DynamixelMotorsBusConfig,
     FeetechMotorsBusConfig,
@@ -43,6 +44,7 @@ class ManipulatorRobotConfig(RobotConfig):
     leader_arms: dict[str, MotorsBusConfig] = field(default_factory=lambda: {})
     follower_arms: dict[str, MotorsBusConfig] = field(default_factory=lambda: {})
     cameras: dict[str, CameraConfig] = field(default_factory=lambda: {})
+    microphones: dict[str, MicrophoneConfig] = field(default_factory=lambda: {})
 
     # Optionally limit the magnitude of the relative positional target vector for safety purposes.
     # Set this to a positive scalar to have the same value for all motors, or a list that is the same length
@@ -68,6 +70,9 @@ class ManipulatorRobotConfig(RobotConfig):
             for cam in self.cameras.values():
                 if not cam.mock:
                     cam.mock = True
+            for mic in self.microphones.values():
+                if not mic.mock:
+                    mic.mock = True
 
         if self.max_relative_target is not None and isinstance(self.max_relative_target, Sequence):
             for name in self.follower_arms:
@@ -550,6 +555,21 @@ class So100RobotConfig(ManipulatorRobotConfig):
                 fps=30,
                 width=640,
                 height=480,
+            ),
+        }
+    )
+
+    microphones: dict[str, MicrophoneConfig] = field(
+        default_factory=lambda: {
+            "laptop": PortAudioMicrophoneConfig(
+                microphone_index=0,
+                sample_rate=48000,
+                channels=[1],
+            ),
+            "headset": PortAudioMicrophoneConfig(
+                microphone_index=1,
+                sample_rate=44100,
+                channels=[1],
             ),
         }
     )

@@ -22,9 +22,11 @@ from pathlib import Path
 import pytest
 import torch
 
-from lerobot import available_cameras, available_motors, available_robots
+from lerobot import available_cameras, available_microphones, available_motors, available_robots
 from lerobot.common.robot_devices.cameras.utils import Camera
 from lerobot.common.robot_devices.cameras.utils import make_camera as make_camera_device
+from lerobot.common.robot_devices.microphones.utils import Microphone
+from lerobot.common.robot_devices.microphones.utils import make_microphone as make_microphone_device
 from lerobot.common.robot_devices.motors.utils import MotorsBus
 from lerobot.common.robot_devices.motors.utils import make_motors_bus as make_motors_bus_device
 from lerobot.common.utils.import_utils import is_package_available
@@ -39,6 +41,10 @@ TEST_CAMERA_TYPES = []
 for camera_type in available_cameras:
     TEST_CAMERA_TYPES += [(camera_type, True), (camera_type, False)]
 
+TEST_MICROPHONE_TYPES = []
+for microphone_type in available_microphones:
+    TEST_MICROPHONE_TYPES += [(microphone_type, True), (microphone_type, False)]
+
 TEST_MOTOR_TYPES = []
 for motor_type in available_motors:
     TEST_MOTOR_TYPES += [(motor_type, True), (motor_type, False)]
@@ -46,6 +52,9 @@ for motor_type in available_motors:
 # Camera indices used for connecting physical cameras
 OPENCV_CAMERA_INDEX = int(os.environ.get("LEROBOT_TEST_OPENCV_CAMERA_INDEX", 0))
 INTELREALSENSE_SERIAL_NUMBER = int(os.environ.get("LEROBOT_TEST_INTELREALSENSE_SERIAL_NUMBER", 128422271614))
+
+# Microphone indices used for connecting physical microphones
+MICROPHONE_INDEX = int(os.environ.get("LEROBOT_TEST_MICROPHONE_INDEX", 0))
 
 DYNAMIXEL_PORT = os.environ.get("LEROBOT_TEST_DYNAMIXEL_PORT", "/dev/tty.usbmodem575E0032081")
 DYNAMIXEL_MOTORS = {
@@ -253,6 +262,29 @@ def require_camera(func):
     return wrapper
 
 
+def require_microphone(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        # Access the pytest request context to get the is_microphone_available fixture
+        request = kwargs.get("request")
+        microphone_type = kwargs.get("microphone_type")
+        mock = kwargs.get("mock")
+
+        if request is None:
+            raise ValueError("The 'request' fixture must be an argument of the test function.")
+        if microphone_type is None:
+            raise ValueError("The 'microphone_type' must be an argument of the test function.")
+        if mock is None:
+            raise ValueError("The 'mock' variable must be an argument of the test function.")
+
+        if not mock and not request.getfixturevalue("is_microphone_available"):
+            pytest.skip(f"A {microphone_type} microphone is not available.")
+
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
 def require_motor(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
@@ -313,6 +345,14 @@ def make_camera(camera_type: str, **kwargs) -> Camera:
         return make_camera_device(camera_type, serial_number=serial_number, **kwargs)
     else:
         raise ValueError(f"The camera type '{camera_type}' is not valid.")
+
+
+def make_microphone(microphone_type: str, **kwargs) -> Microphone:
+    if microphone_type == "portaudio":
+        microphone_index = kwargs.pop("microphone_index", MICROPHONE_INDEX)
+        return make_microphone_device(microphone_type, microphone_index=microphone_index, **kwargs)
+    else:
+        raise ValueError(f"The microphone type '{microphone_type}' is not valid.")
 
 
 # TODO(rcadene, aliberts): remove this dark pattern that overrides
