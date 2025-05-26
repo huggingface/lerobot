@@ -234,7 +234,7 @@ class HomonculusArm(Teleoperator):
                         "wrist_pitch": int(raw_values[0]),
                     }
 
-                    with self._lock:
+                    with self.lock:
                         self._state = joint_angles
                     self.new_state_event.set()
 

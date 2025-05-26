@@ -1,16 +1,18 @@
-INDEX_SPLAY = 0.2
-MIDDLE_SPLAY = 0.1
-RING_SPLAY = 0.1
-PINKY_SPLAY = -0.1
+INDEX_SPLAY = 0.3
+MIDDLE_SPLAY = 0.3
+RING_SPLAY = 0.3
+PINKY_SPLAY = 0.5
 
 
 def get_ulnar_flexion(flexion: float, abduction: float, splay: float):
-    ulnar_component = max(-abduction, 0)
+    # ulnar_component = max(-abduction, 0)
+    ulnar_component = -abduction
     return ulnar_component * splay + flexion * (1 - splay)
 
 
 def get_radial_flexion(flexion: float, abduction: float, splay: float):
-    radial_component = max(abduction, 0)
+    radial_component = abduction
+    # radial_component = max(abduction, 0)
     return radial_component * splay + flexion * (1 - splay)
 
 

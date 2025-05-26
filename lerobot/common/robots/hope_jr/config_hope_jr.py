@@ -25,10 +25,16 @@ from ..config import RobotConfig
 @dataclass
 class HopeJrHandConfig(RobotConfig):
     port: str  # Port to connect to the hand
+    side: str  # "left" / "right"
 
     disable_torque_on_disconnect: bool = True
 
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
+
+    def __post_init__(self):
+        super().__post_init__()
+        if self.side not in ["right", "left"]:
+            raise ValueError(self.side)
 
 
 @RobotConfig.register_subclass("hope_jr_arm")

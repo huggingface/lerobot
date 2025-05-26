@@ -30,6 +30,28 @@ from .config_homonculus import HomonculusGloveConfig
 
 logger = logging.getLogger(__name__)
 
+LEFT_HAND_INVERSIONS = [
+    "thumb_cmc",
+    "index_dip",
+    "middle_mcp_abduction",
+    "middle_dip",
+    "pinky_mcp_abduction",
+    "pinky_dip",
+]
+
+RIGHT_HAND_INVERSIONS = [
+    "thumb_mcp",
+    "thumb_cmc",
+    "index_mcp_abduction",
+    "index_dip",
+    "middle_mcp_abduction",
+    "middle_dip",
+    "ring_mcp_abduction",
+    "ring_mcp_flexion",
+    "ring_dip",
+    "pinky_mcp_abduction",
+]
+
 
 class HomonculusGlove(Teleoperator):
     """
@@ -62,14 +84,7 @@ class HomonculusGlove(Teleoperator):
             "pinky_mcp_flexion": MotorNormMode.RANGE_0_100,
             "pinky_dip": MotorNormMode.RANGE_0_100,
         }
-        self.inverted_joints = [
-            "thumb_cmc",
-            "index_dip",
-            "middle_mcp_abduction",
-            "middle_dip",
-            "pinky_mcp_abduction",
-            "pinky_dip",
-        ]
+        self.inverted_joints = RIGHT_HAND_INVERSIONS if config.side == "right" else LEFT_HAND_INVERSIONS
 
         self._state: dict[str, float] | None = None
         self.new_state_event = threading.Event()
@@ -158,6 +173,8 @@ class HomonculusGlove(Teleoperator):
         elif not isinstance(joints, list):
             raise TypeError(joints)
 
+        display_len = max(len(key) for key in joints)
+
         start_positions = self._read(joints, normalize=False)
         mins = start_positions.copy()
         maxes = start_positions.copy()
@@ -168,9 +185,11 @@ class HomonculusGlove(Teleoperator):
 
             if display_values:
                 print("\n-------------------------------------------")
-                print(f"{'NAME':<15} | {'MIN':>6} | {'POS':>6} | {'MAX':>6}")
+                print(f"{'NAME':<{display_len}} | {'MIN':>6} | {'POS':>6} | {'MAX':>6}")
                 for joint in joints:
-                    print(f"{joint:<15} | {mins[joint]:>6} | {positions[joint]:>6} | {maxes[joint]:>6}")
+                    print(
+                        f"{joint:<{display_len}} | {mins[joint]:>6} | {positions[joint]:>6} | {maxes[joint]:>6}"
+                    )
 
             if enter_pressed():
                 break

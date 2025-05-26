@@ -32,6 +32,31 @@ from .config_hope_jr import HopeJrHandConfig
 
 logger = logging.getLogger(__name__)
 
+RIGHT_HAND_INVERSIONS = [
+    "thumb_mcp",
+    "thumb_dip",
+    "index_ulnar_flexor",
+    "middle_ulnar_flexor",
+    "ring_ulnar_flexor",
+    "ring_pip_dip",
+    "pinky_ulnar_flexor",
+    "pinky_pip_dip",
+]
+
+LEFT_HAND_INVERSIONS = [
+    "thumb_cmc",
+    "thumb_mcp",
+    "thumb_dip",
+    "index_radial_flexor",
+    "index_pip_dip",
+    "middle_radial_flexor",
+    "middle_pip_dip",
+    "ring_radial_flexor",
+    "ring_pip_dip",
+    "pinky_radial_flexor",
+    "pinky_pip_dip",
+]
+
 
 class HopeJrHand(Robot):
     config_class = HopeJrHandConfig
@@ -69,17 +94,7 @@ class HopeJrHand(Robot):
             protocol_version=1,
         )
         self.cameras = make_cameras_from_configs(config.cameras)
-
-        self.inverted_motors = [
-            "thumb_mcp",
-            "thumb_dip",
-            "index_ulnar_flexor",
-            "middle_ulnar_flexor",
-            "ring_ulnar_flexor",
-            "ring_pip_dip",
-            "pinky_ulnar_flexor",
-            "pinky_pip_dip",
-        ]
+        self.inverted_motors = RIGHT_HAND_INVERSIONS if config.side == "right" else LEFT_HAND_INVERSIONS
 
     @property
     def _motors_ft(self) -> dict[str, type]:

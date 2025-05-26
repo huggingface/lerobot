@@ -23,7 +23,12 @@ from ..config import TeleoperatorConfig
 @dataclass
 class HomonculusGloveConfig(TeleoperatorConfig):
     port: str  # Port to connect to the glove
+    side: str  # "left" / "right"
     baud_rate: int = 115_200
+
+    def __post_init__(self):
+        if self.side not in ["right", "left"]:
+            raise ValueError(self.side)
 
 
 @TeleoperatorConfig.register_subclass("homonculus_arm")
