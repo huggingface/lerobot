@@ -370,7 +370,7 @@ class OpenCVCamera(Camera):
 
     def _read_loop(self):
         """
-        Internal loop for background thread for asynchronous reading.
+        Internal loop run by the background thread for asynchronous reading.
 
         On each iteration:
         1. Reads a color frame
