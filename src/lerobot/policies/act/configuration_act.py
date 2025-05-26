@@ -111,7 +111,7 @@ class ACTConfig(PreTrainedConfig):
     replace_final_stride_with_dilation: int = False
     # Audio backbone.
     audio_backbone: str = vision_backbone
-    pretrained_backbone_weights_audio: str | None = ""
+    pretrained_backbone_weights_audio: str | None = None
     replace_final_stride_with_dilation_audio: int = False
     # Transformer layers.
     pre_norm: bool = False
