@@ -75,6 +75,9 @@ class SO100FollowerEndEffector(SO100Follower):
         self.joint_mins = None
         self.joint_maxs = None
 
+        self.current_ee_pos = None
+        self.current_joint_pos = None
+
     @property
     def action_features(self) -> Dict[str, Any]:
         """
@@ -119,25 +122,21 @@ class SO100FollowerEndEffector(SO100Follower):
                 )
                 action = np.zeros(4, dtype=np.float32)
 
-        self.bus.sync_write("Torque_Enable", 0)
-        # Read current joint positions
-        current_joint_pos = self.bus.sync_read("Present_Position")
-
-        # Convert dict to ordered list without gripper
-        joint_names = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"]
-        # Convert the joint positions from min-max to degrees
-        current_joint_pos = np.array([current_joint_pos[name] for name in joint_names])
-        print(current_joint_pos)
+        if self.current_joint_pos is None:
+            # Read current joint positions
+            current_joint_pos = self.bus.sync_read("Present_Position")
+            self.current_joint_pos = np.array([current_joint_pos[name] for name in self.bus.motors.keys()])
 
         # Calculate current end-effector position using forward kinematics
-        current_ee_pos = self.fk_function(current_joint_pos)
+        if self.current_ee_pos is None:
+            self.current_ee_pos = self.fk_function(self.current_joint_pos)
 
         # Set desired end-effector position by adding delta
         desired_ee_pos = np.eye(4)
-        desired_ee_pos[:3, :3] = current_ee_pos[:3, :3]  # Keep orientation
+        desired_ee_pos[:3, :3] = self.current_ee_pos[:3, :3]  # Keep orientation
 
         # Add delta to position and clip to bounds
-        desired_ee_pos[:3, 3] = current_ee_pos[:3, 3] + action[:3]
+        desired_ee_pos[:3, 3] = self.current_ee_pos[:3, 3] + action[:3]
         if self.end_effector_bounds is not None:
             desired_ee_pos[:3, 3] = np.clip(
                 desired_ee_pos[:3, 3],
@@ -147,7 +146,7 @@ class SO100FollowerEndEffector(SO100Follower):
 
         # Compute inverse kinematics to get joint positions
         target_joint_values_in_degrees = self.kinematics.ik(
-            current_joint_pos,
+            self.current_joint_pos,
             desired_ee_pos,
             position_only=True,
             fk_func=self.fk_function,
@@ -155,16 +154,21 @@ class SO100FollowerEndEffector(SO100Follower):
 
         # Create joint space action dictionary
         joint_action = {
-            f"{joint_names[i]}.pos": target_joint_values_in_degrees[i]
-            for i in range(len(joint_names) - 1)  # Exclude gripper
+            f"{key}.pos": target_joint_values_in_degrees[i]
+            for i, key in enumerate(self.bus.motors.keys())
         }
 
         # Handle gripper separately if included in action
         joint_action["gripper.pos"] = np.clip(
-            current_joint_pos[-1] + (action[-1] - 1) * self.config.max_gripper_pos,
+            self.current_joint_pos[-1] + (action[-1] - 1) * self.config.max_gripper_pos,
             0,
             self.config.max_gripper_pos,
         )
+
+        self.current_ee_pos = desired_ee_pos.copy()
+        self.current_joint_pos = target_joint_values_in_degrees.copy()
+        self.current_joint_pos[-1] = joint_action["gripper.pos"]
+
         # Send joint space action to parent class
         return super().send_action(joint_action)
 

@@ -92,7 +92,6 @@ def teleop_loop(
                 if isinstance(val, float):
                     rr.log(f"action_{act}", rr.Scalar(val))
 
-        breakpoint()
         robot.send_action(action)
         dt_s = time.perf_counter() - loop_start
         busy_wait(1 / fps - dt_s)

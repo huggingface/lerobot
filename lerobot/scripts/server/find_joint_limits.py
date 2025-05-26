@@ -36,7 +36,7 @@ from dataclasses import dataclass
 import draccus
 import numpy as np
 
-from lerobot.common.model.kinematics import RobotKinematics
+from lerobot.common.model.kinematics_utils import RobotKinematics
 from lerobot.common.robots import (  # noqa: F401
     RobotConfig,
     koch_follower,
@@ -63,6 +63,8 @@ class FindJointLimitsConfig:
     # Display all cameras on screen
     display_data: bool = False
 
+    urdf_path: str = "/Users/michel_aractingi/code/SO-ARM100/Simulation/SO101/so101_new_calib.urdf"
+
 
 @draccus.wrap()
 def find_joint_and_ee_bounds(cfg: FindJointLimitsConfig):
@@ -75,21 +77,17 @@ def find_joint_and_ee_bounds(cfg: FindJointLimitsConfig):
     start_episode_t = time.perf_counter()
     ee_list = []
     pos_list = []
-    robot_type = cfg.robot.type.split("_")[0]
-    kinematics = RobotKinematics(robot_type)
-    control_time_s = 30
+    kinematics = RobotKinematics(cfg.urdf_path)
+    control_time_s = 10
     while True:
         action = teleop.get_action()
         robot.send_action(action)
         observation = robot.get_observation()
 
-        # Wait for 5 seconds to stabilize the robot initial position
-        if time.perf_counter() - start_episode_t < 5:
-            continue
-
         joint_positions = robot.bus.sync_read("Present_Position")
         joint_positions = np.array([joint_positions[key] for key in joint_positions.keys()])
-        ee_list.append(kinematics.fk_gripper_tip(joint_positions)[:3, 3])
+        ee_pos, ee_rot, _ = kinematics.forward_kinematics(joint_positions * np.pi / 180)
+        ee_list.append(ee_pos.copy())
         pos_list.append(joint_positions)
 
         if time.perf_counter() - start_episode_t > control_time_s:
