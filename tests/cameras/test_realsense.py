@@ -57,12 +57,12 @@ def fixture_patch_realsense():
 
 def test_abc_implementation():
     """Instantiation should raise an error if the class doesn't implement abstract methods/properties."""
-    config = RealSenseCameraConfig(serial_number_or_name=42)
+    config = RealSenseCameraConfig(serial_number_or_name="042")
     _ = RealSenseCamera(config)
 
 
 def test_connect():
-    config = RealSenseCameraConfig(serial_number_or_name=42)
+    config = RealSenseCameraConfig(serial_number_or_name="042")
     camera = RealSenseCamera(config)
 
     camera.connect(warmup=False)
@@ -70,7 +70,7 @@ def test_connect():
 
 
 def test_connect_already_connected():
-    config = RealSenseCameraConfig(serial_number_or_name=42)
+    config = RealSenseCameraConfig(serial_number_or_name="042")
     camera = RealSenseCamera(config)
     camera.connect(warmup=False)
 
@@ -80,7 +80,7 @@ def test_connect_already_connected():
 
 def test_connect_invalid_camera_path(patch_realsense):
     patch_realsense.side_effect = mock_rs_config_enable_device_bad_file
-    config = RealSenseCameraConfig(serial_number_or_name=42)
+    config = RealSenseCameraConfig(serial_number_or_name="042")
     camera = RealSenseCamera(config)
 
     with pytest.raises(ConnectionError):
@@ -88,7 +88,7 @@ def test_connect_invalid_camera_path(patch_realsense):
 
 
 def test_invalid_width_connect():
-    config = RealSenseCameraConfig(serial_number_or_name=42, width=99999, height=480, fps=30)
+    config = RealSenseCameraConfig(serial_number_or_name="042", width=99999, height=480, fps=30)
     camera = RealSenseCamera(config)
 
     with pytest.raises(ConnectionError):
@@ -96,7 +96,7 @@ def test_invalid_width_connect():
 
 
 def test_read():
-    config = RealSenseCameraConfig(serial_number_or_name=42, width=640, height=480, fps=30)
+    config = RealSenseCameraConfig(serial_number_or_name="042", width=640, height=480, fps=30)
     camera = RealSenseCamera(config)
     camera.connect(warmup=False)
 
@@ -105,7 +105,7 @@ def test_read():
 
 
 def test_read_depth():
-    config = RealSenseCameraConfig(serial_number_or_name=42, width=640, height=480, fps=30, use_depth=True)
+    config = RealSenseCameraConfig(serial_number_or_name="042", width=640, height=480, fps=30, use_depth=True)
     camera = RealSenseCamera(config)
     camera.connect(warmup=False)
 
@@ -114,7 +114,7 @@ def test_read_depth():
 
 
 def test_read_before_connect():
-    config = RealSenseCameraConfig(serial_number_or_name=42)
+    config = RealSenseCameraConfig(serial_number_or_name="042")
     camera = RealSenseCamera(config)
 
     with pytest.raises(DeviceNotConnectedError):
@@ -122,7 +122,7 @@ def test_read_before_connect():
 
 
 def test_disconnect():
-    config = RealSenseCameraConfig(serial_number_or_name=42)
+    config = RealSenseCameraConfig(serial_number_or_name="042")
     camera = RealSenseCamera(config)
     camera.connect(warmup=False)
 
@@ -132,7 +132,7 @@ def test_disconnect():
 
 
 def test_disconnect_before_connect():
-    config = RealSenseCameraConfig(serial_number_or_name=42)
+    config = RealSenseCameraConfig(serial_number_or_name="042")
     camera = RealSenseCamera(config)
 
     with pytest.raises(DeviceNotConnectedError):
@@ -140,7 +140,7 @@ def test_disconnect_before_connect():
 
 
 def test_async_read():
-    config = RealSenseCameraConfig(serial_number_or_name=42, width=640, height=480, fps=30)
+    config = RealSenseCameraConfig(serial_number_or_name="042", width=640, height=480, fps=30)
     camera = RealSenseCamera(config)
     camera.connect(warmup=False)
 
@@ -156,7 +156,7 @@ def test_async_read():
 
 
 def test_async_read_timeout():
-    config = RealSenseCameraConfig(serial_number_or_name=42, width=640, height=480, fps=30)
+    config = RealSenseCameraConfig(serial_number_or_name="042", width=640, height=480, fps=30)
     camera = RealSenseCamera(config)
     camera.connect(warmup=False)
 
@@ -171,7 +171,7 @@ def test_async_read_timeout():
 
 
 def test_async_read_before_connect():
-    config = RealSenseCameraConfig(serial_number_or_name=42)
+    config = RealSenseCameraConfig(serial_number_or_name="042")
     camera = RealSenseCamera(config)
 
     with pytest.raises(DeviceNotConnectedError):
@@ -189,7 +189,7 @@ def test_async_read_before_connect():
     ids=["no_rot", "rot90", "rot180", "rot270"],
 )
 def test_rotation(rotation):
-    config = RealSenseCameraConfig(serial_number_or_name=42, rotation=rotation)
+    config = RealSenseCameraConfig(serial_number_or_name="042", rotation=rotation)
     camera = RealSenseCamera(config)
     camera.connect(warmup=False)
 
