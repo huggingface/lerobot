@@ -16,7 +16,6 @@
 
 import logging
 import time
-from typing import Any
 
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.common.motors import Motor, MotorCalibration, MotorNormMode
@@ -27,7 +26,6 @@ from lerobot.common.motors.feetech import (
 
 from ..teleoperator import Teleoperator
 from .config_so101_leader import SO101LeaderConfig
-
 
 logger = logging.getLogger(__name__)
 
