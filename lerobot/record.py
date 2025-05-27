@@ -38,7 +38,6 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from pprint import pformat
 
-import draccus
 import numpy as np
 import rerun as rr
 
@@ -152,6 +151,11 @@ class RecordConfig:
             self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
             self.policy.pretrained_path = policy_path
 
+    @classmethod
+    def __get_path_fields__(cls) -> list[str]:
+        """This enables the parser to load config from the policy using `--policy.path=local/dir`"""
+        return ["policy"]
+
 
 @safe_stop_image_writer
 def record_loop(
@@ -183,9 +187,10 @@ def record_loop(
             observation_frame = build_dataset_frame(dataset.features, observation, prefix="observation")
 
         if policy is not None:
-            action = predict_action(
+            action_values = predict_action(
                 observation_frame, policy, get_safe_torch_device(policy.config.device), policy.config.use_amp
             )
+            action = {key: action_values[i] for i, key in enumerate(robot.action_features.keys())}
         else:
             action = teleop.get_action()
 
@@ -221,7 +226,7 @@ def record_loop(
             break
 
 
-@draccus.wrap()
+@parser.wrap()
 def record(cfg: RecordConfig) -> LeRobotDataset:
     init_logging()
     logging.info(pformat(asdict(cfg)))
