@@ -130,8 +130,6 @@ while True:
 > [!TIP]
 > If you're using a Mac, you might need to give Terminal permission to access your keyboard for teleoperation. Go to System Preferences > Security & Privacy > Input Monitoring and check the box for Terminal.
 
-TODO(pepijn): modify these commands with new API, and explain you can also map the arms to a keyboard with the new API now
-
 To teleoperate, SSH into your Raspberry Pi, and run `conda activate lerobot` and this command:
 ```bash
 python -m lerobot.common.robots.lekiwi.lekiwi_host
@@ -403,21 +401,20 @@ huggingface-cli upload ${HF_USER}/act_so101_test${CKPT} \
 
 ## Evaluate your policy
 
-TODO(pepijn): modify this command further
-
 You can use the `record` script from [`lerobot/record.py`](https://github.com/huggingface/lerobot/blob/main/lerobot/record.py) but with a policy checkpoint as input. For instance, run this command to record 10 evaluation episodes:
 ```bash
-python -m lerobot.record \
-    --robot.type=so101_follower \
-    --robot.port=/dev/tty.usbmodem585A0076841 \
-    --robot.id=my_red_robot_arm \
-    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \
-    --teleop.type=so101_leader \
-    --teleop.port=/dev/tty.usbmodem58760431551 \
-    --teleop.id=my_blue_leader_arm \
-    --display_data=true \
-    --dataset.repo_id=aliberts/eval_act \
-    --policy.checkpoint_path=outputs/train/act_so101_test/checkpoints/last/pretrained_model \
+python -m lerobot.record  \
+  --robot.type=so100_follower \
+  --robot.port=/dev/ttyACM1 \
+  --robot.cameras="{ up: {type: opencv, index_or_path: /dev/video10, width: 640, height: 480, fps: 30}, side: {type: intelrealsense, serial_number_or_name: 233522074606, width: 640, height: 480, fps: 30}}" \
+  --robot.id=blue_follower_arm \
+  --teleop.type=so100_leader \
+  --teleop.port=/dev/ttyACM0 \
+  --teleop.id=red_leader_arm \
+  --display_data=false \
+  --dataset.repo_id=$HF_USER/eval_lego_${EPOCHREALTIME/[^0-9]/} \
+  --dataset.single_task="Put lego brick into the transparent box" \
+  --policy.path=${HF_USER}/act_johns_arm
 ```
 
 As you can see, it's almost the same command as previously used to record your training dataset. Two things changed:
