@@ -4,7 +4,7 @@ from multiprocessing import Event, Queue
 import hilserl_pb2  # type: ignore
 import hilserl_pb2_grpc  # type: ignore
 
-from lerobot.scripts.server.network_utils import receive_bytes_in_chunks, send_bytes_in_chunks
+from lerobot.common.utils.network_utils import receive_bytes_in_chunks, send_bytes_in_chunks
 
 MAX_MESSAGE_SIZE = 4 * 1024 * 1024  # 4 MB
 MAX_WORKERS = 3  # Stream parameters, send transitions and interactions
@@ -12,6 +12,12 @@ SHUTDOWN_TIMEOUT = 10
 
 
 class LearnerService(hilserl_pb2_grpc.LearnerServiceServicer):
+    """
+    Implementation of the LearnerService gRPC service
+    This service is used to send parameters to the Actor and receive transitions and interactions from the Actor
+    check transport.proto for the gRPC service definition
+    """
+
     def __init__(
         self,
         shutdown_event: Event,  # type: ignore

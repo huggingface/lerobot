@@ -24,12 +24,12 @@ Examples of usage:
 
 - Start an actor server for real robot training with human-in-the-loop intervention:
 ```bash
-python lerobot/scripts/server/actor_server.py --config_path lerobot/configs/train_config_hilserl_so100.json
+python lerobot/scripts/server/actor.py --config_path lerobot/configs/train_config_hilserl_so100.json
 ```
 
 - Run with a specific robot type for a pick and place task:
 ```bash
-python lerobot/scripts/server/actor_server.py \
+python lerobot/scripts/server/actor.py \
     --config_path lerobot/configs/train_config_hilserl_so100.json \
     --robot.type=so100 \
     --task=pick_and_place
@@ -37,7 +37,7 @@ python lerobot/scripts/server/actor_server.py \
 
 - Set a custom workspace bound for the robot's end-effector:
 ```bash
-python lerobot/scripts/server/actor_server.py \
+python lerobot/scripts/server/actor.py \
     --config_path lerobot/configs/train_config_hilserl_so100.json \
     --env.ee_action_space_params.bounds.max="[0.24, 0.20, 0.10]" \
     --env.ee_action_space_params.bounds.min="[0.16, -0.08, 0.03]"
@@ -45,7 +45,7 @@ python lerobot/scripts/server/actor_server.py \
 
 - Run with specific camera crop parameters:
 ```bash
-python lerobot/scripts/server/actor_server.py \
+python lerobot/scripts/server/actor.py \
     --config_path lerobot/configs/train_config_hilserl_so100.json \
     --env.crop_params_dict="{'observation.images.side': [180, 207, 180, 200], 'observation.images.front': [180, 250, 120, 150]}"
 ```

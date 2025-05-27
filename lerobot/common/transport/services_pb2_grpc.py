@@ -3,9 +3,9 @@
 import grpc
 import warnings
 
-import hilserl_pb2 as hilserl__pb2
+import services_pb2 as services__pb2
 
-GRPC_GENERATED_VERSION = '1.70.0'
+GRPC_GENERATED_VERSION = '1.69.0'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -18,7 +18,7 @@ except ImportError:
 if _version_not_supported:
     raise RuntimeError(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + f' but the generated code in hilserl_pb2_grpc.py depends on'
+        + f' but the generated code in services_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
@@ -38,28 +38,28 @@ class LearnerServiceStub(object):
         """
         self.SendInteractionMessage = channel.unary_unary(
                 '/hil_serl.LearnerService/SendInteractionMessage',
-                request_serializer=hilserl__pb2.InteractionMessage.SerializeToString,
-                response_deserializer=hilserl__pb2.Empty.FromString,
+                request_serializer=services__pb2.InteractionMessage.SerializeToString,
+                response_deserializer=services__pb2.Empty.FromString,
                 _registered_method=True)
         self.StreamParameters = channel.unary_stream(
                 '/hil_serl.LearnerService/StreamParameters',
-                request_serializer=hilserl__pb2.Empty.SerializeToString,
-                response_deserializer=hilserl__pb2.Parameters.FromString,
+                request_serializer=services__pb2.Empty.SerializeToString,
+                response_deserializer=services__pb2.Parameters.FromString,
                 _registered_method=True)
         self.SendTransitions = channel.stream_unary(
                 '/hil_serl.LearnerService/SendTransitions',
-                request_serializer=hilserl__pb2.Transition.SerializeToString,
-                response_deserializer=hilserl__pb2.Empty.FromString,
+                request_serializer=services__pb2.Transition.SerializeToString,
+                response_deserializer=services__pb2.Empty.FromString,
                 _registered_method=True)
         self.SendInteractions = channel.stream_unary(
                 '/hil_serl.LearnerService/SendInteractions',
-                request_serializer=hilserl__pb2.InteractionMessage.SerializeToString,
-                response_deserializer=hilserl__pb2.Empty.FromString,
+                request_serializer=services__pb2.InteractionMessage.SerializeToString,
+                response_deserializer=services__pb2.Empty.FromString,
                 _registered_method=True)
         self.Ready = channel.unary_unary(
                 '/hil_serl.LearnerService/Ready',
-                request_serializer=hilserl__pb2.Empty.SerializeToString,
-                response_deserializer=hilserl__pb2.Empty.FromString,
+                request_serializer=services__pb2.Empty.SerializeToString,
+                response_deserializer=services__pb2.Empty.FromString,
                 _registered_method=True)
 
 
@@ -104,28 +104,28 @@ def add_LearnerServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'SendInteractionMessage': grpc.unary_unary_rpc_method_handler(
                     servicer.SendInteractionMessage,
-                    request_deserializer=hilserl__pb2.InteractionMessage.FromString,
-                    response_serializer=hilserl__pb2.Empty.SerializeToString,
+                    request_deserializer=services__pb2.InteractionMessage.FromString,
+                    response_serializer=services__pb2.Empty.SerializeToString,
             ),
             'StreamParameters': grpc.unary_stream_rpc_method_handler(
                     servicer.StreamParameters,
-                    request_deserializer=hilserl__pb2.Empty.FromString,
-                    response_serializer=hilserl__pb2.Parameters.SerializeToString,
+                    request_deserializer=services__pb2.Empty.FromString,
+                    response_serializer=services__pb2.Parameters.SerializeToString,
             ),
             'SendTransitions': grpc.stream_unary_rpc_method_handler(
                     servicer.SendTransitions,
-                    request_deserializer=hilserl__pb2.Transition.FromString,
-                    response_serializer=hilserl__pb2.Empty.SerializeToString,
+                    request_deserializer=services__pb2.Transition.FromString,
+                    response_serializer=services__pb2.Empty.SerializeToString,
             ),
             'SendInteractions': grpc.stream_unary_rpc_method_handler(
                     servicer.SendInteractions,
-                    request_deserializer=hilserl__pb2.InteractionMessage.FromString,
-                    response_serializer=hilserl__pb2.Empty.SerializeToString,
+                    request_deserializer=services__pb2.InteractionMessage.FromString,
+                    response_serializer=services__pb2.Empty.SerializeToString,
             ),
             'Ready': grpc.unary_unary_rpc_method_handler(
                     servicer.Ready,
-                    request_deserializer=hilserl__pb2.Empty.FromString,
-                    response_serializer=hilserl__pb2.Empty.SerializeToString,
+                    request_deserializer=services__pb2.Empty.FromString,
+                    response_serializer=services__pb2.Empty.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -155,8 +155,8 @@ class LearnerService(object):
             request,
             target,
             '/hil_serl.LearnerService/SendInteractionMessage',
-            hilserl__pb2.InteractionMessage.SerializeToString,
-            hilserl__pb2.Empty.FromString,
+            services__pb2.InteractionMessage.SerializeToString,
+            services__pb2.Empty.FromString,
             options,
             channel_credentials,
             insecure,
@@ -182,8 +182,8 @@ class LearnerService(object):
             request,
             target,
             '/hil_serl.LearnerService/StreamParameters',
-            hilserl__pb2.Empty.SerializeToString,
-            hilserl__pb2.Parameters.FromString,
+            services__pb2.Empty.SerializeToString,
+            services__pb2.Parameters.FromString,
             options,
             channel_credentials,
             insecure,
@@ -209,8 +209,8 @@ class LearnerService(object):
             request_iterator,
             target,
             '/hil_serl.LearnerService/SendTransitions',
-            hilserl__pb2.Transition.SerializeToString,
-            hilserl__pb2.Empty.FromString,
+            services__pb2.Transition.SerializeToString,
+            services__pb2.Empty.FromString,
             options,
             channel_credentials,
             insecure,
@@ -236,8 +236,8 @@ class LearnerService(object):
             request_iterator,
             target,
             '/hil_serl.LearnerService/SendInteractions',
-            hilserl__pb2.InteractionMessage.SerializeToString,
-            hilserl__pb2.Empty.FromString,
+            services__pb2.InteractionMessage.SerializeToString,
+            services__pb2.Empty.FromString,
             options,
             channel_credentials,
             insecure,
@@ -263,8 +263,8 @@ class LearnerService(object):
             request,
             target,
             '/hil_serl.LearnerService/Ready',
-            hilserl__pb2.Empty.SerializeToString,
-            hilserl__pb2.Empty.FromString,
+            services__pb2.Empty.SerializeToString,
+            services__pb2.Empty.FromString,
             options,
             channel_credentials,
             insecure,

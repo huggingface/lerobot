@@ -25,12 +25,12 @@ Examples of usage:
 
 - Start a learner server for training:
 ```bash
-python lerobot/scripts/server/learner_server.py --config_path lerobot/configs/train_config_hilserl_so100.json
+python lerobot/scripts/server/learner.py --config_path lerobot/configs/train_config_hilserl_so100.json
 ```
 
 - Run with specific SAC hyperparameters:
 ```bash
-python lerobot/scripts/server/learner_server.py \
+python lerobot/scripts/server/learner.py \
     --config_path lerobot/configs/train_config_hilserl_so100.json \
     --learner.sac.alpha=0.1 \
     --learner.sac.gamma=0.99
@@ -38,7 +38,7 @@ python lerobot/scripts/server/learner_server.py \
 
 - Run with a specific dataset and wandb logging:
 ```bash
-python lerobot/scripts/server/learner_server.py \
+python lerobot/scripts/server/learner.py \
     --config_path lerobot/configs/train_config_hilserl_so100.json \
     --dataset.repo_id=username/pick_lift_cube \
     --wandb.enable=true \
@@ -47,14 +47,14 @@ python lerobot/scripts/server/learner_server.py \
 
 - Run with a pretrained policy for fine-tuning:
 ```bash
-python lerobot/scripts/server/learner_server.py \
+python lerobot/scripts/server/learner.py \
     --config_path lerobot/configs/train_config_hilserl_so100.json \
     --pretrained_policy_name_or_path=outputs/previous_training/checkpoints/080000/pretrained_model
 ```
 
 - Run with a reward classifier model:
 ```bash
-python lerobot/scripts/server/learner_server.py \
+python lerobot/scripts/server/learner.py \
     --config_path lerobot/configs/train_config_hilserl_so100.json \
     --reward_classifier_pretrained_path=outputs/reward_model/best_model
 ```
@@ -242,7 +242,7 @@ def start_learner_threads(
         concurrency_entity = Process
 
     communication_process = concurrency_entity(
-        target=start_learner_server,
+        target=start_learner,
         args=(
             parameters_queue,
             transition_queue,
@@ -641,7 +641,7 @@ def add_actor_information_and_train(
             )
 
 
-def start_learner_server(
+def start_learner(
     parameters_queue: Queue,
     transition_queue: Queue,
     interaction_message_queue: Queue,
@@ -664,7 +664,7 @@ def start_learner_server(
         # Create a process-specific log file
         log_dir = os.path.join(cfg.output_dir, "logs")
         os.makedirs(log_dir, exist_ok=True)
-        log_file = os.path.join(log_dir, f"learner_server_process_{os.getpid()}.log")
+        log_file = os.path.join(log_dir, f"learner_process_{os.getpid()}.log")
 
         # Initialize logging with explicit log file
         init_logging(log_file=log_file, display_pid=True)
