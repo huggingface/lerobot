@@ -168,7 +168,7 @@ class LuckyWorldEnv(EnvConfig):
     render_mode: str = "rgb_array"
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
-            "action": PolicyFeature(type=FeatureType.ACTION, shape=(14,)),
+            "action": PolicyFeature(type=FeatureType.ACTION, shape=(6,)),
         }
     )
     features_map: dict[str, str] = field(
@@ -184,7 +184,7 @@ class LuckyWorldEnv(EnvConfig):
         if self.obs_type == "pixels":
             self.features["top"] = PolicyFeature(type=FeatureType.VISUAL, shape=(480, 640, 3))
         elif self.obs_type == "pixels_agent_pos":
-            self.features["agent_pos"] = PolicyFeature(type=FeatureType.STATE, shape=(14,))
+            self.features["agent_pos"] = PolicyFeature(type=FeatureType.STATE, shape=(6,))
             self.features["pixels/top"] = PolicyFeature(type=FeatureType.VISUAL, shape=(480, 640, 3))
 
     @property
