@@ -93,6 +93,7 @@ For a visual reference on how to set the motor ids please refer to [this video](
 
 <hfoptions id="setup_motors">
 <hfoption id="Command">
+
 ```bash
 python -m lerobot.setup_motors \
     --robot.type=koch_follower \
@@ -100,6 +101,7 @@ python -m lerobot.setup_motors \
 ```
 </hfoption>
 <hfoption id="API example">
+
 ```python
 from lerobot.common.robots.koch_follower import KochFollower, KochFollowerConfig
 
@@ -157,6 +159,7 @@ Do the same steps for the leader arm but modify the command or script accordingl
 
 <hfoptions id="setup_motors">
 <hfoption id="Command">
+
 ```bash
 python -m lerobot.setup_motors \
     --teleop.type=koch_leader \
@@ -164,6 +167,7 @@ python -m lerobot.setup_motors \
 ```
 </hfoption>
 <hfoption id="API example">
+
 ```python
 from lerobot.common.teleoperators.koch_leader import KochLeader, KochLeaderConfig
 
@@ -188,6 +192,7 @@ Run the following command or API example to calibrate the follower arm:
 
 <hfoptions id="calibrate_follower">
 <hfoption id="Command">
+
 ```bash
 python -m lerobot.calibrate \
     --robot.type=koch_follower \
@@ -196,6 +201,7 @@ python -m lerobot.calibrate \
 ```
 </hfoption>
 <hfoption id="API example">
+
 ```python
 from lerobot.common.robots.koch_follower import KochFollowerConfig, KochFollower
 
@@ -220,6 +226,7 @@ Do the same steps to calibrate the leader arm, run the following command or API 
 
 <hfoptions id="calibrate_leader">
 <hfoption id="Command">
+
 ```bash
 python -m lerobot.calibrate \
     --teleop.type=koch_leader \
@@ -228,6 +235,7 @@ python -m lerobot.calibrate \
 ```
 </hfoption>
 <hfoption id="API example">
+
 ```python
 from lerobot.common.teleoperators.koch_leader import KochLeaderConfig, KochLeader
 

@@ -90,6 +90,7 @@ The calibration process is very important because it allows a neural network tra
 Make sure the arm is connected to the Raspberry Pi and run this script or API example (on the Raspberry Pi via SSH) to launch calibration of the follower arm:
 <hfoptions id="calibrate_follower">
 <hfoption id="Command">
+
 ```bash
 python -m lerobot.calibrate \
     --robot.type=lekiwi \
@@ -98,6 +99,7 @@ python -m lerobot.calibrate \
 ```
 </hfoption>
 <hfoption id="API example">
+
 ```python
 from lerobot.common.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
 
@@ -123,6 +125,7 @@ If you have the **wired** LeKiwi version, please run all commands on your laptop
 Then, to calibrate the leader arm (which is attached to the laptop/pc). Run the following command of API example on your laptop:
 <hfoptions id="calibrate_leader">
 <hfoption id="Command">
+
 ```bash
 python -m lerobot.calibrate \
     --teleop.type=so100_leader \
@@ -131,6 +134,7 @@ python -m lerobot.calibrate \
 ```
 </hfoption>
 <hfoption id="API example">
+
 ```python
 from lerobot.common.teleoperators.so100_leader import SO100LeaderConfig, SO100Leader
 

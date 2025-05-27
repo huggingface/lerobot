@@ -132,12 +132,15 @@ while True:
 
 TODO(pepijn): modify these commands with new API, and explain you can also map the arms to a keyboard with the new API now
 
-To teleoperate SSH into your Raspberry Pi, and run `conda activate lerobot` and this script:
+To teleoperate SSH into your Raspberry Pi, and run `conda activate lerobot` and this command:
 ```bash
 python -m lerobot.common.robots.lekiwi.lekiwi_host
 ```
 
-Then on your laptop, also run `conda activate lerobot` and this script:
+Then on your laptop, also run `conda activate lerobot` and this command or API example:
+
+<hfoptions id="teleoperate_koch_camera">
+<hfoption id="Command">
 ```bash
 python -m lerobot.teleoperate \
     --robot.type=lekiwi \
@@ -148,6 +151,13 @@ python -m lerobot.teleoperate \
     --teleop.port=/dev/tty.usbmodem58760431551 \
     --teleop.id=my_blue_leader_arm
 ```
+</hfoption>
+<hfoption id="API example">
+```python
+
+```
+</hfoption>
+</hfoptions>
 
 > **NOTE:** To visualize the data, enable `--control.display_data=true`. This streams the data using `rerun`. For the `--control.type=remote_robot` you will also need to set `--control.viewer_ip` and `--control.viewer_port`
 
