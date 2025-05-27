@@ -100,7 +100,7 @@ class HopeJrArm(Robot):
         if self.is_connected:
             raise DeviceAlreadyConnectedError(f"{self} already connected")
 
-        self.bus.connect()
+        self.bus.connect(handshake=False)
         if not self.is_calibrated:
             self.calibrate()
 
@@ -121,21 +121,20 @@ class HopeJrArm(Robot):
         for motor in self.bus.motors:
             self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
 
-        full_turn_motor = self.shoulder_pitch
         unknown_range_motors = self.other_motors
 
         input("Move arm to the middle of its range of motion and press ENTER....")
-        homing_offsets_full_turn = self.bus.set_half_turn_homings(full_turn_motor)
+        homing_offsets_full_turn = self.bus.set_half_turn_homings(self.shoulder_pitch)
         homing_offsets_unknown_range = self.bus.set_half_turn_homings(unknown_range_motors)
         homing_offsets = {**homing_offsets_full_turn, **homing_offsets_unknown_range}
 
         logger.info(
-            f"Move all joints except '{full_turn_motor}' sequentially through their "
+            f"Move all joints except '{self.shoulder_pitch}' sequentially through their "
             "entire ranges of motion.\nRecording positions. Press ENTER to stop..."
         )
         range_mins, range_maxes = self.bus.record_ranges_of_motion(unknown_range_motors)
-        range_mins[full_turn_motor] = 0
-        range_maxes[full_turn_motor] = 4095
+        range_mins[self.shoulder_pitch] = 1024
+        range_maxes[self.shoulder_pitch] = 3071
 
         self.calibration = {}
         for motor, m in self.bus.motors.items():
@@ -153,8 +152,10 @@ class HopeJrArm(Robot):
 
     def configure(self) -> None:
         with self.bus.torque_disabled():
-            self.bus.configure_motors()
-            # TODO
+            for motor in self.bus.motors:
+                self.bus.write("Return_Delay_Time", motor, 0)
+                self.bus.write("Maximum_Acceleration", motor, 50)
+                self.bus.write("Acceleration", motor, 50)
 
     def setup_motors(self) -> None:
         for motor in reversed(self.bus.motors):
