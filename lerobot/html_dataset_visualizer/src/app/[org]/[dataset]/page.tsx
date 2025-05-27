@@ -5,6 +5,6 @@ export default function DatasetRootPage({
 }: {
   params: { org: string; dataset: string };
 }) {
-  redirect(`/${params.org}/${params.dataset}/episode_1`);
+  redirect(`/${params.org}/${params.dataset}/episode_0`);
   return null;
 }

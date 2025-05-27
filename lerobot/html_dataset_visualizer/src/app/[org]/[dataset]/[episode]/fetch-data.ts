@@ -35,8 +35,8 @@ export async function getEpisodeData(
     // Generate list of episodes
     const episodes = Array.from(
       { length: datasetInfo.total_episodes },
-      // episode id starts from 1
-      (_, i) => i + 1,
+      // episode id starts from 0
+      (_, i) => i,
     );
 
     // Videos information
@@ -201,7 +201,7 @@ export async function getEpisodeData(
 
     return {
       datasetInfo,
-      episodeId: episodeId + 1,
+      episodeId,
       videosInfo,
       chartDataGroups,
       episodes,
