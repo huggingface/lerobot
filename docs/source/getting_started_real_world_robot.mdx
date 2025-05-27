@@ -141,6 +141,7 @@ Then on your laptop, also run `conda activate lerobot` and this command or API e
 
 <hfoptions id="teleoperate_koch_camera">
 <hfoption id="Command">
+
 ```bash
 python -m lerobot.teleoperate \
     --robot.type=lekiwi \
@@ -153,8 +154,38 @@ python -m lerobot.teleoperate \
 ```
 </hfoption>
 <hfoption id="API example">
-```python
 
+```python
+from lerobot.common.teleoperators.keyboard.teleop_keyboard import KeyboardTeleopConfig, KeyboardTeleop
+from lerobot.common.teleoperators.so100_leader import SO100LeaderConfig, SO100Leader
+from lerobot.common.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
+
+robot_config = LeKiwiClientConfig(
+    remote_ip="172.18.133.90",
+    id="my_red_lekiwi"
+)
+
+teleop__arm_config = SO100LeaderConfig(
+    port="/dev/tty.usbmodem58760431551",
+    id="my_blue_leader_arm",
+)
+
+teleop_keyboard_config = KeyboardTeleopConfig(
+    id="my_laptop_keyboard",
+)
+
+robot = LeKiwiClient(robot_config)
+teleop_arm = SO100Leader(teleop__arm_config)
+telep_keyboard = KeyboardTeleop(teleop_keyboard_config)
+robot.connect()
+teleop_arm.connect()
+telep_keyboard.connect()
+
+while True:
+    observation = robot.get_observation()
+    action_arm = teleop_arm.get_action()
+    action_base = telep_keyboard.get_action()
+    robot.send_action(action_arm | action_base)
 ```
 </hfoption>
 </hfoptions>
