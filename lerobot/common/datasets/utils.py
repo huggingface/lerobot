@@ -24,7 +24,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from pprint import pformat
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, TypeVar
 
 import datasets
 import numpy as np
@@ -84,6 +84,8 @@ DEFAULT_FEATURES = {
     "index": {"dtype": "int64", "shape": (1,), "names": None},
     "task_index": {"dtype": "int64", "shape": (1,), "names": None},
 }
+
+T = TypeVar("T")
 
 
 def get_parquet_file_size_in_mb(parquet_path):
@@ -898,3 +900,24 @@ def safe_write_dataframe_to_parquet(df: pandas.DataFrame, path: Path, image_keys
         datasets.Dataset.from_dict(df.to_dict(orient="list")).to_parquet(path)
     else:
         df.to_parquet(path)
+
+
+def item_to_torch(item: dict) -> dict:
+    """Convert all items in a dictionary to PyTorch tensors where appropriate.
+
+    This function is used to convert an item from a streaming dataset to PyTorch tensors.
+
+    Args:
+        item (dict): Dictionary of items from a dataset.
+
+    Returns:
+        dict: Dictionary with all tensor-like items converted to torch.Tensor.
+    """
+    import numpy as np
+    import torch
+
+    for key, val in item.items():
+        if isinstance(val, (np.ndarray, list)) and key not in ["task"]:
+            # Convert numpy arrays and lists to torch tensors
+            item[key] = torch.tensor(val)
+    return item
