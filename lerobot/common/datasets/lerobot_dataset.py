@@ -152,6 +152,10 @@ class LeRobotDatasetMetadata:
         return Path(fpath)
 
     @property
+    def url_root(self) -> str:
+        return f"https://huggingface.co/datasets/{self.repo_id}/resolve/main"
+
+    @property
     def data_path(self) -> str:
         """Formattable string for the parquet files."""
         return self.info["data_path"]

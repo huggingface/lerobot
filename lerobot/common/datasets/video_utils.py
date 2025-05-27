@@ -21,12 +21,15 @@ import warnings
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, ClassVar
+from threading import Lock
+from typing import Any, ClassVar, Dict, Literal, Optional
 
+import fsspec
 import pyarrow as pa
 import torch
 import torchvision
 from datasets.features.features import register_feature
+from line_profiler import profile
 from PIL import Image
 
 
@@ -74,7 +77,7 @@ def decode_video_frames_torchvision(
     video_path: Path | str,
     timestamps: list[float],
     tolerance_s: float,
-    backend: str = "pyav",
+    backend: Literal["pyav", "video_reader"] = "pyav",
     log_loaded_timestamps: bool = False,
 ) -> torch.Tensor:
     """Loads frames associated to the requested timestamps of a video
@@ -169,14 +172,61 @@ def decode_video_frames_torchvision(
     return closest_frames
 
 
+class VideoDecoderCache:
+    """Thread-safe cache for video decoders to avoid expensive re-initialization."""
+
+    def __init__(self):
+        self._cache: Dict[str, Any] = {}
+        self._lock = Lock()
+
+    def get_decoder(self, video_path: str):
+        """Get a cached decoder or create a new one."""
+        if importlib.util.find_spec("torchcodec"):
+            from torchcodec.decoders import VideoDecoder
+        else:
+            raise ImportError("torchcodec is required but not available.")
+
+        video_path = str(video_path)
+
+        with self._lock:
+            if video_path not in self._cache:
+                file_handle = fsspec.open(video_path, client_kwargs={"trust_env": True}).__enter__()
+                decoder = VideoDecoder(file_handle, seek_mode="approximate")
+                self._cache[video_path] = decoder
+
+            return self._cache[video_path]
+
+    def clear(self):
+        """Clear the cache."""
+        with self._lock:
+            self._cache.clear()
+
+    def size(self) -> int:
+        """Return the number of cached decoders."""
+        with self._lock:
+            return len(self._cache)
+
+
+# Global instance
+_default_decoder_cache = VideoDecoderCache()
+
+
+@profile
 def decode_video_frames_torchcodec(
     video_path: Path | str,
     timestamps: list[float],
     tolerance_s: float,
-    device: str = "cpu",
     log_loaded_timestamps: bool = False,
+    decoder_cache: Optional[VideoDecoderCache] = None,
 ) -> torch.Tensor:
     """Loads frames associated with the requested timestamps of a video using torchcodec.
+
+    Args:
+        video_path: Path to the video file.
+        timestamps: List of timestamps to extract frames.
+        tolerance_s: Allowed deviation in seconds for frame retrieval.
+        log_loaded_timestamps: Whether to log loaded timestamps.
+        decoder_cache: Optional decoder cache instance. Uses default if None.
 
     Note: Setting device="cuda" outside the main process, e.g. in data loader workers, will lead to CUDA initialization errors.
 
@@ -186,23 +236,20 @@ def decode_video_frames_torchcodec(
     and all subsequent frames until reaching the requested frame. The number of key frames in a video
     can be adjusted during encoding to take into account decoding time and video size in bytes.
     """
+    if decoder_cache is None:
+        decoder_cache = _default_decoder_cache
 
-    if importlib.util.find_spec("torchcodec"):
-        from torchcodec.decoders import VideoDecoder
-    else:
-        raise ImportError("torchcodec is required but not available.")
+    # Use cached decoder instead of creating new one each time
+    decoder = decoder_cache.get_decoder(str(video_path))
 
-    # initialize video decoder
-    decoder = VideoDecoder(video_path, device=device, seek_mode="approximate")
-    loaded_frames = []
     loaded_ts = []
+    loaded_frames = []
+
     # get metadata for frame information
     metadata = decoder.metadata
     average_fps = metadata.average_fps
-
     # convert timestamps to frame indices
     frame_indices = [round(ts * average_fps) for ts in timestamps]
-
     # retrieve frames based on indices
     frames_batch = decoder.get_frames_at(indices=frame_indices)
 
