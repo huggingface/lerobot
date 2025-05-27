@@ -57,7 +57,7 @@ class AlohaEnv(EnvConfig):
     features_map: dict[str, str] = field(
         default_factory=lambda: {
             "action": ACTION,
-            "agent_pos": OBS_ROBOT,
+            "agent_pos": OBS_STATE,
             "top": f"{OBS_IMAGE}.top",
             "pixels/top": f"{OBS_IMAGES}.top",
         }

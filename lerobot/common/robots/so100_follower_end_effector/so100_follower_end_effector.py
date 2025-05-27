@@ -66,7 +66,7 @@ class SO100FollowerEndEffector(SO100Follower):
         self.kinematics = RobotKinematics(robot_type="so101")
 
         # Set the forward kinematics function
-        self.fk_function = self.kinematics.fk_gripper_tip
+        self.fk_function = self.kinematics.fk_gripper
 
         # Store the bounds for end-effector position
         self.end_effector_bounds = self.config.end_effector_bounds
@@ -152,16 +152,16 @@ class SO100FollowerEndEffector(SO100Follower):
             fk_func=self.fk_function,
         )
 
+        target_joint_values_in_degrees = np.clip(target_joint_values_in_degrees, -180.0, 180.0)
         # Create joint space action dictionary
         joint_action = {
-            f"{key}.pos": target_joint_values_in_degrees[i]
-            for i, key in enumerate(self.bus.motors.keys())
+            f"{key}.pos": target_joint_values_in_degrees[i] for i, key in enumerate(self.bus.motors.keys())
         }
 
         # Handle gripper separately if included in action
         joint_action["gripper.pos"] = np.clip(
             self.current_joint_pos[-1] + (action[-1] - 1) * self.config.max_gripper_pos,
-            0,
+            5,
             self.config.max_gripper_pos,
         )
 
@@ -191,3 +191,7 @@ class SO100FollowerEndEffector(SO100Follower):
             logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
 
         return obs_dict
+
+    def reset(self):
+        self.current_ee_pos = None
+        self.current_joint_pos = None

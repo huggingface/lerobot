@@ -91,6 +91,7 @@ from torch import nn
 from torch.multiprocessing import Queue
 from torch.optim.optimizer import Optimizer
 
+from lerobot.common.cameras import so100_follower_end_effector  # noqa: F401
 from lerobot.common.constants import (
     CHECKPOINTS_DIR,
     LAST_CHECKPOINT_LINK,
@@ -101,6 +102,8 @@ from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.sac.modeling_sac import SACPolicy
+from lerobot.common.robots import so100_follower_end_effector  # noqa: F401
+from lerobot.common.teleoperators import gamepad, so100_leader  # noqa: F401
 from lerobot.common.utils.random_utils import set_seed
 from lerobot.common.utils.train_utils import (
     get_step_checkpoint_dir,

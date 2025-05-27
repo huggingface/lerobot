@@ -80,10 +80,13 @@ import torch
 from torch import nn
 from torch.multiprocessing import Event, Queue
 
+from lerobot.common.cameras import opencv  # noqa: F401
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.sac.modeling_sac import SACPolicy
-from lerobot.common.robot_devices.utils import busy_wait
+from lerobot.common.robots import so100_follower_end_effector  # noqa: F401
+from lerobot.common.teleoperators import gamepad, so100_leader  # noqa: F401
 from lerobot.common.utils.random_utils import set_seed
+from lerobot.common.utils.robot_utils import busy_wait
 from lerobot.common.utils.utils import (
     TimerManager,
     get_safe_torch_device,
