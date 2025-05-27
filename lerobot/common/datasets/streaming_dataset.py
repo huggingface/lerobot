@@ -182,7 +182,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         self.rng.shuffle(frames_buffer)
         yield from frames_buffer
 
-    def _make_iterable_dataset(self, dataset: datasets.Dataset) -> Iterator:
+    def _make_iterable_dataset(self, dataset: datasets.IterableDataset) -> Iterator:
         return iter(dataset)
 
     @profile
