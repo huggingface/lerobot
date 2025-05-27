@@ -67,7 +67,7 @@ class RealSenseCamera(Camera):
         from lerobot.common.cameras import ColorMode, Cv2Rotation
 
         # Basic usage with serial number
-        config = RealSenseCameraConfig(serial_number_or_name="0123456789") # Replace with actual SN
+        config = RealSenseCameraConfig(serial_number_or_name=1234567890) # Replace with actual SN
         camera = RealSenseCamera(config)
         camera.connect()
 
@@ -83,7 +83,7 @@ class RealSenseCamera(Camera):
 
         # Example with depth capture and custom settings
         custom_config = RealSenseCameraConfig(
-            serial_number_or_name="0123456789", # Replace with actual SN
+            serial_number_or_name=1234567890, # Replace with actual SN
             fps=30,
             width=1280,
             height=720,
@@ -116,8 +116,8 @@ class RealSenseCamera(Camera):
 
         self.config = config
 
-        if config.serial_number_or_name.isdigit():
-            self.serial_number = config.serial_number_or_name
+        if isinstance(config.serial_number_or_name, int):
+            self.serial_number = str(config.serial_number_or_name)
         else:
             self.serial_number = self._find_serial_number_from_name(config.serial_number_or_name)
 
@@ -310,7 +310,7 @@ class RealSenseCamera(Camera):
                 self.width, self.height = actual_width, actual_height
                 self.capture_width, self.capture_height = actual_width, actual_height
 
-    def read_depth(self, timeout_ms: int = 200) -> np.ndarray:
+    def read_depth(self, timeout_ms: int = 100) -> np.ndarray:
         """
         Reads a single frame (depth) synchronously from the camera.
 
@@ -318,7 +318,7 @@ class RealSenseCamera(Camera):
         from the camera hardware via the RealSense pipeline.
 
         Args:
-            timeout_ms (int): Maximum time in milliseconds to wait for a frame. Defaults to 200ms.
+            timeout_ms (int): Maximum time in milliseconds to wait for a frame. Defaults to 100ms.
 
         Returns:
             np.ndarray: The depth map as a NumPy array (height, width)
@@ -353,7 +353,7 @@ class RealSenseCamera(Camera):
 
         return depth_map_processed
 
-    def read(self, color_mode: ColorMode | None = None, timeout_ms: int = 200) -> np.ndarray:
+    def read(self, color_mode: ColorMode | None = None, timeout_ms: int = 100) -> np.ndarray:
         """
         Reads a single frame (color) synchronously from the camera.
 
@@ -361,7 +361,7 @@ class RealSenseCamera(Camera):
         from the camera hardware via the RealSense pipeline.
 
         Args:
-            timeout_ms (int): Maximum time in milliseconds to wait for a frame. Defaults to 200ms.
+            timeout_ms (int): Maximum time in milliseconds to wait for a frame. Defaults to 100ms.
 
         Returns:
             np.ndarray: The captured color frame as a NumPy array
@@ -444,12 +444,9 @@ class RealSenseCamera(Camera):
         """
         Internal loop run by the background thread for asynchronous reading.
 
-        On each iteration:
-        1. Reads a color frame with 500ms timeout
-        2. Stores result in latest_frame (thread-safe)
-        3. Sets new_frame_event to notify listeners
-
-        Stops on DeviceNotConnectedError, logs other errors and continues.
+        Continuously reads frames (color and optional depth) using `read()`
+        and places the latest result (single image or tuple) into the `frame_queue`.
+        It overwrites any previous frame in the queue.
         """
         while not self.stop_event.is_set():
             try:
@@ -488,17 +485,18 @@ class RealSenseCamera(Camera):
         self.stop_event = None
 
     # NOTE(Steven): Missing implementation for depth for now
-    def async_read(self, timeout_ms: float = 200) -> np.ndarray:
+    def async_read(self, timeout_ms: float = 100) -> np.ndarray:
         """
-        Reads the latest available frame data (color) asynchronously.
+        Reads the latest available frame data (color or color+depth) asynchronously.
 
-        This method retrieves the most recent color frame captured by the background
+        This method retrieves the most recent frame captured by the background
         read thread. It does not block waiting for the camera hardware directly,
-        but may wait up to timeout_ms for the background thread to provide a frame.
+        only waits for a frame to appear in the internal queue up to the specified
+        timeout.
 
         Args:
             timeout_ms (float): Maximum time in milliseconds to wait for a frame
-                to become available. Defaults to 200ms (0.2 seconds).
+                to become available in the queue. Defaults to 100ms (0.1 seconds).
 
         Returns:
             np.ndarray:
@@ -507,7 +505,7 @@ class RealSenseCamera(Camera):
         Raises:
             DeviceNotConnectedError: If the camera is not connected.
             TimeoutError: If no frame data becomes available within the specified timeout.
-            RuntimeError: If the background thread died unexpectedly or another error occurs.
+            RuntimeError: If the background thread died unexpectedly or another queue error occurs.
         """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")

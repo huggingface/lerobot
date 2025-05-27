@@ -372,12 +372,9 @@ class OpenCVCamera(Camera):
         """
         Internal loop run by the background thread for asynchronous reading.
 
-        On each iteration:
-        1. Reads a color frame
-        2. Stores result in latest_frame (thread-safe)
-        3. Sets new_frame_event to notify listeners
-
-        Stops on DeviceNotConnectedError, logs other errors and continues.
+        Continuously reads frames from the camera using the synchronous `read()`
+        method and places the latest frame into the `frame_queue`. It overwrites
+        any previous frame in the queue.
         """
         while not self.stop_event.is_set():
             try:
@@ -415,17 +412,18 @@ class OpenCVCamera(Camera):
         self.thread = None
         self.stop_event = None
 
-    def async_read(self, timeout_ms: float = 200) -> np.ndarray:
+    def async_read(self, timeout_ms: float = 2000) -> np.ndarray:
         """
         Reads the latest available frame asynchronously.
 
         This method retrieves the most recent frame captured by the background
         read thread. It does not block waiting for the camera hardware directly,
-        but may wait up to timeout_ms for the background thread to provide a frame.
+        only waits for a frame to appear in the internal queue up to the specified
+        timeout.
 
         Args:
             timeout_ms (float): Maximum time in milliseconds to wait for a frame
-                to become available. Defaults to 200ms (0.2 seconds).
+                to become available in the queue. Defaults to 2000ms (2 seconds).
 
         Returns:
             np.ndarray: The latest captured frame as a NumPy array in the format
@@ -434,7 +432,7 @@ class OpenCVCamera(Camera):
         Raises:
             DeviceNotConnectedError: If the camera is not connected.
             TimeoutError: If no frame becomes available within the specified timeout.
-            RuntimeError: If an unexpected error occurs.
+            RuntimeError: If an unexpected error occurs while retrieving from the queue.
         """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
