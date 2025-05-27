@@ -141,6 +141,7 @@ from dataclasses import asdict
 from pprint import pformat
 
 import rerun as rr
+from rich import print  # for debugging
 
 # from safetensors.torch import load_file, save_file
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
@@ -166,6 +167,7 @@ from lerobot.common.robot_devices.control_utils import (
     stop_recording,
     warmup_record,
 )
+from lerobot.common.robot_devices.robots.configs import So101RobotConfig  # for debugging
 from lerobot.common.robot_devices.robots.utils import Robot, make_robot_from_config
 from lerobot.common.robot_devices.utils import busy_wait, safe_disconnect
 from lerobot.common.utils.utils import has_method, init_logging, log_say
@@ -406,6 +408,12 @@ def _init_rerun(control_config: ControlConfig, session_name: str = "lerobot_cont
 def control_robot(cfg: ControlPipelineConfig):
     init_logging()
     logging.info(pformat(asdict(cfg)))
+
+    print("\n[bold yellow]Loaded camera config:[/bold yellow]")
+    print(So101RobotConfig().cameras)
+    print("Active robot config class:", type(cfg.robot).__name__)
+
+    print(cfg.robot.cameras)
 
     robot = make_robot_from_config(cfg.robot)
 
