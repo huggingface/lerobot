@@ -132,22 +132,47 @@ while True:
 
 TODO(pepijn): modify these commands with new API, and explain you can also map the arms to a keyboard with the new API now
 
-To teleoperate SSH into your Raspberry Pi, and run `conda activate lerobot` and this script:
+To teleoperate, SSH into your Raspberry Pi, and run `conda activate lerobot` and this script:
 ```bash
 python -m lerobot.common.robots.lekiwi.lekiwi_host
 ```
 
-Then on your laptop, also run `conda activate lerobot` and this script:
+Then on your laptop, also run `conda activate lerobot` and this command or API example:
+
+<hfoptions id="teleoperate_lekiwi">
+<hfoption id="Command">
 ```bash
-python -m lerobot.teleoperate \
-    --robot.type=lekiwi \
-    --robot.port=/dev/tty.usbmodem58760431541 \
-    --robot.cameras="{}" \
-    --robot.id=my_lekiwi \
-    --teleop.type=so101_leader \
-    --teleop.port=/dev/tty.usbmodem58760431551 \
-    --teleop.id=my_blue_leader_arm
+python examples/robots/lekiwi_client_app.py
 ```
+</hfoption>
+<hfoption id="API example">
+```python
+from lerobot.common.robots.lekiwi.config_lekiwi import LeKiwiClientConfig
+from lerobot.common.robots.lekiwi.lekiwi_client import LeKiwiClient
+from lerobot.common.teleoperators.keyboard import KeyboardTeleop, KeyboardTeleopConfig
+from lerobot.common.teleoperators.so100_leader import SO100Leader, SO100LeaderConfig
+
+leader_arm_config = SO100LeaderConfig(port="/dev/tty.usbmodem58760433331")
+leader_arm = SO100Leader(leader_arm_config)
+
+keyboard_config = KeyboardTeleopConfig()
+keyboard = KeyboardTeleop(keyboard_config)
+
+robot_config = LeKiwiClientConfig(remote_ip="172.18.134.136", id="lekiwi")
+robot = LeKiwiClient(robot_config)
+
+leader_arm.connect()
+keyboard.connect()
+robot.connect()
+
+while True:
+    arm_action = leader_arm.get_action()
+    base_action = keyboard.get_action()
+    action_sent = robot.send_action(arm_action | base_action)
+    observation = robot.get_observation()
+```
+</hfoption>
+</hfoptions>
 
 > **NOTE:** To visualize the data, enable `--control.display_data=true`. This streams the data using `rerun`. For the `--control.type=remote_robot` you will also need to set `--control.viewer_ip` and `--control.viewer_port`
 
