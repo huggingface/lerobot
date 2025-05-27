@@ -54,7 +54,7 @@ LEFT_HAND_INVERSIONS = [
     "ring_radial_flexor",
     "ring_pip_dip",
     "pinky_radial_flexor",
-    "pinky_pip_dip",
+    # "pinky_pip_dip",
 ]
 
 
@@ -152,7 +152,10 @@ class HopeJrHand(Robot):
     def configure(self) -> None:
         with self.bus.torque_disabled():
             self.bus.configure_motors()
-            # TODO
+            # for motor in self.bus.motors:
+            #     self.bus.write("Return_Delay_Time", motor, 0)
+            #     self.bus.write("Acceleration_2", motor, 50)
+            #     self.bus.write("Acceleration", motor, 50)
 
     def setup_motors(self) -> None:
         for motor in self.bus.motors:

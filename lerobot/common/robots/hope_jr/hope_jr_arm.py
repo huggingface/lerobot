@@ -124,17 +124,20 @@ class HopeJrArm(Robot):
         unknown_range_motors = self.other_motors
 
         input("Move arm to the middle of its range of motion and press ENTER....")
-        homing_offsets_full_turn = self.bus.set_half_turn_homings(self.shoulder_pitch)
+        homing_offsets_full_turn = self.bus.set_half_turn_homings("shoulder_pitch")
         homing_offsets_unknown_range = self.bus.set_half_turn_homings(unknown_range_motors)
         homing_offsets = {**homing_offsets_full_turn, **homing_offsets_unknown_range}
 
         logger.info(
-            f"Move all joints except '{self.shoulder_pitch}' sequentially through their "
+            "Move all joints except 'shoulder_pitch' sequentially through their "
             "entire ranges of motion.\nRecording positions. Press ENTER to stop..."
         )
         range_mins, range_maxes = self.bus.record_ranges_of_motion(unknown_range_motors)
-        range_mins[self.shoulder_pitch] = 1024
-        range_maxes[self.shoulder_pitch] = 3071
+        range_mins["shoulder_pitch"] = 1024
+        range_maxes["shoulder_pitch"] = 3071
+
+        range_mins["wrist_roll"] = 1500
+        range_maxes["wrist_roll"] = 2500
 
         self.calibration = {}
         for motor, m in self.bus.motors.items():
