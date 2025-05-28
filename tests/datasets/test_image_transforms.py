@@ -16,6 +16,7 @@
 
 import pytest
 import torch
+from packaging import version
 from safetensors.torch import load_file
 from torchvision.transforms import v2
 from torchvision.transforms.v2 import functional as F  # noqa: N812
@@ -260,6 +261,9 @@ def test_backward_compatibility_default_config(img_tensor, default_transforms):
     # - PyTorch issue: https://github.com/pytorch/pytorch/issues/154031
     # - LeRobot PR: https://github.com/huggingface/lerobot/pull/1127
     # If running with PyTorch < 2.7.0, this test is expected to fail.
+    if version.parse(torch.__version__) < version.parse("2.7.0"):
+        pytest.skip(f"Skipping test with PyTorch {torch.__version__}. Requires PyTorch >= 2.7.0")
+
     cfg = ImageTransformsConfig(enable=True)
     default_tf = ImageTransforms(cfg)
 
