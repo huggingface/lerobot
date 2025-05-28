@@ -50,4 +50,12 @@ class SO100FollowerEndEffectorConfig(RobotConfig):
 
     max_gripper_pos: float = 50
 
+    end_effector_step_sizes: Dict[str, float] = field(
+        default_factory=lambda: {
+            "x": 0.02,
+            "y": 0.02,
+            "z": 0.02,
+        }
+    )
+
     urdf_path: str = "/Users/michel_aractingi/code/SO-ARM100/Simulation/SO101/so101_new_calib.urdf"

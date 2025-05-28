@@ -93,11 +93,7 @@ class GamepadTeleop(Teleoperator):
         else:
             from lerobot.scripts.server.end_effector_control_utils import GamepadController as Gamepad
 
-        self.gamepad = Gamepad(
-            x_step_size=self.config.x_step_size,
-            y_step_size=self.config.y_step_size,
-            z_step_size=self.config.z_step_size,
-        )
+        self.gamepad = Gamepad(x_step_size=1.0, y_step_size=1.0, z_step_size=1.0)
         self.gamepad.start()
 
     def calibrate(self) -> None:
