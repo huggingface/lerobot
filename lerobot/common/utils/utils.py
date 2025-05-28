@@ -17,7 +17,9 @@ import logging
 import os
 import os.path as osp
 import platform
+import select
 import subprocess
+import sys
 from copy import copy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -228,3 +230,12 @@ def is_valid_numpy_dtype_string(dtype_str: str) -> bool:
     except TypeError:
         # If a TypeError is raised, the string is not a valid dtype
         return False
+
+
+def enter_pressed() -> bool:
+    return select.select([sys.stdin], [], [], 0)[0] and sys.stdin.readline().strip() == ""
+
+
+def move_cursor_up(lines):
+    """Move the cursor up by a specified number of lines."""
+    print(f"\033[{lines}A", end="")

@@ -26,7 +26,6 @@ from lerobot.common.utils.utils import has_method
 
 PATH_KEY = "path"
 PLUGIN_DISCOVERY_SUFFIX = "discover_packages_path"
-draccus.set_config_type("json")
 
 
 def get_cli_overrides(field_name: str, args: Sequence[str] | None = None) -> list[str] | None:

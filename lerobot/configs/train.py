@@ -170,6 +170,5 @@ class TrainPipelineConfig(HubMixin):
                 ) from e
 
         cli_args = kwargs.pop("cli_args", [])
-        cfg = draccus.parse(cls, config_file, args=cli_args)
-
-        return cfg
+        with draccus.config_type("json"):
+            return draccus.parse(cls, config_file, args=cli_args)

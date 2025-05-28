@@ -78,15 +78,18 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     def type(self) -> str:
         return self.get_choice_name(self.__class__)
 
-    @abc.abstractproperty
+    @property
+    @abc.abstractmethod
     def observation_delta_indices(self) -> list | None:
         raise NotImplementedError
 
-    @abc.abstractproperty
+    @property
+    @abc.abstractmethod
     def action_delta_indices(self) -> list | None:
         raise NotImplementedError
 
-    @abc.abstractproperty
+    @property
+    @abc.abstractmethod
     def reward_delta_indices(self) -> list | None:
         raise NotImplementedError
 
@@ -173,4 +176,5 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
         # HACK: this is very ugly, ideally we'd like to be able to do that natively with draccus
         # something like --policy.path (in addition to --policy.type)
         cli_overrides = policy_kwargs.pop("cli_overrides", [])
-        return draccus.parse(cls, config_file, args=cli_overrides)
+        with draccus.config_type("json"):
+            return draccus.parse(cls, config_file, args=cli_overrides)
