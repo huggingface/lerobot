@@ -43,7 +43,7 @@ python lerobot/scripts/train.py \
 
 Example of using the smolvla pretrained model outside LeRobot training framework:
 ```python
-policy = SmolVLAPolicy.from_pretrained("lerobot/smolvla")
+policy = SmolVLAPolicy.from_pretrained("lerobot/smolvla_base")
 ```
 
 """
@@ -551,11 +551,9 @@ class VLAFlowMatching(nn.Module):
         """Embed images with SigLIP and language tokens with embedding layer to prepare
         for SmolVLM transformer processing.
         """
-        # TODO: avoid list in python and torch.cat ; prefer pre-allocation with torch.empty
         embs = []
         pad_masks = []
         att_masks = []
-        # TODO: remove for loop
         for _img_idx, (
             img,
             img_mask,
