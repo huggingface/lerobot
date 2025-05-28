@@ -186,9 +186,10 @@ def record_loop(
             observation_frame = build_dataset_frame(dataset.features, observation, prefix="observation")
 
         if policy is not None:
-            action = predict_action(
+            action_values = predict_action(
                 observation_frame, policy, get_safe_torch_device(policy.config.device), policy.config.use_amp
             )
+            action = {key: action_values[i] for i, key in enumerate(robot.action_features)}
         else:
             action = teleop.get_action()
 
