@@ -50,14 +50,14 @@ class HubMixin:
             push_to_hub (`bool`, *optional*, defaults to `False`):
                 Whether or not to push your object to the Huggingface Hub after saving it.
             repo_id (`str`, *optional*):
-                ID of your repository on the Hub. Used only if `push_to_hub=True`. Will default to the folder name if
+                ID of your repository on the Hub. Used only if `push_to_hub=true`. Will default to the folder name if
                 not provided.
             card_kwargs (`Dict[str, Any]`, *optional*):
                 Additional arguments passed to the card template to customize the card.
             push_to_hub_kwargs:
                 Additional key word arguments passed along to the [`~HubMixin.push_to_hub`] method.
         Returns:
-            `str` or `None`: url of the commit on the Hub if `push_to_hub=True`, `None` otherwise.
+            `str` or `None`: url of the commit on the Hub if `push_to_hub=true`, `None` otherwise.
         """
         save_directory = Path(save_directory)
         save_directory.mkdir(parents=True, exist_ok=True)
