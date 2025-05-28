@@ -106,6 +106,7 @@ class SO100FollowerEndEffector(SO100Follower):
         Returns:
             The joint-space action that was sent to the motors
         """
+
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
@@ -113,7 +114,12 @@ class SO100FollowerEndEffector(SO100Follower):
         if isinstance(action, dict):
             if all(k in action for k in ["delta_x", "delta_y", "delta_z", "gripper"]):
                 action = np.array(
-                    [action["delta_x"], action["delta_y"], action["delta_z"], action["gripper"]],
+                    [
+                        action["delta_x"] * self.config.end_effector_step_sizes["x"],
+                        action["delta_y"] * self.config.end_effector_step_sizes["y"],
+                        action["delta_z"] * self.config.end_effector_step_sizes["z"],
+                        action["gripper"],
+                    ],
                     dtype=np.float32,
                 )
             else:

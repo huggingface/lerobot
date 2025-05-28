@@ -20,14 +20,14 @@ import time
 import numpy as np
 import torch
 
-from lerobot.common.robots.kinematics import RobotKinematics
+from lerobot.common.model.kinematics import RobotKinematics
 from lerobot.common.utils.robot_utils import busy_wait
 
 
 class InputController:
     """Base class for input controllers that generate motion deltas."""
 
-    def __init__(self, x_step_size=0.01, y_step_size=0.01, z_step_size=0.01):
+    def __init__(self, x_step_size=1.0, y_step_size=1.0, z_step_size=1.0):
         """
         Initialize the controller.
 
@@ -102,7 +102,7 @@ class InputController:
 class KeyboardController(InputController):
     """Generate motion deltas from keyboard input."""
 
-    def __init__(self, x_step_size=0.01, y_step_size=0.01, z_step_size=0.01):
+    def __init__(self, x_step_size=1.0, y_step_size=1.0, z_step_size=1.0):
         super().__init__(x_step_size, y_step_size, z_step_size)
         self.key_states = {
             "forward_x": False,
@@ -215,7 +215,7 @@ class KeyboardController(InputController):
 class GamepadController(InputController):
     """Generate motion deltas from gamepad input."""
 
-    def __init__(self, x_step_size=0.01, y_step_size=0.01, z_step_size=0.01, deadzone=0.1):
+    def __init__(self, x_step_size=1.0, y_step_size=1.0, z_step_size=1.0, deadzone=0.1):
         super().__init__(x_step_size, y_step_size, z_step_size)
         self.deadzone = deadzone
         self.joystick = None
@@ -330,9 +330,9 @@ class GamepadControllerHID(InputController):
 
     def __init__(
         self,
-        x_step_size=0.01,
-        y_step_size=0.01,
-        z_step_size=0.01,
+        x_step_size=1.0,
+        y_step_size=1.0,
+        z_step_size=1.0,
         deadzone=0.1,
         vendor_id=0x046D,
         product_id=0xC219,
