@@ -335,7 +335,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
         loss = losses.mean()
         # For backward pass
         loss_dict["loss"] = loss
-        return loss_dict
+        return loss, loss_dict
 
     def prepare_images(self, batch):
         """Apply SmolVLA preprocessing to the images, like resizing to 224x224 and padding to keep aspect ratio, and
