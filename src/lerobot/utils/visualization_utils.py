@@ -166,7 +166,7 @@ def log_rerun_data(
                                 ),
                             )
                         ],
-                        columns=rr.Scalar.columns(scalar=observation[key]),
+                        columns=rr.Scalar.columns(scalar=np.mean(observation[key], axis=1)),
                     )
                 elif arr.ndim == 3:
                     rr.log(key, rr.Image(arr), static=True)
