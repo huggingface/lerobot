@@ -14,9 +14,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import random
 import traceback
 
 import pytest
+import torch
 from serial import SerialException
 
 from lerobot import available_cameras, available_motors, available_robots
@@ -86,3 +88,19 @@ def patch_builtins_input(monkeypatch):
             print(text)
 
     monkeypatch.setattr("builtins.input", print_text)
+
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--seed",
+        action="store",
+        default="42",
+        help="Set random seed for reproducibility",
+    )
+
+
+@pytest.fixture(autouse=True)
+def set_random_seed(request):
+    seed = int(request.config.getoption("--seed"))
+    random.seed(seed)  # Python random
+    torch.manual_seed(seed)  # PyTorch
