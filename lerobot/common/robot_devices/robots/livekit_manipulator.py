@@ -61,9 +61,6 @@ class LivekitManipulatorRobot(ManipulatorRobot):
         
         logging.info("LivekitManipulatorRobot initialized")
 
-    
-    
-
     def connect(self):
         """Override connect to also establish Livekit connection."""
         # Call parent connect method first
@@ -161,24 +158,21 @@ class LivekitManipulatorRobot(ManipulatorRobot):
         try:
             leader_flat = {k: v.tolist() for k, v in leader_pos.items()}
             data = json.dumps({"leader_arm_positions": leader_flat}).encode("utf-8")
-            print(f"HERE data: {data}")
             
             async def send_packet():
                 await self.room.local_participant.publish_data(
                     data, reliable=False, topic="leader"
                 )
-                print(f"Publishing leader arm positions to Livekit: {data}")
             
             if self._livekit_loop and not self._livekit_loop.is_closed():
-                print(f"HERE self._livekit_loop: {self._livekit_loop}")
                 # Submit the coroutine and get the future
                 future = asyncio.run_coroutine_threadsafe(send_packet(), self._livekit_loop)
                 # Wait a short time for it to complete (non-blocking for real-time performance)
-                try:
-                    future.result(timeout=0.001)  # Very short timeout to avoid blocking
-                    print("Data sent successfully")
-                except Exception as e:
-                    print(f"Send failed: {e}")
+                # try:
+                #     future.result(timeout=0.001)  # Very short timeout to avoid blocking
+                #     print("Data sent successfully")
+                # except Exception as e:
+                #     print(f"Send failed: {e}")
         except Exception as e:
             logging.error(f"Failed to publish leader arm positions to Livekit: {e}")
 
