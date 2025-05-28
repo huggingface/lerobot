@@ -63,7 +63,7 @@ from lerobot.common.datasets.utils import (
     load_nested_dataset,
     load_stats,
     load_tasks,
-    safe_write_dataframe_to_parquet,
+    to_parquet_with_hf_images,
     update_chunk_file_indices,
     validate_episode_buffer,
     validate_frame,
@@ -1009,7 +1009,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # Write the resulting dataframe from RAM to disk
         path = self.root / self.meta.data_path.format(chunk_index=chunk_idx, file_index=file_idx)
         path.parent.mkdir(parents=True, exist_ok=True)
-        safe_write_dataframe_to_parquet(df, path, self.meta.image_keys)
+        if len(self.meta.image_keys) > 0:
+            to_parquet_with_hf_images(df, path)
+        else:
+            df.to_parquet(path)
 
         # Update the Hugging Face dataset by reloading it.
         # This process should be fast because only the latest Parquet file has been modified.
