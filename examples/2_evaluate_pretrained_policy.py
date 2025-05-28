@@ -37,7 +37,12 @@ output_directory = Path("outputs/eval/example_pusht_diffusion")
 output_directory.mkdir(parents=True, exist_ok=True)
 
 # Select your device
-device = "cuda"
+if torch.cuda.is_available():
+    device = torch.device("cuda")
+elif torch.backends.mps.is_available():
+    device = torch.device("mps")
+else:
+    device = torch.device("cpu")
 
 # Provide the [hugging face repo id](https://huggingface.co/lerobot/diffusion_pusht):
 pretrained_policy_path = "lerobot/diffusion_pusht"
@@ -91,8 +96,8 @@ while not done:
     image = image.permute(2, 0, 1)
 
     # Send data tensors from CPU to GPU
-    state = state.to(device, non_blocking=True)
-    image = image.to(device, non_blocking=True)
+    state = state.to(device, non_blocking=device.type == "cuda")
+    image = image.to(device, non_blocking=device.type == "cuda")
 
     # Add extra (empty) batch dimension, required to forward the policy
     state = state.unsqueeze(0)
