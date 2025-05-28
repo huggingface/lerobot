@@ -140,7 +140,8 @@ class KochLeader(Teleoperator):
         self.bus.write("Operating_Mode", "gripper", OperatingMode.CURRENT_POSITION.value)
         # Set gripper's goal pos in current position mode so that we can use it as a trigger.
         self.bus.enable_torque("gripper")
-        self.bus.write("Goal_Position", "gripper", self.config.gripper_open_pos)
+        if self.is_calibrated:
+            self.bus.write("Goal_Position", "gripper", self.config.gripper_open_pos)
 
     def setup_motors(self) -> None:
         for motor in reversed(self.bus.motors):
