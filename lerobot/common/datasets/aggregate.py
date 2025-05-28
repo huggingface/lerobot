@@ -137,7 +137,7 @@ def aggregate_datasets(repo_ids: list[str], aggr_repo_id: str, roots: list[Path]
         dst_meta.info["total_episodes"] += src_meta.total_episodes
         dst_meta.info["total_frames"] += src_meta.total_frames
 
-    finalize_aggregation(aggr_meta, all_metadata)
+    finalize_aggregation(dst_meta, all_metadata)
     logging.info("Aggregation complete.")
 
 
