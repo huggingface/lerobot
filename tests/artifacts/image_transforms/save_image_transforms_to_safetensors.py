@@ -28,7 +28,6 @@ from lerobot.common.datasets.transforms import (
 from lerobot.common.utils.random_utils import seeded_context
 
 ARTIFACT_DIR = Path("tests/artifacts/image_transforms")
-# TODO: Fix lerobot/aloha_mobile_shrimp dataset
 DATASET_REPO_ID = "lerobot/aloha_static_cups_open"
 
 
@@ -43,16 +42,16 @@ def save_default_config_transform(original_frame: torch.Tensor, output_dir: Path
 
 
 def save_single_transforms(original_frame: torch.Tensor, output_dir: Path):
-    transforms = [
+    transforms = {
         ("ColorJitter", "brightness", [(0.5, 0.5), (2.0, 2.0)]),
         ("ColorJitter", "contrast", [(0.5, 0.5), (2.0, 2.0)]),
         ("ColorJitter", "saturation", [(0.5, 0.5), (2.0, 2.0)]),
         ("ColorJitter", "hue", [(-0.25, -0.25), (0.25, 0.25)]),
         ("SharpnessJitter", "sharpness", [(0.5, 0.5), (2.0, 2.0)]),
-    ]
+    }
 
     frames = {"original_frame": original_frame}
-    for tf_type, tf_name, min_max_values in transforms:
+    for tf_type, tf_name, min_max_values in transforms.items():
         for min_max in min_max_values:
             tf_cfg = ImageTransformConfig(type=tf_type, kwargs={tf_name: min_max})
             tf = make_transform_from_config(tf_cfg)

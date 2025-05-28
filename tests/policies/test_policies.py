@@ -415,9 +415,7 @@ def test_backward_compatibility(ds_repo_id: str, policy_name: str, policy_kwargs
     https://github.com/huggingface/lerobot/pull/1127.
 
     """
-    # Skip the test for act policy if PyTorch version is below 2.7
-    # The MultiheadSelfAttention randomness changed between PyTorch 2.6 and 2.7
-    # The artifacts were generated with PyTorch 2.7, so the test will break with act policy if PyTorch is below 2.7
+    # NOTE: ACT policy has different randomness, after PyTorch 2.7.0
     if policy_name == "act" and version.parse(torch.__version__) < version.parse("2.7.0"):
         pytest.skip(f"Skipping act policy test with PyTorch {torch.__version__}. Requires PyTorch >= 2.7.0")
 
