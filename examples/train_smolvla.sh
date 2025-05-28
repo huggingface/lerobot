@@ -14,7 +14,7 @@ export WORK=/home/mustafa_shukor
 # export DATA_DIR=$WORK/.cache/huggingface/datasets
 # export HF_LEROBOT_HOME=$WORK/.cache/huggingface/lerobot
 
-# export HF_DATASETS_OFFLINE=1 
+# export HF_DATASETS_OFFLINE=1
 # export HF_HUB_OFFLINE=1
 
 # export WANDB_CACHE_DIR=/lustre/fsn1/projects/rech/dyf/ugz83ue/wandb
@@ -54,5 +54,4 @@ rm -r $TRAIN_DIR
 CUDA_VISIBLE_DEVICES=2 python lerobot/scripts/train.py \
      --policy.type=$POLICY  \
      --dataset.repo_id=$REPO_ID \
-     --output_dir=$TRAIN_DIR 
-
+     --output_dir=$TRAIN_DIR
