@@ -262,7 +262,7 @@ class PortAudioMicrophone:
             while not event.is_set():
                 try:
                     file.write(
-                        queue.get(timeout=0.01)
+                        queue.get(timeout=0.005)
                     )  # Timeout set as the usual sounddevice buffer size. get_nowait is not possible here as it saturates the thread.
                     queue.task_done()
                 except Empty:
