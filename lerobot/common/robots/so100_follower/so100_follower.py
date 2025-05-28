@@ -79,8 +79,7 @@ class SO100Follower(Robot):
 
     @property
     def is_connected(self) -> bool:
-        # TODO(aliberts): add cam.is_connected for cam in self.cameras
-        return self.bus.is_connected
+        return self.bus.is_connected and all(cam.is_connected for cam in self.cameras.values())
 
     def connect(self, calibrate: bool = True) -> None:
         """
@@ -94,7 +93,6 @@ class SO100Follower(Robot):
         if not self.is_calibrated and calibrate:
             self.calibrate()
 
-        # Connect the cameras
         for cam in self.cameras.values():
             cam.connect()
 
