@@ -28,7 +28,7 @@ from uuid import uuid4
 import rerun as rr
 import torch
 from deepdiff import DeepDiff
-from numpy import linspace
+from numpy import linspace, mean
 from termcolor import colored
 
 from lerobot.common.datasets.image_writer import safe_stop_image_writer
@@ -382,7 +382,7 @@ def control_loop(
                             ),
                         )
                     ],
-                    columns=rr.Scalar.columns(scalar=observation[observation_key].numpy()),
+                    columns=rr.Scalar.columns(scalar=mean(observation[observation_key].numpy(), axis=1)),
                 )
 
         if fps is not None:
