@@ -87,7 +87,7 @@ def log_rerun_data(observation: dict[str | Any], action: dict[str | Any], log_ti
                             ),
                         )
                     ],
-                    columns=rr.Scalar.columns(scalar=observation[obs]),
+                    columns=rr.Scalar.columns(scalar=np.mean(observation[obs], axis=1)),
                 )
             else:
                 rr.log(obs, rr.Image(val), static=True)
