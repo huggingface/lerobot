@@ -299,9 +299,6 @@ def control_loop(
         )
         rr.set_time_seconds("episode_time", seconds=0.0)
 
-    timestamp = 0
-    start_episode_t = time.perf_counter()
-
     if (
         dataset is not None and not robot.robot_type.startswith("lekiwi")
     ):  # For now, LeKiwi only supports frame audio recording (which may lead to audio chunks loss, extended post-processing, increased memory usage)
@@ -313,6 +310,9 @@ def control_loop(
 
     # Fill audio buffers
     busy_wait(DEFAULT_INITIAL_AUDIO_BUFFER_DURATION)
+
+    timestamp = 0
+    start_episode_t = time.perf_counter()
 
     while timestamp < control_time_s:
         start_loop_t = time.perf_counter()
