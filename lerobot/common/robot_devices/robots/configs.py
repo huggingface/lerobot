@@ -830,7 +830,7 @@ class So100BimanualLivekitFollowerRobotConfig(LivekitManipulatorRobotConfig):
 
 @RobotConfig.register_subclass("so100_bimanual")
 @dataclass
-class So100RobotConfig(ManipulatorRobotConfig):
+class So100BimanualRobotConfig(ManipulatorRobotConfig):
     calibration_dir: str = ".cache/calibration/so100bimanual"
     # `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
     # Set this to a positive scalar to have the same value for all motors, or a list that is the same length as
@@ -913,3 +913,4 @@ class So100RobotConfig(ManipulatorRobotConfig):
     )
 
     mock: bool = False
+    
