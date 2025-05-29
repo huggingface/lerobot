@@ -270,8 +270,7 @@ echo ${HF_USER}/moss_test
 If you didn't upload with `--control.push_to_hub=false`, you can also visualize it locally with:
 ```bash
 python lerobot/scripts/visualize_dataset_html.py \
-  --repo-id ${HF_USER}/moss_test \
-  --local-files-only 1
+  --repo-id ${HF_USER}/moss_test
 ```
 
 ## Replay an episode
