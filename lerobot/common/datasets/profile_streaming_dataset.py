@@ -250,8 +250,24 @@ def profile_dataset(
     stats_file_path = "streaming_dataset_profile.txt"
 
     print(f"Creating dataset from {repo_id} with buffer_size={buffer_size}, max_num_shards={max_num_shards}")
+    camera_key = "observation.images.cam_right_wrist"
+    fps = 50
+
+    delta_timestamps = {
+        # loads 4 images: 1 second before current frame, 500 ms before, 200 ms before, and current frame
+        camera_key: [-1, -0.5, -0.20, 0],
+        # loads 6 state vectors: 1.5 seconds before, 1 second before, ... 200 ms, 100 ms, and current frame
+        "observation.state": [-1.5, -1, -0.5, -0.20, -0.10, 0],
+        # loads 64 action vectors: current frame, 1 frame in the future, 2 frames, ... 63 frames in the future
+        "action": [t / fps for t in range(64)],
+    }
+
     dataset = StreamingLeRobotDataset(
-        repo_id=repo_id, buffer_size=buffer_size, max_num_shards=max_num_shards, seed=seed
+        repo_id=repo_id,
+        buffer_size=buffer_size,
+        max_num_shards=max_num_shards,
+        seed=seed,
+        delta_timestamps=delta_timestamps,
     )
 
     _time_iterations(dataset, num_samples, num_runs, warmup_iters, stats_file_path)
