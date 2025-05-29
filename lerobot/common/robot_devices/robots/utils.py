@@ -19,6 +19,7 @@ from lerobot.common.robot_devices.robots.configs import (
     KochBimanualRobotConfig,
     KochRobotConfig,
     LeKiwiRobotConfig,
+    LivekitManipulatorRobotConfig,
     ManipulatorRobotConfig,
     MossRobotConfig,
     RobotConfig,
@@ -70,7 +71,11 @@ def make_robot_config(robot_type: str, **kwargs) -> RobotConfig:
 
 
 def make_robot_from_config(config: RobotConfig):
-    if isinstance(config, ManipulatorRobotConfig):
+    if isinstance(config, LivekitManipulatorRobotConfig):
+        from lerobot.common.robot_devices.robots.livekit_manipulator import LivekitManipulatorRobot
+
+        return LivekitManipulatorRobot(config)
+    elif isinstance(config, ManipulatorRobotConfig):
         from lerobot.common.robot_devices.robots.manipulator import ManipulatorRobot
 
         return ManipulatorRobot(config)
