@@ -163,7 +163,7 @@ def _profile_iteration(dataset, num_samples, stats_file_path):
     # Add functions to profile
     profiler.add_function(dataset.__iter__)
     profiler.add_function(dataset.make_frame)
-    profiler.add_function(dataset._make_iterable_dataset)
+    profiler.add_function(dataset._make_backtrackable_dataset)
 
     # Profile the iteration
 
