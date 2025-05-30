@@ -28,6 +28,7 @@ import torchvision.transforms.functional as F  # noqa: N812
 
 from lerobot.common.envs.configs import EnvConfig
 from lerobot.common.envs.utils import preprocess_observation
+from lerobot.common.kinematics import RobotKinematics
 from lerobot.common.robot_devices.control_utils import (
     busy_wait,
     is_headless,
@@ -36,7 +37,6 @@ from lerobot.common.robot_devices.control_utils import (
 from lerobot.common.robot_devices.robots.utils import make_robot_from_config
 from lerobot.common.utils.utils import log_say
 from lerobot.configs import parser
-from lerobot.scripts.server.kinematics import RobotKinematics
 
 logging.basicConfig(level=logging.INFO)
 MAX_GRIPPER_COMMAND = 30
@@ -1592,7 +1592,7 @@ class GamepadControlWrapper(gym.Wrapper):
         # use HidApi for macos
         if sys.platform == "darwin":
             # NOTE: On macOS, pygame doesn’t reliably detect input from some controllers so we fall back to hidapi
-            from lerobot.scripts.server.end_effector_control_utils import GamepadControllerHID
+            from lerobot.common.utils.end_effector_control import GamepadControllerHID
 
             self.controller = GamepadControllerHID(
                 x_step_size=x_step_size,

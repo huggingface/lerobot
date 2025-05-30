@@ -1,17 +1,21 @@
 import logging
 from multiprocessing import Event, Queue
 
-import hilserl_pb2  # type: ignore
-import hilserl_pb2_grpc  # type: ignore
-
-from lerobot.scripts.server.network_utils import receive_bytes_in_chunks, send_bytes_in_chunks
+from lerobot.common.transport import services_pb2, services_pb2_grpc
+from lerobot.common.transport.utils import receive_bytes_in_chunks, send_bytes_in_chunks
 
 MAX_MESSAGE_SIZE = 4 * 1024 * 1024  # 4 MB
 MAX_WORKERS = 3  # Stream parameters, send transitions and interactions
 SHUTDOWN_TIMEOUT = 10
 
 
-class LearnerService(hilserl_pb2_grpc.LearnerServiceServicer):
+class LearnerService(services_pb2_grpc.LearnerServiceServicer):
+    """
+    Implementation of the LearnerService gRPC service
+    This service is used to send parameters to the Actor and receive transitions and interactions from the Actor
+    check transport.proto for the gRPC service definition
+    """
+
     def __init__(
         self,
         shutdown_event: Event,  # type: ignore
@@ -36,7 +40,7 @@ class LearnerService(hilserl_pb2_grpc.LearnerServiceServicer):
 
             yield from send_bytes_in_chunks(
                 buffer,
-                hilserl_pb2.Parameters,
+                services_pb2.Parameters,
                 log_prefix="[LEARNER] Sending parameters",
                 silent=True,
             )
@@ -46,7 +50,7 @@ class LearnerService(hilserl_pb2_grpc.LearnerServiceServicer):
             self.shutdown_event.wait(self.seconds_between_pushes)
 
         logging.info("[LEARNER] Stream parameters finished")
-        return hilserl_pb2.Empty()
+        return services_pb2.Empty()
 
     def SendTransitions(self, request_iterator, _context):  # noqa: N802
         # TODO: authorize the request
@@ -60,7 +64,7 @@ class LearnerService(hilserl_pb2_grpc.LearnerServiceServicer):
         )
 
         logging.debug("[LEARNER] Finished receiving transitions")
-        return hilserl_pb2.Empty()
+        return services_pb2.Empty()
 
     def SendInteractions(self, request_iterator, _context):  # noqa: N802
         # TODO: authorize the request
@@ -74,7 +78,7 @@ class LearnerService(hilserl_pb2_grpc.LearnerServiceServicer):
         )
 
         logging.debug("[LEARNER] Finished receiving interactions")
-        return hilserl_pb2.Empty()
+        return services_pb2.Empty()
 
     def Ready(self, request, context):  # noqa: N802
-        return hilserl_pb2.Empty()
+        return services_pb2.Empty()

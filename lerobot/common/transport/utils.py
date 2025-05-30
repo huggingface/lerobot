@@ -23,8 +23,8 @@ from typing import Any
 
 import torch
 
-from lerobot.scripts.server import hilserl_pb2
-from lerobot.scripts.server.utils import Transition
+from lerobot.common.transport import services_pb2
+from lerobot.common.utils.transition import Transition
 
 CHUNK_SIZE = 2 * 1024 * 1024  # 2 MB
 
@@ -47,12 +47,12 @@ def send_bytes_in_chunks(buffer: bytes, message_class: Any, log_prefix: str = ""
     logging_method(f"{log_prefix} Buffer size {size_in_bytes / 1024 / 1024} MB with")
 
     while sent_bytes < size_in_bytes:
-        transfer_state = hilserl_pb2.TransferState.TRANSFER_MIDDLE
+        transfer_state = services_pb2.TransferState.TRANSFER_MIDDLE
 
         if sent_bytes + CHUNK_SIZE >= size_in_bytes:
-            transfer_state = hilserl_pb2.TransferState.TRANSFER_END
+            transfer_state = services_pb2.TransferState.TRANSFER_END
         elif sent_bytes == 0:
-            transfer_state = hilserl_pb2.TransferState.TRANSFER_BEGIN
+            transfer_state = services_pb2.TransferState.TRANSFER_BEGIN
 
         size_to_read = min(CHUNK_SIZE, size_in_bytes - sent_bytes)
         chunk = buffer.read(size_to_read)
@@ -75,18 +75,18 @@ def receive_bytes_in_chunks(iterator, queue: Queue, shutdown_event: Event, log_p
             logging.info(f"{log_prefix} Shutting down receiver")
             return
 
-        if item.transfer_state == hilserl_pb2.TransferState.TRANSFER_BEGIN:
+        if item.transfer_state == services_pb2.TransferState.TRANSFER_BEGIN:
             bytes_buffer.seek(0)
             bytes_buffer.truncate(0)
             bytes_buffer.write(item.data)
             logging.debug(f"{log_prefix} Received data at step 0")
             step = 0
             continue
-        elif item.transfer_state == hilserl_pb2.TransferState.TRANSFER_MIDDLE:
+        elif item.transfer_state == services_pb2.TransferState.TRANSFER_MIDDLE:
             bytes_buffer.write(item.data)
             step += 1
             logging.debug(f"{log_prefix} Received data at step {step}")
-        elif item.transfer_state == hilserl_pb2.TransferState.TRANSFER_END:
+        elif item.transfer_state == services_pb2.TransferState.TRANSFER_END:
             bytes_buffer.write(item.data)
             logging.debug(f"{log_prefix} Received data at step end size {bytes_buffer_size(bytes_buffer)}")
 

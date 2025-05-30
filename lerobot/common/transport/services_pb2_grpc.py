@@ -3,9 +3,9 @@
 import grpc
 import warnings
 
-import hilserl_pb2 as hilserl__pb2
+from lerobot.common.transport import services_pb2 as lerobot_dot_common_dot_transport_dot_services__pb2
 
-GRPC_GENERATED_VERSION = '1.70.0'
+GRPC_GENERATED_VERSION = '1.71.0'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -18,7 +18,7 @@ except ImportError:
 if _version_not_supported:
     raise RuntimeError(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + f' but the generated code in hilserl_pb2_grpc.py depends on'
+        + f' but the generated code in lerobot/common/transport/services_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
@@ -37,29 +37,29 @@ class LearnerServiceStub(object):
             channel: A grpc.Channel.
         """
         self.SendInteractionMessage = channel.unary_unary(
-                '/hil_serl.LearnerService/SendInteractionMessage',
-                request_serializer=hilserl__pb2.InteractionMessage.SerializeToString,
-                response_deserializer=hilserl__pb2.Empty.FromString,
+                '/transport.LearnerService/SendInteractionMessage',
+                request_serializer=lerobot_dot_common_dot_transport_dot_services__pb2.InteractionMessage.SerializeToString,
+                response_deserializer=lerobot_dot_common_dot_transport_dot_services__pb2.Empty.FromString,
                 _registered_method=True)
         self.StreamParameters = channel.unary_stream(
-                '/hil_serl.LearnerService/StreamParameters',
-                request_serializer=hilserl__pb2.Empty.SerializeToString,
-                response_deserializer=hilserl__pb2.Parameters.FromString,
+                '/transport.LearnerService/StreamParameters',
+                request_serializer=lerobot_dot_common_dot_transport_dot_services__pb2.Empty.SerializeToString,
+                response_deserializer=lerobot_dot_common_dot_transport_dot_services__pb2.Parameters.FromString,
                 _registered_method=True)
         self.SendTransitions = channel.stream_unary(
-                '/hil_serl.LearnerService/SendTransitions',
-                request_serializer=hilserl__pb2.Transition.SerializeToString,
-                response_deserializer=hilserl__pb2.Empty.FromString,
+                '/transport.LearnerService/SendTransitions',
+                request_serializer=lerobot_dot_common_dot_transport_dot_services__pb2.Transition.SerializeToString,
+                response_deserializer=lerobot_dot_common_dot_transport_dot_services__pb2.Empty.FromString,
                 _registered_method=True)
         self.SendInteractions = channel.stream_unary(
-                '/hil_serl.LearnerService/SendInteractions',
-                request_serializer=hilserl__pb2.InteractionMessage.SerializeToString,
-                response_deserializer=hilserl__pb2.Empty.FromString,
+                '/transport.LearnerService/SendInteractions',
+                request_serializer=lerobot_dot_common_dot_transport_dot_services__pb2.InteractionMessage.SerializeToString,
+                response_deserializer=lerobot_dot_common_dot_transport_dot_services__pb2.Empty.FromString,
                 _registered_method=True)
         self.Ready = channel.unary_unary(
-                '/hil_serl.LearnerService/Ready',
-                request_serializer=hilserl__pb2.Empty.SerializeToString,
-                response_deserializer=hilserl__pb2.Empty.FromString,
+                '/transport.LearnerService/Ready',
+                request_serializer=lerobot_dot_common_dot_transport_dot_services__pb2.Empty.SerializeToString,
+                response_deserializer=lerobot_dot_common_dot_transport_dot_services__pb2.Empty.FromString,
                 _registered_method=True)
 
 
@@ -104,34 +104,34 @@ def add_LearnerServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'SendInteractionMessage': grpc.unary_unary_rpc_method_handler(
                     servicer.SendInteractionMessage,
-                    request_deserializer=hilserl__pb2.InteractionMessage.FromString,
-                    response_serializer=hilserl__pb2.Empty.SerializeToString,
+                    request_deserializer=lerobot_dot_common_dot_transport_dot_services__pb2.InteractionMessage.FromString,
+                    response_serializer=lerobot_dot_common_dot_transport_dot_services__pb2.Empty.SerializeToString,
             ),
             'StreamParameters': grpc.unary_stream_rpc_method_handler(
                     servicer.StreamParameters,
-                    request_deserializer=hilserl__pb2.Empty.FromString,
-                    response_serializer=hilserl__pb2.Parameters.SerializeToString,
+                    request_deserializer=lerobot_dot_common_dot_transport_dot_services__pb2.Empty.FromString,
+                    response_serializer=lerobot_dot_common_dot_transport_dot_services__pb2.Parameters.SerializeToString,
             ),
             'SendTransitions': grpc.stream_unary_rpc_method_handler(
                     servicer.SendTransitions,
-                    request_deserializer=hilserl__pb2.Transition.FromString,
-                    response_serializer=hilserl__pb2.Empty.SerializeToString,
+                    request_deserializer=lerobot_dot_common_dot_transport_dot_services__pb2.Transition.FromString,
+                    response_serializer=lerobot_dot_common_dot_transport_dot_services__pb2.Empty.SerializeToString,
             ),
             'SendInteractions': grpc.stream_unary_rpc_method_handler(
                     servicer.SendInteractions,
-                    request_deserializer=hilserl__pb2.InteractionMessage.FromString,
-                    response_serializer=hilserl__pb2.Empty.SerializeToString,
+                    request_deserializer=lerobot_dot_common_dot_transport_dot_services__pb2.InteractionMessage.FromString,
+                    response_serializer=lerobot_dot_common_dot_transport_dot_services__pb2.Empty.SerializeToString,
             ),
             'Ready': grpc.unary_unary_rpc_method_handler(
                     servicer.Ready,
-                    request_deserializer=hilserl__pb2.Empty.FromString,
-                    response_serializer=hilserl__pb2.Empty.SerializeToString,
+                    request_deserializer=lerobot_dot_common_dot_transport_dot_services__pb2.Empty.FromString,
+                    response_serializer=lerobot_dot_common_dot_transport_dot_services__pb2.Empty.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
-            'hil_serl.LearnerService', rpc_method_handlers)
+            'transport.LearnerService', rpc_method_handlers)
     server.add_generic_rpc_handlers((generic_handler,))
-    server.add_registered_method_handlers('hil_serl.LearnerService', rpc_method_handlers)
+    server.add_registered_method_handlers('transport.LearnerService', rpc_method_handlers)
 
 
  # This class is part of an EXPERIMENTAL API.
@@ -154,9 +154,9 @@ class LearnerService(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/hil_serl.LearnerService/SendInteractionMessage',
-            hilserl__pb2.InteractionMessage.SerializeToString,
-            hilserl__pb2.Empty.FromString,
+            '/transport.LearnerService/SendInteractionMessage',
+            lerobot_dot_common_dot_transport_dot_services__pb2.InteractionMessage.SerializeToString,
+            lerobot_dot_common_dot_transport_dot_services__pb2.Empty.FromString,
             options,
             channel_credentials,
             insecure,
@@ -181,9 +181,9 @@ class LearnerService(object):
         return grpc.experimental.unary_stream(
             request,
             target,
-            '/hil_serl.LearnerService/StreamParameters',
-            hilserl__pb2.Empty.SerializeToString,
-            hilserl__pb2.Parameters.FromString,
+            '/transport.LearnerService/StreamParameters',
+            lerobot_dot_common_dot_transport_dot_services__pb2.Empty.SerializeToString,
+            lerobot_dot_common_dot_transport_dot_services__pb2.Parameters.FromString,
             options,
             channel_credentials,
             insecure,
@@ -208,9 +208,9 @@ class LearnerService(object):
         return grpc.experimental.stream_unary(
             request_iterator,
             target,
-            '/hil_serl.LearnerService/SendTransitions',
-            hilserl__pb2.Transition.SerializeToString,
-            hilserl__pb2.Empty.FromString,
+            '/transport.LearnerService/SendTransitions',
+            lerobot_dot_common_dot_transport_dot_services__pb2.Transition.SerializeToString,
+            lerobot_dot_common_dot_transport_dot_services__pb2.Empty.FromString,
             options,
             channel_credentials,
             insecure,
@@ -235,9 +235,9 @@ class LearnerService(object):
         return grpc.experimental.stream_unary(
             request_iterator,
             target,
-            '/hil_serl.LearnerService/SendInteractions',
-            hilserl__pb2.InteractionMessage.SerializeToString,
-            hilserl__pb2.Empty.FromString,
+            '/transport.LearnerService/SendInteractions',
+            lerobot_dot_common_dot_transport_dot_services__pb2.InteractionMessage.SerializeToString,
+            lerobot_dot_common_dot_transport_dot_services__pb2.Empty.FromString,
             options,
             channel_credentials,
             insecure,
@@ -262,9 +262,9 @@ class LearnerService(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/hil_serl.LearnerService/Ready',
-            hilserl__pb2.Empty.SerializeToString,
-            hilserl__pb2.Empty.FromString,
+            '/transport.LearnerService/Ready',
+            lerobot_dot_common_dot_transport_dot_services__pb2.Empty.SerializeToString,
+            lerobot_dot_common_dot_transport_dot_services__pb2.Empty.FromString,
             options,
             channel_credentials,
             insecure,
