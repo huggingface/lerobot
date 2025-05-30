@@ -18,21 +18,21 @@ the test will be skipped.
 
 Example of running a specific test:
 ```bash
-pytest -sx tests/test_control_robot.py::test_teleoperate
+pytest -sx tests/robots/test_control_robot.py::test_teleoperate
 ```
 
 Example of running test on real robots connected to the computer:
 ```bash
-pytest -sx 'tests/test_control_robot.py::test_teleoperate[koch-False]'
-pytest -sx 'tests/test_control_robot.py::test_teleoperate[koch_bimanual-False]'
-pytest -sx 'tests/test_control_robot.py::test_teleoperate[aloha-False]'
+pytest -sx 'tests/robots/test_control_robot.py::test_teleoperate[koch-False]'
+pytest -sx 'tests/robots/test_control_robot.py::test_teleoperate[koch_bimanual-False]'
+pytest -sx 'tests/robots/test_control_robot.py::test_teleoperate[aloha-False]'
 ```
 
 Example of running test on a mocked version of robots:
 ```bash
-pytest -sx 'tests/test_control_robot.py::test_teleoperate[koch-True]'
-pytest -sx 'tests/test_control_robot.py::test_teleoperate[koch_bimanual-True]'
-pytest -sx 'tests/test_control_robot.py::test_teleoperate[aloha-True]'
+pytest -sx 'tests/robots/test_control_robot.py::test_teleoperate[koch-True]'
+pytest -sx 'tests/robots/test_control_robot.py::test_teleoperate[koch_bimanual-True]'
+pytest -sx 'tests/robots/test_control_robot.py::test_teleoperate[aloha-True]'
 ```
 """
 
@@ -45,12 +45,13 @@ from lerobot.common.policies.act.configuration_act import ACTConfig
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.robot_devices.control_configs import (
     CalibrateControlConfig,
+    ControlPipelineConfig,
     RecordControlConfig,
     ReplayControlConfig,
     TeleoperateControlConfig,
 )
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.scripts.control_robot import calibrate, record, replay, teleoperate
+from lerobot.scripts.control_robot import calibrate, control_robot, record, replay, teleoperate
 from tests.robots.test_robots import make_robot
 from tests.utils import TEST_ROBOT_TYPES, mock_calibration_dir, require_robot
 
@@ -441,3 +442,148 @@ def test_record_with_event_stop_recording(tmp_path, request, robot_type, mock, n
 
         assert not mock_events["exit_early"], "`exit_early` wasn't properly reset to False"
         assert len(dataset) == 1, "`dataset` should contain only 1 frame"
+
+
+@pytest.mark.parametrize("robot_type, mock", [("koch", True)])
+@require_robot
+def test_robot_disconnects_on_value_error(tmp_path, request, robot_type, mock):
+    """Test that the robot disconnects if an exception occurs during control."""
+    robot_kwargs = {"robot_type": robot_type, "mock": mock}
+
+    if mock:
+        request.getfixturevalue("patch_builtins_input")
+
+        # Create an empty calibration directory
+        calibration_dir = tmp_path / robot_type
+        mock_calibration_dir(calibration_dir)
+        robot_kwargs["calibration_dir"] = calibration_dir
+
+    # Create the robot
+    robot = make_robot(**robot_kwargs)
+
+    # Create a mock make_robot_from_config that returns our robot
+    with (
+        patch("lerobot.scripts.control_robot.make_robot_from_config", return_value=robot) as mock_make_robot,
+        patch("lerobot.scripts.control_robot.isinstance") as mock_isinstance,
+        patch("lerobot.scripts.control_robot.calibrate") as mock_calibrate,
+    ):
+        # Configure the mocks
+        mock_isinstance.side_effect = lambda obj, cls: cls == CalibrateControlConfig
+        mock_calibrate.side_effect = ValueError("Test exception")
+
+        # Create a config
+        control_config = CalibrateControlConfig(arms=robot.available_arms)
+        robot_config = {"type": robot_type, "mock": mock}
+        pipeline_config = ControlPipelineConfig(robot=robot_config, control=control_config)
+
+        # Connect the robot first
+        robot.connect()
+        assert robot.is_connected, "Robot should be connected before the test"
+
+        # Call the function that should handle the exception and disconnect the robot
+        control_robot(pipeline_config)
+
+        # Verify the robot was disconnected
+        assert not robot.is_connected, "Robot should be disconnected after an exception"
+
+        # Verify our mocks were called correctly
+        mock_make_robot.assert_called_once()
+        mock_isinstance.assert_called()
+        mock_calibrate.assert_called_once()
+
+
+@pytest.mark.parametrize("robot_type, mock", [("koch", True)])
+@require_robot
+def test_robot_disconnects_on_keyboard_interrupt(tmp_path, request, robot_type, mock):
+    """Test that the robot disconnects if a KeyboardInterrupt occurs."""
+    robot_kwargs = {"robot_type": robot_type, "mock": mock}
+
+    if mock:
+        request.getfixturevalue("patch_builtins_input")
+
+        # Create an empty calibration directory
+        calibration_dir = tmp_path / robot_type
+        mock_calibration_dir(calibration_dir)
+        robot_kwargs["calibration_dir"] = calibration_dir
+
+    # Create the robot
+    robot = make_robot(**robot_kwargs)
+
+    # Create a mock make_robot_from_config that returns our robot
+    with (
+        patch("lerobot.scripts.control_robot.make_robot_from_config", return_value=robot) as mock_make_robot,
+        patch("lerobot.scripts.control_robot.isinstance") as mock_isinstance,
+        patch("lerobot.scripts.control_robot.teleoperate") as mock_teleoperate,
+        patch("lerobot.scripts.control_robot._init_rerun"),
+    ):
+        # Configure the mocks
+        mock_isinstance.side_effect = lambda obj, cls: cls == TeleoperateControlConfig
+        mock_teleoperate.side_effect = KeyboardInterrupt()
+
+        # Create a config
+        control_config = TeleoperateControlConfig(fps=30, teleop_time_s=1)
+        robot_config = {"type": robot_type, "mock": mock}
+        pipeline_config = ControlPipelineConfig(robot=robot_config, control=control_config)
+
+        # Connect the robot first
+        robot.connect()
+        assert robot.is_connected, "Robot should be connected before the test"
+
+        # Call the function that should handle the exception and disconnect the robot
+        control_robot(pipeline_config)
+
+        # Verify the robot was disconnected
+        assert not robot.is_connected, "Robot should be disconnected after KeyboardInterrupt"
+
+        # Verify our mocks were called correctly
+        mock_make_robot.assert_called_once()
+        mock_isinstance.assert_called()
+        mock_teleoperate.assert_called_once()
+
+
+@pytest.mark.parametrize("robot_type, mock", [("koch", True)])
+@require_robot
+def test_robot_disconnects_on_unexpected_exception(tmp_path, request, robot_type, mock):
+    """Test that the robot disconnects if an unexpected exception occurs."""
+    robot_kwargs = {"robot_type": robot_type, "mock": mock}
+
+    if mock:
+        request.getfixturevalue("patch_builtins_input")
+
+        # Create an empty calibration directory
+        calibration_dir = tmp_path / robot_type
+        mock_calibration_dir(calibration_dir)
+        robot_kwargs["calibration_dir"] = calibration_dir
+
+    # Create the robot
+    robot = make_robot(**robot_kwargs)
+
+    # Create a mock make_robot_from_config that returns our robot
+    with (
+        patch("lerobot.scripts.control_robot.make_robot_from_config", return_value=robot) as mock_make_robot,
+        patch("lerobot.scripts.control_robot.isinstance") as mock_isinstance,
+        patch("lerobot.scripts.control_robot.replay") as mock_replay,
+    ):
+        # Configure the mocks
+        mock_isinstance.side_effect = lambda obj, cls: cls == ReplayControlConfig
+        mock_replay.side_effect = Exception("Unexpected test error")
+
+        # Create a config
+        control_config = ReplayControlConfig(episode=0, fps=1, repo_id="test/repo")
+        robot_config = {"type": robot_type, "mock": mock}
+        pipeline_config = ControlPipelineConfig(robot=robot_config, control=control_config)
+
+        # Connect the robot first
+        robot.connect()
+        assert robot.is_connected, "Robot should be connected before the test"
+
+        # Call the function that should handle the exception and disconnect the robot
+        control_robot(pipeline_config)
+
+        # Verify the robot was disconnected
+        assert not robot.is_connected, "Robot should be disconnected after an unexpected exception"
+
+        # Verify our mocks were called correctly
+        mock_make_robot.assert_called_once()
+        mock_isinstance.assert_called()
+        mock_replay.assert_called_once()
