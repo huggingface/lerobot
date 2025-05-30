@@ -1592,7 +1592,7 @@ class GamepadControlWrapper(gym.Wrapper):
         # use HidApi for macos
         if sys.platform == "darwin":
             # NOTE: On macOS, pygame doesn’t reliably detect input from some controllers so we fall back to hidapi
-            from lerobot.scripts.server.end_effector_control_utils import GamepadControllerHID
+            from lerobot.common.utils.end_effector_control import GamepadControllerHID
 
             self.controller = GamepadControllerHID(
                 x_step_size=x_step_size,
