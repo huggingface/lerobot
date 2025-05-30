@@ -84,7 +84,6 @@ from pathlib import Path
 from pprint import pformat
 
 import grpc
-import hilserl_pb2_grpc  # type: ignore
 import torch
 from termcolor import colored
 from torch import nn
@@ -101,6 +100,7 @@ from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.sac.modeling_sac import SACPolicy
+from lerobot.common.transport import services_pb2_grpc
 from lerobot.common.transport.utils import (
     bytes_to_python_object,
     bytes_to_transitions,
@@ -688,7 +688,7 @@ def start_learner(
         ],
     )
 
-    hilserl_pb2_grpc.add_LearnerServiceServicer_to_server(
+    services_pb2_grpc.add_LearnerServiceServicer_to_server(
         service,
         server,
     )

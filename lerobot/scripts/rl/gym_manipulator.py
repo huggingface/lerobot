@@ -28,6 +28,7 @@ import torchvision.transforms.functional as F  # noqa: N812
 
 from lerobot.common.envs.configs import EnvConfig
 from lerobot.common.envs.utils import preprocess_observation
+from lerobot.common.kinematics import RobotKinematics
 from lerobot.common.robot_devices.control_utils import (
     busy_wait,
     is_headless,
@@ -36,7 +37,6 @@ from lerobot.common.robot_devices.control_utils import (
 from lerobot.common.robot_devices.robots.utils import make_robot_from_config
 from lerobot.common.utils.utils import log_say
 from lerobot.configs import parser
-from lerobot.scripts.server.kinematics import RobotKinematics
 
 logging.basicConfig(level=logging.INFO)
 MAX_GRIPPER_COMMAND = 30
