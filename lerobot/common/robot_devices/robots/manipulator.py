@@ -312,7 +312,7 @@ class ManipulatorRobot:
                     from lerobot.common.robot_devices.robots.dynamixel_calibration import run_arm_calibration
 
                     calibration = run_arm_calibration(arm, self.robot_type, name, arm_type)
-                
+
                 elif self.robot_type.startswith("so100") or self.robot_type in ["so101", "moss", "lekiwi"]:
                     from lerobot.common.robot_devices.robots.feetech_calibration import (
                         run_arm_manual_calibration,

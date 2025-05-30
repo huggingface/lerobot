@@ -95,7 +95,7 @@ In `lerobot/common/robot_devices/robots/configs.py` there are examples for regul
        --robot.type=so100bimanual_livekit_follower \
        --control.type=teleoperate --control.fps=1
 
-       # note: the control.fps here is not important, the follower will send the commands to the robot as fast as it receives from the leader.  
+       # note: the control.fps here is not important, the follower will send the commands to the robot as fast as it receives from the leader.
    ```
 
 ## Robot Configuration Details
@@ -119,7 +119,7 @@ from lerobot.common.robot_devices.robots.configs import LivekitManipulatorRobotC
 class MyCustomLivekitRobotConfig(LivekitManipulatorRobotConfig):
     # Your custom configuration here
     is_leader: bool = False
-    
+
     # Override leader_arms, follower_arms, cameras as needed
     leader_arms: dict[str, MotorsBusConfig] = field(default_factory=lambda: {})
     follower_arms: dict[str, MotorsBusConfig] = field(default_factory=lambda: {})

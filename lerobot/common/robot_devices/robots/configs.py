@@ -13,13 +13,13 @@
 # limitations under the License.
 
 import abc
-from dataclasses import dataclass, field
-from typing import Sequence
 import os
+from dataclasses import dataclass, field
 from pathlib import Path
-from dotenv import load_dotenv
+from typing import Sequence
 
 import draccus
+from dotenv import load_dotenv
 
 from lerobot.common.robot_devices.cameras.configs import (
     CameraConfig,
@@ -678,6 +678,7 @@ class LeKiwiRobotConfig(RobotConfig):
 
     mock: bool = False
 
+
 @RobotConfig.register_subclass("livekit_manipulator")
 @dataclass
 class LivekitManipulatorRobotConfig(ManipulatorRobotConfig):
@@ -685,6 +686,7 @@ class LivekitManipulatorRobotConfig(ManipulatorRobotConfig):
     livekit_url: str = ""
     livekit_token: str = ""
     is_leader: bool = False
+
 
 @RobotConfig.register_subclass("so100_bimanual_livekit_leader")
 @dataclass
@@ -745,11 +747,10 @@ class So100BimanualLivekitLeaderRobotConfig(LivekitManipulatorRobotConfig):
     )
 
     # No cameras for the leader
-    cameras: dict[str, CameraConfig] = field(
-        default_factory=lambda: {}
-    )
+    cameras: dict[str, CameraConfig] = field(default_factory=lambda: {})
 
     mock: bool = False
+
 
 @RobotConfig.register_subclass("so100_bimanual_livekit_follower")
 @dataclass
@@ -827,6 +828,7 @@ class So100BimanualLivekitFollowerRobotConfig(LivekitManipulatorRobotConfig):
     )
 
     mock: bool = False
+
 
 @RobotConfig.register_subclass("so100_bimanual")
 @dataclass
@@ -913,4 +915,3 @@ class So100BimanualRobotConfig(ManipulatorRobotConfig):
     )
 
     mock: bool = False
-    
