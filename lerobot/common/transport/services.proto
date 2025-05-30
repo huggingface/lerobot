@@ -15,7 +15,7 @@
 
 syntax = "proto3";
 
-package hil_serl;
+package transport;
 
 // LearnerService: the Actor calls this to push transitions.
 // The Learner implements this service.

@@ -24,23 +24,23 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0eservices.proto\x12\x08hil_serl\"K\n\nTransition\x12/\n\x0etransfer_state\x18\x01 \x01(\x0e\x32\x17.hil_serl.TransferState\x12\x0c\n\x04\x64\x61ta\x18\x02 \x01(\x0c\"K\n\nParameters\x12/\n\x0etransfer_state\x18\x01 \x01(\x0e\x32\x17.hil_serl.TransferState\x12\x0c\n\x04\x64\x61ta\x18\x02 \x01(\x0c\"S\n\x12InteractionMessage\x12/\n\x0etransfer_state\x18\x01 \x01(\x0e\x32\x17.hil_serl.TransferState\x12\x0c\n\x04\x64\x61ta\x18\x02 \x01(\x0c\"\x07\n\x05\x45mpty*`\n\rTransferState\x12\x14\n\x10TRANSFER_UNKNOWN\x10\x00\x12\x12\n\x0eTRANSFER_BEGIN\x10\x01\x12\x13\n\x0fTRANSFER_MIDDLE\x10\x02\x12\x10\n\x0cTRANSFER_END\x10\x03\x32\xc2\x02\n\x0eLearnerService\x12G\n\x16SendInteractionMessage\x12\x1c.hil_serl.InteractionMessage\x1a\x0f.hil_serl.Empty\x12;\n\x10StreamParameters\x12\x0f.hil_serl.Empty\x1a\x14.hil_serl.Parameters0\x01\x12:\n\x0fSendTransitions\x12\x14.hil_serl.Transition\x1a\x0f.hil_serl.Empty(\x01\x12\x43\n\x10SendInteractions\x12\x1c.hil_serl.InteractionMessage\x1a\x0f.hil_serl.Empty(\x01\x12)\n\x05Ready\x12\x0f.hil_serl.Empty\x1a\x0f.hil_serl.Emptyb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0eservices.proto\x12\ttransport\"L\n\nTransition\x12\x30\n\x0etransfer_state\x18\x01 \x01(\x0e\x32\x18.transport.TransferState\x12\x0c\n\x04\x64\x61ta\x18\x02 \x01(\x0c\"L\n\nParameters\x12\x30\n\x0etransfer_state\x18\x01 \x01(\x0e\x32\x18.transport.TransferState\x12\x0c\n\x04\x64\x61ta\x18\x02 \x01(\x0c\"T\n\x12InteractionMessage\x12\x30\n\x0etransfer_state\x18\x01 \x01(\x0e\x32\x18.transport.TransferState\x12\x0c\n\x04\x64\x61ta\x18\x02 \x01(\x0c\"\x07\n\x05\x45mpty*`\n\rTransferState\x12\x14\n\x10TRANSFER_UNKNOWN\x10\x00\x12\x12\n\x0eTRANSFER_BEGIN\x10\x01\x12\x13\n\x0fTRANSFER_MIDDLE\x10\x02\x12\x10\n\x0cTRANSFER_END\x10\x03\x32\xcc\x02\n\x0eLearnerService\x12I\n\x16SendInteractionMessage\x12\x1d.transport.InteractionMessage\x1a\x10.transport.Empty\x12=\n\x10StreamParameters\x12\x10.transport.Empty\x1a\x15.transport.Parameters0\x01\x12<\n\x0fSendTransitions\x12\x15.transport.Transition\x1a\x10.transport.Empty(\x01\x12\x45\n\x10SendInteractions\x12\x1d.transport.InteractionMessage\x1a\x10.transport.Empty(\x01\x12+\n\x05Ready\x12\x10.transport.Empty\x1a\x10.transport.Emptyb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'services_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_TRANSFERSTATE']._serialized_start=276
-  _globals['_TRANSFERSTATE']._serialized_end=372
-  _globals['_TRANSITION']._serialized_start=28
-  _globals['_TRANSITION']._serialized_end=103
-  _globals['_PARAMETERS']._serialized_start=105
-  _globals['_PARAMETERS']._serialized_end=180
-  _globals['_INTERACTIONMESSAGE']._serialized_start=182
-  _globals['_INTERACTIONMESSAGE']._serialized_end=265
-  _globals['_EMPTY']._serialized_start=267
-  _globals['_EMPTY']._serialized_end=274
-  _globals['_LEARNERSERVICE']._serialized_start=375
-  _globals['_LEARNERSERVICE']._serialized_end=697
+  _globals['_TRANSFERSTATE']._serialized_start=280
+  _globals['_TRANSFERSTATE']._serialized_end=376
+  _globals['_TRANSITION']._serialized_start=29
+  _globals['_TRANSITION']._serialized_end=105
+  _globals['_PARAMETERS']._serialized_start=107
+  _globals['_PARAMETERS']._serialized_end=183
+  _globals['_INTERACTIONMESSAGE']._serialized_start=185
+  _globals['_INTERACTIONMESSAGE']._serialized_end=269
+  _globals['_EMPTY']._serialized_start=271
+  _globals['_EMPTY']._serialized_end=278
+  _globals['_LEARNERSERVICE']._serialized_start=379
+  _globals['_LEARNERSERVICE']._serialized_end=711
 # @@protoc_insertion_point(module_scope)
