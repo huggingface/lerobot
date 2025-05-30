@@ -256,7 +256,8 @@ def control_loop(
         else:
             observation = robot.capture_observation()
             action = None
-
+            observation['task'] = [single_task]
+            observation["robot_type"] = [policy.robot_type] if hasattr(policy, "robot_type") else [""]
             if policy is not None:
                 pred_action = predict_action(
                     observation, policy, get_safe_torch_device(policy.config.device), policy.config.use_amp
