@@ -22,14 +22,14 @@
 ##SBATCH -C a100
 ###SBATCH -A dyf@a100
 ##SBATCH -A lqm@a100
-##SBATCH --qos=qos_gpu_a100-dev 
-##SBATCH --qos=qos_gpu_a100-t3 
+##SBATCH --qos=qos_gpu_a100-dev
+##SBATCH --qos=qos_gpu_a100-t3
 
 #SBATCH --partition=gpu_p6
 #SBATCH -C h100
 #SBATCH -A lqm@h100
-##SBATCH --qos=qos_gpu_h100-dev 
-#SBATCH --qos=qos_gpu_h100-t4 
+##SBATCH --qos=qos_gpu_h100-dev
+#SBATCH --qos=qos_gpu_h100-t4
 
 
 cd ~/lerobot_pi
@@ -45,7 +45,7 @@ export DATA_DIR=$WORK/.cache/huggingface/datasets
 export HF_LEROBOT_HOME=$WORK/.cache/huggingface/lerobot
 # export LEROBOT_HOME=
 
-export HF_DATASETS_OFFLINE=1 
+export HF_DATASETS_OFFLINE=1
 export HF_HUB_OFFLINE=1
 
 export WANDB_CACHE_DIR=/lustre/fsn1/projects/rech/dyf/ugz83ue/wandb
@@ -103,4 +103,3 @@ python lerobot/scripts/train.py \
      --output_dir=$TRAIN_DIR \
      --batch_size=$BATCH_SIZE \
      --steps=$OFFLINE_STEPS
-
