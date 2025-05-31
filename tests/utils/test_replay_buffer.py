@@ -5,7 +5,7 @@ import pytest
 import torch
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.scripts.server.buffer import BatchTransition, ReplayBuffer, random_crop_vectorized
+from lerobot.common.utils.buffer import BatchTransition, ReplayBuffer, random_crop_vectorized
 from tests.fixtures.constants import DUMMY_REPO_ID
 
 
