@@ -29,16 +29,20 @@ pip install -e ".[smolvla]"
 Example of finetuning the smolvla pretrained model (`smolvla_base`):
 ```bash
 python lerobot/scripts/train.py \
---policy.path=lerobot/smolvla \
---dataset.repo_id=danaaubakirova/koch_test
+--policy.path=lerobot/smolvla_base \
+--dataset.repo_id=danaaubakirova/svla_so100_task1_v3 \
+--batch_size=64 \
+--steps=200000
 ```
 
-Example of finetuning the smolvla neural network with SmolVLM and expert Gemma
-pretrained with VLM default parameters before smolvla finetuning:
+Example of finetuning the smolvla neural network with pretrained VLM and action expert
+intialized from scratch:
 ```bash
 python lerobot/scripts/train.py \
 --policy.type=smolvla \
---dataset.repo_id=danaaubakirova/koch_test
+--dataset.repo_id=danaaubakirova/svla_so100_task1_v3 \
+--batch_size=64 \
+--steps=200000
 ```
 
 Example of using the smolvla pretrained model outside LeRobot training framework:
