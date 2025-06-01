@@ -16,7 +16,6 @@ import copy
 from typing import List, Optional, Union
 
 import torch
-from pytest import Cache
 from torch import nn
 from transformers import (
     AutoConfig,
@@ -409,7 +408,7 @@ class SmolVLMWithExpertModel(nn.Module):
         self,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[Union[List[torch.FloatTensor], Cache]] = None,
+        past_key_values: Optional[List[torch.FloatTensor]] = None,
         inputs_embeds: List[torch.FloatTensor] = None,
         use_cache: Optional[bool] = None,
         fill_kv_cache: Optional[bool] = None,
