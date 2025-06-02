@@ -24,12 +24,12 @@ Examples of usage:
 
 - Start an actor server for real robot training with human-in-the-loop intervention:
 ```bash
-python lerobot/scripts/server/actor_server.py --config_path lerobot/configs/train_config_hilserl_so100.json
+python lerobot/scripts/rl/actor.py --config_path lerobot/configs/train_config_hilserl_so100.json
 ```
 
 - Run with a specific robot type for a pick and place task:
 ```bash
-python lerobot/scripts/server/actor_server.py \
+python lerobot/scripts/rl/actor.py \
     --config_path lerobot/configs/train_config_hilserl_so100.json \
     --robot.type=so100 \
     --task=pick_and_place
@@ -37,7 +37,7 @@ python lerobot/scripts/server/actor_server.py \
 
 - Set a custom workspace bound for the robot's end-effector:
 ```bash
-python lerobot/scripts/server/actor_server.py \
+python lerobot/scripts/rl/actor.py \
     --config_path lerobot/configs/train_config_hilserl_so100.json \
     --env.ee_action_space_params.bounds.max="[0.24, 0.20, 0.10]" \
     --env.ee_action_space_params.bounds.min="[0.16, -0.08, 0.03]"
@@ -45,7 +45,7 @@ python lerobot/scripts/server/actor_server.py \
 
 - Run with specific camera crop parameters:
 ```bash
-python lerobot/scripts/server/actor_server.py \
+python lerobot/scripts/rl/actor.py \
     --config_path lerobot/configs/train_config_hilserl_so100.json \
     --env.crop_params_dict="{'observation.images.side': [180, 207, 180, 200], 'observation.images.front': [180, 250, 120, 150]}"
 ```
@@ -85,8 +85,23 @@ from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.sac.modeling_sac import SACPolicy
 from lerobot.common.robots import so100_follower_end_effector  # noqa: F401
 from lerobot.common.teleoperators import gamepad, so100_leader  # noqa: F401
+from lerobot.common.transport import services_pb2, services_pb2_grpc
+from lerobot.common.transport.utils import (
+    bytes_to_state_dict,
+    python_object_to_bytes,
+    receive_bytes_in_chunks,
+    send_bytes_in_chunks,
+    transitions_to_bytes,
+)
+from lerobot.common.utils.process import setup_process_handlers
+from lerobot.common.utils.queue import get_last_item_from_queue
 from lerobot.common.utils.random_utils import set_seed
 from lerobot.common.utils.robot_utils import busy_wait
+from lerobot.common.utils.transition import (
+    Transition,
+    move_state_dict_to_device,
+    move_transition_to_device,
+)
 from lerobot.common.utils.utils import (
     TimerManager,
     get_safe_torch_device,
@@ -94,22 +109,8 @@ from lerobot.common.utils.utils import (
 )
 from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
-from lerobot.scripts.server import hilserl_pb2, hilserl_pb2_grpc, learner_service
-from lerobot.scripts.server.buffer import Transition
-from lerobot.scripts.server.gym_manipulator import make_robot_env
-from lerobot.scripts.server.network_utils import (
-    bytes_to_state_dict,
-    python_object_to_bytes,
-    receive_bytes_in_chunks,
-    send_bytes_in_chunks,
-    transitions_to_bytes,
-)
-from lerobot.scripts.server.utils import (
-    get_last_item_from_queue,
-    move_state_dict_to_device,
-    move_transition_to_device,
-    setup_process_handlers,
-)
+from lerobot.scripts.rl import learner_service
+from lerobot.scripts.rl.gym_manipulator import make_robot_env
 
 ACTOR_SHUTDOWN_TIMEOUT = 30
 
@@ -386,14 +387,14 @@ def act_with_policy(
 
 
 def establish_learner_connection(
-    stub: hilserl_pb2_grpc.LearnerServiceStub,
+    stub: services_pb2_grpc.LearnerServiceStub,
     shutdown_event: Event,  # type: ignore
     attempts: int = 30,
 ):
     """Establish a connection with the learner.
 
     Args:
-        stub (hilserl_pb2_grpc.LearnerServiceStub): The stub to use for the connection.
+        stub (services_pb2_grpc.LearnerServiceStub): The stub to use for the connection.
         shutdown_event (Event): The event to check if the connection should be established.
         attempts (int): The number of attempts to establish the connection.
     Returns:
@@ -407,7 +408,7 @@ def establish_learner_connection(
         # Force a connection attempt and check state
         try:
             logging.info("[ACTOR] Send ready message to Learner")
-            if stub.Ready(hilserl_pb2.Empty()) == hilserl_pb2.Empty():
+            if stub.Ready(services_pb2.Empty()) == services_pb2.Empty():
                 return True
         except grpc.RpcError as e:
             logging.error(f"[ACTOR] Waiting for Learner to be ready... {e}")
@@ -419,7 +420,7 @@ def establish_learner_connection(
 def learner_service_client(
     host: str = "127.0.0.1",
     port: int = 50051,
-) -> tuple[hilserl_pb2_grpc.LearnerServiceStub, grpc.Channel]:
+) -> tuple[services_pb2_grpc.LearnerServiceStub, grpc.Channel]:
     import json
 
     """
@@ -458,7 +459,7 @@ def learner_service_client(
             ("grpc.service_config", service_config_json),
         ],
     )
-    stub = hilserl_pb2_grpc.LearnerServiceStub(channel)
+    stub = services_pb2_grpc.LearnerServiceStub(channel)
     logging.info("[ACTOR] Learner service client created")
     return stub, channel
 
@@ -467,7 +468,7 @@ def receive_policy(
     cfg: TrainPipelineConfig,
     parameters_queue: Queue,
     shutdown_event: Event,  # type: ignore
-    learner_client: hilserl_pb2_grpc.LearnerServiceStub | None = None,
+    learner_client: services_pb2_grpc.LearnerServiceStub | None = None,
     grpc_channel: grpc.Channel | None = None,
 ):
     """Receive parameters from the learner.
@@ -499,7 +500,7 @@ def receive_policy(
         )
 
     try:
-        iterator = learner_client.StreamParameters(hilserl_pb2.Empty())
+        iterator = learner_client.StreamParameters(services_pb2.Empty())
         receive_bytes_in_chunks(
             iterator,
             parameters_queue,
@@ -519,9 +520,9 @@ def send_transitions(
     cfg: TrainPipelineConfig,
     transitions_queue: Queue,
     shutdown_event: any,  # Event,
-    learner_client: hilserl_pb2_grpc.LearnerServiceStub | None = None,
+    learner_client: services_pb2_grpc.LearnerServiceStub | None = None,
     grpc_channel: grpc.Channel | None = None,
-) -> hilserl_pb2.Empty:
+) -> services_pb2.Empty:
     """
     Sends transitions to the learner.
 
@@ -530,7 +531,7 @@ def send_transitions(
     - Transition Data:
         - A batch of transitions (observation, action, reward, next observation) is collected.
         - Transitions are moved to the CPU and serialized using PyTorch.
-        - The serialized data is wrapped in a `hilserl_pb2.Transition` message and sent to the learner.
+        - The serialized data is wrapped in a `services_pb2.Transition` message and sent to the learner.
     """
 
     if not use_threads(cfg):
@@ -569,9 +570,9 @@ def send_interactions(
     cfg: TrainPipelineConfig,
     interactions_queue: Queue,
     shutdown_event: Event,  # type: ignore
-    learner_client: hilserl_pb2_grpc.LearnerServiceStub | None = None,
+    learner_client: services_pb2_grpc.LearnerServiceStub | None = None,
     grpc_channel: grpc.Channel | None = None,
-) -> hilserl_pb2.Empty:
+) -> services_pb2.Empty:
     """
     Sends interactions to the learner.
 
@@ -614,7 +615,7 @@ def send_interactions(
     logging.info("[ACTOR] Interactions process stopped")
 
 
-def transitions_stream(shutdown_event: Event, transitions_queue: Queue) -> hilserl_pb2.Empty:  # type: ignore
+def transitions_stream(shutdown_event: Event, transitions_queue: Queue) -> services_pb2.Empty:  # type: ignore
     while not shutdown_event.is_set():
         try:
             message = transitions_queue.get(block=True, timeout=5)
@@ -623,16 +624,16 @@ def transitions_stream(shutdown_event: Event, transitions_queue: Queue) -> hilse
             continue
 
         yield from send_bytes_in_chunks(
-            message, hilserl_pb2.Transition, log_prefix="[ACTOR] Send transitions"
+            message, services_pb2.Transition, log_prefix="[ACTOR] Send transitions"
         )
 
-    return hilserl_pb2.Empty()
+    return services_pb2.Empty()
 
 
 def interactions_stream(
     shutdown_event: Event,  # type: ignore
     interactions_queue: Queue,
-) -> hilserl_pb2.Empty:
+) -> services_pb2.Empty:
     while not shutdown_event.is_set():
         try:
             message = interactions_queue.get(block=True, timeout=5)
@@ -642,11 +643,11 @@ def interactions_stream(
 
         yield from send_bytes_in_chunks(
             message,
-            hilserl_pb2.InteractionMessage,
+            services_pb2.InteractionMessage,
             log_prefix="[ACTOR] Send interactions",
         )
 
-    return hilserl_pb2.Empty()
+    return services_pb2.Empty()
 
 
 #################################################
