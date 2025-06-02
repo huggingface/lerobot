@@ -38,15 +38,14 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from pprint import pformat
 
-import draccus
 import numpy as np
 import rerun as rr
 
 from lerobot.common.cameras import (  # noqa: F401
     CameraConfig,  # noqa: F401
 )
-from lerobot.common.cameras.opencv import OpenCVCameraConfig  # noqa: F401
-from lerobot.common.cameras.realsense import RealSenseCameraConfig  # noqa: F401
+from lerobot.common.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
+from lerobot.common.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.common.datasets.image_writer import safe_stop_image_writer
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.datasets.utils import build_dataset_frame, hw_to_dataset_features
@@ -132,8 +131,6 @@ class RecordConfig:
     teleop: TeleoperatorConfig | None = None
     # Whether to control the robot with a policy
     policy: PreTrainedConfig | None = None
-    # Number of seconds before starting data collection. It allows the robot devices to warmup and synchronize.
-    warmup_time_s: int | float = 10
     # Display all cameras on screen
     display_data: bool = False
     # Use vocal synthesis to read events.
@@ -152,6 +149,11 @@ class RecordConfig:
             self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
             self.policy.pretrained_path = policy_path
 
+    @classmethod
+    def __get_path_fields__(cls) -> list[str]:
+        """This enables the parser to load config from the policy using `--policy.path=local/dir`"""
+        return ["policy"]
+
 
 @safe_stop_image_writer
 def record_loop(
@@ -168,6 +170,10 @@ def record_loop(
     if dataset is not None and fps is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
 
+    # if policy is given it needs cleaning up
+    if policy is not None:
+        policy.reset()
+
     timestamp = 0
     start_episode_t = time.perf_counter()
     while timestamp < control_time_s:
@@ -175,10 +181,14 @@ def record_loop(
 
         observation = robot.get_observation()
 
+        if policy is not None or dataset is not None:
+            observation_frame = build_dataset_frame(dataset.features, observation, prefix="observation")
+
         if policy is not None:
-            action = predict_action(
-                observation, policy, get_safe_torch_device(policy.config.device), policy.config.use_amp
+            action_values = predict_action(
+                observation_frame, policy, get_safe_torch_device(policy.config.device), policy.config.use_amp
             )
+            action = {key: action_values[i] for i, key in enumerate(robot.action_features)}
         else:
             action = teleop.get_action()
 
@@ -187,7 +197,6 @@ def record_loop(
         sent_action = robot.send_action(action)
 
         if dataset is not None:
-            observation_frame = build_dataset_frame(dataset.features, observation, prefix="observation")
             action_frame = build_dataset_frame(dataset.features, sent_action, prefix="action")
             frame = {**observation_frame, **action_frame}
             dataset.add_frame(frame, task=single_task)
@@ -215,7 +224,7 @@ def record_loop(
             break
 
 
-@draccus.wrap()
+@parser.wrap()
 def record(cfg: RecordConfig) -> LeRobotDataset:
     init_logging()
     logging.info(pformat(asdict(cfg)))
@@ -313,7 +322,6 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 single_task=cfg.dataset.single_task,
                 display_data=cfg.display_data,
             )
-            # reset_environment(robot, events, cfg.dataset.reset_time_s, cfg.dataset.fps)
 
         if events["rerecord_episode"]:
             log_say("Re-record episode", cfg.play_sounds)

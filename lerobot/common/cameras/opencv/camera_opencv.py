@@ -16,14 +16,12 @@
 Provides the OpenCVCamera class for capturing frames from cameras using OpenCV.
 """
 
-import contextlib
 import logging
 import math
 import platform
-import queue
 import time
 from pathlib import Path
-from threading import Event, Thread
+from threading import Event, Lock, Thread
 from typing import Any, Dict, List
 
 import cv2
@@ -118,7 +116,9 @@ class OpenCVCamera(Camera):
 
         self.thread: Thread | None = None
         self.stop_event: Event | None = None
-        self.frame_queue: queue.Queue = queue.Queue(maxsize=1)
+        self.frame_lock: Lock = Lock()
+        self.latest_frame: np.ndarray | None = None
+        self.new_frame_event: Event = Event()
 
         self.rotation: int | None = get_cv2_rotation(config.rotation)
         self.backend: int = get_cv2_backend()
@@ -174,7 +174,7 @@ class OpenCVCamera(Camera):
                 self.read()
                 time.sleep(0.1)
 
-        logger.debug(f"{self} connected.")
+        logger.info(f"{self} connected.")
 
     def _configure_capture_settings(self) -> None:
         """
@@ -318,7 +318,6 @@ class OpenCVCamera(Camera):
         if not ret or frame is None:
             raise RuntimeError(f"{self} read failed (status={ret}).")
 
-        # Post-process the frame (color conversion, dimension check, rotation)
         processed_frame = self._postprocess_image(frame, color_mode)
 
         read_duration_ms = (time.perf_counter() - start_time) * 1e3
@@ -373,17 +372,20 @@ class OpenCVCamera(Camera):
         """
         Internal loop run by the background thread for asynchronous reading.
 
-        Continuously reads frames from the camera using the synchronous `read()`
-        method and places the latest frame into the `frame_queue`. It overwrites
-        any previous frame in the queue.
+        On each iteration:
+        1. Reads a color frame
+        2. Stores result in latest_frame (thread-safe)
+        3. Sets new_frame_event to notify listeners
+
+        Stops on DeviceNotConnectedError, logs other errors and continues.
         """
         while not self.stop_event.is_set():
             try:
                 color_image = self.read()
 
-                with contextlib.suppress(queue.Empty):
-                    _ = self.frame_queue.get_nowait()
-                self.frame_queue.put(color_image)
+                with self.frame_lock:
+                    self.latest_frame = color_image
+                self.new_frame_event.set()
 
             except DeviceNotConnectedError:
                 break
@@ -413,18 +415,17 @@ class OpenCVCamera(Camera):
         self.thread = None
         self.stop_event = None
 
-    def async_read(self, timeout_ms: float = 2000) -> np.ndarray:
+    def async_read(self, timeout_ms: float = 200) -> np.ndarray:
         """
         Reads the latest available frame asynchronously.
 
         This method retrieves the most recent frame captured by the background
         read thread. It does not block waiting for the camera hardware directly,
-        only waits for a frame to appear in the internal queue up to the specified
-        timeout.
+        but may wait up to timeout_ms for the background thread to provide a frame.
 
         Args:
             timeout_ms (float): Maximum time in milliseconds to wait for a frame
-                to become available in the queue. Defaults to 2000ms (2 seconds).
+                to become available. Defaults to 200ms (0.2 seconds).
 
         Returns:
             np.ndarray: The latest captured frame as a NumPy array in the format
@@ -433,7 +434,7 @@ class OpenCVCamera(Camera):
         Raises:
             DeviceNotConnectedError: If the camera is not connected.
             TimeoutError: If no frame becomes available within the specified timeout.
-            RuntimeError: If an unexpected error occurs while retrieving from the queue.
+            RuntimeError: If an unexpected error occurs.
         """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
@@ -441,17 +442,21 @@ class OpenCVCamera(Camera):
         if self.thread is None or not self.thread.is_alive():
             self._start_read_thread()
 
-        try:
-            return self.frame_queue.get(timeout=timeout_ms / 1000.0)
-        except queue.Empty as e:
+        if not self.new_frame_event.wait(timeout=timeout_ms / 1000.0):
             thread_alive = self.thread is not None and self.thread.is_alive()
             raise TimeoutError(
                 f"Timed out waiting for frame from camera {self} after {timeout_ms} ms. "
                 f"Read thread alive: {thread_alive}."
-            ) from e
-        except Exception as e:
-            logger.exception(f"Unexpected error getting frame from queue for {self}: {e}")
-            raise RuntimeError(f"Error getting frame from queue for camera {self.index_or_path}: {e}") from e
+            )
+
+        with self.frame_lock:
+            frame = self.latest_frame
+            self.new_frame_event.clear()
+
+        if frame is None:
+            raise RuntimeError(f"Internal error: Event set but no frame available for {self}.")
+
+        return frame
 
     def disconnect(self):
         """

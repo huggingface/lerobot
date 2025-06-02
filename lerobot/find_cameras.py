@@ -30,7 +30,6 @@ python -m lerobot.find_cameras
 import argparse
 import concurrent.futures
 import logging
-import shutil
 import time
 from pathlib import Path
 from typing import Any, Dict, List
@@ -154,16 +153,6 @@ def save_image(
         logger.error(f"Failed to save image for camera {camera_identifier} (type {camera_type}): {e}")
 
 
-def initialize_output_directory(output_dir: Path) -> Path:
-    """Initialize and clean the output directory."""
-    if output_dir.exists():
-        logger.info(f"Output directory {output_dir} exists. Removing previous content.")
-        shutil.rmtree(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    logger.info(f"Saving images to {output_dir}")
-    return output_dir
-
-
 def create_camera_instance(cam_meta: Dict[str, Any]) -> Dict[str, Any] | None:
     """Create and connect to a camera instance based on metadata."""
     cam_type = cam_meta.get("type")
@@ -253,7 +242,8 @@ def save_images_from_all_cameras(
         camera_type: Optional string to filter cameras ("realsense" or "opencv").
                             If None, uses all detected cameras.
     """
-    output_dir = initialize_output_directory(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Saving images to {output_dir}")
     all_camera_metadata = find_and_print_cameras(camera_type_filter=camera_type)
 
     if not all_camera_metadata:
