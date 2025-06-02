@@ -82,10 +82,10 @@ class SmolVLAConfig(PreTrainedConfig):
     scheduler_decay_steps: int = 30_000
     scheduler_decay_lr: float = 2.5e-6
 
-    vlm_model_name: str = "HuggingFaceTB/SmolVLM2-500M-Video-Instruct" # Select the VLM backbone.
-    load_vlm_weights: bool = False # Set to True in case of training the expert from scratch. True when init from pretrained SmolVLA weights
+    vlm_model_name: str = "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"  # Select the VLM backbone.
+    load_vlm_weights: bool = False  # Set to True in case of training the expert from scratch. True when init from pretrained SmolVLA weights
 
-    add_image_special_tokens: bool = False # Whether to use special image tokens around image features.
+    add_image_special_tokens: bool = False  # Whether to use special image tokens around image features.
 
     attention_mode: str = "cross_attn"
 
@@ -93,10 +93,10 @@ class SmolVLAConfig(PreTrainedConfig):
 
     pad_language_to: str = "longest"  # "max_length"
 
-    num_expert_layers: int = -1 # Less or equal to 0 is the default where the action expert has the same number of layers of VLM. Otherwise the expert have less layers.
-    num_vlm_layers: int = 16 # Number of layers used in the VLM (first num_vlm_layers layers)
-    self_attn_every_n_layers: int = 2 # Interleave SA layers each self_attn_every_n_layers
-    expert_width_multiplier: float = 0.75 # The action expert hidden size (wrt to the VLM)
+    num_expert_layers: int = -1  # Less or equal to 0 is the default where the action expert has the same number of layers of VLM. Otherwise the expert have less layers.
+    num_vlm_layers: int = 16  # Number of layers used in the VLM (first num_vlm_layers layers)
+    self_attn_every_n_layers: int = 2  # Interleave SA layers each self_attn_every_n_layers
+    expert_width_multiplier: float = 0.75  # The action expert hidden size (wrt to the VLM)
 
     def __post_init__(self):
         super().__post_init__()
