@@ -606,7 +606,7 @@ class SACObservationEncoder(nn.Module):
 
         Usage patterns:
         - Called in select_action() with normalize=True
-        - Called in learner_server.py's get_observation_features() to pre-compute features for all policy components
+        - Called in learner.py's get_observation_features() to pre-compute features for all policy components
         - Called internally by forward() with normalize=False
 
         Args:

@@ -13,9 +13,15 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 
+// To generate a classes for transport part (services_pb2.py and services_pb2_grpc.py) use the following command:
+//
+// python -m grpc_tools.protoc -I . --python_out=. --grpc_python_out=. lerobot/common/transport/services.proto
+//
+// The command should be launched from the root of the project.
+
 syntax = "proto3";
 
-package hil_serl;
+package transport;
 
 // LearnerService: the Actor calls this to push transitions.
 // The Learner implements this service.
