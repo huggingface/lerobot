@@ -373,7 +373,6 @@ class SmolVLMWithExpertModel(nn.Module):
             ]  # take into account kv
 
             expert_query_states = apply_rope(expert_query_state, expert_position_id)
-            # expert_key_states = apply_rope(expert_key_state, expert_position_id)
 
             att_output = attention_interface(
                 expert_attention_mask,
