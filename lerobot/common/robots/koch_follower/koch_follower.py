@@ -48,14 +48,15 @@ class KochFollower(Robot):
     def __init__(self, config: KochFollowerConfig):
         super().__init__(config)
         self.config = config
+        norm_mode_body = MotorNormMode.DEGREES if config.use_degrees else MotorNormMode.RANGE_M100_100
         self.bus = DynamixelMotorsBus(
             port=self.config.port,
             motors={
-                "shoulder_pan": Motor(1, "xl430-w250", MotorNormMode.RANGE_M100_100),
-                "shoulder_lift": Motor(2, "xl430-w250", MotorNormMode.RANGE_M100_100),
-                "elbow_flex": Motor(3, "xl330-m288", MotorNormMode.RANGE_M100_100),
-                "wrist_flex": Motor(4, "xl330-m288", MotorNormMode.RANGE_M100_100),
-                "wrist_roll": Motor(5, "xl330-m288", MotorNormMode.RANGE_M100_100),
+                "shoulder_pan": Motor(1, "xl430-w250", norm_mode_body),
+                "shoulder_lift": Motor(2, "xl430-w250", norm_mode_body),
+                "elbow_flex": Motor(3, "xl330-m288", norm_mode_body),
+                "wrist_flex": Motor(4, "xl330-m288", norm_mode_body),
+                "wrist_roll": Motor(5, "xl330-m288", norm_mode_body),
                 "gripper": Motor(6, "xl330-m288", MotorNormMode.RANGE_0_100),
             },
             calibration=self.calibration,
@@ -82,8 +83,7 @@ class KochFollower(Robot):
 
     @property
     def is_connected(self) -> bool:
-        # TODO(aliberts): add cam.is_connected for cam in self.cameras
-        return self.bus.is_connected
+        return self.bus.is_connected and all(cam.is_connected for cam in self.cameras.values())
 
     def connect(self, calibrate: bool = True) -> None:
         """

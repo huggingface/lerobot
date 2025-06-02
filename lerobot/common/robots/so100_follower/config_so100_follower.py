@@ -34,3 +34,6 @@ class SO100FollowerConfig(RobotConfig):
 
     # cameras
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
+
+    # Set to `True` for backward compatibility with previous policies/dataset
+    use_degrees: bool = False

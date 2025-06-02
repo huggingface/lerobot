@@ -45,6 +45,7 @@ class ViperX(Robot):
         self,
         config: ViperXConfig,
     ):
+        raise NotImplementedError
         super().__init__(config)
         self.config = config
         self.bus = DynamixelMotorsBus(
@@ -83,8 +84,7 @@ class ViperX(Robot):
 
     @property
     def is_connected(self) -> bool:
-        # TODO(aliberts): add cam.is_connected for cam in self.cameras
-        return self.bus.is_connected
+        return self.bus.is_connected and all(cam.is_connected for cam in self.cameras.values())
 
     def connect(self, calibrate: bool = True) -> None:
         """

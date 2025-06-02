@@ -400,15 +400,22 @@ def hw_to_dataset_features(
     joint_fts = {key: ftype for key, ftype in hw_features.items() if ftype is float}
     cam_fts = {key: shape for key, shape in hw_features.items() if isinstance(shape, tuple)}
 
-    if joint_fts:
-        features[f"{prefix}.joints"] = {
+    if joint_fts and prefix == "action":
+        features[prefix] = {
+            "dtype": "float32",
+            "shape": (len(joint_fts),),
+            "names": list(joint_fts),
+        }
+
+    if joint_fts and prefix == "observation":
+        features[f"{prefix}.state"] = {
             "dtype": "float32",
             "shape": (len(joint_fts),),
             "names": list(joint_fts),
         }
 
     for key, shape in cam_fts.items():
-        features[f"{prefix}.cameras.{key}"] = {
+        features[f"{prefix}.images.{key}"] = {
             "dtype": "video" if use_video else "image",
             "shape": shape,
             "names": ["height", "width", "channels"],
@@ -428,7 +435,7 @@ def build_dataset_frame(
         elif ft["dtype"] == "float32" and len(ft["shape"]) == 1:
             frame[key] = np.array([values[name] for name in ft["names"]], dtype=np.float32)
         elif ft["dtype"] in ["image", "video"]:
-            frame[key] = values[key.removeprefix(f"{prefix}.cameras.")]
+            frame[key] = values[key.removeprefix(f"{prefix}.images.")]
 
     return frame
 
@@ -461,7 +468,7 @@ def dataset_to_policy_features(features: dict[str, dict]) -> dict[str, PolicyFea
             type = FeatureType.ENV
         elif key.startswith("observation"):
             type = FeatureType.STATE
-        elif key == "action":
+        elif key.startswith("action"):
             type = FeatureType.ACTION
         else:
             continue

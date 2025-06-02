@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 # Copyright 2024 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,28 +16,29 @@
 
 import abc
 from dataclasses import dataclass
+from enum import Enum
 
 import draccus
 
 
-@dataclass
-class MotorsBusConfig(draccus.ChoiceRegistry, abc.ABC):
+class ColorMode(str, Enum):
+    RGB = "rgb"
+    BGR = "bgr"
+
+
+class Cv2Rotation(int, Enum):
+    NO_ROTATION = 0
+    ROTATE_90 = 90
+    ROTATE_180 = 180
+    ROTATE_270 = -90
+
+
+@dataclass(kw_only=True)
+class CameraConfig(draccus.ChoiceRegistry, abc.ABC):
+    fps: int | None = None
+    width: int | None = None
+    height: int | None = None
+
     @property
     def type(self) -> str:
         return self.get_choice_name(self.__class__)
-
-
-@MotorsBusConfig.register_subclass("dynamixel")
-@dataclass
-class DynamixelMotorsBusConfig(MotorsBusConfig):
-    port: str
-    motors: dict[str, tuple[int, str]]
-    mock: bool = False
-
-
-@MotorsBusConfig.register_subclass("feetech")
-@dataclass
-class FeetechMotorsBusConfig(MotorsBusConfig):
-    port: str
-    motors: dict[str, tuple[int, str]]
-    mock: bool = False

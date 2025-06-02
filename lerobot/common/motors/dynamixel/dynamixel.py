@@ -39,7 +39,6 @@ DEFAULT_BAUDRATE = 1_000_000
 DEFAULT_TIMEOUT_MS = 1000
 
 NORMALIZED_DATA = ["Goal_Position", "Present_Position"]
-CONVERT_UINT32_TO_INT32_REQUIRED = ["Goal_Position", "Present_Position"]
 
 logger = logging.getLogger(__name__)
 

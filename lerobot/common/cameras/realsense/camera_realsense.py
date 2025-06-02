@@ -138,10 +138,9 @@ class RealSenseCamera(Camera):
         self.rotation: int | None = get_cv2_rotation(config.rotation)
 
         if self.height and self.width:
+            self.capture_width, self.capture_height = self.width, self.height
             if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
                 self.capture_width, self.capture_height = self.height, self.width
-            else:
-                self.capture_width, self.capture_height = self.width, self.height
 
     def __str__(self) -> str:
         return f"{self.__class__.__name__}({self.serial_number})"
@@ -442,7 +441,7 @@ class RealSenseCamera(Camera):
 
     def _read_loop(self):
         """
-        Internal loop for background thread for asynchronous reading.
+        Internal loop run by the background thread for asynchronous reading.
 
         On each iteration:
         1. Reads a color frame with 500ms timeout

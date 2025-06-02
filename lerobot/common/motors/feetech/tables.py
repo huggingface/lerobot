@@ -207,6 +207,7 @@ MODEL_BAUDRATE_TABLE = {
 STS_SMS_SERIES_ENCODINGS_TABLE = {
     "Homing_Offset": 11,
     "Goal_Velocity": 15,
+    "Present_Velocity": 15,
 }
 
 MODEL_ENCODING_TABLE = {

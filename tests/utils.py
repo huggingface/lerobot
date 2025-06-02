@@ -21,9 +21,6 @@ import pytest
 import torch
 
 from lerobot import available_cameras, available_motors, available_robots
-from lerobot.common.cameras import Camera
-from lerobot.common.motors.motors_bus import MotorsBus
-from lerobot.common.motors.utils import make_motors_bus as make_motors_bus_device
 from lerobot.common.utils.import_utils import is_package_available
 
 DEVICE = os.environ.get("LEROBOT_TEST_DEVICE", "cuda") if torch.cuda.is_available() else "cpu"
@@ -185,63 +182,3 @@ def require_package(package_name):
         return wrapper
 
     return decorator
-
-
-def require_camera(func):
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        # Access the pytest request context to get the is_camera_available fixture
-        request = kwargs.get("request")
-        camera_type = kwargs.get("camera_type")
-        mock = kwargs.get("mock")
-
-        if request is None:
-            raise ValueError("The 'request' fixture must be an argument of the test function.")
-        if camera_type is None:
-            raise ValueError("The 'camera_type' must be an argument of the test function.")
-        if mock is None:
-            raise ValueError("The 'mock' variable must be an argument of the test function.")
-
-        if not mock and not request.getfixturevalue("is_camera_available"):
-            pytest.skip(f"A {camera_type} camera is not available.")
-
-        return func(*args, **kwargs)
-
-    return wrapper
-
-
-# TODO(rcadene, aliberts): remove this dark pattern that overrides
-def make_camera(camera_type: str, **kwargs) -> Camera:
-    if camera_type == "opencv":
-        camera_index = kwargs.pop("camera_index", OPENCV_CAMERA_INDEX)
-        kwargs["camera_index"] = camera_index
-        from lerobot.common.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
-
-        config = OpenCVCameraConfig(**kwargs)
-        return OpenCVCamera(config)
-
-    elif camera_type == "intelrealsense":
-        serial_number = kwargs.pop("serial_number", INTELREALSENSE_SERIAL_NUMBER)
-        kwargs["serial_number"] = serial_number
-        from lerobot.common.cameras.realsense import RealSenseCamera, RealSenseCameraConfig
-
-        config = RealSenseCameraConfig(**kwargs)
-        return RealSenseCamera(config)
-    else:
-        raise ValueError(f"The camera type '{camera_type}' is not valid.")
-
-
-# TODO(rcadene, aliberts): remove this dark pattern that overrides
-def make_motors_bus(motor_type: str, **kwargs) -> MotorsBus:
-    if motor_type == "dynamixel":
-        port = kwargs.pop("port", DYNAMIXEL_PORT)
-        motors = kwargs.pop("motors", DYNAMIXEL_MOTORS)
-        return make_motors_bus_device(motor_type, port=port, motors=motors, **kwargs)
-
-    elif motor_type == "feetech":
-        port = kwargs.pop("port", FEETECH_PORT)
-        motors = kwargs.pop("motors", FEETECH_MOTORS)
-        return make_motors_bus_device(motor_type, port=port, motors=motors, **kwargs)
-
-    else:
-        raise ValueError(f"The motor type '{motor_type}' is not valid.")

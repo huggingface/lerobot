@@ -38,8 +38,6 @@ from lerobot.common.utils.utils import enter_pressed, move_cursor_up
 NameOrID: TypeAlias = str | int
 Value: TypeAlias = int | float
 
-MAX_ID_RANGE = 252
-
 logger = logging.getLogger(__name__)
 
 
@@ -79,11 +77,10 @@ def assert_same_address(model_ctrl_table: dict[str, dict], motor_models: list[st
         )
 
 
-class MotorNormMode(Enum):
-    DEGREE = 0
-    RANGE_0_100 = 1
-    RANGE_M100_100 = 2
-    VELOCITY = 3
+class MotorNormMode(str, Enum):
+    RANGE_0_100 = "range_0_100"
+    RANGE_M100_100 = "range_m100_100"
+    DEGREES = "degrees"
 
 
 @dataclass
@@ -241,11 +238,11 @@ class MotorsBus(abc.ABC):
     )
     bus.connect()
 
-    position = bus.read("Present_Position", normalize=False)
+    position = bus.read("Present_Position", "my_motor", normalize=False)
 
     # Move from a few motor steps as an example
     few_steps = 30
-    bus.write("Goal_Position", position + few_steps, normalize=False)
+    bus.write("Goal_Position", "my_motor", position + few_steps, normalize=False)
 
     # When done, properly disconnect the port using
     bus.disconnect()
@@ -449,7 +446,7 @@ class MotorsBus(abc.ABC):
         except (FileNotFoundError, OSError, serial.SerialException) as e:
             raise ConnectionError(
                 f"\nCould not connect on port '{self.port}'. Make sure you are using the correct port."
-                "\nTry running `python lerobot/scripts/find_motors_bus_port.py`\n"
+                "\nTry running `python lerobot/find_port.py`\n"
             ) from e
 
     @abc.abstractmethod
@@ -499,6 +496,7 @@ class MotorsBus(abc.ABC):
                 tqdm.write(f"Motors found for {baudrate=}: {pformat(ids_models, indent=4)}")
                 baudrate_ids[baudrate] = list(ids_models)
 
+        bus.port_handler.closePort()
         return baudrate_ids
 
     def setup_motor(
@@ -582,8 +580,8 @@ class MotorsBus(abc.ABC):
 
         Args:
             motor (int): Same semantics as :pymeth:`disable_torque`. Defaults to `None`.
-            model (str): _description_
-            num_retry (int, optional): _description_. Defaults to 0.
+            num_retry (int, optional): Number of additional retry attempts on communication failure.
+                Defaults to 0.
         """
         pass
 
@@ -749,7 +747,9 @@ class MotorsBus(abc.ABC):
         start_positions = self.sync_read("Present_Position", motors, normalize=False)
         mins = start_positions.copy()
         maxes = start_positions.copy()
-        while True:
+
+        user_pressed_enter = False
+        while not user_pressed_enter:
             positions = self.sync_read("Present_Position", motors, normalize=False)
             mins = {motor: min(positions[motor], min_) for motor, min_ in mins.items()}
             maxes = {motor: max(positions[motor], max_) for motor, max_ in maxes.items()}
@@ -761,9 +761,9 @@ class MotorsBus(abc.ABC):
                     print(f"{motor:<15} | {mins[motor]:>6} | {positions[motor]:>6} | {maxes[motor]:>6}")
 
             if enter_pressed():
-                break
+                user_pressed_enter = True
 
-            if display_values:
+            if display_values and not user_pressed_enter:
                 # Move cursor up to overwrite the previous output
                 move_cursor_up(len(motors) + 3)
 
@@ -793,8 +793,11 @@ class MotorsBus(abc.ABC):
             elif self.motors[motor].norm_mode is MotorNormMode.RANGE_0_100:
                 norm = ((bounded_val - min_) / (max_ - min_)) * 100
                 normalized_values[id_] = 100 - norm if drive_mode else norm
+            elif self.motors[motor].norm_mode is MotorNormMode.DEGREES:
+                mid = (min_ + max_) / 2
+                max_res = self.model_resolution_table[self._id_to_model(id_)] - 1
+                normalized_values[id_] = (val - mid) * 360 / max_res
             else:
-                # TODO(alibers): degree mode
                 raise NotImplementedError
 
         return normalized_values
@@ -820,8 +823,11 @@ class MotorsBus(abc.ABC):
                 val = 100 - val if drive_mode else val
                 bounded_val = min(100.0, max(0.0, val))
                 unnormalized_values[id_] = int((bounded_val / 100) * (max_ - min_) + min_)
+            elif self.motors[motor].norm_mode is MotorNormMode.DEGREES:
+                mid = (min_ + max_) / 2
+                max_res = self.model_resolution_table[self._id_to_model(id_)] - 1
+                unnormalized_values[id_] = int((val * max_res / 360) + mid)
             else:
-                # TODO(aliberts): degree mode
                 raise NotImplementedError
 
         return unnormalized_values
