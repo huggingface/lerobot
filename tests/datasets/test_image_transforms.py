@@ -16,6 +16,7 @@
 
 import pytest
 import torch
+from packaging import version
 from safetensors.torch import load_file
 from torchvision.transforms import v2
 from torchvision.transforms.v2 import functional as F  # noqa: N812
@@ -253,7 +254,14 @@ def test_backward_compatibility_single_transforms(
 
 
 @require_x86_64_kernel
+@pytest.mark.skipif(
+    version.parse(torch.__version__) < version.parse("2.7.0"),
+    reason="Test artifacts were generated with PyTorch >= 2.7.0 which has different multinomial behavior",
+)
 def test_backward_compatibility_default_config(img_tensor, default_transforms):
+    # NOTE: PyTorch versions have different randomness, it might break this test.
+    # See this PR: https://github.com/huggingface/lerobot/pull/1127.
+
     cfg = ImageTransformsConfig(enable=True)
     default_tf = ImageTransforms(cfg)
 
