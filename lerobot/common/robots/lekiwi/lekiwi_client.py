@@ -258,16 +258,16 @@ class LeKiwiClient(Robot):
         if not self._is_connected:
             raise DeviceNotConnectedError("LeKiwiClient is not connected. You need to run `robot.connect()`.")
 
-        frames, obs_state_dics = self._get_data()
+        frames, obs_dict = self._get_data()
 
         # Loop over each configured camera
         for cam_name, frame in frames.items():
             if frame is None:
                 logging.warning("Frame is None")
                 frame = np.zeros((640, 480, 3), dtype=np.uint8)
-            obs_state_dics[cam_name] = torch.from_numpy(frame)
+            obs_dict[cam_name] = torch.from_numpy(frame)
 
-        return obs_state_dics
+        return obs_dict
 
     def _from_keyboard_to_base_action(self, pressed_keys: np.ndarray):
         # Speed control
