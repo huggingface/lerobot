@@ -35,8 +35,8 @@ python lerobot/scripts/train.py \
 --steps=200000
 ```
 
-Example of finetuning a smolVLA. SmolVLA is composed by a pretrained frozen VLM,
-and an action expert trained from scratch.
+Example of finetuning a smolVLA. SmolVLA is composed of a pretrained VLM,
+and an action expert.
 ```bash
 python lerobot/scripts/train.py \
 --policy.type=smolvla \
