@@ -16,42 +16,38 @@ import logging
 import time
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.common.datasets.utils import hw_to_dataset_features
 from lerobot.common.robots.lekiwi.config_lekiwi import LeKiwiClientConfig
-from lerobot.common.robots.lekiwi.lekiwi_client import OBS_STATE, LeKiwiClient
+from lerobot.common.robots.lekiwi.lekiwi_client import LeKiwiClient
 from lerobot.common.teleoperators.keyboard import KeyboardTeleop, KeyboardTeleopConfig
-from lerobot.common.teleoperators.so100 import SO100Leader, SO100LeaderConfig
+from lerobot.common.teleoperators.so100_leader import SO100Leader, SO100LeaderConfig
 
 NB_CYCLES_CLIENT_CONNECTION = 250
 
 
 def main():
     logging.info("Configuring Teleop Devices")
-    leader_arm_config = SO100LeaderConfig(port="/dev/tty.usbmodem58760434171")
+    leader_arm_config = SO100LeaderConfig(port="/dev/tty.usbmodem58760433331")
     leader_arm = SO100Leader(leader_arm_config)
 
     keyboard_config = KeyboardTeleopConfig()
     keyboard = KeyboardTeleop(keyboard_config)
 
     logging.info("Configuring LeKiwi Client")
-    robot_config = LeKiwiClientConfig(remote_ip="192.0.2.42", id="lekiwi")
+    robot_config = LeKiwiClientConfig(remote_ip="172.18.134.136", id="lekiwi")
     robot = LeKiwiClient(robot_config)
 
     logging.info("Creating LeRobot Dataset")
 
-    # The observations that we get are expected to be in body frame (x,y,theta)
-    obs_dict = {f"{OBS_STATE}." + key: value for key, value in robot.state_feature.items()}
-    # The actions that we send are expected to be in wheel frame (motor encoders)
-    act_dict = {"action." + key: value for key, value in robot.action_feature.items()}
+    action_features = hw_to_dataset_features(robot.action_features, "action")
+    obs_features = hw_to_dataset_features(robot.observation_features, "observation")
+    dataset_features = {**action_features, **obs_features}
 
-    features_dict = {
-        **act_dict,
-        **obs_dict,
-        **robot.camera_features,
-    }
     dataset = LeRobotDataset.create(
         repo_id="user/lekiwi" + str(int(time.time())),
         fps=10,
-        features=features_dict,
+        features=dataset_features,
+        robot_type=robot.name,
     )
 
     logging.info("Connecting Teleop Devices")
@@ -76,10 +72,10 @@ def main():
         observation = robot.get_observation()
 
         frame = {**action_sent, **observation}
-        frame.update({"task": "Dummy Example Task Dataset"})
+        task = "Dummy Example Task Dataset"
 
         logging.info("Saved a frame into the dataset")
-        dataset.add_frame(frame)
+        dataset.add_frame(frame, task)
         i += 1
 
     logging.info("Disconnecting Teleop Devices and LeKiwi Client")
