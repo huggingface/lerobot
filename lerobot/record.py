@@ -131,8 +131,6 @@ class RecordConfig:
     teleop: TeleoperatorConfig | None = None
     # Whether to control the robot with a policy
     policy: PreTrainedConfig | None = None
-    # Number of seconds before starting data collection. It allows the robot devices to warmup and synchronize.
-    warmup_time_s: int | float = 10
     # Display all cameras on screen
     display_data: bool = False
     # Use vocal synthesis to read events.
@@ -324,7 +322,6 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 single_task=cfg.dataset.single_task,
                 display_data=cfg.display_data,
             )
-            # reset_environment(robot, events, cfg.dataset.reset_time_s, cfg.dataset.fps)
 
         if events["rerecord_episode"]:
             log_say("Re-record episode", cfg.play_sounds)
