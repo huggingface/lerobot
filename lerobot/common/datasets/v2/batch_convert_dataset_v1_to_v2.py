@@ -433,7 +433,7 @@ DATASETS = {
         "tasks_col": "language_instruction",
         "license": "mit",
         "url": "https://diffusion-policy.cs.columbia.edu/",
-        "paper": "https://huggingface.co/papers/2303.04137v5",
+        "paper": "https://huggingface.co/papers/2303.04137",
         "citation_bibtex": dedent(r"""
             @inproceedings{chi2023diffusionpolicy,
                 title={Diffusion Policy: Visuomotor Policy Learning via Action Diffusion},
