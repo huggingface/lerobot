@@ -7,7 +7,18 @@ This tutorial will explain how to train a neural network to control a real robot
 2. How to train a policy using your data and prepare it for evaluation.
 3. How to evaluate your policy and visualize the results.
 
-By following these steps, you'll be able to replicate tasks, such as picking up a Lego block and placing it in a bin with a high success rate, as shown in [this video](https://x.com/RemiCadene/status/1814680760592572934).
+By following these steps, you'll be able to replicate tasks, such as picking up a Lego block and placing it in a bin with a high success rate, as shown in the video below.
+
+<details>
+<summary><strong>Video removing gears</strong></summary>
+
+<div class="video-container">
+  <video controls width="600">
+    <source src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/lerobot_task.mp4" type="video/mp4" />
+  </video>
+</div>
+
+</details>
 
 This tutorial isn’t tied to a specific robot: we walk you through the commands and API snippets you can adapt for any supported platform.
 
@@ -125,97 +136,6 @@ while True:
 </hfoption>
 </hfoptions>
 
-## Teleoperate LeKiwi
-
-> [!TIP]
-> If you're using a Mac, you might need to give Terminal permission to access your keyboard for teleoperation. Go to System Preferences > Security & Privacy > Input Monitoring and check the box for Terminal.
-
-To teleoperate, SSH into your Raspberry Pi, and run `conda activate lerobot` and this command:
-```bash
-python -m lerobot.common.robots.lekiwi.lekiwi_host
-```
-
-Then on your laptop, also run `conda activate lerobot` and this command or API example:
-
-<hfoptions id="teleoperate_koch_camera">
-<hfoption id="Command">
-
-```bash
-python -m lerobot.teleoperate \
-    --robot.type=lekiwi \
-    --robot.port=/dev/tty.usbmodem58760431541 \
-    --robot.cameras="{}" \
-    --robot.id=my_lekiwi \
-    --teleop.type=so101_leader \
-    --teleop.port=/dev/tty.usbmodem58760431551 \
-    --teleop.id=my_blue_leader_arm
-```
-</hfoption>
-<hfoption id="API example">
-
-```python
-from lerobot.common.teleoperators.keyboard.teleop_keyboard import KeyboardTeleopConfig, KeyboardTeleop
-from lerobot.common.teleoperators.so100_leader import SO100LeaderConfig, SO100Leader
-from lerobot.common.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
-
-robot_config = LeKiwiClientConfig(
-    remote_ip="172.18.133.90",
-    id="my_red_lekiwi"
-)
-
-teleop__arm_config = SO100LeaderConfig(
-    port="/dev/tty.usbmodem58760431551",
-    id="my_blue_leader_arm",
-)
-
-teleop_keyboard_config = KeyboardTeleopConfig(
-    id="my_laptop_keyboard",
-)
-
-robot = LeKiwiClient(robot_config)
-teleop_arm = SO100Leader(teleop__arm_config)
-telep_keyboard = KeyboardTeleop(teleop_keyboard_config)
-robot.connect()
-teleop_arm.connect()
-telep_keyboard.connect()
-
-while True:
-    observation = robot.get_observation()
-    action_arm = teleop_arm.get_action()
-    action_base = telep_keyboard.get_action()
-    robot.send_action(action_arm | action_base)
-```
-</hfoption>
-</hfoptions>
-
-> **NOTE:** To visualize the data, enable `--control.display_data=true`. This streams the data using `rerun`. For the `--control.type=remote_robot` you will also need to set `--control.viewer_ip` and `--control.viewer_port`
-
-You should see on your laptop something like this: ```[INFO] Connected to remote robot at tcp://172.17.133.91:5555 and video stream at tcp://172.17.133.91:5556.``` Now you can move the leader arm and use the keyboard (w,a,s,d) to drive forward, left, backwards, right. And use (z,x) to turn left or turn right. You can use (r,f) to increase and decrease the speed of the mobile robot. There are three speed modes, see the table below:
-
-| Speed Mode | Linear Speed (m/s) | Rotation Speed (deg/s) |
-| ---------- | ------------------ | ---------------------- |
-| Fast       | 0.4                | 90                     |
-| Medium     | 0.25               | 60                     |
-| Slow       | 0.1                | 30                     |
-
-
-| Key | Action         |
-| --- | -------------- |
-| W   | Move forward   |
-| A   | Move left      |
-| S   | Move backward  |
-| D   | Move right     |
-| Z   | Turn left      |
-| X   | Turn right     |
-| R   | Increase speed |
-| F   | Decrease speed |
-
-> [!TIP]
->  If you use a different keyboard, you can change the keys for each command in the [`LeKiwiConfig`](../lerobot/common/robot_devices/robots/configs.py).
-
-### Wired version
-If you have the **wired** LeKiwi version, please run all commands on your laptop.
-
 ## Record a dataset
 
 Once you're familiar with teleoperation, you can record your first dataset.
@@ -291,9 +211,6 @@ The `record` function provides a suite of tools for capturing and managing data 
 
 ##### 3. Recording Parameters
 Set the flow of data recording using command-line arguments:
-- `--warmup_time_s=10`
-  Number of seconds before starting data collection (default: **10 seconds**).
-  Allows devices to warm up and synchronize.
 - `--dataset.episode_time_s=60`
   Duration of each data recording episode (default: **60 seconds**).
 - `--dataset.reset_time_s=60`
