@@ -35,8 +35,8 @@ python lerobot/scripts/train.py \
 --steps=200000
 ```
 
-Example of finetuning the smolvla neural network with pretrained VLM and action expert
-intialized from scratch:
+Example of finetuning a smolVLA. SmolVLA is composed by a pretrained frozen VLM,
+and an action expert trained from scratch.
 ```bash
 python lerobot/scripts/train.py \
 --policy.type=smolvla \
