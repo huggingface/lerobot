@@ -24,7 +24,7 @@ import torch
 
 from lerobot.common.utils.robot_utils import busy_wait
 from lerobot.common.utils.utils import init_logging
-from lerobot.scripts.server.kinematics import RobotKinematics
+from lerobot.common.model.kinematics import RobotKinematics
 
 
 class InputController:

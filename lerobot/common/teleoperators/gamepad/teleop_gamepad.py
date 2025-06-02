@@ -89,9 +89,9 @@ class GamepadTeleop(Teleoperator):
         # use HidApi for macos
         if sys.platform == "darwin":
             # NOTE: On macOS, pygame doesn’t reliably detect input from some controllers so we fall back to hidapi
-            from lerobot.scripts.server.end_effector_control_utils import GamepadControllerHID as Gamepad
+            from lerobot.common.utils.end_effector_control import GamepadControllerHID as Gamepad
         else:
-            from lerobot.scripts.server.end_effector_control_utils import GamepadController as Gamepad
+            from lerobot.common.utils.end_effector_control import GamepadController as Gamepad
 
         self.gamepad = Gamepad(x_step_size=1.0, y_step_size=1.0, z_step_size=1.0)
         self.gamepad.start()
