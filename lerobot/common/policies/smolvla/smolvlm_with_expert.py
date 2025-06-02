@@ -133,9 +133,7 @@ class SmolVLMWithExpertModel(nn.Module):
         self.expert_hidden_size = lm_expert_config.hidden_size
         self.set_requires_grad()
 
-    def get_vlm_model(
-        self,
-    ):
+    def get_vlm_model(self):
         return self.vlm.model
 
     def set_requires_grad(self):

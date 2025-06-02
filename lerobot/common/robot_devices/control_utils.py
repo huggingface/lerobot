@@ -109,8 +109,9 @@ def predict_action(observation, policy, device, use_amp):
     ):
         # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
         for name in observation:
+            # Skip all observations that are not tensors (e.g. text)
             if not isinstance(observation[name], torch.Tensor):
-                continue  # VLA-like and multirobot policies include textual inputs in the observation
+                continue
 
             if "image" in name:
                 observation[name] = observation[name].type(torch.float32) / 255
