@@ -10,7 +10,7 @@ This tutorial will explain how to train a neural network to control a real robot
 By following these steps, you'll be able to replicate tasks, such as picking up a Lego block and placing it in a bin with a high success rate, as shown in the video below.
 
 <details>
-<summary><strong>Video removing gears</strong></summary>
+<summary><strong>Video: pickup lego block task</strong></summary>
 
 <div class="video-container">
   <video controls width="600">
@@ -167,23 +167,6 @@ python -m lerobot.record \
     --dataset.num_episodes=2 \
     --dataset.single_task="Grab the black cube"
 ```
-
-You will see a lot of lines appearing like this one:
-```
-INFO 2024-08-10 15:02:58 ol_robot.py:219 dt:33.34 (30.0hz) dtRlead: 5.06 (197.5hz) dtWfoll: 0.25 (3963.7hz) dtRfoll: 6.22 (160.7hz) dtRlaptop: 32.57 (30.7hz) dtRphone: 33.84 (29.5hz)
-```
-
-| Field | Meaning |
-|:---|:---|
-| `2024-08-10 15:02:58` | Timestamp when `print` was called. |
-| `ol_robot.py:219` | Source file and line number of the `print` call (`lerobot/scripts/control_robot.py` at line `219`). |
-| `dt: 33.34 (30.0 Hz)` | Delta time (ms) between teleop steps (target: 30.0 Hz, `--fps 30`). Yellow if step is too slow. |
-| `dtRlead: 5.06 (197.5 Hz)` | Delta time (ms) for reading present position from the **leader arm**. |
-| `dtWfoll: 0.25 (3963.7 Hz)` | Delta time (ms) for writing goal position to the **follower arm** (asynchronous). |
-| `dtRfoll: 6.22 (160.7 Hz)` | Delta time (ms) for reading present position from the **follower arm**. |
-| `dtRlaptop: 32.57 (30.7 Hz)` | Delta time (ms) for capturing an image from the **laptop camera** (async thread). |
-| `dtRphone: 33.84 (29.5 Hz)` | Delta time (ms) for capturing an image from the **phone camera** (async thread). |
-
 
 #### Dataset upload
 Locally, your dataset is stored in this folder: `~/.cache/huggingface/lerobot/{repo-id}`. At the end of data recording, your dataset will be uploaded on your Hugging Face page (e.g. https://huggingface.co/datasets/cadene/so101_test) that you can obtain by running:
