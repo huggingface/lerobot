@@ -1,0 +1,512 @@
+# HilSerl Real Robot Training Workflow Guide
+
+Human-in-the-Loop Sample-Efficient Reinforcement Learning (HIL-SERL) with LeRobot workflow for taking a policy from “zero” to real-world robot mastery in just a couple of hours.
+It combines three ingredients:
+	1.	**Offline demonstrations & reward classifier:** a handful of human-teleop episodes plus a vision-based success detector give the policy a shaped starting point.
+	2.	**On-robot actor / learner loop with human interventions:** a distributed SAC/RLPD learner updates the policy while an actor explores on the physical robot; the human can jump in at any time to correct dangerous or unproductive behaviour.
+	3.	**Safety & efficiency tools:** joint/EE bounds, impedance control, crop-ROI preprocessing and WandB monitoring keep the data useful and the hardware safe.
+
+Together these elements let HIL-SERL reach near-perfect task success and faster cycle times than imitation-only baselines.
+
+<p align="center">
+  <img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/hilserl-main-figure.png" alt="HIL-SERL workflow" title="HIL-SERL workflow" width="100%"></img>
+</p>
+
+<p align="center"><i>HIL-SERL workflow, Luo et al. 2024</i></p>
+
+This guide provides step-by-step instructions for training a robot policy using LeRobot's HilSerl implementation to train on a real robot.
+
+
+# 1. Real Robot Training Workflow
+
+## 1.1 Understanding Configuration
+
+The training process begins with proper configuration for the HILSerl environment. The configuration class of interest is `HILSerlRobotEnvConfig` in `lerobot/common/envs/configs.py`. Which is defined as:
+
+```python
+class HILSerlRobotEnvConfig(EnvConfig):
+    robot: Optional[RobotConfig] = None    # Main robot agent (defined in `lerobot/common/robots`)
+    teleop: Optional[TeleoperatorConfig] = None    # Teleoperator agent, e.g., gamepad or leader arm, (defined in `lerobot/common/teleoperators`)
+    wrapper: Optional[EnvTransformConfig] = None    # Environment wrapper settings; check `lerobot/scripts/server/gym_manipulator.py`
+    fps: int = 10    # Control frequency
+    name: str = "real_robot"    # Environment name
+    mode: str = None    # "record", "replay", or None (for training)
+    repo_id: Optional[str] = None    # LeRobot dataset repository ID
+    dataset_root: Optional[str] = None    # Local dataset root (optional)
+    task: str = ""    # Task identifier
+    num_episodes: int = 10    # Number of episodes for recording
+    episode: int = 0    # episode index for replay
+    device: str = "cuda"    # Compute device
+    push_to_hub: bool = True    # Whether to push the recorded datasets to Hub
+    pretrained_policy_name_or_path: Optional[str] = None    # For policy loading
+    reward_classifier_pretrained_path: Optional[str] = None    # For reward model
+```
+
+
+## 1.2 Finding Robot Workspace Bounds
+
+Before collecting demonstrations, you need to determine the appropriate operational bounds for your robot.
+
+This helps simplifying the problem of learning on the real robot by limiting the robot's operational space to a specific region that solves the task and avoids unnecessary or unsafe exploration.
+
+### 1.2.1 Using find_joint_limits.py
+
+This script helps you find the safe operational bounds for your robot's end-effector. Given that you have a follower and leader arm, you can use the script to find the bounds for the follower arm that will be applied during training.
+Bounding the action space will reduce the redundant exploration of the agent and guarantees safety.
+
+```bash
+python -m lerobot.scripts.find_joint_limits \
+    --robot.type=so100_follower \
+    --robot.port=/dev/tty.usbmodem58760431541 \
+    --robot.id=black \
+    --teleop.type=so100_leader \
+    --teleop.port=/dev/tty.usbmodem58760431551 \
+    --teleop.id=blue
+```
+
+### 1.2.2 Workflow
+
+1. Run the script and move the robot through the space that solves the task
+2. The script will record the minimum and maximum end-effector positions and the joint angles and prints them to the console, for example:
+   ```
+   Max ee position [0.24170487 0.201285   0.10273342]
+   Min ee position [0.16631757 -0.08237468  0.03364977]
+   Max joint positions [-20.0, -20.0, -20.0, -20.0, -20.0, -20.0]
+   Min joint positions [50.0, 50.0, 50.0, 50.0, 50.0, 50.0]
+   ```
+3. Use these values in the configuration of you teleoperation device (TeleoperatorConfig) under the `end_effector_bounds` field
+
+### 1.2.3 Example Configuration
+
+```json
+"end_effector_bounds": {
+    "max": [0.24, 0.20, 0.10],
+    "min": [0.16, -0.08, 0.03]
+}
+```
+
+## 1.3 Collecting Demonstrations
+
+With the bounds defined, you can safely collect demonstrations for training. Training RL with off-policy algorithm allows us to use offline datasets collected in order to improve the efficiency of the learning process.
+
+### 1.3.1 Setting Up Record Mode
+
+Create a configuration file for recording demonstrations (or edit an existing one like `env_config_so100.json`):
+
+1. Set `mode` to `"record"` 
+2. Specify a unique `repo_id` for your dataset (e.g., "username/task_name")
+3. Set `num_episodes` to the number of demonstrations you want to collect
+4. Set `crop_params_dict` to `null` initially (we'll determine crops later)
+5. Configure `robot`, `cameras`, and other hardware settings
+
+Example configuration section:
+```json
+"mode": "record",
+"repo_id": "username/pick_lift_cube",
+"dataset_root": null,
+"task": "pick_and_lift",
+"num_episodes": 15,
+"episode": 0,
+"push_to_hub": true
+```
+
+### 1.3.2 Gamepad Controls
+
+<p align="center">
+  <img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/gamepad_guide.jpg?raw=true" alt="Figure shows the control mappings on a Logitech gamepad." title="Gamepad Control Mapping" width="100%"></img>
+</p>
+<p align="center"><i>Gamepad button mapping for robot control and episode management</i></p>
+
+
+### 1.3.3 Recording Demonstrations
+
+Start the recording process:
+
+```bash
+python lerobot/scripts/rl/gym_manipulator.py --config_path lerobot/configs/env_config_so100.json
+```
+
+During recording:
+1. The robot will reset to the initial position defined in the configuration file `fixed_reset_position`
+2. Use the gamepad to control the robot by setting `"control_mode"="gamepad"` in the configuration file
+3. Complete the task successfully
+4. The episode ends with a reward of 1 when you press the "success" button
+5. If the time limit is reached, or the fail button is pressed, the episode ends with a reward of 0
+6. You can rerecord an episode by pressing the "rerecord" button
+7. The process automatically continues to the next episode
+8. After recording all episodes, the dataset is pushed to the Hugging Face Hub (optional) and saved locally
+
+
+
+## 1.4 Processing the Dataset
+
+After collecting demonstrations, process them to determine optimal camera crops.
+Reinforcement learning is sensitive to background distractions, so it is important to crop the images to the relevant workspace area.
+Note: If you already know the crop parameters, you can skip this step and just set the `crop_params_dict` in the configuration file during recording.
+
+### 1.4.1 Determining Crop Parameters
+
+Use the `crop_dataset_roi.py` script to interactively select regions of interest in your camera images:
+
+```bash
+python lerobot/scripts/rl/crop_dataset_roi.py --repo-id username/pick_lift_cube
+```
+
+1. For each camera view, the script will display the first frame
+2. Draw a rectangle around the relevant workspace area
+3. Press 'c' to confirm the selection
+4. Repeat for all camera views
+5. The script outputs cropping parameters and creates a new cropped dataset
+
+Example output:
+```
+Selected Rectangular Regions of Interest (top, left, height, width):
+observation.images.side: [180, 207, 180, 200]
+observation.images.front: [180, 250, 120, 150]
+```
+
+<p align="center">
+<img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/crop_dataset.gif" width="600"/>
+</p>
+
+<p align="center"><i>Interactive cropping tool for selecting regions of interest</i></p>
+
+
+### 1.4.2 Updating Configuration
+
+Add these crop parameters to your training configuration:
+
+```json
+"crop_params_dict": {
+    "observation.images.side": [180, 207, 180, 200],
+    "observation.images.front": [180, 250, 120, 150]
+},
+"resize_size": [128, 128]
+```
+
+## 1.5 Training with Actor-Learner
+
+The LeRobot system uses a distributed actor-learner architecture for training. You will need to start two processes: a learner and an actor.
+
+### 1.5.1 Configuration Setup
+
+Create a training configuration file (See example `train_config_hilserl_so100.json`). The training config is based on the main `TrainPipelineConfig` class in `lerobot/configs/train.py`.
+
+1. Set `mode` to `null` (for training mode)
+2. Configure the policy settings (`type`, `device`, etc.)
+3. Set `dataset` to your cropped dataset
+4. Configure environment settings with crop parameters
+5. Check the other parameters related to SAC.
+6. Verify that the `policy` config is correct with the right `input_features` and `output_features` for your task.
+
+### 1.5.2 Starting the Learner
+
+First, start the learner server process:
+
+```bash
+python lerobot/scripts/rl/learner.py --config_path lerobot/configs/train_config_hilserl_so100.json
+```
+
+The learner:
+- Initializes the policy network
+- Prepares replay buffers
+- Opens a gRPC server to communicate with actors
+- Processes transitions and updates the policy
+
+### 1.5.3 Starting the Actor
+
+In a separate terminal, start the actor process with the same configuration:
+
+```bash
+python lerobot/scripts/rl/actor.py --config_path lerobot/configs/train_config_hilserl_so100.json
+```
+
+The actor:
+- Connects to the learner via gRPC
+- Initializes the environment
+- Execute rollouts of the policy to collect experience
+- Sends transitions to the learner
+- Receives updated policy parameters
+
+### 1.5.4 Training Flow
+
+The training proceeds automatically:
+
+1. The actor executes the policy in the environment
+2. Transitions are collected and sent to the learner
+3. The learner updates the policy based on these transitions
+4. Updated policy parameters are sent back to the actor
+5. The process continues until the specified step limit is reached
+
+### 1.5.5 Human in the Loop
+
+- The key to learning efficiently is to have a human interventions to provide corrective feedback and completing the task to aide the policy learning and exploration.
+- To perform human interventions, you can press the upper right trigger button on the gamepad. This will pause the policy actions and allow you to take over. 
+- A successful experiment is one where the human has to intervene at the start but then reduces the amount of interventions as the policy improves. You can monitor the intervention rate in the `wandb` dashboard.
+
+<p align="center">
+  <img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/hil_effect.png?raw=true" alt="Figure shows the control mappings on a Logitech gamepad." title="Gamepad Control Mapping" width="100%"></img>
+</p>
+
+<p align="center"><i>Example showing how human interventions help guide policy learning over time</i></p>
+
+- The figure shows the plot of the episodic reward over interaction step. The figure shows the effect of human interventions on the policy learning.
+- The orange curve is an experiment without any human interventions. While the pink and blue curves are experiments with human interventions.
+- We can observe that the number of steps where the policy starts acheiving the maximum reward is cut by a quarter when human interventions are present.
+
+#### Guide to Human Interventions
+The strategy to follow is to intervene heavily at the start of training and then reduce the amount of interventions as the training progresses. Some tips and hints:
+- Interevene for almost the length of the entire episode at the first few episodes.
+- When the policy is less chaotic, gradually reduce the intervention time during one episode and let the policy explore for a longer time.
+- Once the policy start guiding the robot towards acheiving the task, even if its not perfect, you can limit your interventions to simple quick actions like a grasping command, or grasp and lift command. 
+
+## 1.6 Monitoring and Debugging
+
+If you have `wandb.enable` set to `true` in your configuration, you can monitor training progress in real-time through the [Weights & Biases](https://wandb.ai/site/) dashboard. 
+
+# 2. Training a Reward Classifier with LeRobot
+
+This guide explains how to train a reward classifier for human-in-the-loop reinforcement learning implementation of  LeRobot. Reward classifiers learn to predict the reward value given a state which can be used in an RL setup to train a policy.
+
+
+The reward classifier implementation in `modeling_classifier.py` uses a pretrained vision model to process the images. It can output either a single value for binary rewards to predict success/fail cases or multiple values for multi-class settings.
+
+## 2.1 Collecting a Dataset
+Before training, you need to collect a dataset with labeled examples. The `record_dataset` function in `gym_manipulator.py` enables the process of collecting a dataset of observations, actions, and rewards.
+
+To collect a dataset, you need to modeify some parameters in the environment configuration based on HILSerlRobotEnvConfig.
+
+```bash
+python lerobot/scripts/rl/gym_manipulator.py --config_path lerobot/configs/reward_classifier_train_config.json
+```
+
+### 2.1.1 Key Parameters for Data Collection:
+
+- **mode**: set it to "record" to collect a dataset
+- **repo_id**: "hf_username/dataset_name", name of the dataset and repo on the hub
+- **num_episodes**: Number of episodes to record
+- **number_of_steps_after_success**: Number of additional frames to record after a success (reward=1) is detected
+- **fps**: Number of frames per second to record
+- **push_to_hub**: Whether to push the dataset to the hub
+
+The `number_of_steps_after_success` parameter is crucial as it allows you to collect more positive examples. When a success is detected, the system will continue recording for the specified number of steps while maintaining the reward=1 label. Otherwise, there won't be enough states in the dataset labeled to 1 to train a good classifier.
+
+Example configuration section for data collection:
+
+```json
+{
+    "mode": "record",
+    "repo_id": "hf_username/dataset_name",
+    "dataset_root": "data/your_dataset",
+    "num_episodes": 20,
+    "push_to_hub": true,
+    "fps": 10,
+    "number_of_steps_after_success": 15
+}
+```
+
+## 2.2 Reward Classifier Configuration
+
+The reward classifier is configured using `configuration_classifier.py`. Here are the key parameters:
+
+- **model_name**: Base model architecture (e.g., we mainly use "helper2424/resnet10")
+- **model_type**: "cnn" or "transformer"
+- **num_cameras**: Number of camera inputs
+- **num_classes**: Number of output classes (typically 2 for binary success/failure)
+- **hidden_dim**: Size of hidden representation
+- **dropout_rate**: Regularization parameter
+- **learning_rate**: Learning rate for optimizer
+
+Example configuration from `reward_classifier_train_config.json`:
+
+```json
+{
+  "policy": {
+    "type": "reward_classifier",
+    "model_name": "helper2424/resnet10",
+    "model_type": "cnn",
+    "num_cameras": 2,
+    "num_classes": 2,
+    "hidden_dim": 256,
+    "dropout_rate": 0.1,
+    "learning_rate": 1e-4,
+    "device": "cuda",
+    "use_amp": true,
+    "input_features": {
+      "observation.images.front": {
+        "type": "VISUAL",
+        "shape": [3, 128, 128]
+      },
+      "observation.images.side": {
+        "type": "VISUAL",
+        "shape": [3, 128, 128]
+      }
+    }
+  }
+}
+```
+
+## 2.3 Training the Classifier
+
+To train the classifier, use the `train.py` script with your configuration:
+
+```bash
+python lerobot/scripts/train.py --config_path lerobot/configs/reward_classifier_train_config.json
+```
+
+## 2.4 Deploying and Testing the Model
+
+To use your trained reward classifier, configure the `HILSerlRobotEnvConfig` to use your model:
+
+```python
+env_config = HILSerlRobotEnvConfig(
+    reward_classifier_pretrained_path="path_to_your_pretrained_trained_model",
+    # Other environment parameters
+)
+```
+or set the argument in the json config file.
+
+```json
+{
+    "reward_classifier_pretrained_path": "path_to_your_pretrained_model"
+}
+```
+
+Run gym_manipulator.py to test the model.
+```bash
+python lerobot/scripts/rl/gym_manipulator.py --config_path lerobot/configs/env_config.json
+```
+
+The reward classifier will automatically provide rewards based on the visual input from the robot's cameras.
+
+## 2.5 Example Workflow
+
+1. **Create the configuration files**:
+   Create the necessary json configuration files for the reward classifier and the environment. Check the `json_examples` directory for examples.
+
+2. **Collect a dataset**:
+   ```bash
+   python lerobot/scripts/rl/gym_manipulator.py --config_path lerobot/configs/env_config.json
+   ```
+
+3. **Train the classifier**:
+   ```bash
+   python lerobot/scripts/train.py --config_path lerobot/configs/reward_classifier_train_config.json
+   ```
+
+4. **Test the classifier**:
+   ```bash
+   python lerobot/scripts/rl/gym_manipulator.py --config_path lerobot/configs/env_config.json
+   ```
+# 3. Using gym_hil Simulation Environments with LeRobot
+
+This guide explains how to use the `gym_hil` simulation environments as an alternative to real robots when working with the LeRobot framework for Human-In-the-Loop (HIL) reinforcement learning.
+
+`gym_hil` is a package that provides Gymnasium-compatible simulation environments specifically designed for Human-In-the-Loop reinforcement learning. These environments allow you to:
+
+- Train policies in simulation to test the RL stack before training on real robots
+
+- Collect demonstrations in sim using external devices like gamepads or keyboards
+- Perform human interventions during policy learning
+
+Currently, the main environment is a Franka Panda robot simulation based on MuJoCo, with tasks like picking up a cube.
+
+## 3.1 Installation
+
+First, install the `gym_hil` package within the LeRobot environment:
+
+```bash
+pip install gym_hil
+
+# Or in LeRobot
+cd lerobot
+pip install -e .[hilserl]
+```
+
+## 3.2 Configuration
+
+To use `gym_hil` with LeRobot, you need to create a configuration file. An example is provided in `gym_hil_env.json`. Key configuration sections include:
+
+### 3.2.1 Environment Type and Task
+
+```json
+{
+    "type": "hil",
+    "name": "franka_sim",
+    "task": "PandaPickCubeGamepad-v0",
+    "device": "cuda"
+}
+```
+
+Available tasks:
+- `PandaPickCubeBase-v0`: Basic environment
+- `PandaPickCubeGamepad-v0`: With gamepad control
+- `PandaPickCubeKeyboard-v0`: With keyboard control
+
+### 3.2.2 Gym Wrappers Configuration
+
+```json
+"wrapper": {
+    "gripper_penalty": -0.02,
+    "control_time_s": 15.0,
+    "use_gripper": true,
+    "fixed_reset_joint_positions": [0.0, 0.195, 0.0, -2.43, 0.0, 2.62, 0.785],
+    "end_effector_step_sizes": {
+        "x": 0.025,
+        "y": 0.025,
+        "z": 0.025
+    },
+    "control_mode": "gamepad"
+    }
+```
+
+Important parameters:
+- `gripper_penalty`: Penalty for excessive gripper movement
+- `use_gripper`: Whether to enable gripper control
+- `end_effector_step_sizes`: Size of the steps in the x,y,z axes of the end-effector
+- `control_mode`: Set to "gamepad" to use a gamepad controller
+
+## 3.3 Running with HIL RL of LeRobot
+
+### 3.3.1 Basic Usage
+
+To run the environment, set mode to null:
+
+```python
+python lerobot/scripts/rl/gym_manipulator.py --config_path path/to/gym_hil_env.json
+```
+
+### 3.3.2 Recording a Dataset
+
+To collect a dataset, set the mode to `record` whilst defining the repo_id and number of episodes to record:
+
+```python
+python lerobot/scripts/rl/gym_manipulator.py --config_path path/to/gym_hil_env.json
+```
+
+### 3.3.3 Training a Policy
+
+To train a policy, checkout the example json in `train_gym_hil_env.json` and run the actor and learner servers:
+
+```python
+python lerobot/scripts/rl/actor.py --config_path path/to/train_gym_hil_env.json
+```
+
+In a different terminal, run the learner server:
+
+```python 
+python lerobot/scripts/rl/learner.py --config_path path/to/train_gym_hil_env.json
+```
+
+The simulation environment provides a safe and repeatable way to develop and test your Human-In-the-Loop reinforcement learning components before deploying to real robots. 
+
+Paper citation:
+
+```
+@article{luo2024precise,
+  title={Precise and Dexterous Robotic Manipulation via Human-in-the-Loop Reinforcement Learning},
+  author={Luo, Jianlan and Xu, Charles and Wu, Jeffrey and Levine, Sergey},
+  journal={arXiv preprint arXiv:2410.21845},
+  year={2024}
+}
+```
