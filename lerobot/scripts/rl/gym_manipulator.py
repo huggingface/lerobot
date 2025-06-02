@@ -2225,7 +2225,7 @@ def main(cfg: EnvConfig):
     while num_episode < 10:
         start_loop_s = time.perf_counter()
         # Sample a new random action from the robot's action space.
-        new_random_action = env.action_space.sample()
+        new_random_action = env.action_space.sample() * 0
         # Update the smoothed action using an exponential moving average.
         smoothed_action = alpha * new_random_action + (1 - alpha) * smoothed_action
 
