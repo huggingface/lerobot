@@ -25,7 +25,7 @@ if _version_not_supported:
     )
 
 
-class LearnerServiceStub(object):
+class LearnerServiceStub:
     """LearnerService: the Actor calls this to push transitions.
     The Learner implements this service.
     """
@@ -63,7 +63,7 @@ class LearnerServiceStub(object):
                 _registered_method=True)
 
 
-class LearnerServiceServicer(object):
+class LearnerServiceServicer:
     """LearnerService: the Actor calls this to push transitions.
     The Learner implements this service.
     """
@@ -135,7 +135,7 @@ def add_LearnerServiceServicer_to_server(servicer, server):
 
 
  # This class is part of an EXPERIMENTAL API.
-class LearnerService(object):
+class LearnerService:
     """LearnerService: the Actor calls this to push transitions.
     The Learner implements this service.
     """

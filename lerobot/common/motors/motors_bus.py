@@ -795,7 +795,6 @@ class MotorsBus(abc.ABC):
                 norm = ((bounded_val - min_) / (max_ - min_)) * 100
                 normalized_values[id_] = 100 - norm if drive_mode else norm
             elif self.motors[motor].norm_mode is MotorNormMode.DEGREE:
-                homing_offset = self.calibration[motor].homing_offset
                 resolution = self.model_resolution_table[self.motors[motor].model]
                 if drive_mode:
                     val *= -1
@@ -830,16 +829,14 @@ class MotorsBus(abc.ABC):
                 bounded_val = min(100.0, max(0.0, val))
                 unnormalized_values[id_] = int((bounded_val / 100) * (max_ - min_) + min_)
             elif self.motors[motor].norm_mode is MotorNormMode.DEGREE:
-                homing_offset = self.calibration[motor].homing_offset
                 resolution = self.model_resolution_table[self.motors[motor].model]
-                # middle_pos = homing_offset + resolution // 2
                 middle_pos = int((max_ + min_) / 2)
                 unnormalized_values[id_] = int((val / 180) * resolution // 2) + middle_pos
                 if drive_mode:
                     unnormalized_values[id_] *= -1
 
-                if unnormalized_values[id_] < 0:
-                    breakpoint()
+                # if unnormalized_values[id_] < 0:
+                #     breakpoint()
             else:
                 # TODO(aliberts): degree mode
                 raise NotImplementedError
