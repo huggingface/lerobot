@@ -337,7 +337,7 @@ class LeKiwiClient(Robot):
 
         # TODO(Steven): Remove the np conversion when it is possible to record a non-numpy array value
         actions = np.array([goal_pos.get(k, 0.0) for k in self._state_order], dtype=np.float32)
-        return {"action.state": actions}
+        return {"action": actions}
 
     def disconnect(self):
         """Cleans ZMQ comms"""

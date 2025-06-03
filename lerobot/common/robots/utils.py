@@ -34,9 +34,9 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
 
         return SO101Follower(config)
     elif config.type == "lekiwi":
-        from .lekiwi import LeKiwiClient
+        from .lekiwi import LeKiwi
 
-        return LeKiwiClient(config)
+        return LeKiwi(config)
     elif config.type == "stretch3":
         from .stretch3 import Stretch3Robot
 
