@@ -272,6 +272,7 @@ def control_loop(
                 action = {"action": action}
 
         if dataset is not None:
+            observation = {k: v for k, v in observation.items() if k not in ["task", "robot_type"]}
             frame = {**observation, **action, "task": single_task}
             dataset.add_frame(frame)
 
