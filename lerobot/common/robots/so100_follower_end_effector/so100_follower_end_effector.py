@@ -131,7 +131,7 @@ class SO100FollowerEndEffector(SO100Follower):
         if self.current_joint_pos is None:
             # Read current joint positions
             current_joint_pos = self.bus.sync_read("Present_Position")
-            self.current_joint_pos = np.array([current_joint_pos[name] for name in self.bus.motors.keys()])
+            self.current_joint_pos = np.array([current_joint_pos[name] for name in self.bus.motors])
 
         # Calculate current end-effector position using forward kinematics
         if self.current_ee_pos is None:

@@ -137,6 +137,9 @@ exclude = [
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "I", "N", "B", "C4", "SIM"]
 
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401", "F403"]
+
 [tool.bandit]
 exclude_dirs = [
     "tests",
