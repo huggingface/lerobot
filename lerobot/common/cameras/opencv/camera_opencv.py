@@ -124,10 +124,9 @@ class OpenCVCamera(Camera):
         self.backend: int = get_cv2_backend()
 
         if self.height and self.width:
+            self.capture_width, self.capture_height = self.width, self.height
             if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
                 self.capture_width, self.capture_height = self.height, self.width
-            else:
-                self.capture_width, self.capture_height = self.width, self.height
 
     def __str__(self) -> str:
         return f"{self.__class__.__name__}({self.index_or_path})"
@@ -206,11 +205,10 @@ class OpenCVCamera(Camera):
         default_height = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_HEIGHT)))
 
         if self.width is None or self.height is None:
+            self.width, self.height = default_width, default_height
+            self.capture_width, self.capture_height = default_width, default_height
             if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
                 self.width, self.height = default_height, default_width
-                self.capture_width, self.capture_height = default_width, default_height
-            else:
-                self.width, self.height = default_width, default_height
                 self.capture_width, self.capture_height = default_width, default_height
         else:
             self._validate_width_and_height()
