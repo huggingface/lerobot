@@ -243,10 +243,6 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             cfg.dataset.repo_id,
             root=cfg.dataset.root,
         )
-        # for key, ft in dataset_features.items():
-        #     for property in ["dtype", "shape", "names"]:
-        #         if ft[property] != dataset.features[key][property]:
-        #             raise ValueError(ft)
 
         if hasattr(robot, "cameras") and len(robot.cameras) > 0:
             dataset.start_image_writer(
@@ -276,22 +272,6 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         teleop.connect()
 
     listener, events = init_keyboard_listener()
-
-    # Execute a few seconds without recording to:
-    # 1. teleoperate the robot to move it in starting position if no policy provided,
-    # 2. give times to the robot devices to connect and start synchronizing,
-    # 3. place the cameras windows on screen
-    # enable_teleoperation = policy is None
-    # log_say("Warmup record", cfg.play_sounds)
-    # record_loop(
-    #     robot=robot,
-    #     control_time_s=cfg.warmup_time_s,
-    #     display_data=cfg.display_data,
-    #     events=events,
-    #     fps=cfg.dataset.fps,
-    #     teleoperate=enable_teleoperation,
-    # )
-    # warmup_record(robot, events, enable_teleoperation, cfg.warmup_time_s, cfg.display_data, cfg.dataset.fps)
 
     for recorded_episodes in range(cfg.dataset.num_episodes):
         log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)

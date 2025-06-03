@@ -38,6 +38,7 @@ from lerobot.common.datasets.utils import (
     DEFAULT_IMAGE_PATH,
     INFO_PATH,
     TASKS_PATH,
+    _validate_feature_names,
     append_jsonlines,
     backward_compatible_episodes_stats,
     check_delta_timestamps,
@@ -314,23 +315,9 @@ class LeRobotDatasetMetadata:
 
         obj.root.mkdir(parents=True, exist_ok=False)
 
-        # if robot is not None:
-        #     features = get_features_from_robot(robot, use_videos)
-        #     robot_type = robot.robot_type
-        #     if not all(cam.fps == fps for cam in robot.cameras.values()):
-        #         logging.warning(
-        #             f"Some cameras in your {robot.robot_type} robot don't have an fps matching the fps of your dataset."
-        #             "In this case, frames from lower fps cameras will be repeated to fill in the blanks."
-        #         )
-
         # TODO(aliberts, rcadene): implement sanity check for features
         features = {**features, **DEFAULT_FEATURES}
-
-        # check if none of the features contains a "/" in their names,
-        # as this would break the dict flattening in the stats computation, which uses '/' as separator
-        for key in features:
-            if "/" in key:
-                raise ValueError(f"Feature names should not contain '/'. Found '/' in feature '{key}'.")
+        _validate_feature_names(features)
 
         obj.tasks, obj.task_to_task_index = {}, {}
         obj.episodes_stats, obj.stats, obj.episodes = {}, {}, {}
