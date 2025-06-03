@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# TODO(aliberts, Steven, Pepijn): use gRPC calls instead of zmq?
+
 import base64
 import json
 import logging
