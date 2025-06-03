@@ -98,7 +98,12 @@ def is_headless():
 
 
 def predict_action(
-    observation: dict[str, np.ndarray], policy: PreTrainedPolicy, device: torch.device, use_amp: bool
+    observation: dict[str, np.ndarray],
+    policy: PreTrainedPolicy,
+    device: torch.device,
+    use_amp: bool,
+    task: str | None = None,
+    robot_type: str | None = None,
 ):
     observation = copy(observation)
     with (
@@ -113,6 +118,9 @@ def predict_action(
                 observation[name] = observation[name].permute(2, 0, 1).contiguous()
             observation[name] = observation[name].unsqueeze(0)
             observation[name] = observation[name].to(device)
+
+        observation["task"] = task if task else ""
+        observation["robot_type"] = robot_type if robot_type else ""
 
         # Compute the next action with the policy
         # based on the current observation

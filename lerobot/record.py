@@ -186,7 +186,12 @@ def record_loop(
 
         if policy is not None:
             action_values = predict_action(
-                observation_frame, policy, get_safe_torch_device(policy.config.device), policy.config.use_amp
+                observation_frame,
+                policy,
+                get_safe_torch_device(policy.config.device),
+                policy.config.use_amp,
+                task=single_task,
+                robot_type=robot.robot_type,
             )
             action = {key: action_values[i] for i, key in enumerate(robot.action_features)}
         else:
