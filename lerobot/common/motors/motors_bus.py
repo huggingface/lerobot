@@ -241,11 +241,11 @@ class MotorsBus(abc.ABC):
     )
     bus.connect()
 
-    position = bus.read("Present_Position", normalize=False)
+    position = bus.read("Present_Position", "my_motor", normalize=False)
 
     # Move from a few motor steps as an example
     few_steps = 30
-    bus.write("Goal_Position", position + few_steps, normalize=False)
+    bus.write("Goal_Position", "my_motor", position + few_steps, normalize=False)
 
     # When done, properly disconnect the port using
     bus.disconnect()
