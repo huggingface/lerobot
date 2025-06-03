@@ -17,7 +17,7 @@
 """
 SmolVLA:
 
-[Paper]()
+[Paper](https://huggingface.co/papers/2506.01844)
 
 Designed by Hugging Face.
 
@@ -656,7 +656,7 @@ class VLAFlowMatching(nn.Module):
         dtype = action_emb.dtype
         # Embed timestep using sine-cosine positional encoding with sensitivity in the range [0, 1]
         time_emb = create_sinusoidal_pos_embedding(
-            timestep, self.vlm_with_expert.expert_hidden_size, min_period=4e-3, max_period=4.0, device=device
+            timestep, self.vlm_with_expert.expert_hidden_size, self.config.min_period, self.config.max_period, device=device
         )
         time_emb = time_emb.type(dtype=dtype)
 

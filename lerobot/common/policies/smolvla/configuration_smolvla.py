@@ -98,6 +98,9 @@ class SmolVLAConfig(PreTrainedConfig):
     self_attn_every_n_layers: int = 2  # Interleave SA layers each self_attn_every_n_layers
     expert_width_multiplier: float = 0.75  # The action expert hidden size (wrt to the VLM)
 
+    min_period: float = 4e-3   # sensitivity range for the timestep used in sine-cosine positional encoding
+    max_period: float = 4.0  
+   
     def __post_init__(self):
         super().__post_init__()
 
