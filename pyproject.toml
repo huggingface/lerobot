@@ -63,13 +63,13 @@ dependencies = [
     "opencv-python-headless>=4.9.0",
     "packaging>=24.2",
     "av>=14.2.0",
-    "pymunk>=6.6.0",
+    "pymunk>=6.6.0,<7.0.0",
     "pynput>=1.7.7",
     "pyzmq>=26.2.1",
     "rerun-sdk>=0.21.0",
     "termcolor>=2.4.0",
-    "torch>=2.2.1,<2.7",
-    "torchcodec==0.2.1; sys_platform != 'win32' and (sys_platform != 'linux' or (platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l')) and (sys_platform != 'darwin' or platform_machine != 'x86_64')",
+    "torch>=2.2.1",
+    "torchcodec>=0.2.1; sys_platform != 'win32' and (sys_platform != 'linux' or (platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l')) and (sys_platform != 'darwin' or platform_machine != 'x86_64')",
     "torchvision>=0.21.0",
     "wandb>=0.16.3",
     "zarr>=2.17.0",
@@ -86,6 +86,7 @@ dynamixel = ["dynamixel-sdk>=3.7.31", "pynput>=1.7.7"]
 feetech = ["feetech-servo-sdk>=1.0.0", "pynput>=1.7.7"]
 intelrealsense = ["pyrealsense2>=2.55.1.6486 ; sys_platform != 'darwin'"]
 pi0 = ["transformers>=4.48.0"]
+smolvla = ["transformers>=4.50.3", "num2words>=0.5.14", "accelerate>=1.7.0"]
 pusht = ["gym-pusht>=0.1.5 ; python_version < '4.0'"]
 stretch = [
     "hello-robot-stretch-body>=0.7.27 ; python_version < '4.0' and sys_platform == 'linux'",
