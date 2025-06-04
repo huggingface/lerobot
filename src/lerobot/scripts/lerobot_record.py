@@ -333,12 +333,13 @@ def record_loop(
         postprocessor.reset()
 
     # Create a buffer for audio observations (shifting window of fixed size over audio samples)
-    audio_buffer = {
-        microphone_name: np.zeros(
-            (int(microphone.sample_rate * DEFAULT_AUDIO_CHUNK_DURATION), len(microphone.channels))
-        )
-        for microphone_name, microphone in robot.microphones.items()
-    }
+    if robot.microphones and (policy is not None or dataset is not None):
+        audio_buffer = {
+            microphone_name: np.zeros(
+                (int(microphone.sample_rate * DEFAULT_AUDIO_CHUNK_DURATION), len(microphone.channels))
+            )
+            for microphone_name, microphone in robot.microphones.items()
+        }
 
     if (
         dataset is not None and robot.name != "lekiwi"
@@ -349,8 +350,20 @@ def record_loop(
         async_microphones_start_recording(robot.microphones)
 
     # Fill audio buffers if needed
-    if robot.microphones:
+    if robot.microphones and (policy is not None or dataset is not None):
+        # This initial wait might be longer than the audio chunk duration to (1) ensure that the audio buffers are filled with enough data and (2) add additional initial samples to the dataset in case of variable audio chubk duration during training.
         busy_wait(DEFAULT_INITIAL_AUDIO_BUFFER_DURATION)
+
+        for microphone_name, microphone in robot.microphones.items():
+            audio_chunk = microphone.read()
+
+            buffer_size = audio_buffer[microphone_name].shape[0]
+            # Remove as many old audio samples as needed
+            audio_buffer[microphone_name] = audio_buffer[microphone_name][len(audio_chunk) :]
+            # Add new audio samples, only the newest if the buffer is already full
+            audio_buffer[microphone_name] = np.vstack(
+                (audio_buffer[microphone_name], audio_chunk[-buffer_size:])
+            )
 
     timestamp = 0
     start_episode_t = time.perf_counter()
