@@ -281,7 +281,7 @@ class MockInstructionPacket(MockDynamixelPacketv2):
     @classmethod
     def sync_write(
         cls,
-        ids_values: dict[int,int],
+        ids_values: dict[int, int],
         start_address: int,
         data_length: int,
     ) -> bytes:
