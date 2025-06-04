@@ -170,9 +170,14 @@ telep_keyboard.connect()
 
 while True:
     observation = robot.get_observation()
-    action_arm = teleop_arm.get_action()
-    action_base = telep_keyboard.get_action()
-    robot.send_action(action_arm | action_base)
+
+    arm_action = teleop_arm.get_action()
+    arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
+
+    keyboard_keys = telep_keyboard.get_action()
+    base_action = robot._from_keyboard_to_base_action(keyboard_keys)
+
+    robot.send_action(arm_action | base_action)
 ```
 
 You should see on your laptop something like this: ```[INFO] Connected to remote robot at tcp://172.17.133.91:5555 and video stream at tcp://172.17.133.91:5556.``` Now you can move the leader arm and use the keyboard (w,a,s,d) to drive forward, left, backwards, right. And use (z,x) to turn left or turn right. You can use (r,f) to increase and decrease the speed of the mobile robot. There are three speed modes, see the table below:
@@ -219,7 +224,7 @@ echo $HF_USER
 ```
 
 Now you can record a dataset. To record episodes and upload your dataset to the hub, execute this API example tailored for LeKiwi. Make sure to first adapt the `remote_ip`, `repo_id`, `port` and `task` in the script. If you would like to run the script for longer you can increase `NB_CYCLES_CLIENT_CONNECTION`.
-```bash
+```python
 import time
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
@@ -262,7 +267,12 @@ print("Starting LeKiwi teleoperation")
 i = 0
 while i < NB_CYCLES_CLIENT_CONNECTION:
     arm_action = leader_arm.get_action()
-    base_action = keyboard.get_action()
+    arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
+
+    keyboard_keys = keyboard.get_action()
+
+    base_action = robot._from_keyboard_to_base_action(keyboard_keys)
+
     action = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
 
     action_sent = robot.send_action(action)
@@ -306,11 +316,87 @@ If you want to dive deeper into this important topic, you can check out the [blo
 #### Troubleshooting:
 - On Linux, if the left and right arrow keys and escape key don't have any effect during data recording, make sure you've set the `$DISPLAY` environment variable. See [pynput limitations](https://pynput.readthedocs.io/en/latest/limitations.html#linux).
 
-#TODO:(pepijn): Add lekiwi replay API example
+
+## Replay an episode
+
+To replay an episode run the API example below, make sure to change `remote_ip`, `port`, LeRobotDatasetId and episode index.
+
+```python
+import time
+from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.common.robots.lekiwi.config_lekiwi import LeKiwiClientConfig
+from lerobot.common.robots.lekiwi.lekiwi_client import LeKiwiClient
+from lerobot.common.utils.robot_utils import busy_wait
+
+robot_config = LeKiwiClientConfig(remote_ip="172.18.134.136", id="lekiwi")
+robot = LeKiwiClient(robot_config)
+
+dataset = LeRobotDataset("pepijn223/lekiwi1749025613", episodes=[0])           
+
+robot.connect()
+
+print("Replaying episode…")
+for idx, action_array in enumerate(dataset.hf_dataset["action"]):
+    t0 = time.perf_counter()
+
+    action = {name: float(action_array[i]) for i, name in enumerate(dataset.features["action"]["names"])}
+    robot.send_action(action)
+
+    busy_wait(max(1.0 / dataset.fps - (time.perf_counter() - t0), 0.0))
+
+print("Disconnecting LeKiwi Client")
+robot.disconnect()
+```
 
 Congrats 🎉, your robot is all set to learn a task on its own. Start training it by the training part of this tutorial: [Getting started with real-world robots](./getting_started_real_world_robot)
 
-#TODO:(pepijn): Add lekiwi eval/inference API example!
+## Evaluate your policy
+
+To evaluate your policy and run this API example below, make sure to change `remote_ip`, `port`, model..
+
+```python
+import torch
+from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
+from lerobot.common.policies.factory import make_policy
+from lerobot.common.robots.lekiwi.config_lekiwi import LeKiwiClientConfig
+from lerobot.common.robots.lekiwi.lekiwi_client import LeKiwiClient
+from lerobot.common.utils.control_utils import predict_action
+from lerobot.common.utils.utils import get_safe_torch_device
+from lerobot.configs.policies import PreTrainedConfig
+
+NB_CYCLES_CLIENT_CONNECTION = 1000
+
+robot_config = LeKiwiClientConfig(remote_ip="172.18.134.136", id="lekiwi")
+robot = LeKiwiClient(robot_config)
+
+robot.connect()
+
+model_config = PreTrainedConfig.from_pretrained("pepijn223/act_lekiwi_circle")
+metadata = LeRobotDatasetMetadata(repo_id="pepijn223/lekiwi1749025613")
+
+policy = make_policy(cfg=model_config, ds_meta=metadata)
+policy.reset()
+
+print("Running inference")
+i = 0
+while i < NB_CYCLES_CLIENT_CONNECTION:
+    obs = robot.get_observation()
+
+    for key, value in obs.items():
+        if isinstance(value, torch.Tensor):
+            obs[key] = value.detach().cpu().numpy()
+
+    action_values = predict_action(
+        obs, policy, get_safe_torch_device(policy.config.device), policy.config.use_amp)
+    action = {
+        key: action_values[i].item() if isinstance(action_values[i], torch.Tensor) else action_values[i]
+        for i, key in enumerate(robot.action_features)
+    }
+    robot.send_action(action)
+    i += 1
+
+robot.disconnect()
+```
 
 > [!TIP]
 >  If you have any questions or need help, please reach out on [Discord](https://discord.com/invite/s3KuuzsPFb).

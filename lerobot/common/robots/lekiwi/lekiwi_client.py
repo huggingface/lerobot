@@ -321,22 +321,10 @@ class LeKiwiClient(Robot):
                 "ManipulatorRobot is not connected. You need to run `robot.connect()`."
             )
 
-        common_keys = [
-            key
-            for key in action
-            if key in (motor.replace("arm_", "") for motor, _ in self.action_features.items())
-        ]
-
-        arm_actions = {"arm_" + arm_motor: action[arm_motor] for arm_motor in common_keys}
-
-        keyboard_keys = np.array(list(set(action.keys()) - set(common_keys)))
-        base_actions = self._from_keyboard_to_base_action(keyboard_keys)
-        goal_pos = {**arm_actions, **base_actions}
-
-        self.zmq_cmd_socket.send_string(json.dumps(goal_pos))  # action is in motor space
+        self.zmq_cmd_socket.send_string(json.dumps(action))  # action is in motor space
 
         # TODO(Steven): Remove the np conversion when it is possible to record a non-numpy array value
-        actions = np.array([goal_pos.get(k, 0.0) for k in self._state_order], dtype=np.float32)
+        actions = np.array([action.get(k, 0.0) for k in self._state_order], dtype=np.float32)
         return {"action": actions}
 
     def disconnect(self):
