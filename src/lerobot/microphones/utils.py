@@ -78,7 +78,8 @@ def async_microphones_stop_recording(microphones: dict[str, Microphone]) -> None
 
 def async_microphones_read(microphones: dict[str, Microphone]) -> dict[str, np.ndarray]:
     """
-    Reads from multiple microphones asynchronously to avoid delays
+    Reads from multiple microphones asynchronously to avoid delays.
+    -> Actually induces more delays than the synchronous version, so use with caution !
     """
 
     read_threads = []
