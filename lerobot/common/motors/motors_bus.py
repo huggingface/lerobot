@@ -497,6 +497,7 @@ class MotorsBus(abc.ABC):
                 tqdm.write(f"Motors found for {baudrate=}: {pformat(ids_models, indent=4)}")
                 baudrate_ids[baudrate] = list(ids_models)
 
+        bus.port_handler.closePort()
         return baudrate_ids
 
     def setup_motor(
