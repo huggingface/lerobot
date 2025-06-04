@@ -251,7 +251,6 @@ class FeetechMotorsBus(MotorsBus):
 
     def read_calibration(self) -> dict[str, MotorCalibration]:
         offsets, mins, maxes = {}, {}, {}
-        drive_modes = dict.fromkeys(self.motors, 0)
         for motor in self.motors:
             mins[motor] = self.read("Min_Position_Limit", motor, normalize=False)
             maxes[motor] = self.read("Max_Position_Limit", motor, normalize=False)
@@ -263,7 +262,7 @@ class FeetechMotorsBus(MotorsBus):
         for motor, m in self.motors.items():
             calibration[motor] = MotorCalibration(
                 id=m.id,
-                drive_mode=drive_modes[motor],
+                drive_mode=0,
                 homing_offset=offsets[motor],
                 range_min=mins[motor],
                 range_max=maxes[motor],
