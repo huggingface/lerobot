@@ -21,7 +21,7 @@ from torch import nn
 def populate_queues(queues, batch, exclude_keys=None):
     if exclude_keys is None:
         exclude_keys = []
-    
+
     for key in batch:
         # Skip keys that are in the exclude list
         if key in exclude_keys:
