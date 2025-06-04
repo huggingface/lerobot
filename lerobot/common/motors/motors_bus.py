@@ -746,7 +746,9 @@ class MotorsBus(abc.ABC):
         start_positions = self.sync_read("Present_Position", motors, normalize=False)
         mins = start_positions.copy()
         maxes = start_positions.copy()
-        while True:
+
+        user_pressed_enter = False
+        while not user_pressed_enter:
             positions = self.sync_read("Present_Position", motors, normalize=False)
             mins = {motor: min(positions[motor], min_) for motor, min_ in mins.items()}
             maxes = {motor: max(positions[motor], max_) for motor, max_ in maxes.items()}
@@ -758,9 +760,9 @@ class MotorsBus(abc.ABC):
                     print(f"{motor:<15} | {mins[motor]:>6} | {positions[motor]:>6} | {maxes[motor]:>6}")
 
             if enter_pressed():
-                break
+                user_pressed_enter = True
 
-            if display_values:
+            if display_values and not user_pressed_enter:
                 # Move cursor up to overwrite the previous output
                 move_cursor_up(len(motors) + 3)
 
