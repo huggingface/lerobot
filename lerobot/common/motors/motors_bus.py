@@ -38,8 +38,6 @@ from lerobot.common.utils.utils import enter_pressed, move_cursor_up
 NameOrID: TypeAlias = str | int
 Value: TypeAlias = int | float
 
-MAX_ID_RANGE = 252
-
 logger = logging.getLogger(__name__)
 
 
