@@ -219,7 +219,7 @@ class MockStatusPacket(MockFeetechPacket):
 
         Args:
             scs_id (int): ID of the servo responding.
-            error (str, optional): Error to be returned. Defaults to "Success".
+            error (int, optional): Error to be returned. Defaults to 0 (success).
 
         Returns:
             bytes: The raw 'Ping' status packet ready to be sent through serial.
