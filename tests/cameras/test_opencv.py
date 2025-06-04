@@ -141,9 +141,7 @@ def test_async_read_timeout():
 
     try:
         with pytest.raises(TimeoutError):
-            camera.async_read(
-                timeout_ms=0
-            )  # NOTE(Steven): This is flaky as sdometimes we actually get a frame
+            camera.async_read(timeout_ms=0)
     finally:
         if camera.is_connected:
             camera.disconnect()
