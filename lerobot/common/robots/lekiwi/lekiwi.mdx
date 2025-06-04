@@ -379,7 +379,7 @@ while i < NB_CYCLES_CLIENT_CONNECTION:
 
     for key, value in obs.items():
         if isinstance(value, torch.Tensor):
-            obs[key] = value.detach().cpu().numpy()
+            obs[key] = value.numpy()
 
     action_values = predict_action(
         obs, policy, get_safe_torch_device(policy.config.device), policy.config.use_amp)
