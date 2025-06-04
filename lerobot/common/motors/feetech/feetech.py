@@ -154,7 +154,7 @@ class FeetechMotorsBus(MotorsBus):
             )
 
     def _assert_same_firmware(self) -> None:
-        firmware_versions = self._read_firmware_version(self.ids)
+        firmware_versions = self._read_firmware_version(self.ids, raise_on_error=True)
         if len(set(firmware_versions.values())) != 1:
             raise RuntimeError(
                 "Some Motors use different firmware versions:"
@@ -433,13 +433,13 @@ class FeetechMotorsBus(MotorsBus):
                 *FIRMWARE_MAJOR_VERSION, id_, raise_on_error=raise_on_error
             )
             if not self._is_comm_success(comm) or self._is_error(error):
-                return
+                continue
 
             firm_ver_minor, comm, error = self._read(
                 *FIRMWARE_MINOR_VERSION, id_, raise_on_error=raise_on_error
             )
             if not self._is_comm_success(comm) or self._is_error(error):
-                return
+                continue
 
             firmware_versions[id_] = f"{firm_ver_major}.{firm_ver_minor}"
 
@@ -450,7 +450,7 @@ class FeetechMotorsBus(MotorsBus):
         for id_ in motor_ids:
             model_nb, comm, error = self._read(*MODEL_NUMBER, id_, raise_on_error=raise_on_error)
             if not self._is_comm_success(comm) or self._is_error(error):
-                return
+                continue
 
             model_numbers[id_] = model_nb
 
