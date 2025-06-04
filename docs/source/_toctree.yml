@@ -10,8 +10,8 @@
   - local: getting_started_real_world_robot
     title: Getting Started with Real-World Robots
   title: "Tutorials"
-- sections: 
+- sections:
   - local: smolvla
     title: Use SmolVLA
   title: "Policies"
-  
+
