@@ -537,8 +537,7 @@ echo ${HF_USER}/lekiwi_test
 If you didn't upload with `--control.push_to_hub=false`, you can also visualize it locally with (a window can be opened in the browser `http://127.0.0.1:9090` with the visualization tool):
 ```bash
 python lerobot/scripts/visualize_dataset_html.py \
-  --repo-id ${HF_USER}/lekiwi_test \
-  --local-files-only 1
+  --repo-id ${HF_USER}/lekiwi_test
 ```
 
 # I. Replay an episode

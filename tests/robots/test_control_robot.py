@@ -118,7 +118,7 @@ def test_record_without_cameras(tmp_path, request, robot_type, mock):
         pass
 
     repo_id = "lerobot/debug"
-    root = tmp_path / "data" / repo_id
+    root = tmp_path / "data"
     single_task = "Do something."
 
     robot = make_robot(**robot_kwargs)
@@ -156,7 +156,7 @@ def test_record_and_replay_and_policy(tmp_path, request, robot_type, mock):
         pass
 
     repo_id = "lerobot_test/debug"
-    root = tmp_path / "data" / repo_id
+    root = tmp_path / "data"
     single_task = "Do something."
 
     robot = make_robot(**robot_kwargs)
@@ -212,7 +212,7 @@ def test_record_and_replay_and_policy(tmp_path, request, robot_type, mock):
         num_image_writer_processes = 0
 
     eval_repo_id = "lerobot/eval_debug"
-    eval_root = tmp_path / "data" / eval_repo_id
+    eval_root = tmp_path / "data"
 
     rec_eval_cfg = RecordControlConfig(
         repo_id=eval_repo_id,
@@ -260,7 +260,7 @@ def test_resume_record(tmp_path, request, robot_type, mock):
     robot = make_robot(**robot_kwargs)
 
     repo_id = "lerobot/debug"
-    root = tmp_path / "data" / repo_id
+    root = tmp_path / "data"
     single_task = "Do something."
 
     rec_cfg = RecordControlConfig(
@@ -316,7 +316,7 @@ def test_record_with_event_rerecord_episode(tmp_path, request, robot_type, mock)
         mock_listener.return_value = (None, mock_events)
 
         repo_id = "lerobot/debug"
-        root = tmp_path / "data" / repo_id
+        root = tmp_path / "data"
         single_task = "Do something."
 
         rec_cfg = RecordControlConfig(
@@ -366,7 +366,7 @@ def test_record_with_event_exit_early(tmp_path, request, robot_type, mock):
         mock_listener.return_value = (None, mock_events)
 
         repo_id = "lerobot/debug"
-        root = tmp_path / "data" / repo_id
+        root = tmp_path / "data"
         single_task = "Do something."
 
         rec_cfg = RecordControlConfig(
@@ -418,7 +418,7 @@ def test_record_with_event_stop_recording(tmp_path, request, robot_type, mock, n
         mock_listener.return_value = (None, mock_events)
 
         repo_id = "lerobot/debug"
-        root = tmp_path / "data" / repo_id
+        root = tmp_path / "data"
         single_task = "Do something."
 
         rec_cfg = RecordControlConfig(
