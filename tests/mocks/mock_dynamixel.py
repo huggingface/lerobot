@@ -48,7 +48,7 @@ DXL_CRC_TABLE = [
 
 class MockDynamixelPacketv2(abc.ABC):
     @classmethod
-    def build(cls, dxl_id: int, params: list[int], length: list[int], *args, **kwargs) -> bytes:
+    def build(cls, dxl_id: int, params: list[int], length: int, *args, **kwargs) -> bytes:
         packet = cls._build(dxl_id, params, length, *args, **kwargs)
         packet = cls._add_stuffing(packet)
         packet = cls._add_crc(packet)
@@ -281,7 +281,7 @@ class MockInstructionPacket(MockDynamixelPacketv2):
     @classmethod
     def sync_write(
         cls,
-        ids_values: dict[int],
+        ids_values: dict[int,int],
         start_address: int,
         data_length: int,
     ) -> bytes:
