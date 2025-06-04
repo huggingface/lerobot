@@ -1,0 +1,16 @@
+name: Upload PR Documentation
+
+on: # zizmor: ignore[dangerous-triggers] We follow the same pattern as in Transformers
+  workflow_run:
+    workflows: [ "Build PR Documentation" ]
+    types:
+    - completed
+
+jobs:
+  build:  # zizmor: ignore[excessive-permissions] We follow the same pattern as in Transformers
+    uses: huggingface/doc-builder/.github/workflows/upload_pr_documentation.yml@main
+    with:
+      package_name: lerobot
+    secrets:
+      hf_token: ${{ secrets.HF_DOC_BUILD_PUSH }}
+      comment_bot_token: ${{ secrets.COMMENT_BOT_TOKEN }}

@@ -109,6 +109,10 @@ def predict_action(observation, policy, device, use_amp):
     ):
         # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
         for name in observation:
+            # Skip all observations that are not tensors (e.g. text)
+            if not isinstance(observation[name], torch.Tensor):
+                continue
+
             if "image" in name:
                 observation[name] = observation[name].type(torch.float32) / 255
                 observation[name] = observation[name].permute(2, 0, 1).contiguous()
@@ -243,6 +247,11 @@ def control_loop(
 
     timestamp = 0
     start_episode_t = time.perf_counter()
+
+    # Controls starts, if policy is given it needs cleaning up
+    if policy is not None:
+        policy.reset()
+
     while timestamp < control_time_s:
         start_loop_t = time.perf_counter()
 
@@ -250,7 +259,9 @@ def control_loop(
             observation, action = robot.teleop_step(record_data=True)
         else:
             observation = robot.capture_observation()
-
+            action = None
+            observation["task"] = [single_task]
+            observation["robot_type"] = [policy.robot_type] if hasattr(policy, "robot_type") else [""]
             if policy is not None:
                 pred_action = predict_action(
                     observation, policy, get_safe_torch_device(policy.config.device), policy.config.use_amp
@@ -261,14 +272,16 @@ def control_loop(
                 action = {"action": action}
 
         if dataset is not None:
+            observation = {k: v for k, v in observation.items() if k not in ["task", "robot_type"]}
             frame = {**observation, **action, "task": single_task}
             dataset.add_frame(frame)
 
         # TODO(Steven): This should be more general (for RemoteRobot instead of checking the name, but anyways it will change soon)
         if (display_data and not is_headless()) or (display_data and robot.robot_type.startswith("lekiwi")):
-            for k, v in action.items():
-                for i, vv in enumerate(v):
-                    rr.log(f"sent_{k}_{i}", rr.Scalar(vv.numpy()))
+            if action is not None:
+                for k, v in action.items():
+                    for i, vv in enumerate(v):
+                        rr.log(f"sent_{k}_{i}", rr.Scalar(vv.numpy()))
 
             image_keys = [key for key in observation if "image" in key]
             for key in image_keys:
