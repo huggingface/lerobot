@@ -9,6 +9,8 @@
     title: Getting Started with Real-World Robots
   - local: cameras
     title: Cameras
+  - local: hilserl
+    title: Getting Started with Reinforcement Learning
   title: "Tutorials"
 - sections:
   - local: so101
