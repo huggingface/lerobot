@@ -36,7 +36,7 @@ If you haven't yet set up and calibrated your robot and teleop device, please do
 
 In this example, we’ll demonstrate how to teleoperate the SO101 robot. For each command, we also provide a corresponding API example.
 
-Note that the `id` associated with a robot and is used to store the calibration file. It's important to use the same `id` when teleoperating, recording, and evaluating when using the same setup.
+Note that the `id` associated with a robot is used to store the calibration file. It's important to use the same `id` when teleoperating, recording, and evaluating when using the same setup.
 
 <hfoptions id="teleoperate_so101">
 <hfoption id="Command">
@@ -240,7 +240,7 @@ python -m lerobot.replay \
     --robot.port=/dev/tty.usbmodem58760431541 \
     --robot.id=my_awesome_follower_arm \
     --dataset.repo_id=${HF_USER}/record-test \
-    --dataset.episode=0
+    --dataset.episode=0 # choose the episode you want to replay
 ```
 
 Your robot should replicate movements similar to those you recorded. For example, check out [this video](https://x.com/RemiCadene/status/1793654950905680090) where we use `replay` on a Aloha robot from [Trossen Robotics](https://www.trossenrobotics.com).
