@@ -15,7 +15,6 @@
 # limitations under the License.
 
 import argparse
-import time
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -25,10 +24,12 @@ from soundfile import read
 from lerobot.microphones.configs import MicrophoneConfig
 from lerobot.microphones.portaudio import PortAudioMicrophone, PortAudioMicrophoneConfig
 from lerobot.microphones.utils import (
-    async_microphones_read,
     async_microphones_start_recording,
     async_microphones_stop_recording,
     make_microphones_from_configs,
+)
+from lerobot.utils.robot_utils import (
+    busy_wait,
 )
 
 
@@ -51,6 +52,8 @@ def main(
 
     all_audio_chunks = []
     for i in range(repetitions):
+        print(f"Repetition {i + 1}/{repetitions}...")
+
         # Create audio chunks
         audio_chunks = {}
         for microphone_key in microphones:
@@ -62,17 +65,17 @@ def main(
             output_files=[
                 recording_dir / f"{microphone_key}_recording_{i}.wav" for microphone_key in microphones
             ],
-            multiprocessing=True,
+            multiprocessing=multiprocessing,
         )
 
         # Record audio chunks
         for j in range(audio_chunks_number):
-            time.sleep(audio_chunks_duration)
+            busy_wait(audio_chunks_duration)
 
-            audio_readings = async_microphones_read(microphones)
-            for microphone_index, reading in audio_readings.items():
-                print(f"{microphone_index} - repetition {i} - chunk {j} - samples {reading.shape[0]}")
-                audio_chunks[microphone_index].append(reading)
+            for microphone_key, microphone in microphones.items():
+                audio_chunk = microphone.read()
+                print(f"{microphone_key} - repetition {i} - chunk {j} - samples {audio_chunk.shape[0]}")
+                audio_chunks[microphone_key].append(audio_chunk)
 
         # Stop recording
         async_microphones_stop_recording(microphones)
