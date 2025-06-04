@@ -580,8 +580,8 @@ class MotorsBus(abc.ABC):
 
         Args:
             motor (int): Same semantics as :pymeth:`disable_torque`. Defaults to `None`.
-            model (str): _description_
-            num_retry (int, optional): _description_. Defaults to 0.
+            num_retry (int, optional): Number of additional retry attempts on communication failure.
+                Defaults to 0.
         """
         pass
 
