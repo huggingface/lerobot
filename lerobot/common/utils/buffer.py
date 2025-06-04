@@ -547,7 +547,6 @@ class ReplayBuffer:
             repo_id=repo_id,
             fps=fps,
             root=root,
-            robot=None,  # TODO: (azouitine) Handle robot
             robot_type=None,
             features=features,
             use_videos=True,
@@ -588,11 +587,8 @@ class ReplayBuffer:
                     else:
                         frame_dict[f"complementary_info.{key}"] = val
 
-            # Add task field which is required by LeRobotDataset
-            frame_dict["task"] = task_name
-
             # Add to the dataset's buffer
-            lerobot_dataset.add_frame(frame_dict)
+            lerobot_dataset.add_frame(frame_dict, task=task_name)
 
             # Move to next frame
             frame_idx_in_episode += 1

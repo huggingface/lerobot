@@ -14,6 +14,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
+"""
+Robot Environment for LeRobot Manipulation Tasks
+
+This module provides a comprehensive gym-compatible environment for robot manipulation
+with support for:
+- Multiple robot types (SO100, SO101, Koch and Moss)
+- Human intervention via leader-follower control or gamepad
+
+- End-effector and joint space control
+- Image processing (cropping and resizing)
+
+The environment is built using a composable wrapper pattern where each wrapper
+adds specific functionality to the base RobotEnv.
+
+Example:
+    env = make_robot_env(cfg)
+    obs, info = env.reset()
+    action = policy.select_action(obs)
+    obs, reward, terminated, truncated, info = env.step(action)
+"""
+
 import logging
 import time
 from collections import deque
