@@ -1,4 +1,5 @@
 import torch
+
 from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.robots.lekiwi.config_lekiwi import LeKiwiClientConfig
@@ -30,7 +31,8 @@ while i < NB_CYCLES_CLIENT_CONNECTION:
             obs[key] = value.detach().cpu().numpy()
 
     action_values = predict_action(
-        obs, policy, get_safe_torch_device(policy.config.device), policy.config.use_amp)
+        obs, policy, get_safe_torch_device(policy.config.device), policy.config.use_amp
+    )
     action = {
         key: action_values[i].item() if isinstance(action_values[i], torch.Tensor) else action_values[i]
         for i, key in enumerate(robot.action_features)
