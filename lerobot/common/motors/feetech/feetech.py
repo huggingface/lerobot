@@ -358,12 +358,9 @@ class FeetechMotorsBus(MotorsBus):
         self.port_handler.setPacketTimeoutMillis((wait_length * tx_time_per_byte) + (3.0 * scs.MAX_ID) + 16.0)
 
         rxpacket = []
-        while True:
+        while not self.port_handler.isPacketTimeout() and rx_length < wait_length:
             rxpacket += self.port_handler.readPort(wait_length - rx_length)
             rx_length = len(rxpacket)
-
-            if self.port_handler.isPacketTimeout():  # or rx_length >= wait_length
-                break
 
         self.port_handler.is_using = False
 
