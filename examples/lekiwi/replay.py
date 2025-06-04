@@ -13,7 +13,7 @@ dataset = LeRobotDataset("pepijn223/lekiwi1749025613", episodes=[0])
 robot.connect()
 
 print("Replaying episode…")
-for idx, action_array in enumerate(dataset.hf_dataset["action"]):
+for _, action_array in enumerate(dataset.hf_dataset["action"]):
     t0 = time.perf_counter()
 
     action = {name: float(action_array[i]) for i, name in enumerate(dataset.features["action"]["names"])}
