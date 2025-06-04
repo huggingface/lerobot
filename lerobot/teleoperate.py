@@ -54,6 +54,7 @@ from lerobot.common.teleoperators import (
     TeleoperatorConfig,
     make_teleoperator_from_config,
 )
+from lerobot.common.utils.robot_utils import busy_wait
 from lerobot.common.utils.utils import init_logging, move_cursor_up
 from lerobot.common.utils.visualization_utils import _init_rerun
 
@@ -64,15 +65,15 @@ from .common.teleoperators import koch_leader, so100_leader, so101_leader  # noq
 class TeleoperateConfig:
     teleop: TeleoperatorConfig
     robot: RobotConfig
-    # Limit the maximum frames per second. By default, no limit.
-    fps: int | None = None
+    # Limit the maximum frames per second.
+    fps: int = 60
     teleop_time_s: float | None = None
     # Display all cameras on screen
     display_data: bool = False
 
 
 def teleop_loop(
-    teleop: Teleoperator, robot: Robot, display_data: bool = False, duration: float | None = None
+    teleop: Teleoperator, robot: Robot, fps: int, display_data: bool = False, duration: float | None = None
 ):
     display_len = max(len(key) for key in robot.action_features)
     start = time.perf_counter()
@@ -91,6 +92,9 @@ def teleop_loop(
                     rr.log(f"action_{act}", rr.Scalar(val))
 
         robot.send_action(action)
+        dt_s = time.perf_counter() - loop_start
+        busy_wait(1 / fps - dt_s)
+
         loop_s = time.perf_counter() - loop_start
 
         print("\n" + "-" * (display_len + 10))
@@ -119,7 +123,7 @@ def teleoperate(cfg: TeleoperateConfig):
     robot.connect()
 
     try:
-        teleop_loop(teleop, robot, display_data=cfg.display_data, duration=cfg.teleop_time_s)
+        teleop_loop(teleop, robot, cfg.fps, display_data=cfg.display_data, duration=cfg.teleop_time_s)
     except KeyboardInterrupt:
         pass
     finally:

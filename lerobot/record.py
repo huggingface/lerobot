@@ -92,7 +92,7 @@ class DatasetRecordConfig:
     single_task: str
     # Root directory where the dataset will be stored (e.g. 'dataset/path').
     root: str | Path | None = None
-    # Limit the frames per second. By default, uses the policy fps.
+    # Limit the frames per second.
     fps: int = 30
     # Number of seconds for data recording for each episode.
     episode_time_s: int | float = 60
@@ -159,15 +159,15 @@ class RecordConfig:
 def record_loop(
     robot: Robot,
     events: dict,
+    fps: int,
     dataset: LeRobotDataset | None = None,
     teleop: Teleoperator | None = None,
     policy: PreTrainedPolicy | None = None,
     control_time_s: int | None = None,
-    fps: int | None = None,
     single_task: str | None = None,
     display_data: bool = False,
 ):
-    if dataset is not None and fps is not None and dataset.fps != fps:
+    if dataset is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
 
     # if policy is given it needs cleaning up
@@ -216,12 +216,8 @@ def record_loop(
                 if isinstance(val, float):
                     rr.log(f"action.{act}", rr.Scalar(val))
 
-        if fps is not None:
-            dt_s = time.perf_counter() - start_loop_t
-            busy_wait(1 / fps - dt_s)
-
         dt_s = time.perf_counter() - start_loop_t
-        # log_control_info(robot, dt_s, fps=fps)
+        busy_wait(1 / fps - dt_s)
 
         timestamp = time.perf_counter() - start_episode_t
         if events["exit_early"]:
@@ -283,11 +279,11 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         record_loop(
             robot=robot,
             events=events,
+            fps=cfg.dataset.fps,
             teleop=teleop,
             policy=policy,
             dataset=dataset,
             control_time_s=cfg.dataset.episode_time_s,
-            fps=cfg.dataset.fps,
             single_task=cfg.dataset.single_task,
             display_data=cfg.display_data,
         )
@@ -301,9 +297,9 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             record_loop(
                 robot=robot,
                 events=events,
+                fps=cfg.dataset.fps,
                 teleop=teleop,
                 control_time_s=cfg.dataset.reset_time_s,
-                fps=cfg.dataset.fps,
                 single_task=cfg.dataset.single_task,
                 display_data=cfg.display_data,
             )
