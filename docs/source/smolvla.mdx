@@ -1,0 +1,91 @@
+# Use SmolVLA 
+
+SmolVLA is designed to be easy to use and integrate—whether you're finetuning on your own data or plugging it into an existing robotics stack.
+
+<p align="center">
+  <img src="https://cdn-uploads.huggingface.co/production/uploads/640e21ef3c82bd463ee5a76d/aooU0a3DMtYmy_1IWMaIM.png" alt="SmolVLA architecture." width="500"/>
+  <br/>
+  <em>Figure 2. SmolVLA takes as input a sequence of RGB images from multiple cameras, the robot’s current sensorimotor state, and a natural language instruction. The VLM encodes these into contextual features, which condition the action expert to generate a continuous sequence of actions.</em>
+</p>
+
+###  Install
+
+First, install the required dependencies:
+
+```python
+git clone https://github.com/huggingface/lerobot.git
+cd lerobot
+pip install -e ".[smolvla]"
+```
+
+### Finetune the pretrained model
+Use [`smolvla_base`](https://hf.co/lerobot/smolvla_base), our pretrained 450M model, with the lerobot training framework:
+
+```python
+python lerobot/scripts/train.py \
+  --policy.path=lerobot/smolvla_base \
+  --dataset.repo_id=lerobot/svla_so100_stacking \
+  --batch_size=64 \
+  --steps=200000
+```
+
+<p align="center">
+  <img src="https://cdn-uploads.huggingface.co/production/uploads/640e21ef3c82bd463ee5a76d/S-3vvVCulChREwHDkquoc.gif" alt="Comparison of SmolVLA across task variations." width="500"/>
+  <br/>
+  <em>Figure 1: Comparison of SmolVLA across task variations. From left to right: (1) asynchronous pick-place cube counting, (2) synchronous pick-place cube counting, (3) pick-place cube counting under perturbations, and (4) generalization on pick-and-place of the lego block with real-world SO101.</em>
+</p>
+
+
+### Train from scratch
+
+​​If you'd like to build from the architecture (pretrained VLM + action expert) rather than a pretrained checkpoint:
+
+```python
+python lerobot/scripts/train.py \
+  --policy.type=smolvla \
+  --dataset.repo_id=lerobot/svla_so100_stacking \
+  --batch_size=64 \
+  --steps=200000
+```
+You can also load `SmolVLAPolicy` directly:
+
+```python
+from lerobot.common.policies.smolvla.modeling_smolvla import SmolVLAPolicy
+policy = SmolVLAPolicy.from_pretrained("lerobot/smolvla_base")
+```
+
+## Evaluate the pretrained policy and run it in real-time
+
+If you want to record the evaluation process and safe the videos on the hub, login to your HF account by running:
+
+```python
+huggingface-cli login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
+```
+
+Store your Hugging Face repository name in a variable to run these commands:
+
+```python
+HF_USER=$(huggingface-cli whoami | head -n 1)
+echo $HF_USER
+```
+Now, indicate the path to the policy, which is `lerobot/smolvla_base` in this case, and run: 
+
+```python
+
+python lerobot/scripts/control_robot.py \
+  --robot.type=so100 \
+  --control.type=record \
+  --control.fps=30 \
+  --control.single_task="Grasp a lego block and put it in the bin." \
+  --control.repo_id=${HF_USER}/eval_svla_base_test \
+  --control.tags='["tutorial"]' \
+  --control.warmup_time_s=5 \
+  --control.episode_time_s=30 \
+  --control.reset_time_s=30 \
+  --control.num_episodes=10 \
+  --control.push_to_hub=true \
+  --control.policy.path=lerobot/smolvla_base
+
+```
+
+Depending on your evaluation setup, you can configure the duration and the number of episodes to record for your evaluation suite.

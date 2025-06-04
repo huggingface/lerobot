@@ -9,6 +9,8 @@
     title: Getting Started with Real-World Robots
   - local: cameras
     title: Cameras
+  - local: smolvla
+    title: Use SmolVLA
   title: "Tutorials"
 - sections:
   - local: so101
