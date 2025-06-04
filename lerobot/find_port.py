@@ -22,7 +22,7 @@ python -m lerobot.find_port
 ```
 """
 
-import os
+import platform
 import time
 from pathlib import Path
 
@@ -30,7 +30,7 @@ from pathlib import Path
 def find_available_ports():
     from serial.tools import list_ports  # Part of pyserial library
 
-    if os.name == "nt":  # Windows
+    if platform.system() == "Windows":
         # List COM ports using pyserial
         ports = [port.device for port in list_ports.comports()]
     else:  # Linux/macOS
