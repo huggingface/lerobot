@@ -253,7 +253,6 @@ def record_loop(
 
     # Fill audio buffers if needed
     if robot.microphones and (policy is not None or dataset is not None):
-
        # This initial wait might be longer than the audio chunk duration to (1) ensure that the audio buffers are filled with enough data and (2) add additionnal initial samples to the dataset in case of variable audio chubk duration during training.
         busy_wait(DEFAULT_INITIAL_AUDIO_BUFFER_DURATION)
 
