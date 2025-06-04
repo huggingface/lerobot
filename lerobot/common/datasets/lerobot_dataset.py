@@ -944,7 +944,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def stop_image_writer(self) -> None:
         """
         Whenever wrapping this dataset inside a parallelized DataLoader, this needs to be called first to
-        remove the image_writer in order for the LeRobotDataset object to be pickleable and parallelized.
+        remove the image_writer in order for the LeRobotDataset object to be picklable and parallelized.
         """
         if self.image_writer is not None:
             self.image_writer.stop()
@@ -1053,7 +1053,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         super().__init__()
         self.repo_ids = repo_ids
         self.root = Path(root) if root else HF_LEROBOT_HOME
-        self.tolerances_s = tolerances_s if tolerances_s else {repo_id: 1e-4 for repo_id in repo_ids}
+        self.tolerances_s = tolerances_s if tolerances_s else dict.fromkeys(repo_ids, 0.0001)
         # Construct the underlying datasets passing everything but `transform` and `delta_timestamps` which
         # are handled by this class.
         self._datasets = [

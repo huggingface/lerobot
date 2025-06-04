@@ -33,7 +33,7 @@ First, install the additional dependencies required for robots built with dynami
 
 Using `pip`:
 ```bash
-pip install --no-binary=av -e ".[dynamixel]"
+pip install -e ".[dynamixel]"
 ```
 
 Using `poetry`:
@@ -55,6 +55,9 @@ Finally, connect both arms to your computer via USB. Note that the USB doesn't p
 Now you are ready to configure your motors for the first time, as detailed in the sections below. In the upcoming sections, you'll learn about our classes and functions by running some python code in an interactive session, or by copy-pasting it in a python file.
 
 If you have already configured your motors the first time, you can streamline the process by directly running the teleoperate script (which is detailed further in the tutorial):
+
+> **NOTE:** To visualize the data, enable `--control.display_data=true`. This streams the data using `rerun`.
+
 ```bash
 python lerobot/scripts/control_robot.py \
   --robot.type=koch \
@@ -374,7 +377,7 @@ robot = ManipulatorRobot(robot_config)
 
 The `KochRobotConfig` is used to set the associated settings and calibration process. For instance, we activate the torque of the gripper of the leader Koch v1.1 arm and position it at a 40 degree angle to use it as a trigger.
 
-For the [Aloha bimanual robot](https://aloha-2.github.io), we would use `AlohaRobotConfig` to set different settings such as a secondary ID for shadow joints (shoulder, elbow). Specific to Aloha, LeRobot comes with default calibration files stored in in `.cache/calibration/aloha_default`. Assuming the motors have been properly assembled, no manual calibration step is expected for Aloha.
+For the [Aloha bimanual robot](https://aloha-2.github.io), we would use `AlohaRobotConfig` to set different settings such as a secondary ID for shadow joints (shoulder, elbow). Specific to Aloha, LeRobot comes with default calibration files stored in `.cache/calibration/aloha_default`. Assuming the motors have been properly assembled, no manual calibration step is expected for Aloha.
 
 **Calibrate and Connect the ManipulatorRobot**
 
@@ -396,7 +399,7 @@ And here are the corresponding positions for the leader arm:
 
 You can watch a [video tutorial of the calibration procedure](https://youtu.be/8drnU9uRY24) for more details.
 
-During calibration, we count the number of full 360-degree rotations your motors have made since they were first used. That's why we ask yo to move to this arbitrary "zero" position. We don't actually "set" the zero position, so you don't need to be accurate. After calculating these "offsets" to shift the motor values around 0, we need to assess the rotation direction of each motor, which might differ. That's why we ask you to rotate all motors to roughly 90 degrees, to measure if the values changed negatively or positively.
+During calibration, we count the number of full 360-degree rotations your motors have made since they were first used. That's why we ask you to move to this arbitrary "zero" position. We don't actually "set" the zero position, so you don't need to be accurate. After calculating these "offsets" to shift the motor values around 0, we need to assess the rotation direction of each motor, which might differ. That's why we ask you to rotate all motors to roughly 90 degrees, to measure if the values changed negatively or positively.
 
 Finally, the rest position ensures that the follower and leader arms are roughly aligned after calibration, preventing sudden movements that could damage the motors when starting teleoperation.
 
@@ -619,7 +622,7 @@ camera_01_frame_000047.png
 
 Note: Some cameras may take a few seconds to warm up, and the first frame might be black or green.
 
-Finally, run this code to instantiate and connectyour camera:
+Finally, run this code to instantiate and connect your camera:
 ```python
 from lerobot.common.robot_devices.cameras.configs import OpenCVCameraConfig
 from lerobot.common.robot_devices.cameras.opencv import OpenCVCamera
@@ -827,11 +830,6 @@ It contains:
 - `dtRphone:33.84 (29.5hz)` which is the delta time of capturing an image from the phone camera in the thread running asynchronously.
 
 Troubleshooting:
-- On Linux, if you encounter any issue during video encoding with `ffmpeg: unknown encoder libsvtav1`, you can:
-  - install with conda-forge by running `conda install -c conda-forge ffmpeg` (it should be compiled with `libsvtav1`),
-  - or, install [Homebrew](https://brew.sh) and run `brew install ffmpeg` (it should be compiled with `libsvtav1`),
-  - or, install [ffmpeg build dependencies](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#GettheDependencies) and [compile ffmpeg from source with libsvtav1](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#libsvtav1),
-  - and, make sure you use the corresponding ffmpeg binary to your install with `which ffmpeg`.
 - On Linux, if the left and right arrow keys and escape key don't have any effect during data recording, make sure you've set the `$DISPLAY` environment variable. See [pynput limitations](https://pynput.readthedocs.io/en/latest/limitations.html#linux).
 
 At the end of data recording, your dataset will be uploaded on your Hugging Face page (e.g. https://huggingface.co/datasets/cadene/koch_test) that you can obtain by running:

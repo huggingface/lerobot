@@ -67,9 +67,15 @@ conda activate lerobot
 git clone https://github.com/huggingface/lerobot.git ~/lerobot
 ```
 
-#### 5. Install LeRobot with dependencies for the feetech motors:
+#### 5. Install ffmpeg in your environment:
+When using `miniconda`, install `ffmpeg` in your environment:
 ```bash
-cd ~/lerobot && pip install --no-binary=av -e ".[feetech]"
+conda install ffmpeg -c conda-forge
+```
+
+#### 6. Install LeRobot with dependencies for the feetech motors:
+```bash
+cd ~/lerobot && pip install -e ".[feetech]"
 ```
 
 ## C. Install LeRobot on laptop
@@ -108,9 +114,15 @@ conda activate lerobot
 git clone https://github.com/huggingface/lerobot.git ~/lerobot
 ```
 
-#### 5. Install LeRobot with dependencies for the feetech motors:
+#### 5. Install ffmpeg in your environment:
+When using `miniconda`, install `ffmpeg` in your environment:
 ```bash
-cd ~/lerobot && pip install --no-binary=av -e ".[feetech]"
+conda install ffmpeg -c conda-forge
+```
+
+#### 6. Install LeRobot with dependencies for the feetech motors:
+```bash
+cd ~/lerobot && pip install -e ".[feetech]"
 ```
 
 Great :hugs:! You are now done installing LeRobot and we can begin assembling the SO100 arms and Mobile base :robot:.
@@ -122,7 +134,7 @@ First we will assemble the two SO100 arms. One to attach to the mobile base and 
 
 ## SO100 Arms
 ### Configure motors
-The instructions for configuring the motors can be found [Here](https://github.com/huggingface/lerobot/blob/main/examples/10_use_so100.md#c-configure-the-motors) in step C of the SO100 tutorial. Besides the ID's for the arm motors we also need to set the motor ID's for the mobile base. These needs to be in a specific order to work. Below an image of the motor ID's and motor mounting positions for the mobile base. Note that we only use one Motor Control board on LeKiwi. This means the motor ID's for the wheels are 7, 8 and 9.
+The instructions for configuring the motors can be found [Here](https://github.com/huggingface/lerobot/blob/main/examples/10_use_so100.md#c-configure-the-motors) in step C of the SO100 tutorial. Besides the ID's for the arm motors we also need to set the motor ID's for the mobile base. These need to be in a specific order to work. Below an image of the motor ID's and motor mounting positions for the mobile base. Note that we only use one Motor Control board on LeKiwi. This means the motor ID's for the wheels are 7, 8 and 9.
 
 <img src="../media/lekiwi/motor_ids.webp?raw=true" alt="Motor ID's for mobile robot" title="Motor ID's for mobile robot" width="60%">
 
@@ -412,6 +424,8 @@ python lerobot/scripts/control_robot.py \
   --control.fps=30
 ```
 
+> **NOTE:** To visualize the data, enable `--control.display_data=true`. This streams the data using `rerun`. For the `--control.type=remote_robot` you will also need to set `--control.viewer_ip` and `--control.viewer_port`
+
 You should see on your laptop something like this: ```[INFO] Connected to remote robot at tcp://172.17.133.91:5555 and video stream at tcp://172.17.133.91:5556.``` Now you can move the leader arm and use the keyboard (w,a,s,d) to drive forward, left, backwards, right. And use (z,x) to turn left or turn right. You can use (r,f) to increase and decrease the speed of the mobile robot. There are three speed modes, see the table below:
 | Speed Mode | Linear Speed (m/s) | Rotation Speed (deg/s) |
 | ---------- | ------------------ | ---------------------- |
@@ -553,7 +567,7 @@ python lerobot/scripts/train.py \
 
 Let's explain it:
 1. We provided the dataset as argument with `--dataset.repo_id=${HF_USER}/lekiwi_test`.
-2. We provided the policy with `policy.type=act`. This loads configurations from [`configuration_act.py`](../lerobot/common/policies/act/configuration_act.py). Importantly, this policy will automatically adapt to the number of motor sates, motor actions and cameras of your robot (e.g. `laptop` and `phone`) which have been saved in your dataset.
+2. We provided the policy with `policy.type=act`. This loads configurations from [`configuration_act.py`](../lerobot/common/policies/act/configuration_act.py). Importantly, this policy will automatically adapt to the number of motor states, motor actions and cameras of your robot (e.g. `laptop` and `phone`) which have been saved in your dataset.
 4. We provided `policy.device=cuda` since we are training on a Nvidia GPU, but you could use `policy.device=mps` to train on Apple silicon.
 5. We provided `wandb.enable=true` to use [Weights and Biases](https://docs.wandb.ai/quickstart) for visualizing training plots. This is optional but if you use it, make sure you are logged in by running `wandb login`.
 

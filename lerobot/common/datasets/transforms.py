@@ -128,7 +128,7 @@ class SharpnessJitter(Transform):
             raise TypeError(f"{sharpness=} should be a single number or a sequence with length 2.")
 
         if not 0.0 <= sharpness[0] <= sharpness[1]:
-            raise ValueError(f"sharpnesss values should be between (0., inf), but got {sharpness}.")
+            raise ValueError(f"sharpness values should be between (0., inf), but got {sharpness}.")
 
         return float(sharpness[0]), float(sharpness[1])
 

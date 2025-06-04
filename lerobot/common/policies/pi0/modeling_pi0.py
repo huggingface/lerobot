@@ -24,7 +24,7 @@ Designed by Physical Intelligence. Ported from Jax by Hugging Face.
 
 Install pi0 extra dependencies:
 ```bash
-pip install --no-binary=av -e ".[pi0]"
+pip install -e ".[pi0]"
 ```
 
 Example of finetuning the pi0 pretrained model (`pi0_base` in `openpi`):
@@ -357,7 +357,7 @@ class PI0Policy(PreTrainedPolicy):
             if self.config.resize_imgs_with_padding is not None:
                 img = resize_with_pad(img, *self.config.resize_imgs_with_padding, pad_value=0)
 
-            # Normalize from range [0,1] to [-1,1] as expacted by siglip
+            # Normalize from range [0,1] to [-1,1] as expected by siglip
             img = img * 2.0 - 1.0
 
             bsize = img.shape[0]
