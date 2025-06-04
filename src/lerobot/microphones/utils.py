@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import numpy as np
+from multiprocessing import Barrier
 from queue import Queue
 from threading import Thread
 
@@ -47,9 +48,11 @@ def async_microphones_start_recording(
     if output_files is None:
         output_files = [None] * len(microphones)
 
+    barrier = Barrier(len(microphones))
+
     for microphone, output_file in zip(microphones.values(), output_files, strict=False):
         start_recording_threads.append(
-            Thread(target=microphone.start_recording, args=(output_file, multiprocessing, overwrite))
+            Thread(target=microphone.start_recording, args=(output_file, multiprocessing, overwrite, barrier))
         )
 
     for thread in start_recording_threads:
