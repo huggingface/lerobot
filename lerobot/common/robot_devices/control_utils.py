@@ -264,15 +264,6 @@ def control_loop(
     if policy is not None:
         policy.reset()
 
-    # Create a buffer for audio observations (shifting window of fixed size over audio samples)
-    # TODO(CarolinePascal): Fill buffers with actual recordings by starting to record audio earlier and add a start_timestamp parameter for camera/microphone synchronization
-    audio_buffer = {
-        f"observation.audio.{microphone_name}": torch.zeros(
-            (int(microphone.sample_rate * DEFAULT_AUDIO_CHUNK_DURATION), len(microphone.channels))
-        )
-        for microphone_name, microphone in robot.microphones.items()
-    }
-
     if (display_data and not is_headless()) or (display_data and robot.robot_type.startswith("lekiwi")):
         # Create Rerun blueprint
         blueprint = rr.blueprint.Grid(
@@ -299,6 +290,15 @@ def control_loop(
         )
         rr.set_time_seconds("episode_time", seconds=0.0)
 
+    # Create a buffer for audio observations (shifting window of fixed size over audio samples)
+    if policy is not None or dataset is not None:
+        audio_buffer = {
+            f"observation.audio.{microphone_name}": torch.zeros(
+                (int(microphone.sample_rate * DEFAULT_AUDIO_CHUNK_DURATION), len(microphone.channels))
+            )
+            for microphone_name, microphone in robot.microphones.items()
+        }
+
     if (
         dataset is not None and not robot.robot_type.startswith("lekiwi")
     ):  # For now, LeKiwi only supports frame audio recording (which may lead to audio chunks loss, extended post-processing, increased memory usage)
@@ -309,7 +309,22 @@ def control_loop(
         async_microphones_start_recording(robot.microphones)
 
     # Fill audio buffers
-    busy_wait(DEFAULT_INITIAL_AUDIO_BUFFER_DURATION)
+    if policy is not None or dataset is not None:
+
+        # This initial wait might be longer than the audio chunk duration to (1) ensure that the audio buffers are filled with enough data and (2) add additionnal initial samples to the dataset in case of variable audio chubk duration during training.
+        busy_wait(DEFAULT_INITIAL_AUDIO_BUFFER_DURATION)
+
+        for microphone_name, microphone in robot.microphones.items():
+            audio_chunk = microphone.read()
+
+            name = f"observation.audio.{microphone_name}"
+            buffer_size = audio_buffer[name].shape[0]
+            # Remove as many old audio samples as needed
+            audio_buffer[name] = audio_buffer[name][len(audio_chunk) :]
+            # Add new audio samples, only the newest if the buffer is already full
+            audio_buffer[name] = torch.cat(
+                (audio_buffer[name], torch.from_numpy(audio_chunk[-buffer_size:])), dim=0
+            )
 
     timestamp = 0
     start_episode_t = time.perf_counter()
