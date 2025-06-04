@@ -89,11 +89,3 @@ def ensure_safe_goal_position(
         )
 
     return safe_goal_positions
-
-
-# TODO(aliberts): Remove
-def get_arm_id(name, arm_type):
-    """Returns the string identifier of a robot arm. For instance, for a bimanual manipulator
-    like Aloha, it could be left_follower, right_follower, left_leader, or right_leader.
-    """
-    return f"{name}_{arm_type}"
