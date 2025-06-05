@@ -1,0 +1,51 @@
+# Backward compatibility
+
+## Hardware API redesign
+
+PR [#777](https://github.com/huggingface/lerobot/pull/777) improves the LeRobot calibration but is **not backward-compatible**. Below is a overview of what changed and how you can continue to work with datasets created before this pull request.
+
+### What changed?
+
+|                                   | Before PR #777                                    | After PR #777                                                               |
+| --------------------------------- | ------------------------------------------------- | --------------------------------------------------------------------------- |
+| **Joint range**                   | Degrees (one full motor turn)                     | **Normalised range** Joints: `–100 … +100` Gripper: `0 … 100` |
+| **Zero position (SO100 / SO101)** | Arm fully extended horizontally                   | **In middle of the range for each joint**                                        |
+| **Boundary handling**             | Software safeguards to detect ±180 ° wrap-arounds | No wrap-around logic needed due to mid-range zero                           |
+
+---
+
+### Impact on existing datasets
+
+* Recorded trajectories created **before** PR #777 will replay incorrectly if loaded directly:
+  * Joint angles are offset and incorrectly normalized.
+* Any models directly finetuned or trained on the old data will need their inputs and outputs converted.
+
+### How to keep using datasets that use the “old” calibration
+We provide a migration example script for replaying an episode recorded with the "old" calibration here: `examples/backward_compatibility/replay.py`.
+Below we take you through the modifications that are done in the example script to make the "old" calibration datasets work.
+
+```python
+action = {}
+for i, name in enumerate(dataset.features["action"]["names"]):
+    key = f"{name.removeprefix('main_')}.pos" # (old: "main_shoulder_lift"-> new: "shoulder_lift.pos") New codebase uses .pos for the position observations and we have removed main_ prefix
+    action[key] = action_array[i].item()
+
+    action["shoulder_lift.pos"] = -(action["shoulder_lift.pos"] - 90) # For "shoulder_lift" (id = 2), the 0 position is changed by -90 degrees and the direction is reversed compared to old calibration/code.
+    action["elbow_flex.pos"] -= 90 # For "elbow_flex" (id = 3), the 0 position is changed by -90 degrees compared to old calibration/code.
+
+    robot.send_action(action)
+```
+
+To use degrees (which is required when running the example script) we set the `--robot.use_degrees` parameter in the command to `true`.
+
+```bash
+python examples/backward_compatibility/replay.py \
+    --robot.type=so101_follower \
+    --robot.port=/dev/tty.usbmodem5A460814411 \
+    --robot.id=blue\
+    --dataset.repo_id=my_dataset_id \
+    --dataset.episode=0 \
+    --robot.use_degrees=true # We need to set this to true when using an "old" dataset and to use degrees
+```
+
+If you have questions or run into migration issues, feel free to ask them on [Discord](https://discord.gg/s3KuuzsPFb)

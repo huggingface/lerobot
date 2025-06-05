@@ -23,4 +23,6 @@
 - sections:
   - local: contributing
     title: Contribute to LeRobot
-  title: "Contribute"
+  - local: backwardcomp
+    title: Backward compatibility
+  title: "About"
