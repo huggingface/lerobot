@@ -33,15 +33,6 @@ from .config_so101_follower import SO101FollowerConfig
 
 logger = logging.getLogger(__name__)
 
-JOINTS = [
-    "shoulder_pan",
-    "shoulder_lift",
-    "elbow_flex",
-    "wrist_flex",
-    "wrist_roll",
-    "gripper",
-]
-
 
 class SO101Follower(Robot):
     """

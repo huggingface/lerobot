@@ -41,6 +41,9 @@ class LeKiwiConfig(RobotConfig):
         }
     )
 
+    # Set to `True` for backward compatibility with previous policies/dataset
+    use_degrees: bool = False
+
 
 @dataclass
 class LeKiwiHostConfig:
