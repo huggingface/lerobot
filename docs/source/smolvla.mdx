@@ -20,7 +20,9 @@ pip install -e ".[smolvla]"
 
 ### Finetune the pretrained model
 Use [`smolvla_base`](https://hf.co/lerobot/smolvla_base), our pretrained 450M model, with the lerobot training framework:
+Training the model for 20k steps will take around 3h on A100 GPU.
 
+Run the command below with your `repo_id` to start training.
 ```python
 python lerobot/scripts/train.py \
   --policy.path=lerobot/smolvla_base \
