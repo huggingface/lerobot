@@ -160,7 +160,7 @@ class XarmEnv(EnvConfig):
 @dataclass
 class LuckyWorldEnv(EnvConfig):
     task: str = "LuckyWorld-PickandPlace-v0"
-    scene: str = "loft"
+    scene: str = "bedroom"
     robot_type: str = "so100"
     fps: int = 30
     episode_length: int = 200
