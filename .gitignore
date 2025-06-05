@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Dev scripts
+.dev
+
 # Logging
 logs
 tmp
@@ -91,10 +94,8 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 
-# Ignore .cache except calibration
+# Ignore .cache
 .cache/*
-!.cache/calibration/
-!.cache/calibration/**
 
 # Translations
 *.mo
