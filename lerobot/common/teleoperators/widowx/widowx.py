@@ -40,6 +40,7 @@ class WidowX(Teleoperator):
     name = "widowx"
 
     def __init__(self, config: WidowXConfig):
+        raise NotImplementedError
         super().__init__(config)
         self.config = config
         self.bus = DynamixelMotorsBus(

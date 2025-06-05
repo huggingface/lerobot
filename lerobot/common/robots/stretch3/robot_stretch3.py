@@ -51,6 +51,7 @@ class Stretch3Robot(Robot):
     name = "stretch3"
 
     def __init__(self, config: Stretch3RobotConfig):
+        raise NotImplementedError
         super().__init__(config)
 
         self.config = config
