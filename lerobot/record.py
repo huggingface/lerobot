@@ -203,6 +203,9 @@ def record_loop(
 
         if dataset is not None:
             action_frame = build_dataset_frame(dataset.features, sent_action, prefix="action")
+            observation_frame = {
+                k: v for k, v in observation_frame.items() if k not in ["task", "robot_type"]
+            }
             frame = {**observation_frame, **action_frame}
             dataset.add_frame(frame, task=single_task)
 
