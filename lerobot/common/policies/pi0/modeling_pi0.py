@@ -57,7 +57,7 @@ import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 from transformers import AutoTokenizer
 
-from lerobot.common.constants import ACTION, OBS_ROBOT
+from lerobot.common.constants import ACTION, OBS_STATE
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.common.policies.pi0.paligemma_with_expert import (
@@ -271,7 +271,7 @@ class PI0Policy(PreTrainedPolicy):
         self.eval()
 
         if self.config.adapt_to_pi_aloha:
-            batch[OBS_ROBOT] = self._pi_aloha_decode_state(batch[OBS_ROBOT])
+            batch[OBS_STATE] = self._pi_aloha_decode_state(batch[OBS_STATE])
 
         batch = self.normalize_inputs(batch)
 
@@ -303,7 +303,7 @@ class PI0Policy(PreTrainedPolicy):
     def forward(self, batch: dict[str, Tensor], noise=None, time=None) -> tuple[Tensor, dict[str, Tensor]]:
         """Do a full training forward pass to compute the loss"""
         if self.config.adapt_to_pi_aloha:
-            batch[OBS_ROBOT] = self._pi_aloha_decode_state(batch[OBS_ROBOT])
+            batch[OBS_STATE] = self._pi_aloha_decode_state(batch[OBS_STATE])
             batch[ACTION] = self._pi_aloha_encode_actions_inv(batch[ACTION])
 
         batch = self.normalize_inputs(batch)
@@ -380,7 +380,7 @@ class PI0Policy(PreTrainedPolicy):
 
     def prepare_language(self, batch) -> tuple[Tensor, Tensor]:
         """Tokenize the text input"""
-        device = batch[OBS_ROBOT].device
+        device = batch[OBS_STATE].device
         tasks = batch["task"]
 
         # PaliGemma prompt has to end with a new line
@@ -427,7 +427,7 @@ class PI0Policy(PreTrainedPolicy):
 
     def prepare_state(self, batch):
         """Pad state"""
-        state = pad_vector(batch[OBS_ROBOT], self.config.max_state_dim)
+        state = pad_vector(batch[OBS_STATE], self.config.max_state_dim)
         return state
 
     def prepare_action(self, batch):
