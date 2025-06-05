@@ -33,6 +33,15 @@ from .config_so101_follower import SO101FollowerConfig
 
 logger = logging.getLogger(__name__)
 
+JOINTS = [
+    "shoulder_pan",
+    "shoulder_lift",
+    "elbow_flex",
+    "wrist_flex",
+    "wrist_roll",
+    "gripper",
+]
+
 
 class SO101Follower(Robot):
     """
@@ -45,15 +54,17 @@ class SO101Follower(Robot):
     def __init__(self, config: SO101FollowerConfig):
         super().__init__(config)
         self.config = config
+        norm_mode_body = MotorNormMode.DEGREES if config.use_degrees else MotorNormMode.RANGE_M100_100
+        norm_mode_gripper = MotorNormMode.DEGREES if config.use_degrees else MotorNormMode.RANGE_0_100
         self.bus = FeetechMotorsBus(
             port=self.config.port,
             motors={
-                "shoulder_pan": Motor(1, "sts3215", MotorNormMode.RANGE_M100_100),
-                "shoulder_lift": Motor(2, "sts3215", MotorNormMode.RANGE_M100_100),
-                "elbow_flex": Motor(3, "sts3215", MotorNormMode.RANGE_M100_100),
-                "wrist_flex": Motor(4, "sts3215", MotorNormMode.RANGE_M100_100),
-                "wrist_roll": Motor(5, "sts3215", MotorNormMode.RANGE_M100_100),
-                "gripper": Motor(6, "sts3215", MotorNormMode.RANGE_0_100),
+                "shoulder_pan": Motor(1, "sts3215", norm_mode_body),
+                "shoulder_lift": Motor(2, "sts3215", norm_mode_body),
+                "elbow_flex": Motor(3, "sts3215", norm_mode_body),
+                "wrist_flex": Motor(4, "sts3215", norm_mode_body),
+                "wrist_roll": Motor(5, "sts3215", norm_mode_body),
+                "gripper": Motor(6, "sts3215", norm_mode_gripper),
             },
             calibration=self.calibration,
         )
