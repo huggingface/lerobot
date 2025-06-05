@@ -93,8 +93,6 @@ def replay(cfg: ReplayConfig):
 
         action["shoulder_lift.pos"] = -(action["shoulder_lift.pos"] - 90)
         action["elbow_flex.pos"] -= 90
-
-        robot.get_observation()
         robot.send_action(action)
 
         dt_s = time.perf_counter() - start_episode_t
