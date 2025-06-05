@@ -71,3 +71,21 @@ def test_ready_method(learner_service_stub):
     request = services_pb2.Empty()
     response = learner_service_stub.Ready(request)
     assert response == services_pb2.Empty()
+
+
+def test_send_interactions():
+    shutdown_event = Event()
+
+    parameters_queue = Queue()
+    transitions_queue = Queue()
+    interactions_queue = Queue()
+    seconds_between_pushes = 1
+    learner_service_stub, channel, server = create_learner_service_stub(
+        shutdown_event, parameters_queue, transitions_queue, interactions_queue, seconds_between_pushes
+    )
+
+    request = services_pb2.InteractionMessage(interaction_id="1", interaction_type="1", interaction_data="1")
+    response = learner_service_stub.SendInteractions(request)
+    assert response == services_pb2.Empty()
+
+    # request = services_pb2.InteractionMessage(
