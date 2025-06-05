@@ -36,11 +36,6 @@ class LearnerServiceStub:
         Args:
             channel: A grpc.Channel.
         """
-        self.SendInteractionMessage = channel.unary_unary(
-                '/transport.LearnerService/SendInteractionMessage',
-                request_serializer=lerobot_dot_common_dot_transport_dot_services__pb2.InteractionMessage.SerializeToString,
-                response_deserializer=lerobot_dot_common_dot_transport_dot_services__pb2.Empty.FromString,
-                _registered_method=True)
         self.StreamParameters = channel.unary_stream(
                 '/transport.LearnerService/StreamParameters',
                 request_serializer=lerobot_dot_common_dot_transport_dot_services__pb2.Empty.SerializeToString,
@@ -68,15 +63,9 @@ class LearnerServiceServicer:
     The Learner implements this service.
     """
 
-    def SendInteractionMessage(self, request, context):
+    def StreamParameters(self, request, context):
         """Actor -> Learner to store transitions
         """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def StreamParameters(self, request, context):
-        """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
@@ -102,11 +91,6 @@ class LearnerServiceServicer:
 
 def add_LearnerServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
-            'SendInteractionMessage': grpc.unary_unary_rpc_method_handler(
-                    servicer.SendInteractionMessage,
-                    request_deserializer=lerobot_dot_common_dot_transport_dot_services__pb2.InteractionMessage.FromString,
-                    response_serializer=lerobot_dot_common_dot_transport_dot_services__pb2.Empty.SerializeToString,
-            ),
             'StreamParameters': grpc.unary_stream_rpc_method_handler(
                     servicer.StreamParameters,
                     request_deserializer=lerobot_dot_common_dot_transport_dot_services__pb2.Empty.FromString,
@@ -139,33 +123,6 @@ class LearnerService:
     """LearnerService: the Actor calls this to push transitions.
     The Learner implements this service.
     """
-
-    @staticmethod
-    def SendInteractionMessage(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/transport.LearnerService/SendInteractionMessage',
-            lerobot_dot_common_dot_transport_dot_services__pb2.InteractionMessage.SerializeToString,
-            lerobot_dot_common_dot_transport_dot_services__pb2.Empty.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
 
     @staticmethod
     def StreamParameters(request,
