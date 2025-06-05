@@ -55,7 +55,6 @@ class SO101Follower(Robot):
         super().__init__(config)
         self.config = config
         norm_mode_body = MotorNormMode.DEGREES if config.use_degrees else MotorNormMode.RANGE_M100_100
-        norm_mode_gripper = MotorNormMode.DEGREES if config.use_degrees else MotorNormMode.RANGE_0_100
         self.bus = FeetechMotorsBus(
             port=self.config.port,
             motors={
@@ -64,7 +63,7 @@ class SO101Follower(Robot):
                 "elbow_flex": Motor(3, "sts3215", norm_mode_body),
                 "wrist_flex": Motor(4, "sts3215", norm_mode_body),
                 "wrist_roll": Motor(5, "sts3215", norm_mode_body),
-                "gripper": Motor(6, "sts3215", norm_mode_gripper),
+                "gripper": Motor(6, "sts3215", MotorNormMode.RANGE_0_100),
             },
             calibration=self.calibration,
         )
