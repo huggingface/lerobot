@@ -26,8 +26,19 @@ from lerobot.common.constants import PRETRAINED_MODEL_DIR
 from lerobot.configs.train import TrainPipelineConfig
 
 
-def cfg_to_group(cfg: TrainPipelineConfig, return_list: bool = False) -> list[str] | str:
+def cfg_to_group(
+    cfg: TrainPipelineConfig, return_list: bool = False, truncate_tags: bool = False, max_tag_bytes: int = 64
+) -> list[str] | str:
     """Return a group name for logging. Optionally returns group name as list."""
+
+    def _maybe_truncate(tag: str) -> str:
+        """Truncate `tag` in UTF‑8 bytes if required."""
+        raw = tag.encode("utf-8")
+        if len(raw) <= max_tag_bytes:
+            return tag
+        # Cut at byte‑level, then decode; characters split mid‑sequence are dropped.
+        return raw[:max_tag_bytes].decode("utf-8", errors="ignore")
+
     lst = [
         f"policy:{cfg.policy.type}",
         f"dataset:{cfg.dataset.repo_id}",
@@ -35,6 +46,8 @@ def cfg_to_group(cfg: TrainPipelineConfig, return_list: bool = False) -> list[st
     ]
     if cfg.env is not None:
         lst.append(f"env:{cfg.env.type}")
+    if truncate_tags:
+        lst = [_maybe_truncate(tag) for tag in lst]
     return lst if return_list else "-".join(lst)
 
 
@@ -82,7 +95,7 @@ class WandBLogger:
             entity=self.cfg.entity,
             name=self.job_name,
             notes=self.cfg.notes,
-            tags=cfg_to_group(cfg, return_list=True),
+            tags=cfg_to_group(cfg, return_list=True, truncate_tags=True),
             dir=self.log_dir,
             config=cfg.to_dict(),
             # TODO(rcadene): try set to True
