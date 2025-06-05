@@ -55,7 +55,7 @@ from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
 from pprint import pformat
-from typing import Callable
+from typing import Callable, Union
 
 import einops
 import gymnasium as gym
@@ -66,7 +66,12 @@ from torch import Tensor, nn
 from tqdm import trange
 
 from lerobot.common.envs.factory import make_env
-from lerobot.common.envs.utils import add_envs_task, check_env_attributes_and_types, preprocess_observation
+from lerobot.common.envs.utils import (
+    BatchedEnv,
+    add_envs_task,
+    check_env_attributes_and_types,
+    preprocess_observation,
+)
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.policies.utils import get_device_from_parameters
@@ -82,7 +87,7 @@ from lerobot.configs.eval import EvalPipelineConfig
 
 
 def rollout(
-    env: gym.vector.VectorEnv,
+    env: Union[gym.vector.VectorEnv, BatchedEnv],
     policy: PreTrainedPolicy,
     seeds: list[int] | None = None,
     return_observations: bool = False,
@@ -124,7 +129,12 @@ def rollout(
 
     # Reset the policy and environments.
     policy.reset()
-    observation, info = env.reset(seed=seeds)
+    if isinstance(env, gym.vector.VectorEnv):
+        observation, info = env.reset(seed=seeds)
+    else:
+        # fallback: if env only accepts a single int
+        observation, info = env.reset(seed=seeds[0] if isinstance(seeds, list) else seeds)
+
     if render_callback is not None:
         render_callback(env)
 
@@ -137,7 +147,11 @@ def rollout(
     step = 0
     # Keep track of which environments are done.
     done = np.array([False] * env.num_envs)
-    max_steps = env.call("_max_episode_steps")[0]
+
+    if isinstance(env, gym.vector.VectorEnv):
+        max_steps = env.call("_max_episode_steps")[0]
+    else:
+        max_steps = env._max_episode_steps
     progbar = trange(
         max_steps,
         desc=f"Running rollout with at most {max_steps} steps",
@@ -173,18 +187,23 @@ def rollout(
 
         # VectorEnv stores is_success in `info["final_info"][env_index]["is_success"]`. "final_info" isn't
         # available of none of the envs finished.
-        if "final_info" in info:
-            successes = [info["is_success"] if info is not None else False for info in info["final_info"]]
+        if isinstance(env, gym.vector.VectorEnv):
+            if "final_info" in info:
+                successes = [info["is_success"] if info is not None else False for info in info["final_info"]]
+            else:
+                successes = [False] * env.num_envs
         else:
-            successes = [False] * env.num_envs
-
+            # native batched env (e.g., Genesis): success is directly in info
+            successes = info["is_success"]
         # Keep track of which environments are done so far.
         done = terminated | truncated | done
 
         all_actions.append(torch.from_numpy(action))
         all_rewards.append(torch.from_numpy(reward))
         all_dones.append(torch.from_numpy(done))
-        all_successes.append(torch.tensor(successes))
+        all_successes.append(
+            torch.tensor(successes, device="cpu")
+        )  # .from_numpy move to cpu, while this stays on gpu, so we move it back to cpu
 
         step += 1
         running_success_rate = (
@@ -311,7 +330,11 @@ def eval_policy(
 
         # Make a mask with shape (batch, n_steps) to mask out rollout data after the first done
         # (batch-element-wise). Note the `done_indices + 1` to make sure to keep the data from the done step.
-        mask = (torch.arange(n_steps) <= einops.repeat(done_indices + 1, "b -> b s", s=n_steps)).int()
+        # updated because of device mismatch
+        mask = (
+            torch.arange(n_steps).to(done_indices.device)
+            <= einops.repeat(done_indices + 1, "b -> b s", s=n_steps)
+        ).int()
         # Extend metrics.
         batch_sum_rewards = einops.reduce((rollout_data["reward"] * mask), "b n -> b", "sum")
         sum_rewards.extend(batch_sum_rewards.tolist())
@@ -493,7 +516,9 @@ def eval_main(cfg: EvalPipelineConfig):
     print(info["aggregated"])
 
     # Save info
-    with open(Path(cfg.output_dir) / "eval_info.json", "w") as f:
+    output_file = Path(cfg.output_dir) / "eval_info.json"
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_file, "w") as f:
         json.dump(info, f, indent=2)
 
     env.close()

@@ -14,10 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import importlib
+from typing import Union
 
 import gymnasium as gym
 
-from lerobot.common.envs.configs import AlohaEnv, EnvConfig, PushtEnv, XarmEnv
+from lerobot.common.envs.configs import AlohaEnv, EnvConfig, GenesisEnv, PushtEnv, XarmEnv
+from lerobot.common.envs.utils import BatchedEnv
 
 
 def make_env_config(env_type: str, **kwargs) -> EnvConfig:
@@ -27,11 +29,15 @@ def make_env_config(env_type: str, **kwargs) -> EnvConfig:
         return PushtEnv(**kwargs)
     elif env_type == "xarm":
         return XarmEnv(**kwargs)
+    elif env_type == "genesis":
+        return GenesisEnv(**kwargs)
     else:
         raise ValueError(f"Policy type '{env_type}' is not available.")
 
 
-def make_env(cfg: EnvConfig, n_envs: int = 1, use_async_envs: bool = False) -> gym.vector.VectorEnv | None:
+def make_env(
+    cfg: EnvConfig, n_envs: int = 1, use_async_envs: bool = False
+) -> Union[gym.vector.VectorEnv, BatchedEnv] | None:
     """Makes a gym vector environment according to the config.
 
     Args:
@@ -60,6 +66,17 @@ def make_env(cfg: EnvConfig, n_envs: int = 1, use_async_envs: bool = False) -> g
 
     gym_handle = f"{package_name}/{cfg.task}"
 
+    if cfg.type in ["genesis"]:
+        # genesis env is natively batched—just create it with num_envs=n_envs
+        env = gym.make(
+            gym_handle,
+            num_envs=n_envs,
+            disable_env_checker=True,
+            **cfg.gym_kwargs,
+        )
+        return env
+
+    # otherwise, use vectorized Gym environments
     # batched version of the env that returns an observation of shape (b, c)
     env_cls = gym.vector.AsyncVectorEnv if use_async_envs else gym.vector.SyncVectorEnv
     env = env_cls(
