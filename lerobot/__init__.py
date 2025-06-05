@@ -58,6 +58,7 @@ available_tasks_per_env = {
     ],
     "pusht": ["PushT-v0"],
     "xarm": ["XarmLift-v0"],
+    "luckyworld": ["LuckyWorld-PickandPlace-v0"],
 }
 available_envs = list(available_tasks_per_env.keys())
 
@@ -196,6 +197,7 @@ available_policies_per_env = {
     "aloha": ["act"],
     "pusht": ["diffusion", "vqbet"],
     "xarm": ["tdmpc"],
+    "luckyworld": ["diffusion"],
     "koch_real": ["act_koch_real"],
     "aloha_real": ["act_aloha_real"],
 }

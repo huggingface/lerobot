@@ -155,3 +155,46 @@ class XarmEnv(EnvConfig):
             "visualization_height": self.visualization_height,
             "max_episode_steps": self.episode_length,
         }
+
+
+@EnvConfig.register_subclass("luckyworld")
+@dataclass
+class LuckyWorldEnv(EnvConfig):
+    task: str = "LuckyWorld-PickandPlace-v0"
+    scene: str = "bedroom"
+    robot_type: str = "so100"
+    fps: int = 30
+    episode_length: int = 200
+    obs_type: str = "pixels_agent_pos"
+    render_mode: str = "rgb_array"
+    features: dict[str, PolicyFeature] = field(
+        default_factory=lambda: {
+            "action": PolicyFeature(type=FeatureType.ACTION, shape=(6,)),
+        }
+    )
+    features_map: dict[str, str] = field(
+        default_factory=lambda: {
+            "action": ACTION,
+            "agent_pos": OBS_STATE,
+            "top": f"{OBS_IMAGE}.top",
+            "pixels/top": f"{OBS_IMAGES}.top",
+        }
+    )
+
+    def __post_init__(self):
+        if self.obs_type == "pixels":
+            self.features["top"] = PolicyFeature(type=FeatureType.VISUAL, shape=(480, 640, 3))
+        elif self.obs_type == "pixels_agent_pos":
+            self.features["agent_pos"] = PolicyFeature(type=FeatureType.STATE, shape=(6,))
+            self.features["pixels/top"] = PolicyFeature(type=FeatureType.VISUAL, shape=(480, 640, 3))
+
+    @property
+    def gym_kwargs(self) -> dict:
+        return {
+            "obs_type": self.obs_type,
+            "render_mode": self.render_mode,
+            "max_episode_steps": self.episode_length,
+            "task": self.task.split("-")[1].lower(),
+            "scene": self.scene,
+            "robot_type": self.robot_type,
+        }
