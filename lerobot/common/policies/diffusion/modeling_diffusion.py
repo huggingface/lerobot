@@ -42,6 +42,7 @@ from lerobot.common.policies.utils import (
     get_dtype_from_parameters,
     get_output_shape,
     populate_queues,
+    smoothen_actions,
 )
 
 
@@ -137,6 +138,8 @@ class DiffusionPolicy(PreTrainedPolicy):
 
             # TODO(rcadene): make above methods return output dictionary?
             actions = self.unnormalize_outputs({"action": actions})["action"]
+            # use low-pass filter to prevent jerky actions
+            actions = smoothen_actions(actions)
 
             self._queues["action"].extend(actions.transpose(0, 1))
 
