@@ -193,7 +193,7 @@ def record_loop(
                 task=single_task,
                 robot_type=robot.robot_type,
             )
-            action = {key: action_values[i] for i, key in enumerate(robot.action_features)}
+            action = {key: action_values[i].item() for i, key in enumerate(robot.action_features)}
         else:
             action = teleop.get_action()
 
