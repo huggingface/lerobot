@@ -226,7 +226,7 @@ def convert_lerobot_dataset_to_cropper_lerobot_dataset(
 
             new_frame[key] = value
 
-        new_dataset.add_frame(new_frame)
+        new_dataset.add_frame(new_frame, task=frame["task"])
 
         if frame["episode_index"].item() != prev_episode_index:
             # Save the episode
