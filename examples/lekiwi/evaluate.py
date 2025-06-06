@@ -2,8 +2,7 @@ import torch
 
 from lerobot.common.datasets.utils import build_dataset_frame, hw_to_dataset_features
 from lerobot.common.policies.act.modeling_act import ACTPolicy
-from lerobot.common.robots.lekiwi.config_lekiwi import LeKiwiClientConfig
-from lerobot.common.robots.lekiwi.lekiwi_client import LeKiwiClient
+from lerobot.common.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
 from lerobot.common.utils.control_utils import predict_action
 from lerobot.common.utils.utils import get_safe_torch_device
 
