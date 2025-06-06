@@ -99,6 +99,10 @@ class RoarmRobot:
 
     def connect(self):
         if self.is_connected:
+            
+            self.follower_arms[name].echo_set(cmd=0)
+            self.leader_arms[name].echo_set(cmd=0)
+        
             raise RobotDeviceAlreadyConnectedError(
                 "RoarmRobot is already connected. Do not run `robot.connect()` twice."
             )
