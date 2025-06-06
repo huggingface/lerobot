@@ -47,6 +47,10 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
             # TODO(aliberts, rcadene): use transforms.ToTensor()?
             img = torch.from_numpy(img)
 
+            # When preprocessing observations in a non-vectorized environment, we need to add a batch dimension.
+            # This is the case for human-in-the-loop RL where there is only one environment.
+            if img.ndim == 3:
+                img = img.unsqueeze(0)
             # sanity check that images are channel last
             _, h, w, c = img.shape
             assert c < h and c < w, f"expect channel last images, but instead got {img.shape=}"
@@ -62,13 +66,18 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
             return_observations[imgkey] = img
 
     if "environment_state" in observations:
-        return_observations["observation.environment_state"] = torch.from_numpy(
-            observations["environment_state"]
-        ).float()
+        env_state = torch.from_numpy(observations["environment_state"]).float()
+        if env_state.dim() == 1:
+            env_state = env_state.unsqueeze(0)
+
+        return_observations["observation.environment_state"] = env_state
 
     # TODO(rcadene): enable pixels only baseline with `obs_type="pixels"` in environment by removing
-    # requirement for "agent_pos"
-    return_observations["observation.state"] = torch.from_numpy(observations["agent_pos"]).float()
+    agent_pos = torch.from_numpy(observations["agent_pos"]).float()
+    if agent_pos.dim() == 1:
+        agent_pos = agent_pos.unsqueeze(0)
+    return_observations["observation.state"] = agent_pos
+
     return return_observations
 
 
