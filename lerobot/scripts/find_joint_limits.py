@@ -78,7 +78,7 @@ def find_joint_and_ee_bounds(cfg: FindJointLimitsConfig):
     ee_list = []
     pos_list = []
     kinematics = RobotKinematics(cfg.urdf_path)
-    control_time_s = 10
+    control_time_s = 30
     while True:
         action = teleop.get_action()
         robot.send_action(action)
@@ -86,6 +86,8 @@ def find_joint_and_ee_bounds(cfg: FindJointLimitsConfig):
         joint_positions = robot.bus.sync_read("Present_Position")
         joint_positions = np.array([joint_positions[key] for key in joint_positions])
         ee_pos, _, _ = kinematics.forward_kinematics(joint_positions * np.pi / 180)
+        if (time.perf_counter() - start_episode_t) < 5:
+            continue
         ee_list.append(ee_pos.copy())
         pos_list.append(joint_positions)
 

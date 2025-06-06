@@ -27,7 +27,7 @@ import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
 from torch.distributions import MultivariateNormal, TanhTransform, Transform, TransformedDistribution
 
-from lerobot.common.policies.normalize import NormalizeBuffer, UnnormalizeBuffer
+from lerobot.common.policies.normalize import NormalizeBuffer
 from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.policies.sac.configuration_sac import SACConfig, is_image_feature
 from lerobot.common.policies.utils import get_device_from_parameters
@@ -86,7 +86,6 @@ class SACPolicy(
             observations_features = self.actor.encoder.get_cached_image_features(batch, normalize=True)
 
         actions, _, _ = self.actor(batch, observations_features)
-        actions = self.unnormalize_outputs({"action": actions})["action"]
 
         if self.config.num_discrete_actions is not None:
             discrete_action_value = self.discrete_critic(batch, observations_features)
@@ -253,8 +252,6 @@ class SACPolicy(
         with torch.no_grad():
             next_action_preds, next_log_probs, _ = self.actor(next_observations, next_observation_features)
 
-            next_action_preds = self.unnormalize_outputs({"action": next_action_preds})["action"]
-
             # 2- compute q targets
             q_targets = self.critic_forward(
                 observations=next_observations,
@@ -377,8 +374,6 @@ class SACPolicy(
     ) -> Tensor:
         actions_pi, log_probs, _ = self.actor(observations, observation_features)
 
-        actions_pi: Tensor = self.unnormalize_outputs({"action": actions_pi})["action"]
-
         q_preds = self.critic_forward(
             observations=observations,
             actions=actions_pi,
@@ -394,7 +389,6 @@ class SACPolicy(
         """Initialize input/output normalization modules."""
         self.normalize_inputs = nn.Identity()
         self.normalize_targets = nn.Identity()
-        self.unnormalize_outputs = nn.Identity()
         if self.config.dataset_stats is not None:
             params = _convert_normalization_params_to_tensor(self.config.dataset_stats)
             self.normalize_inputs = NormalizeBuffer(
@@ -402,9 +396,6 @@ class SACPolicy(
             )
             stats = dataset_stats or params
             self.normalize_targets = NormalizeBuffer(
-                self.config.output_features, self.config.normalization_mapping, stats
-            )
-            self.unnormalize_outputs = UnnormalizeBuffer(
                 self.config.output_features, self.config.normalization_mapping, stats
             )
 

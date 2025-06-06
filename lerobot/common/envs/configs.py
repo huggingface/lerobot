@@ -199,6 +199,7 @@ class EnvTransformConfig:
     gripper_quantization_threshold: float | None = 0.8
     gripper_penalty: float = 0.0
     gripper_penalty_in_reward: bool = False
+    number_of_steps_after_success: int = 0
 
 
 @EnvConfig.register_subclass(name="gym_manipulator")

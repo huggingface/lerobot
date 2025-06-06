@@ -66,7 +66,7 @@ class SO100FollowerEndEffector(SO100Follower):
         self.kinematics = RobotKinematics(robot_type="so101")
 
         # Set the forward kinematics function
-        self.fk_function = self.kinematics.fk_gripper
+        self.fk_function = self.kinematics.fk_gripper_tip
 
         # Store the bounds for end-effector position
         self.end_effector_bounds = self.config.end_effector_bounds

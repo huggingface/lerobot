@@ -1056,92 +1056,6 @@ class GripperActionWrapper(gym.ActionWrapper):
         return obs, info
 
 
-class EEActionWrapper(gym.ActionWrapper):
-    """
-    Wrapper that converts end-effector space actions to joint space actions.
-
-    This wrapper takes actions defined in cartesian space (x, y, z, gripper) and
-    converts them to joint space actions using inverse kinematics.
-    """
-
-    def __init__(self, env, ee_action_space_params=None, use_gripper=False):
-        """
-        Initialize the end-effector action wrapper.
-
-        Args:
-            env: The environment to wrap.
-            ee_action_space_params: Parameters defining the end-effector action space.
-            use_gripper: Whether to include gripper control in the action space.
-        """
-        super().__init__(env)
-        self.ee_action_space_params = ee_action_space_params
-        self.use_gripper = use_gripper
-
-        # Initialize kinematics instance for the appropriate robot type
-        robot_type = getattr(env.unwrapped.robot.config, "type", "so100")
-        self.kinematics = RobotKinematics(robot_type)
-        self.fk_function = self.kinematics.fk_gripper_tip
-
-        action_space_bounds = np.array(
-            [
-                ee_action_space_params.x_step_size,
-                ee_action_space_params.y_step_size,
-                ee_action_space_params.z_step_size,
-            ]
-        )
-        if self.use_gripper:
-            # gripper actions open at 2.0, and closed at 0.0
-            min_action_space_bounds = np.concatenate([-action_space_bounds, [0.0]])
-            max_action_space_bounds = np.concatenate([action_space_bounds, [2.0]])
-        else:
-            min_action_space_bounds = -action_space_bounds
-            max_action_space_bounds = action_space_bounds
-
-        self.action_space = gym.spaces.Box(
-            low=min_action_space_bounds,
-            high=max_action_space_bounds,
-            shape=(3 + int(self.use_gripper),),
-            dtype=np.float32,
-        )
-
-        self.bounds = ee_action_space_params.bounds
-
-    def action(self, action):
-        """
-        Convert end-effector action to joint space action.
-
-        Args:
-            action: End-effector action in cartesian space.
-
-        Returns:
-            Converted action in joint space.
-        """
-        desired_ee_pos = np.eye(4)
-
-        if self.use_gripper:
-            gripper_command = action[-1]
-            action = action[:-1]
-
-        current_joint_pos = self.unwrapped._get_observation()["observation.state"]
-
-        current_ee_pos = self.fk_function(current_joint_pos)
-        desired_ee_pos[:3, 3] = np.clip(
-            current_ee_pos[:3, 3] + action,
-            self.bounds["min"],
-            self.bounds["max"],
-        )
-        target_joint_pos = self.kinematics.ik(
-            current_joint_pos,
-            desired_ee_pos,
-            position_only=True,
-            fk_func=self.fk_function,
-        )
-        if self.use_gripper:
-            target_joint_pos[-1] = gripper_command
-
-        return target_joint_pos
-
-
 class EEObservationWrapper(gym.ObservationWrapper):
     """
     Wrapper that adds end-effector pose information to observations.
@@ -1849,7 +1763,6 @@ def make_robot_env(cfg: EnvConfig) -> gym.Env:
             f"gym_hil/{cfg.task}",
             image_obs=True,
             render_mode="human",
-            step_size=cfg.wrapper.ee_action_space_params.x_step_size,
             use_gripper=cfg.wrapper.use_gripper,
             gripper_penalty=cfg.wrapper.gripper_penalty,
         )

@@ -84,7 +84,7 @@ from lerobot.common.cameras import opencv  # noqa: F401
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.sac.modeling_sac import SACPolicy
 from lerobot.common.robots import so100_follower_end_effector  # noqa: F401
-from lerobot.common.teleoperators import gamepad, so100_leader  # noqa: F401
+from lerobot.common.teleoperators import gamepad, so101_leader  # noqa: F401
 from lerobot.common.transport import services_pb2, services_pb2_grpc
 from lerobot.common.transport.utils import (
     bytes_to_state_dict,

@@ -90,6 +90,7 @@ from torch import nn
 from torch.multiprocessing import Queue
 from torch.optim.optimizer import Optimizer
 
+from lerobot.common.cameras import opencv  # noqa: F401
 from lerobot.common.constants import (
     CHECKPOINTS_DIR,
     LAST_CHECKPOINT_LINK,
