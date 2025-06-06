@@ -48,7 +48,7 @@ repos:
     -   id: pyupgrade
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.11.11
+    rev: v0.11.12
     hooks:
       - id: ruff
         args: [--fix]
@@ -57,12 +57,12 @@ repos:
 
   ##### Security #####
   - repo: https://github.com/gitleaks/gitleaks
-    rev: v8.26.0
+    rev: v8.27.0
     hooks:
       - id: gitleaks
 
   - repo: https://github.com/woodruffw/zizmor-pre-commit
-    rev: v1.8.0
+    rev: v1.9.0
     hooks:
       - id: zizmor
 
