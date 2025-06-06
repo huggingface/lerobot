@@ -1,7 +1,10 @@
-# HilSerl Real Robot Training Workflow Guide
+# HIL-SERL Real Robot Training Workflow Guide
 
-Human-in-the-Loop Sample-Efficient Reinforcement Learning (HIL-SERL) with LeRobot workflow for taking a policy from “zero” to real-world robot mastery in just a couple of hours.
-It combines three ingredients:
+In this tutorial you will go through the full Human-in-the-Loop Sample-Efficient Reinforcement Learning (HIL-SERL) workflow using LeRobot. You will master training a policy with RL on a real robot in just a few hours.
+
+HIL-SERL is a sample-efficient reinforcement learning algorithm that combines human demonstrations with online learning and human interventions. The approach starts from a small set of human demonstrations, uses them to train a reward classifier, and then employs an actor-learner architecture where humans can intervene during policy execution to guide exploration and correct unsafe behaviors. In this tutorial, you'll use a gamepad to provide interventions and control the robot during the learning process.
+
+It combines three key ingredients:
 	1.	**Offline demonstrations & reward classifier:** a handful of human-teleop episodes plus a vision-based success detector give the policy a shaped starting point.
 	2.	**On-robot actor / learner loop with human interventions:** a distributed SAC/RLPD learner updates the policy while an actor explores on the physical robot; the human can jump in at any time to correct dangerous or unproductive behaviour.
 	3.	**Safety & efficiency tools:** joint/EE bounds, impedance control, crop-ROI preprocessing and WandB monitoring keep the data useful and the hardware safe.
@@ -266,7 +269,9 @@ If you have `wandb.enable` set to `true` in your configuration, you can monitor 
 
 # 2. Training a Reward Classifier with LeRobot
 
-This guide explains how to train a reward classifier for human-in-the-loop reinforcement learning implementation of  LeRobot. Reward classifiers learn to predict the reward value given a state which can be used in an RL setup to train a policy.
+The reward classifier plays an important role in the HIL-SERL workflow by automating reward assignment and automatically detecting episode success. Instead of manually defining reward functions or relying on human feedback for every timestep, the reward classifier learns to predict success/failure from visual observations. This enables the RL algorithm to learn efficiently by providing consistent and automated reward signals based on the robot's camera inputs.
+
+This guide explains how to train a reward classifier for human-in-the-loop reinforcement learning implementation of LeRobot. Reward classifiers learn to predict the reward value given a state which can be used in an RL setup to train a policy.
 
 
 The reward classifier implementation in `modeling_classifier.py` uses a pretrained vision model to process the images. It can output either a single value for binary rewards to predict success/fail cases or multiple values for multi-class settings.
@@ -398,3 +403,18 @@ The reward classifier will automatically provide rewards based on the visual inp
    ```bash
    python lerobot/scripts/rl/gym_manipulator.py --config_path lerobot/configs/env_config.json
    ```
+
+Congrats 🎉, you have finished this tutorial!
+
+> [!TIP]
+>  If you have any questions or need help, please reach out on [Discord](https://discord.com/invite/s3KuuzsPFb).
+
+Paper citation:
+```
+@article{luo2024precise,
+  title={Precise and Dexterous Robotic Manipulation via Human-in-the-Loop Reinforcement Learning},
+  author={Luo, Jianlan and Xu, Charles and Wu, Jeffrey and Levine, Sergey},
+  journal={arXiv preprint arXiv:2410.21845},
+  year={2024}
+}
+```
