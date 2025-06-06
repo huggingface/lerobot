@@ -1,5 +1,3 @@
-import torch
-
 from lerobot.common.datasets.utils import build_dataset_frame, hw_to_dataset_features
 from lerobot.common.policies.act.modeling_act import ACTPolicy
 from lerobot.common.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
@@ -25,12 +23,9 @@ while i < NB_CYCLES_CLIENT_CONNECTION:
 
     observation_frame = build_dataset_frame(obs_features, obs, prefix="observation")
     action_values = predict_action(
-        obs, policy, get_safe_torch_device(policy.config.device), policy.config.use_amp
+        observation_frame, policy, get_safe_torch_device(policy.config.device), policy.config.use_amp
     )
-    action = {
-        key: action_values[i].item() if isinstance(action_values[i], torch.Tensor) else action_values[i]
-        for i, key in enumerate(robot.action_features)
-    }
+    action = {key: action_values[i].item() for i, key in enumerate(robot.action_features)}
     robot.send_action(action)
     i += 1
 
