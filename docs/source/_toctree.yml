@@ -10,7 +10,7 @@
   - local: cameras
     title: Cameras
   - local: hilserl
-    title: Getting Started with Reinforcement Learning
+    title: Train a Robot with RL
   title: "Tutorials"
 - sections:
   - local: so101
