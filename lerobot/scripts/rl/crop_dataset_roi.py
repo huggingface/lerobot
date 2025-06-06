@@ -211,7 +211,7 @@ def convert_lerobot_dataset_to_cropper_lerobot_dataset(
         # Create a copy of the frame to add to the new dataset
         new_frame = {}
         for key, value in frame.items():
-            if key in ("task_index", "timestamp", "episode_index", "frame_index", "index"):
+            if key in ("task_index", "timestamp", "episode_index", "frame_index", "index", "task"):
                 continue
             if key in ("next.done", "next.reward"):
                 # if not isinstance(value, str) and len(value.shape) == 0:
