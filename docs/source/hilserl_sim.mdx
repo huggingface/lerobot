@@ -25,7 +25,7 @@ pip install -e .[hilserl]
 
 ## Configuration
 
-To use `gym_hil` with LeRobot, you need to create a configuration file. An example is provided in `gym_hil_env.json`. Key configuration sections include:
+To use `gym_hil` with LeRobot, you need to create a configuration file. An example is provided [here](https://huggingface.co/datasets/aractingi/lerobot-example-config-files/blob/main/gym_hil_env.json). Key configuration sections include:
 
 ### Environment Type and Task
 
@@ -86,7 +86,7 @@ python lerobot/scripts/rl/gym_manipulator.py --config_path path/to/gym_hil_env.j
 
 ### Training a Policy
 
-To train a policy, checkout the example json in `train_gym_hil_env.json` and run the actor and learner servers:
+To train a policy, checkout the configuration example available [here](https://huggingface.co/datasets/aractingi/lerobot-example-config-files/blob/main/train_gym_hil_env.json) and run the actor and learner servers:
 
 ```python
 python lerobot/scripts/rl/actor.py --config_path path/to/train_gym_hil_env.json

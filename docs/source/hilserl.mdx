@@ -94,7 +94,7 @@ With the bounds defined, you can safely collect demonstrations for training. Tra
 
 ### 1.3.1 Setting Up Record Mode
 
-Create a configuration file for recording demonstrations (or edit an existing one like `env_config_so100.json`):
+Create a configuration file for recording demonstrations (or edit an existing one like [env_config_so100.json](https://huggingface.co/datasets/aractingi/lerobot-example-config-files/blob/main/env_config_so100.json)):
 
 1. Set `mode` to `"record"`
 2. Specify a unique `repo_id` for your dataset (e.g., "username/task_name")
@@ -123,7 +123,7 @@ Example configuration section:
 
 ### 1.3.3 Recording Demonstrations
 
-Start the recording process:
+Start the recording process, an example of the config file can be found [here](https://huggingface.co/datasets/aractingi/lerobot-example-config-files/blob/main/env_config_so100.json):
 
 ```bash
 python lerobot/scripts/rl/gym_manipulator.py --config_path lerobot/configs/env_config_so100.json
@@ -193,7 +193,7 @@ The LeRobot system uses a distributed actor-learner architecture for training. Y
 
 ### 1.5.1 Configuration Setup
 
-Create a training configuration file (See example `train_config_hilserl_so100.json`). The training config is based on the main `TrainPipelineConfig` class in `lerobot/configs/train.py`.
+Create a training configuration file (example available [here](https://huggingface.co/datasets/aractingi/lerobot-example-config-files/blob/main/train_config_hilserl_so100.json)). The training config is based on the main `TrainPipelineConfig` class in `lerobot/configs/train.py`.
 
 1. Set `mode` to `null` (for training mode)
 2. Configure the policy settings (`type`, `device`, etc.)
@@ -322,7 +322,7 @@ The reward classifier is configured using `configuration_classifier.py`. Here ar
 - **dropout_rate**: Regularization parameter
 - **learning_rate**: Learning rate for optimizer
 
-Example configuration from `reward_classifier_train_config.json`:
+Example configuration for training the [reward classifier](https://huggingface.co/datasets/aractingi/lerobot-example-config-files/blob/main/reward_classifier_train_config.json):
 
 ```json
 {
@@ -387,7 +387,7 @@ The reward classifier will automatically provide rewards based on the visual inp
 ## 2.5 Example Workflow
 
 1. **Create the configuration files**:
-   Create the necessary json configuration files for the reward classifier and the environment. Check the `json_examples` directory for examples.
+   Create the necessary json configuration files for the reward classifier and the environment. Check the examples [here](https://huggingface.co/datasets/aractingi/lerobot-example-config-files/tree/main).
 
 2. **Collect a dataset**:
    ```bash
