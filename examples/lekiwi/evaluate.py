@@ -1,5 +1,6 @@
 import torch
 
+from lerobot.common.datasets.utils import build_dataset_frame, hw_to_dataset_features
 from lerobot.common.policies.act.modeling_act import ACTPolicy
 from lerobot.common.robots.lekiwi.config_lekiwi import LeKiwiClientConfig
 from lerobot.common.robots.lekiwi.lekiwi_client import LeKiwiClient
@@ -16,15 +17,14 @@ robot.connect()
 policy = ACTPolicy.from_pretrained("pepijn223/act_lekiwi_circle")
 policy.reset()
 
+obs_features = hw_to_dataset_features(robot.observation_features, "observation")
+
 print("Running inference")
 i = 0
 while i < NB_CYCLES_CLIENT_CONNECTION:
     obs = robot.get_observation()
 
-    for key, value in obs.items():
-        if isinstance(value, torch.Tensor):
-            obs[key] = value.numpy()
-
+    observation_frame = build_dataset_frame(obs_features, obs, prefix="observation")
     action_values = predict_action(
         obs, policy, get_safe_torch_device(policy.config.device), policy.config.use_amp
     )
