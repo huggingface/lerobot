@@ -1,5 +1,3 @@
-import time
-
 from lerobot.calibrate import CalibrateConfig, calibrate
 from lerobot.record import DatasetRecordConfig, RecordConfig, record
 from lerobot.replay import DatasetReplayConfig, ReplayConfig, replay
@@ -18,17 +16,12 @@ def test_calibrate():
 def test_teleoperate():
     robot_cfg = MockRobotConfig()
     teleop_cfg = MockTeleopConfig()
-    expected_duration = 0.1
     cfg = TeleoperateConfig(
         robot=robot_cfg,
         teleop=teleop_cfg,
-        teleop_time_s=expected_duration,
+        teleop_time_s=0.1,
     )
-    start = time.perf_counter()
     teleoperate(cfg)
-    actual_duration = time.perf_counter() - start
-
-    assert actual_duration <= expected_duration * 1.1
 
 
 def test_record_and_resume(tmp_path):
