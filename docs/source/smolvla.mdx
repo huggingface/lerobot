@@ -74,19 +74,19 @@ Now, indicate the path to the policy, which is `lerobot/smolvla_base` in this ca
 
 ```python
 
-python lerobot/scripts/control_robot.py \
-  --robot.type=so100 \
-  --control.type=record \
-  --control.fps=30 \
-  --control.single_task="Grasp a lego block and put it in the bin." \
-  --control.repo_id=${HF_USER}/eval_svla_base_test \
-  --control.tags='["tutorial"]' \
-  --control.warmup_time_s=5 \
-  --control.episode_time_s=30 \
-  --control.reset_time_s=30 \
-  --control.num_episodes=10 \
-  --control.push_to_hub=true \
-  --control.policy.path=lerobot/smolvla_base
+python -m lerobot.record \
+  --robot.type=so100_follower \
+  --robot.port=/dev/tty.usbmodem58760431541 \
+  --robot.id=my_awesome_robot \
+  --dataset.fps=30 \
+  --dataset.single_task="Grasp a lego block and put it in the bin." \
+  --dataset.repo_id=${HF_USER}/eval_svla_base_test \
+  --dataset.tags='["tutorial"]' \
+  --dataset.episode_time_s=30 \
+  --dataset.reset_time_s=30 \
+  --dataset.num_episodes=10 \
+  --dataset.push_to_hub=true \
+  --policy.path=lerobot/smolvla_base
 
 ```
 
