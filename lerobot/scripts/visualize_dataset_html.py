@@ -22,7 +22,7 @@ However, there might not be a transition from a final state to another state.
 
 Note: This script aims to visualize the data used to train the neural networks.
 ~What you see is what you get~. When visualizing image modality, it is often expected to observe
-lossly compression artifacts since these images have been decoded from compressed mp4 videos to
+lossy compression artifacts since these images have been decoded from compressed mp4 videos to
 save disk space. The compression factor applied has been tuned to not affect success rate.
 
 Example of usage:
