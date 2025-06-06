@@ -14,11 +14,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections import deque
+
 import torch
 from torch import nn
 
 
-def populate_queues(queues, batch, exclude_keys: list = None):
+def populate_queues(
+    queues: dict[str, deque], batch: dict[str, torch.Tensor], exclude_keys: list[str] | None = None
+):
     if exclude_keys is None:
         exclude_keys = []
     for key in batch:
