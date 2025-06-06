@@ -5,9 +5,8 @@ from pathlib import Path
 import pandas as pd
 import tqdm
 
-from lerobot.common.constants import HF_LEROBOT_HOME
 from lerobot.common.datasets.compute_stats import aggregate_stats
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
+from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
 from lerobot.common.datasets.utils import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_DATA_FILE_SIZE_IN_MB,
@@ -24,7 +23,6 @@ from lerobot.common.datasets.utils import (
     write_stats,
     write_tasks,
 )
-from lerobot.common.utils.utils import init_logging
 
 
 def validate_all_metadata(all_metadata: list[LeRobotDatasetMetadata]):
@@ -51,8 +49,8 @@ def validate_all_metadata(all_metadata: list[LeRobotDatasetMetadata]):
 
 def update_data_df(df, src_meta, dst_meta):
     def _update(row):
-        row["episode_index"] = row["episode_index"] + dst_meta["total_episodes"]
-        row["index"] = row["index"] + dst_meta["total_frames"]
+        row["episode_index"] = row["episode_index"] + dst_meta.info["total_episodes"]
+        row["index"] = row["index"] + dst_meta.info["total_frames"]
         task = src_meta.tasks.iloc[row["task_index"]].name
         row["task_index"] = dst_meta.tasks.loc[task].task_index.item()
         return row
@@ -68,13 +66,13 @@ def update_meta_data(
     videos_idx,
 ):
     def _update(row):
-        row["meta/episodes/chunk_index"] = row["meta/episodes/chunk_index"] + meta_idx["chunk_index"]
-        row["meta/episodes/file_index"] = row["meta/episodes/file_index"] + meta_idx["file_index"]
-        row["data/chunk_index"] = row["data/chunk_index"] + data_idx["chunk_index"]
-        row["data/file_index"] = row["data/file_index"] + data_idx["file_index"]
+        row["meta/episodes/chunk_index"] = row["meta/episodes/chunk_index"] + meta_idx["chunk"]
+        row["meta/episodes/file_index"] = row["meta/episodes/file_index"] + meta_idx["file"]
+        row["data/chunk_index"] = row["data/chunk_index"] + data_idx["chunk"]
+        row["data/file_index"] = row["data/file_index"] + data_idx["file"]
         for key, video_idx in videos_idx.items():
-            row[f"videos/{key}/chunk_index"] = row[f"videos/{key}/chunk_index"] + video_idx["chunk_index"]
-            row[f"videos/{key}/file_index"] = row[f"videos/{key}/file_index"] + video_idx["file_index"]
+            row[f"videos/{key}/chunk_index"] = row[f"videos/{key}/chunk_index"] + video_idx["chunk"]
+            row[f"videos/{key}/file_index"] = row[f"videos/{key}/file_index"] + video_idx["file"]
             row[f"videos/{key}/from_timestamp"] = (
                 row[f"videos/{key}/from_timestamp"] + video_idx["latest_duration"]
             )
@@ -102,7 +100,6 @@ def aggregate_datasets(repo_ids: list[str], aggr_repo_id: str, roots: list[Path]
     )
     fps, robot_type, features = validate_all_metadata(all_metadata)
     video_keys = [key for key in features if features[key]["dtype"] == "video"]
-    image_keys = [key for key in features if features[key]["dtype"] == "image"]
 
     # Initialize output dataset metadata
     dst_meta = LeRobotDatasetMetadata.create(
@@ -131,8 +128,8 @@ def aggregate_datasets(repo_ids: list[str], aggr_repo_id: str, roots: list[Path]
     for src_meta in tqdm.tqdm(all_metadata, desc="Copy data and videos"):
         videos_idx = aggregate_videos(src_meta, dst_meta, videos_idx)
         data_idx = aggregate_data(src_meta, dst_meta, data_idx)
-    
-        meta_idx = aggregate_metadata(src_meta, dst_meta, meta_idx, data_idx, videos_idx, video_keys, image_keys)
+
+        meta_idx = aggregate_metadata(src_meta, dst_meta, meta_idx, data_idx, videos_idx)
 
         dst_meta.info["total_episodes"] += src_meta.total_episodes
         dst_meta.info["total_frames"] += src_meta.total_frames
@@ -162,8 +159,8 @@ def aggregate_videos(src_meta, dst_meta, videos_idx):
         }
 
         # Current target chunk/file index
-        chunk_idx = video_idx["chunk_idx"]
-        file_idx = video_idx["file_idx"]
+        chunk_idx = video_idx["chunk"]
+        file_idx = video_idx["file"]
 
         for src_chunk_idx, src_file_idx in unique_chunk_file_pairs:
             src_path = src_meta.root / DEFAULT_VIDEO_PATH.format(
@@ -208,23 +205,11 @@ def aggregate_videos(src_meta, dst_meta, videos_idx):
                     file_idx,
                 )
 
-                if src_size + dst_size >= DEFAULT_DATA_FILE_SIZE_IN_MB:
-                    # Size limit is reached, prepare new parquet file
-                    aggr_data_chunk_idx, aggr_data_file_idx = update_chunk_file_indices(
-                        aggr_data_chunk_idx, aggr_data_file_idx, DEFAULT_CHUNK_SIZE
-                    )
-                    aggr_path = aggr_root / DEFAULT_DATA_PATH.format(
-                        chunk_index=aggr_data_chunk_idx, file_index=aggr_data_file_idx
-                    )
-                    aggr_path.parent.mkdir(parents=True, exist_ok=True)
-                    df.to_parquet(aggr_path)
-                else:
-                    # Update the existing parquet file with new rows
-                    aggr_df = pd.read_parquet(aggr_path)
-                    df = pd.concat([aggr_df, df], ignore_index=True)
-                    to_parquet_with_hf_images(df, aggr_path, dst_meta.image_keys)
+        # Update the videos_idx with the final chunk and file indices for this key
+        videos_idx[key]["chunk"] = chunk_idx
+        videos_idx[key]["file"] = file_idx
 
-        return videos_idx
+    return videos_idx
 
 
 def aggregate_data(src_meta, dst_meta, data_idx):
@@ -248,7 +233,8 @@ def aggregate_data(src_meta, dst_meta, data_idx):
             DEFAULT_DATA_FILE_SIZE_IN_MB,
             DEFAULT_CHUNK_SIZE,
             DEFAULT_DATA_PATH,
-            contains_images=len(dst_meta.image_keys) > 0
+            contains_images=len(dst_meta.image_keys) > 0,
+            aggr_root=dst_meta.root,
         )
 
     return data_idx
@@ -275,16 +261,18 @@ def aggregate_metadata(src_meta, dst_meta, meta_idx, data_idx, videos_idx):
             videos_idx,
         )
 
-        # for k in video_keys:
-        #     video_idx[k]["latest_duration"] += video_idx[k]["episode_duration"]
+        for k in videos_idx:
+            videos_idx[k]["latest_duration"] += videos_idx[k]["episode_duration"]
 
-        append_or_create_parquet_file(
+        meta_idx = append_or_create_parquet_file(
             df,
             src_path,
             meta_idx,
             DEFAULT_DATA_FILE_SIZE_IN_MB,
             DEFAULT_CHUNK_SIZE,
             DEFAULT_EPISODES_PATH,
+            contains_images=False,
+            aggr_root=dst_meta.root,
         )
 
     return meta_idx
@@ -298,6 +286,7 @@ def append_or_create_parquet_file(
     chunk_size: int,
     default_path: str,
     contains_images: bool = False,
+    aggr_root: Path = None,
 ):
     """
     Safely appends or creates a Parquet file at dst_path based on size constraints.
@@ -313,15 +302,16 @@ def append_or_create_parquet_file(
     Returns:
         dict: Updated index dictionary.
     """
-    # Initial destination path
-    dst_path = aggr_root / DEFAULT_DATA_PATH.format(
-        chunk_index=idx["chunk"], file_index=idx["file"]
-    )
+    # Initial destination path - use the correct default_path parameter
+    dst_path = aggr_root / default_path.format(chunk_index=idx["chunk"], file_index=idx["file"])
 
     # If destination file doesn't exist, just write the new one
     if not dst_path.exists():
         dst_path.parent.mkdir(parents=True, exist_ok=True)
-        df.to_parquet(dst_path)
+        if contains_images:
+            to_parquet_with_hf_images(df, dst_path)
+        else:
+            df.to_parquet(dst_path)
         return idx
 
     # Otherwise, check if we exceed the size limit
@@ -331,18 +321,20 @@ def append_or_create_parquet_file(
     if dst_size + src_size >= max_mb:
         # File is too large, move to a new one
         idx["chunk"], idx["file"] = update_chunk_file_indices(idx["chunk"], idx["file"], chunk_size)
-        new_path = dst_path.parent / default_path.format(chunk_index=idx["chunk"], file_index=idx["file"])
+        new_path = aggr_root / default_path.format(chunk_index=idx["chunk"], file_index=idx["file"])
         new_path.parent.mkdir(parents=True, exist_ok=True)
         final_df = df
+        target_path = new_path
     else:
         # Append to existing file
         existing_df = pd.read_parquet(dst_path)
         final_df = pd.concat([existing_df, df], ignore_index=True)
+        target_path = dst_path
 
     if contains_images:
-        to_parquet_with_hf_images(final_df, new_path)
+        to_parquet_with_hf_images(final_df, target_path)
     else:
-        final_df.to_parquet(new_path)
+        final_df.to_parquet(target_path)
 
     return idx
 
@@ -365,52 +357,3 @@ def finalize_aggregation(aggr_meta, all_metadata):
     logging.info("write stats")
     aggr_meta.stats = aggregate_stats([m.stats for m in all_metadata])
     write_stats(aggr_meta.stats, aggr_meta.root)
-
-
-if __name__ == "__main__":
-    init_logging()
-
-    num_shards = 2048
-    repo_id = "cadene/droid_1.0.1_v30"
-    aggr_repo_id = f"{repo_id}_compact_6"
-    tags = ["openx"]
-
-    # num_shards = 210
-    # repo_id = "cadene/agibot_alpha_v30"
-    # aggr_repo_id = f"{repo_id}"
-    # tags = None
-
-    # aggr_root = Path(f"/tmp/{aggr_repo_id}")
-    aggr_root = HF_LEROBOT_HOME / aggr_repo_id
-    if aggr_root.exists():
-        shutil.rmtree(aggr_root)
-
-    repo_ids = []
-    roots = []
-    for rank in range(num_shards):
-        shard_repo_id = f"{repo_id}_world_{num_shards}_rank_{rank}"
-        shard_root = HF_LEROBOT_HOME / shard_repo_id
-        try:
-            meta = LeRobotDatasetMetadata(shard_repo_id, root=shard_root)
-            if len(meta.video_keys) == 0:
-                continue
-            repo_ids.append(shard_repo_id)
-            roots.append(shard_root)
-        except:
-            pass
-
-        if rank == 1:
-            break
-
-    aggregate_datasets(
-        repo_ids,
-        aggr_repo_id,
-        roots=roots,
-        aggr_root=aggr_root,
-    )
-
-    aggr_dataset = LeRobotDataset(repo_id=aggr_repo_id, root=aggr_root)
-    # for i in tqdm.tqdm(range(len(aggr_dataset))):
-    #     aggr_dataset[i]
-    #     pass
-    aggr_dataset.push_to_hub(tags=tags, upload_large_folder=True)
