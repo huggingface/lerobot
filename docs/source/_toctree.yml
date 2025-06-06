@@ -5,12 +5,32 @@
     title: Installation
   title: Get started
 - sections:
-  - local: assemble_so101
-    title: Assemble SO-101
   - local: getting_started_real_world_robot
     title: Getting Started with Real-World Robots
+  - local: cameras
+    title: Cameras
+  - local: smolvla
+    title: Use SmolVLA
   title: "Tutorials"
 - sections:
+<<<<<<< HEAD
   - local: smolvla
     title: Use SmolVLA
   title: "Policies"
+=======
+  - local: so101
+    title: SO-101
+  - local: so100
+    title: SO-100
+  - local: koch
+    title: Koch v1.1
+  - local: lekiwi
+    title: LeKiwi
+  title: "Robots"
+- sections:
+  - local: contributing
+    title: Contribute to LeRobot
+  - local: backwardcomp
+    title: Backward compatibility
+  title: "About"
+>>>>>>> 7766f2447ae13f18ebe0fc750661143f7568cf43
