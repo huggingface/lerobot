@@ -5,8 +5,10 @@
     title: Installation
   title: Get started
 - sections:
-  - local: getting_started_real_world_robot
-    title: Getting Started with Real-World Robots
+  - local: il_robots
+    title: Imitation Learning for Robots
+  - local: il_sim
+    title: Imitation Learning in Sim
   - local: cameras
     title: Cameras
   title: "Tutorials"

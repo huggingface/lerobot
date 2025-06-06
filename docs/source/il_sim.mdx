@@ -1,0 +1,73 @@
+# Imitation Learning in Sim
+
+This tutorial will explain how to train a neural network to control a robot in simulation with imitation learning.
+
+**You'll learn:**
+1. How to record a dataset in simulation with [gym-hil](https://github.com/huggingface/gym-hil) and visualize the dataset.
+2. How to train a policy using your data.
+3. How to evaluate your policy in simulation and visualize the results.
+
+For the simulation environment we use the same [repo](https://github.com/huggingface/gym-hil) that is also being used by the Human-In-the-Loop (HIL) reinforcement learning algorithm.
+This environment is based on [MuJoCo](https://mujoco.org) and allows you to record datasets in LeRobotDataset format.
+
+## Installation
+
+First we will install the environment. we follow the installation instructions from the [repo](https://github.com/huggingface/gym-hil#installation).
+
+Create a virtual environment with Python 3.10 and activate it, e.g. with [`miniconda`](https://docs.anaconda.com/free/miniconda/index.html):
+```bash
+conda create -y -n gym_hil python=3.10 && conda activate gym_hil
+```
+
+Install gym-hil from PyPI:
+```bash
+pip install gym-hil
+```
+or from source:
+```bash
+git clone https://github.com/HuggingFace/gym-hil.git && cd gym-hil
+pip install -e .
+```
+
+## Teleoperate and record dataset
+
+To teleoperate a Franka Panda robot in simulation and record a dataset, run this script `examples/test_teleoperation.py` from inside the repo:
+
+<hfoptions id="telop_sim">
+<hfoption id="Linux">
+
+```bash
+python examples/test_teleoperation.py --use-keyboard
+```
+</hfoption>
+<hfoption id="Mac">
+
+```python
+mjpython examples/test_teleoperation.py --use-keyboard
+```
+</hfoption>
+</hfoptions>
+
+Once rendered you can teleoperate the robot by using your keyboard like this:
+
+```bash
+Keyboard controls:
+  Arrow keys: Move in X-Y plane
+  Shift and Shift_R: Move in Z axis
+  Enter: End episode with SUCCESS
+  Backspace: End episode with FAILURE
+  ESC: Exit
+```
+
+## Train a policy
+
+
+
+## Evaluate your policy in Sim
+
+
+
+Congrats 🎉, you have finished this tutorial. If you want to continue with using LeRobot in simulation follow this [Tutorial on reinforcement learning in sim with HIL-SERL](https://huggingface.co/docs/lerobot/hilserl_sim)
+
+> [!TIP]
+>  If you have any questions or need help, please reach out on [Discord](https://discord.com/invite/s3KuuzsPFb).
