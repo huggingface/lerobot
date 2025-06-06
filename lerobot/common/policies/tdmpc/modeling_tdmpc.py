@@ -17,8 +17,8 @@
 """Implementation of Finetuning Offline World Models in the Real World.
 
 The comments in this code may sometimes refer to these references:
-    TD-MPC paper: Temporal Difference Learning for Model Predictive Control (https://arxiv.org/abs/2203.04955)
-    FOWM paper: Finetuning Offline World Models in the Real World (https://arxiv.org/abs/2310.16029)
+    TD-MPC paper: Temporal Difference Learning for Model Predictive Control (https://huggingface.co/papers/2203.04955)
+    FOWM paper: Finetuning Offline World Models in the Real World (https://huggingface.co/papers/2310.16029)
 """
 
 # ruff: noqa: N806
