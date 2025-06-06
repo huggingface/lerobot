@@ -191,7 +191,7 @@ def decode_video_frames_torchcodec(
         raise ImportError("torchcodec is required but not available.")
 
     # initialize video decoder
-    decoder = VideoDecoder(video_path, device=device, seek_mode="approximate")
+    decoder = VideoDecoder(video_path, device=device, seek_mode="exact")
     loaded_frames = []
     loaded_ts = []
     # get metadata for frame information
