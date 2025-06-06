@@ -363,6 +363,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         force_cache_sync: bool = False,
         download_videos: bool = True,
         video_backend: str | None = None,
+        local_files_only: bool = False,
     ):
         """
         2 modes are available for instantiating this class, depending on 2 different use cases:
@@ -475,6 +476,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.revision = revision if revision else CODEBASE_VERSION
         self.video_backend = video_backend if video_backend else "pyav"
         self.delta_indices = None
+        self.local_files_only = local_files_only
 
         # Unused attributes
         self.image_writer = None
@@ -575,6 +577,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         allow_patterns: list[str] | str | None = None,
         ignore_patterns: list[str] | str | None = None,
     ) -> None:
+        # Call the snapshot_download function to pull the dataset from the repo
         snapshot_download(
             self.repo_id,
             repo_type="dataset",
@@ -582,6 +585,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             local_dir=self.root,
             allow_patterns=allow_patterns,
             ignore_patterns=ignore_patterns,
+            local_files_only=self.local_files_only,
         )
 
     def download_episodes(self, download_videos: bool = True) -> None:

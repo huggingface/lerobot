@@ -13,8 +13,11 @@
 
 ## A. Install LeRobot
 
-Before running the following commands, make sure you have installed LeRobot by following the [installation instructions](https://github.com/lerobot/lerobot/blob/main/README.md).
+docker pull dudulrx0601/lerobot:cpu
 
+docker pull dudulrx0601/lerobot:gpu_jetson
+
+docker pull dudulrx0601/lerobot:gpu
 ## B. Teleoperate
 
 **Simple teleop**
@@ -61,9 +64,9 @@ python lerobot/scripts/control_robot.py \
   --control.tags='["roarm_m3","tutorial"]' \
   --control.warmup_time_s=5 \
   --control.episode_time_s=30 \
-  --control.reset_time_s=30 \
-  --control.num_episodes=2 \
-  --control.push_to_hub=true
+  --control.reset_time_s=5 \
+  --control.num_episodes=50 \
+  --control.push_to_hub=false
 ```
 
 Note: You can resume recording by adding `--control.resume=true`.
@@ -79,8 +82,7 @@ If you didn't upload with `--control.push_to_hub=false`, you can also visualize 
 ```bash
 python lerobot/scripts/visualize_dataset_html.py \
   --repo-id ${HF_USER}/roarm_m3_test \
-  --host ip \
-  --local-files-only 1
+  --host ip 
 ```
 
 ## E. Replay an episode
@@ -104,8 +106,9 @@ python lerobot/scripts/train.py \
   --policy.type=act \
   --output_dir=outputs/train/act_roarm_m3_test \
   --job_name=act_roarm_m3_test \
-  --device=cuda \
-  --wandb.enable=true
+  --policy.device=cuda \
+  --wandb.enable=false \
+  --local_files_only=true
 ```
 
 Let's explain it:
@@ -113,6 +116,7 @@ Let's explain it:
 2. We provided the policy with `policy.type=act`. This loads configurations from [`configuration_act.py`](../lerobot/common/policies/act/configuration_act.py). Importantly, this policy will automatically adapt to the number of motor sates, motor actions and cameras of your robot (e.g. `laptop` and `phone`) which have been saved in your dataset.
 4. We provided `device=cuda` since we are training on a Nvidia GPU, but you could use `device=mps` to train on Apple silicon.
 5. We provided `wandb.enable=true` to use [Weights and Biases](https://docs.wandb.ai/quickstart) for visualizing training plots. This is optional but if you use it, make sure you are logged in by running `wandb login`.
+6. We provided `local_files_only=true` to use the local dataset. This is useful if you want to train on a local machine.
 
 Training should take several hours. You will find checkpoints in `outputs/train/act_roarm_m3_test/checkpoints`.
 
@@ -131,7 +135,7 @@ python lerobot/scripts/control_robot.py \
   --control.episode_time_s=30 \
   --control.reset_time_s=30 \
   --control.num_episodes=10 \
-  --control.push_to_hub=true \
+  --control.push_to_hub=false \
   --control.policy.path=outputs/train/act_roarm_m3_test/checkpoints/last/pretrained_model
 ```
 
