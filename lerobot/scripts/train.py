@@ -107,6 +107,7 @@ def update_policy(
 
 @parser.wrap()
 def train(cfg: TrainPipelineConfig):
+    cfg.steps = 81000  # Set total number of training updates
     cfg.validate()
     logging.info(pformat(cfg.to_dict()))
 
