@@ -101,6 +101,9 @@ xarm = ["gym-xarm>=0.1.1 ; python_version < '4.0'"]
 [tool.poetry]
 requires-poetry = ">=2.1"
 
+[tool.poetry.group.dev.dependencies]
+ipykernel = "^6.29.5"
+
 [tool.ruff]
 line-length = 110
 target-version = "py310"
