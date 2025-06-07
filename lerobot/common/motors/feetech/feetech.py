@@ -66,34 +66,45 @@ class TorqueMode(Enum):
     DISABLED = 0
 
 
-def _split_into_byte_chunks(value: int, length: int) -> list[int]:
+def scs_lobyte(w):
     import scservo_sdk as scs
 
+    if scs.SCS_END == 0:
+        return w & 0xFF
+    else:
+        return (w >> 8) & 0xFF
+
+
+def scs_hibyte(w):
+    import scservo_sdk as scs
+
+    if scs.SCS_END == 0:
+        return (w >> 8) & 0xFF
+    else:
+        return w & 0xFF
+
+
+def scs_loword(l):
+    return l & 0xFFFF
+
+
+def scs_hiword(l):
+    return (l >> 16) & 0xFFFF
+
+
+def _split_into_byte_chunks(value: int, length: int) -> list[int]:
     if length == 1:
         data = [value]
     elif length == 2:
-        data = [scs.SCS_LOBYTE(value), scs.SCS_HIBYTE(value)]
+        data = [scs_lobyte(value), scs_hibyte(value)]
     elif length == 4:
         data = [
-            scs.SCS_LOBYTE(scs.SCS_LOWORD(value)),
-            scs.SCS_HIBYTE(scs.SCS_LOWORD(value)),
-            scs.SCS_LOBYTE(scs.SCS_HIWORD(value)),
-            scs.SCS_HIBYTE(scs.SCS_HIWORD(value)),
+            scs_lobyte(scs_loword(value)),
+            scs_hibyte(scs_loword(value)),
+            scs_lobyte(scs_hiword(value)),
+            scs_hibyte(scs_hiword(value)),
         ]
     return data
-
-
-def patch_setPacketTimeout(self, packet_length):  # noqa: N802
-    """
-    HACK: This patches the PortHandler behavior to set the correct packet timeouts.
-
-    It fixes https://gitee.com/ftservo/SCServoSDK/issues/IBY2S6
-    The bug is fixed on the official Feetech SDK repo (https://gitee.com/ftservo/FTServo_Python)
-    but because that version is not published on PyPI, we rely on the (unofficial) on that is, which needs
-    patching.
-    """
-    self.packet_start_time = self.getCurrentTime()
-    self.packet_timeout = (self.tx_time_per_byte * packet_length) + (self.tx_time_per_byte * 3.0) + 50
 
 
 class FeetechMotorsBus(MotorsBus):
@@ -126,13 +137,9 @@ class FeetechMotorsBus(MotorsBus):
         import scservo_sdk as scs
 
         self.port_handler = scs.PortHandler(self.port)
-        # HACK: monkeypatch
-        self.port_handler.setPacketTimeout = patch_setPacketTimeout.__get__(
-            self.port_handler, scs.PortHandler
-        )
-        self.packet_handler = scs.PacketHandler(protocol_version)
-        self.sync_reader = scs.GroupSyncRead(self.port_handler, self.packet_handler, 0, 0)
-        self.sync_writer = scs.GroupSyncWrite(self.port_handler, self.packet_handler, 0, 0)
+        self.packet_handler = scs.protocol_packet_handler(self.port_handler, protocol_version)
+        self.sync_reader = scs.GroupSyncRead(self.packet_handler, 0, 0)
+        self.sync_writer = scs.GroupSyncWrite(self.packet_handler, 0, 0)
         self._comm_success = scs.COMM_SUCCESS
         self._no_error = 0x00
 
@@ -175,9 +182,7 @@ class FeetechMotorsBus(MotorsBus):
 
     def _find_single_motor_p0(self, motor: str, initial_baudrate: int | None = None) -> tuple[int, int]:
         model = self.motors[motor].model
-        search_baudrates = (
-            [initial_baudrate] if initial_baudrate is not None else self.model_baudrate_table[model]
-        )
+        search_baudrates = [initial_baudrate] if initial_baudrate is not None else self.model_baudrate_table[model]
         expected_model_nb = self.model_number_table[model]
 
         for baudrate in search_baudrates:
@@ -199,9 +204,7 @@ class FeetechMotorsBus(MotorsBus):
         import scservo_sdk as scs
 
         model = self.motors[motor].model
-        search_baudrates = (
-            [initial_baudrate] if initial_baudrate is not None else self.model_baudrate_table[model]
-        )
+        search_baudrates = [initial_baudrate] if initial_baudrate is not None else self.model_baudrate_table[model]
         expected_model_nb = self.model_number_table[model]
 
         for baudrate in search_baudrates:
@@ -236,16 +239,14 @@ class FeetechMotorsBus(MotorsBus):
             return False
 
         same_ranges = all(
-            self.calibration[motor].range_min == cal.range_min
-            and self.calibration[motor].range_max == cal.range_max
+            self.calibration[motor].range_min == cal.range_min and self.calibration[motor].range_max == cal.range_max
             for motor, cal in motors_calibration.items()
         )
         if self.protocol_version == 1:
             return same_ranges
 
         same_offsets = all(
-            self.calibration[motor].homing_offset == cal.homing_offset
-            for motor, cal in motors_calibration.items()
+            self.calibration[motor].homing_offset == cal.homing_offset for motor, cal in motors_calibration.items()
         )
         return same_ranges and same_offsets
 
@@ -254,9 +255,7 @@ class FeetechMotorsBus(MotorsBus):
         for motor in self.motors:
             mins[motor] = self.read("Min_Position_Limit", motor, normalize=False)
             maxes[motor] = self.read("Max_Position_Limit", motor, normalize=False)
-            offsets[motor] = (
-                self.read("Homing_Offset", motor, normalize=False) if self.protocol_version == 0 else 0
-            )
+            offsets[motor] = self.read("Homing_Offset", motor, normalize=False) if self.protocol_version == 0 else 0
 
         calibration = {}
         for motor, m in self.motors.items():
@@ -426,15 +425,11 @@ class FeetechMotorsBus(MotorsBus):
     def _read_firmware_version(self, motor_ids: list[int], raise_on_error: bool = False) -> dict[int, str]:
         firmware_versions = {}
         for id_ in motor_ids:
-            firm_ver_major, comm, error = self._read(
-                *FIRMWARE_MAJOR_VERSION, id_, raise_on_error=raise_on_error
-            )
+            firm_ver_major, comm, error = self._read(*FIRMWARE_MAJOR_VERSION, id_, raise_on_error=raise_on_error)
             if not self._is_comm_success(comm) or self._is_error(error):
                 continue
 
-            firm_ver_minor, comm, error = self._read(
-                *FIRMWARE_MINOR_VERSION, id_, raise_on_error=raise_on_error
-            )
+            firm_ver_minor, comm, error = self._read(*FIRMWARE_MINOR_VERSION, id_, raise_on_error=raise_on_error)
             if not self._is_comm_success(comm) or self._is_error(error):
                 continue
 
