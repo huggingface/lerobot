@@ -1,17 +1,28 @@
 import logging
-from typing import TYPE_CHECKING
+import threading
+import time
 
 from lerobot.common.errors import DeviceNotConnectedError
 
 from .config_moveit2 import MoveIt2InterfaceConfig
 from .moveit2_servo import MoveIt2Servo
 
-if TYPE_CHECKING:
+logger = logging.getLogger(__name__)
+
+try:
+    import rclpy
     from control_msgs.action import GripperCommand
+    from rclpy import qos
     from rclpy.action import ActionClient
-    from rclpy.executors import Executor
+    from rclpy.callback_groups import ReentrantCallbackGroup
+    from rclpy.executors import MultiThreadedExecutor
     from rclpy.node import Node
     from sensor_msgs.msg import JointState
+
+    ROS2_AVAILABLE = True
+except ImportError as e:
+    logger.info(f"ROS2 dependencies not available: {e}")
+    ROS2_AVAILABLE = False
 
 
 class MoveIt2Interface:
@@ -20,18 +31,19 @@ class MoveIt2Interface:
     def __init__(self, config: MoveIt2InterfaceConfig):
         self.config = config
         self.robot_node: Node | None = None
-        self.moveit2_servo: MoveIt2Servo | None = None
         self.gripper_action_client: ActionClient | None = None
-        self._last_joint_state_msg = None
+        self.executor: MultiThreadedExecutor | None = None
+        self._last_joint_state: dict[str, dict[str, float]] | None = None
+        self.moveit2_servo: MoveIt2Servo | None = None
+        self.executor_thread: threading.Thread | None = None
         self.is_connected = False
 
-    def connect(self, executor: "Executor") -> None:
-        from control_msgs.action import GripperCommand
-        from rclpy import qos
-        from rclpy.action import ActionClient
-        from rclpy.callback_groups import ReentrantCallbackGroup
-        from rclpy.node import Node
-        from sensor_msgs.msg import JointState
+    def connect(self) -> None:
+        if not ROS2_AVAILABLE:
+            raise ImportError("ROS2 is not available")
+
+        if not rclpy.ok():
+            rclpy.init()
 
         self.robot_node = Node(self.config.planning_group + "_control_node", namespace=self.config.namespace)
         self.moveit2_servo = MoveIt2Servo(
@@ -45,6 +57,7 @@ class MoveIt2Interface:
             "/gripper_controller/gripper_cmd",
             callback_group=ReentrantCallbackGroup(),
         )
+        self._goal_msg = GripperCommand.Goal()
         self.joint_state_sub = self.robot_node.create_subscription(
             JointState,
             "joint_states",
@@ -57,10 +70,15 @@ class MoveIt2Interface:
             ),
             callback_group=ReentrantCallbackGroup(),
         )
-        executor.add_node(self.robot_node)
-        self.is_connected = True
 
-        self._goal_msg = GripperCommand.Goal()
+        # Create and start the executor in a separate thread
+        self.executor = MultiThreadedExecutor()
+        self.executor.add_node(self.robot_node)
+        self.executor_thread = threading.Thread(target=self.executor.spin, daemon=True)
+        self.executor_thread.start()
+        time.sleep(3)  # Give some time to connect to services and receive messages
+
+        self.is_connected = True
 
     def servo(self, linear, angular, normalize: bool = True) -> None:
         if not self.moveit2_servo:
@@ -83,7 +101,7 @@ class MoveIt2Interface:
             raise RuntimeError("MoveIt2Interface is not connected. You need to call `connect()`.")
 
         if not self.gripper_action_client.wait_for_server(timeout_sec=1.0):
-            logging.error("Gripper action server not available")
+            logger.error("Gripper action server not available")
             return False
 
         if normalize:
@@ -96,36 +114,61 @@ class MoveIt2Interface:
 
         self._goal_msg.command.position = gripper_goal
         if not (resp := self.gripper_action_client.send_goal(self._goal_msg)):
-            logging.error("Failed to send gripper command")
+            logger.error("Failed to send gripper command")
             return False
-        result: GripperCommand.Result = resp.result
+        result = resp.result  # type: ignore  # ROS2 types available at runtime
         if result.reached_goal:
             return True
-        logging.error(
+        logger.error(
             f"Gripper did not reach goal. stalled: {result.stalled}, "
             f"effort: {result.effort}, position: {result.position}"
         )
         return False
 
     @property
-    def joint_state(self) -> "JointState | None":
-        """
-        Get the last received joint state message.
-        Returns:
-            JointState: The last joint state message received, or None if no message has been received.
-        """
-        return self._last_joint_state_msg
+    def joint_state(self) -> dict[str, dict[str, float]] | None:
+        """Get the last received joint state."""
+        return self._last_joint_state
 
-    def _joint_state_callback(self, msg):
-        self._last_joint_state_msg = msg
+    def _joint_state_callback(self, msg: "JointState") -> None:
+        self._last_joint_state = self._last_joint_state or {}
+        positions = {}
+        velocities = {}
+        name_to_index = {name: i for i, name in enumerate(msg.name)}
+        for joint_name in self.config.arm_joint_names:
+            idx = name_to_index.get(joint_name)
+            if idx is None:
+                raise ValueError(f"Joint '{joint_name}' not found in joint state.")
+            positions[joint_name] = msg.position[idx]
+            velocities[joint_name] = msg.velocity[idx]
+
+        idx = name_to_index.get(self.config.gripper_joint_name)
+        if idx is None:
+            raise ValueError(f"Gripper joint '{self.config.gripper_joint_name}' not found in joint state.")
+        positions[self.config.gripper_joint_name] = msg.position[idx]
+        velocities[self.config.gripper_joint_name] = msg.velocity[idx]
+
+        self._last_joint_state["position"] = positions
+        self._last_joint_state["velocity"] = velocities
 
     def disconnect(self):
+        if self.joint_state_sub:
+            self.joint_state_sub.destroy()
+            self.joint_state_sub = None
+        if self.gripper_action_client:
+            self.gripper_action_client.destroy()
+            self.gripper_action_client = None
         if self.robot_node:
             self.robot_node.destroy_node()
             self.robot_node = None
         if self.moveit2_servo:
             self.moveit2_servo = None
-        if self.gripper_action_client:
-            self.gripper_action_client.destroy()
-            self.gripper_action_client = None
+
+        if self.executor:
+            self.executor.shutdown()
+            self.executor = None
+        if self.executor_thread:
+            self.executor_thread.join()
+            self.executor_thread = None
+
         self.is_connected = False

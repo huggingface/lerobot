@@ -1,8 +1,7 @@
 import logging
-import threading
 import time
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 from lerobot.common.cameras.utils import make_cameras_from_configs
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
@@ -12,9 +11,6 @@ from ..robot import Robot
 from ..utils import ensure_safe_goal_position
 from .config_moveit2 import MoveIt2Config
 from .moveit2_interface import MoveIt2Interface
-
-if TYPE_CHECKING:
-    from rclpy.executors import Executor
 
 logger = logging.getLogger(__name__)
 
@@ -28,9 +24,6 @@ class MoveIt2(Robot):
         self.config = config
         self.moveit2_interface = MoveIt2Interface(config.moveit2_interface)
         self.cameras = make_cameras_from_configs(config.cameras)
-
-        self.executor: Executor | None = None
-        self.executor_thread: threading.Thread | None = None
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
@@ -63,29 +56,12 @@ class MoveIt2(Robot):
         return self.moveit2_interface.is_connected and all(cam.is_connected for cam in self.cameras.values())
 
     def connect(self, calibrate: bool = True) -> None:
-        """
-        We assume that at connection time, arm is in a rest position,
-        and torque can be safely disabled to run calibration.
-        """
         if self.is_connected:
             raise DeviceAlreadyConnectedError(f"{self} already connected")
 
         for cam in self.cameras.values():
             cam.connect()
-
-        # TODO (Yifei): should this be done in the MoveIt2Interface?
-        import rclpy
-        from rclpy.executors import MultiThreadedExecutor
-
-        rclpy.init()
-        # Create and start the executor in a separate thread
-        self.executor = MultiThreadedExecutor()
-        self.moveit2_interface.connect(self.executor)
-        self.executor_thread = threading.Thread(target=self.executor.spin, daemon=True)
-        self.executor_thread.start()
-        time.sleep(3)  # Give some time to connect to services and receive messages
-
-        logger.info(f"{self} connected.")
+        self.moveit2_interface.connect()
 
     @property
     def is_calibrated(self) -> bool:
@@ -102,8 +78,10 @@ class MoveIt2(Robot):
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
         obs_dict: dict[str, Any] = {}
-        arm_obs = self._get_arm_observation()
-        obs_dict.update({f"{joint}.pos": pos for joint, pos in arm_obs.items()})
+        joint_state = self.moveit2_interface.joint_state
+        if joint_state is None:
+            raise ValueError("Joint state is not available yet.")
+        obs_dict.update({f"{joint}.pos": pos for joint, pos in joint_state["position"].items()})
 
         # Capture images from cameras
         for cam_key, cam in self.cameras.items():
@@ -113,25 +91,6 @@ class MoveIt2(Robot):
             logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
 
         return obs_dict
-
-    def _get_arm_observation(self) -> dict[str, float]:
-        positions = {}
-        arm = self.moveit2_interface
-        if not arm.joint_state:
-            raise ValueError("Joint state is not available yet.")
-
-        name_to_index = {name: i for i, name in enumerate(arm.joint_state.name)}
-        for joint_name in arm.config.arm_joint_names:
-            idx = name_to_index.get(joint_name)
-            if idx is None:
-                raise ValueError(f"Joint '{joint_name}' not found in joint state.")
-            positions[joint_name] = arm.joint_state.position[idx]
-
-        idx = name_to_index.get(arm.config.gripper_joint_name)
-        if idx is None:
-            raise ValueError(f"Gripper joint '{arm.config.gripper_joint_name}' not found in joint state.")
-        positions[arm.config.gripper_joint_name] = arm.joint_state.position[idx]
-        return positions
 
     def send_action(self, action: dict[str, float]) -> dict[str, float]:
         """Command arm to move to a target joint configuration.
@@ -229,8 +188,8 @@ class MoveIt2(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        self.moveit2_interface.disconnect()
         for cam in self.cameras.values():
             cam.disconnect()
+        self.moveit2_interface.disconnect()
 
         logger.info(f"{self} disconnected.")
