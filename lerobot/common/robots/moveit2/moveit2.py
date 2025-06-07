@@ -177,12 +177,11 @@ class MoveIt2(Robot):
 
     def from_keyboard_to_action(self, pressed_keys: dict[str, Any]) -> dict[str, float]:
         """Convert pressed keys to action commands for teleop."""
-        print("Pressed keys:", pressed_keys)
         lin_vel_x = 0.0
         if "a" in pressed_keys:
-            lin_vel_x += 1.0
-        if "d" in pressed_keys:
             lin_vel_x -= 1.0
+        if "d" in pressed_keys:
+            lin_vel_x += 1.0
         lin_vel_y = 0.0
         if "w" in pressed_keys:
             lin_vel_y += 1.0
@@ -190,15 +189,15 @@ class MoveIt2(Robot):
             lin_vel_y -= 1.0
         lin_vel_z = 0.0
         if "q" in pressed_keys:
-            lin_vel_z += 1.0
-        if "e" in pressed_keys:
             lin_vel_z -= 1.0
+        if "e" in pressed_keys:
+            lin_vel_z += 1.0
 
         ang_vel_x = 0.0
         if "j" in pressed_keys:
-            ang_vel_x += 1.0
-        if "l" in pressed_keys:
             ang_vel_x -= 1.0
+        if "l" in pressed_keys:
+            ang_vel_x += 1.0
         
         ang_vel_y = 0.0
         if "i" in pressed_keys:
@@ -207,9 +206,9 @@ class MoveIt2(Robot):
             ang_vel_y -= 1.0
         ang_vel_z = 0.0
         if "u" in pressed_keys:
-            ang_vel_z += 1.0
-        if "o" in pressed_keys:
             ang_vel_z -= 1.0
+        if "o" in pressed_keys:
+            ang_vel_z += 1.0
 
         gripper_pos = 0.0
         if "g" in pressed_keys:
