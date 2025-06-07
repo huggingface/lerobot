@@ -15,13 +15,18 @@
 # limitations under the License.
 
 import logging
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
+logger = logging.getLogger(__name__)
+
+try:
+    from rclpy import qos
     from rclpy.callback_groups import CallbackGroup
     from rclpy.node import Node
 
-logger = logging.getLogger(__name__)
+    ROS2_AVAILABLE = True
+except ImportError as e:
+    logger.info(f"ROS2 dependencies not available: {e}")
+    ROS2_AVAILABLE = False
 
 
 class MoveIt2Servo:
@@ -35,13 +40,15 @@ class MoveIt2Servo:
         frame_id: str,
         callback_group: "CallbackGroup",
     ):
+        if not ROS2_AVAILABLE:
+            raise ImportError("ROS2 is not available")
+
         self._node = node
         self._frame_id = frame_id
         self._enabled = False
 
         from geometry_msgs.msg import TwistStamped
         from moveit_msgs.srv import ServoCommandType
-        from rclpy import qos
         from std_srvs.srv import SetBool
 
         self._twist_pub = node.create_publisher(

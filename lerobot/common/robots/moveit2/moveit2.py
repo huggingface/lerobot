@@ -33,9 +33,9 @@ class MoveIt2(Robot):
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
-        all_joint_names = self.config.moveit2_interface.arm_joint_names + [
-            self.config.moveit2_interface.gripper_joint_name
-        ]
+        all_joint_names = self.config.moveit2_interface.arm_joint_names.copy()
+        if self.config.moveit2_interface.gripper_joint_name:
+            all_joint_names.append(self.config.moveit2_interface.gripper_joint_name)
         motor_state_ft = {f"{motor}.pos": float for motor in all_joint_names}
         return {**motor_state_ft, **self._cameras_ft}
 
@@ -130,8 +130,9 @@ class MoveIt2(Robot):
             action["angular_vel_y"],
             action["angular_vel_z"],
         )
-        gripper_pos = action["gripper_pos"]
         self.moveit2_interface.servo(linear=linear_vel, angular=angular_vel)
+
+        gripper_pos = action["gripper_pos"]
         self.moveit2_interface.send_gripper_command(gripper_pos)
         return action
 
@@ -139,18 +140,18 @@ class MoveIt2(Robot):
         """Convert pressed keys to action commands for teleop."""
         lin_vel_x = 0.0
         if "a" in pressed_keys:
-            lin_vel_x -= 1.0
-        if "d" in pressed_keys:
             lin_vel_x += 1.0
+        if "d" in pressed_keys:
+            lin_vel_x -= 1.0
         lin_vel_y = 0.0
         if "w" in pressed_keys:
-            lin_vel_y += 1.0
-        if "s" in pressed_keys:
             lin_vel_y -= 1.0
+        if "s" in pressed_keys:
+            lin_vel_y += 1.0
         lin_vel_z = 0.0
-        if "q" in pressed_keys:
+        if "n" in pressed_keys:
             lin_vel_z -= 1.0
-        if "e" in pressed_keys:
+        if "m" in pressed_keys:
             lin_vel_z += 1.0
 
         ang_vel_y = 0.0
@@ -161,9 +162,9 @@ class MoveIt2(Robot):
 
         ang_vel_x = 0.0
         if "i" in pressed_keys:
-            ang_vel_x += 1.0
-        if "k" in pressed_keys:
             ang_vel_x -= 1.0
+        if "k" in pressed_keys:
+            ang_vel_x += 1.0
         ang_vel_z = 0.0
         if "u" in pressed_keys:
             ang_vel_z += 1.0

@@ -12,10 +12,9 @@ logger = logging.getLogger(__name__)
 try:
     import rclpy
     from control_msgs.action import GripperCommand
-    from rclpy import qos
     from rclpy.action import ActionClient
     from rclpy.callback_groups import ReentrantCallbackGroup
-    from rclpy.executors import MultiThreadedExecutor
+    from rclpy.executors import Executor, SingleThreadedExecutor
     from rclpy.node import Node
     from sensor_msgs.msg import JointState
 
@@ -32,7 +31,7 @@ class MoveIt2Interface:
         self.config = config
         self.robot_node: Node | None = None
         self.gripper_action_client: ActionClient | None = None
-        self.executor: MultiThreadedExecutor | None = None
+        self.executor: Executor | None = None
         self._last_joint_state: dict[str, dict[str, float]] | None = None
         self.moveit2_servo: MoveIt2Servo | None = None
         self.executor_thread: threading.Thread | None = None
@@ -45,7 +44,7 @@ class MoveIt2Interface:
         if not rclpy.ok():
             rclpy.init()
 
-        self.robot_node = Node(self.config.planning_group + "_control_node", namespace=self.config.namespace)
+        self.robot_node = Node("moveit2_interface_node", namespace=self.config.namespace)
         self.moveit2_servo = MoveIt2Servo(
             node=self.robot_node,
             frame_id=self.config.base_link,
@@ -62,17 +61,11 @@ class MoveIt2Interface:
             JointState,
             "joint_states",
             self._joint_state_callback,
-            qos_profile=qos.QoSProfile(
-                durability=qos.QoSDurabilityPolicy.VOLATILE,
-                reliability=qos.QoSReliabilityPolicy.BEST_EFFORT,
-                history=qos.QoSHistoryPolicy.KEEP_LAST,
-                depth=1,
-            ),
-            callback_group=ReentrantCallbackGroup(),
+            10,
         )
 
         # Create and start the executor in a separate thread
-        self.executor = MultiThreadedExecutor()
+        self.executor = SingleThreadedExecutor()
         self.executor.add_node(self.robot_node)
         self.executor_thread = threading.Thread(target=self.executor.spin, daemon=True)
         self.executor_thread.start()
@@ -142,11 +135,14 @@ class MoveIt2Interface:
             positions[joint_name] = msg.position[idx]
             velocities[joint_name] = msg.velocity[idx]
 
-        idx = name_to_index.get(self.config.gripper_joint_name)
-        if idx is None:
-            raise ValueError(f"Gripper joint '{self.config.gripper_joint_name}' not found in joint state.")
-        positions[self.config.gripper_joint_name] = msg.position[idx]
-        velocities[self.config.gripper_joint_name] = msg.velocity[idx]
+        if self.config.gripper_joint_name:
+            idx = name_to_index.get(self.config.gripper_joint_name)
+            if idx is None:
+                raise ValueError(
+                    f"Gripper joint '{self.config.gripper_joint_name}' not found in joint state."
+                )
+            positions[self.config.gripper_joint_name] = msg.position[idx]
+            velocities[self.config.gripper_joint_name] = msg.velocity[idx]
 
         self._last_joint_state["position"] = positions
         self._last_joint_state["velocity"] = velocities

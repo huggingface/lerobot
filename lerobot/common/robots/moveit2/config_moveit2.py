@@ -23,9 +23,6 @@ class MoveIt2InterfaceConfig:
     # Namespace used by MoveIt2 nodes
     namespace: str = ""
 
-    # The MoveIt2 planning group name.
-    planning_group: str = "manipulator"
-
     # The MoveIt2 base link name.
     base_link: str = "base_link"
 
@@ -40,16 +37,15 @@ class MoveIt2InterfaceConfig:
         ]
     )
 
-    gripper_joint_name: str = "gripper_jaw1_joint"
+    gripper_joint_name: str = "gripper_joint"
 
     max_linear_velocity: float = 0.05
-    max_angular_velocity: float = 0.3  # rad/s
+    max_angular_velocity: float = 0.25  # rad/s
 
-    gripper_open_position: float = 0.014
-    gripper_close_position: float = 0.0
+    gripper_open_position: float = 0.0
+    gripper_close_position: float = 1.0
 
 
-@RobotConfig.register_subclass("moveit2")
 @dataclass
 class MoveIt2Config(RobotConfig):
     # `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
@@ -64,3 +60,28 @@ class MoveIt2Config(RobotConfig):
     moveit2_interface: MoveIt2InterfaceConfig = field(default_factory=MoveIt2InterfaceConfig)
 
     action_from_keyboard: bool = False
+
+
+@RobotConfig.register_subclass("annin_ar4")
+@dataclass
+class AnninAR4Config(MoveIt2Config):
+    """Annin Robotics AR4 robot configuration - extends MoveIt2Config with
+    AR4-specific settings
+    """
+
+    moveit2_interface: MoveIt2InterfaceConfig = field(
+        default_factory=lambda: MoveIt2InterfaceConfig(
+            base_link="base_link",
+            arm_joint_names=[
+                "joint_1",
+                "joint_2",
+                "joint_3",
+                "joint_4",
+                "joint_5",
+                "joint_6",
+            ],
+            gripper_joint_name="gripper_jaw1_joint",
+            gripper_open_position=0.014,
+            gripper_close_position=0.0,
+        )
+    )

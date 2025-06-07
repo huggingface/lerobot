@@ -185,8 +185,8 @@ def test_from_keyboard_to_action(moveit2_robot):
         ({"d": True}, {"linear_vel_x": 1.0}),
         ({"q": True}, {"linear_vel_z": -1.0}),
         ({"e": True}, {"linear_vel_z": 1.0}),
-        ({"i": True}, {"angular_vel_x": 1.0}),
-        ({"k": True}, {"angular_vel_x": -1.0}),
+        ({"i": True}, {"angular_vel_x": -1.0}),
+        ({"k": True}, {"angular_vel_x": 1.0}),
         ({"j": True}, {"angular_vel_y": -1.0}),
         ({"l": True}, {"angular_vel_y": 1.0}),
         ({"u": True}, {"angular_vel_z": 1.0}),
@@ -204,7 +204,9 @@ def test_observation_features(moveit2_robot):
     features = moveit2_robot.observation_features
 
     # Check that all joint position features are defined
-    expected_joints = ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6", "gripper_jaw1_joint"]
+    expected_joints = moveit2_robot.config.moveit2_interface.arm_joint_names + [
+        moveit2_robot.config.moveit2_interface.gripper_joint_name
+    ]
     for joint in expected_joints:
         assert f"{joint}.pos" in features
         assert features[f"{joint}.pos"] is float
