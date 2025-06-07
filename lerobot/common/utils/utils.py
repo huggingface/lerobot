@@ -116,10 +116,13 @@ def init_logging():
         message = f"{record.levelname} {dt} {fnameline[-15:]:>15} {record.msg}"
         return message
 
-    logging.basicConfig(level=logging.INFO)
+    # Clean up previous logging handlers
+    if len(logging.root.handlers) > 0:
+        logging.warning(f"Cleaning up {len(logging.root.handlers)} handler(s) that were initialized before calling init_logging")
+        for handler in logging.root.handlers[:]:
+            logging.root.removeHandler(handler)
 
-    for handler in logging.root.handlers[:]:
-        logging.root.removeHandler(handler)
+    logging.basicConfig(level=logging.INFO)
 
     formatter = logging.Formatter()
     formatter.format = custom_format
