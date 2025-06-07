@@ -118,7 +118,9 @@ def init_logging():
 
     # Clean up previous logging handlers
     if len(logging.root.handlers) > 0:
-        logging.warning(f"Cleaning up {len(logging.root.handlers)} handler(s) that were initialized before calling init_logging")
+        logging.warning(
+            f"Cleaning up {len(logging.root.handlers)} handler(s) that were initialized before calling init_logging"
+        )
         for handler in logging.root.handlers[:]:
             logging.root.removeHandler(handler)
 
