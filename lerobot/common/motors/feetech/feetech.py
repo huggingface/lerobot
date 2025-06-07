@@ -84,12 +84,12 @@ def scs_hibyte(w):
         return w & 0xFF
 
 
-def scs_loword(l):
-    return l & 0xFFFF
+def scs_loword(val):
+    return val & 0xFFFF
 
 
-def scs_hiword(l):
-    return (l >> 16) & 0xFFFF
+def scs_hiword(val):
+    return (val >> 16) & 0xFFFF
 
 
 def _split_into_byte_chunks(value: int, length: int) -> list[int]:
