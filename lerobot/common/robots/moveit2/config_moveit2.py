@@ -48,6 +48,7 @@ class MoveIt2InterfaceConfig:
     gripper_open_position: float = 0.014
     gripper_close_position: float = 0.0
 
+
 @RobotConfig.register_subclass("moveit2")
 @dataclass
 class MoveIt2Config(RobotConfig):
@@ -60,7 +61,6 @@ class MoveIt2Config(RobotConfig):
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
 
     # MoveIt2 interface configuration
-    moveit2_interface: MoveIt2InterfaceConfig = field(
-        default_factory=MoveIt2InterfaceConfig
-    )
-    
+    moveit2_interface: MoveIt2InterfaceConfig = field(default_factory=MoveIt2InterfaceConfig)
+
+    action_from_keyboard: bool = False

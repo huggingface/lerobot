@@ -64,17 +64,11 @@ class MoveIt2Interface:
 
     def servo(self, linear, angular, normalize: bool = True) -> None:
         if not self.moveit2_servo:
-            raise DeviceNotConnectedError(
-                "MoveIt2Interface is not connected. You need to call `connect()`."
-            )
+            raise DeviceNotConnectedError("MoveIt2Interface is not connected. You need to call `connect()`.")
 
         if normalize:
-            linear = [
-                v * self.config.max_linear_velocity for v in linear
-            ]
-            angular = [
-                v * self.config.max_angular_velocity for v in angular
-            ]
+            linear = [v * self.config.max_linear_velocity for v in linear]
+            angular = [v * self.config.max_angular_velocity for v in angular]
         self.moveit2_servo.servo(linear=linear, angular=angular)
 
     def send_gripper_command(self, position: float, normalize: bool = True) -> bool:

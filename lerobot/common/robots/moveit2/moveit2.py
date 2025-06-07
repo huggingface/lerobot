@@ -20,7 +20,6 @@ logger = logging.getLogger(__name__)
 
 
 class MoveIt2(Robot):
-
     config_class = cast(MoveIt2Config, RobotConfig)
     name = "moveit2"
 
@@ -29,7 +28,6 @@ class MoveIt2(Robot):
         self.config = config
         self.moveit2_interface = MoveIt2Interface(config.moveit2_interface)
         self.cameras = make_cameras_from_configs(config.cameras)
-        
 
         self.executor: Executor | None = None
         self.executor_thread: threading.Thread | None = None
@@ -42,10 +40,10 @@ class MoveIt2(Robot):
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
-        all_joint_names = self.config.moveit2_interface.arm_joint_names + [self.config.moveit2_interface.gripper_joint_name]
-        motor_state_ft = {
-            f"{motor}.pos": float for motor in all_joint_names
-        }
+        all_joint_names = self.config.moveit2_interface.arm_joint_names + [
+            self.config.moveit2_interface.gripper_joint_name
+        ]
+        motor_state_ft = {f"{motor}.pos": float for motor in all_joint_names}
         return {**motor_state_ft, **self._cameras_ft}
 
     @cached_property
@@ -97,7 +95,7 @@ class MoveIt2(Robot):
         pass  # robot must be calibrated before running LeRobot
 
     def configure(self) -> None:
-        pass # robot must be configured before running LeRobot
+        pass  # robot must be configured before running LeRobot
 
     def get_observation(self) -> dict[str, Any]:
         if not self.is_connected:
@@ -143,7 +141,7 @@ class MoveIt2(Robot):
         Thus, this function always returns the action actually sent.
 
         Args:
-            action (dict[str, float]): The goal positions for the motors.
+            action (dict[str, float]): The goal positions for the motors or pressed_keys dict.
 
         Raises:
             DeviceNotConnectedError: if robot is not connected.
@@ -153,6 +151,9 @@ class MoveIt2(Robot):
         """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
+
+        if self.config.action_from_keyboard:
+            action = self.from_keyboard_to_action(action)
 
         if self.config.max_relative_target is not None:
             # We don't have the current velocity of the arm, so set it to 0.0
@@ -193,25 +194,25 @@ class MoveIt2(Robot):
         if "e" in pressed_keys:
             lin_vel_z += 1.0
 
-        ang_vel_x = 0.0
-        if "j" in pressed_keys:
-            ang_vel_x -= 1.0
-        if "l" in pressed_keys:
-            ang_vel_x += 1.0
-        
         ang_vel_y = 0.0
-        if "i" in pressed_keys:
-            ang_vel_y += 1.0
-        if "k" in pressed_keys:
+        if "j" in pressed_keys:
             ang_vel_y -= 1.0
+        if "l" in pressed_keys:
+            ang_vel_y += 1.0
+
+        ang_vel_x = 0.0
+        if "i" in pressed_keys:
+            ang_vel_x += 1.0
+        if "k" in pressed_keys:
+            ang_vel_x -= 1.0
         ang_vel_z = 0.0
         if "u" in pressed_keys:
-            ang_vel_z -= 1.0
-        if "o" in pressed_keys:
             ang_vel_z += 1.0
+        if "o" in pressed_keys:
+            ang_vel_z -= 1.0
 
         gripper_pos = 0.0
-        if "g" in pressed_keys:
+        if "space" in pressed_keys:
             gripper_pos = 1.0
 
         return {
