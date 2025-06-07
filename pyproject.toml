@@ -84,7 +84,7 @@ dora = [
     "gym-dora @ git+https://github.com/dora-rs/dora-lerobot.git#subdirectory=gym_dora ; python_version < '4.0'",
 ]
 dynamixel = ["dynamixel-sdk>=3.7.31"]
-feetech = ["feetech-servo-sdk>=1.0.0"]
+feetech = ["ftservo-python-sdk>=2.0.0"]
 intelrealsense = [
     "pyrealsense2>=2.55.1.6486 ; sys_platform != 'darwin'",
     "pyrealsense2-macosx>=2.54 ; sys_platform == 'darwin'",
