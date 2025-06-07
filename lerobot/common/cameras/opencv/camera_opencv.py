@@ -230,7 +230,9 @@ class OpenCVCamera(Camera):
 
         actual_width = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_WIDTH)))
         if not width_success or self.capture_width != actual_width:
-            raise RuntimeError(f"{self} failed to set capture_width={self.capture_width} ({actual_width=}, {width_success=}).")
+            raise RuntimeError(
+                f"{self} failed to set capture_width={self.capture_width} ({actual_width=}, {width_success=})."
+            )
 
         actual_height = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_HEIGHT)))
         if not height_success or self.capture_height != actual_height:
