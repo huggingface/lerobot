@@ -147,7 +147,8 @@ You can then test a stereo camera setup with YOLO detections using:
 python lerobot/scripts/test_stereo_vision.py --setup
 ```
 The `--setup` flag launches an interactive prompt to select your cameras and
-saves the configuration for future runs.
+shows a short live preview of each detected camera. Once you choose, the
+configuration is saved for future runs.
 
 For instance, to install 🤗 LeRobot with aloha and pusht, use:
 ```bash
