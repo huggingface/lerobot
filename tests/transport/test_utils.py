@@ -424,11 +424,11 @@ def test_transitions_to_bytes_empty_list():
 def test_transitions_to_bytes_single_transition():
     """Test converting a single transition."""
     transition = Transition(
-        observation={"image": torch.randn(3, 64, 64), "state": torch.randn(10)},
+        state={"image": torch.randn(3, 64, 64), "state": torch.randn(10)},
         action=torch.randn(5),
         reward=torch.tensor(1.5),
         done=torch.tensor(False),
-        next_observation={"image": torch.randn(3, 64, 64), "state": torch.randn(10)},
+        next_state={"image": torch.randn(3, 64, 64), "state": torch.randn(10)},
     )
 
     transitions = [transition]
@@ -442,11 +442,11 @@ def test_transitions_to_bytes_single_transition():
 
 def assert_transitions_equal(t1: Transition, t2: Transition):
     """Helper to assert two transitions are equal."""
-    assert_observation_equal(t1["observation"], t2["observation"])
+    assert_observation_equal(t1["state"], t2["state"])
     assert torch.allclose(t1["action"], t2["action"])
     assert torch.allclose(t1["reward"], t2["reward"])
     assert torch.equal(t1["done"], t2["done"])
-    assert_observation_equal(t1["next_observation"], t2["next_observation"])
+    assert_observation_equal(t1["next_state"], t2["next_state"])
 
 
 def assert_observation_equal(o1: dict, o2: dict):
@@ -461,11 +461,11 @@ def test_transitions_to_bytes_multiple_transitions():
     transitions = []
     for i in range(5):
         transition = Transition(
-            observation={"data": torch.randn(10)},
+            state={"data": torch.randn(10)},
             action=torch.randn(3),
             reward=torch.tensor(float(i)),
             done=torch.tensor(i == 4),
-            next_observation={"data": torch.randn(10)},
+            next_state={"data": torch.randn(10)},
         )
         transitions.append(transition)
 
