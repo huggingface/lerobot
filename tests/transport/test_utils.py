@@ -16,14 +16,21 @@
 
 import io
 from multiprocessing import Event, Queue
+from pickle import UnpicklingError
+
+import pytest
+import torch
 
 from lerobot.common.transport import services_pb2
 from lerobot.common.transport.utils import (
     CHUNK_SIZE,
     bytes_buffer_size,
+    bytes_to_state_dict,
     receive_bytes_in_chunks,
     send_bytes_in_chunks,
+    state_to_bytes,
 )
+from tests.utils import require_cuda
 
 
 def test_bytes_buffer_size_empty_buffer():
@@ -252,3 +259,469 @@ def test_receive_bytes_in_chunks_missing_begin():
     # The implementation continues from where it is, so we should get partial data
     assert queue.get(timeout=0.01) == b"MiddleEnd"
     assert queue.empty()
+
+
+# Tests for state_to_bytes and bytes_to_state_dict
+def test_state_to_bytes_empty_dict():
+    """Test converting empty state dict to bytes."""
+    state_dict = {}
+    data = state_to_bytes(state_dict)
+    reconstructed = bytes_to_state_dict(data)
+    assert reconstructed == state_dict
+
+
+def test_bytes_to_state_dict_empty_data():
+    """Test converting empty data to state dict."""
+    with pytest.raises(EOFError):
+        bytes_to_state_dict(b"")
+
+
+def test_state_to_bytes_simple_dict():
+    """Test converting simple state dict to bytes."""
+    state_dict = {
+        "layer1.weight": torch.randn(10, 5),
+        "layer1.bias": torch.randn(10),
+        "layer2.weight": torch.randn(1, 10),
+        "layer2.bias": torch.randn(1),
+    }
+
+    data = state_to_bytes(state_dict)
+    assert isinstance(data, bytes)
+    assert len(data) > 0
+
+    reconstructed = bytes_to_state_dict(data)
+
+    assert len(reconstructed) == len(state_dict)
+    for key in state_dict:
+        assert key in reconstructed
+        assert torch.allclose(state_dict[key], reconstructed[key])
+
+
+def test_state_to_bytes_various_dtypes():
+    """Test converting state dict with various tensor dtypes."""
+    state_dict = {
+        "float32": torch.randn(5, 5),
+        "float64": torch.randn(3, 3).double(),
+        "int32": torch.randint(0, 100, (4, 4), dtype=torch.int32),
+        "int64": torch.randint(0, 100, (2, 2), dtype=torch.int64),
+        "bool": torch.tensor([True, False, True]),
+        "uint8": torch.randint(0, 255, (3, 3), dtype=torch.uint8),
+    }
+
+    data = state_to_bytes(state_dict)
+    reconstructed = bytes_to_state_dict(data)
+
+    for key in state_dict:
+        assert reconstructed[key].dtype == state_dict[key].dtype
+        if state_dict[key].dtype == torch.bool:
+            assert torch.equal(state_dict[key], reconstructed[key])
+        else:
+            assert torch.allclose(state_dict[key], reconstructed[key])
+
+
+def test_bytes_to_state_dict_invalid_data():
+    """Test bytes_to_state_dict with invalid data."""
+    with pytest.raises(UnpicklingError):
+        bytes_to_state_dict(b"This is not a valid torch save file")
+
+
+@require_cuda
+def test_state_to_bytes_various_dtypes_cuda():
+    """Test converting state dict with various tensor dtypes."""
+    state_dict = {
+        "float32": torch.randn(5, 5).cuda(),
+        "float64": torch.randn(3, 3).double().cuda(),
+        "int32": torch.randint(0, 100, (4, 4), dtype=torch.int32).cuda(),
+        "int64": torch.randint(0, 100, (2, 2), dtype=torch.int64).cuda(),
+        "bool": torch.tensor([True, False, True]),
+        "uint8": torch.randint(0, 255, (3, 3), dtype=torch.uint8),
+    }
+
+    data = state_to_bytes(state_dict)
+    reconstructed = bytes_to_state_dict(data)
+
+    for key in state_dict:
+        assert reconstructed[key].dtype == state_dict[key].dtype
+        if state_dict[key].dtype == torch.bool:
+            assert torch.equal(state_dict[key], reconstructed[key])
+        else:
+            assert torch.allclose(state_dict[key], reconstructed[key])
+
+
+# # Tests for python_object_to_bytes and bytes_to_python_object
+# def test_python_object_to_bytes_none():
+#     """Test converting None to bytes."""
+#     obj = None
+#     data = python_object_to_bytes(obj)
+#     reconstructed = bytes_to_python_object(data)
+#     assert reconstructed is None
+
+
+# def test_python_object_to_bytes_simple_types():
+#     """Test converting simple Python types."""
+#     test_objects = [
+#         42,
+#         -123,
+#         3.14159,
+#         -2.71828,
+#         "Hello, World!",
+#         "Unicode: 你好世界 🌍",
+#         True,
+#         False,
+#         b"byte string",
+#     ]
+
+#     for obj in test_objects:
+#         data = python_object_to_bytes(obj)
+#         assert isinstance(data, bytes)
+#         reconstructed = bytes_to_python_object(data)
+#         assert reconstructed == obj
+#         assert type(reconstructed) == type(obj)
+
+
+# def test_python_object_to_bytes_collections():
+#     """Test converting Python collections."""
+#     test_objects = [
+#         [],
+#         [1, 2, 3, 4, 5],
+#         [1, "two", 3.0, True, None],
+#         {},
+#         {"key": "value", "number": 123, "nested": {"a": 1}},
+#         (),
+#         (1, 2, 3),
+#         {1, 2, 3, 4, 5},
+#         frozenset([1, 2, 3]),
+#     ]
+
+#     for obj in test_objects:
+#         data = python_object_to_bytes(obj)
+#         reconstructed = bytes_to_python_object(data)
+#         assert reconstructed == obj
+#         assert type(reconstructed) == type(obj)
+
+
+# def test_python_object_to_bytes_nested_structures():
+#     """Test converting deeply nested structures."""
+#     obj = {
+#         'list': [1, [2, [3, [4, [5]]]]],
+#         'dict': {'a': {'b': {'c': {'d': {'e': 'deep'}}}}},
+#         'mixed': {
+#             'numbers': [1, 2.5, -3],
+#             'strings': ["a", "b", "c"],
+#             'bools': [True, False, None],
+#             'nested_list': [[1, 2], [3, 4], [5, 6]],
+#             'nested_dict': {'x': {'y': {'z': 'end'}}},
+#         }
+#     }
+
+#     data = python_object_to_bytes(obj)
+#     reconstructed = bytes_to_python_object(data)
+#     assert reconstructed == obj
+
+
+# def test_python_object_to_bytes_with_tensors():
+#     """Test converting objects containing PyTorch tensors."""
+#     obj = {
+#         'tensor': torch.randn(5, 5),
+#         'list_with_tensor': [1, 2, torch.randn(3, 3), "string"],
+#         'nested': {
+#             'tensor1': torch.randn(2, 2),
+#             'tensor2': torch.tensor([1, 2, 3]),
+#         }
+#     }
+
+#     data = python_object_to_bytes(obj)
+#     reconstructed = bytes_to_python_object(data)
+
+#     assert torch.allclose(obj['tensor'], reconstructed['tensor'])
+#     assert reconstructed['list_with_tensor'][0] == 1
+#     assert reconstructed['list_with_tensor'][3] == "string"
+#     assert torch.allclose(obj['list_with_tensor'][2], reconstructed['list_with_tensor'][2])
+#     assert torch.allclose(obj['nested']['tensor1'], reconstructed['nested']['tensor1'])
+#     assert torch.equal(obj['nested']['tensor2'], reconstructed['nested']['tensor2'])
+
+
+# def test_python_object_to_bytes_custom_class():
+#     """Test converting custom class instances."""
+#     class TestClass:
+#         def __init__(self, value, name):
+#             self.value = value
+#             self.name = name
+#             self.data = [1, 2, 3]
+
+#         def __eq__(self, other):
+#             return (self.value == other.value and
+#                    self.name == other.name and
+#                    self.data == other.data)
+
+#     obj = TestClass(42, "test")
+#     data = python_object_to_bytes(obj)
+#     reconstructed = bytes_to_python_object(data)
+
+#     assert reconstructed.value == obj.value
+#     assert reconstructed.name == obj.name
+#     assert reconstructed.data == obj.data
+
+
+# def test_python_object_to_bytes_large_object():
+#     """Test converting very large objects."""
+#     # Create a large object with many elements
+#     obj = {
+#         f'key_{i}': list(range(100)) for i in range(100)
+#     }
+#     obj['large_string'] = 'x' * 1000000  # 1MB string
+
+#     data = python_object_to_bytes(obj)
+#     reconstructed = bytes_to_python_object(data)
+
+#     assert len(reconstructed) == len(obj)
+#     assert reconstructed['key_50'] == list(range(100))
+#     assert reconstructed['large_string'] == obj['large_string']
+
+
+# def test_bytes_to_python_object_invalid_data():
+#     """Test bytes_to_python_object with invalid pickle data."""
+#     with pytest.raises(Exception):
+#         bytes_to_python_object(b"This is not valid pickle data")
+
+#     with pytest.raises(Exception):
+#         bytes_to_python_object(b"")
+
+
+# # Tests for transitions_to_bytes and bytes_to_transitions
+# def test_transitions_to_bytes_empty_list():
+#     """Test converting empty transitions list."""
+#     transitions = []
+#     data = transitions_to_bytes(transitions)
+#     reconstructed = bytes_to_transitions(data)
+#     assert reconstructed == transitions
+#     assert isinstance(reconstructed, list)
+
+
+# def test_transitions_to_bytes_single_transition():
+#     """Test converting a single transition."""
+#     transition = Transition(
+#         observation={'image': torch.randn(3, 64, 64), 'state': torch.randn(10)},
+#         action=torch.randn(5),
+#         reward=torch.tensor(1.5),
+#         done=torch.tensor(False),
+#         next_observation={'image': torch.randn(3, 64, 64), 'state': torch.randn(10)},
+#     )
+
+#     transitions = [transition]
+#     data = transitions_to_bytes(transitions)
+#     reconstructed = bytes_to_transitions(data)
+
+#     assert len(reconstructed) == 1
+#     assert_transitions_equal(transitions[0], reconstructed[0])
+
+
+# def test_transitions_to_bytes_multiple_transitions():
+#     """Test converting multiple transitions."""
+#     transitions = []
+#     for i in range(5):
+#         transition = Transition(
+#             observation={'data': torch.randn(10)},
+#             action=torch.randn(3),
+#             reward=torch.tensor(float(i)),
+#             done=torch.tensor(i == 4),  # Last one is done
+#             next_observation={'data': torch.randn(10)},
+#         )
+#         transitions.append(transition)
+
+#     data = transitions_to_bytes(transitions)
+#     reconstructed = bytes_to_transitions(data)
+
+#     assert len(reconstructed) == len(transitions)
+#     for original, reconstructed_item in zip(transitions, reconstructed):
+#         assert_transitions_equal(original, reconstructed_item)
+
+
+# def test_transitions_to_bytes_complex_observations():
+#     """Test converting transitions with complex observation structures."""
+#     transitions = []
+
+#     # Various observation structures
+#     observation_types = [
+#         {'image': torch.randn(3, 128, 128), 'depth': torch.randn(1, 128, 128), 'state': torch.randn(7)},
+#         {'lidar': torch.randn(360), 'imu': torch.randn(6), 'joint_pos': torch.randn(7)},
+#         {'rgb': torch.randn(3, 64, 64), 'segmentation': torch.randint(0, 10, (64, 64))},
+#     ]
+
+#     for i, obs_type in enumerate(observation_types):
+#         transition = Transition(
+#             observation=obs_type.copy(),
+#             action=torch.randn(4),
+#             reward=torch.tensor(float(i)),
+#             done=torch.tensor(False),
+#             next_observation=obs_type.copy(),
+#         )
+#         transitions.append(transition)
+
+#     data = transitions_to_bytes(transitions)
+#     reconstructed = bytes_to_transitions(data)
+
+#     assert len(reconstructed) == len(transitions)
+#     for original, reconstructed_item in zip(transitions, reconstructed):
+#         assert_transitions_equal(original, reconstructed_item)
+
+
+# def test_transitions_to_bytes_large_batch():
+#     """Test converting a large batch of transitions."""
+#     transitions = []
+#     for i in range(100):
+#         transition = Transition(
+#             observation={'state': torch.randn(20)},
+#             action=torch.randn(6),
+#             reward=torch.tensor(float(i % 10) / 10),
+#             done=torch.tensor(i % 20 == 0),
+#             next_observation={'state': torch.randn(20)},
+#         )
+#         transitions.append(transition)
+
+#     data = transitions_to_bytes(transitions)
+#     reconstructed = bytes_to_transitions(data)
+
+#     assert len(reconstructed) == 100
+#     # Spot check some transitions
+#     for i in [0, 25, 50, 75, 99]:
+#         assert_transitions_equal(transitions[i], reconstructed[i])
+
+
+# def test_bytes_to_transitions_invalid_data():
+#     """Test bytes_to_transitions with invalid data."""
+#     with pytest.raises(Exception):
+#         bytes_to_transitions(b"This is not valid transition data")
+
+#     with pytest.raises(Exception):
+#         bytes_to_transitions(b"")
+
+
+# def test_transitions_with_different_dtypes():
+#     """Test transitions with various tensor dtypes."""
+#     transition = Transition(
+#         observation={
+#             'float32': torch.randn(5),
+#             'int64': torch.randint(0, 100, (3,)),
+#             'bool': torch.tensor([True, False, True]),
+#         },
+#         action=torch.randn(2, dtype=torch.float64),
+#         reward=torch.tensor(1.0, dtype=torch.float32),
+#         done=torch.tensor(True),
+#         next_observation={
+#             'float32': torch.randn(5),
+#             'int64': torch.randint(0, 100, (3,)),
+#             'bool': torch.tensor([False, True, False]),
+#         },
+#     )
+
+#     transitions = [transition]
+#     data = transitions_to_bytes(transitions)
+#     reconstructed = bytes_to_transitions(data)
+
+#     assert len(reconstructed) == 1
+
+#     # Check dtypes are preserved
+#     assert reconstructed[0].observation['float32'].dtype == torch.float32
+#     assert reconstructed[0].observation['int64'].dtype == torch.int64
+#     assert reconstructed[0].observation['bool'].dtype == torch.bool
+#     assert reconstructed[0].action.dtype == torch.float64
+#     assert reconstructed[0].reward.dtype == torch.float32
+#     assert reconstructed[0].done.dtype == torch.bool
+
+
+# # Helper function for transition comparison
+# def assert_transitions_equal(t1: Transition, t2: Transition):
+#     """Helper to assert two transitions are equal."""
+#     # Check observations
+#     assert set(t1.observation.keys()) == set(t2.observation.keys())
+#     for key in t1.observation:
+#         if t1.observation[key].dtype == torch.bool:
+#             assert torch.equal(t1.observation[key], t2.observation[key])
+#         else:
+#             assert torch.allclose(t1.observation[key], t2.observation[key])
+
+#     # Check actions
+#     if t1.action.dtype == torch.bool:
+#         assert torch.equal(t1.action, t2.action)
+#     else:
+#         assert torch.allclose(t1.action, t2.action)
+
+#     # Check rewards
+#     assert torch.allclose(t1.reward, t2.reward)
+
+#     # Check done flags
+#     assert torch.equal(t1.done, t2.done)
+
+#     # Check next observations
+#     assert set(t1.next_observation.keys()) == set(t2.next_observation.keys())
+#     for key in t1.next_observation:
+#         if t1.next_observation[key].dtype == torch.bool:
+#             assert torch.equal(t1.next_observation[key], t2.next_observation[key])
+#         else:
+#             assert torch.allclose(t1.next_observation[key], t2.next_observation[key])
+
+
+# # Integration tests
+# def test_state_dict_through_chunks():
+#     """Test sending state dict through chunking system."""
+#     state_dict = {
+#         'model.layer1.weight': torch.randn(100, 50),
+#         'model.layer1.bias': torch.randn(100),
+#         'model.layer2.weight': torch.randn(10, 100),
+#         'model.layer2.bias': torch.randn(10),
+#     }
+
+#     # Convert to bytes
+#     data = state_to_bytes(state_dict)
+
+#     # Send through chunks
+#     chunks = list(send_bytes_in_chunks(data, services_pb2.InteractionMessage))
+
+#     # Simulate receiving
+#     queue = Queue()
+#     shutdown_event = Event()
+#     receive_bytes_in_chunks(iter(chunks), queue, shutdown_event)
+
+#     # Get received data and convert back
+#     received_data = queue.get(timeout=0.1)
+#     reconstructed = bytes_to_state_dict(received_data)
+
+#     # Verify
+#     assert len(reconstructed) == len(state_dict)
+#     for key in state_dict:
+#         assert torch.allclose(state_dict[key], reconstructed[key])
+
+
+# def test_transitions_through_chunks():
+#     """Test sending transitions through chunking system."""
+#     transitions = []
+#     for i in range(10):
+#         transition = Transition(
+#             observation={'image': torch.randn(3, 32, 32), 'state': torch.randn(5)},
+#             action=torch.randn(3),
+#             reward=torch.tensor(float(i)),
+#             done=torch.tensor(i == 9),
+#             next_observation={'image': torch.randn(3, 32, 32), 'state': torch.randn(5)},
+#         )
+#         transitions.append(transition)
+
+#     # Convert to bytes
+#     data = transitions_to_bytes(transitions)
+
+#     # Send through chunks
+#     chunks = list(send_bytes_in_chunks(data, services_pb2.Transition))
+
+#     # Simulate receiving
+#     queue = Queue()
+#     shutdown_event = Event()
+#     receive_bytes_in_chunks(iter(chunks), queue, shutdown_event)
+
+#     # Get received data and convert back
+#     received_data = queue.get(timeout=0.1)
+#     reconstructed = bytes_to_transitions(received_data)
+
+#     # Verify
+#     assert len(reconstructed) == len(transitions)
+#     for original, reconstructed_item in zip(transitions, reconstructed):
+#         assert_transitions_equal(original, reconstructed_item)
