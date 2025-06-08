@@ -31,15 +31,13 @@ def learner_service_stub():
     transitions_queue = Queue()
     interactions_queue = Queue()
     seconds_between_pushes = 1
-    stub, channel, server = create_learner_service_stub(
+    client, channel, server = create_learner_service_stub(
         shutdown_event, parameters_queue, transitions_queue, interactions_queue, seconds_between_pushes
     )
 
-    yield stub  # provide the stub to the test function
+    yield client  # provide the stub to the test function
 
-    # **Teardown Phase**: close channel and stop server.
-    channel.close()
-    server.stop(None)  # stop the server; None for immediate shutdown (no grace period)
+    close_learner_service_stub(channel, server)
 
 
 def create_learner_service_stub(
@@ -52,7 +50,11 @@ def create_learner_service_stub(
     """Fixture to start a LearnerService gRPC server and provide a connected stub."""
 
     servicer = LearnerService(
-        shutdown_event, parameters_queue, transitions_queue, interactions_queue, seconds_between_pushes
+        shutdown_event=shutdown_event,
+        parameters_queue=parameters_queue,
+        seconds_between_pushes=seconds_between_pushes,
+        transition_queue=transitions_queue,
+        interaction_message_queue=interactions_queue,
     )
 
     # Create a gRPC server and add our servicer to it.
@@ -64,6 +66,11 @@ def create_learner_service_stub(
     # Create a client channel and stub connected to the server's port.
     channel = grpc.insecure_channel(f"localhost:{port}")
     return services_pb2_grpc.LearnerServiceStub(channel), channel, server
+
+
+def close_learner_service_stub(channel: grpc.Channel, server: grpc.Server):
+    channel.close()
+    server.stop(None)
 
 
 def test_ready_method(learner_service_stub):
@@ -80,12 +87,34 @@ def test_send_interactions():
     transitions_queue = Queue()
     interactions_queue = Queue()
     seconds_between_pushes = 1
-    learner_service_stub, channel, server = create_learner_service_stub(
+    client, channel, server = create_learner_service_stub(
         shutdown_event, parameters_queue, transitions_queue, interactions_queue, seconds_between_pushes
     )
 
-    request = services_pb2.InteractionMessage(interaction_id="1", interaction_type="1", interaction_data="1")
-    response = learner_service_stub.SendInteractions(request)
+    list_of_interaction_messages = [
+        services_pb2.InteractionMessage(transfer_state=services_pb2.TransferState.TRANSFER_BEGIN, data=b"1"),
+        services_pb2.InteractionMessage(transfer_state=services_pb2.TransferState.TRANSFER_MIDDLE, data=b"2"),
+        services_pb2.InteractionMessage(transfer_state=services_pb2.TransferState.TRANSFER_END, data=b"3"),
+        services_pb2.InteractionMessage(transfer_state=services_pb2.TransferState.TRANSFER_END, data=b"4"),
+        services_pb2.InteractionMessage(transfer_state=services_pb2.TransferState.TRANSFER_END, data=b"5"),
+        services_pb2.InteractionMessage(transfer_state=services_pb2.TransferState.TRANSFER_BEGIN, data=b"6"),
+        services_pb2.InteractionMessage(transfer_state=services_pb2.TransferState.TRANSFER_MIDDLE, data=b"7"),
+        services_pb2.InteractionMessage(transfer_state=services_pb2.TransferState.TRANSFER_END, data=b"8"),
+    ]
+
+    def mock_intercations_stream():
+        yield from list_of_interaction_messages
+
+        return services_pb2.Empty()
+
+    response = client.SendInteractions(mock_intercations_stream())
     assert response == services_pb2.Empty()
 
-    # request = services_pb2.InteractionMessage(
+    close_learner_service_stub(channel, server)
+
+    # Extract the data from the interactions queue
+    interactions = []
+    while not interactions_queue.empty():
+        interactions.append(interactions_queue.get())
+
+    assert interactions == [b"123", b"4", b"5", b"678"]
