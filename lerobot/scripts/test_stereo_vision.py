@@ -24,6 +24,7 @@ import numpy as np
 from ultralytics import YOLO
 
 from lerobot.common.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
+import time
 
 
 CONFIG_FILE = Path.home() / ".lerobot" / "stereo_vision.json"
@@ -43,11 +44,36 @@ def _save_config(cfg: dict) -> None:
     CONFIG_FILE.write_text(json.dumps(cfg))
 
 
+def _preview_camera(info: dict, duration: float = 3.0) -> None:
+    """Preview a camera for a short time to help selection."""
+    cam = OpenCVCamera(OpenCVCameraConfig(index_or_path=info["id"]))
+    try:
+        cam.connect()
+    except Exception as e:
+        print(f"Failed to open camera {info.get('id')}: {e}")
+        return
+
+    win_name = f"Preview {info.get('id')}"
+    start = time.time()
+    try:
+        while time.time() - start < duration:
+            frame = cam.read()
+            cv2.imshow(win_name, frame)
+            if cv2.waitKey(1) != -1:
+                break
+    finally:
+        cam.disconnect()
+        cv2.destroyWindow(win_name)
+
+
 def _interactive_setup() -> dict:
     print("=== Interactive stereo vision setup ===")
     available = OpenCVCamera.find_cameras()
     for i, info in enumerate(available):
         print(f"[{i}] {info.get('id')} - {info.get('name')}")
+        _preview_camera(info)
+        cv2.destroyAllWindows()
+    cv2.destroyAllWindows()
     left = input("Left camera index or path: ")
     right = input("Right camera index or path: ")
     calibration = input("Stereo calibration .npz path (leave blank if none): ")
