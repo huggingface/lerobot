@@ -17,15 +17,14 @@
 
 import argparse
 import json
-from pathlib import Path
 import time
+from pathlib import Path
 
 import cv2
 import numpy as np
 from ultralytics import YOLO
 
 from lerobot.common.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
-
 
 CONFIG_FILE = Path.home() / ".lerobot" / "stereo_vision.json"
 
