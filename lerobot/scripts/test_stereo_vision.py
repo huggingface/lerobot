@@ -16,6 +16,7 @@
 """Simple stereo vision demo using OpenCV cameras and YOLO detections."""
 
 import argparse
+import json
 from pathlib import Path
 
 import cv2
@@ -26,13 +27,22 @@ from lerobot.common.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Test stereo vision with YOLO")
-    parser.add_argument("--left", required=True, help="Left camera index or path")
-    parser.add_argument("--right", required=True, help="Right camera index or path")
+    parser = argparse.ArgumentParser(
+        description="Test stereo vision with YOLO. Run with --setup the first time to store camera configuration."
+    )
+    parser.add_argument("--left", help="Left camera index or path")
+    parser.add_argument("--right", help="Right camera index or path")
     parser.add_argument("--calibration", type=Path, help="Path to stereo calibration .npz file")
     parser.add_argument("--model", default="yolov8n.pt", help="YOLO model path")
-    parser.add_argument("--width", type=int, default=640)
-    parser.add_argument("--height", type=int, default=480)
+    parser.add_argument("--width", type=int)
+    parser.add_argument("--height", type=int)
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=Path.home() / ".lerobot" / "stereo_config.json",
+        help="Path to stereo configuration file (default: ~/.lerobot/stereo_config.json)",
+    )
+    parser.add_argument("--setup", action="store_true", help="Interactively set up stereo configuration")
     return parser.parse_args()
 
 
@@ -51,11 +61,39 @@ def load_calibration(path: Path):
 def main() -> None:
     args = parse_args()
 
-    left_id = _parse_index_or_path(args.left)
-    right_id = _parse_index_or_path(args.right)
+    config_path = args.config.expanduser()
+    config_data = {}
+    if not args.setup and config_path.exists():
+        with open(config_path) as f:
+            config_data = json.load(f)
 
-    left_cam = OpenCVCamera(OpenCVCameraConfig(index_or_path=left_id, width=args.width, height=args.height))
-    right_cam = OpenCVCamera(OpenCVCameraConfig(index_or_path=right_id, width=args.width, height=args.height))
+    if args.setup or not config_data:
+        cams = OpenCVCamera.find_cameras()
+        print("Available cameras:")
+        for cam in cams:
+            print(f"  {cam['id']}: {cam.get('name', 'OpenCV Camera')}")
+        left_val = input("Left camera id/path: ") if args.left is None else args.left
+        right_val = input("Right camera id/path: ") if args.right is None else args.right
+        width_val = args.width or int(input("Image width (e.g. 640): "))
+        height_val = args.height or int(input("Image height (e.g. 480): "))
+        config_data = {
+            "left": left_val,
+            "right": right_val,
+            "width": width_val,
+            "height": height_val,
+        }
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(config_path, "w") as f:
+            json.dump(config_data, f, indent=2)
+        print(f"Configuration saved to {config_path}")
+
+    left_id = _parse_index_or_path(args.left or config_data.get("left"))
+    right_id = _parse_index_or_path(args.right or config_data.get("right"))
+    width = args.width if args.width is not None else int(config_data.get("width", 640))
+    height = args.height if args.height is not None else int(config_data.get("height", 480))
+
+    left_cam = OpenCVCamera(OpenCVCameraConfig(index_or_path=left_id, width=width, height=height))
+    right_cam = OpenCVCamera(OpenCVCameraConfig(index_or_path=right_id, width=width, height=height))
 
     left_cam.connect()
     right_cam.connect()
@@ -70,7 +108,7 @@ def main() -> None:
         m1, d1 = calib["M1"], calib["D1"]
         m2, d2 = calib["M2"], calib["D2"]
         r, t = calib["R"], calib["T"]
-        img_size = (args.width, args.height)
+        img_size = (width, height)
         r1, r2, p1, p2, q_matrix, _, _ = cv2.stereoRectify(m1, d1, m2, d2, img_size, r, t)
         map1_l, map2_l = cv2.initUndistortRectifyMap(m1, d1, r1, p1, img_size, cv2.CV_32FC1)
         map1_r, map2_r = cv2.initUndistortRectifyMap(m2, d2, r2, p2, img_size, cv2.CV_32FC1)
