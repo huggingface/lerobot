@@ -135,6 +135,12 @@ For simulations, 🤗 LeRobot comes with gymnasium environments that can be inst
 - [aloha](https://github.com/huggingface/gym-aloha)
 - [xarm](https://github.com/huggingface/gym-xarm)
 - [pusht](https://github.com/huggingface/gym-pusht)
+- [vision](https://github.com/ultralytics/ultralytics) (YOLO support)
+
+For YOLO support, install the `vision` extra:
+```bash
+pip install -e .[vision]
+```
 
 For instance, to install 🤗 LeRobot with aloha and pusht, use:
 ```bash
