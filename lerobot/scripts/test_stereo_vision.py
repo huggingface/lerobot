@@ -16,15 +16,15 @@
 """Simple stereo vision demo using OpenCV cameras and YOLO detections."""
 
 import argparse
-from pathlib import Path
 import json
+from pathlib import Path
+import time
 
 import cv2
 import numpy as np
 from ultralytics import YOLO
 
 from lerobot.common.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
-import time
 
 
 CONFIG_FILE = Path.home() / ".lerobot" / "stereo_vision.json"
@@ -83,7 +83,10 @@ def _interactive_setup() -> dict:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Test stereo vision with YOLO")
+    # Merged: Bessere Beschreibung vom codex-Branch, aber Logik vom main-Branch.
+    parser = argparse.ArgumentParser(
+        description="Test stereo vision with YOLO. Run with --setup the first time to store camera configuration."
+    )
     parser.add_argument("--left", help="Left camera index or path")
     parser.add_argument("--right", help="Right camera index or path")
     parser.add_argument("--calibration", type=Path, help="Path to stereo calibration .npz file")
@@ -98,10 +101,12 @@ def parse_args() -> argparse.Namespace:
 
     args = parser.parse_args()
 
+    # Logik zum Laden der Konfiguration und interaktiven Setup ist hier gekapselt.
     cfg = None if args.setup else _load_config()
     if cfg is None:
         cfg = _interactive_setup()
 
+    # Befülle die Argumente aus der Konfiguration, falls sie nicht über die Kommandozeile gesetzt wurden.
     args.left = args.left or cfg.get("left")
     args.right = args.right or cfg.get("right")
     if args.calibration is None and cfg.get("calibration"):
@@ -126,6 +131,7 @@ def load_calibration(path: Path):
 
 
 def main() -> None:
+    # Merged: Die main-Funktion wurde vereinfacht, da parse_args nun die Konfiguration übernimmt.
     args = parse_args()
 
     left_id = _parse_index_or_path(args.left)

@@ -369,6 +369,23 @@ with profile(
             # insert code to profile, potentially whole body of eval_policy function
 ```
 
+### Stereo vision demo
+
+Use `lerobot/scripts/test_stereo_vision.py` to experiment with stereo cameras and YOLO detections.
+Run the script once with `--setup` to select your cameras and resolution:
+
+```bash
+python lerobot/scripts/test_stereo_vision.py --setup
+```
+
+Your choices are saved to `~/.lerobot/stereo_config.json`. Subsequent runs will reuse this configuration:
+
+```bash
+python lerobot/scripts/test_stereo_vision.py
+```
+
+Provide `--config` to use a different configuration file.
+
 ## Citation
 
 If you want, you can cite this work with:
