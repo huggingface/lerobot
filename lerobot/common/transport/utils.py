@@ -129,8 +129,7 @@ def bytes_to_python_object(buffer: bytes) -> Any:
 def bytes_to_transitions(buffer: bytes) -> list[Transition]:
     buffer = io.BytesIO(buffer)
     buffer.seek(0)
-    transitions = torch.load(buffer, weights_only=False)  # nosec B614: Safe usage of torch.load
-    # Add validation checks here
+    transitions = torch.load(buffer, weights_only=True)
     return transitions
 
 
