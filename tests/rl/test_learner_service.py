@@ -73,6 +73,7 @@ def close_learner_service_stub(channel: grpc.Channel, server: grpc.Server):
     server.stop(None)
 
 
+@pytest.mark.timeout(3)  # force cross-platform watchdog
 def test_ready_method(learner_service_stub):
     """Test the ready method of the UserService."""
     request = services_pb2.Empty()
@@ -80,6 +81,7 @@ def test_ready_method(learner_service_stub):
     assert response == services_pb2.Empty()
 
 
+@pytest.mark.timeout(3)  # force cross-platform watchdog
 def test_send_interactions():
     shutdown_event = Event()
 
@@ -120,6 +122,7 @@ def test_send_interactions():
     assert interactions == [b"123", b"4", b"5", b"678"]
 
 
+@pytest.mark.timeout(3)  # force cross-platform watchdog
 def test_send_transitions():
     """Test the SendTransitions method with various transition data."""
     shutdown_event = Event()
@@ -162,6 +165,7 @@ def test_send_transitions():
     assert transitions == [b"transition_1transition_2transition_3", b"batch_1batch_2"]
 
 
+@pytest.mark.timeout(3)  # force cross-platform watchdog
 def test_send_transitions_empty_stream():
     """Test SendTransitions with empty stream."""
     shutdown_event = Event()
@@ -186,6 +190,7 @@ def test_send_transitions_empty_stream():
     assert transitions_queue.empty()
 
 
+@pytest.mark.timeout(3)  # force cross-platform watchdog
 def test_stream_parameters():
     """Test the StreamParameters method."""
     shutdown_event = Event()
@@ -222,6 +227,7 @@ def test_stream_parameters():
     assert received_params == test_params
 
 
+@pytest.mark.timeout(3)  # force cross-platform watchdog
 def test_stream_parameters_with_shutdown():
     """Test StreamParameters handles shutdown gracefully."""
     shutdown_event = Event()
