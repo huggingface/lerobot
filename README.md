@@ -142,6 +142,13 @@ For YOLO support, install the `vision` extra:
 pip install -e .[vision]
 ```
 
+You can then test a stereo camera setup with YOLO detections using:
+```bash
+python lerobot/scripts/test_stereo_vision.py --setup
+```
+The `--setup` flag launches an interactive prompt to select your cameras and
+saves the configuration for future runs.
+
 For instance, to install 🤗 LeRobot with aloha and pusht, use:
 ```bash
 pip install -e ".[aloha, pusht]"
