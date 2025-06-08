@@ -17,6 +17,7 @@
 
 import argparse
 from pathlib import Path
+import json
 
 import cv2
 import numpy as np
@@ -25,15 +26,65 @@ from ultralytics import YOLO
 from lerobot.common.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
 
 
+CONFIG_FILE = Path.home() / ".lerobot" / "stereo_vision.json"
+
+
+def _load_config() -> dict | None:
+    if CONFIG_FILE.exists():
+        try:
+            return json.loads(CONFIG_FILE.read_text())
+        except Exception:
+            pass
+    return None
+
+
+def _save_config(cfg: dict) -> None:
+    CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    CONFIG_FILE.write_text(json.dumps(cfg))
+
+
+def _interactive_setup() -> dict:
+    print("=== Interactive stereo vision setup ===")
+    available = OpenCVCamera.find_cameras()
+    for i, info in enumerate(available):
+        print(f"[{i}] {info.get('id')} - {info.get('name')}")
+    left = input("Left camera index or path: ")
+    right = input("Right camera index or path: ")
+    calibration = input("Stereo calibration .npz path (leave blank if none): ")
+    cfg = {"left": left, "right": right, "calibration": calibration or None}
+    _save_config(cfg)
+    return cfg
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Test stereo vision with YOLO")
-    parser.add_argument("--left", required=True, help="Left camera index or path")
-    parser.add_argument("--right", required=True, help="Right camera index or path")
+    parser.add_argument("--left", help="Left camera index or path")
+    parser.add_argument("--right", help="Right camera index or path")
     parser.add_argument("--calibration", type=Path, help="Path to stereo calibration .npz file")
     parser.add_argument("--model", default="yolov8n.pt", help="YOLO model path")
     parser.add_argument("--width", type=int, default=640)
     parser.add_argument("--height", type=int, default=480)
-    return parser.parse_args()
+    parser.add_argument(
+        "--setup",
+        action="store_true",
+        help="Run interactive setup and ignore saved configuration",
+    )
+
+    args = parser.parse_args()
+
+    cfg = None if args.setup else _load_config()
+    if cfg is None:
+        cfg = _interactive_setup()
+
+    args.left = args.left or cfg.get("left")
+    args.right = args.right or cfg.get("right")
+    if args.calibration is None and cfg.get("calibration"):
+        args.calibration = Path(cfg["calibration"])
+
+    if args.left is None or args.right is None:
+        parser.error("Left and right camera indices/paths must be provided")
+
+    return args
 
 
 def _parse_index_or_path(value: str) -> int | str:
