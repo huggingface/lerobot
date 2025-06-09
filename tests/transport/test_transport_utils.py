@@ -510,8 +510,6 @@ def test_transitions_to_bytes_single_transition():
 
 @require_package("grpc")
 def assert_transitions_equal(t1: Transition, t2: Transition):
-    from lerobot.common.transport.utils import assert_observation_equal
-
     """Helper to assert two transitions are equal."""
     assert_observation_equal(t1["state"], t2["state"])
     assert torch.allclose(t1["action"], t2["action"])

@@ -23,25 +23,9 @@ import torch
 from torch.multiprocessing import Event, Queue
 
 from lerobot.common.policies.sac.configuration_sac import SACConfig
-from lerobot.common.transport.utils import (
-    bytes_to_python_object,
-    bytes_to_state_dict,
-    bytes_to_transitions,
-    python_object_to_bytes,
-    state_to_bytes,
-)
 from lerobot.common.utils.transition import Transition
 from lerobot.configs.train import TrainPipelineConfig
-from lerobot.scripts.rl.actor import (
-    establish_learner_connection,
-    learner_service_client,
-    push_transitions_to_transport_queue,
-    receive_policy,
-    send_interactions,
-    send_transitions,
-)
-from lerobot.scripts.rl.learner import start_learner
-from tests.transport.test_transport_utils import assert_transitions_equal
+from tests.utils import require_package
 
 
 def create_test_transitions(count: int = 3) -> list[Transition]:
@@ -102,8 +86,19 @@ def cfg():
     return cfg
 
 
+@require_package("grpc")
 @pytest.mark.timeout(10)  # force cross-platform watchdog
 def test_end_to_end_transitions_flow(cfg):
+    from lerobot.common.transport.utils import bytes_to_transitions
+    from lerobot.scripts.rl.actor import (
+        establish_learner_connection,
+        learner_service_client,
+        push_transitions_to_transport_queue,
+        send_transitions,
+    )
+    from lerobot.scripts.rl.learner import start_learner
+    from tests.transport.test_transport_utils import assert_transitions_equal
+
     """Test complete transitions flow from actor to learner."""
     transitions_actor_queue = Queue()
     transitions_learner_queue = Queue()
@@ -156,8 +151,17 @@ def test_end_to_end_transitions_flow(cfg):
         assert_transitions_equal(transition, input_transitions[i])
 
 
+@require_package("grpc")
 @pytest.mark.timeout(10)
 def test_end_to_end_interactions_flow(cfg):
+    from lerobot.common.transport.utils import bytes_to_python_object, python_object_to_bytes
+    from lerobot.scripts.rl.actor import (
+        establish_learner_connection,
+        learner_service_client,
+        send_interactions,
+    )
+    from lerobot.scripts.rl.learner import start_learner
+
     """Test complete interactions flow from actor to learner."""
     # Queues for actor-learner communication
     interactions_actor_queue = Queue()
@@ -223,9 +227,14 @@ def test_end_to_end_interactions_flow(cfg):
         assert received == expected
 
 
+@require_package("grpc")
 @pytest.mark.parametrize("data_size", ["small", "large"])
 @pytest.mark.timeout(10)
 def test_end_to_end_parameters_flow(cfg, data_size):
+    from lerobot.common.transport.utils import bytes_to_state_dict, state_to_bytes
+    from lerobot.scripts.rl.actor import establish_learner_connection, learner_service_client, receive_policy
+    from lerobot.scripts.rl.learner import start_learner
+
     """Test complete parameter flow from learner to actor, with small and large data."""
     # Actor's local queue to receive params
     parameters_actor_queue = Queue()

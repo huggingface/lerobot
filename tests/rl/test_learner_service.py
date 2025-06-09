@@ -18,9 +18,6 @@ from multiprocessing import Event, Queue
 
 import pytest
 
-# Import the generated classes and service implementation from our project.
-from lerobot.common.transport import services_pb2, services_pb2_grpc  # generated from .proto
-from lerobot.scripts.rl.learner_service import LearnerService
 from tests.utils import require_package  # our gRPC servicer class
 
 
@@ -49,6 +46,9 @@ def create_learner_service_stub(
     seconds_between_pushes: int,
 ):
     import grpc
+
+    from lerobot.common.transport import services_pb2_grpc  # generated from .proto
+    from lerobot.scripts.rl.learner_service import LearnerService
 
     """Fixture to start a LearnerService gRPC server and provide a connected stub."""
 
@@ -79,6 +79,8 @@ def close_learner_service_stub(channel, server):
 
 @pytest.mark.timeout(3)  # force cross-platform watchdog
 def test_ready_method(learner_service_stub):
+    from lerobot.common.transport import services_pb2
+
     """Test the ready method of the UserService."""
     request = services_pb2.Empty()
     response = learner_service_stub.Ready(request)
@@ -88,6 +90,8 @@ def test_ready_method(learner_service_stub):
 @require_package("grpc")
 @pytest.mark.timeout(3)  # force cross-platform watchdog
 def test_send_interactions():
+    from lerobot.common.transport import services_pb2
+
     shutdown_event = Event()
 
     parameters_queue = Queue()
@@ -130,6 +134,8 @@ def test_send_interactions():
 @require_package("grpc")
 @pytest.mark.timeout(3)  # force cross-platform watchdog
 def test_send_transitions():
+    from lerobot.common.transport import services_pb2
+
     """Test the SendTransitions method with various transition data."""
     shutdown_event = Event()
     parameters_queue = Queue()
@@ -174,6 +180,8 @@ def test_send_transitions():
 @require_package("grpc")
 @pytest.mark.timeout(3)  # force cross-platform watchdog
 def test_send_transitions_empty_stream():
+    from lerobot.common.transport import services_pb2
+
     """Test SendTransitions with empty stream."""
     shutdown_event = Event()
     parameters_queue = Queue()
@@ -200,6 +208,8 @@ def test_send_transitions_empty_stream():
 @require_package("grpc")
 @pytest.mark.timeout(3)  # force cross-platform watchdog
 def test_stream_parameters():
+    from lerobot.common.transport import services_pb2
+
     """Test the StreamParameters method."""
     shutdown_event = Event()
     parameters_queue = Queue()
@@ -238,6 +248,8 @@ def test_stream_parameters():
 @require_package("grpc")
 @pytest.mark.timeout(3)  # force cross-platform watchdog
 def test_stream_parameters_with_shutdown():
+    from lerobot.common.transport import services_pb2
+
     """Test StreamParameters handles shutdown gracefully."""
     shutdown_event = Event()
     parameters_queue = Queue()

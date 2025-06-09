@@ -17,37 +17,32 @@
 from concurrent import futures
 from unittest.mock import patch
 
-import grpc
 import pytest
 import torch
 from torch.multiprocessing import Event, Queue
 
-from lerobot.common.transport import services_pb2, services_pb2_grpc
-from lerobot.common.transport.utils import (
-    bytes_to_python_object,
-    bytes_to_transitions,
-    python_object_to_bytes,
-)
 from lerobot.common.utils.transition import Transition
-from tests.transport.test_utils import assert_transitions_equal
 from tests.utils import require_package
 
 
-class MockLearnerService(services_pb2_grpc.LearnerServiceServicer):
-    def __init__(self):
-        self.ready_call_count = 0
-        self.should_fail = False
-
-    def Ready(self, request, context):  # noqa: N802
-        self.ready_call_count += 1
-        if self.should_fail:
-            context.set_code(grpc.StatusCode.UNAVAILABLE)
-            context.set_details("Service unavailable")
-            raise grpc.RpcError("Service unavailable")
-        return services_pb2.Empty()
-
-
 def create_learner_service_stub():
+    import grpc
+
+    from lerobot.common.transport import services_pb2, services_pb2_grpc
+
+    class MockLearnerService(services_pb2_grpc.LearnerServiceServicer):
+        def __init__(self):
+            self.ready_call_count = 0
+            self.should_fail = False
+
+        def Ready(self, request, context):  # noqa: N802
+            self.ready_call_count += 1
+            if self.should_fail:
+                context.set_code(grpc.StatusCode.UNAVAILABLE)
+                context.set_details("Service unavailable")
+                raise grpc.RpcError("Service unavailable")
+            return services_pb2.Empty()
+
     """Fixture to start a LearnerService gRPC server and provide a connected stub."""
 
     servicer = MockLearnerService()
@@ -63,7 +58,7 @@ def create_learner_service_stub():
     return services_pb2_grpc.LearnerServiceStub(channel), servicer, channel, server
 
 
-def close_service_stub(channel: grpc.Channel, server: grpc.Server):
+def close_service_stub(channel, server):
     channel.close()
     server.stop(None)
 
@@ -106,7 +101,9 @@ def test_establish_learner_connection_failure():
 
 @require_package("grpc")
 def test_push_transitions_to_transport_queue():
+    from lerobot.common.transport.utils import bytes_to_transitions
     from lerobot.scripts.rl.actor import push_transitions_to_transport_queue
+    from tests.transport.test_transport_utils import assert_transitions_equal
 
     """Test pushing transitions to transport queue."""
     # Create mock transitions
@@ -172,6 +169,7 @@ def test_transitions_stream():
 @require_package("grpc")
 @pytest.mark.timeout(3)  # force cross-platform watchdog
 def test_interactions_stream():
+    from lerobot.common.transport.utils import bytes_to_python_object, python_object_to_bytes
     from lerobot.scripts.rl.actor import interactions_stream
 
     """Test interactions stream functionality."""
