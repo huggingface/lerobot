@@ -29,13 +29,8 @@ from lerobot.common.transport.utils import (
     python_object_to_bytes,
 )
 from lerobot.common.utils.transition import Transition
-from lerobot.scripts.rl.actor import (
-    establish_learner_connection,
-    interactions_stream,
-    push_transitions_to_transport_queue,
-    transitions_stream,
-)
 from tests.transport.test_utils import assert_transitions_equal
+from tests.utils import require_package
 
 
 class MockLearnerService(services_pb2_grpc.LearnerServiceServicer):
@@ -73,7 +68,10 @@ def close_service_stub(channel: grpc.Channel, server: grpc.Server):
     server.stop(None)
 
 
+@require_package("grpc")
 def test_establish_learner_connection_success():
+    from lerobot.scripts.rl.actor import establish_learner_connection
+
     """Test successful connection establishment."""
     stub, _servicer, channel, server = create_learner_service_stub()
 
@@ -87,7 +85,10 @@ def test_establish_learner_connection_success():
     close_service_stub(channel, server)
 
 
+@require_package("grpc")
 def test_establish_learner_connection_failure():
+    from lerobot.scripts.rl.actor import establish_learner_connection
+
     """Test connection failure."""
     stub, servicer, channel, server = create_learner_service_stub()
     servicer.should_fail = True
@@ -103,7 +104,10 @@ def test_establish_learner_connection_failure():
     close_service_stub(channel, server)
 
 
+@require_package("grpc")
 def test_push_transitions_to_transport_queue():
+    from lerobot.scripts.rl.actor import push_transitions_to_transport_queue
+
     """Test pushing transitions to transport queue."""
     # Create mock transitions
     transitions = []
@@ -133,8 +137,11 @@ def test_push_transitions_to_transport_queue():
         assert_transitions_equal(deserialized_transition, transitions[i])
 
 
+@require_package("grpc")
 @pytest.mark.timeout(3)  # force cross-platform watchdog
 def test_transitions_stream():
+    from lerobot.scripts.rl.actor import transitions_stream
+
     """Test transitions stream functionality."""
     shutdown_event = Event()
     transitions_queue = Queue()
@@ -162,8 +169,11 @@ def test_transitions_stream():
     assert streamed_data[2].data == b"transition_data_3"
 
 
+@require_package("grpc")
 @pytest.mark.timeout(3)  # force cross-platform watchdog
 def test_interactions_stream():
+    from lerobot.scripts.rl.actor import interactions_stream
+
     """Test interactions stream functionality."""
     shutdown_event = Event()
     interactions_queue = Queue()

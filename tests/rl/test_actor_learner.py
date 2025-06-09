@@ -41,7 +41,7 @@ from lerobot.scripts.rl.actor import (
     send_transitions,
 )
 from lerobot.scripts.rl.learner import start_learner
-from tests.transport.test_utils import assert_transitions_equal
+from tests.transport.test_transport_utils import assert_transitions_equal
 
 
 def create_test_transitions(count: int = 3) -> list[Transition]:
