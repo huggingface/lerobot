@@ -14,7 +14,7 @@ export default function Home({
     redirect(searchParams.path);
   }
 
-  // leagcy sync with hf.co/spaces URL params
+  // legacy sync with hf.co/spaces URL params
   let redirectUrl: string | null = null;
   if (searchParams?.dataset && searchParams?.episode) {
     redirectUrl = `/${searchParams.dataset}/episode_${searchParams.episode}`;
