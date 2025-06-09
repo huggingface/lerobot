@@ -54,7 +54,7 @@ from lerobot.common.model.kinematics import RobotKinematics
 from lerobot.common.robots import (  # noqa: F401
     RobotConfig,
     make_robot_from_config,
-    so100_follower_end_effector,
+    so100_follower,
 )
 from lerobot.common.teleoperators import (
     gamepad,  # noqa: F401
