@@ -36,13 +36,12 @@ from dataclasses import dataclass
 import draccus
 import numpy as np
 
-from lerobot.common.model.kinematics_utils import RobotKinematics
+from lerobot.common.model.kinematics import RobotKinematics
 from lerobot.common.robots import (  # noqa: F401
     RobotConfig,
     koch_follower,
     make_robot_from_config,
     so100_follower,
-    so100_follower_end_effector,
 )
 from lerobot.common.teleoperators import (  # noqa: F401
     TeleoperatorConfig,
