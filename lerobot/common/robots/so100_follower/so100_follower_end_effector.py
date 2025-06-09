@@ -26,8 +26,8 @@ from lerobot.common.model.kinematics import RobotKinematics
 from lerobot.common.motors import Motor, MotorNormMode
 from lerobot.common.motors.feetech import FeetechMotorsBus
 
-from ..so100_follower import SO100Follower
-from .config_so100_follower_end_effector import SO100FollowerEndEffectorConfig
+from . import SO100Follower
+from .config_so100_follower import SO100FollowerEndEffectorConfig
 
 logger = logging.getLogger(__name__)
 
