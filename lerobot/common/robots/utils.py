@@ -33,7 +33,7 @@ def make_robot_config(robot_type: str, **kwargs) -> RobotConfig:
 
         return SO100FollowerConfig(**kwargs)
     elif robot_type == "so100_follower_end_effector":
-        from .so100_follower_end_effector.config_so100_follower_end_effector import (
+        from .so100_follower.config_so100_follower import (
             SO100FollowerEndEffectorConfig,
         )
 
@@ -60,7 +60,7 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
 
         return SO100Follower(config)
     elif config.type == "so100_follower_end_effector":
-        from .so100_follower_end_effector import SO100FollowerEndEffector
+        from .so100_follower import SO100FollowerEndEffector
 
         return SO100FollowerEndEffector(config)
     elif config.type == "so101_follower":
