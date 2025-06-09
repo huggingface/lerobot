@@ -111,9 +111,7 @@ def state_to_bytes(state_dict: dict[str, torch.Tensor]) -> bytes:
 def bytes_to_state_dict(buffer: bytes) -> dict[str, torch.Tensor]:
     buffer = io.BytesIO(buffer)
     buffer.seek(0)
-    return torch.load(buffer, weights_only=False)  # nosec B614: Using weights_only=False relies on pickle which has security implications.
-    # This is currently safe as we only deserialize trusted internal data.
-    # TODO: Verify if weights_only=True would work for our use case (safer default in torch 2.6+)
+    return torch.load(buffer, weights_only=True)
 
 
 def python_object_to_bytes(python_object: Any) -> bytes:
@@ -131,8 +129,7 @@ def bytes_to_python_object(buffer: bytes) -> Any:
 def bytes_to_transitions(buffer: bytes) -> list[Transition]:
     buffer = io.BytesIO(buffer)
     buffer.seek(0)
-    transitions = torch.load(buffer, weights_only=False)  # nosec B614: Safe usage of torch.load
-    # Add validation checks here
+    transitions = torch.load(buffer, weights_only=True)
     return transitions
 
 
