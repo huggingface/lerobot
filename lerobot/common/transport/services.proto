@@ -27,7 +27,6 @@ package transport;
 // The Learner implements this service.
 service LearnerService {
   // Actor -> Learner to store transitions
-  rpc SendInteractionMessage(InteractionMessage) returns (Empty);
   rpc StreamParameters(Empty) returns (stream Parameters);
   rpc SendTransitions(stream Transition) returns (Empty);
   rpc SendInteractions(stream InteractionMessage) returns (Empty);
