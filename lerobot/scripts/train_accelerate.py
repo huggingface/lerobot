@@ -106,7 +106,7 @@ def train(cfg: TrainPipelineConfig):
     logging.info(pformat(cfg.to_dict()))
     
     # Initialize accelerator
-    from accelerate.utils import DistributedDataParallelKwargs, DeepSpeedPlugin
+    from accelerate.utils import DistributedDataParallelKwargs
     from lerobot.common.utils.wandb_utils import WandBLogger, cfg_to_group, get_wandb_run_id_from_filesystem
 
     ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
