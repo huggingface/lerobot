@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import packageJson from './package.json';
 
 const nextConfig: NextConfig = {
   /* config options here */
@@ -8,6 +9,7 @@ const nextConfig: NextConfig = {
   eslint: {
     ignoreDuringBuilds: true,
   },
+  generateBuildId: () => packageJson.version,
 };
 
 export default nextConfig;
