@@ -102,29 +102,27 @@ def update_policy(
 
 @parser.wrap()
 def train(cfg: TrainPipelineConfig):
+    cfg.validate()
+    logging.info(pformat(cfg.to_dict()))
+    
     # Initialize accelerator
+    from accelerate.utils import DistributedDataParallelKwargs, DeepSpeedPlugin
+    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
     accelerator = Accelerator(
         mixed_precision="fp16" if cfg.policy.use_amp else "no",
-        gradient_accumulation_steps=1,
+        gradient_accumulation_steps=cfg.policy.gradient_accumulation_steps,
         log_with="wandb" if cfg.wandb.enable else None,
-        project_config={
-            "project_name": cfg.wandb.project,
-            "config": cfg.to_dict()
-        } if cfg.wandb.enable else None,
+        kwargs_handlers=[ddp_kwargs],
+        project_dir=cfg.output_dir,
     )
-    
-    # Only print on main process
-    if accelerator.is_main_process:
-        cfg.validate()
-        logging.info(pformat(cfg.to_dict()))
-    
-    # Set up logging based on accelerator
-    if cfg.wandb.enable and cfg.wandb.project and accelerator.is_main_process:
-        wandb_logger = WandBLogger(cfg)
-    else:
-        wandb_logger = None
-        if accelerator.is_main_process:
-            logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
+    accelerator.init_trackers(
+        project_name=cfg.wandb.project,
+        init_kwargs={
+            "wandb": {
+                "mode": cfg.wandb.mode if cfg.wandb.mode in ["online", "offline", "disabled"] else "online",
+            }
+        }
+    )
     
     # Set seed for reproducibility
     if cfg.seed is not None:
@@ -270,11 +268,11 @@ def train(cfg: TrainPipelineConfig):
         # Logging (only on main process)
         if is_log_step and accelerator.is_main_process:
             logging.info(train_tracker)
-            if wandb_logger:
-                wandb_log_dict = train_tracker.to_dict()
-                if output_dict:
-                    wandb_log_dict.update(output_dict)
-                wandb_logger.log_dict(wandb_log_dict, step)
+            wandb_log_dict = train_tracker.to_dict()
+            if output_dict:
+                wandb_log_dict.update(output_dict)
+            for k, v in wandb_log_dict.items():
+                accelerator.log({f"{'train'}/{k}": v}, step=step)
             train_tracker.reset_averages()
         
         # Checkpointing (only on main process)
@@ -289,10 +287,9 @@ def train(cfg: TrainPipelineConfig):
             unwrapped_policy = accelerator.unwrap_model(policy)
             save_checkpoint(checkpoint_dir, step, cfg, unwrapped_policy, optimizer, lr_scheduler)
             update_last_checkpoint(checkpoint_dir)
-            
-            if wandb_logger:
-                wandb_logger.log_policy(checkpoint_dir)
-        
+            # if wandb_logger:
+            #     wandb_logger.log_policy(checkpoint_dir)
+
         # Evaluation (only on main process)
         if cfg.env and is_eval_step and accelerator.is_main_process:
             step_id = get_step_identifier(step, cfg.steps)
@@ -329,10 +326,10 @@ def train(cfg: TrainPipelineConfig):
             eval_tracker.pc_success = eval_info["aggregated"].pop("pc_success")
             logging.info(eval_tracker)
             
-            if wandb_logger:
-                wandb_log_dict = {**eval_tracker.to_dict(), **eval_info}
-                wandb_logger.log_dict(wandb_log_dict, step, mode="eval")
-                wandb_logger.log_video(eval_info["video_paths"][0], step, mode="eval")
+
+            wandb_log_dict = {**eval_tracker.to_dict(), **eval_info}
+            for k, v in wandb_log_dict.items():
+                accelerator.log({f"{'eval'}/{k}": v}, step=step)
             
             # Set back to training mode
             policy.train()
