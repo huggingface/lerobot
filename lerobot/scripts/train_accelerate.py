@@ -107,6 +107,8 @@ def train(cfg: TrainPipelineConfig):
     
     # Initialize accelerator
     from accelerate.utils import DistributedDataParallelKwargs, DeepSpeedPlugin
+    from lerobot.common.utils.wandb_utils import WandBLogger, cfg_to_group, get_wandb_run_id_from_filesystem
+
     ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
     accelerator = Accelerator(
         mixed_precision="fp16" if cfg.policy.use_amp else "no",
@@ -115,11 +117,25 @@ def train(cfg: TrainPipelineConfig):
         kwargs_handlers=[ddp_kwargs],
         project_dir=cfg.output_dir,
     )
+    
+
     accelerator.init_trackers(
         project_name=cfg.wandb.project,
         init_kwargs={
             "wandb": {
+                "entity": cfg.wandb.entity,
+                "name": cfg.job_name,
+                "notes": cfg.wandb.notes,
+                "tags": cfg_to_group(cfg, return_list=True),
+                "dir": cfg.output_dir,
+                "config": cfg.to_dict(),
+                "save_code": False,
+                "job_type": "train_eval",
                 "mode": cfg.wandb.mode if cfg.wandb.mode in ["online", "offline", "disabled"] else "online",
+                "resume": "must" if cfg.resume else None,
+                "id": cfg.wandb.run_id if cfg.wandb.run_id else (
+                    get_wandb_run_id_from_filesystem(cfg.output_dir) if cfg.resume else None
+                ),
             }
         }
     )
