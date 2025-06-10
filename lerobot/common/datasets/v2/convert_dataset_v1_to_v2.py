@@ -680,7 +680,7 @@ def main():
 
     del args.robot
 
-    convert_dataset(**vars(args), robot_config=None)
+    convert_dataset(**vars(args), robot_config=robot_config)
 
 
 if __name__ == "__main__":
