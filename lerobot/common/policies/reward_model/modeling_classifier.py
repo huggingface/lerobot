@@ -15,7 +15,6 @@
 # limitations under the License.
 
 import logging
-from typing import Optional
 
 import torch
 from torch import Tensor, nn
@@ -32,8 +31,8 @@ class ClassifierOutput:
     def __init__(
         self,
         logits: Tensor,
-        probabilities: Optional[Tensor] = None,
-        hidden_states: Optional[Tensor] = None,
+        probabilities: Tensor | None = None,
+        hidden_states: Tensor | None = None,
     ):
         self.logits = logits
         self.probabilities = probabilities
