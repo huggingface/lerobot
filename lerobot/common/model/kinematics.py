@@ -1,5 +1,3 @@
-# ruff: noqa: N806, N815, N803
-
 # Copyright 2024 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,18 +27,18 @@ def rodrigues_rotation(w, theta):
     return np.eye(3) + np.sin(theta) * w_hat + (1 - np.cos(theta)) * w_hat @ w_hat
 
 
-def screw_axis_to_transform(S, theta):
+def screw_axis_to_transform(S, theta):  # noqa: N803
     """Converts a screw axis to a 4x4 transformation matrix."""
-    S_w = S[:3]
-    S_v = S[3:]
+    S_w = S[:3]  # noqa: N806
+    S_v = S[3:]  # noqa: N806
     if np.allclose(S_w, 0) and np.linalg.norm(S_v) == 1:  # Pure translation
-        T = np.eye(4)
+        T = np.eye(4)  # noqa: N806
         T[:3, 3] = S_v * theta
     elif np.linalg.norm(S_w) == 1:  # Rotation and translation
         w_hat = skew_symmetric(S_w)
-        R = np.eye(3) + np.sin(theta) * w_hat + (1 - np.cos(theta)) * w_hat @ w_hat
+        R = np.eye(3) + np.sin(theta) * w_hat + (1 - np.cos(theta)) * w_hat @ w_hat  # noqa: N806
         t = (np.eye(3) * theta + (1 - np.cos(theta)) * w_hat + (theta - np.sin(theta)) * w_hat @ w_hat) @ S_v
-        T = np.eye(4)
+        T = np.eye(4)  # noqa: N806
         T[:3, :3] = R
         T[:3, 3] = t
     else:
@@ -74,14 +72,14 @@ def pose_difference_se3(pose1, pose2):
     """
 
     # Extract rotation matrices from poses
-    R1 = pose1[:3, :3]
-    R2 = pose2[:3, :3]
+    R1 = pose1[:3, :3]  # noqa: N806
+    R2 = pose2[:3, :3]  # noqa: N806
 
     # Calculate translational difference
     translation_diff = pose1[:3, 3] - pose2[:3, 3]
 
     # Calculate rotational difference using scipy's Rotation library
-    R_diff = Rotation.from_matrix(R1 @ R2.T)
+    R_diff = Rotation.from_matrix(R1 @ R2.T)  # noqa: N806
     rotation_diff = R_diff.as_rotvec()  # Convert to axis-angle representation
 
     return np.concatenate([translation_diff, rotation_diff])
@@ -89,9 +87,9 @@ def pose_difference_se3(pose1, pose2):
 
 def se3_error(target_pose, current_pose):
     pos_error = target_pose[:3, 3] - current_pose[:3, 3]
-    R_target = target_pose[:3, :3]
-    R_current = current_pose[:3, :3]
-    R_error = R_target @ R_current.T
+    R_target = target_pose[:3, :3]  # noqa: N806
+    R_current = current_pose[:3, :3]  # noqa: N806
+    R_error = R_target @ R_current.T  # noqa: N806
     rot_error = Rotation.from_matrix(R_error).as_rotvec()
     return np.concatenate([pos_error, rot_error])
 
@@ -430,7 +428,7 @@ class RobotKinematics:
         for el_ix in range(len(robot_pos_deg[:-1])):
             delta *= 0
             delta[el_ix] = eps / 2
-            Sdot = (
+            Sdot = (  # noqa: N806
                 pose_difference_se3(
                     fk_func(robot_pos_deg[:-1] + delta),
                     fk_func(robot_pos_deg[:-1] - delta),
@@ -458,9 +456,10 @@ class RobotKinematics:
         for el_ix in range(len(robot_pos_deg[:-1])):
             delta *= 0
             delta[el_ix] = eps / 2
-            Sdot = (
-                fk_func(robot_pos_deg[:-1] + delta)[:3, 3] - fk_func(robot_pos_deg[:-1] - delta)[:3, 3]
-            ) / eps
+            Sdot = (  # noqa: N806
+                (fk_func(robot_pos_deg[:-1] + delta)[:3, 3] - fk_func(robot_pos_deg[:-1] - delta)[:3, 3])
+                / eps
+            )
             jac[:, el_ix] = Sdot
         return jac
 

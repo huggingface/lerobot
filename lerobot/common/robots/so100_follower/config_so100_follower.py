@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
-from typing import Dict, List
 
 from lerobot.common.cameras import CameraConfig
 
@@ -46,7 +45,7 @@ class SO100FollowerEndEffectorConfig(SO100FollowerConfig):
     """Configuration for the SO100FollowerEndEffector robot."""
 
     # Default bounds for the end-effector position (in meters)
-    end_effector_bounds: Dict[str, List[float]] = field(
+    end_effector_bounds: dict[str, list[float]] = field(
         default_factory=lambda: {
             "min": [-1.0, -1.0, -1.0],  # min x, y, z
             "max": [1.0, 1.0, 1.0],  # max x, y, z
@@ -55,7 +54,7 @@ class SO100FollowerEndEffectorConfig(SO100FollowerConfig):
 
     max_gripper_pos: float = 50
 
-    end_effector_step_sizes: Dict[str, float] = field(
+    end_effector_step_sizes: dict[str, float] = field(
         default_factory=lambda: {
             "x": 0.02,
             "y": 0.02,

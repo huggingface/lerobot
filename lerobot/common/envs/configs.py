@@ -14,7 +14,7 @@
 
 import abc
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Optional
 
 import draccus
 
@@ -190,8 +190,8 @@ class EnvTransformConfig:
     add_joint_velocity_to_observation: bool = False
     add_current_to_observation: bool = False
     add_ee_pose_to_observation: bool = False
-    crop_params_dict: Optional[Dict[str, Tuple[int, int, int, int]]] = None
-    resize_size: Optional[Tuple[int, int]] = None
+    crop_params_dict: Optional[dict[str, tuple[int, int, int, int]]] = None
+    resize_size: Optional[tuple[int, int]] = None
     control_time_s: float = 20.0
     fixed_reset_joint_positions: Optional[Any] = None
     reset_time_s: float = 5.0

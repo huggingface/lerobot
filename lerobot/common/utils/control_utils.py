@@ -98,7 +98,12 @@ def is_headless():
 
 
 def predict_action(
-    observation: dict[str, np.ndarray], policy: PreTrainedPolicy, device: torch.device, use_amp: bool
+    observation: dict[str, np.ndarray],
+    policy: PreTrainedPolicy,
+    device: torch.device,
+    use_amp: bool,
+    task: str | None = None,
+    robot_type: str | None = None,
 ):
     observation = copy(observation)
     with (
