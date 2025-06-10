@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 
 import draccus
 
-from lerobot.common.constants import ACTION, OBS_ENV, OBS_IMAGE, OBS_IMAGES, OBS_ROBOT
+from lerobot.common.constants import ACTION, OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
 from lerobot.configs.types import FeatureType, PolicyFeature
 
 
@@ -42,7 +42,8 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         """ID string used in gym.make() to instantiate the environment"""
         return f"{self.package_name}/{self.task}"
 
-    @abc.abstractproperty
+    @property
+    @abc.abstractmethod
     def gym_kwargs(self) -> dict:
         raise NotImplementedError()
 
@@ -63,7 +64,7 @@ class AlohaEnv(EnvConfig):
     features_map: dict[str, str] = field(
         default_factory=lambda: {
             "action": ACTION,
-            "agent_pos": OBS_ROBOT,
+            "agent_pos": OBS_STATE,
             "top": f"{OBS_IMAGE}.top",
             "pixels/top": f"{OBS_IMAGES}.top",
         }
@@ -104,8 +105,8 @@ class PushtEnv(EnvConfig):
     features_map: dict[str, str] = field(
         default_factory=lambda: {
             "action": ACTION,
-            "agent_pos": OBS_ROBOT,
-            "environment_state": OBS_ENV,
+            "agent_pos": OBS_STATE,
+            "environment_state": OBS_ENV_STATE,
             "pixels": OBS_IMAGE,
         }
     )
@@ -146,7 +147,7 @@ class XarmEnv(EnvConfig):
     features_map: dict[str, str] = field(
         default_factory=lambda: {
             "action": ACTION,
-            "agent_pos": OBS_ROBOT,
+            "agent_pos": OBS_STATE,
             "pixels": OBS_IMAGE,
         }
     )

@@ -20,6 +20,7 @@ from pathlib import Path
 import einops
 import pytest
 import torch
+from packaging import version
 from safetensors.torch import load_file
 
 from lerobot import available_policies
@@ -408,7 +409,16 @@ def test_backward_compatibility(ds_repo_id: str, policy_name: str, policy_kwargs
         4. Check that this test now passes.
         5. Remember to restore `tests/scripts/save_policy_to_safetensors.py` to its original state.
         6. Remember to stage and commit the resulting changes to `tests/artifacts`.
+
+    NOTE: If the test does not pass, and you don't change the policy, it is likely that the test artifact
+    is out of date. For example, some PyTorch versions have different randomness, see this PR:
+    https://github.com/huggingface/lerobot/pull/1127.
+
     """
+    # NOTE: ACT policy has different randomness, after PyTorch 2.7.0
+    if policy_name == "act" and version.parse(torch.__version__) < version.parse("2.7.0"):
+        pytest.skip(f"Skipping act policy test with PyTorch {torch.__version__}. Requires PyTorch >= 2.7.0")
+
     ds_name = ds_repo_id.split("/")[-1]
     artifact_dir = Path("tests/artifacts/policies") / f"{ds_name}_{policy_name}_{file_name_extra}"
     saved_output_dict = load_file(artifact_dir / "output_dict.safetensors")

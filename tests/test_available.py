@@ -45,12 +45,7 @@ def test_available_policies():
     This test verifies that the class attribute `name` for all policies is
     consistent with those listed in `lerobot/__init__.py`.
     """
-    policy_classes = [
-        ACTPolicy,
-        DiffusionPolicy,
-        TDMPCPolicy,
-        VQBeTPolicy,
-    ]
+    policy_classes = [ACTPolicy, DiffusionPolicy, TDMPCPolicy, VQBeTPolicy]
     policies = [pol_cls.name for pol_cls in policy_classes]
     assert set(policies) == set(lerobot.available_policies), policies
 

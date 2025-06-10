@@ -66,7 +66,7 @@ def main():
     print(f"Number of episodes in full dataset: {total_episodes}")
     print(f"Number of episodes in training dataset (90% subset): {len(train_episodes)}")
     print(f"Number of episodes in validation dataset (10% subset): {len(val_episodes)}")
-    # - Load train an val datasets
+    # - Load train and val datasets
     train_dataset = LeRobotDataset(
         "lerobot/pusht", episodes=train_episodes, delta_timestamps=delta_timestamps
     )

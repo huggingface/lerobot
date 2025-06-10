@@ -33,7 +33,7 @@ jobs:
     runs-on:
       group: aws-general-8-plus
     container:
-      image: huggingface/lerobot-cpu:latest
+      image: huggingface/lerobot-cpu:latest  # zizmor: ignore[unpinned-images]
       options: --shm-size "16gb"
       credentials:
         username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -60,7 +60,7 @@ jobs:
       CUDA_VISIBLE_DEVICES: "0"
       TEST_TYPE: "single_gpu"
     container:
-      image: huggingface/lerobot-gpu:latest
+      image: huggingface/lerobot-gpu:latest  # zizmor: ignore[unpinned-images]
       options: --gpus all --shm-size "16gb"
       credentials:
         username: ${{ secrets.DOCKERHUB_USERNAME }}

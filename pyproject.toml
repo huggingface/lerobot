@@ -49,11 +49,11 @@ dependencies = [
     "datasets>=2.19.0",
     "deepdiff>=7.0.1",
     "diffusers>=0.27.2",
-    "draccus>=0.10.0",
+    "draccus==0.10.0",
     "einops>=0.8.0",
     "flask>=3.0.3",
     "gdown>=5.1.0",
-    "gymnasium==0.29.1",                                                 # TODO(rcadene, aliberts): Make gym 1.0.0 work
+    "gymnasium==0.29.1", # TODO(rcadene, aliberts): Make gym 1.0.0 work
     "h5py>=3.10.0",
     "huggingface-hub[hf-transfer,cli]>=0.27.1 ; python_version < '4.0'",
     "imageio[ffmpeg]>=2.34.0",
@@ -62,9 +62,10 @@ dependencies = [
     "omegaconf>=2.3.0",
     "opencv-python-headless>=4.9.0",
     "packaging>=24.2",
-    "av>=12.0.5",
-    "pymunk>=6.6.0",
+    "av>=14.2.0",
+    "pymunk>=6.6.0,<7.0.0",
     "pynput>=1.7.7",
+    "pyserial>=3.5",
     "pyzmq>=26.2.1",
     "rerun-sdk>=0.21.0",
     "termcolor>=2.4.0",
@@ -77,22 +78,26 @@ dependencies = [
 
 [project.optional-dependencies]
 aloha = ["gym-aloha>=0.1.1 ; python_version < '4.0'"]
+docs = ["hf-doc-builder @ git+https://github.com/huggingface/doc-builder.git@main", "watchdog >= 6.0.0"]
 dev = ["pre-commit>=3.7.0", "debugpy>=1.8.1"]
 dora = [
     "gym-dora @ git+https://github.com/dora-rs/dora-lerobot.git#subdirectory=gym_dora ; python_version < '4.0'",
 ]
-dynamixel = ["dynamixel-sdk>=3.7.31", "pynput>=1.7.7"]
-feetech = ["feetech-servo-sdk>=1.0.0", "pynput>=1.7.7"]
-intelrealsense = ["pyrealsense2>=2.55.1.6486 ; sys_platform != 'darwin'"]
+dynamixel = ["dynamixel-sdk>=3.7.31"]
+feetech = ["feetech-servo-sdk>=1.0.0"]
+intelrealsense = [
+    "pyrealsense2>=2.55.1.6486 ; sys_platform != 'darwin'",
+    "pyrealsense2-macosx>=2.54 ; sys_platform == 'darwin'",
+]
 pi0 = ["transformers>=4.48.0"]
+smolvla = ["transformers>=4.50.3", "num2words>=0.5.14", "accelerate>=1.7.0"]
 pusht = ["gym-pusht>=0.1.5 ; python_version < '4.0'"]
 stretch = [
     "hello-robot-stretch-body>=0.7.27 ; python_version < '4.0' and sys_platform == 'linux'",
     "pyrender @ git+https://github.com/mmatl/pyrender.git ; sys_platform == 'linux'",
-    "pyrealsense2>=2.55.1.6486 ; sys_platform != 'darwin'",
-    "pynput>=1.7.7",
+    "pyrealsense2>=2.55.1.6486 ; sys_platform != 'darwin'"
 ]
-test = ["pytest>=8.1.0", "pytest-cov>=5.0.0", "pyserial>=3.5"]
+test = ["pytest>=8.1.0", "pytest-cov>=5.0.0", "mock-serial>=0.0.1 ; sys_platform != 'win32'"]
 umi = ["imagecodecs>=2024.1.1"]
 video_benchmark = ["scikit-image>=0.23.2", "pandas>=2.2.2"]
 xarm = ["gym-xarm>=0.1.1 ; python_version < '4.0'"]
@@ -107,6 +112,9 @@ exclude = ["tests/artifacts/**/*.safetensors"]
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "I", "N", "B", "C4", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401", "F403"]
 
 [tool.bandit]
 exclude_dirs = [

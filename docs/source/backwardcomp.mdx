@@ -1,0 +1,82 @@
+# Backward compatibility
+
+## Hardware API redesign
+
+PR [#777](https://github.com/huggingface/lerobot/pull/777) improves the LeRobot calibration but is **not backward-compatible**. Below is a overview of what changed and how you can continue to work with datasets created before this pull request.
+
+### What changed?
+
+|                                   | Before PR #777                                    | After PR #777                                                               |
+| --------------------------------- | ------------------------------------------------- | --------------------------------------------------------------------------- |
+| **Joint range**                   | Degrees `-180...180°`                              | **Normalised range** Joints: `–100...100` Gripper: `0...100` |
+| **Zero position (SO100 / SO101)** | Arm fully extended horizontally                   | **In middle of the range for each joint**                                        |
+| **Boundary handling**             | Software safeguards to detect ±180 ° wrap-arounds | No wrap-around logic needed due to mid-range zero                           |
+
+---
+
+### Impact on existing datasets
+
+* Recorded trajectories created **before** PR #777 will replay incorrectly if loaded directly:
+  * Joint angles are offset and incorrectly normalized.
+* Any models directly finetuned or trained on the old data will need their inputs and outputs converted.
+
+### Using datasets made with the previous calibration system
+We provide a migration example script for replaying an episode recorded with the previous calibration here: `examples/backward_compatibility/replay.py`.
+Below we take you through the modifications that are done in the example script to make the previous calibration datasets work.
+
+```diff
++   key = f"{name.removeprefix('main_')}.pos"
+    action[key] = action_array[i].item()
++   action["shoulder_lift.pos"] = -(action["shoulder_lift.pos"] - 90)
++   action["elbow_flex.pos"] -= 90
+```
+
+Let's break this down.
+New codebase uses `.pos` suffix for the position observations and we have removed `main_` prefix:
+```python
+key = f"{name.removeprefix('main_')}.pos"
+```
+
+For `"shoulder_lift"` (id = 2), the 0 position is changed by -90 degrees and the direction is reversed compared to old calibration/code.
+```python
+action["shoulder_lift.pos"] = -(action["shoulder_lift.pos"] - 90)
+```
+For `"elbow_flex"` (id = 3), the 0 position is changed by -90 degrees compared to old calibration/code.
+```python
+action["elbow_flex.pos"] -= 90
+```
+
+To use degrees normalization we then set the `--robot.use_degrees` option to `true`.
+```diff
+python examples/backward_compatibility/replay.py \
+    --robot.type=so101_follower \
+    --robot.port=/dev/tty.usbmodem5A460814411 \
+    --robot.id=blue \
++   --robot.use_degrees=true \
+    --dataset.repo_id=my_dataset_id \
+    --dataset.episode=0
+```
+
+### Using policies trained with the previous calibration system
+
+Policies output actions in the same format as the datasets (`torch.Tensors`). Therefore, the same transformations should be applied.
+
+To find these transformations, we recommend to first try and and replay an episode of the dataset your policy was trained on using the section above.
+Then, add these same transformations on your inference script (shown here in the `record.py` script):
+```diff
+action_values = predict_action(
+    observation_frame,
+    policy,
+    get_safe_torch_device(policy.config.device),
+    policy.config.use_amp,
+    task=single_task,
+    robot_type=robot.robot_type,
+    )
+    action = {key: action_values[i].item() for i, key in enumerate(robot.action_features)}
+
++   action["shoulder_lift.pos"] = -(action["shoulder_lift.pos"] - 90)
++   action["elbow_flex.pos"] -= 90
+    robot.send_action(action)
+```
+
+If you have questions or run into migration issues, feel free to ask them on [Discord](https://discord.gg/s3KuuzsPFb)
