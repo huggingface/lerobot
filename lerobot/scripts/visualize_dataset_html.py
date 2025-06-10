@@ -54,6 +54,7 @@ python lerobot/scripts/visualize_dataset_html.py \
 
 import argparse
 import atexit
+import contextlib
 import json
 import logging
 import os
@@ -200,10 +201,8 @@ def run_react_app(
                 process.wait(timeout=5)
             except (ProcessLookupError, subprocess.TimeoutExpired):
                 # Force kill if graceful termination fails
-                try:
+                with contextlib.suppress(ProcessLookupError):
                     os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
 
     def signal_handler(sig, frame):
         cleanup()
