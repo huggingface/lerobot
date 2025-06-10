@@ -47,10 +47,8 @@ export const DataRecharts = React.memo(
   },
 );
 
-// Delimiter for nested/flattened keys
 const NESTED_KEY_DELIMITER = ",";
 
-// SingleDataGraph renders one chart for a group
 const SingleDataGraph = React.memo(
   ({
     data,
@@ -62,7 +60,6 @@ const SingleDataGraph = React.memo(
     setHoveredTime: (t: number | null) => void;
   }) => {
     const { currentTime, setCurrentTime } = useTime();
-    // Utility: flatten nested objects with dot notation
     function flattenRow(row: Record<string, any>, prefix = ""): Record<string, number> {
       const result: Record<string, number> = {};
       for (const [key, value] of Object.entries(row)) {
@@ -129,12 +126,10 @@ const SingleDataGraph = React.memo(
       return chartData.length - 1;
     };
 
-    // Handle mouseLeave - restore to video's current time
     const handleMouseLeave = () => {
       setHoveredTime(null);
     };
 
-    // Handle click on chart - this SHOULD change the video time
     const handleClick = (data: any) => {
       if (data && data.activePayload && data.activePayload.length) {
         const timeValue = data.activePayload[0].payload.timestamp;
@@ -143,9 +138,7 @@ const SingleDataGraph = React.memo(
     };
 
     // Custom legend to show current value next to each series
-    // --- Grouped Legend UI ---
     const CustomLegend = () => {
-      // Find the closest data point to the hovered or current time
       const closestIndex = findClosestDataIndex(
         hoveredTime != null ? hoveredTime : currentTime,
       );
@@ -172,12 +165,9 @@ const SingleDataGraph = React.memo(
         groupColorMap[group] = `hsl(${idx * (360 / allGroups.length)}, 100%, 50%)`;
       });
 
-      // Helper: check if all children are visible
       const isGroupChecked = (group: string) => groups[group].every(k => visibleKeys.includes(k));
-      // Helper: check if some children are visible
       const isGroupIndeterminate = (group: string) => groups[group].some(k => visibleKeys.includes(k)) && !isGroupChecked(group);
 
-      // Handle parent (group) checkbox
       const handleGroupCheckboxChange = (group: string) => {
         if (isGroupChecked(group)) {
           // Uncheck all children
@@ -188,7 +178,6 @@ const SingleDataGraph = React.memo(
         }
       };
 
-      // Handle single (non-grouped) or child checkbox
       const handleCheckboxChange = (key: string) => {
         setVisibleKeys((prev) =>
           prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]

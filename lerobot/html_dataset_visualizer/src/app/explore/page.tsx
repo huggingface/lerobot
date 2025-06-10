@@ -6,7 +6,6 @@ import {
   formatStringWithVars,
 } from "@/utils/parquetUtils";
 
-// Server component for data fetching
 export default async function ExplorePage({
   searchParams,
 }: {

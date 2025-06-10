@@ -25,7 +25,6 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [sidebarVisible, setSidebarVisible] = React.useState(true);
   const toggleSidebar = () => setSidebarVisible((prev) => !prev);
 
-  // Ref for the sidebar nav
   const sidebarRef = React.useRef<HTMLDivElement>(null);
 
   React.useEffect(() => {

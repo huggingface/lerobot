@@ -134,7 +134,6 @@ export async function getEpisodeData(
       )
       .map(([key]) => key);
 
-    // --- Refactored: Group columns by suffix first, then by scale ---
     // 1. Group all numeric keys by suffix (excluding 'timestamp')
     const numericKeys = seriesNames.filter((k) => k !== "timestamp");
     const suffixGroupsMap: Record<string, string[]> = {};

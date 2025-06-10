@@ -10,8 +10,6 @@ import {
   FaArrowUp,
 } from "react-icons/fa";
 
-// duration is now provided by useTime context
-
 import { debounce } from "@/utils/debounce";
 
 const PlaybackBar: React.FC = () => {
