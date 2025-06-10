@@ -217,7 +217,7 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
 
     def embed_image(self, image: torch.Tensor):
         # Handle different transformers versions
-        if hasattr(self.paligemma, 'get_image_features'):
+        if hasattr(self.paligemma, "get_image_features"):
             return self.paligemma.get_image_features(image)
         else:
             return self.paligemma.model.get_image_features(image)
