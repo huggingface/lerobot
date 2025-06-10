@@ -165,18 +165,24 @@ export const VideosPlayer = ({
     const onCanPlayThrough = () => {
       videosReadyCount += 1;
       if (videosReadyCount === videosInfo.length) {
-        // Start autoplay when all videos are ready
         if (typeof onVideosReady === "function") {
           onVideosReady();
           setIsPlaying(true);
         }
       }
     };
+  
     videoRefs.current.forEach((video) => {
       if (video) {
-        video.addEventListener("canplaythrough", onCanPlayThrough);
+        // If already ready, call the handler immediately
+        if (video.readyState >= 4) {
+          onCanPlayThrough();
+        } else {
+          video.addEventListener("canplaythrough", onCanPlayThrough);
+        }
       }
     });
+  
     return () => {
       videoRefs.current.forEach((video) => {
         if (video) {
@@ -185,7 +191,7 @@ export const VideosPlayer = ({
       });
     };
   }, []);
-
+  
   return (
     <>
       {/* Error message */}
