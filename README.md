@@ -23,7 +23,7 @@
 </div>
 
 <h2 align="center">
-    <p><a href="https://github.com/huggingface/lerobot/blob/main/examples/12_use_so101.md">
+    <p><a href="https://huggingface.co/docs/lerobot/so101">
         Build Your Own SO-101 Robot!</a></p>
 </h2>
 
@@ -48,7 +48,7 @@
   <p>Train it in minutes with a few simple moves on your laptop.</p>
   <p>Then sit back and watch your creation act autonomously! 🤯</p>
 
-  <p><a href="https://github.com/huggingface/lerobot/blob/main/examples/12_use_so101.md">
+  <p><a href="https://huggingface.co/docs/lerobot/so101">
       See the full SO-101 tutorial here.</a></p>
 
   <p>Want to take it to the next level? Make your SO-101 mobile by building LeKiwi!</p>
