@@ -5,6 +5,10 @@ export default function DatasetRootPage({
 }: {
   params: { org: string; dataset: string };
 }) {
-  redirect(`/${params.org}/${params.dataset}/episode_0`);
-  return null;
+  const episodeN = process.env.EPISODES
+    ?.split(/\s+/)
+    .map((x) => parseInt(x.trim(), 10))
+    .filter((x) => !isNaN(x))[0] ?? 0;
+
+  redirect(`/${params.org}/${params.dataset}/episode_${episodeN}`);
 }

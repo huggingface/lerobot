@@ -9,6 +9,15 @@ export default function Home({
 }: {
   searchParams: { [key: string]: string | undefined };
 }) {
+  // Redirect to the first episode of the dataset if REPO_ID is defined
+  if (process.env.REPO_ID) {
+    const episodeN = process.env.EPISODES
+      ?.split(/\s+/)
+      .map((x) => parseInt(x.trim(), 10))
+      .filter((x) => !isNaN(x))[0] ?? 0;
+      
+    redirect(`/${process.env.REPO_ID}/episode_${episodeN}`);
+  }
   // sync with hf.co/spaces URL params
   if (searchParams.path) {
     redirect(searchParams.path);

@@ -33,11 +33,17 @@ export async function getEpisodeData(
     };
 
     // Generate list of episodes
-    const episodes = Array.from(
-      { length: datasetInfo.total_episodes },
-      // episode id starts from 0
-      (_, i) => i,
-    );
+    const episodes =
+      process.env.EPISODES === undefined
+        ? Array.from(
+            { length: datasetInfo.total_episodes },
+            // episode id starts from 0
+            (_, i) => i,
+          )
+        : process.env.EPISODES
+            .split(/\s+/)
+            .map((x) => parseInt(x.trim(), 10))
+            .filter((x) => !isNaN(x));
 
     // Videos information
     const videosInfo = Object.entries(info.features)
