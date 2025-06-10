@@ -15,7 +15,7 @@ export default function Home({
       ?.split(/\s+/)
       .map((x) => parseInt(x.trim(), 10))
       .filter((x) => !isNaN(x))[0] ?? 0;
-      
+
     redirect(`/${process.env.REPO_ID}/episode_${episodeN}`);
   }
   // sync with hf.co/spaces URL params

@@ -53,19 +53,19 @@ python lerobot/scripts/visualize_dataset_html.py \
 """
 
 import argparse
-import json
-import os
-from pathlib import Path
-import subprocess
 import atexit
-import signal
-import sys
+import json
 import logging
+import os
+import signal
+import subprocess
+import sys
+from pathlib import Path
 
 from flask import Flask, jsonify, redirect, send_file, url_for
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.datasets.utils import INFO_PATH, DEFAULT_PARQUET_PATH, DEFAULT_VIDEO_PATH
+from lerobot.common.datasets.utils import DEFAULT_PARQUET_PATH, DEFAULT_VIDEO_PATH, INFO_PATH
 from lerobot.common.utils.utils import init_logging
 
 
@@ -159,10 +159,10 @@ def build_react_app(script_dir: Path):
 
     package_json_path = next_dir / "package.json"
     build_id_path = next_build_dir / "BUILD_ID"
-    with open(package_json_path, "r") as f:
+    with open(package_json_path) as f:
         package_data = json.load(f)
         package_version = package_data.get("version", "")
-    with open(build_id_path, "r") as f:
+    with open(build_id_path) as f:
         build_id = f.read().strip()
 
     if package_version != build_id:
