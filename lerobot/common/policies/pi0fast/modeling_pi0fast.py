@@ -878,7 +878,11 @@ class PI0FAST(nn.Module):
         return actions
 
     def embed_image(self, image: torch.Tensor):
-        return self.pi0_paligemma.get_image_features(image)
+        # Handle different transformers versions
+        if hasattr(self.pi0_paligemma, "get_image_features"):
+            return self.pi0_paligemma.get_image_features(image)
+        else:
+            return self.pi0_paligemma.model.get_image_features(image)
 
     def embed_inputs(
         self,
