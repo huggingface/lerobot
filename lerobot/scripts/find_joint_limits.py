@@ -62,8 +62,6 @@ class FindJointLimitsConfig:
     # Display all cameras on screen
     display_data: bool = False
 
-    urdf_path: str = "/Users/michel_aractingi/code/SO-ARM100/Simulation/SO101/so101_new_calib.urdf"
-
 
 @draccus.wrap()
 def find_joint_and_ee_bounds(cfg: FindJointLimitsConfig):
