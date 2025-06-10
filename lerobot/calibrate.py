@@ -40,6 +40,7 @@ from lerobot.common.robots import (  # noqa: F401
     lekiwi,
     make_robot_from_config,
     so100_follower,
+    so101_follower,
 )
 from lerobot.common.teleoperators import (  # noqa: F401
     Teleoperator,
