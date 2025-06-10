@@ -1877,7 +1877,7 @@ def init_reward_classifier(cfg):
     if cfg.reward_classifier_pretrained_path is None:
         return None
 
-    from lerobot.common.policies.reward_model.modeling_classifier import Classifier
+    from lerobot.common.policies.sac.reward_model.modeling_classifier import Classifier
 
     # Get device from config or default to CUDA
     device = getattr(cfg, "device", "cpu")
