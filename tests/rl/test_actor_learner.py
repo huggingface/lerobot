@@ -80,6 +80,7 @@ def cfg():
     policy_cfg.actor_learner_config.learner_port = port
     policy_cfg.concurrency.actor = "threads"
     policy_cfg.concurrency.learner = "threads"
+    policy_cfg.actor_learner_config.queue_get_timeout = 0.1
 
     cfg.policy = policy_cfg
 
@@ -118,9 +119,6 @@ def test_end_to_end_transitions_flow(cfg):
         host=policy_cfg.actor_learner_config.learner_host, port=policy_cfg.actor_learner_config.learner_port
     )
 
-    # Give learner time to start
-    time.sleep(0.5)
-
     assert establish_learner_connection(learner_client, shutdown_event, attempts=5)
 
     send_transitions_thread = threading.Thread(
@@ -133,7 +131,7 @@ def test_end_to_end_transitions_flow(cfg):
     push_transitions_to_transport_queue(input_transitions, transitions_actor_queue)
 
     # Wait for learner to start
-    time.sleep(1)
+    time.sleep(0.1)
 
     shutdown_event.set()
 
@@ -186,9 +184,6 @@ def test_end_to_end_interactions_flow(cfg):
         host=policy_cfg.actor_learner_config.learner_host, port=policy_cfg.actor_learner_config.learner_port
     )
 
-    # Give learner time to start
-    time.sleep(0.5)
-
     assert establish_learner_connection(learner_client, shutdown_event, attempts=5)
 
     # Start the actor's interaction sending process in a separate thread
@@ -204,7 +199,7 @@ def test_end_to_end_interactions_flow(cfg):
         interactions_actor_queue.put(python_object_to_bytes(interaction))
 
     # Wait for the communication to happen
-    time.sleep(1)
+    time.sleep(0.1)
 
     # Signal shutdown and wait for threads to complete
     shutdown_event.set()
@@ -266,9 +261,6 @@ def test_end_to_end_parameters_flow(cfg, data_size):
         host=policy_cfg.actor_learner_config.learner_host, port=policy_cfg.actor_learner_config.learner_port
     )
 
-    # Give learner time to start
-    time.sleep(0.5)
-
     assert establish_learner_connection(learner_client, shutdown_event, attempts=5)
 
     # Start the actor's parameter receiving process in a separate thread
@@ -289,7 +281,7 @@ def test_end_to_end_parameters_flow(cfg, data_size):
     parameters_learner_queue.put(state_to_bytes(input_params))
 
     # Wait for the actor to receive the parameters
-    time.sleep(1)
+    time.sleep(0.1)
 
     # Signal shutdown and wait for threads to complete
     shutdown_event.set()

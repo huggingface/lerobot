@@ -555,7 +555,11 @@ def send_transitions(
         )
 
     try:
-        learner_client.SendTransitions(transitions_stream(shutdown_event, transitions_queue))
+        learner_client.SendTransitions(
+            transitions_stream(
+                shutdown_event, transitions_queue, cfg.policy.actor_learner_config.queue_get_timeout
+            )
+        )
     except grpc.RpcError as e:
         logging.error(f"[ACTOR] gRPC error: {e}")
 
@@ -604,7 +608,11 @@ def send_interactions(
         )
 
     try:
-        learner_client.SendInteractions(interactions_stream(shutdown_event, interactions_queue))
+        learner_client.SendInteractions(
+            interactions_stream(
+                shutdown_event, interactions_queue, cfg.policy.actor_learner_config.queue_get_timeout
+            )
+        )
     except grpc.RpcError as e:
         logging.error(f"[ACTOR] gRPC error: {e}")
 
@@ -615,10 +623,10 @@ def send_interactions(
     logging.info("[ACTOR] Interactions process stopped")
 
 
-def transitions_stream(shutdown_event: Event, transitions_queue: Queue) -> services_pb2.Empty:  # type: ignore
+def transitions_stream(shutdown_event: Event, transitions_queue: Queue, timeout: float) -> services_pb2.Empty:  # type: ignore
     while not shutdown_event.is_set():
         try:
-            message = transitions_queue.get(block=True, timeout=5)
+            message = transitions_queue.get(block=True, timeout=timeout)
         except Empty:
             logging.debug("[ACTOR] Transition queue is empty")
             continue
@@ -631,12 +639,13 @@ def transitions_stream(shutdown_event: Event, transitions_queue: Queue) -> servi
 
 
 def interactions_stream(
-    shutdown_event: Event,  # type: ignore
+    shutdown_event: Event,
     interactions_queue: Queue,
+    timeout: float,  # type: ignore
 ) -> services_pb2.Empty:
     while not shutdown_event.is_set():
         try:
-            message = interactions_queue.get(block=True, timeout=5)
+            message = interactions_queue.get(block=True, timeout=timeout)
         except Empty:
             logging.debug("[ACTOR] Interaction queue is empty")
             continue
