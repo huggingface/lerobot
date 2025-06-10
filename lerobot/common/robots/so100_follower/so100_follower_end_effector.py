@@ -16,7 +16,7 @@
 
 import logging
 import time
-from typing import Any, Dict
+from typing import Any
 
 import numpy as np
 
@@ -79,7 +79,7 @@ class SO100FollowerEndEffector(SO100Follower):
         self.current_joint_pos = None
 
     @property
-    def action_features(self) -> Dict[str, Any]:
+    def action_features(self) -> dict[str, Any]:
         """
         Define action features for end-effector control.
         Returns dictionary with dtype, shape, and names.
@@ -95,7 +95,7 @@ class SO100FollowerEndEffector(SO100Follower):
         self.joint_mins = self.bus.sync_read("Min_Position_Limit")
         self.joint_maxs = self.bus.sync_read("Max_Position_Limit")
 
-    def send_action(self, action: Dict[str, Any]) -> Dict[str, Any]:
+    def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         """
         Transform action from end-effector space to joint space and send to motors.
 
