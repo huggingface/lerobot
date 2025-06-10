@@ -786,8 +786,6 @@ class MotorsBus(abc.ABC):
                 raise ValueError(f"Invalid calibration for motor '{motor}': min and max are equal.")
 
             bounded_val = min(max_, max(min_, val))
-            # TODO(Steven): normalization can go boom if max_ == min_, we should add a check probably in record_ranges_of_motions
-            # (which probably indicates the user forgot to move a motor, most likely a gripper-like one)
             if self.motors[motor].norm_mode is MotorNormMode.RANGE_M100_100:
                 norm = (((bounded_val - min_) / (max_ - min_)) * 200) - 100
                 normalized_values[id_] = -norm if drive_mode else norm
