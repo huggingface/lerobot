@@ -233,7 +233,7 @@ def is_valid_numpy_dtype_string(dtype_str: str) -> bool:
 
 
 def enter_pressed() -> bool:
-    if os.name == "nt":
+    if platform.system() == "Windows":
         import msvcrt
 
         if msvcrt.kbhit():
