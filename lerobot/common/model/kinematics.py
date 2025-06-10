@@ -109,14 +109,6 @@ class RobotKinematics:
             "shoulder": [0, 0, 0],
             "base": [0, 0, 0.02],
         },
-        "so100": {
-            "gripper": [0.320, 0, 0.050],
-            "wrist": [0.278, 0, 0.050],
-            "forearm": [0.143, 0, 0.044],
-            "humerus": [0.031, 0, 0.072],
-            "shoulder": [0, 0, 0],
-            "base": [0, 0, 0.02],
-        },
         "moss": {
             "gripper": [0.246, 0.013, 0.111],
             "wrist": [0.245, 0.002, 0.064],
@@ -125,7 +117,15 @@ class RobotKinematics:
             "shoulder": [0, 0, 0],
             "base": [0, 0, 0.02],
         },
-        "so101": {
+        "so_old_calibration": {
+            "gripper": [0.320, 0, 0.050],
+            "wrist": [0.278, 0, 0.050],
+            "forearm": [0.143, 0, 0.044],
+            "humerus": [0.031, 0, 0.072],
+            "shoulder": [0, 0, 0],
+            "base": [0, 0, 0.02],
+        },
+        "so_new_calibration": {
             "gripper": [0.33, 0.0, 0.285],
             "wrist": [0.30, 0.0, 0.267],
             "forearm": [0.25, 0.0, 0.266],

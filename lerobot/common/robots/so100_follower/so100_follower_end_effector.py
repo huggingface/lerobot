@@ -64,7 +64,7 @@ class SO100FollowerEndEffector(SO100Follower):
         self.config = config
 
         # Initialize the kinematics module for the so100 robot
-        self.kinematics = RobotKinematics(robot_type="so101")
+        self.kinematics = RobotKinematics(robot_type="so_new_calibration")
 
         # Store the bounds for end-effector position
         self.end_effector_bounds = self.config.end_effector_bounds
@@ -153,6 +153,8 @@ class SO100FollowerEndEffector(SO100Follower):
         }
 
         # Handle gripper separately if included in action
+        # Gripper delta action is in the range 0 - 2,
+        # We need to shift the action to the range -1, 1 so that we can expand it to -Max_gripper_pos, Max_gripper_pos
         joint_action["gripper.pos"] = np.clip(
             self.current_joint_pos[-1] + (action[-1] - 1) * self.config.max_gripper_pos,
             5,

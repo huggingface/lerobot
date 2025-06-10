@@ -1090,6 +1090,10 @@ class EEObservationWrapper(gym.ObservationWrapper):
 
         # Initialize kinematics instance for the appropriate robot type
         robot_type = getattr(env.unwrapped.robot.config, "robot_type", "so101")
+        if "so100" in robot_type or "so101" in robot_type:
+            # Note to be compatible with the rest of the codebase,
+            # we are using the new calibration method for so101 and so100
+            robot_type = "so_new_calibration"
         self.kinematics = RobotKinematics(robot_type)
 
     def observation(self, observation):
@@ -1151,7 +1155,11 @@ class BaseLeaderControlWrapper(gym.Wrapper):
         self.event_lock = Lock()  # Thread-safe access to events
 
         # Initialize robot control
-        robot_type = getattr(env.unwrapped.robot.config, "robot_type", "so100")
+        robot_type = getattr(env.unwrapped.robot.config, "robot_type", "so101")
+        if "so100" in robot_type or "so101" in robot_type:
+            # Note to be compatible with the rest of the codebase,
+            # we are using the new calibration method for so101 and so100
+            robot_type = "so_new_calibration"
         self.kinematics = RobotKinematics(robot_type)
         self.leader_torque_enabled = True
         self.prev_leader_gripper = None

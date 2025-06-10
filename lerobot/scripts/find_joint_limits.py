@@ -57,7 +57,7 @@ class FindJointLimitsConfig:
     teleop: TeleoperatorConfig
     robot: RobotConfig
     # Limit the maximum frames per second. By default, no limit.
-    teleop_time_s: float | None = None
+    teleop_time_s: float = 30
     # Display all cameras on screen
     display_data: bool = False
 
@@ -71,9 +71,12 @@ def find_joint_and_ee_bounds(cfg: FindJointLimitsConfig):
     robot.connect()
 
     start_episode_t = time.perf_counter()
-    robot_type = cfg.robot.type.split("_")[0]
+    robot_type = getattr(robot.config, "robot_type", "so101")
+    if "so100" in robot_type or "so101" in robot_type:
+        # Note to be compatible with the rest of the codebase,
+        # we are using the new calibration method for so101 and so100
+        robot_type = "so_new_calibration"
     kinematics = RobotKinematics(robot_type=robot_type)
-    control_time_s = 10
 
     # Initialize min/max values
     observation = robot.get_observation()
@@ -103,7 +106,7 @@ def find_joint_and_ee_bounds(cfg: FindJointLimitsConfig):
         max_pos = np.maximum(max_pos, joint_positions)
         min_pos = np.minimum(min_pos, joint_positions)
 
-        if time.perf_counter() - start_episode_t > control_time_s:
+        if time.perf_counter() - start_episode_t > cfg.teleop_time_s:
             print(f"Max ee position {np.round(max_ee, 4).tolist()}")
             print(f"Min ee position {np.round(min_ee, 4).tolist()}")
             print(f"Max joint pos position {np.round(max_pos, 4).tolist()}")
