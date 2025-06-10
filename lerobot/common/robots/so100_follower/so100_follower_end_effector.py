@@ -69,10 +69,6 @@ class SO100FollowerEndEffector(SO100Follower):
         # Store the bounds for end-effector position
         self.end_effector_bounds = self.config.end_effector_bounds
 
-        # Store the joint mins and maxs
-        self.joint_mins = None
-        self.joint_maxs = None
-
         self.current_ee_pos = None
         self.current_joint_pos = None
 
@@ -87,11 +83,6 @@ class SO100FollowerEndEffector(SO100Follower):
             "shape": (4,),
             "names": {"delta_x": 0, "delta_y": 1, "delta_z": 2, "gripper": 3},
         }
-
-    def connect(self):
-        super().connect()
-        self.joint_mins = self.bus.sync_read("Min_Position_Limit")
-        self.joint_maxs = self.bus.sync_read("Max_Position_Limit")
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         """

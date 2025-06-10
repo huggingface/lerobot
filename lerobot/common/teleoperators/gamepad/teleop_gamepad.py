@@ -51,11 +51,6 @@ class GamepadTeleop(Teleoperator):
         self.config = config
         self.robot_type = config.type
 
-        self.event_queue = Queue()
-        self.current_pressed = {}
-        self.listener = None
-        self.logs = {}
-
         self.gamepad = None
 
     @property
@@ -77,14 +72,6 @@ class GamepadTeleop(Teleoperator):
     def feedback_features(self) -> dict:
         return {}
 
-    @property
-    def is_connected(self) -> bool:
-        pass
-
-    @property
-    def is_calibrated(self) -> bool:
-        return True
-
     def connect(self) -> None:
         # use HidApi for macos
         if sys.platform == "darwin":
@@ -93,14 +80,8 @@ class GamepadTeleop(Teleoperator):
         else:
             from .gamepad_utils import GamepadController as Gamepad
 
-        self.gamepad = Gamepad(x_step_size=1.0, y_step_size=1.0, z_step_size=1.0)
+        self.gamepad = Gamepad()
         self.gamepad.start()
-
-    def calibrate(self) -> None:
-        pass
-
-    def configure(self):
-        pass
 
     def get_action(self) -> dict[str, Any]:
         # Update the controller to get fresh inputs
@@ -127,8 +108,3 @@ class GamepadTeleop(Teleoperator):
 
         return action_dict
 
-    def send_feedback(self, feedback: dict[str, Any]) -> None:
-        pass
-
-    def disconnect(self) -> None:
-        pass
