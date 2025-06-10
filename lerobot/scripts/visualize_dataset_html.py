@@ -58,6 +58,7 @@ import contextlib
 import json
 import logging
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -143,8 +144,11 @@ def run_data_server(
 
 
 def is_npm_available():
+    npm_path = shutil.which("npm")
+    if npm_path is None:
+        return False
     try:
-        subprocess.run(["npm", "--version"], capture_output=True, text=True, check=True)
+        subprocess.run([npm_path, "--version"], capture_output=True, text=True, check=True)
         return True
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False
@@ -153,10 +157,15 @@ def is_npm_available():
 def build_react_app(script_dir: Path):
     next_dir = script_dir.parent / "html_dataset_visualizer"
     next_build_dir = next_dir / ".next"
+    npm_path = shutil.which("npm")
+    if npm_path is None:
+        raise RuntimeError(
+            "'npm' executable not found in PATH. Please ensure Node.js is installed and npm is available."
+        )
     if not next_build_dir.exists() or not next_build_dir.is_dir():
         print("Building React.js app ...")
-        subprocess.run(["npm", "ci"], cwd=next_dir)
-        subprocess.run(["npm", "run", "build"], cwd=next_dir)
+        subprocess.run([npm_path, "ci"], cwd=next_dir)
+        subprocess.run([npm_path, "run", "build"], cwd=next_dir)
 
     package_json_path = next_dir / "package.json"
     build_id_path = next_build_dir / "BUILD_ID"
@@ -168,8 +177,8 @@ def build_react_app(script_dir: Path):
 
     if package_version != build_id:
         print("Building React.js app ...")
-        subprocess.run(["npm", "ci"], cwd=next_dir)
-        subprocess.run(["npm", "run", "build"], cwd=next_dir)
+        subprocess.run([npm_path, "ci"], cwd=next_dir)
+        subprocess.run([npm_path, "run", "build"], cwd=next_dir)
 
 
 def run_react_app(
@@ -189,8 +198,13 @@ def run_react_app(
     if episodes:
         env["EPISODES"] = " ".join(map(str, episodes))
 
+    npm_path = shutil.which("npm")
+    if npm_path is None:
+        raise RuntimeError(
+            "'npm' executable not found in PATH. Please ensure Node.js is installed and npm is available."
+        )
     process = subprocess.Popen(
-        ["npm", "run", "start", "--", f"--port={port}"], cwd=next_dir, env=env, preexec_fn=os.setsid
+        [npm_path, "run", "start", "--", f"--port={port}"], cwd=next_dir, env=env, preexec_fn=os.setsid
     )
 
     def cleanup():
