@@ -169,17 +169,6 @@ class VideoRecordConfig:
     trajectory_name: str = "trajectory"
 
 
-# @dataclass
-# class EEActionSpaceConfig:
-#     """Configuration parameters for end-effector action space."""
-
-#     x_step_size: float
-#     y_step_size: float
-#     z_step_size: float
-#     bounds: Dict[str, Any]  # Contains 'min' and 'max' keys with position bounds
-#     control_mode: str = "gamepad"
-
-
 @dataclass
 class EnvTransformConfig:
     """Configuration for environment wrappers."""
