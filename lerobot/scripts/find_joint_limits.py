@@ -76,15 +76,15 @@ def find_joint_and_ee_bounds(cfg: FindJointLimitsConfig):
     start_episode_t = time.perf_counter()
     ee_list = []
     pos_list = []
-    kinematics = RobotKinematics(cfg.urdf_path)
+    kinematics = RobotKinematics(robot_type=cfg.robot.type)
     control_time_s = 30
     while True:
         action = teleop.get_action()
         robot.send_action(action)
 
-        joint_positions = robot.bus.sync_read("Present_Position")
-        joint_positions = np.array([joint_positions[key] for key in joint_positions])
-        ee_pos, _, _ = kinematics.forward_kinematics(joint_positions * np.pi / 180)
+        observation = robot.get_observation()
+        joint_positions = np.array([observation[key] for key in robot.bus.motors])
+        ee_pos = kinematics.fk_gripper_tip(joint_positions * np.pi / 180)
         if (time.perf_counter() - start_episode_t) < 5:
             continue
         ee_list.append(ee_pos.copy())
@@ -95,10 +95,10 @@ def find_joint_and_ee_bounds(cfg: FindJointLimitsConfig):
             min_ee = np.min(np.stack(ee_list), 0)
             max_pos = np.max(np.stack(pos_list), 0)
             min_pos = np.min(np.stack(pos_list), 0)
-            print(f"Max ee position {max_ee}")
-            print(f"Min ee position {min_ee}")
-            print(f"Max joint pos position {max_pos}")
-            print(f"Min joint pos position {min_pos}")
+            print(f"Max ee position {max_ee:.2f}")
+            print(f"Min ee position {min_ee:.2f}")
+            print(f"Max joint pos position {max_pos:.2f}")
+            print(f"Min joint pos position {min_pos:.2f}")
             break
 
 
