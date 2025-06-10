@@ -387,10 +387,14 @@ class SmolVLAPolicy(PreTrainedPolicy):
         """Tokenize the text input"""
         device = batch[OBS_STATE].device
         tasks = batch["task"]
+        if isinstance(tasks, str):
+            tasks = [tasks]
+
         if len(tasks) == 1:
             tasks = [tasks[0] for _ in range(batch[OBS_STATE].shape[0])]
-
+        
         tasks = [task if task.endswith("\n") else f"{task}\n" for task in tasks]
+
         tokenized_prompt = self.language_tokenizer.__call__(
             tasks,
             padding=self.config.pad_language_to,
@@ -799,3 +803,4 @@ class VLAFlowMatching(nn.Module):
         suffix_out = suffix_out.to(dtype=torch.float32)
         v_t = self.action_out_proj(suffix_out)
         return v_t
+
