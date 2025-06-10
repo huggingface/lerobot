@@ -171,7 +171,7 @@ export const VideosPlayer = ({
         }
       }
     };
-  
+
     videoRefs.current.forEach((video) => {
       if (video) {
         // If already ready, call the handler immediately
@@ -182,7 +182,7 @@ export const VideosPlayer = ({
         }
       }
     });
-  
+
     return () => {
       videoRefs.current.forEach((video) => {
         if (video) {
@@ -191,7 +191,7 @@ export const VideosPlayer = ({
       });
     };
   }, []);
-  
+
   return (
     <>
       {/* Error message */}
