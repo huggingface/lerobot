@@ -57,7 +57,6 @@ class FindJointLimitsConfig:
     teleop: TeleoperatorConfig
     robot: RobotConfig
     # Limit the maximum frames per second. By default, no limit.
-    fps: int | None = None
     teleop_time_s: float | None = None
     # Display all cameras on screen
     display_data: bool = False
