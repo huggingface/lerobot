@@ -150,7 +150,7 @@ def test_transitions_stream():
 
     # Collect streamed data
     streamed_data = []
-    stream_generator = transitions_stream(shutdown_event, transitions_queue)
+    stream_generator = transitions_stream(shutdown_event, transitions_queue, 0.1)
 
     # Process a few items
     for i, message in enumerate(stream_generator):
@@ -190,7 +190,7 @@ def test_interactions_stream():
 
     # Collect streamed data
     streamed_data = []
-    stream_generator = interactions_stream(shutdown_event, interactions_queue)
+    stream_generator = interactions_stream(shutdown_event, interactions_queue, 0.1)
 
     # Process the items
     for i, message in enumerate(stream_generator):
