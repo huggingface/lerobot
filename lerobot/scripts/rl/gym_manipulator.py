@@ -1,6 +1,6 @@
 # !/usr/bin/env python
 
-# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -40,7 +40,7 @@ import logging
 import time
 from collections import deque
 from threading import Lock
-from typing import Annotated, Any, Dict, Sequence, Tuple
+from typing import Annotated, Any, Sequence
 
 import gymnasium as gym
 import numpy as np
@@ -320,7 +320,7 @@ class RobotEnv(gym.Env):
             dtype=np.float32,
         )
 
-    def reset(self, seed=None, options=None) -> Tuple[Dict[str, np.ndarray], Dict[str, Any]]:
+    def reset(self, seed=None, options=None) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
         """
         Reset the environment to its initial state.
         This method resets the step counter and clears any episodic data.
@@ -347,7 +347,7 @@ class RobotEnv(gym.Env):
 
         return observation, {"is_intervention": False}
 
-    def step(self, action) -> Tuple[Dict[str, np.ndarray], float, bool, bool, Dict[str, Any]]:
+    def step(self, action) -> tuple[dict[str, np.ndarray], float, bool, bool, dict[str, Any]]:
         """
         Execute a single step within the environment using the specified action.
 
@@ -670,7 +670,7 @@ class ImageCropResizeWrapper(gym.Wrapper):
     def __init__(
         self,
         env,
-        crop_params_dict: Dict[str, Annotated[Tuple[int], 4]],
+        crop_params_dict: dict[str, Annotated[tuple[int], 4]],
         resize_size=None,
     ):
         """
@@ -1569,7 +1569,7 @@ class GamepadControlWrapper(gym.Wrapper):
 
     def get_gamepad_action(
         self,
-    ) -> Tuple[bool, np.ndarray, bool, bool, bool]:
+    ) -> tuple[bool, np.ndarray, bool, bool, bool]:
         """
         Get the current action from the gamepad if any input is active.
 

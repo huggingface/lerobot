@@ -1,5 +1,21 @@
+# !/usr/bin/env python
+
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import logging
-from typing import Dict, Optional, Tuple
+from typing import Optional
 
 import torch
 from torch import Tensor, nn
@@ -93,7 +109,7 @@ class Classifier(PreTrainedPolicy):
     def __init__(
         self,
         config: RewardClassifierConfig,
-        dataset_stats: Dict[str, Dict[str, Tensor]] | None = None,
+        dataset_stats: dict[str, dict[str, Tensor]] | None = None,
     ):
         from transformers import AutoModel
 
@@ -207,7 +223,7 @@ class Classifier(PreTrainedPolicy):
                 outputs = self.encoder(x)
                 return outputs.last_hidden_state[:, 0, :]
 
-    def extract_images_and_labels(self, batch: Dict[str, Tensor]) -> Tuple[list, Tensor]:
+    def extract_images_and_labels(self, batch: dict[str, Tensor]) -> tuple[list, Tensor]:
         """Extract image tensors and label tensors from batch."""
         # Check for both OBS_IMAGE and OBS_IMAGES prefixes
         images = [batch[key] for key in self.config.input_features if key.startswith(OBS_IMAGE)]
@@ -230,7 +246,7 @@ class Classifier(PreTrainedPolicy):
 
         return ClassifierOutput(logits=logits, probabilities=probabilities, hidden_states=encoder_outputs)
 
-    def forward(self, batch: Dict[str, Tensor]) -> Tuple[Tensor, Dict[str, Tensor]]:
+    def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict[str, Tensor]]:
         """Standard forward pass for training compatible with train.py."""
         # Normalize inputs if needed
         batch = self.normalize_inputs(batch)
@@ -286,7 +302,7 @@ class Classifier(PreTrainedPolicy):
         """Return optimizer parameters for the policy."""
         return self.parameters()
 
-    def select_action(self, batch: Dict[str, Tensor]) -> Tensor:
+    def select_action(self, batch: dict[str, Tensor]) -> Tensor:
         """
         This method is required by PreTrainedPolicy but not used for reward classifiers.
         The reward classifier is not an actor and does not select actions.
