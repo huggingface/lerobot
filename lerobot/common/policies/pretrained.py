@@ -15,17 +15,18 @@ import abc
 import logging
 import os
 from pathlib import Path
-from typing import Type, TypeVar, Union, Tuple
+from typing import Tuple, Type, TypeVar
 
 import packaging
 import safetensors
+import torch
 from huggingface_hub import hf_hub_download
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from huggingface_hub.errors import HfHubHTTPError
 from safetensors.torch import load_model as load_model_as_safetensor
 from safetensors.torch import save_model as save_model_as_safetensor
 from torch import Tensor, nn
-import torch
+
 from lerobot.common.utils.hub import HubMixin
 from lerobot.configs.policies import PreTrainedConfig
 
@@ -43,11 +44,11 @@ This policy has been pushed to the Hub using [LeRobot](https://github.com/huggin
 """
 
 import re
-import torch
 from typing import Dict
 
 # Matches ".soNNN", optionally followed by "-something", up to the "_buffer_" marker
 _VARIANT_RE = re.compile(r"\.so\d+(?:-[\w]+)?_buffer_")
+
 
 def canonicalise(k: str) -> str:
     """
@@ -55,6 +56,7 @@ def canonicalise(k: str) -> str:
     normalisation-buffer key.
     """
     return _VARIANT_RE.sub(".buffer_", k)
+
 
 def standardise_state_dict(
     ckpt: Dict[str, torch.Tensor], ref_keys: set[str], *, verbose: bool = True
@@ -70,7 +72,7 @@ def standardise_state_dict(
     for k, v in ckpt.items():
         canon = canonicalise(k)
         if canon in ref_keys:
-            if canon in out:                       # duplicate after collapsing
+            if canon in out:  # duplicate after collapsing
                 collisions.setdefault(canon, []).append(k)
             else:
                 out[canon] = v
@@ -87,6 +89,7 @@ def standardise_state_dict(
     # load_state_dict(strict=False) will silently ignore the extras.
     out.update({k: ckpt[k] for k in unmatched})
     return out, unmatched
+
 
 def rename_checkpoint_keys(ckpt, rename_str):
     """
@@ -111,13 +114,14 @@ def rename_checkpoint_keys(ckpt, rename_str):
         new_ckpt[k] = v  # Store the modified key-value pair
     return new_ckpt
 
+
 def load_model(
     model: torch.nn.Module,
     filename: str | os.PathLike,
     *,
     strict: bool = True,
     device: str | int = "cpu",
-    checkpoint_keys_mapping: str = ""
+    checkpoint_keys_mapping: str = "",
 ) -> tuple[list[str], list[str]]:
     state_dict = safetensors.torch.load_file(filename, device=device)
 
@@ -137,6 +141,7 @@ def load_model(
     missing, unexpected = model.load_state_dict(state_dict, strict=False)
     # … unchanged error-reporting block …
     return missing, unexpected
+
 
 class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
     """

@@ -392,7 +392,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
 
         if len(tasks) == 1:
             tasks = [tasks[0] for _ in range(batch[OBS_STATE].shape[0])]
-        
+
         tasks = [task if task.endswith("\n") else f"{task}\n" for task in tasks]
 
         tokenized_prompt = self.language_tokenizer.__call__(
@@ -803,4 +803,3 @@ class VLAFlowMatching(nn.Module):
         suffix_out = suffix_out.to(dtype=torch.float32)
         v_t = self.action_out_proj(suffix_out)
         return v_t
-
