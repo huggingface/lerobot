@@ -15,7 +15,7 @@
 # limitations under the License.
 
 import sys
-from typing import Callable, Optional
+from typing import Callable
 
 import pytest
 import torch
@@ -41,7 +41,7 @@ def clone_state(state: dict) -> dict:
 def create_empty_replay_buffer(
     optimize_memory: bool = False,
     use_drq: bool = False,
-    image_augmentation_function: Optional[Callable] = None,
+    image_augmentation_function: Callable | None = None,
 ) -> ReplayBuffer:
     buffer_capacity = 10
     device = "cpu"

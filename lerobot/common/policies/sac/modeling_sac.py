@@ -17,7 +17,7 @@
 
 import math
 from dataclasses import asdict
-from typing import Callable, List, Literal, Optional, Tuple
+from typing import Callable, Literal
 
 import einops
 import numpy as np
@@ -560,7 +560,7 @@ class SACObservationEncoder(nn.Module):
         self._out_dim = out
 
     def forward(
-        self, obs: dict[str, Tensor], cache: Optional[dict[str, Tensor]] = None, detach: bool = False
+        self, obs: dict[str, Tensor], cache: dict[str, Tensor] | None = None, detach: bool = False
     ) -> Tensor:
         obs = self.input_normalization(obs)
         parts = []
@@ -673,7 +673,7 @@ class MLP(nn.Module):
         hidden_dims: list[int],
         activations: Callable[[torch.Tensor], torch.Tensor] | str = nn.SiLU(),
         activate_final: bool = False,
-        dropout_rate: Optional[float] = None,
+        dropout_rate: float | None = None,
         final_activation: Callable[[torch.Tensor], torch.Tensor] | str | None = None,
     ):
         super().__init__()
@@ -710,8 +710,8 @@ class CriticHead(nn.Module):
         hidden_dims: list[int],
         activations: Callable[[torch.Tensor], torch.Tensor] | str = nn.SiLU(),
         activate_final: bool = False,
-        dropout_rate: Optional[float] = None,
-        init_final: Optional[float] = None,
+        dropout_rate: float | None = None,
+        init_final: float | None = None,
         final_activation: Callable[[torch.Tensor], torch.Tensor] | str | None = None,
     ):
         super().__init__()
@@ -742,7 +742,7 @@ class CriticEnsemble(nn.Module):
         encoder (SACObservationEncoder): encoder for observations.
         ensemble (List[CriticHead]): list of critic heads.
         output_normalization (nn.Module): normalization layer for actions.
-        init_final (Optional[float]): optional initializer scale for final layers.
+        init_final (float | None): optional initializer scale for final layers.
 
     Forward returns a tensor of shape (num_critics, batch_size) containing Q-values.
     """
@@ -750,9 +750,9 @@ class CriticEnsemble(nn.Module):
     def __init__(
         self,
         encoder: SACObservationEncoder,
-        ensemble: List[CriticHead],
+        ensemble: list[CriticHead],
         output_normalization: nn.Module,
-        init_final: Optional[float] = None,
+        init_final: float | None = None,
     ):
         super().__init__()
         self.encoder = encoder
@@ -798,8 +798,8 @@ class DiscreteCritic(nn.Module):
         output_dim: int = 3,
         activations: Callable[[torch.Tensor], torch.Tensor] | str = nn.SiLU(),
         activate_final: bool = False,
-        dropout_rate: Optional[float] = None,
-        init_final: Optional[float] = None,
+        dropout_rate: float | None = None,
+        init_final: float | None = None,
         final_activation: Callable[[torch.Tensor], torch.Tensor] | str | None = None,
     ):
         super().__init__()
@@ -839,8 +839,8 @@ class Policy(nn.Module):
         action_dim: int,
         log_std_min: float = -5,
         log_std_max: float = 2,
-        fixed_std: Optional[torch.Tensor] = None,
-        init_final: Optional[float] = None,
+        fixed_std: torch.Tensor | None = None,
+        init_final: float | None = None,
         use_tanh_squash: bool = False,
         encoder_is_shared: bool = False,
     ):
@@ -880,7 +880,7 @@ class Policy(nn.Module):
         self,
         observations: torch.Tensor,
         observation_features: torch.Tensor | None = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         # We detach the encoder if it is shared to avoid backprop through it
         # This is important to avoid the encoder to be updated through the policy
         obs_enc = self.encoder(observations, cache=observation_features, detach=self.encoder_is_shared)

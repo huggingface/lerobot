@@ -16,7 +16,7 @@
 
 import functools
 from contextlib import suppress
-from typing import Callable, Optional, Sequence, TypedDict
+from typing import Callable, Sequence, TypedDict
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -80,8 +80,8 @@ class ReplayBuffer:
         self,
         capacity: int,
         device: str = "cuda:0",
-        state_keys: Optional[Sequence[str]] = None,
-        image_augmentation_function: Optional[Callable] = None,
+        state_keys: Sequence[str] | None = None,
+        image_augmentation_function: Callable | None = None,
         use_drq: bool = True,
         storage_device: str = "cpu",
         optimize_memory: bool = False,
@@ -131,7 +131,7 @@ class ReplayBuffer:
         self,
         state: dict[str, torch.Tensor],
         action: torch.Tensor,
-        complementary_info: Optional[dict[str, torch.Tensor]] = None,
+        complementary_info: dict[str, torch.Tensor] | None = None,
     ):
         """Initialize the storage tensors based on the first transition."""
         # Determine shapes from the first transition
@@ -193,7 +193,7 @@ class ReplayBuffer:
         next_state: dict[str, torch.Tensor],
         done: bool,
         truncated: bool,
-        complementary_info: Optional[dict[str, torch.Tensor]] = None,
+        complementary_info: dict[str, torch.Tensor] | None = None,
     ):
         """Saves a transition, ensuring tensors are stored on the designated storage device."""
         # Initialize storage if this is the first transition
@@ -406,9 +406,9 @@ class ReplayBuffer:
         cls,
         lerobot_dataset: LeRobotDataset,
         device: str = "cuda:0",
-        state_keys: Optional[Sequence[str]] = None,
-        capacity: Optional[int] = None,
-        image_augmentation_function: Optional[Callable] = None,
+        state_keys: Sequence[str] | None = None,
+        capacity: int | None = None,
+        image_augmentation_function: Callable | None = None,
         use_drq: bool = True,
         storage_device: str = "cpu",
         optimize_memory: bool = False,
@@ -419,10 +419,10 @@ class ReplayBuffer:
         Args:
             lerobot_dataset (LeRobotDataset): The dataset to convert.
             device (str): The device for sampling tensors. Defaults to "cuda:0".
-            state_keys (Optional[Sequence[str]]): The list of keys that appear in `state` and `next_state`.
-            capacity (Optional[int]): Buffer capacity. If None, uses dataset length.
-            action_mask (Optional[Sequence[int]]): Indices of action dimensions to keep.
-            image_augmentation_function (Optional[Callable]): Function for image augmentation.
+            state_keys (Sequence[str] | None): The list of keys that appear in `state` and `next_state`.
+            capacity (int | None): Buffer capacity. If None, uses dataset length.
+            action_mask (Sequence[int] | None): Indices of action dimensions to keep.
+            image_augmentation_function (Callable | None): Function for image augmentation.
                 If None, uses default random shift with pad=4.
             use_drq (bool): Whether to use DrQ image augmentation when sampling.
             storage_device (str): Device for storing tensor data. Using "cpu" saves GPU memory.
@@ -613,7 +613,7 @@ class ReplayBuffer:
     @staticmethod
     def _lerobotdataset_to_transitions(
         dataset: LeRobotDataset,
-        state_keys: Optional[Sequence[str]] = None,
+        state_keys: Sequence[str] | None = None,
     ) -> list[Transition]:
         """
         Convert a LeRobotDataset into a list of RL (s, a, r, s', done) transitions.
@@ -630,7 +630,7 @@ class ReplayBuffer:
                 }
                 plus whatever your 'state_keys' specify.
 
-            state_keys (Optional[Sequence[str]]):
+            state_keys (Sequence[str] | None):
                 The dataset keys to include in 'state' and 'next_state'. Their names
                 will be kept as-is in the output transitions. E.g.
                 ["observation.state", "observation.environment_state"].

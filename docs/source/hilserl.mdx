@@ -40,21 +40,21 @@ The training process begins with proper configuration for the HILSerl environmen
 
 ```python
 class HILSerlRobotEnvConfig(EnvConfig):
-    robot: Optional[RobotConfig] = None    # Main robot agent (defined in `lerobot/common/robots`)
-    teleop: Optional[TeleoperatorConfig] = None    # Teleoperator agent, e.g., gamepad or leader arm, (defined in `lerobot/common/teleoperators`)
-    wrapper: Optional[EnvTransformConfig] = None    # Environment wrapper settings; check `lerobot/scripts/server/gym_manipulator.py`
+    robot: RobotConfig | None = None    # Main robot agent (defined in `lerobot/common/robots`)
+    teleop: TeleoperatorConfig | None = None    # Teleoperator agent, e.g., gamepad or leader arm, (defined in `lerobot/common/teleoperators`)
+    wrapper: EnvTransformConfig | None = None    # Environment wrapper settings; check `lerobot/scripts/server/gym_manipulator.py`
     fps: int = 10    # Control frequency
     name: str = "real_robot"    # Environment name
     mode: str = None    # "record", "replay", or None (for training)
-    repo_id: Optional[str] = None    # LeRobot dataset repository ID
-    dataset_root: Optional[str] = None    # Local dataset root (optional)
+    repo_id: str | None = None    # LeRobot dataset repository ID
+    dataset_root: str | None = None    # Local dataset root (optional)
     task: str = ""    # Task identifier
     num_episodes: int = 10    # Number of episodes for recording
     episode: int = 0    # episode index for replay
     device: str = "cuda"    # Compute device
     push_to_hub: bool = True    # Whether to push the recorded datasets to Hub
-    pretrained_policy_name_or_path: Optional[str] = None    # For policy loading
-    reward_classifier_pretrained_path: Optional[str] = None    # For reward model
+    pretrained_policy_name_or_path: str | None = None    # For policy loading
+    reward_classifier_pretrained_path: str | None = None    # For reward model
 ```
 
 
