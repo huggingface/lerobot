@@ -74,31 +74,43 @@ def find_joint_and_ee_bounds(cfg: FindJointLimitsConfig):
     robot.connect()
 
     start_episode_t = time.perf_counter()
-    ee_list = []
-    pos_list = []
-    kinematics = RobotKinematics(robot_type=cfg.robot.type)
-    control_time_s = 30
+    robot_type = cfg.robot.type.split("_")[0]
+    kinematics = RobotKinematics(robot_type=robot_type)
+    control_time_s = 10
+
+    # Initialize min/max values
+    observation = robot.get_observation()
+    joint_positions = np.array([observation[f"{key}.pos"] for key in robot.bus.motors])
+    ee_pos = kinematics.forward_kinematics(joint_positions, frame="gripper_tip")[:3, 3]
+
+    max_pos = joint_positions.copy()
+    min_pos = joint_positions.copy()
+    max_ee = ee_pos.copy()
+    min_ee = ee_pos.copy()
+
     while True:
         action = teleop.get_action()
         robot.send_action(action)
 
         observation = robot.get_observation()
-        joint_positions = np.array([observation[key] for key in robot.bus.motors])
-        ee_pos = kinematics.fk_gripper_tip(joint_positions * np.pi / 180)
+        joint_positions = np.array([observation[f"{key}.pos"] for key in robot.bus.motors])
+        ee_pos = kinematics.forward_kinematics(joint_positions, frame="gripper_tip")[:3, 3]
+
+        # Skip initial warmup period
         if (time.perf_counter() - start_episode_t) < 5:
             continue
-        ee_list.append(ee_pos.copy())
-        pos_list.append(joint_positions)
+
+        # Update min/max values
+        max_ee = np.maximum(max_ee, ee_pos)
+        min_ee = np.minimum(min_ee, ee_pos)
+        max_pos = np.maximum(max_pos, joint_positions)
+        min_pos = np.minimum(min_pos, joint_positions)
 
         if time.perf_counter() - start_episode_t > control_time_s:
-            max_ee = np.max(np.stack(ee_list), 0)
-            min_ee = np.min(np.stack(ee_list), 0)
-            max_pos = np.max(np.stack(pos_list), 0)
-            min_pos = np.min(np.stack(pos_list), 0)
-            print(f"Max ee position {max_ee:.2f}")
-            print(f"Min ee position {min_ee:.2f}")
-            print(f"Max joint pos position {max_pos:.2f}")
-            print(f"Min joint pos position {min_pos:.2f}")
+            print(f"Max ee position {np.round(max_ee, 4).tolist()}")
+            print(f"Min ee position {np.round(min_ee, 4).tolist()}")
+            print(f"Max joint pos position {np.round(max_pos, 4).tolist()}")
+            print(f"Min joint pos position {np.round(min_pos, 4).tolist()}")
             break
 
 
