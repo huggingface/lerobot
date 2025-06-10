@@ -447,6 +447,8 @@ class RobotKinematics:
         desired_ee_pose: NDArray[np.float32],
         position_only: bool = True,
         frame: str = "gripper_tip",
+        max_iterations: int = 5,
+        learning_rate: float = 1,
     ) -> NDArray[np.float32]:
         """Inverse kinematics using gradient descent.
 
@@ -454,15 +456,16 @@ class RobotKinematics:
             current_joint_state: Initial joint positions in degrees
             desired_ee_pose: Target end-effector pose as a 4x4 transformation matrix
             position_only: If True, only match end-effector position, not orientation
-            fk_func: Forward kinematics function to use (defaults to fk_gripper)
+            frame: Target frame. One of
+                ``{"base", "shoulder", "humerus", "forearm", "wrist", "gripper", "gripper_tip"}``.
+            max_iterations: Maximum number of iterations to run
+            learning_rate: Learning rate for gradient descent
 
         Returns:
             Joint positions in degrees that achieve the desired end-effector pose
         """
         # Do gradient descent.
         current_joint_state = current_joint_pos.copy()
-        max_iterations = 5
-        learning_rate = 1
         for _ in range(max_iterations):
             current_ee_pose = self.forward_kinematics(current_joint_state, frame)
             if not position_only:
