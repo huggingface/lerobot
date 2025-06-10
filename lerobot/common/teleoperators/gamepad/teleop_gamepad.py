@@ -16,7 +16,6 @@
 
 import sys
 from enum import IntEnum
-from queue import Queue
 from typing import Any
 
 import numpy as np
@@ -107,4 +106,3 @@ class GamepadTeleop(Teleoperator):
             action_dict["gripper"] = gripper_action
 
         return action_dict
-
