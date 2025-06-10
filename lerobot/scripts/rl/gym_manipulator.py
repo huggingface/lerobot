@@ -1091,7 +1091,6 @@ class EEObservationWrapper(gym.ObservationWrapper):
         # Initialize kinematics instance for the appropriate robot type
         robot_type = getattr(env.unwrapped.robot.config, "robot_type", "so101")
         self.kinematics = RobotKinematics(robot_type)
-        self.fk_function = self.kinematics.fk_gripper_tip
 
     def observation(self, observation):
         """
@@ -1105,8 +1104,8 @@ class EEObservationWrapper(gym.ObservationWrapper):
         """
         current_joint_pos = self.unwrapped._get_observation()["agent_pos"]
 
-        current_ee_pos = self.fk_function(current_joint_pos)
-        observation["agent_pos"] = np.concatenate([observation["agent_pos"], current_ee_pos[:3, 3]], -1)
+        current_ee_pos = self.kinematics.forward_kinematics(current_joint_pos, frame="gripper_tip")[:3, 3]
+        observation["agent_pos"] = np.concatenate([observation["agent_pos"], current_ee_pos], -1)
         return observation
 
 
@@ -1257,8 +1256,8 @@ class BaseLeaderControlWrapper(gym.Wrapper):
         self.leader_tracking_error_queue.append(np.linalg.norm(follower_pos[:-1] - leader_pos[:-1]))
 
         # [:3, 3] Last column of the transformation matrix corresponds to the xyz translation
-        leader_ee = self.kinematics.fk_gripper_tip(leader_pos)[:3, 3]
-        follower_ee = self.kinematics.fk_gripper_tip(follower_pos)[:3, 3]
+        leader_ee = self.kinematics.forward_kinematics(leader_pos, frame="gripper_tip")[:3, 3]
+        follower_ee = self.kinematics.forward_kinematics(follower_pos, frame="gripper_tip")[:3, 3]
 
         action = np.clip(leader_ee - follower_ee, -self.end_effector_step_sizes, self.end_effector_step_sizes)
         # Normalize the action to the range [-1, 1]

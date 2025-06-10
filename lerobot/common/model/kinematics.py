@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Callable
 
 import numpy as np
 from numpy.typing import NDArray
@@ -35,18 +34,18 @@ def screw_axis_to_transform(s: NDArray[np.float32], theta: float) -> NDArray[np.
     S_w = s[:3]  # noqa: N806
     S_v = s[3:]  # noqa: N806
     if np.allclose(S_w, 0) and np.linalg.norm(S_v) == 1:  # Pure translation
-        T = np.eye(4)  # noqa: N806
-        T[:3, 3] = S_v * theta
+        transformation_matrix = np.eye(4)  # noqa: N806
+        transformation_matrix[:3, 3] = S_v * theta
     elif np.linalg.norm(S_w) == 1:  # Rotation and translation
         w_hat = skew_symmetric(S_w)
         R = np.eye(3) + np.sin(theta) * w_hat + (1 - np.cos(theta)) * w_hat @ w_hat  # noqa: N806
         t = (np.eye(3) * theta + (1 - np.cos(theta)) * w_hat + (theta - np.sin(theta)) * w_hat @ w_hat) @ S_v
-        T = np.eye(4)  # noqa: N806
-        T[:3, :3] = R
-        T[:3, 3] = t
+        transformation_matrix = np.eye(4)  # noqa: N806
+        transformation_matrix[:3, :3] = R
+        transformation_matrix[:3, 3] = t
     else:
         raise ValueError("Invalid screw axis parameters")
-    return T
+    return transformation_matrix
 
 
 def pose_difference_se3(pose1: NDArray[np.float32], pose2: NDArray[np.float32]) -> NDArray[np.float32]:
@@ -254,7 +253,7 @@ class RobotKinematics:
         )
 
         # Forearm origin + centroid transform
-        self.X_FoFc = self._create_translation_matrix(x=0.036)  # spellchecker:disable-line
+        self.X_ForearmFc = self._create_translation_matrix(x=0.036)
 
         # 0-position forearm frame pose wrt base
         self.X_BF = self._create_translation_matrix(
@@ -315,116 +314,80 @@ class RobotKinematics:
         # Pre-compute gripper post-multiplication matrix
         self._fk_gripper_post = self.X_GoGc @ self.X_BoGo @ self.gripper_X0
 
-    def fk_base(self):
-        """Forward kinematics for the base frame."""
-        return self.X_WoBo @ self.X_BoBc @ self.base_X0
+    def forward_kinematics(
+        self,
+        robot_pos_deg: NDArray[np.float32],
+        frame: str = "gripper_tip",
+    ) -> NDArray[np.float32]:
+        """Generic forward kinematics.
 
-    def fk_shoulder(self, robot_pos_deg: NDArray[np.float32]) -> NDArray[np.float32]:
-        """Forward kinematics for the shoulder frame."""
+        Args:
+            robot_pos_deg: Joint positions in degrees. Can be ``None`` when
+                computing the *base* frame as it does not depend on joint
+                angles.
+            frame: Target frame. One of
+                ``{"base", "shoulder", "humerus", "forearm", "wrist", "gripper", "gripper_tip"}``.
+
+        Returns
+        -------
+        NDArray[np.float32]
+            4×4 homogeneous transformation matrix of the requested frame
+            expressed in the world coordinate system.
+        """
+        frame = frame.lower()
+        if frame not in {
+            "base",
+            "shoulder",
+            "humerus",
+            "forearm",
+            "wrist",
+            "gripper",
+            "gripper_tip",
+        }:
+            raise ValueError(
+                f"Unknown frame '{frame}'. Valid options are base, shoulder, humerus, forearm, wrist, gripper, gripper_tip."
+            )
+
+        # Base frame does not rely on joint angles.
+        if frame == "base":
+            return self.X_WoBo @ self.X_BoBc @ self.base_X0
+
         robot_pos_rad = robot_pos_deg / 180 * np.pi
-        return self.X_WoBo @ screw_axis_to_transform(self.S_BS, robot_pos_rad[0]) @ self.X_SoSc @ self.X_BS
 
-    def fk_humerus(self, robot_pos_deg: NDArray[np.float32]) -> NDArray[np.float32]:
-        """Forward kinematics for the humerus frame."""
-        robot_pos_rad = robot_pos_deg / 180 * np.pi
-
+        # Extract joint angles (note the sign convention for shoulder lift).
         theta_shoulder_pan = robot_pos_rad[0]
-        # NOTE: Negate shoulder lift angle for all robot types
-        theta_shoulder_lift = -robot_pos_rad[1]
-
-        return (
-            self.X_WoBo
-            @ screw_axis_to_transform(self.S_BS, theta_shoulder_pan)
-            @ screw_axis_to_transform(self.S_BH, theta_shoulder_lift)
-            @ self.X_HoHc
-            @ self.X_BH
-        )
-
-    def fk_forearm(self, robot_pos_deg: NDArray[np.float32]) -> NDArray[np.float32]:
-        """Forward kinematics for the forearm frame."""
-        robot_pos_rad = robot_pos_deg / 180 * np.pi
-
-        theta_shoulder_pan = robot_pos_rad[0]
-        # NOTE: Negate shoulder lift angle for all robot types
-        theta_shoulder_lift = -robot_pos_rad[1]
-        theta_elbow_flex = robot_pos_rad[2]
-
-        return (
-            self.X_WoBo
-            @ screw_axis_to_transform(self.S_BS, theta_shoulder_pan)
-            @ screw_axis_to_transform(self.S_BH, theta_shoulder_lift)
-            @ screw_axis_to_transform(self.S_BF, theta_elbow_flex)
-            @ self.X_FoFc  # spellchecker:disable-line
-            @ self.X_BF
-        )
-
-    def fk_wrist(self, robot_pos_deg: NDArray[np.float32]) -> NDArray[np.float32]:
-        """Forward kinematics for the wrist frame."""
-        robot_pos_rad = robot_pos_deg / 180 * np.pi
-
-        theta_shoulder_pan = robot_pos_rad[0]
-        # NOTE: Negate shoulder lift angle for all robot types
-        theta_shoulder_lift = -robot_pos_rad[1]
-        theta_elbow_flex = robot_pos_rad[2]
-        theta_wrist_flex = robot_pos_rad[3]
-
-        return (
-            self.X_WoBo
-            @ screw_axis_to_transform(self.S_BS, theta_shoulder_pan)
-            @ screw_axis_to_transform(self.S_BH, theta_shoulder_lift)
-            @ screw_axis_to_transform(self.S_BF, theta_elbow_flex)
-            @ screw_axis_to_transform(self.S_BR, theta_wrist_flex)
-            @ self.X_RoRc
-            @ self.X_BR
-            @ self.wrist_X0
-        )
-
-    def fk_gripper(self, robot_pos_deg: NDArray[np.float32]) -> NDArray[np.float32]:
-        """Forward kinematics for the gripper frame."""
-        robot_pos_rad = robot_pos_deg / 180 * np.pi
-
-        theta_shoulder_pan = robot_pos_rad[0]
-        # NOTE: Negate shoulder lift angle for all robot types
         theta_shoulder_lift = -robot_pos_rad[1]
         theta_elbow_flex = robot_pos_rad[2]
         theta_wrist_flex = robot_pos_rad[3]
         theta_wrist_roll = robot_pos_rad[4]
 
-        return (
-            self.X_WoBo
-            @ screw_axis_to_transform(self.S_BS, theta_shoulder_pan)
-            @ screw_axis_to_transform(self.S_BH, theta_shoulder_lift)
-            @ screw_axis_to_transform(self.S_BF, theta_elbow_flex)
-            @ screw_axis_to_transform(self.S_BR, theta_wrist_flex)
-            @ screw_axis_to_transform(self.S_BG, theta_wrist_roll)
-            @ self._fk_gripper_post
+        # Start with the world-to-base transform; incrementally add successive links.
+        transformation_matrix = self.X_WoBo @ screw_axis_to_transform(self.S_BS, theta_shoulder_pan)
+        if frame == "shoulder":
+            return transformation_matrix @ self.X_SoSc @ self.X_BS
+
+        transformation_matrix = transformation_matrix @ screw_axis_to_transform(
+            self.S_BH, theta_shoulder_lift
         )
+        if frame == "humerus":
+            return transformation_matrix @ self.X_HoHc @ self.X_BH
 
-    def fk_gripper_tip(self, robot_pos_deg: NDArray[np.float32]) -> NDArray[np.float32]:
-        """Forward kinematics for the gripper tip frame."""
-        robot_pos_rad = robot_pos_deg / 180 * np.pi
+        transformation_matrix = transformation_matrix @ screw_axis_to_transform(self.S_BF, theta_elbow_flex)
+        if frame == "forearm":
+            return transformation_matrix @ self.X_ForearmFc @ self.X_BF
 
-        theta_shoulder_pan = robot_pos_rad[0]
-        # Negate shoulder lift angle for all robot types
-        theta_shoulder_lift = -robot_pos_rad[1]
-        theta_elbow_flex = robot_pos_rad[2]
-        theta_wrist_flex = robot_pos_rad[3]
-        theta_wrist_roll = robot_pos_rad[4]
+        transformation_matrix = transformation_matrix @ screw_axis_to_transform(self.S_BR, theta_wrist_flex)
+        if frame == "wrist":
+            return transformation_matrix @ self.X_RoRc @ self.X_BR @ self.wrist_X0
 
-        return (
-            self.X_WoBo
-            @ screw_axis_to_transform(self.S_BS, theta_shoulder_pan)
-            @ screw_axis_to_transform(self.S_BH, theta_shoulder_lift)
-            @ screw_axis_to_transform(self.S_BF, theta_elbow_flex)
-            @ screw_axis_to_transform(self.S_BR, theta_wrist_flex)
-            @ screw_axis_to_transform(self.S_BG, theta_wrist_roll)
-            @ self.X_GoGt
-            @ self.X_BoGo
-            @ self.gripper_X0
-        )
+        transformation_matrix = transformation_matrix @ screw_axis_to_transform(self.S_BG, theta_wrist_roll)
+        if frame == "gripper":
+            return transformation_matrix @ self._fk_gripper_post
+        else:  # frame == "gripper_tip"
+            return transformation_matrix @ self.X_GoGt @ self.X_BoGo @ self.gripper_X0
 
     def compute_jacobian(
-        self, robot_pos_deg: NDArray[np.float32], fk_func: Callable | None = None
+        self, robot_pos_deg: NDArray[np.float32], frame: str = "gripper_tip"
     ) -> NDArray[np.float32]:
         """Finite differences to compute the Jacobian.
         J(i, j) represents how the ith component of the end-effector's velocity changes wrt a small change
@@ -434,8 +397,6 @@ class RobotKinematics:
             robot_pos_deg: Current joint positions in degrees
             fk_func: Forward kinematics function to use (defaults to fk_gripper)
         """
-        if fk_func is None:
-            fk_func = self.fk_gripper
 
         eps = 1e-8
         jac = np.zeros(shape=(6, 5))
@@ -445,8 +406,8 @@ class RobotKinematics:
             delta[el_ix] = eps / 2
             Sdot = (  # noqa: N806
                 pose_difference_se3(
-                    fk_func(robot_pos_deg[:-1] + delta),
-                    fk_func(robot_pos_deg[:-1] - delta),
+                    self.forward_kinematics(robot_pos_deg[:-1] + delta, frame),
+                    self.forward_kinematics(robot_pos_deg[:-1] - delta, frame),
                 )
                 / eps
             )
@@ -454,7 +415,7 @@ class RobotKinematics:
         return jac
 
     def compute_positional_jacobian(
-        self, robot_pos_deg: NDArray[np.float32], fk_func: Callable | None = None
+        self, robot_pos_deg: NDArray[np.float32], frame: str = "gripper_tip"
     ) -> NDArray[np.float32]:
         """Finite differences to compute the positional Jacobian.
         J(i, j) represents how the ith component of the end-effector's position changes wrt a small change
@@ -464,9 +425,6 @@ class RobotKinematics:
             robot_pos_deg: Current joint positions in degrees
             fk_func: Forward kinematics function to use (defaults to fk_gripper)
         """
-        if fk_func is None:
-            fk_func = self.fk_gripper
-
         eps = 1e-8
         jac = np.zeros(shape=(3, 5))
         delta = np.zeros(len(robot_pos_deg[:-1]), dtype=np.float64)
@@ -474,7 +432,10 @@ class RobotKinematics:
             delta *= 0
             delta[el_ix] = eps / 2
             Sdot = (  # noqa: N806
-                (fk_func(robot_pos_deg[:-1] + delta)[:3, 3] - fk_func(robot_pos_deg[:-1] - delta)[:3, 3])
+                (
+                    self.forward_kinematics(robot_pos_deg[:-1] + delta, frame)[:3, 3]
+                    - self.forward_kinematics(robot_pos_deg[:-1] - delta, frame)[:3, 3]
+                )
                 / eps
             )
             jac[:, el_ix] = Sdot
@@ -485,7 +446,7 @@ class RobotKinematics:
         current_joint_pos: NDArray[np.float32],
         desired_ee_pose: NDArray[np.float32],
         position_only: bool = True,
-        fk_func: Callable | None = None,
+        frame: str = "gripper_tip",
     ) -> NDArray[np.float32]:
         """Inverse kinematics using gradient descent.
 
@@ -498,114 +459,21 @@ class RobotKinematics:
         Returns:
             Joint positions in degrees that achieve the desired end-effector pose
         """
-        if fk_func is None:
-            fk_func = self.fk_gripper
-
         # Do gradient descent.
         current_joint_state = current_joint_pos.copy()
         max_iterations = 5
         learning_rate = 1
         for _ in range(max_iterations):
-            current_ee_pose = fk_func(current_joint_state)
+            current_ee_pose = self.forward_kinematics(current_joint_state, frame)
             if not position_only:
                 error = se3_error(desired_ee_pose, current_ee_pose)
-                jac = self.compute_jacobian(current_joint_state, fk_func)
+                jac = self.compute_jacobian(current_joint_state, frame)
             else:
                 error = desired_ee_pose[:3, 3] - current_ee_pose[:3, 3]
-                jac = self.compute_positional_jacobian(current_joint_state, fk_func)
+                jac = self.compute_positional_jacobian(current_joint_state, frame)
             delta_angles = np.linalg.pinv(jac) @ error
             current_joint_state[:-1] += learning_rate * delta_angles
 
             if np.linalg.norm(error) < 5e-3:
                 return current_joint_state
         return current_joint_state
-
-
-if __name__ == "__main__":
-    import time
-
-    def run_test(robot_type):
-        """Run test suite for a specific robot type."""
-        print(f"\n--- Testing {robot_type.upper()} Robot ---")
-
-        # Initialize kinematics for this robot
-        robot = RobotKinematics(robot_type)
-
-        # Test 1: Forward kinematics consistency
-        print("Test 1: Forward kinematics consistency")
-        test_angles = np.array([30, 45, -30, 20, 10, 0])  # Example joint angles in degrees
-
-        # Calculate FK for different joints
-        shoulder_pose = robot.fk_shoulder(test_angles)
-        humerus_pose = robot.fk_humerus(test_angles)
-        forearm_pose = robot.fk_forearm(test_angles)
-        wrist_pose = robot.fk_wrist(test_angles)
-        gripper_pose = robot.fk_gripper(test_angles)
-        gripper_tip_pose = robot.fk_gripper_tip(test_angles)
-
-        # Check that poses form a consistent kinematic chain (positions should be progressively further from origin)
-        distances = [
-            np.linalg.norm(shoulder_pose[:3, 3]),
-            np.linalg.norm(humerus_pose[:3, 3]),
-            np.linalg.norm(forearm_pose[:3, 3]),
-            np.linalg.norm(wrist_pose[:3, 3]),
-            np.linalg.norm(gripper_pose[:3, 3]),
-            np.linalg.norm(gripper_tip_pose[:3, 3]),
-        ]
-
-        # Check if distances generally increase along the chain
-        is_consistent = all(distances[i] <= distances[i + 1] for i in range(len(distances) - 1))
-        print(f"  Pose distances from origin: {[round(d, 3) for d in distances]}")
-        print(f"  Kinematic chain consistency: {'PASSED' if is_consistent else 'FAILED'}")
-
-        # Test 2: Jacobian computation
-        print("Test 2: Jacobian computation")
-        jacobian = robot.compute_jacobian(test_angles)
-        positional_jacobian = robot.compute_positional_jacobian(test_angles)
-
-        # Check shapes
-        jacobian_shape_ok = jacobian.shape == (6, 5)
-        pos_jacobian_shape_ok = positional_jacobian.shape == (3, 5)
-
-        print(f"  Jacobian shape: {'PASSED' if jacobian_shape_ok else 'FAILED'}")
-        print(f"  Positional Jacobian shape: {'PASSED' if pos_jacobian_shape_ok else 'FAILED'}")
-
-        # Test 3: Inverse kinematics
-        print("Test 3: Inverse kinematics (position only)")
-
-        # Generate target pose from known joint angles
-        original_angles = np.array([10, 20, 30, -10, 5, 0])
-        target_pose = robot.fk_gripper(original_angles)
-
-        # Start IK from a different position
-        initial_guess = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-
-        # Measure IK performance
-        start_time = time.time()
-        computed_angles = robot.ik(initial_guess.copy(), target_pose)
-        ik_time = time.time() - start_time
-
-        # Compute resulting pose from IK solution
-        result_pose = robot.fk_gripper(computed_angles)
-
-        # Calculate position error
-        pos_error = np.linalg.norm(target_pose[:3, 3] - result_pose[:3, 3])
-        passed = pos_error < 0.01  # Accept errors less than 1cm
-
-        print(f"  IK computation time: {ik_time:.4f} seconds")
-        print(f"  Position error: {pos_error:.4f}")
-        print(f"  IK position accuracy: {'PASSED' if passed else 'FAILED'}")
-
-        return is_consistent and jacobian_shape_ok and pos_jacobian_shape_ok and passed
-
-    # Run tests for all robot types
-    results = {}
-    for robot_type in ["koch", "so100", "moss", "so101"]:
-        results[robot_type] = run_test(robot_type)
-
-    # Print overall summary
-    print("\n=== Test Summary ===")
-    all_passed = all(results.values())
-    for robot_type, passed in results.items():
-        print(f"{robot_type.upper()}: {'PASSED' if passed else 'FAILED'}")
-    print(f"\nOverall: {'ALL TESTS PASSED' if all_passed else 'SOME TESTS FAILED'}")
