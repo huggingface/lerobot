@@ -84,7 +84,7 @@ python -m lerobot.scripts.find_joint_limits \
    Max joint positions [-20.0, -20.0, -20.0, -20.0, -20.0, -20.0]
    Min joint positions [50.0, 50.0, 50.0, 50.0, 50.0, 50.0]
    ```
-3. Use these values in the configuration of you teleoperation device (TeleoperatorConfig) under the `end_effector_bounds` field
+3. Use these values in the configuration of your teleoperation device (TeleoperatorConfig) under the `end_effector_bounds` field
 
 ### 1.2.3 Example Configuration
 
@@ -137,7 +137,7 @@ python lerobot/scripts/rl/gym_manipulator.py --config_path lerobot/configs/env_c
 ```
 
 During recording:
-1. The robot will reset to the initial position defined in the configuration file `fixed_reset_position`
+1. The robot will reset to the initial position defined in the configuration file `fixed_reset_joint_positions`
 2. Use the gamepad to control the robot by setting `"control_mode"="gamepad"` in the configuration file
 3. Complete the task successfully
 4. The episode ends with a reward of 1 when you press the "success" button
@@ -250,7 +250,7 @@ The training proceeds automatically:
 
 ### 1.5.5 Human in the Loop
 
-- The key to learning efficiently is to have a human interventions to provide corrective feedback and completing the task to aide the policy learning and exploration.
+- The key to learning efficiently is to have human interventions to provide corrective feedback and completing the task to aide the policy learning and exploration.
 - To perform human interventions, you can press the upper right trigger button on the gamepad. This will pause the policy actions and allow you to take over.
 - A successful experiment is one where the human has to intervene at the start but then reduces the amount of interventions as the policy improves. You can monitor the intervention rate in the `wandb` dashboard.
 
@@ -286,7 +286,7 @@ The reward classifier implementation in `modeling_classifier.py` uses a pretrain
 ## 2.1 Collecting a Dataset
 Before training, you need to collect a dataset with labeled examples. The `record_dataset` function in `gym_manipulator.py` enables the process of collecting a dataset of observations, actions, and rewards.
 
-To collect a dataset, you need to modeify some parameters in the environment configuration based on HILSerlRobotEnvConfig.
+To collect a dataset, you need to modify some parameters in the environment configuration based on HILSerlRobotEnvConfig.
 
 ```bash
 python lerobot/scripts/rl/gym_manipulator.py --config_path lerobot/configs/reward_classifier_train_config.json
@@ -294,8 +294,8 @@ python lerobot/scripts/rl/gym_manipulator.py --config_path lerobot/configs/rewar
 
 ### 2.1.1 Key Parameters for Data Collection:
 
-- **mode**: set it to "record" to collect a dataset
-- **repo_id**: "hf_username/dataset_name", name of the dataset and repo on the hub
+- **mode**: set it to `"record"` to collect a dataset
+- **repo_id**: `"hf_username/dataset_name"`, name of the dataset and repo on the hub
 - **num_episodes**: Number of episodes to record
 - **number_of_steps_after_success**: Number of additional frames to record after a success (reward=1) is detected
 - **fps**: Number of frames per second to record
@@ -321,8 +321,8 @@ Example configuration section for data collection:
 
 The reward classifier is configured using `configuration_classifier.py`. Here are the key parameters:
 
-- **model_name**: Base model architecture (e.g., we mainly use "helper2424/resnet10")
-- **model_type**: "cnn" or "transformer"
+- **model_name**: Base model architecture (e.g., we mainly use `"helper2424/resnet10"`)
+- **model_type**: `"cnn"` or `"transformer"`
 - **num_cameras**: Number of camera inputs
 - **num_classes**: Number of output classes (typically 2 for binary success/failure)
 - **hidden_dim**: Size of hidden representation
@@ -384,7 +384,7 @@ or set the argument in the json config file.
 }
 ```
 
-Run gym_manipulator.py to test the model.
+Run `gym_manipulator.py` to test the model.
 ```bash
 python lerobot/scripts/rl/gym_manipulator.py --config_path path/to/env_config.json
 ```
