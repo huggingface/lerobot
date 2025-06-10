@@ -112,16 +112,18 @@ class SO100FollowerEndEffector(SO100Follower):
 
         # Convert action to numpy array if not already
         if isinstance(action, dict):
-            if all(k in action for k in ["delta_x", "delta_y", "delta_z", "gripper"]):
-                action = np.array(
+            if all(k in action for k in ["delta_x", "delta_y", "delta_z"]):
+                delta_ee = np.array(
                     [
                         action["delta_x"] * self.config.end_effector_step_sizes["x"],
                         action["delta_y"] * self.config.end_effector_step_sizes["y"],
                         action["delta_z"] * self.config.end_effector_step_sizes["z"],
-                        action["gripper"],
                     ],
                     dtype=np.float32,
                 )
+                if "gripper" not in action:
+                    action["gripper"] = [1.0]
+                action = np.append(delta_ee, action["gripper"])
             else:
                 logger.warning(
                     f"Expected action keys 'delta_x', 'delta_y', 'delta_z', got {list(action.keys())}"

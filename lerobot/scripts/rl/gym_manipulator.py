@@ -367,7 +367,11 @@ class RobotEnv(gym.Env):
         """
         self.current_joint_positions = self._get_observation()["agent_pos"]
 
-        action_dict = {"delta_x": action[0], "delta_y": action[1], "delta_z": action[2], "gripper": action[3]}
+        action_dict = {"delta_x": action[0], "delta_y": action[1], "delta_z": action[2]}
+
+        # 1.0 action corresponds to no-op action
+        action_dict["gripper"] = action[3] if self.use_gripper else 1.0
+
         self.robot.send_action(action_dict)
 
         if self.display_cameras:
