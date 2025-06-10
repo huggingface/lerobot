@@ -128,7 +128,7 @@ from lerobot.common.utils.utils import (
 )
 from lerobot.common.utils.wandb_utils import WandBLogger
 from lerobot.configs import parser
-from lerobot.configs.train import TrainPipelineConfig
+from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.scripts.rl import learner_service
 
 LOG_PREFIX = "[LEARNER]"
@@ -140,7 +140,7 @@ LOG_PREFIX = "[LEARNER]"
 
 
 @parser.wrap()
-def train_cli(cfg: TrainPipelineConfig):
+def train_cli(cfg: TrainRLServerPipelineConfig):
     if not use_threads(cfg):
         import torch.multiprocessing as mp
 
@@ -155,12 +155,12 @@ def train_cli(cfg: TrainPipelineConfig):
     logging.info("[LEARNER] train_cli finished")
 
 
-def train(cfg: TrainPipelineConfig, job_name: str | None = None):
+def train(cfg: TrainRLServerPipelineConfig, job_name: str | None = None):
     """
     Main training function that initializes and runs the training process.
 
     Args:
-        cfg (TrainPipelineConfig): The training configuration
+        cfg (TrainRLServerPipelineConfig): The training configuration
         job_name (str | None, optional): Job name for logging. Defaults to None.
     """
 
@@ -213,7 +213,7 @@ def train(cfg: TrainPipelineConfig, job_name: str | None = None):
 
 
 def start_learner_threads(
-    cfg: TrainPipelineConfig,
+    cfg: TrainRLServerPipelineConfig,
     wandb_logger: WandBLogger | None,
     shutdown_event: any,  # Event,
 ) -> None:
@@ -221,7 +221,7 @@ def start_learner_threads(
     Start the learner threads for training.
 
     Args:
-        cfg (TrainPipelineConfig): Training configuration
+        cfg (TrainRLServerPipelineConfig): Training configuration
         wandb_logger (WandBLogger | None): Logger for metrics
         shutdown_event: Event to signal shutdown
     """
@@ -286,7 +286,7 @@ def start_learner_threads(
 
 
 def add_actor_information_and_train(
-    cfg: TrainPipelineConfig,
+    cfg: TrainRLServerPipelineConfig,
     wandb_logger: WandBLogger | None,
     shutdown_event: any,  # Event,
     transition_queue: Queue,
@@ -310,7 +310,7 @@ def add_actor_information_and_train(
     are divided by 200. So we need to have a single thread that does all the work.
 
     Args:
-        cfg (TrainPipelineConfig): Configuration object containing hyperparameters.
+        cfg (TrainRLServerPipelineConfig): Configuration object containing hyperparameters.
         wandb_logger (WandBLogger | None): Logger for tracking training progress.
         shutdown_event (Event): Event to signal shutdown.
         transition_queue (Queue): Queue for receiving transitions from the actor.
@@ -646,7 +646,7 @@ def start_learner(
     transition_queue: Queue,
     interaction_message_queue: Queue,
     shutdown_event: any,  # Event,
-    cfg: TrainPipelineConfig,
+    cfg: TrainRLServerPipelineConfig,
 ):
     """
     Start the learner server for training.
@@ -710,7 +710,7 @@ def start_learner(
 
 
 def save_training_checkpoint(
-    cfg: TrainPipelineConfig,
+    cfg: TrainRLServerPipelineConfig,
     optimization_step: int,
     online_steps: int,
     interaction_message: dict | None,
@@ -796,7 +796,7 @@ def save_training_checkpoint(
     logging.info("Resume training")
 
 
-def make_optimizers_and_scheduler(cfg: TrainPipelineConfig, policy: nn.Module):
+def make_optimizers_and_scheduler(cfg: TrainRLServerPipelineConfig, policy: nn.Module):
     """
     Creates and returns optimizers for the actor, critic, and temperature components of a reinforcement learning policy.
 
@@ -853,7 +853,7 @@ def make_optimizers_and_scheduler(cfg: TrainPipelineConfig, policy: nn.Module):
 #################################################
 
 
-def handle_resume_logic(cfg: TrainPipelineConfig) -> TrainPipelineConfig:
+def handle_resume_logic(cfg: TrainRLServerPipelineConfig) -> TrainRLServerPipelineConfig:
     """
     Handle the resume logic for training.
 
@@ -868,10 +868,10 @@ def handle_resume_logic(cfg: TrainPipelineConfig) -> TrainPipelineConfig:
     - Returns the original configuration
 
     Args:
-        cfg (TrainPipelineConfig): The training configuration
+        cfg (TrainRLServerPipelineConfig): The training configuration
 
     Returns:
-        TrainPipelineConfig: The updated configuration
+        TrainRLServerPipelineConfig: The updated configuration
 
     Raises:
         RuntimeError: If resume is True but no checkpoint found, or if resume is False but directory exists
@@ -903,7 +903,7 @@ def handle_resume_logic(cfg: TrainPipelineConfig) -> TrainPipelineConfig:
 
     # Load config using Draccus
     checkpoint_cfg_path = os.path.join(checkpoint_dir, PRETRAINED_MODEL_DIR, "train_config.json")
-    checkpoint_cfg = TrainPipelineConfig.from_pretrained(checkpoint_cfg_path)
+    checkpoint_cfg = TrainRLServerPipelineConfig.from_pretrained(checkpoint_cfg_path)
 
     # Ensure resume flag is set in returned config
     checkpoint_cfg.resume = True
@@ -911,14 +911,14 @@ def handle_resume_logic(cfg: TrainPipelineConfig) -> TrainPipelineConfig:
 
 
 def load_training_state(
-    cfg: TrainPipelineConfig,
+    cfg: TrainRLServerPipelineConfig,
     optimizers: Optimizer | dict[str, Optimizer],
 ):
     """
     Loads the training state (optimizers, step count, etc.) from a checkpoint.
 
     Args:
-        cfg (TrainPipelineConfig): Training configuration
+        cfg (TrainRLServerPipelineConfig): Training configuration
         optimizers (Optimizer | dict): Optimizers to load state into
 
     Returns:
@@ -951,12 +951,12 @@ def load_training_state(
         return None, None
 
 
-def log_training_info(cfg: TrainPipelineConfig, policy: nn.Module) -> None:
+def log_training_info(cfg: TrainRLServerPipelineConfig, policy: nn.Module) -> None:
     """
     Log information about the training process.
 
     Args:
-        cfg (TrainPipelineConfig): Training configuration
+        cfg (TrainRLServerPipelineConfig): Training configuration
         policy (nn.Module): Policy model
     """
     num_learnable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
@@ -969,12 +969,14 @@ def log_training_info(cfg: TrainPipelineConfig, policy: nn.Module) -> None:
     logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
 
-def initialize_replay_buffer(cfg: TrainPipelineConfig, device: str, storage_device: str) -> ReplayBuffer:
+def initialize_replay_buffer(
+    cfg: TrainRLServerPipelineConfig, device: str, storage_device: str
+) -> ReplayBuffer:
     """
     Initialize a replay buffer, either empty or from a dataset if resuming.
 
     Args:
-        cfg (TrainPipelineConfig): Training configuration
+        cfg (TrainRLServerPipelineConfig): Training configuration
         device (str): Device to store tensors on
         storage_device (str): Device for storage optimization
 
@@ -1011,7 +1013,7 @@ def initialize_replay_buffer(cfg: TrainPipelineConfig, device: str, storage_devi
 
 
 def initialize_offline_replay_buffer(
-    cfg: TrainPipelineConfig,
+    cfg: TrainRLServerPipelineConfig,
     device: str,
     storage_device: str,
 ) -> ReplayBuffer:
@@ -1019,7 +1021,7 @@ def initialize_offline_replay_buffer(
     Initialize an offline replay buffer from a dataset.
 
     Args:
-        cfg (TrainPipelineConfig): Training configuration
+        cfg (TrainRLServerPipelineConfig): Training configuration
         device (str): Device to store tensors on
         storage_device (str): Device for storage optimization
 
@@ -1083,7 +1085,7 @@ def get_observation_features(
     return observation_features, next_observation_features
 
 
-def use_threads(cfg: TrainPipelineConfig) -> bool:
+def use_threads(cfg: TrainRLServerPipelineConfig) -> bool:
     return cfg.policy.concurrency.learner == "threads"
 
 

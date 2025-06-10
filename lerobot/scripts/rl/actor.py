@@ -108,7 +108,7 @@ from lerobot.common.utils.utils import (
     init_logging,
 )
 from lerobot.configs import parser
-from lerobot.configs.train import TrainPipelineConfig
+from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.scripts.rl import learner_service
 from lerobot.scripts.rl.gym_manipulator import make_robot_env
 
@@ -121,7 +121,7 @@ ACTOR_SHUTDOWN_TIMEOUT = 30
 
 
 @parser.wrap()
-def actor_cli(cfg: TrainPipelineConfig):
+def actor_cli(cfg: TrainRLServerPipelineConfig):
     cfg.validate()
     display_pid = False
     if not use_threads(cfg):
@@ -229,7 +229,7 @@ def actor_cli(cfg: TrainPipelineConfig):
 
 
 def act_with_policy(
-    cfg: TrainPipelineConfig,
+    cfg: TrainRLServerPipelineConfig,
     shutdown_event: any,  # Event,
     parameters_queue: Queue,
     transitions_queue: Queue,
@@ -465,7 +465,7 @@ def learner_service_client(
 
 
 def receive_policy(
-    cfg: TrainPipelineConfig,
+    cfg: TrainRLServerPipelineConfig,
     parameters_queue: Queue,
     shutdown_event: Event,  # type: ignore
     learner_client: services_pb2_grpc.LearnerServiceStub | None = None,
@@ -474,7 +474,7 @@ def receive_policy(
     """Receive parameters from the learner.
 
     Args:
-        cfg (TrainPipelineConfig): The configuration for the actor.
+        cfg (TrainRLServerPipelineConfig): The configuration for the actor.
         parameters_queue (Queue): The queue to receive the parameters.
         shutdown_event (Event): The event to check if the process should shutdown.
     """
@@ -517,7 +517,7 @@ def receive_policy(
 
 
 def send_transitions(
-    cfg: TrainPipelineConfig,
+    cfg: TrainRLServerPipelineConfig,
     transitions_queue: Queue,
     shutdown_event: any,  # Event,
     learner_client: services_pb2_grpc.LearnerServiceStub | None = None,
@@ -571,7 +571,7 @@ def send_transitions(
 
 
 def send_interactions(
-    cfg: TrainPipelineConfig,
+    cfg: TrainRLServerPipelineConfig,
     interactions_queue: Queue,
     shutdown_event: Event,  # type: ignore
     learner_client: services_pb2_grpc.LearnerServiceStub | None = None,
@@ -720,14 +720,14 @@ def get_frequency_stats(timer: TimerManager) -> dict[str, float]:
     return stats
 
 
-def log_policy_frequency_issue(policy_fps: float, cfg: TrainPipelineConfig, interaction_step: int):
+def log_policy_frequency_issue(policy_fps: float, cfg: TrainRLServerPipelineConfig, interaction_step: int):
     if policy_fps < cfg.env.fps:
         logging.warning(
             f"[ACTOR] Policy FPS {policy_fps:.1f} below required {cfg.env.fps} at step {interaction_step}"
         )
 
 
-def use_threads(cfg: TrainPipelineConfig) -> bool:
+def use_threads(cfg: TrainRLServerPipelineConfig) -> bool:
     return cfg.policy.concurrency.actor == "threads"
 
 

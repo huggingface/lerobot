@@ -24,7 +24,7 @@ from torch.multiprocessing import Event, Queue
 
 from lerobot.common.policies.sac.configuration_sac import SACConfig
 from lerobot.common.utils.transition import Transition
-from lerobot.configs.train import TrainPipelineConfig
+from lerobot.configs.train import TrainRLServerPipelineConfig
 from tests.utils import require_package
 
 
@@ -71,7 +71,7 @@ def find_free_port():
 
 @pytest.fixture
 def cfg():
-    cfg = TrainPipelineConfig()
+    cfg = TrainRLServerPipelineConfig()
 
     port = find_free_port()
 

@@ -206,7 +206,7 @@ The LeRobot system uses a distributed actor-learner architecture for training. T
 
 ### 1.5.1 Configuration Setup
 
-Create a training configuration file (example available [here](https://huggingface.co/datasets/aractingi/lerobot-example-config-files/blob/main/train_config_hilserl_so100.json)). The training config is based on the main `TrainPipelineConfig` class in `lerobot/configs/train.py`.
+Create a training configuration file (example available [here](https://huggingface.co/datasets/aractingi/lerobot-example-config-files/blob/main/train_config_hilserl_so100.json)). The training config is based on the main `TrainRLServerPipelineConfig` class in `lerobot/configs/train.py`.
 
 1. Configure the policy settings (`type="sac"`, `device`, etc.)
 2. Set `dataset` to your cropped dataset

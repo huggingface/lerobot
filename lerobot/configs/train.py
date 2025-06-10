@@ -34,7 +34,7 @@ TRAIN_CONFIG_NAME = "train_config.json"
 
 @dataclass
 class TrainPipelineConfig(HubMixin):
-    dataset: DatasetConfig | None = None  # NOTE: In RL, we don't need an offline dataset
+    dataset: DatasetConfig
     env: envs.EnvConfig | None = None
     policy: PreTrainedConfig | None = None
     # Set `dir` to where you would like to save all of the run outputs. If you run another training session
@@ -107,7 +107,7 @@ class TrainPipelineConfig(HubMixin):
             train_dir = f"{now:%Y-%m-%d}/{now:%H-%M-%S}_{self.job_name}"
             self.output_dir = Path("outputs/train") / train_dir
 
-        if self.dataset is not None and isinstance(self.dataset.repo_id, list):
+        if isinstance(self.dataset.repo_id, list):
             raise NotImplementedError("LeRobotMultiDataset is not currently implemented.")
 
         if not self.use_policy_training_preset and (self.optimizer is None or self.scheduler is None):
@@ -172,3 +172,8 @@ class TrainPipelineConfig(HubMixin):
         cli_args = kwargs.pop("cli_args", [])
         with draccus.config_type("json"):
             return draccus.parse(cls, config_file, args=cli_args)
+
+
+@dataclass(kw_only=True)
+class TrainRLServerPipelineConfig(TrainPipelineConfig):
+    dataset: DatasetConfig | None = None  # NOTE: In RL, we don't need an offline dataset
