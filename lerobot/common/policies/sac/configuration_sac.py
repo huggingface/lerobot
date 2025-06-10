@@ -70,8 +70,8 @@ class ActorNetworkConfig:
 @dataclass
 class PolicyConfig:
     use_tanh_squash: bool = True
-    log_std_min: float = 1e-5
-    log_std_max: float = 10.0
+    std_min: float = 1e-5
+    std_max: float = 10.0
     init_final: float = 0.05
 
 

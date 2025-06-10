@@ -219,7 +219,7 @@ class SACPolicy(
         for target_param, param in zip(
             self.critic_target.parameters(),
             self.critic_ensemble.parameters(),
-            strict=False,
+            strict=True,
         ):
             target_param.data.copy_(
                 param.data * self.config.critic_target_update_weight
@@ -229,7 +229,7 @@ class SACPolicy(
             for target_param, param in zip(
                 self.discrete_critic_target.parameters(),
                 self.discrete_critic.parameters(),
-                strict=False,
+                strict=True,
             ):
                 target_param.data.copy_(
                     param.data * self.config.critic_target_update_weight
@@ -837,8 +837,8 @@ class Policy(nn.Module):
         encoder: SACObservationEncoder,
         network: nn.Module,
         action_dim: int,
-        log_std_min: float = -5,
-        log_std_max: float = 2,
+        std_min: float = -5,
+        std_max: float = 2,
         fixed_std: torch.Tensor | None = None,
         init_final: float | None = None,
         use_tanh_squash: bool = False,
@@ -848,8 +848,8 @@ class Policy(nn.Module):
         self.encoder: SACObservationEncoder = encoder
         self.network = network
         self.action_dim = action_dim
-        self.log_std_min = log_std_min
-        self.log_std_max = log_std_max
+        self.std_min = std_min
+        self.std_max = std_max
         self.fixed_std = fixed_std
         self.use_tanh_squash = use_tanh_squash
         self.encoder_is_shared = encoder_is_shared
@@ -893,9 +893,9 @@ class Policy(nn.Module):
         if self.fixed_std is None:
             log_std = self.std_layer(outputs)
             std = torch.exp(log_std)  # Match JAX "exp"
-            std = torch.clamp(std, self.log_std_min, self.log_std_max)  # Match JAX default clip
+            std = torch.clamp(std, self.std_min, self.std_max)  # Match JAX default clip
         else:
-            log_std = self.fixed_std.expand_as(means)
+            std = self.fixed_std.expand_as(means)
 
         # Build transformed distribution
         dist = TanhMultivariateNormalDiag(loc=means, scale_diag=std)
