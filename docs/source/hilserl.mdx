@@ -6,8 +6,8 @@ HIL-SERL is a sample-efficient reinforcement learning algorithm that combines hu
 
 It combines three key ingredients:
 	1.	**Offline demonstrations & reward classifier:** a handful of human-teleop episodes plus a vision-based success detector give the policy a shaped starting point.
-	2.	**On-robot actor / learner loop with human interventions:** a distributed SAC/RLPD learner updates the policy while an actor explores on the physical robot; the human can jump in at any time to correct dangerous or unproductive behaviour.
-	3.	**Safety & efficiency tools:** joint/EE bounds, impedance control, crop-ROI preprocessing and WandB monitoring keep the data useful and the hardware safe.
+	2.	**On-robot actor / learner loop with human interventions:** a distributed Soft Actor Critic (SAC) learner updates the policy while an actor explores on the physical robot; the human can jump in at any time to correct dangerous or unproductive behaviour.
+	3.	**Safety & efficiency tools:** joint/end-effector (EE) bounds, impedance control, crop region of interest (ROI) preprocessing and WandB monitoring keep the data useful and the hardware safe.
 
 Together these elements let HIL-SERL reach near-perfect task success and faster cycle times than imitation-only baselines.
 
@@ -19,6 +19,13 @@ Together these elements let HIL-SERL reach near-perfect task success and faster 
 
 This guide provides step-by-step instructions for training a robot policy using LeRobot's HilSerl implementation to train on a real robot.
 
+# 0. Install LeRobot with HIL-SERL
+
+To install LeRobot with HIL-SERL, you need to install the `hilserl` extra.
+
+```bash
+pip install -e .[hilserl]
+```
 
 # 1. Real Robot Training Workflow
 
@@ -50,7 +57,7 @@ class HILSerlRobotEnvConfig(EnvConfig):
 
 Before collecting demonstrations, you need to determine the appropriate operational bounds for your robot.
 
-This helps simplifying the problem of learning on the real robot by limiting the robot's operational space to a specific region that solves the task and avoids unnecessary or unsafe exploration.
+This helps simplify the problem of learning on the real robot in two ways: 1) by limiting the robot's operational space to a specific region that solves the task and avoids unnecessary or unsafe exploration, and 2) by allowing training in end-effector space rather than joint space. Empirically, learning in joint space for reinforcement learning in manipulation is often a harder problem - some tasks are nearly impossible to learn in joint space but become learnable when the action space is transformed to end-effector coordinates.
 
 ### 1.2.1 Using find_joint_limits.py
 
@@ -72,8 +79,8 @@ python -m lerobot.scripts.find_joint_limits \
 1. Run the script and move the robot through the space that solves the task
 2. The script will record the minimum and maximum end-effector positions and the joint angles and prints them to the console, for example:
    ```
-   Max ee position [0.24170487 0.201285   0.10273342]
-   Min ee position [0.16631757 -0.08237468  0.03364977]
+   Max ee position [0.2417 0.2012 0.1027]
+   Min ee position [0.1663 -0.0823 0.0336]
    Max joint positions [-20.0, -20.0, -20.0, -20.0, -20.0, -20.0]
    Min joint positions [50.0, 50.0, 50.0, 50.0, 50.0, 50.0]
    ```
@@ -189,7 +196,7 @@ Add these crop parameters to your training configuration:
 
 ## 1.5 Training with Actor-Learner
 
-The LeRobot system uses a distributed actor-learner architecture for training. You will need to start two processes: a learner and an actor.
+The LeRobot system uses a distributed actor-learner architecture for training. This architecture decouples robot interactions from the learning process, allowing them to run concurrently without blocking each other. The actor server handles robot observations and actions, sending interaction data to the learner server. The learner server performs gradient descent and periodically updates the actor's policy weights. You will need to start two processes: a learner and an actor.
 
 ### 1.5.1 Configuration Setup
 
@@ -356,7 +363,7 @@ Example configuration for training the [reward classifier](https://huggingface.c
 To train the classifier, use the `train.py` script with your configuration:
 
 ```bash
-python lerobot/scripts/train.py --config_path lerobot/configs/reward_classifier_train_config.json
+python lerobot/scripts/train.py --config_path path/to/reward_classifier_train_config.json
 ```
 
 ## 2.4 Deploying and Testing the Model
@@ -379,7 +386,7 @@ or set the argument in the json config file.
 
 Run gym_manipulator.py to test the model.
 ```bash
-python lerobot/scripts/rl/gym_manipulator.py --config_path lerobot/configs/env_config.json
+python lerobot/scripts/rl/gym_manipulator.py --config_path path/to/env_config.json
 ```
 
 The reward classifier will automatically provide rewards based on the visual input from the robot's cameras.
