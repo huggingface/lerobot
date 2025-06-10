@@ -116,8 +116,8 @@ def test_sac_config_default_initialization():
 
     # Policy configuration
     assert config.policy_kwargs.use_tanh_squash is True
-    assert config.policy_kwargs.log_std_min == 1e-5
-    assert config.policy_kwargs.log_std_max == 10.0
+    assert config.policy_kwargs.std_min == 1e-5
+    assert config.policy_kwargs.std_max == 10.0
     assert config.policy_kwargs.init_final == 0.05
 
     # Discrete critic network configuration
@@ -157,8 +157,8 @@ def test_actor_network_kwargs():
 def test_policy_kwargs():
     config = PolicyConfig()
     assert config.use_tanh_squash is True
-    assert config.log_std_min == 1e-5
-    assert config.log_std_max == 10.0
+    assert config.std_min == 1e-5
+    assert config.std_max == 10.0
     assert config.init_final == 0.05
 
 
