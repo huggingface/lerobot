@@ -158,6 +158,12 @@ During recording:
 
 After collecting demonstrations, process them to determine optimal camera crops.
 Reinforcement learning is sensitive to background distractions, so it is important to crop the images to the relevant workspace area.
+
+Visual RL algorithms learn directly from pixel inputs, making them vulnerable to irrelevant visual information. Background elements like changing lighting, shadows, people moving, or objects outside the workspace can confuse the learning process. Good ROI selection should:
+- Include only the essential workspace where the task happens
+- Capture the robot's end-effector and all objects involved in the task
+- Exclude unnecessary background elements and distractions
+
 Note: If you already know the crop parameters, you can skip this step and just set the `crop_params_dict` in the configuration file during recording.
 
 ### 1.4.1 Determining Crop Parameters
