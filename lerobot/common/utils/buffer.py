@@ -760,7 +760,24 @@ def guess_feature_info(t, name: str):
 def concatenate_batch_transitions(
     left_batch_transitions: BatchTransition, right_batch_transition: BatchTransition
 ) -> BatchTransition:
-    """NOTE: Be careful it change the left_batch_transitions in place"""
+    """
+    Concatenates two BatchTransition objects into one.
+
+    This function merges the right BatchTransition into the left one by concatenating
+    all corresponding tensors along dimension 0. The operation modifies the left_batch_transitions
+    in place and also returns it.
+
+    Args:
+        left_batch_transitions (BatchTransition): The first batch to concatenate and the one
+            that will be modified in place.
+        right_batch_transition (BatchTransition): The second batch to append to the first one.
+
+    Returns:
+        BatchTransition: The concatenated batch (same object as left_batch_transitions).
+
+    Warning:
+        This function modifies the left_batch_transitions object in place.
+    """
     # Concatenate state fields
     left_batch_transitions["state"] = {
         key: torch.cat(
