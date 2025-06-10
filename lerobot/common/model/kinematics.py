@@ -12,25 +12,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Callable
+
 import numpy as np
+from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation
 
 
-def skew_symmetric(w):
+def skew_symmetric(w: NDArray[np.float32]) -> NDArray[np.float32]:
     """Creates the skew-symmetric matrix from a 3D vector."""
     return np.array([[0, -w[2], w[1]], [w[2], 0, -w[0]], [-w[1], w[0], 0]])
 
 
-def rodrigues_rotation(w, theta):
+def rodrigues_rotation(w: NDArray[np.float32], theta: float) -> NDArray[np.float32]:
     """Computes the rotation matrix using Rodrigues' formula."""
     w_hat = skew_symmetric(w)
     return np.eye(3) + np.sin(theta) * w_hat + (1 - np.cos(theta)) * w_hat @ w_hat
 
 
-def screw_axis_to_transform(S, theta):  # noqa: N803
+def screw_axis_to_transform(s: NDArray[np.float32], theta: float) -> NDArray[np.float32]:
     """Converts a screw axis to a 4x4 transformation matrix."""
-    S_w = S[:3]  # noqa: N806
-    S_v = S[3:]  # noqa: N806
+    S_w = s[:3]  # noqa: N806
+    S_v = s[3:]  # noqa: N806
     if np.allclose(S_w, 0) and np.linalg.norm(S_v) == 1:  # Pure translation
         T = np.eye(4)  # noqa: N806
         T[:3, 3] = S_v * theta
@@ -46,7 +49,7 @@ def screw_axis_to_transform(S, theta):  # noqa: N803
     return T
 
 
-def pose_difference_se3(pose1, pose2):
+def pose_difference_se3(pose1: NDArray[np.float32], pose2: NDArray[np.float32]) -> NDArray[np.float32]:
     """
     Calculates the SE(3) difference between two 4x4 homogeneous transformation matrices.
     SE(3) (Special Euclidean Group) represents rigid body transformations in 3D space, combining rotation (SO(3)) and translation.
@@ -85,7 +88,7 @@ def pose_difference_se3(pose1, pose2):
     return np.concatenate([translation_diff, rotation_diff])
 
 
-def se3_error(target_pose, current_pose):
+def se3_error(target_pose: NDArray[np.float32], current_pose: NDArray[np.float32]) -> NDArray[np.float32]:
     pos_error = target_pose[:3, 3] - current_pose[:3, 3]
     R_target = target_pose[:3, :3]  # noqa: N806
     R_current = current_pose[:3, :3]  # noqa: N806
@@ -133,7 +136,7 @@ class RobotKinematics:
         },
     }
 
-    def __init__(self, robot_type="so100"):
+    def __init__(self, robot_type: str = "so100"):
         """Initialize kinematics for the specified robot type.
 
         Args:
@@ -150,7 +153,9 @@ class RobotKinematics:
         # Initialize all transformation matrices and screw axes
         self._setup_transforms()
 
-    def _create_translation_matrix(self, x=0, y=0, z=0):
+    def _create_translation_matrix(
+        self, x: float = 0.0, y: float = 0.0, z: float = 0.0
+    ) -> NDArray[np.float32]:
         """Create a 4x4 translation matrix."""
         return np.array([[1, 0, 0, x], [0, 1, 0, y], [0, 0, 1, z], [0, 0, 0, 1]])
 
@@ -165,7 +170,8 @@ class RobotKinematics:
                 [0, 0, 1, 0],
                 [0, -1, 0, 0],
                 [0, 0, 0, 1],
-            ]
+            ],
+            dtype=np.float32,
         )
 
         # Wrist orientation
@@ -175,7 +181,8 @@ class RobotKinematics:
                 [1, 0, 0, 0],
                 [0, 0, 1, 0],
                 [0, 0, 0, 1],
-            ]
+            ],
+            dtype=np.float32,
         )
 
         # Base orientation
@@ -185,7 +192,8 @@ class RobotKinematics:
                 [1, 0, 0, 0],
                 [0, 1, 0, 0],
                 [0, 0, 0, 1],
-            ]
+            ],
+            dtype=np.float32,
         )
 
         # Gripper
@@ -198,7 +206,8 @@ class RobotKinematics:
                 0,
                 self.measurements["gripper"][2],
                 -self.measurements["gripper"][1],
-            ]
+            ],
+            dtype=np.float32,
         )
 
         # Gripper origin to centroid transform
@@ -216,7 +225,9 @@ class RobotKinematics:
 
         # Wrist
         # Screw axis of wrist frame wrt base frame
-        self.S_BR = np.array([0, 1, 0, -self.measurements["wrist"][2], 0, self.measurements["wrist"][0]])
+        self.S_BR = np.array(
+            [0, 1, 0, -self.measurements["wrist"][2], 0, self.measurements["wrist"][0]], dtype=np.float32
+        )
 
         # 0-position origin to centroid transform
         self.X_RoRc = self._create_translation_matrix(x=0.0035, y=-0.002)
@@ -238,7 +249,8 @@ class RobotKinematics:
                 -self.measurements["forearm"][2],
                 0,
                 self.measurements["forearm"][0],
-            ]
+            ],
+            dtype=np.float32,
         )
 
         # Forearm origin + centroid transform
@@ -261,7 +273,8 @@ class RobotKinematics:
                 self.measurements["humerus"][2],
                 0,
                 -self.measurements["humerus"][0],
-            ]
+            ],
+            dtype=np.float32,
         )
 
         # Humerus origin to centroid transform
@@ -276,7 +289,7 @@ class RobotKinematics:
 
         # Shoulder
         # Screw axis of shoulder frame wrt Base frame
-        self.S_BS = np.array([0, 0, -1, 0, 0, 0])
+        self.S_BS = np.array([0, 0, -1, 0, 0, 0], dtype=np.float32)
 
         # Shoulder origin to centroid transform
         self.X_SoSc = self._create_translation_matrix(x=-0.017, z=0.0235)
@@ -306,12 +319,12 @@ class RobotKinematics:
         """Forward kinematics for the base frame."""
         return self.X_WoBo @ self.X_BoBc @ self.base_X0
 
-    def fk_shoulder(self, robot_pos_deg):
+    def fk_shoulder(self, robot_pos_deg: NDArray[np.float32]) -> NDArray[np.float32]:
         """Forward kinematics for the shoulder frame."""
         robot_pos_rad = robot_pos_deg / 180 * np.pi
         return self.X_WoBo @ screw_axis_to_transform(self.S_BS, robot_pos_rad[0]) @ self.X_SoSc @ self.X_BS
 
-    def fk_humerus(self, robot_pos_deg):
+    def fk_humerus(self, robot_pos_deg: NDArray[np.float32]) -> NDArray[np.float32]:
         """Forward kinematics for the humerus frame."""
         robot_pos_rad = robot_pos_deg / 180 * np.pi
 
@@ -327,7 +340,7 @@ class RobotKinematics:
             @ self.X_BH
         )
 
-    def fk_forearm(self, robot_pos_deg):
+    def fk_forearm(self, robot_pos_deg: NDArray[np.float32]) -> NDArray[np.float32]:
         """Forward kinematics for the forearm frame."""
         robot_pos_rad = robot_pos_deg / 180 * np.pi
 
@@ -345,7 +358,7 @@ class RobotKinematics:
             @ self.X_BF
         )
 
-    def fk_wrist(self, robot_pos_deg):
+    def fk_wrist(self, robot_pos_deg: NDArray[np.float32]) -> NDArray[np.float32]:
         """Forward kinematics for the wrist frame."""
         robot_pos_rad = robot_pos_deg / 180 * np.pi
 
@@ -366,7 +379,7 @@ class RobotKinematics:
             @ self.wrist_X0
         )
 
-    def fk_gripper(self, robot_pos_deg):
+    def fk_gripper(self, robot_pos_deg: NDArray[np.float32]) -> NDArray[np.float32]:
         """Forward kinematics for the gripper frame."""
         robot_pos_rad = robot_pos_deg / 180 * np.pi
 
@@ -387,7 +400,7 @@ class RobotKinematics:
             @ self._fk_gripper_post
         )
 
-    def fk_gripper_tip(self, robot_pos_deg):
+    def fk_gripper_tip(self, robot_pos_deg: NDArray[np.float32]) -> NDArray[np.float32]:
         """Forward kinematics for the gripper tip frame."""
         robot_pos_rad = robot_pos_deg / 180 * np.pi
 
@@ -410,7 +423,9 @@ class RobotKinematics:
             @ self.gripper_X0
         )
 
-    def compute_jacobian(self, robot_pos_deg, fk_func=None):
+    def compute_jacobian(
+        self, robot_pos_deg: NDArray[np.float32], fk_func: Callable | None = None
+    ) -> NDArray[np.float32]:
         """Finite differences to compute the Jacobian.
         J(i, j) represents how the ith component of the end-effector's velocity changes wrt a small change
         in the jth joint's velocity.
@@ -438,7 +453,9 @@ class RobotKinematics:
             jac[:, el_ix] = Sdot
         return jac
 
-    def compute_positional_jacobian(self, robot_pos_deg, fk_func=None):
+    def compute_positional_jacobian(
+        self, robot_pos_deg: NDArray[np.float32], fk_func: Callable | None = None
+    ) -> NDArray[np.float32]:
         """Finite differences to compute the positional Jacobian.
         J(i, j) represents how the ith component of the end-effector's position changes wrt a small change
         in the jth joint's velocity.
@@ -463,7 +480,13 @@ class RobotKinematics:
             jac[:, el_ix] = Sdot
         return jac
 
-    def ik(self, current_joint_pos, desired_ee_pose, position_only=True, fk_func=None):
+    def ik(
+        self,
+        current_joint_pos: NDArray[np.float32],
+        desired_ee_pose: NDArray[np.float32],
+        position_only: bool = True,
+        fk_func: Callable | None = None,
+    ) -> NDArray[np.float32]:
         """Inverse kinematics using gradient descent.
 
         Args:
