@@ -17,6 +17,7 @@
 
 from dataclasses import dataclass, field
 
+from lerobot.common.constants import ACTION, OBS_IMAGE, OBS_STATE
 from lerobot.common.optim.optimizers import MultiAdamConfig
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import NormalizationMode
@@ -31,7 +32,7 @@ def is_image_feature(key: str) -> bool:
     Returns:
         True if the key represents an image feature, False otherwise
     """
-    return key.startswith("observation.image")
+    return key.startswith(OBS_IMAGE)
 
 
 @dataclass
@@ -102,15 +103,15 @@ class SACConfig(PreTrainedConfig):
     # Statistics for normalizing different types of inputs
     dataset_stats: dict[str, dict[str, list[float]]] | None = field(
         default_factory=lambda: {
-            "observation.image": {
+            OBS_IMAGE: {
                 "mean": [0.485, 0.456, 0.406],
                 "std": [0.229, 0.224, 0.225],
             },
-            "observation.state": {
+            OBS_STATE: {
                 "min": [0.0, 0.0],
                 "max": [1.0, 1.0],
             },
-            "action": {
+            ACTION: {
                 "min": [0.0, 0.0, 0.0],
                 "max": [1.0, 1.0, 1.0],
             },
@@ -217,7 +218,7 @@ class SACConfig(PreTrainedConfig):
 
     def validate_features(self) -> None:
         has_image = any(is_image_feature(key) for key in self.input_features)
-        has_state = "observation.state" in self.input_features
+        has_state = OBS_STATE in self.input_features
 
         if not (has_state or has_image):
             raise ValueError(
