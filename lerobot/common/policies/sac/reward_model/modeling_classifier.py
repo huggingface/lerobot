@@ -19,7 +19,7 @@ import logging
 import torch
 from torch import Tensor, nn
 
-from lerobot.common.constants import OBS_IMAGE
+from lerobot.common.constants import OBS_IMAGE, REWARD
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
@@ -226,7 +226,7 @@ class Classifier(PreTrainedPolicy):
         """Extract image tensors and label tensors from batch."""
         # Check for both OBS_IMAGE and OBS_IMAGES prefixes
         images = [batch[key] for key in self.config.input_features if key.startswith(OBS_IMAGE)]
-        labels = batch["next.reward"]
+        labels = batch[REWARD]
 
         return images, labels
 
