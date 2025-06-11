@@ -92,7 +92,7 @@ def rename_checkpoint_keys(checkpoint: dict, rename_str: str):
     Renames keys in a checkpoint dictionary based on the given rename string.
 
     Args:
-        ckpt (dict): The checkpoint dictionary.
+        checkpoint (dict): The checkpoint dictionary.
         rename_str (str): A string specifying key mappings in the format "old1//new1,old2//new2".
 
     Returns:
