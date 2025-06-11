@@ -14,7 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from queue import Queue
+import threading
+import time
+
+from torch.multiprocessing import Queue
 
 from lerobot.common.utils.queue import get_last_item_from_queue
 
@@ -66,6 +69,9 @@ def test_get_last_item_maxsize_queue():
     for i in range(5):
         queue.put(i)
 
+    # Give the queue time to fill
+    time.sleep(0.1)
+
     result = get_last_item_from_queue(queue)
 
     assert result == 4
@@ -80,7 +86,66 @@ def test_get_last_item_with_none_values():
     for item in items:
         queue.put(item)
 
+    # Give the queue time to fill
+    time.sleep(0.1)
+
     result = get_last_item_from_queue(queue)
 
     assert result == 3
+    assert queue.empty()
+
+
+def test_get_last_item_blocking_timeout():
+    """Test get_last_item_from_queue returns None on timeout."""
+    queue = Queue()
+    result = get_last_item_from_queue(queue, block=True, timeout=0.1)
+    assert result is None
+
+
+def test_get_last_item_non_blocking_empty():
+    """Test get_last_item_from_queue with block=False on an empty queue returns None."""
+    queue = Queue()
+    result = get_last_item_from_queue(queue, block=False)
+    assert result is None
+
+
+def test_get_last_item_non_blocking_success():
+    """Test get_last_item_from_queue with block=False on a non-empty queue."""
+    queue = Queue()
+    items = ["first", "second", "last"]
+    for item in items:
+        queue.put(item)
+
+    # Give the queue time to fill
+    time.sleep(0.1)
+
+    result = get_last_item_from_queue(queue, block=False)
+    assert result == "last"
+    assert queue.empty()
+
+
+def test_get_last_item_blocking_waits_for_item():
+    """Test that get_last_item_from_queue waits for an item if block=True."""
+    queue = Queue()
+    result = []
+
+    def producer():
+        queue.put("item1")
+        queue.put("item2")
+
+    def consumer():
+        # This will block until the producer puts the first item
+        item = get_last_item_from_queue(queue, block=True, timeout=0.2)
+        result.append(item)
+
+    producer_thread = threading.Thread(target=producer)
+    consumer_thread = threading.Thread(target=consumer)
+
+    producer_thread.start()
+    consumer_thread.start()
+
+    producer_thread.join()
+    consumer_thread.join()
+
+    assert result == ["item2"]
     assert queue.empty()
