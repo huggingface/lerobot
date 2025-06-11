@@ -34,8 +34,8 @@ except ImportError:
 
 
 @pytest.fixture(autouse=True)
-def set_random_seed(request):
-    seed = int(request.config.getoption("--seed"))
+def set_random_seed():
+    seed = 42
     set_seed(seed)
 
 

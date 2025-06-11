@@ -69,12 +69,3 @@ def patch_builtins_input(monkeypatch):
             print(text)
 
     monkeypatch.setattr("builtins.input", print_text)
-
-
-def pytest_addoption(parser):
-    parser.addoption(
-        "--seed",
-        action="store",
-        default="42",
-        help="Set random seed for reproducibility",
-    )
