@@ -60,7 +60,7 @@ def standardise_state_dict(
     checkpoint: Dict[str, torch.Tensor], ref_keys: set[str], *, verbose: bool = True
 ) -> Tuple[Dict[str, torch.Tensor], list[str]]:
     """
-    • Re-keys `ckpt` so that every entry matches the *reference* key set.
+    • Re-keys `checkpoint ` so that every entry matches the *reference* key set.
     • If several variant keys collapse to the same canonical name we keep the
       first one and log the collision.
     • Returns the new dict + a list of entries that could not be matched.
