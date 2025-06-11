@@ -157,7 +157,7 @@ def load_smolvla(
 
     state_dict, _ = standardise_state_dict(state_dict, set(model.state_dict().keys()))
 
-    missing, unexpected = model.load_state_dict(state_dict, strict=False)
+    missing, unexpected = model.load_state_dict(state_dict)
 
     if missing or unexpected:
         raise RuntimeError(
@@ -372,7 +372,6 @@ class SmolVLAPolicy(PreTrainedPolicy):
         return load_smolvla(
             model,
             model_file,
-            strict=strict,
             device=map_location,
             checkpoint_keys_mapping="model._orig_mod.//model.",
         )
