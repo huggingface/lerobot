@@ -21,7 +21,7 @@ conda install ffmpeg -c conda-forge
 
 ### Finetune the pretrained model
 Use [`smolvla_base`](https://hf.co/lerobot/smolvla_base), our pretrained 450M model, with the lerobot training framework:
-Training the model for 20k steps will take around 3h on A100 GPU.
+Training the model for 20k steps will take around 3h on A100 GPU.  You should increase the number of training steps based on your use-case. 
 
 Run the command below with your `repo_id` to start training.
 ```python
@@ -29,7 +29,7 @@ python lerobot/scripts/train.py \
   --policy.path=lerobot/smolvla_base \
   --dataset.repo_id=lerobot/svla_so100_stacking \
   --batch_size=64 \
-  --steps=200000
+  --steps=20000 # 10% of total training budget
 ```
 
 <p align="center">
@@ -45,7 +45,7 @@ python lerobot/scripts/train.py \
 
 ```python
 python lerobot/scripts/train.py \
-  --policy.type=smolvla \
+  --policy.type=smolvla \ 
   --dataset.repo_id=lerobot/svla_so100_stacking \
   --batch_size=64 \
   --steps=200000
@@ -76,9 +76,12 @@ Now, indicate the path to the policy, which is `lerobot/smolvla_base` in this ca
 ```python
 
 python -m lerobot.record \
-  --robot.type=so100_follower \
+  --robot.type=so101_follower \
   --robot.port=/dev/tty.usbmodem58760431541 \
-  --robot.id=my_awesome_robot \
+  --robot.id=my_blue_follower_arm \
+  --teleop.type=so101_leader \
+  --teleop.port=/dev/tty.usbmodem58FA1015821 \
+  --teleop.id=my_blue_leader_arm \
   --dataset.fps=30 \
   --dataset.single_task="Grasp a lego block and put it in the bin." \
   --dataset.repo_id=${HF_USER}/eval_svla_base_test \
@@ -90,5 +93,10 @@ python -m lerobot.record \
   --policy.path=lerobot/smolvla_base
 
 ```
-
 Depending on your evaluation setup, you can configure the duration and the number of episodes to record for your evaluation suite.
+
+**Note!**
+
+>SmolVLA was pretrained on SO100 arms and is not expected to perform well zero-shot on SO101. We strongly recommend finetuning the model on an SO101-based dataset before deployment/ running this command.
+
+>Additionally, running the base model on SO100 may also lead to issues. The codebase has undergone significant refactoring and now includes a new calibration method, which uses a different range of motions from those used during pretraining. As a result, **finetuning is essential before executing the command above and testing on a real robot.**
