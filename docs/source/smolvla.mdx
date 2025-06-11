@@ -21,7 +21,7 @@ conda install ffmpeg -c conda-forge
 
 ### Finetune the pretrained model
 Use [`smolvla_base`](https://hf.co/lerobot/smolvla_base), our pretrained 450M model, with the lerobot training framework:
-Training the model for 20k steps will take around 3h on A100 GPU.  You should increase the number of training steps based on your use-case. 
+Training the model for 20k steps will take around 3h on A100 GPU.  You should increase the number of training steps based on your use-case.
 
 Run the command below with your `repo_id` to start training.
 ```python
@@ -45,7 +45,7 @@ python lerobot/scripts/train.py \
 
 ```python
 python lerobot/scripts/train.py \
-  --policy.type=smolvla \ 
+  --policy.type=smolvla \
   --dataset.repo_id=lerobot/svla_so100_stacking \
   --batch_size=64 \
   --steps=200000
