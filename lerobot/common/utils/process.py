@@ -31,6 +31,9 @@ class ProcessSignalHandler:
     _SUPPORTED_SIGNALS = ("SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT")
 
     def __init__(self, use_threads: bool):
+        # TODO: Check if we can use Event from threading since Event from
+        # multiprocessing is the a clone of threading.Event.
+        # https://docs.python.org/3/library/multiprocessing.html#multiprocessing.Event
         if use_threads:
             from threading import Event
         else:
