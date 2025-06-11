@@ -65,7 +65,7 @@ class ProcessSignalHandler:
             # On a second Ctrl-C (or any supported signal) *force* the exit to
             # mimic the previous behaviour while giving the caller one chance to
             # shutdown gracefully.
-            if self._counter > 1:
+            if self._counter > 0:
                 logging.info("Force shutdown")
                 sys.exit(1)
 
