@@ -363,7 +363,7 @@ class GamepadControllerHID(InputController):
                 return device
 
         logging.error(
-            f"No gamepad found, check the connection and the product string in HID to add your gamepad"
+            "No gamepad found, check the connection and the product string in HID to add your gamepad"
         )
         return None
 
