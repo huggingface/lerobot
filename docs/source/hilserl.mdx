@@ -25,6 +25,19 @@ This guide provides step-by-step instructions for training a robot policy using 
 - A Nvidia GPU
 - A real robot with a follower and leader arm (optional if you use the keyboard or the gamepad)
 
+## What kind of tasks can I train?
+
+One can use HIL-SERL to train on a variety of manipulation tasks. Some recommendations:
+- Start with a simple task to understand how the system works.
+  - Push cube to a goal region
+  - Pick and lift cube with the gripper
+- Avoid extremely long horizon tasks. Focus on tasks that can be completed in 5-10 seconds.
+- Once you have a good idea of how the system works, you can try more complex tasks and longer horizons.
+  - Pick and place cube
+  - Bimanual tasks to pick objects with two arms
+  - Hand-over tasks to transfer objects from one arm to another
+  - Go crazy!
+
 ## 0. Install LeRobot with HIL-SERL
 
 To install LeRobot with HIL-SERL, you need to install the `hilserl` extra.
