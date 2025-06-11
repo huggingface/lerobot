@@ -613,3 +613,70 @@ def test_random_crop_vectorized_invalid_size():
 
     with pytest.raises(ValueError, match="Requested crop size .* is bigger than the image size"):
         random_crop_vectorized(images, (10, 10))
+
+
+def _populate_buffer_for_async_test(capacity: int = 10) -> ReplayBuffer:
+    """Create a small buffer with deterministic 3×128×128 images and 11-D state."""
+    buffer = ReplayBuffer(
+        capacity=capacity,
+        device="cpu",
+        state_keys=["observation.image", "observation.state"],
+        storage_device="cpu",
+    )
+
+    for i in range(capacity):
+        img = torch.ones(3, 128, 128) * i
+        state_vec = torch.arange(11).float() + i
+        state = {
+            "observation.image": img,
+            "observation.state": state_vec,
+        }
+        buffer.add(
+            state=state,
+            action=torch.tensor([0.0]),
+            reward=0.0,
+            next_state=state,
+            done=False,
+            truncated=False,
+        )
+    return buffer
+
+
+def test_async_iterator_shapes_basic():
+    buffer = _populate_buffer_for_async_test()
+    batch_size = 2
+    iterator = buffer.get_iterator(batch_size=batch_size, async_prefetch=True, queue_size=1)
+    batch = next(iterator)
+
+    images = batch["state"]["observation.image"]
+    states = batch["state"]["observation.state"]
+
+    assert images.shape == (batch_size, 3, 128, 128)
+    assert states.shape == (batch_size, 11)
+
+    next_images = batch["next_state"]["observation.image"]
+    next_states = batch["next_state"]["observation.state"]
+
+    assert next_images.shape == (batch_size, 3, 128, 128)
+    assert next_states.shape == (batch_size, 11)
+
+
+def test_async_iterator_multiple_iterations():
+    buffer = _populate_buffer_for_async_test()
+    batch_size = 2
+    iterator = buffer.get_iterator(batch_size=batch_size, async_prefetch=True, queue_size=2)
+
+    for _ in range(5):
+        batch = next(iterator)
+        images = batch["state"]["observation.image"]
+        states = batch["state"]["observation.state"]
+        assert images.shape == (batch_size, 3, 128, 128)
+        assert states.shape == (batch_size, 11)
+
+        next_images = batch["next_state"]["observation.image"]
+        next_states = batch["next_state"]["observation.state"]
+        assert next_images.shape == (batch_size, 3, 128, 128)
+        assert next_states.shape == (batch_size, 11)
+
+    # Ensure iterator can be disposed without blocking
+    del iterator
