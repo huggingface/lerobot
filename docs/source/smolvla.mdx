@@ -59,7 +59,8 @@ policy = SmolVLAPolicy.from_pretrained("lerobot/smolvla_base")
 
 ## Evaluate the pretrained policy and run it in real-time
 
-> **Important**
+**Important**
+
 > In the `config.json` of the pre-trained policy, set `n_action_steps` to `50` so the robot arm executes a chunk of actions in a single timestep.
 
 If you want to record the evaluation process and safe the videos on the hub, login to your HF account by running:
@@ -100,6 +101,5 @@ Depending on your evaluation setup, you can configure the duration and the numbe
 
 **Note!**
 
->SmolVLA was pretrained on SO100 arms and is not expected to perform well zero-shot on SO101. We strongly recommend finetuning the model on an SO101-based dataset before deployment/ running this command.
-
->Additionally, running the base model zero-shot on SO100 arms with the updated `lerobot` repo may also lead to issues. The codebase has undergone significant refactoring and now includes a new calibration method, which uses a different range of motions from those used during pretraining. As a result, **finetuning is essential before executing the command above and testing on a real robot.**
+> SmolVLA was pretrained on SO100 arms and is not expected to perform well zero-shot on SO101. We strongly recommend finetuning the model on an SO101-based dataset before deployment/ running this command.
+> Additionally, running the base model zero-shot on SO100 arms with the updated `lerobot` repo may also lead to issues. The codebase has undergone significant refactoring and now includes a new calibration method, which uses a different range of motions from those used during pretraining. As a result, **finetuning is essential before executing the command above and testing on a real robot.**
