@@ -672,6 +672,12 @@ def start_learner(
         init_logging(log_file=log_file, display_pid=True)
         logging.info("Learner server process logging initialized")
 
+        # Setup process handlers to handle shutdown signal
+        # But use shutdown event from the main process
+        # Return back for MP
+        # TODO: Check if its useful
+        _ = ProcessSignalHandler(False, display_pid=True)
+
     service = learner_service.LearnerService(
         shutdown_event=shutdown_event,
         parameters_queue=parameters_queue,
