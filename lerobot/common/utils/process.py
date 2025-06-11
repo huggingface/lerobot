@@ -23,11 +23,9 @@ import sys
 class ProcessSignalHandler:
     """Utility class to attach graceful shutdown signal handlers.
 
-    The class exposes a *shutdown_event* attribute that is set when a shutdown
+    The class exposes a shutdown_event attribute that is set when a shutdown
     signal is received. A counter tracks how many shutdown signals have been
-    caught. On the second signal the process exits with status 1, mirroring the
-    previous behaviour of *setup_process_handlers* but without relying on a
-    module-level mutable counter.
+    caught. On the second signal the process exits with status 1.
     """
 
     _SUPPORTED_SIGNALS = ("SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT")
