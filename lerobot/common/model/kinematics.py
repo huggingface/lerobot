@@ -51,26 +51,25 @@ def screw_axis_to_transform(s: NDArray[np.float32], theta: float) -> NDArray[np.
 def pose_difference_se3(pose1: NDArray[np.float32], pose2: NDArray[np.float32]) -> NDArray[np.float32]:
     """
     Calculates the SE(3) difference between two 4x4 homogeneous transformation matrices.
-    SE(3) (Special Euclidean Group) represents rigid body transformations in 3D space, combining rotation (SO(3)) and translation.
-    Each 4x4 matrix has the following structure, a 3x3 rotation matrix in the top-left and a 3x1 translation vector in the top-right:
+    SE(3) (Special Euclidean Group) represents rigid body transformations in 3D space,
+    combining rotation (SO(3)) and translation.
 
+    Each 4x4 matrix has the following structure:
     [R11 R12 R13 tx]
     [R21 R22 R23 ty]
     [R31 R32 R33 tz]
     [ 0   0   0   1]
 
-    where Rij is the 3x3 rotation matrix and [tx,ty,tz] is the translation vector.
-
-    pose1 - pose2
+    where R is the 3x3 rotation matrix and [tx,ty,tz] is the translation vector.
 
     Args:
         pose1: A 4x4 numpy array representing the first pose.
         pose2: A 4x4 numpy array representing the second pose.
 
     Returns:
-        A tuple (translation_diff, rotation_diff) where:
-        - translation_diff is a 3x1 numpy array representing the translational difference.
-        - rotation_diff is a 3x1 numpy array representing the rotational difference in axis-angle representation.
+        A 6D numpy array concatenating translation and rotation differences.
+        First 3 elements are the translational difference (position).
+        Last 3 elements are the rotational difference in axis-angle representation.
     """
 
     # Extract rotation matrices from poses
