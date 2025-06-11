@@ -52,11 +52,17 @@ policy = SmolVLAPolicy.from_pretrained("lerobot/smolvla_base")
 
 """
 
+import logging
 import math
+import os
+import re
 from collections import deque
 
+import packaging
+import safetensors
 import torch
 import torch.nn.functional as F  # noqa: N812
+from safetensors.torch import load_model as load_model_as_safetensor
 from torch import Tensor, nn
 from transformers import AutoProcessor
 
@@ -72,6 +78,92 @@ from lerobot.common.policies.utils import (
     populate_queues,
 )
 from lerobot.common.utils.utils import get_safe_dtype
+
+# Matches ".soNNN", optionally followed by "-something", up to the "_buffer_" marker
+_VARIANT_RE = re.compile(r"\.so\d+(?:-[\w]+)?_buffer_")
+
+
+def canonicalise(k: str) -> str:
+    """
+    Remove dataset-variant markers like '.so100-blue_' or '.so100_' from a
+    normalisation-buffer key.
+    """
+    return _VARIANT_RE.sub(".buffer_", k)
+
+
+def standardise_state_dict(
+    checkpoint: dict[str, torch.Tensor], ref_keys: set[str], *, verbose: bool = True
+) -> tuple[dict[str, torch.Tensor], list[str]]:
+    """
+    • Re-keys `checkpoint ` so that every entry matches the *reference* key set.
+    • If several variant keys collapse to the same canonical name we keep the
+      first one and log the collision.
+    • Returns the new dict + a list of entries that could not be matched.
+    """
+    out, collisions, unmatched = {}, {}, []
+
+    for k, v in checkpoint.items():
+        canon = canonicalise(k)
+        if canon in ref_keys:
+            if canon in out:  # duplicate after collapsing
+                collisions.setdefault(canon, []).append(k)
+            else:
+                out[canon] = v
+        else:
+            unmatched.append(k)
+
+    if verbose:
+        for canon, variants in collisions.items():
+            print(f"[standardise_state_dict] '{canon}'  ←  {variants}")
+        if unmatched:
+            print(f"[standardise_state_dict] kept {len(unmatched)} unmatched keys")
+
+    out.update({k: checkpoint[k] for k in unmatched})
+    return out, unmatched
+
+
+def rename_checkpoint_keys(checkpoint: dict, rename_str: str):
+    """
+    Renames keys in a checkpoint dictionary based on the given rename string.
+
+    Args:
+        checkpoint (dict): The checkpoint dictionary.
+        rename_str (str): A string specifying key mappings in the format "old1//new1,old2//new2".
+
+    Returns:
+        dict: The modified checkpoint with renamed keys.
+    """
+
+    rename_dict = dict(pair.split("//") for pair in rename_str.split(","))
+
+    new_checkpoint = {}
+    for k, v in checkpoint.items():
+        for old_key, new_key in rename_dict.items():
+            if old_key in k:
+                k = k.replace(old_key, new_key)
+        new_checkpoint[k] = v
+    return new_checkpoint
+
+
+def load_model(
+    model: torch.nn.Module,
+    filename: str | os.PathLike,
+    *,
+    strict: bool = True,
+    device: str = "cpu",
+    checkpoint_keys_mapping: str = "",
+) -> tuple[list[str], list[str]]:
+    state_dict = safetensors.torch.load_file(filename, device=device)
+
+    # Optional user-supplied renames (e.g. "model._orig_mod.//model.")
+    if checkpoint_keys_mapping and "//" in checkpoint_keys_mapping:
+        state_dict = rename_checkpoint_keys(state_dict, checkpoint_keys_mapping)
+
+    state_dict, _ = standardise_state_dict(state_dict, set(model.state_dict().keys()))
+
+    missing, unexpected = model.load_state_dict(state_dict, strict=False)
+
+    return missing, unexpected
 
 
 def create_sinusoidal_pos_embedding(
@@ -263,6 +355,43 @@ class SmolVLAPolicy(PreTrainedPolicy):
         self._queues = {
             ACTION: deque(maxlen=self.config.n_action_steps),
         }
+
+    @classmethod
+    def _load_as_safetensor(
+        cls,
+        model: "SmolVLAPolicy",
+        model_file: str,
+        map_location: str,
+        strict: bool,
+    ):
+        if packaging.version.parse(safetensors.__version__) < packaging.version.parse("0.4.3"):
+            load_model_as_safetensor(model, model_file, strict=strict)
+            if map_location != "cpu":
+                logging.warning(
+                    "Loading model weights on other devices than 'cpu' is not supported natively in your version of safetensors."
+                    " This means that the model is loaded on 'cpu' first and then copied to the device."
+                    " This leads to a slower loading time."
+                    " Please update safetensors to version 0.4.3 or above for improved performance."
+                )
+                model.to(map_location)
+        else:
+            safetensors.torch.load_model(model, model_file, strict=strict, device=map_location)
+            missing, unexpected = load_model(
+                model,
+                model_file,
+                strict=strict,
+                device=map_location,
+                checkpoint_keys_mapping="model._orig_mod.//model.",
+            )
+
+            if missing or unexpected:
+                logging.info(
+                    "SmolVLA %d missing / %d unexpected keys",
+                    len(missing),
+                    len(unexpected),
+                )
+
+        return model
 
     def get_optim_params(self) -> dict:
         return self.parameters()

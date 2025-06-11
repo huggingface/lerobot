@@ -14,13 +14,11 @@
 import abc
 import logging
 import os
-import re
 from pathlib import Path
 from typing import Type, TypeVar
 
 import packaging
 import safetensors
-import torch
 from huggingface_hub import hf_hub_download
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from huggingface_hub.errors import HfHubHTTPError
@@ -43,92 +41,6 @@ DEFAULT_POLICY_CARD = """
 This policy has been pushed to the Hub using [LeRobot](https://github.com/huggingface/lerobot):
 - Docs: {{ docs_url | default("[More Information Needed]", true) }}
 """
-
-# Matches ".soNNN", optionally followed by "-something", up to the "_buffer_" marker
-_VARIANT_RE = re.compile(r"\.so\d+(?:-[\w]+)?_buffer_")
-
-
-def canonicalise(k: str) -> str:
-    """
-    Remove dataset-variant markers like '.so100-blue_' or '.so100_' from a
-    normalisation-buffer key.
-    """
-    return _VARIANT_RE.sub(".buffer_", k)
-
-
-def standardise_state_dict(
-    checkpoint: dict[str, torch.Tensor], ref_keys: set[str], *, verbose: bool = True
-) -> tuple[dict[str, torch.Tensor], list[str]]:
-    """
-    • Re-keys `checkpoint ` so that every entry matches the *reference* key set.
-    • If several variant keys collapse to the same canonical name we keep the
-      first one and log the collision.
-    • Returns the new dict + a list of entries that could not be matched.
-    """
-    out, collisions, unmatched = {}, {}, []
-
-    for k, v in checkpoint.items():
-        canon = canonicalise(k)
-        if canon in ref_keys:
-            if canon in out:  # duplicate after collapsing
-                collisions.setdefault(canon, []).append(k)
-            else:
-                out[canon] = v
-        else:
-            unmatched.append(k)
-
-    if verbose:
-        for canon, variants in collisions.items():
-            print(f"[standardise_state_dict] '{canon}'  ←  {variants}")
-        if unmatched:
-            print(f"[standardise_state_dict] kept {len(unmatched)} unmatched keys")
-
-    out.update({k: checkpoint[k] for k in unmatched})
-    return out, unmatched
-
-
-def rename_checkpoint_keys(checkpoint: dict, rename_str: str):
-    """
-    Renames keys in a checkpoint dictionary based on the given rename string.
-
-    Args:
-        checkpoint (dict): The checkpoint dictionary.
-        rename_str (str): A string specifying key mappings in the format "old1//new1,old2//new2".
-
-    Returns:
-        dict: The modified checkpoint with renamed keys.
-    """
-
-    rename_dict = dict(pair.split("//") for pair in rename_str.split(","))
-
-    new_checkpoint = {}
-    for k, v in checkpoint.items():
-        for old_key, new_key in rename_dict.items():
-            if old_key in k:
-                k = k.replace(old_key, new_key)
-        new_checkpoint[k] = v
-    return new_checkpoint
-
-
-def load_model(
-    model: torch.nn.Module,
-    filename: str | os.PathLike,
-    *,
-    strict: bool = True,
-    device: str = "cpu",
-    checkpoint_keys_mapping: str = "",
-) -> tuple[list[str], list[str]]:
-    state_dict = safetensors.torch.load_file(filename, device=device)
-
-    # Optional user-supplied renames (e.g. "model._orig_mod.//model.")
-    if checkpoint_keys_mapping and "//" in checkpoint_keys_mapping:
-        state_dict = rename_checkpoint_keys(state_dict, checkpoint_keys_mapping)
-
-    state_dict, _ = standardise_state_dict(state_dict, set(model.state_dict().keys()))
-
-    missing, unexpected = model.load_state_dict(state_dict, strict=False)
-
-    return missing, unexpected
 
 
 class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
@@ -236,13 +148,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                 model.to(map_location)
         else:
             safetensors.torch.load_model(model, model_file, strict=strict, device=map_location)
-            missing, unexpected = load_model(
-                model,
-                model_file,
-                strict=strict,
-                device=map_location,
-                checkpoint_keys_mapping="model._orig_mod.//model.",
-            )
+
         return model
 
     # def generate_model_card(self, *args, **kwargs) -> ModelCard:
