@@ -101,13 +101,13 @@ def rename_checkpoint_keys(checkpoint: dict, rename_str: str):
 
     rename_dict = dict(pair.split("//") for pair in rename_str.split(","))
 
-    new_ckpt = {}
-    for k, v in ckpt.items():
+    new_checkpoint = {}
+    for k, v in checkpoint.items():
         for old_key, new_key in rename_dict.items():
             if old_key in k:
                 k = k.replace(old_key, new_key)
-        new_ckpt[k] = v
-    return new_ckpt
+        new_checkpoint[k] = v
+    return new_checkpoint
 
 
 def load_model(
