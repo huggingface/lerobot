@@ -22,7 +22,7 @@ from unittest.mock import patch
 
 import pytest
 
-from lerobot.common.utils.process import setup_process_handlers
+from lerobot.common.utils.process import ProcessSignalHandler
 
 
 # Fixture to reset shutdown_event_counter and original signal handlers before and after each test
@@ -34,30 +34,26 @@ def reset_globals_and_handlers():
         for sig in [signal.SIGINT, signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT]
         if hasattr(signal, sig.name)
     }
-    # Reset counter from the module
-    import lerobot.common.utils.process
-
-    lerobot.common.utils.process.shutdown_event_counter = 0
 
     yield
 
     # Restore original signal handlers
     for sig, handler in original_handlers.items():
         signal.signal(sig, handler)
-    # Reset counter again to be safe
-    lerobot.common.utils.process.shutdown_event_counter = 0
 
 
 def test_setup_process_handlers_event_with_threads():
     """Test that setup_process_handlers returns the correct event type."""
-    shutdown_event = setup_process_handlers(use_threads=True)
+    handler = ProcessSignalHandler(use_threads=True)
+    shutdown_event = handler.shutdown_event
     assert isinstance(shutdown_event, threading.Event), "Should be a threading.Event"
     assert not shutdown_event.is_set(), "Event should initially be unset"
 
 
 def test_setup_process_handlers_event_with_processes():
     """Test that setup_process_handlers returns the correct event type."""
-    shutdown_event = setup_process_handlers(use_threads=False)
+    handler = ProcessSignalHandler(use_threads=False)
+    shutdown_event = handler.shutdown_event
     assert isinstance(shutdown_event, type(multiprocessing.Event())), "Should be a multiprocessing.Event"
     assert not shutdown_event.is_set(), "Event should initially be unset"
 
@@ -81,10 +77,10 @@ def test_setup_process_handlers_event_with_processes():
 )
 def test_signal_handler_sets_event(use_threads, sig):
     """Test that the signal handler sets the event on receiving a signal."""
-    shutdown_event = setup_process_handlers(use_threads=use_threads)
-    import lerobot.common.utils.process
+    handler = ProcessSignalHandler(use_threads=use_threads)
+    shutdown_event = handler.shutdown_event
 
-    assert lerobot.common.utils.process.shutdown_event_counter == 0
+    assert handler.counter == 0
 
     os.kill(os.getpid(), sig)
 
@@ -93,13 +89,15 @@ def test_signal_handler_sets_event(use_threads, sig):
 
     assert shutdown_event.is_set(), f"Event should be set after receiving signal {sig}"
 
+    # Ensure the internal counter was incremented
+    assert handler.counter == 1
+
 
 @pytest.mark.parametrize("use_threads", [True, False])
 @patch("sys.exit")
 def test_force_shutdown_on_second_signal(mock_sys_exit, use_threads):
     """Test that a second signal triggers a force shutdown."""
-    setup_process_handlers(use_threads=use_threads)
-    import lerobot.common.utils.process
+    handler = ProcessSignalHandler(use_threads=use_threads)
 
     os.kill(os.getpid(), signal.SIGINT)
     # Give a moment for the first signal to be processed
@@ -110,5 +108,5 @@ def test_force_shutdown_on_second_signal(mock_sys_exit, use_threads):
 
     time.sleep(0.1)
 
-    assert lerobot.common.utils.process.shutdown_event_counter == 2
+    assert handler.counter == 2
     mock_sys_exit.assert_called_once_with(1)

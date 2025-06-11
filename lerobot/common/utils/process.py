@@ -19,35 +19,58 @@ import logging
 import signal
 import sys
 
-shutdown_event_counter = 0
 
+class ProcessSignalHandler:
+    """Utility class to attach graceful shutdown signal handlers.
 
-def setup_process_handlers(use_threads: bool) -> any:
-    if use_threads:
-        from threading import Event
-    else:
-        from multiprocessing import Event
+    The class exposes a *shutdown_event* attribute that is set when a shutdown
+    signal is received. A counter tracks how many shutdown signals have been
+    caught. On the second signal the process exits with status 1, mirroring the
+    previous behaviour of *setup_process_handlers* but without relying on a
+    module-level mutable counter.
+    """
 
-    shutdown_event = Event()
+    _SUPPORTED_SIGNALS = ("SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT")
 
-    # Define signal handler
-    def signal_handler(signum, frame):
-        logging.info("Shutdown signal received. Cleaning up...")
-        shutdown_event.set()
-        global shutdown_event_counter
-        shutdown_event_counter += 1
+    def __init__(self, use_threads: bool):
+        if use_threads:
+            from threading import Event
+        else:
+            from multiprocessing import Event
 
-        if shutdown_event_counter > 1:
-            logging.info("Force shutdown")
-            sys.exit(1)
+        self.shutdown_event = Event()
+        self._counter: int = 0
 
-    signal.signal(signal.SIGINT, signal_handler)  # Ctrl+C
-    signal.signal(signal.SIGTERM, signal_handler)  # Termination request (kill)
-    signal.signal(signal.SIGHUP, signal_handler)  # Terminal closed/Hangup
-    signal.signal(signal.SIGQUIT, signal_handler)  # Ctrl+\
+        self._register_handlers()
 
-    def signal_handler(signum, frame):
-        logging.info("Shutdown signal received. Cleaning up...")
-        shutdown_event.set()
+    @property
+    def counter(self) -> int:  # pragma: no cover – simple accessor
+        """Number of shutdown signals that have been intercepted."""
+        return self._counter
 
-    return shutdown_event
+    def _register_handlers(self):  # noqa: D401 – not a docstring oriented helper
+        """Attach the internal *_signal_handler* to a subset of POSIX signals."""
+
+        def _signal_handler(signum, frame):  # noqa: D401, unused-argument (frame)
+            logging.info(f"Shutdown signal {signum} received. Cleaning up…")
+            self.shutdown_event.set()
+            self._counter += 1
+
+            # On a second Ctrl-C (or any supported signal) *force* the exit to
+            # mimic the previous behaviour while giving the caller one chance to
+            # shutdown gracefully.
+            if self._counter > 1:
+                logging.info("Force shutdown")
+                sys.exit(1)
+
+        for sig_name in self._SUPPORTED_SIGNALS:
+            sig = getattr(signal, sig_name, None)
+            if sig is None:
+                # The signal is not available on this platform (Windows for
+                # instance does not provide SIGHUP, SIGQUIT…). Skip it.
+                continue
+            try:
+                signal.signal(sig, _signal_handler)
+            except (ValueError, OSError):  # pragma: no cover – unlikely but safe
+                # Signal not supported or we are in a non-main thread.
+                continue

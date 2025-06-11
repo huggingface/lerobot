@@ -110,7 +110,7 @@ from lerobot.common.transport.utils import (
     state_to_bytes,
 )
 from lerobot.common.utils.buffer import ReplayBuffer, concatenate_batch_transitions
-from lerobot.common.utils.process import setup_process_handlers
+from lerobot.common.utils.process import ProcessSignalHandler
 from lerobot.common.utils.random_utils import set_seed
 from lerobot.common.utils.train_utils import (
     get_step_checkpoint_dir,
@@ -203,7 +203,8 @@ def train(cfg: TrainRLServerPipelineConfig, job_name: str | None = None):
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
 
-    shutdown_event = setup_process_handlers(use_threads(cfg))
+    process_handler = ProcessSignalHandler(use_threads(cfg))
+    shutdown_event = process_handler.shutdown_event
 
     start_learner_threads(
         cfg=cfg,
@@ -673,7 +674,7 @@ def start_learner(
         # Setup process handlers to handle shutdown signal
         # But use shutdown event from the main process
         # Return back for MP
-        setup_process_handlers(False)
+        _ = ProcessSignalHandler(False)
 
     service = learner_service.LearnerService(
         shutdown_event=shutdown_event,

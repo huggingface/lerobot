@@ -93,7 +93,7 @@ from lerobot.common.transport.utils import (
     send_bytes_in_chunks,
     transitions_to_bytes,
 )
-from lerobot.common.utils.process import setup_process_handlers
+from lerobot.common.utils.process import ProcessSignalHandler
 from lerobot.common.utils.queue import get_last_item_from_queue
 from lerobot.common.utils.random_utils import set_seed
 from lerobot.common.utils.robot_utils import busy_wait
@@ -139,7 +139,8 @@ def actor_cli(cfg: TrainRLServerPipelineConfig):
     init_logging(log_file=log_file, display_pid=display_pid)
     logging.info(f"Actor logging initialized, writing to {log_file}")
 
-    shutdown_event = setup_process_handlers(use_threads(cfg))
+    process_handler = ProcessSignalHandler(use_threads(cfg))
+    shutdown_event = process_handler.shutdown_event
 
     learner_client, grpc_channel = learner_service_client(
         host=cfg.policy.actor_learner_config.learner_host,
@@ -491,7 +492,7 @@ def receive_policy(
 
         # Setup process handlers to handle shutdown signal
         # But use shutdown event from the main process
-        setup_process_handlers(use_threads=False)
+        _ = ProcessSignalHandler(use_threads=False)
 
     if grpc_channel is None or learner_client is None:
         learner_client, grpc_channel = learner_service_client(
@@ -546,7 +547,7 @@ def send_transitions(
 
         # Setup process handlers to handle shutdown signal
         # But use shutdown event from the main process
-        setup_process_handlers(False)
+        _ = ProcessSignalHandler(False)
 
     if grpc_channel is None or learner_client is None:
         learner_client, grpc_channel = learner_service_client(
@@ -599,7 +600,7 @@ def send_interactions(
 
         # Setup process handlers to handle shutdown signal
         # But use shutdown event from the main process
-        setup_process_handlers(False)
+        _ = ProcessSignalHandler(False)
 
     if grpc_channel is None or learner_client is None:
         learner_client, grpc_channel = learner_service_client(
