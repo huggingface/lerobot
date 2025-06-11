@@ -22,7 +22,7 @@ from torch import Tensor, nn
 
 from lerobot.common.policies.sac.configuration_sac import SACConfig
 from lerobot.common.policies.sac.modeling_sac import MLP, SACPolicy
-from lerobot.common.utils.random_utils import seeded_context
+from lerobot.common.utils.random_utils import seeded_context, set_seed
 from lerobot.configs.types import FeatureType, PolicyFeature
 
 try:
@@ -31,6 +31,12 @@ try:
     TRANSFORMERS_AVAILABLE = True
 except ImportError:
     TRANSFORMERS_AVAILABLE = False
+
+
+@pytest.fixture(autouse=True)
+def set_random_seed(request):
+    seed = int(request.config.getoption("--seed"))
+    set_seed(seed)
 
 
 def test_mlp_with_default_args():
