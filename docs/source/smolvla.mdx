@@ -59,6 +59,9 @@ policy = SmolVLAPolicy.from_pretrained("lerobot/smolvla_base")
 
 ## Evaluate the pretrained policy and run it in real-time
 
+> **Important**
+> In the `config.json` of the pre-trained policy, set `n_action_steps` to `50` so the robot arm executes a chunk of actions in a single timestep.
+
 If you want to record the evaluation process and safe the videos on the hub, login to your HF account by running:
 
 ```python
