@@ -99,4 +99,4 @@ Depending on your evaluation setup, you can configure the duration and the numbe
 
 >SmolVLA was pretrained on SO100 arms and is not expected to perform well zero-shot on SO101. We strongly recommend finetuning the model on an SO101-based dataset before deployment/ running this command.
 
->Additionally, running the base model on SO100 may also lead to issues. The codebase has undergone significant refactoring and now includes a new calibration method, which uses a different range of motions from those used during pretraining. As a result, **finetuning is essential before executing the command above and testing on a real robot.**
+>Additionally, running the base model zero-shot on SO100 arms with the updated `lerobot` repo may also lead to issues. The codebase has undergone significant refactoring and now includes a new calibration method, which uses a different range of motions from those used during pretraining. As a result, **finetuning is essential before executing the command above and testing on a real robot.**
