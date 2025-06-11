@@ -13,11 +13,6 @@
     title: Use SmolVLA
   title: "Tutorials"
 - sections:
-<<<<<<< HEAD
-  - local: smolvla
-    title: Use SmolVLA
-  title: "Policies"
-=======
   - local: so101
     title: SO-101
   - local: so100
@@ -33,4 +28,3 @@
   - local: backwardcomp
     title: Backward compatibility
   title: "About"
->>>>>>> 7766f2447ae13f18ebe0fc750661143f7568cf43
