@@ -66,7 +66,7 @@ Before collecting demonstrations, you need to determine the appropriate operatio
 
 This helps simplify the problem of learning on the real robot in two ways: 1) by limiting the robot's operational space to a specific region that solves the task and avoids unnecessary or unsafe exploration, and 2) by allowing training in end-effector space rather than joint space. Empirically, learning in joint space for reinforcement learning in manipulation is often a harder problem - some tasks are nearly impossible to learn in joint space but become learnable when the action space is transformed to end-effector coordinates.
 
-#### 1.2.1 Using find_joint_limits.py
+**Using find_joint_limits.py**
 
 This script helps you find the safe operational bounds for your robot's end-effector. Given that you have a follower and leader arm, you can use the script to find the bounds for the follower arm that will be applied during training.
 Bounding the action space will reduce the redundant exploration of the agent and guarantees safety.
@@ -81,7 +81,7 @@ python -m lerobot.scripts.find_joint_limits \
     --teleop.id=blue
 ```
 
-#### 1.2.2 Workflow
+**Workflow**
 
 1. Run the script and move the robot through the space that solves the task
 2. The script will record the minimum and maximum end-effector positions and the joint angles and prints them to the console, for example:
@@ -93,7 +93,7 @@ python -m lerobot.scripts.find_joint_limits \
    ```
 3. Use these values in the configuration of your teleoperation device (TeleoperatorConfig) under the `end_effector_bounds` field
 
-#### 1.2.3 Example Configuration
+**Example Configuration**
 
 ```json
 "end_effector_bounds": {
@@ -106,7 +106,7 @@ python -m lerobot.scripts.find_joint_limits \
 
 With the bounds defined, you can safely collect demonstrations for training. Training RL with off-policy algorithm allows us to use offline datasets collected in order to improve the efficiency of the learning process.
 
-#### 1.3.1 Setting Up Record Mode
+**Setting Up Record Mode**
 
 Create a configuration file for recording demonstrations (or edit an existing one like [env_config_so100.json](https://huggingface.co/datasets/aractingi/lerobot-example-config-files/blob/main/env_config_so100.json)):
 
@@ -127,7 +127,7 @@ Example configuration section:
 "push_to_hub": true
 ```
 
-#### 1.3.2 Gamepad Controls
+**Gamepad Controls**
 
 <p align="center">
   <img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/gamepad_guide.jpg?raw=true" alt="Figure shows the control mappings on a Logitech gamepad." title="Gamepad Control Mapping" width="100%"></img>
@@ -135,7 +135,7 @@ Example configuration section:
 <p align="center"><i>Gamepad button mapping for robot control and episode management</i></p>
 
 
-#### 1.3.3 Recording Demonstrations
+**Recording Demonstrations**
 
 Start the recording process, an example of the config file can be found [here](https://huggingface.co/datasets/aractingi/lerobot-example-config-files/blob/main/env_config_so100.json):
 
@@ -167,7 +167,7 @@ Visual RL algorithms learn directly from pixel inputs, making them vulnerable to
 
 Note: If you already know the crop parameters, you can skip this step and just set the `crop_params_dict` in the configuration file during recording.
 
-#### 1.4.1 Determining Crop Parameters
+**Determining Crop Parameters**
 
 Use the `crop_dataset_roi.py` script to interactively select regions of interest in your camera images:
 
@@ -195,7 +195,7 @@ observation.images.front: [180, 250, 120, 150]
 <p align="center"><i>Interactive cropping tool for selecting regions of interest</i></p>
 
 
-#### 1.4.2 Updating Configuration
+**Updating Configuration**
 
 Add these crop parameters to your training configuration:
 
@@ -211,7 +211,7 @@ Add these crop parameters to your training configuration:
 
 The LeRobot system uses a distributed actor-learner architecture for training. This architecture decouples robot interactions from the learning process, allowing them to run concurrently without blocking each other. The actor server handles robot observations and actions, sending interaction data to the learner server. The learner server performs gradient descent and periodically updates the actor's policy weights. You will need to start two processes: a learner and an actor.
 
-#### 1.5.1 Configuration Setup
+**Configuration Setup**
 
 Create a training configuration file (example available [here](https://huggingface.co/datasets/aractingi/lerobot-example-config-files/blob/main/train_config_hilserl_so100.json)). The training config is based on the main `TrainRLServerPipelineConfig` class in `lerobot/configs/train.py`.
 
@@ -221,7 +221,7 @@ Create a training configuration file (example available [here](https://huggingfa
 4. Check the other parameters related to SAC in [configuration_sac.py](https://github.com/huggingface/lerobot/blob/19bb621a7d0a31c20cd3cc08b1dbab68d3031454/lerobot/common/policies/sac/configuration_sac.py#L79).
 5. Verify that the `policy` config is correct with the right `input_features` and `output_features` for your task.
 
-#### 1.5.2 Starting the Learner
+**Starting the Learner**
 
 First, start the learner server process:
 
@@ -235,7 +235,7 @@ The learner:
 - Opens a gRPC server to communicate with actors
 - Processes transitions and updates the policy
 
-#### 1.5.3 Starting the Actor
+**Starting the Actor**
 
 In a separate terminal, start the actor process with the same configuration:
 
@@ -250,7 +250,7 @@ The actor:
 - Sends transitions to the learner
 - Receives updated policy parameters
 
-#### 1.5.4 Training Flow
+**Training Flow**
 
 The training proceeds automatically:
 
@@ -260,7 +260,7 @@ The training proceeds automatically:
 4. Updated policy parameters are sent back to the actor
 5. The process continues until the specified step limit is reached
 
-#### 1.5.5 Human in the Loop
+**Human in the Loop**
 
 - The key to learning efficiently is to have human interventions to provide corrective feedback and completing the task to aide the policy learning and exploration.
 - To perform human interventions, you can press the upper right trigger button on the gamepad. This will pause the policy actions and allow you to take over.
@@ -276,7 +276,7 @@ The training proceeds automatically:
 - The orange curve is an experiment without any human interventions. While the pink and blue curves are experiments with human interventions.
 - We can observe that the number of steps where the policy starts achieving the maximum reward is cut by a quarter when human interventions are present.
 
-#### 1.5.6 Guide to Human Interventions
+**Guide to Human Interventions**
 The strategy to follow is to intervene heavily at the start of training and then reduce the amount of interventions as the training progresses. Some tips and hints:
 - Interevene for almost the length of the entire episode at the first few episodes.
 - When the policy is less chaotic, gradually reduce the intervention time during one episode and let the policy explore for a longer time.
@@ -304,7 +304,7 @@ To collect a dataset, you need to modify some parameters in the environment conf
 python lerobot/scripts/rl/gym_manipulator.py --config_path lerobot/configs/reward_classifier_train_config.json
 ```
 
-#### 2.1.1 Key Parameters for Data Collection:
+**Key Parameters for Data Collection**
 
 - **mode**: set it to `"record"` to collect a dataset
 - **repo_id**: `"hf_username/dataset_name"`, name of the dataset and repo on the hub
