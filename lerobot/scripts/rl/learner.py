@@ -203,7 +203,8 @@ def train(cfg: TrainRLServerPipelineConfig, job_name: str | None = None):
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
 
-    process_handler = ProcessSignalHandler(use_threads(cfg))
+    is_threaded = use_threads(cfg)
+    process_handler = ProcessSignalHandler(use_threads=is_threaded, display_pid=display_pid)
     shutdown_event = process_handler.shutdown_event
 
     start_learner_threads(
@@ -674,7 +675,7 @@ def start_learner(
         # Setup process handlers to handle shutdown signal
         # But use shutdown event from the main process
         # Return back for MP
-        _ = ProcessSignalHandler(False)
+        _ = ProcessSignalHandler(False, display_pid=True)
 
     service = learner_service.LearnerService(
         shutdown_event=shutdown_event,

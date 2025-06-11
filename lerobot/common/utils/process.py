@@ -16,6 +16,7 @@
 # limitations under the License.
 
 import logging
+import os
 import signal
 import sys
 
@@ -30,7 +31,7 @@ class ProcessSignalHandler:
 
     _SUPPORTED_SIGNALS = ("SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT")
 
-    def __init__(self, use_threads: bool):
+    def __init__(self, use_threads: bool, display_pid: bool = False):
         # TODO: Check if we can use Event from threading since Event from
         # multiprocessing is the a clone of threading.Event.
         # https://docs.python.org/3/library/multiprocessing.html#multiprocessing.Event
@@ -41,6 +42,7 @@ class ProcessSignalHandler:
 
         self.shutdown_event = Event()
         self._counter: int = 0
+        self._display_pid = display_pid
 
         self._register_handlers()
 
@@ -49,11 +51,14 @@ class ProcessSignalHandler:
         """Number of shutdown signals that have been intercepted."""
         return self._counter
 
-    def _register_handlers(self):  # noqa: D401 – not a docstring oriented helper
-        """Attach the internal *_signal_handler* to a subset of POSIX signals."""
+    def _register_handlers(self):
+        """Attach the internal _signal_handler to a subset of POSIX signals."""
 
-        def _signal_handler(signum, frame):  # noqa: D401, unused-argument (frame)
-            logging.info(f"Shutdown signal {signum} received. Cleaning up…")
+        def _signal_handler(signum, frame):
+            pid_str = ""
+            if self._display_pid:
+                pid_str = f"[PID: {os.getpid()}]"
+            logging.info(f"{pid_str} Shutdown signal {signum} received. Cleaning up…")
             self.shutdown_event.set()
             self._counter += 1
 

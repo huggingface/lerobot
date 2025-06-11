@@ -139,7 +139,8 @@ def actor_cli(cfg: TrainRLServerPipelineConfig):
     init_logging(log_file=log_file, display_pid=display_pid)
     logging.info(f"Actor logging initialized, writing to {log_file}")
 
-    process_handler = ProcessSignalHandler(use_threads(cfg))
+    is_threaded = use_threads(cfg)
+    process_handler = ProcessSignalHandler(is_threaded, display_pid=display_pid)
     shutdown_event = process_handler.shutdown_event
 
     learner_client, grpc_channel = learner_service_client(
@@ -492,7 +493,7 @@ def receive_policy(
 
         # Setup process handlers to handle shutdown signal
         # But use shutdown event from the main process
-        _ = ProcessSignalHandler(use_threads=False)
+        _ = ProcessSignalHandler(use_threads=False, display_pid=True)
 
     if grpc_channel is None or learner_client is None:
         learner_client, grpc_channel = learner_service_client(
@@ -545,10 +546,6 @@ def send_transitions(
         init_logging(log_file=log_file, display_pid=True)
         logging.info("Actor transitions process logging initialized")
 
-        # Setup process handlers to handle shutdown signal
-        # But use shutdown event from the main process
-        _ = ProcessSignalHandler(False)
-
     if grpc_channel is None or learner_client is None:
         learner_client, grpc_channel = learner_service_client(
             host=cfg.policy.actor_learner_config.learner_host,
@@ -600,7 +597,7 @@ def send_interactions(
 
         # Setup process handlers to handle shutdown signal
         # But use shutdown event from the main process
-        _ = ProcessSignalHandler(False)
+        _ = ProcessSignalHandler(use_threads=False, display_pid=True)
 
     if grpc_channel is None or learner_client is None:
         learner_client, grpc_channel = learner_service_client(
