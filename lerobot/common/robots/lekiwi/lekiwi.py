@@ -65,8 +65,8 @@ class LeKiwi(Robot):
                 "arm_gripper": Motor(6, "sts3215", MotorNormMode.RANGE_0_100),
                 # base
                 "base_left_wheel": Motor(7, "sts3215", MotorNormMode.RANGE_M100_100),
-                "base_right_wheel": Motor(8, "sts3215", MotorNormMode.RANGE_M100_100),
-                "base_back_wheel": Motor(9, "sts3215", MotorNormMode.RANGE_M100_100),
+                "base_back_wheel": Motor(8, "sts3215", MotorNormMode.RANGE_M100_100),
+                "base_right_wheel": Motor(9, "sts3215", MotorNormMode.RANGE_M100_100),
             },
             calibration=self.calibration,
         )
@@ -249,7 +249,7 @@ class LeKiwi(Robot):
         velocity_vector = np.array([x, y, theta_rad])
 
         # Define the wheel mounting angles with a -90° offset.
-        angles = np.radians(np.array([240, 120, 0]) - 90)
+        angles = np.radians(np.array([240, 0, 120]) - 90)
         # Build the kinematic matrix: each row maps body velocities to a wheel’s linear speed.
         # The third column (base_radius) accounts for the effect of rotation.
         m = np.array([[np.cos(a), np.sin(a), base_radius] for a in angles])
@@ -316,7 +316,7 @@ class LeKiwi(Robot):
         wheel_linear_speeds = wheel_radps * wheel_radius
 
         # Define the wheel mounting angles with a -90° offset.
-        angles = np.radians(np.array([240, 120, 0]) - 90)
+        angles = np.radians(np.array([240, 0, 120]) - 90)
         m = np.array([[np.cos(a), np.sin(a), base_radius] for a in angles])
 
         # Solve the inverse kinematics: body_velocity = M⁻¹ · wheel_linear_speeds.
