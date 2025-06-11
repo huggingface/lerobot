@@ -14,8 +14,9 @@
 import abc
 import logging
 import os
+import re
 from pathlib import Path
-from typing import Tuple, Type, TypeVar
+from typing import Dict, Tuple, Type, TypeVar
 
 import packaging
 import safetensors
@@ -42,9 +43,6 @@ DEFAULT_POLICY_CARD = """
 This policy has been pushed to the Hub using [LeRobot](https://github.com/huggingface/lerobot):
 - Docs: {{ docs_url | default("[More Information Needed]", true) }}
 """
-
-import re
-from typing import Dict
 
 # Matches ".soNNN", optionally followed by "-something", up to the "_buffer_" marker
 _VARIANT_RE = re.compile(r"\.so\d+(?:-[\w]+)?_buffer_")
@@ -85,8 +83,6 @@ def standardise_state_dict(
         if unmatched:
             print(f"[standardise_state_dict] kept {len(unmatched)} unmatched keys")
 
-    # we return *all* tensors (matched + unmatched) so nothing is lost;
-    # load_state_dict(strict=False) will silently ignore the extras.
     out.update({k: ckpt[k] for k in unmatched})
     return out, unmatched
 
@@ -102,16 +98,15 @@ def rename_checkpoint_keys(ckpt, rename_str):
     Returns:
         dict: The modified checkpoint with renamed keys.
     """
-    # Parse the rename string into a dictionary
+
     rename_dict = dict(pair.split("//") for pair in rename_str.split(","))
 
-    # Rename keys
     new_ckpt = {}
     for k, v in ckpt.items():
         for old_key, new_key in rename_dict.items():
-            if old_key in k:  # Replace only if old_key is found in the original key
+            if old_key in k:
                 k = k.replace(old_key, new_key)
-        new_ckpt[k] = v  # Store the modified key-value pair
+        new_ckpt[k] = v
     return new_ckpt
 
 
@@ -129,17 +124,10 @@ def load_model(
     if checkpoint_keys_mapping and "//" in checkpoint_keys_mapping:
         state_dict = rename_checkpoint_keys(state_dict, checkpoint_keys_mapping)
 
-    # ***** NEW: canonicalise all variant keys *****
     state_dict, _ = standardise_state_dict(state_dict, set(model.state_dict().keys()))
-    # **********************************************
-
-    model_state_dict = model.state_dict()
-    to_removes = safetensors.torch._remove_duplicate_names(
-        model_state_dict, preferred_names=state_dict.keys()
-    )
 
     missing, unexpected = model.load_state_dict(state_dict, strict=False)
-    # … unchanged error-reporting block …
+
     return missing, unexpected
 
 
