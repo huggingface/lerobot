@@ -91,10 +91,10 @@ class LeKiwiClient(Robot):
         return tuple(self._state_ft.keys())
 
     @cached_property
-    def _cameras_ft(self) -> dict[str, tuple]:
+    def _cameras_ft(self) -> dict[str, tuple[int, int, int]]:
         return {
-            "front": (480, 640, 3),
-            "wrist": (640, 480, 3),
+            f"observation.images.{name}": (cfg.height, cfg.width, 3)
+            for name, cfg in self.config.cameras.items()
         }
 
     @cached_property
