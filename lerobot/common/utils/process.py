@@ -62,9 +62,6 @@ class ProcessSignalHandler:
             self.shutdown_event.set()
             self._counter += 1
 
-            # On a second Ctrl-C (or any supported signal) *force* the exit to
-            # mimic the previous behaviour while giving the caller one chance to
-            # shutdown gracefully.
             logging.info("Force shutdown")
             sys.exit(1)
 
