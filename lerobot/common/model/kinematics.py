@@ -31,21 +31,27 @@ def rodrigues_rotation(w: NDArray[np.float32], theta: float) -> NDArray[np.float
 
 def screw_axis_to_transform(s: NDArray[np.float32], theta: float) -> NDArray[np.float32]:
     """Converts a screw axis to a 4x4 transformation matrix."""
-    S_w = s[:3]  # noqa: N806
-    S_v = s[3:]  # noqa: N806
-    if np.allclose(S_w, 0) and np.linalg.norm(S_v) == 1:  # Pure translation
-        transformation_matrix = np.eye(4)  # noqa: N806
-        transformation_matrix[:3, 3] = S_v * theta
-    elif np.linalg.norm(S_w) == 1:  # Rotation and translation
-        w_hat = skew_symmetric(S_w)
-        R = np.eye(3) + np.sin(theta) * w_hat + (1 - np.cos(theta)) * w_hat @ w_hat  # noqa: N806
-        t = (np.eye(3) * theta + (1 - np.cos(theta)) * w_hat + (theta - np.sin(theta)) * w_hat @ w_hat) @ S_v
-        transformation_matrix = np.eye(4)  # noqa: N806
-        transformation_matrix[:3, :3] = R
-        transformation_matrix[:3, 3] = t
+    screw_axis_rot = s[:3]
+    screw_axis_trans = s[3:]
+
+    # Pure translation
+    if np.allclose(screw_axis_rot, 0) and np.linalg.norm(screw_axis_trans) == 1:
+        transform = np.eye(4)
+        transform[:3, 3] = screw_axis_trans * theta
+
+    # Rotation (and potentially translation)
+    elif np.linalg.norm(screw_axis_rot) == 1:
+        w_hat = skew_symmetric(screw_axis_rot)
+        rot_mat = np.eye(3) + np.sin(theta) * w_hat + (1 - np.cos(theta)) * w_hat @ w_hat
+        t = (
+            np.eye(3) * theta + (1 - np.cos(theta)) * w_hat + (theta - np.sin(theta)) * w_hat @ w_hat
+        ) @ screw_axis_trans
+        transform = np.eye(4)
+        transform[:3, :3] = rot_mat
+        transform[:3, 3] = t
     else:
         raise ValueError("Invalid screw axis parameters")
-    return transformation_matrix
+    return transform
 
 
 def pose_difference_se3(pose1: NDArray[np.float32], pose2: NDArray[np.float32]) -> NDArray[np.float32]:
@@ -71,27 +77,26 @@ def pose_difference_se3(pose1: NDArray[np.float32], pose2: NDArray[np.float32]) 
         First 3 elements are the translational difference (position).
         Last 3 elements are the rotational difference in axis-angle representation.
     """
+    rot1 = pose1[:3, :3]
+    rot2 = pose2[:3, :3]
 
-    # Extract rotation matrices from poses
-    R1 = pose1[:3, :3]  # noqa: N806
-    R2 = pose2[:3, :3]  # noqa: N806
-
-    # Calculate translational difference
     translation_diff = pose1[:3, 3] - pose2[:3, 3]
 
     # Calculate rotational difference using scipy's Rotation library
-    R_diff = Rotation.from_matrix(R1 @ R2.T)  # noqa: N806
-    rotation_diff = R_diff.as_rotvec()  # Convert to axis-angle representation
+    rot_diff = Rotation.from_matrix(rot1 @ rot2.T)
+    rotation_diff = rot_diff.as_rotvec()  # Axis-angle representation
 
     return np.concatenate([translation_diff, rotation_diff])
 
 
 def se3_error(target_pose: NDArray[np.float32], current_pose: NDArray[np.float32]) -> NDArray[np.float32]:
     pos_error = target_pose[:3, 3] - current_pose[:3, 3]
-    R_target = target_pose[:3, :3]  # noqa: N806
-    R_current = current_pose[:3, :3]  # noqa: N806
-    R_error = R_target @ R_current.T  # noqa: N806
-    rot_error = Rotation.from_matrix(R_error).as_rotvec()
+
+    rot_target = target_pose[:3, :3]
+    rot_current = current_pose[:3, :3]
+    rot_error_mat = rot_target @ rot_current.T
+    rot_error = Rotation.from_matrix(rot_error_mat).as_rotvec()
+
     return np.concatenate([pos_error, rot_error])
 
 
@@ -403,14 +408,14 @@ class RobotKinematics:
         for el_ix in range(len(robot_pos_deg[:-1])):
             delta *= 0
             delta[el_ix] = eps / 2
-            Sdot = (  # noqa: N806
+            sdot = (
                 pose_difference_se3(
                     self.forward_kinematics(robot_pos_deg[:-1] + delta, frame),
                     self.forward_kinematics(robot_pos_deg[:-1] - delta, frame),
                 )
                 / eps
             )
-            jac[:, el_ix] = Sdot
+            jac[:, el_ix] = sdot
         return jac
 
     def compute_positional_jacobian(
@@ -430,14 +435,11 @@ class RobotKinematics:
         for el_ix in range(len(robot_pos_deg[:-1])):
             delta *= 0
             delta[el_ix] = eps / 2
-            Sdot = (  # noqa: N806
-                (
-                    self.forward_kinematics(robot_pos_deg[:-1] + delta, frame)[:3, 3]
-                    - self.forward_kinematics(robot_pos_deg[:-1] - delta, frame)[:3, 3]
-                )
-                / eps
-            )
-            jac[:, el_ix] = Sdot
+            sdot = (
+                self.forward_kinematics(robot_pos_deg[:-1] + delta, frame)[:3, 3]
+                - self.forward_kinematics(robot_pos_deg[:-1] - delta, frame)[:3, 3]
+            ) / eps
+            jac[:, el_ix] = sdot
         return jac
 
     def ik(
