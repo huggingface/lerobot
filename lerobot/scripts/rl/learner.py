@@ -204,8 +204,7 @@ def train(cfg: TrainRLServerPipelineConfig, job_name: str | None = None):
     torch.backends.cuda.matmul.allow_tf32 = True
 
     is_threaded = use_threads(cfg)
-    process_handler = ProcessSignalHandler(use_threads=is_threaded, display_pid=display_pid)
-    shutdown_event = process_handler.shutdown_event
+    shutdown_event = ProcessSignalHandler(is_threaded, display_pid=display_pid).shutdown_event
 
     start_learner_threads(
         cfg=cfg,

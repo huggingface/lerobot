@@ -140,8 +140,7 @@ def actor_cli(cfg: TrainRLServerPipelineConfig):
     logging.info(f"Actor logging initialized, writing to {log_file}")
 
     is_threaded = use_threads(cfg)
-    process_handler = ProcessSignalHandler(is_threaded, display_pid=display_pid)
-    shutdown_event = process_handler.shutdown_event
+    shutdown_event = ProcessSignalHandler(is_threaded, display_pid=display_pid).shutdown_event
 
     learner_client, grpc_channel = learner_service_client(
         host=cfg.policy.actor_learner_config.learner_host,
