@@ -16,7 +16,7 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Dict, Tuple, Type, TypeVar
+from typing import Type, TypeVar
 
 import packaging
 import safetensors
@@ -57,8 +57,8 @@ def canonicalise(k: str) -> str:
 
 
 def standardise_state_dict(
-    checkpoint: Dict[str, torch.Tensor], ref_keys: set[str], *, verbose: bool = True
-) -> Tuple[Dict[str, torch.Tensor], list[str]]:
+    checkpoint: dict[str, torch.Tensor], ref_keys: set[str], *, verbose: bool = True
+) -> tuple[dict[str, torch.Tensor], list[str]]:
     """
     • Re-keys `checkpoint ` so that every entry matches the *reference* key set.
     • If several variant keys collapse to the same canonical name we keep the
@@ -115,7 +115,7 @@ def load_model(
     filename: str | os.PathLike,
     *,
     strict: bool = True,
-    device: str | int = "cpu",
+    device: str = "cpu",
     checkpoint_keys_mapping: str = "",
 ) -> tuple[list[str], list[str]]:
     state_dict = safetensors.torch.load_file(filename, device=device)
