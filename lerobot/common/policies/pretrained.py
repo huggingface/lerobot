@@ -148,7 +148,6 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                 model.to(map_location)
         else:
             safetensors.torch.load_model(model, model_file, strict=strict, device=map_location)
-
         return model
 
     # def generate_model_card(self, *args, **kwargs) -> ModelCard:
