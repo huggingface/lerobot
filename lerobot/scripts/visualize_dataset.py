@@ -134,6 +134,30 @@ def visualize_dataset(
     spawn_local_viewer = mode == "local" and not save
     rr.init(f"{repo_id}/episode_{episode_index}", spawn=spawn_local_viewer)
 
+    # Track which keys have video files
+    keys_with_videos = set()
+
+    # Log video assets first
+    for key in dataset.meta.camera_keys:
+        video_path = dataset.root / dataset.meta.get_video_file_path(episode_index, key)
+        if not video_path.exists():
+            logging.warning(f"Video file not found: {video_path}")
+            continue
+
+        video_asset = rr.AssetVideo(path=str(video_path))
+        rr.log(key, video_asset, static=True)
+        keys_with_videos.add(key)
+
+        # Get frame timestamps in nanoseconds from video
+        frame_timestamps_ns = video_asset.read_frame_timestamps_ns()
+
+        # Ensure metrics data aligns with video frames
+        rr.send_columns(
+            key,
+            indexes=[rr.TimeNanosColumn("frame_index", frame_timestamps_ns)],
+            columns=rr.VideoFrameReference.columns_nanoseconds(frame_timestamps_ns),
+        )
+
     # Manually call python garbage collector after `rr.init` to avoid hanging in a blocking flush
     # when iterating on a dataloader with `num_workers` > 0
     # TODO(rcadene): remove `gc.collect` when rerun version 0.16 is out, which includes a fix
@@ -147,13 +171,15 @@ def visualize_dataset(
     for batch in tqdm.tqdm(dataloader, total=len(dataloader)):
         # iterate over the batch
         for i in range(len(batch["index"])):
-            rr.set_time_sequence("frame_index", batch["frame_index"][i].item())
+            # Convert timestamp to nanoseconds for alignment
+            timestamp_ns = int(batch["timestamp"][i].item() * 1e9)
+            rr.set_time_nanos("frame_index", timestamp_ns)
             rr.set_time_seconds("timestamp", batch["timestamp"][i].item())
 
-            # display each camera image
+            # Only show individual frames for keys without video files
             for key in dataset.meta.camera_keys:
-                # TODO(rcadene): add `.compress()`? is it lossless?
-                rr.log(key, rr.Image(to_hwc_uint8_numpy(batch[key][i])))
+                if key not in keys_with_videos:
+                    rr.log(key, rr.Image(to_hwc_uint8_numpy(batch[key][i])))
 
             # display each dimension of action space (e.g. actuators command)
             if "action" in batch:
