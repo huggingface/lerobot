@@ -106,3 +106,33 @@ class GamepadTeleop(Teleoperator):
             action_dict["gripper"] = gripper_action
 
         return action_dict
+
+    def disconnect(self) -> None:
+        """Disconnect from the gamepad."""
+        if self.gamepad is not None:
+            self.gamepad.stop()
+            self.gamepad = None
+
+    def is_connected(self) -> bool:
+        """Check if gamepad is connected."""
+        return self.gamepad is not None
+
+    def calibrate(self) -> None:
+        """Calibrate the gamepad."""
+        # No calibration needed for gamepad
+        pass
+
+    def is_calibrated(self) -> bool:
+        """Check if gamepad is calibrated."""
+        # Gamepad doesn't require calibration
+        return True
+
+    def configure(self) -> None:
+        """Configure the gamepad."""
+        # No additional configuration needed
+        pass
+
+    def send_feedback(self, feedback: dict) -> None:
+        """Send feedback to the gamepad."""
+        # Gamepad doesn't support feedback
+        pass

@@ -327,8 +327,6 @@ class GamepadControllerHID(InputController):
         y_step_size=1.0,
         z_step_size=1.0,
         deadzone=0.1,
-        vendor_id=0x046D,
-        product_id=0xC219,
     ):
         """
         Initialize the HID gamepad controller.
@@ -337,13 +335,9 @@ class GamepadControllerHID(InputController):
             step_size: Base movement step size in meters
             z_scale: Scaling factor for Z-axis movement
             deadzone: Joystick deadzone to prevent drift
-            vendor_id: USB vendor ID of the gamepad (default: Logitech)
-            product_id: USB product ID of the gamepad (default: RumblePad 2)
         """
         super().__init__(x_step_size, y_step_size, z_step_size)
         self.deadzone = deadzone
-        self.vendor_id = vendor_id
-        self.product_id = product_id
         self.device = None
         self.device_info = None
 
@@ -364,12 +358,12 @@ class GamepadControllerHID(InputController):
 
         devices = hid.enumerate()
         for device in devices:
-            if device["vendor_id"] == self.vendor_id and device["product_id"] == self.product_id:
-                logging.info(f"Found gamepad: {device.get('product_string', 'Unknown')}")
+            device_name = device["product_string"]
+            if any(controller in device_name for controller in ["Logitech", "Xbox", "PS4", "PS5"]):
                 return device
 
         logging.error(
-            f"No gamepad with vendor ID 0x{self.vendor_id:04X} and product ID 0x{self.product_id:04X} found"
+            f"No gamepad found, check the connection and the product string in HID to add your gamepad"
         )
         return None
 

@@ -22,7 +22,4 @@ from ..config import TeleoperatorConfig
 @TeleoperatorConfig.register_subclass("gamepad")
 @dataclass
 class GamepadTeleopConfig(TeleoperatorConfig):
-    # TODO(Steven): Consider setting in here the keys that we want to capture/listen
-    mock: bool = False
-
     use_gripper: bool = True
