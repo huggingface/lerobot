@@ -92,7 +92,7 @@ class LeKiwiClient(Robot):
 
     @cached_property
     def _cameras_ft(self) -> dict[str, tuple[int, int, int]]:
-        return {f"{name}": (cfg.height, cfg.width, 3) for name, cfg in self.config.cameras.items()}
+        return {name: (cfg.height, cfg.width, 3) for name, cfg in self.config.cameras.items()}
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:

@@ -93,12 +93,12 @@ def main():
             # Encode ndarrays to base64 strings
             for cam_key, _ in robot.cameras.items():
                 ret, buffer = cv2.imencode(
-                    ".jpg", last_observation[f"{cam_key}"], [int(cv2.IMWRITE_JPEG_QUALITY), 90]
+                    ".jpg", last_observation[cam_key], [int(cv2.IMWRITE_JPEG_QUALITY), 90]
                 )
                 if ret:
-                    last_observation[f"{cam_key}"] = base64.b64encode(buffer).decode("utf-8")
+                    last_observation[cam_key] = base64.b64encode(buffer).decode("utf-8")
                 else:
-                    last_observation[f"{cam_key}"] = ""
+                    last_observation[cam_key] = ""
 
             # Send the observation to the remote agent
             try:
