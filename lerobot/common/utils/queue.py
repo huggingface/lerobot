@@ -25,6 +25,8 @@ def get_last_item_from_queue(queue: Queue, block=True, timeout: float = 0.1) -> 
     if block:
         item = queue.get(timeout=timeout)
         counter = 1
+    else:
+        item = queue.get_nowait()
 
     # Drain queue and keep only the most recent parameters
     try:
