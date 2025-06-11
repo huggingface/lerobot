@@ -87,7 +87,7 @@ def standardise_state_dict(
     return out, unmatched
 
 
-def rename_checkpoint_keys(ckpt, rename_str):
+def rename_checkpoint_keys(checkpoint: dict, rename_str: str):
     """
     Renames keys in a checkpoint dictionary based on the given rename string.
 
