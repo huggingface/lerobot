@@ -83,7 +83,7 @@ def standardise_state_dict(
         if unmatched:
             print(f"[standardise_state_dict] kept {len(unmatched)} unmatched keys")
 
-    out.update({k: ckpt[k] for k in unmatched})
+    out.update({k: checkpoint[k] for k in unmatched})
     return out, unmatched
 
 
