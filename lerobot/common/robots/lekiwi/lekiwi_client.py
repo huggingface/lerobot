@@ -92,10 +92,7 @@ class LeKiwiClient(Robot):
 
     @cached_property
     def _cameras_ft(self) -> dict[str, tuple[int, int, int]]:
-        return {
-            f"observation.images.{name}": (cfg.height, cfg.width, 3)
-            for name, cfg in self.config.cameras.items()
-        }
+        return {f"{name}": (cfg.height, cfg.width, 3) for name, cfg in self.config.cameras.items()}
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
@@ -206,7 +203,11 @@ class LeKiwiClient(Robot):
         )
 
         # Decode images
-        image_observation = {key: value for key, value in observation.items() if key in self._cameras_ft}
+        image_observation = {
+            f"observation.images.{key}": value
+            for key, value in observation.items()
+            if key in self._cameras_ft
+        }
         current_frames: Dict[str, np.ndarray] = {}
         for cam_name, image_b64 in image_observation.items():
             frame = self._decode_image_from_b64(image_b64)
