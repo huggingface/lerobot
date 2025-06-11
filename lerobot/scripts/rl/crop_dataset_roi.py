@@ -168,6 +168,7 @@ def convert_lerobot_dataset_to_cropper_lerobot_dataset(
     new_dataset_root: str,
     resize_size: Tuple[int, int] = (128, 128),
     push_to_hub: bool = False,
+    task: str = "",
 ) -> LeRobotDataset:
     """
     Converts an existing LeRobotDataset by iterating over its episodes and frames,
@@ -211,7 +212,7 @@ def convert_lerobot_dataset_to_cropper_lerobot_dataset(
         # Create a copy of the frame to add to the new dataset
         new_frame = {}
         for key, value in frame.items():
-            if key in ("task_index", "timestamp", "episode_index", "frame_index", "index"):
+            if key in ("task_index", "timestamp", "episode_index", "frame_index", "index", "task"):
                 continue
             if key in ("next.done", "next.reward"):
                 # if not isinstance(value, str) and len(value.shape) == 0:
@@ -226,12 +227,15 @@ def convert_lerobot_dataset_to_cropper_lerobot_dataset(
 
             new_frame[key] = value
 
-        new_dataset.add_frame(new_frame)
+        new_dataset.add_frame(new_frame, task=task)
 
         if frame["episode_index"].item() != prev_episode_index:
             # Save the episode
             new_dataset.save_episode()
             prev_episode_index = frame["episode_index"].item()
+
+    # Save the last episode
+    new_dataset.save_episode()
 
     if push_to_hub:
         new_dataset.push_to_hub()
@@ -265,6 +269,12 @@ if __name__ == "__main__":
         default=False,
         help="Whether to push the new dataset to the hub.",
     )
+    parser.add_argument(
+        "--task",
+        type=str,
+        default="",
+        help="The natural language task to describe the dataset.",
+    )
     args = parser.parse_args()
 
     dataset = LeRobotDataset(repo_id=args.repo_id, root=args.root)
@@ -294,6 +304,7 @@ if __name__ == "__main__":
         new_dataset_root=new_dataset_root,
         resize_size=(128, 128),
         push_to_hub=args.push_to_hub,
+        task=args.task,
     )
 
     meta_dir = new_dataset_root / "meta"
