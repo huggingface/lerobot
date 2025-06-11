@@ -321,7 +321,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
         state = self.prepare_state(batch)
         lang_tokens, lang_masks = self.prepare_language(batch)
         actions = self.prepare_action(batch)
-        actions_is_pad = batch.get("actions_id_pad")
+        actions_is_pad = batch.get("actions_is_pad")
         loss_dict = {}
         losses = self.model.forward(images, img_masks, lang_tokens, lang_masks, state, actions, noise, time)
         loss_dict["losses_after_forward"] = losses.clone()
@@ -332,7 +332,8 @@ class SmolVLAPolicy(PreTrainedPolicy):
             loss_dict["losses_after_in_ep_bound"] = losses.clone()
 
         # Remove padding
-        losses = losses[:, :, : self.config.max_action_dim]
+        original_action_dim = self.config.action_feature.shape[0]
+        losses = losses[:, :, :original_action_dim]
         loss_dict["losses_after_rm_padding"] = losses.clone()
 
         # For backward pass
