@@ -28,16 +28,18 @@ import zmq
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..robot import Robot
-from .config_lekiwi import LeKiwiClientConfig
+from .config_lekiwi import LeKiwiClientConfig, LeKiwiConfig
 
 
 class LeKiwiClient(Robot):
     config_class = LeKiwiClientConfig
+    lekiwi_config_class = LeKiwiConfig
     name = "lekiwi_client"
 
-    def __init__(self, config: LeKiwiClientConfig):
+    def __init__(self, config: LeKiwiClientConfig, lekiwi_config):
         super().__init__(config)
         self.config = config
+        self.lekiwi_config = lekiwi_config
         self.id = config.id
         self.robot_type = config.type
 
@@ -94,7 +96,7 @@ class LeKiwiClient(Robot):
     def _cameras_ft(self) -> dict[str, tuple[int, int, int]]:
         return {
             f"observation.images.{name}": (cfg.height, cfg.width, 3)
-            for name, cfg in self.config.cameras.items()
+            for name, cfg in self.lekiwi_config_class.items()
         }
 
     @cached_property
