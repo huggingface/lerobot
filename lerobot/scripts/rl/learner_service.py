@@ -16,10 +16,12 @@
 # limitations under the License.
 
 import logging
+import time
 from multiprocessing import Event, Queue
 
 from lerobot.common.transport import services_pb2, services_pb2_grpc
 from lerobot.common.transport.utils import receive_bytes_in_chunks, send_bytes_in_chunks
+from lerobot.common.utils.queue import get_last_item_from_queue
 
 MAX_MESSAGE_SIZE = 4 * 1024 * 1024  # 4 MB
 MAX_WORKERS = 3  # Stream parameters, send transitions and interactions
@@ -40,6 +42,7 @@ class LearnerService(services_pb2_grpc.LearnerServiceServicer):
         seconds_between_pushes: float,
         transition_queue: Queue,
         interaction_message_queue: Queue,
+        queue_get_timeout: float = 0.001,
     ):
         self.shutdown_event = shutdown_event
         self.parameters_queue = parameters_queue
@@ -53,7 +56,12 @@ class LearnerService(services_pb2_grpc.LearnerServiceServicer):
 
         while not self.shutdown_event.is_set():
             logging.info("[LEARNER] Push parameters to the Actor")
-            buffer = self.parameters_queue.get()
+            buffer = get_last_item_from_queue(
+                self.parameters_queue, block=True, timeout=self.queue_get_timeout
+            )
+
+            if buffer is None:
+                continue
 
             yield from send_bytes_in_chunks(
                 buffer,
@@ -62,9 +70,13 @@ class LearnerService(services_pb2_grpc.LearnerServiceServicer):
                 silent=True,
             )
 
+            sent_last_time = time.time()
+
             logging.info("[LEARNER] Parameters sent")
 
-            self.shutdown_event.wait(self.seconds_between_pushes)
+            time_since_last_push = time.time() - sent_last_time
+            if time_since_last_push < self.seconds_between_pushes:
+                self.shutdown_event.wait(self.seconds_between_pushes - time_since_last_push)
 
         logging.info("[LEARNER] Stream parameters finished")
         return services_pb2.Empty()
