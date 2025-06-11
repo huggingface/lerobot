@@ -57,7 +57,7 @@ def canonicalise(k: str) -> str:
 
 
 def standardise_state_dict(
-    ckpt: Dict[str, torch.Tensor], ref_keys: set[str], *, verbose: bool = True
+    checkpoint: Dict[str, torch.Tensor], ref_keys: set[str], *, verbose: bool = True
 ) -> Tuple[Dict[str, torch.Tensor], list[str]]:
     """
     • Re-keys `ckpt` so that every entry matches the *reference* key set.
