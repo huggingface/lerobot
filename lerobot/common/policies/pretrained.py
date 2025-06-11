@@ -67,7 +67,7 @@ def standardise_state_dict(
     """
     out, collisions, unmatched = {}, {}, []
 
-    for k, v in ckpt.items():
+    for k, v in checkpoint.items():
         canon = canonicalise(k)
         if canon in ref_keys:
             if canon in out:  # duplicate after collapsing
