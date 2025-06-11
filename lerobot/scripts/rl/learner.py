@@ -681,6 +681,7 @@ def start_learner(
         seconds_between_pushes=cfg.policy.actor_learner_config.policy_parameters_push_frequency,
         transition_queue=transition_queue,
         interaction_message_queue=interaction_message_queue,
+        queue_get_timeout=cfg.policy.actor_learner_config.queue_get_timeout,
     )
 
     server = grpc.server(

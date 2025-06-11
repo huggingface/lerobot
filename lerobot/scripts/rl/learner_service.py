@@ -49,12 +49,22 @@ class LearnerService(services_pb2_grpc.LearnerServiceServicer):
         self.seconds_between_pushes = seconds_between_pushes
         self.transition_queue = transition_queue
         self.interaction_message_queue = interaction_message_queue
+        self.queue_get_timeout = queue_get_timeout
 
     def StreamParameters(self, request, context):  # noqa: N802
         # TODO: authorize the request
         logging.info("[LEARNER] Received request to stream parameters from the Actor")
 
+        last_push_time = 0
+
         while not self.shutdown_event.is_set():
+            time_since_last_push = time.time() - last_push_time
+            if time_since_last_push < self.seconds_between_pushes:
+                self.shutdown_event.wait(self.seconds_between_pushes - time_since_last_push)
+                # Continue, because we could receive a shutdown event,
+                # and it's checked in the while loop
+                continue
+
             logging.info("[LEARNER] Push parameters to the Actor")
             buffer = get_last_item_from_queue(
                 self.parameters_queue, block=True, timeout=self.queue_get_timeout
@@ -70,13 +80,8 @@ class LearnerService(services_pb2_grpc.LearnerServiceServicer):
                 silent=True,
             )
 
-            sent_last_time = time.time()
-
+            last_push_time = time.time()
             logging.info("[LEARNER] Parameters sent")
-
-            time_since_last_push = time.time() - sent_last_time
-            if time_since_last_push < self.seconds_between_pushes:
-                self.shutdown_event.wait(self.seconds_between_pushes - time_since_last_push)
 
         logging.info("[LEARNER] Stream parameters finished")
         return services_pb2.Empty()
