@@ -25,7 +25,6 @@ import numpy as np
 import torch
 import zmq
 
-from lerobot.common.constants import OBS_IMAGES, OBS_STATE
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..robot import Robot
@@ -199,7 +198,7 @@ class LeKiwiClient(Robot):
         self, observation: Dict[str, Any]
     ) -> Tuple[Dict[str, np.ndarray], Dict[str, Any]]:
         """Extracts frames, and state from the parsed observation."""
-        flat_state = observation[OBS_STATE]
+        flat_state = {key: value for key, value in observation.items() if key in self._state_ft}
 
         state_vec = np.array(
             [flat_state.get(k, 0.0) for k in self._state_order],
@@ -207,7 +206,7 @@ class LeKiwiClient(Robot):
         )
 
         # Decode images
-        image_observation = {k: v for k, v in observation.items() if k.startswith(OBS_IMAGES)}
+        image_observation = {key: value for key, value in observation.items() if key in self._cameras_ft}
         current_frames: Dict[str, np.ndarray] = {}
         for cam_name, image_b64 in image_observation.items():
             frame = self._decode_image_from_b64(image_b64)
