@@ -237,16 +237,33 @@ def rollout(
     return ret
 
 
+def _convert_to_json_serializable(obj):
+    """Recursively convert numpy arrays and other non-serializable types to JSON serializable types."""
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, dict):
+        return {key: _convert_to_json_serializable(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [_convert_to_json_serializable(item) for item in obj]
+    elif isinstance(obj, (np.int32, np.int64)):
+        return int(obj)
+    elif isinstance(obj, (np.float32, np.float64)):
+        return float(obj)
+    return obj
+
+
 def eval_policy(
     env: gym.vector.VectorEnv,
     policy: PreTrainedPolicy,
     n_episodes: int,
     max_episodes_rendered: int = 0,
     videos_dir: Path | None = None,
-    return_episode_data: bool = False,
+    return_episode_data: bool = True,
+    save_eval_data: bool = False,
+    eval_data_dir: Path | None = None,
     start_seed: int | None = None,
 ) -> dict:
-    """
+    """Run a batched policy rollout once through a batch of environments.
     Args:
         env: The batch of environments.
         policy: The policy.
@@ -255,6 +272,8 @@ def eval_policy(
         videos_dir: Where to save rendered videos.
         return_episode_data: Whether to return episode data for online training. Incorporates the data into
             the "episodes" key of the returned dictionary.
+        save_eval_data: Whether to save evaluation data in a format compatible with visualize_dataset.py
+        eval_data_dir: Directory to save evaluation data
         start_seed: The first seed to use for the first individual rollout. For all subsequent rollouts the
             seed is incremented by 1. If not provided, the environments are not manually seeded.
     Returns:
@@ -267,6 +286,12 @@ def eval_policy(
         raise ValueError(
             f"Policy of type 'PreTrainedPolicy' is expected, but type '{type(policy)}' was provided."
         )
+
+    if save_eval_data:
+        assert (
+            eval_data_dir is not None
+        ), "Must provide eval_data_dir when save_eval_data is True"
+        eval_data_dir.mkdir(parents=True, exist_ok=True)
 
     start = time.time()
     policy.eval()
@@ -474,11 +499,34 @@ def eval_policy(
     }
 
     if return_episode_data:
-        info["episodes"] = episode_data
+        # Convert tensors to numpy arrays before adding to info
+        info["episodes"] = {
+            k: v.cpu().numpy() if isinstance(v, torch.Tensor) else v
+            for k, v in episode_data.items()
+        }
 
     if max_episodes_rendered > 0:
         info["video_paths"] = video_paths
 
+    if save_eval_data and "episodes" in info:
+        # Save each episode's data in a format compatible with visualize_dataset.py
+        # Get unique episode indices using numpy's unique
+        unique_episodes = np.unique(info["episodes"]["episode_index"])
+        for ep_idx, episode_data in enumerate(unique_episodes):
+            # Create boolean mask for this episode
+            episode_mask = info["episodes"]["episode_index"] == episode_data
+            episode_dict = {
+                key: info["episodes"][key][episode_mask] for key in info["episodes"]
+            }
+            # Convert back to torch tensors for saving
+            episode_dict = {
+                key: torch.from_numpy(val) if isinstance(val, np.ndarray) else val
+                for key, val in episode_dict.items()
+            }
+            torch.save(episode_dict, eval_data_dir / f"episode_{ep_idx}.pt")
+
+    # Convert all numpy arrays to lists for JSON serialization
+    info = _convert_to_json_serializable(info)
     return info
 
 
@@ -579,6 +627,8 @@ def eval_main(cfg: EvalPipelineConfig):
             cfg.eval.n_episodes,
             max_episodes_rendered=10,
             videos_dir=Path(cfg.output_dir) / "videos",
+            save_eval_data=True,
+            eval_data_dir=Path(cfg.output_dir) / "eval_data",
             start_seed=cfg.seed,
         )
     print(info["aggregated"])
