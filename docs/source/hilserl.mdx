@@ -56,6 +56,7 @@ class HILSerlRobotEnvConfig(EnvConfig):
     push_to_hub: bool = True    # Whether to push the recorded datasets to Hub
     pretrained_policy_name_or_path: str | None = None    # For policy loading
     reward_classifier_pretrained_path: str | None = None    # For reward model
+    number_of_steps_after_success: int = 0    # For reward classifier, collect more positive examples after a success to train a classifier
 ```
 
 
