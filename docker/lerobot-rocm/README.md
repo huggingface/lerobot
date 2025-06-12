@@ -81,5 +81,14 @@ python lerobot/examples/2_evaluate_pretrained_policy.py
 - Add your user to the `dialout` group: `sudo usermod -aG dialout $USER`
 - Verify devices are connected: `lsusb` or `dmesg | grep tty`
 
-**Using an iGPU:**
-- `export HSA_OVERRIDE_GFX_VERSION=11.0.0`
+**ROCm "invalid device function" errors:**
+- If you have an iGPU that is not officially supported, e.g. for Phoenix set: `export HSA_OVERRIDE_GFX_VERSION=11.0.0`
+- For other AMD GPUs, check your architecture and set accordingly
+- You can also pass this as an environment variable in Docker:
+  ```bash
+  docker run -it --rm \
+    -e HSA_OVERRIDE_GFX_VERSION=11.0.0 \
+    --device=/dev/kfd --device=/dev/dri \
+    [other flags...] \
+    lerobot bash
+  ```
