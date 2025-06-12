@@ -40,6 +40,7 @@ def convert_episode_stats(dataset: LeRobotDataset, ep_idx: int):
         if ft["dtype"] == "video":
             # We sample only for videos
             ep_ft_data = sample_episode_video_frames(dataset, ep_idx, key)
+            ep_ft_data = ep_ft_data[None, ...] if ep_ft_data.ndim == 3 else ep_ft_data
         else:
             ep_ft_data = np.array(ep_data[key])
 
