@@ -16,10 +16,12 @@
 # limitations under the License.
 
 import logging
+import time
 from multiprocessing import Event, Queue
 
 from lerobot.common.transport import services_pb2, services_pb2_grpc
 from lerobot.common.transport.utils import receive_bytes_in_chunks, send_bytes_in_chunks
+from lerobot.common.utils.queue import get_last_item_from_queue
 
 MAX_MESSAGE_SIZE = 4 * 1024 * 1024  # 4 MB
 MAX_WORKERS = 3  # Stream parameters, send transitions and interactions
@@ -40,20 +42,36 @@ class LearnerService(services_pb2_grpc.LearnerServiceServicer):
         seconds_between_pushes: float,
         transition_queue: Queue,
         interaction_message_queue: Queue,
+        queue_get_timeout: float = 0.001,
     ):
         self.shutdown_event = shutdown_event
         self.parameters_queue = parameters_queue
         self.seconds_between_pushes = seconds_between_pushes
         self.transition_queue = transition_queue
         self.interaction_message_queue = interaction_message_queue
+        self.queue_get_timeout = queue_get_timeout
 
     def StreamParameters(self, request, context):  # noqa: N802
         # TODO: authorize the request
         logging.info("[LEARNER] Received request to stream parameters from the Actor")
 
+        last_push_time = 0
+
         while not self.shutdown_event.is_set():
+            time_since_last_push = time.time() - last_push_time
+            if time_since_last_push < self.seconds_between_pushes:
+                self.shutdown_event.wait(self.seconds_between_pushes - time_since_last_push)
+                # Continue, because we could receive a shutdown event,
+                # and it's checked in the while loop
+                continue
+
             logging.info("[LEARNER] Push parameters to the Actor")
-            buffer = self.parameters_queue.get()
+            buffer = get_last_item_from_queue(
+                self.parameters_queue, block=True, timeout=self.queue_get_timeout
+            )
+
+            if buffer is None:
+                continue
 
             yield from send_bytes_in_chunks(
                 buffer,
@@ -62,9 +80,8 @@ class LearnerService(services_pb2_grpc.LearnerServiceServicer):
                 silent=True,
             )
 
+            last_push_time = time.time()
             logging.info("[LEARNER] Parameters sent")
-
-            self.shutdown_event.wait(self.seconds_between_pushes)
 
         logging.info("[LEARNER] Stream parameters finished")
         return services_pb2.Empty()

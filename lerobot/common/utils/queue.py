@@ -14,22 +14,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
-from queue import Empty, Queue
+from queue import Empty
+from typing import Any
+
+from torch.multiprocessing import Queue
 
 
-def get_last_item_from_queue(queue: Queue):
-    item = queue.get()
-    counter = 1
+def get_last_item_from_queue(queue: Queue, block=True, timeout: float = 0.1) -> Any:
+    if block:
+        try:
+            item = queue.get(timeout=timeout)
+        except Empty:
+            return None
+    else:
+        item = None
 
     # Drain queue and keep only the most recent parameters
     try:
         while True:
             item = queue.get_nowait()
-            counter += 1
     except Empty:
         pass
-
-    logging.debug(f"Drained {counter} items from queue")
 
     return item

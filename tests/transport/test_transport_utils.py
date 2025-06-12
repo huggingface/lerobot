@@ -548,3 +548,24 @@ def test_transitions_to_bytes_multiple_transitions():
     assert len(reconstructed) == len(transitions)
     for original, reconstructed_item in zip(transitions, reconstructed, strict=False):
         assert_transitions_equal(original, reconstructed_item)
+
+
+@require_package("grpc")
+def test_receive_bytes_in_chunks_unknown_state():
+    from lerobot.common.transport.utils import receive_bytes_in_chunks
+
+    """Test receive_bytes_in_chunks with an unknown transfer state."""
+
+    # Mock the gRPC message object, which has `transfer_state` and `data` attributes.
+    class MockMessage:
+        def __init__(self, transfer_state, data):
+            self.transfer_state = transfer_state
+            self.data = data
+
+    # 10 is not a valid TransferState enum value
+    bad_iterator = [MockMessage(transfer_state=10, data=b"bad_data")]
+    output_queue = Queue()
+    shutdown_event = Event()
+
+    with pytest.raises(ValueError, match="Received unknown transfer state"):
+        receive_bytes_in_chunks(bad_iterator, output_queue, shutdown_event)
