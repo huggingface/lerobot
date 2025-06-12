@@ -21,27 +21,31 @@ pip install -e ".[hilserl]"
 
 ## Teleoperate and Record a Dataset
 
-To use `gym_hil` with LeRobot, you need to use a configuration file. An example config file is stored under `examples/rl_config/hil_serl.json`.
+To use `gym_hil` with LeRobot, you need to use a configuration file. An example config file is stored under `lerobot/examples/rl_config/gym_hil_serl_il.json`.
 
-To teleoperate and collect a dataset, we need to set the mode to `record` and define the `repo_id` and `number of episodes` to record. ....
+To teleoperate and collect a dataset, we need to modify this config file and you should add your `repo_id` here: `"repo_id": null,` and `"num_episodes": 30,` and make sure you set `mode` to `record`, "mode": "record".
+
+If you do not have a Nvidia GPU also change `"device": "cuda"` parameter in the config file (for example to `mps` for MacOS).
 
 Then we can run this command to start:
 
 <hfoptions id="teleop_sim">
 <hfoption id="Linux">
 ```bash
-python lerobot/scripts/rl/gym_manipulator.py --config_path path/to/gym_hil_env.json
+python lerobot/scripts/rl/gym_manipulator.py --config_path examples/rl_config/gym_hil_serl_il.json
 
 ```
 </hfoption>
 <hfoption id="MacOS">
 ```bash
-mjpython lerobot/scripts/rl/gym_manipulator.py --config_path path/to/gym_hil_env.json
+mjpython lerobot/scripts/rl/gym_manipulator.py --config_path examples/rl_config/gym_hil_serl_il.json
 ```
 </hfoption>
 </hfoptions>
 
-Once rendered you can teleoperate the robot with......
+Once rendered you can teleoperate the robot with the gamepad. If you want to teleopertate with keyboard ....
+
+
 
 ## Train a policy
 
