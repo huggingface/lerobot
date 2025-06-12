@@ -45,5 +45,8 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
         from tests.mocks.mock_teleop import MockTeleop
 
         return MockTeleop(config)
+    elif config.type == "panda_leader":
+        from .panda_leader import PandaTeleoperator
+        return PandaTeleoperator(config)
     else:
         raise ValueError(config.type)

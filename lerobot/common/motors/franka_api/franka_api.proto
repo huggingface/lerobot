@@ -1,0 +1,43 @@
+syntax = "proto3";
+
+package franka;
+
+message JointState {
+  repeated string name = 1;
+  repeated double position = 2;
+  repeated double velocity = 3;
+  repeated double effort = 4;
+}
+
+message Pose {
+  double x = 1;
+  double y = 2;
+  double z = 3;
+  double qx = 4;
+  double qy = 5;
+  double qz = 6;
+  double qw = 7;
+}
+
+message Wrench {
+  double fx = 1;
+  double fy = 2;
+  double fz = 3;
+  double tx = 4;
+  double ty = 5;
+  double tz = 6;
+}
+
+message Empty {}
+
+message StatusResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+service FrankaService {
+  rpc GetJointState(Empty) returns (JointState);
+  rpc GetEEFPose(Empty) returns (Pose);
+  rpc GetWrench(Empty) returns (Wrench);
+  rpc SetJointTarget(JointState) returns (StatusResponse);
+}

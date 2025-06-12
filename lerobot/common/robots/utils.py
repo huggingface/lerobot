@@ -49,6 +49,10 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from tests.mocks.mock_robot import MockRobot
 
         return MockRobot(config)
+    elif config.type == "panda_follower":
+        from .panda_follower import PandaRobot
+
+        return PandaRobot(config)
     else:
         raise ValueError(config.type)
 
