@@ -27,6 +27,10 @@
     title: LeKiwi
   title: "Robots"
 - sections:
+  - local: notebooks
+    title: Notebooks
+  title: "Resources"
+- sections:
   - local: contributing
     title: Contribute to LeRobot
   - local: backwardcomp

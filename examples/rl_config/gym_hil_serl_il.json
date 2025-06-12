@@ -39,7 +39,7 @@
     },
     "name": "franka_sim",
     "mode": "record",
-    "repo_id": "pepijn223/il_gym",
+    "repo_id": "pepijn223/il_gym0",
     "dataset_root": null,
     "task": "PandaPickCubeGamepad-v0",
     "num_episodes": 30,

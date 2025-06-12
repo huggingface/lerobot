@@ -23,7 +23,7 @@ pip install -e ".[hilserl]"
 
 To use `gym_hil` with LeRobot, you need to use a configuration file. An example config file is stored under `lerobot/examples/rl_config/gym_hil_serl_il.json`.
 
-To teleoperate and collect a dataset, we need to modify this config file and you should add your `repo_id` here: `"repo_id": null,` and `"num_episodes": 30,` and make sure you set `mode` to `record`, "mode": "record".
+To teleoperate and collect a dataset, we need to modify this config file and you should add your `repo_id` here: `"repo_id": "il_gym",` and `"num_episodes": 30,` and make sure you set `mode` to `record`, "mode": "record".
 
 If you do not have a Nvidia GPU also change `"device": "cuda"` parameter in the config file (for example to `mps` for MacOS).
 
@@ -43,13 +43,63 @@ mjpython lerobot/scripts/rl/gym_manipulator.py --config_path examples/rl_config/
 </hfoption>
 </hfoptions>
 
-Once rendered you can teleoperate the robot with the gamepad. If you want to teleopertate with keyboard ....
+Once rendered you can teleoperate the robot with the gamepad, below you can find the gamepad controls.
 
+Note that to teleoperate the robot you have to hold the "Human Take Over Pause Policy" Button `RB` to enable control!
+
+**Gamepad Controls**
+
+<p align="center">
+  <img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/gamepad_guide.jpg?raw=true" alt="Figure shows the control mappings on a Logitech gamepad." title="Gamepad Control Mapping" width="100%"></img>
+</p>
+<p align="center"><i>Gamepad button mapping for robot control and episode management</i></p>
+
+
+## Visualize a dataset
+
+If you uploaded your dataset to the hub you can [visualize your dataset online](https://huggingface.co/spaces/lerobot/visualize_dataset) by copy pasting your repo id.
+
+<p align="center">
+  <img src="https://huggingface.co/datasets/huggingface/documentation-images/blob/main/lerobot/dataset_visualizer_sim.png" alt="Figure shows the dataset visualizer" title="Dataset visualization" width="100%"></img>
+</p>
+<p align="center"><i>Dataset visualizer</i></p>
 
 
 ## Train a policy
 
+To train a policy to control your robot, use the [`python lerobot/scripts/train.py`](../lerobot/scripts/train.py) script. A few arguments are required. Here is an example command:
+```bash
+python lerobot/scripts/train.py \
+  --dataset.repo_id=${HF_USER}/il_gym \
+  --policy.type=act \
+  --output_dir=outputs/train/il_sim_test \
+  --job_name=il_sim_test \
+  --policy.device=cuda \
+  --wandb.enable=true
+```
 
+Let's explain the command:
+1. We provided the dataset as argument with `--dataset.repo_id=${HF_USER}/il_gym`.
+2. We provided the policy with `policy.type=act`. This loads configurations from [`configuration_act.py`](../lerobot/common/policies/act/configuration_act.py). Importantly, this policy will automatically adapt to the number of motor states, motor actions and cameras of your robot (e.g. `laptop` and `phone`) which have been saved in your dataset.
+4. We provided `policy.device=cuda` since we are training on a Nvidia GPU, but you could use `policy.device=mps` to train on Apple silicon.
+5. We provided `wandb.enable=true` to use [Weights and Biases](https://docs.wandb.ai/quickstart) for visualizing training plots. This is optional but if you use it, make sure you are logged in by running `wandb login`.
+
+Training should take several hours, 100k steps (which is the default) will take about 1h on Nvidia A100. You will find checkpoints in `outputs/train/il_sim_test/checkpoints`.
+
+#### Upload policy checkpoints
+
+Once training is done, upload the latest checkpoint with:
+```bash
+huggingface-cli upload ${HF_USER}/il_sim_test \
+  outputs/train/il_sim_test/checkpoints/last/pretrained_model
+```
+
+You can also upload intermediate checkpoints with:
+```bash
+CKPT=010000
+huggingface-cli upload ${HF_USER}/il_sim_test${CKPT} \
+  outputs/train/il_sim_test/checkpoints/${CKPT}/pretrained_model
+```
 
 ## Evaluate your policy in Sim
 
