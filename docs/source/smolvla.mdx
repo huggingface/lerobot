@@ -19,17 +19,15 @@ cd lerobot
 conda create -n smolvlaenv python=3.10 -y
 conda activate smolvlaenv
 pip install -e ".[smolvla]"
-conda install ffmpeg -c conda-forge # correct ffmpeg only installs with conda as of now
+conda install ffmpeg=7.1.1 -c conda-forge # explicitly install the correct version of ffmpeg
 ```
-
-Try installing using this command if you encounter the errors related to `ffmpeg`.
-
-`conda install ffmpeg=7.1.1 -c conda-forge`
 
 ## Collect a dataset
 
-SmolVLA is a base model-finetune it on data per your demonstrations. We recommend starting [recording a dataset](https://huggingface.co/docs/lerobot/getting_started_real_world_robot#record-a-dataset) of ~50 episodes.
+SmolVLA is a base model, you need to finetune it on your data to use it for your setup.
+We recommend starting from [recording a dataset](https://huggingface.co/docs/lerobot/getting_started_real_world_robot#record-a-dataset) of ~50 episodes.
 
+<Tip>
 **Small tips on the dataset:**
 
 Make sure to have enough demonstrations per each variation you are introducing.
@@ -40,6 +38,7 @@ We recommend checking out this dataset for reference that was used in the [SmolV
 
 In this dataset, we recorded 50 episodes across 5 distinct cube positions. For each position, we collected 10 episodes of pick-and-place interactions. This structure, repeating each variation several times, helped the model generalize better. We tried similar dataset with 25 episodes, and it was not enough leading to a bad performance. So, the data quality and quantity is definitely a key!
 After you have your dataset available on the Hub, you are good to go to use our finetuning script to adapt SmolVLA to your application!
+</Tip>
 
 ### Finetune SmolVLA on your data
 
@@ -80,14 +79,14 @@ Record the evaluation process and save your evaluation to the hub by running:
 huggingface-cli login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
 ```
 
-Store your Hugging Face user name in a variable to run these commands:
+Store your **Hugging Face User Name** in a variable to run these commands:
 
 ```python
 HF_USER=$(huggingface-cli whoami | head -n 1)
 echo $HF_USER
 ```
 
-Now, indicate the path to the policy, which is `lerobot/smolvla_base` in this case, and run:
+Now, indicate the path to the policy, `policy.path`, which is `lerobot/smolvla_base` in this case, and run:
 
 ```python
 
