@@ -10,7 +10,7 @@ SmolVLA is Hugging Face’s compact foundation model for robotics: designed to b
 
 ## Setup your environment
 
-First, use the following instructions to properly setup your environment! ([source](https://github.com/huggingface/lerobot?tab=readme-ov-file#installation))
+First, use the following instructions to properly setup your environment!
 
 ```python
 git clone https://github.com/huggingface/lerobot.git
@@ -55,6 +55,10 @@ python lerobot/scripts/train.py \
   --batch_size=64 \
   --steps=20000  # trains for 10% of our total training budget for adaptation to your usecase
 ```
+
+<tip>
+You can start with a small batch size and increase it incrementally, GPU permitting, as long as loading times remain short.
+</tip>
 
 Again, there is no perfect recipe for the finetuning.
 
