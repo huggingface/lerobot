@@ -19,8 +19,9 @@ cd lerobot
 conda create -n smolvlaenv python=3.10 -y
 conda activate smolvlaenv
 pip install -e ".[smolvla]"
-conda install -c conda-forge ffmpeg -y  # correct ffmpeg only installs with conda as of now
+conda install ffmpeg -c conda-forge # correct ffmpeg only installs with conda as of now
 ```
+
 Try installing using this command if you encounter the errors related to `ffmpeg`.
 
 `conda install ffmpeg=7.1.1 -c conda-forge`
