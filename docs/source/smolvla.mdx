@@ -13,13 +13,15 @@ SmolVLA is Hugging Face’s compact foundation model for robotics. We designed S
 First, use the following instructions to properly setup your environment!
 
 ```python
-git clone https://github.com/huggingface/lerobot.git
-cd lerobot
 
-conda create -n smolvlaenv python=3.10 -y
-conda activate smolvlaenv
+To install LeRobot, follow our [Installation Guide](./installation)
+
+In addition to these instructions, you need to install the SmolVLA dependencies:
+
 pip install -e ".[smolvla]"
+
 conda install ffmpeg=7.1.1 -c conda-forge # explicitly install the correct version of ffmpeg
+
 ```
 
 ## Collect a dataset
