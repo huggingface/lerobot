@@ -1,111 +1,96 @@
-from __future__ import annotations
+# !/usr/bin/env python
 
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 import logging
 import time
+from collections import deque
+from threading import Lock
+from typing import Annotated, Any, Sequence
 
+import gymnasium as gym
+import numpy as np
 import torch
+import torchvision.transforms.functional as F  # noqa: N812
+
+from lerobot.common.cameras import opencv  # noqa: F401
+from lerobot.common.envs.configs import EnvConfig
+from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.configs.train import TrainRLServerPipelineConfig
+from lerobot.common.envs.utils import preprocess_observation
+from lerobot.common.model.kinematics import RobotKinematics
+from lerobot.common.robots import (  # noqa: F401
+    RobotConfig,
+    make_robot_from_config,
+    so100_follower,
+)
+from lerobot.common.teleoperators import (
+    gamepad,  # noqa: F401
+    make_teleoperator_from_config,
+    so101_leader,  # noqa: F401
+)
 
 from lerobot.common.policies.factory import make_policy
-from lerobot.common.utils.random_utils import set_seed
+from lerobot.common.teleoperators.gamepad.teleop_gamepad import GamepadTeleop
+from lerobot.common.utils.robot_utils import busy_wait
+from lerobot.common.utils.utils import log_say
 from lerobot.configs import parser
-from lerobot.configs.train import TrainRLServerPipelineConfig
-
-# Generic policy handling
 from lerobot.scripts.rl.gym_manipulator import make_robot_env
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 
-def _make_policy_from_cfg(train_cfg: TrainRLServerPipelineConfig):
-    """Instantiate a policy (pretrained or scratch) using the common factory."""
 
-    # Ensure the policy config carries the pretrained path if provided via CLI shortcut
-    # In TrainRLServerPipelineConfig validation, policy.pretrained_path is normally set
-    # If not, try to fallback to legacy `pretrained_policy_name_or_path` field
-    if getattr(train_cfg.policy, "pretrained_path", None) is None:
-        legacy_field = getattr(train_cfg, "pretrained_policy_name_or_path", None)
-        if legacy_field is not None:
-            train_cfg.policy.pretrained_path = legacy_field  # type: ignore[attr-defined]
+def eval_policy(env, policy, n_episodes):
+    sum_reward_episode = []
+    for i in range(n_episodes):
+        obs, _ = env.reset()
+        episode_reward = 0.0
+        while True:
+            action = policy.select_action(obs)
+            obs, reward, terminated, truncated, _ = env.step(action)
+            episode_reward += reward
+            if terminated or truncated:
+                break
+        sum_reward_episode.append(episode_reward)
 
-    policy = make_policy(cfg=train_cfg.policy, env_cfg=train_cfg.env)
-    policy.eval()
-    return policy
-
-
-def _evaluate_once(env, policy) -> float:
-    """Run a single episode and return the cumulative reward."""
-    obs, info = env.reset()
-    episode_reward = 0.0
-
-    terminated = False
-    truncated = False
-
-    while not (terminated or truncated):
-        with torch.inference_mode():
-            action = policy.select_action(batch=obs)
-        obs, reward, terminated, truncated, _ = env.step(action)
-        episode_reward += float(reward)
-    return episode_reward
+    logging.info(f"Success after 20 steps {sum_reward_episode}")
+    logging.info(f"success rate {sum(sum_reward_episode) / len(sum_reward_episode)}")
 
 
 @parser.wrap()
-def main(cfg: TrainRLServerPipelineConfig):  # noqa: D401 – function is a CLI entry point
-    """Evaluate a pretrained policy for a fixed number of episodes and report rewards.
-
-    The configuration cfg must include at least:
-        • `pretrained_policy_name_or_path`: Path or repo id to the policy to evaluate.
-        • `device`: Torch device to execute the policy on (e.g. "cuda", "cpu").
-        • `num_episodes`: Number of evaluation episodes (defaults to 10 if absent).
-
-    All other parameters (robot, teleop, wrapper, etc.) are handled by the standard
-    `make_robot_env` factory.
-    """
-
-    # Validate presence of pretrained path (or allow scratch)
-    if (
-        getattr(cfg.policy, "pretrained_path", None) is None
-        and getattr(cfg, "pretrained_policy_name_or_path", None) is None
-    ):
-        raise ValueError(
-            "A pretrained policy path must be provided via cfg.policy.pretrained_path or pretrained_policy_name_or_path."
-        )
-
-    num_episodes: int = getattr(cfg, "num_episodes", 10)
-
-    set_seed(getattr(cfg, "seed", 42))
+def main(cfg: TrainRLServerPipelineConfig):
 
     env_cfg = cfg.env
-    if env_cfg is None:
-        raise ValueError("The evaluation config must contain an 'env' section.")
-
-    logger.info("Creating robot environment …")
     env = make_robot_env(env_cfg)
+    dataset_cfg = cfg.dataset
+    dataset = LeRobotDataset(repo_id=dataset_cfg.repo_id)
+    dataset_meta = dataset.meta
 
-    logger.info("Building policy …")
-    policy = _make_policy_from_cfg(cfg)
-
-    rewards: list[float] = []
-    start_time = time.perf_counter()
-
-    for ep in range(num_episodes):
-        episode_reward = _evaluate_once(env, policy)
-        rewards.append(episode_reward)
-        logger.info("Episode %d | reward = %.3f", ep, episode_reward)
-
-    duration = time.perf_counter() - start_time
-    avg_reward = sum(rewards) / len(rewards) if rewards else 0.0
-
-    logger.info(
-        "Finished %d episodes in %.1fs (%.2f avg FPS)",
-        num_episodes,
-        duration,
-        (num_episodes / duration) if duration > 0 else float("inf"),
+    policy = make_policy(
+        cfg=cfg.policy,
+        # env_cfg=cfg.env,
+        ds_meta=dataset_meta,
     )
-    logger.info("Average reward over %d episodes: %.3f", num_episodes, avg_reward)
+    policy.from_pretrained(env_cfg.pretrained_policy_name_or_path)
+    policy.eval()
 
-    # Print to stdout for convenience when piping/redirecting output
-    print({"average_reward": avg_reward, "rewards": rewards})
+    eval_policy(
+        env,
+        policy=policy,
+        n_episodes=10)
+
 
 
 if __name__ == "__main__":
