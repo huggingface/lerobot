@@ -269,9 +269,6 @@ Follow these steps to start contributing:
    the PR as a draft PR. These are useful to avoid duplicated work, and to differentiate
    it from PRs ready to be merged;
 4. Make sure existing tests pass;
-<!-- 5. Add high-coverage tests. No quality testing = no merge.
-
-See an example of a good PR here: https://github.com/huggingface/lerobot/pull/ -->
 
 ### Tests
 

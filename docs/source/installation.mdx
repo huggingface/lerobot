@@ -2,6 +2,8 @@
 
 ## Install LeRobot
 
+Currently only available from source.
+
 Download our source code:
 ```bash
 git clone https://github.com/huggingface/lerobot.git
@@ -12,28 +14,6 @@ Create a virtual environment with Python 3.10, using [`Miniconda`](https://docs.
 ```bash
 conda create -y -n lerobot python=3.10
 ```
-
-Now restart the shell by running:
-<hfoptions id="shell_restart">
-<hfoption id="Windows">
-
-```bash
-source ~/.bashrc
-```
-</hfoption>
-<hfoption id="Mac">
-
-```bash
-source ~/.bash_profile
-```
-</hfoption>
-<hfoption id="zshell">
-
-```bash
-source ~/.zshrc
-```
-</hfoption>
-</hfoptions>
 
 Then activate your conda environment, you have to do this each time you open a shell to use lerobot:
 ```bash
@@ -51,14 +31,14 @@ conda install ffmpeg -c conda-forge
 >  ```bash
 >  conda install ffmpeg=7.1.1 -c conda-forge
 >  ```
->  - _[On Linux only]_ Install [ffmpeg build dependencies](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#GettheDependencies) and [compile ffmpeg from source with libsvtav1](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#libsvtav1), and make sure you use the corresponding ffmpeg binary to your install with `which ffmpeg`.
+>  - _[On Linux only]_ If you want to bring your own ffmpeg: Install [ffmpeg build dependencies](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#GettheDependencies) and [compile ffmpeg from source with libsvtav1](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#libsvtav1), and make sure you use the corresponding ffmpeg binary to your install with `which ffmpeg`.
 
 Install 🤗 LeRobot:
 ```bash
-cd lerobot && pip install -e ".[feetech]"
+pip install -e .
 ```
 
-## Troubleshooting
+### Troubleshooting
 If you encounter build errors, you may need to install additional dependencies: `cmake`, `build-essential`, and `ffmpeg libs`.
 To install these for linux run:
 ```bash
@@ -66,18 +46,24 @@ sudo apt-get install cmake build-essential python-dev pkg-config libavformat-dev
 ```
 For other systems, see: [Compiling PyAV](https://pyav.org/docs/develop/overview/installation.html#bring-your-own-ffmpeg)
 
-## Sim
-For simulations, 🤗 LeRobot comes with gymnasium environments that can be installed as extras:
-- [aloha](https://github.com/huggingface/gym-aloha)
-- [xarm](https://github.com/huggingface/gym-xarm)
-- [pusht](https://github.com/huggingface/gym-pusht)
+## Optional dependencies
 
-For instance, to install 🤗 LeRobot with aloha and pusht, use:
+LeRobot provides optional extras for specific functionalities. Multiple extras can be combined (e.g., `.[aloha,feetech]`). For all available extras, refer to `pyproject.toml`.
+
+### Simulations
+Install environment packages: `aloha` ([gym-aloha](https://github.com/huggingface/gym-aloha)), `xarm` ([gym-xarm](https://github.com/huggingface/gym-xarm)), or `pusht` ([gym-pusht](https://github.com/huggingface/gym-pusht))
+Example:
 ```bash
-pip install -e ".[aloha, pusht]"
+pip install -e ".[aloha]" # or "[pusht]" for example
 ```
 
-## W&B
+### Motor Control
+For Koch v1.1 install the Dynamixel SDK, for SO100/SO101/Moss install the Feetech SDK.
+```bash
+pip install -e ".[feetech]" # or "[dynamixel]" for example
+```
+
+### Experiment Tracking
 To use [Weights and Biases](https://docs.wandb.ai/quickstart) for experiment tracking, log in with
 ```bash
 wandb login
