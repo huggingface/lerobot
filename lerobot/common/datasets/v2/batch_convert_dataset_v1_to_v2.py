@@ -36,7 +36,7 @@ ALOHA_MOBILE_INFO = {
     "robot_config": AlohaRobotConfig(),
     "license": "mit",
     "url": "https://mobile-aloha.github.io/",
-    "paper": "https://arxiv.org/abs/2401.02117",
+    "paper": "https://huggingface.co/papers/2401.02117",
     "citation_bibtex": dedent(r"""
         @inproceedings{fu2024mobile,
             author    = {Fu, Zipeng and Zhao, Tony Z. and Finn, Chelsea},
@@ -49,7 +49,7 @@ ALOHA_STATIC_INFO = {
     "robot_config": AlohaRobotConfig(),
     "license": "mit",
     "url": "https://tonyzhaozh.github.io/aloha/",
-    "paper": "https://arxiv.org/abs/2304.13705",
+    "paper": "https://huggingface.co/papers/2304.13705",
     "citation_bibtex": dedent(r"""
         @article{Zhao2023LearningFB,
             title={Learning Fine-Grained Bimanual Manipulation with Low-Cost Hardware},
@@ -57,13 +57,13 @@ ALOHA_STATIC_INFO = {
             journal={RSS},
             year={2023},
             volume={abs/2304.13705},
-            url={https://arxiv.org/abs/2304.13705}
+            url={https://huggingface.co/papers/2304.13705}
         }""").lstrip(),
 }
 PUSHT_INFO = {
     "license": "mit",
     "url": "https://diffusion-policy.cs.columbia.edu/",
-    "paper": "https://arxiv.org/abs/2303.04137v5",
+    "paper": "https://huggingface.co/papers/2303.04137v5",
     "citation_bibtex": dedent(r"""
         @article{chi2024diffusionpolicy,
             author = {Cheng Chi and Zhenjia Xu and Siyuan Feng and Eric Cousineau and Yilun Du and Benjamin Burchfiel and Russ Tedrake and Shuran Song},
@@ -75,7 +75,7 @@ PUSHT_INFO = {
 XARM_INFO = {
     "license": "mit",
     "url": "https://www.nicklashansen.com/td-mpc/",
-    "paper": "https://arxiv.org/abs/2203.04955",
+    "paper": "https://huggingface.co/papers/2203.04955",
     "citation_bibtex": dedent(r"""
         @inproceedings{Hansen2022tdmpc,
             title={Temporal Difference Learning for Model Predictive Control},
@@ -244,7 +244,7 @@ DATASETS = {
         "tasks_col": "language_instruction",
         "license": "mit",
         "url": "https://ut-austin-rpl.github.io/BUDS-website/",
-        "paper": "https://arxiv.org/abs/2109.13841",
+        "paper": "https://huggingface.co/papers/2109.13841",
         "citation_bibtex": dedent(r"""
             @article{zhu2022bottom,
                 title={Bottom-Up Skill Discovery From Unsegmented Demonstrations for Long-Horizon Robot Manipulation},
@@ -261,7 +261,7 @@ DATASETS = {
         "tasks_col": "language_instruction",
         "license": "mit",
         "url": "https://ut-austin-rpl.github.io/sailor/",
-        "paper": "https://arxiv.org/abs/2210.11435",
+        "paper": "https://huggingface.co/papers/2210.11435",
         "citation_bibtex": dedent(r"""
             @inproceedings{nasiriany2022sailor,
                 title={Learning and Retrieval from Prior Data for Skill-based Imitation Learning},
@@ -274,7 +274,7 @@ DATASETS = {
         "tasks_col": "language_instruction",
         "license": "mit",
         "url": "https://ut-austin-rpl.github.io/sirius/",
-        "paper": "https://arxiv.org/abs/2211.08416",
+        "paper": "https://huggingface.co/papers/2211.08416",
         "citation_bibtex": dedent(r"""
             @inproceedings{liu2022robot,
                 title = {Robot Learning on the Job: Human-in-the-Loop Autonomy and Learning During Deployment},
@@ -298,14 +298,14 @@ DATASETS = {
         "tasks_col": "language_instruction",
         "license": "cc-by-4.0",
         "url": "https://sites.google.com/view/cablerouting/home",
-        "paper": "https://arxiv.org/abs/2307.08927",
+        "paper": "https://huggingface.co/papers/2307.08927",
         "citation_bibtex": dedent(r"""
             @article{luo2023multistage,
                 author    = {Jianlan Luo and Charles Xu and Xinyang Geng and Gilbert Feng and Kuan Fang and Liam Tan and Stefan Schaal and Sergey Levine},
                 title     = {Multi-Stage Cable Routing through Hierarchical Imitation Learning},
                 journal   = {arXiv pre-print},
                 year      = {2023},
-                url       = {https://arxiv.org/abs/2307.08927},
+                url       = {https://huggingface.co/papers/2307.08927},
             }""").lstrip(),
     },
     "berkeley_fanuc_manipulation": {
@@ -322,7 +322,7 @@ DATASETS = {
     "berkeley_gnm_cory_hall": {
         "tasks_col": "language_instruction",
         "license": "mit",
-        "paper": "https://arxiv.org/abs/1709.10489",
+        "paper": "https://huggingface.co/papers/1709.10489",
         "citation_bibtex": dedent(r"""
             @inproceedings{kahn2018self,
                 title={Self-supervised deep reinforcement learning with generalized computation graphs for robot navigation},
@@ -337,7 +337,7 @@ DATASETS = {
         "tasks_col": "language_instruction",
         "license": "mit",
         "url": "https://sites.google.com/view/recon-robot",
-        "paper": "https://arxiv.org/abs/2104.05859",
+        "paper": "https://huggingface.co/papers/2104.05859",
         "citation_bibtex": dedent(r"""
             @inproceedings{shah2021rapid,
                 title={Rapid Exploration for Open-World Navigation with Latent Goal Models},
@@ -351,7 +351,7 @@ DATASETS = {
         "tasks_col": "language_instruction",
         "license": "mit",
         "url": "https://sites.google.com/view/SACSoN-review",
-        "paper": "https://arxiv.org/abs/2306.01874",
+        "paper": "https://huggingface.co/papers/2306.01874",
         "citation_bibtex": dedent(r"""
             @article{hirose2023sacson,
                 title={SACSoN: Scalable Autonomous Data Collection for Social Navigation},
@@ -363,7 +363,7 @@ DATASETS = {
     "berkeley_mvp": {
         "tasks_col": "language_instruction",
         "license": "mit",
-        "paper": "https://arxiv.org/abs/2203.06173",
+        "paper": "https://huggingface.co/papers/2203.06173",
         "citation_bibtex": dedent(r"""
             @InProceedings{Radosavovic2022,
                 title = {Real-World Robot Learning with Masked Visual Pre-training},
@@ -375,7 +375,7 @@ DATASETS = {
     "berkeley_rpt": {
         "tasks_col": "language_instruction",
         "license": "mit",
-        "paper": "https://arxiv.org/abs/2306.10007",
+        "paper": "https://huggingface.co/papers/2306.10007",
         "citation_bibtex": dedent(r"""
             @article{Radosavovic2023,
                 title={Robot Learning with Sensorimotor Pre-training},
@@ -388,7 +388,7 @@ DATASETS = {
         "tasks_col": "language_instruction",
         "license": "mit",
         "url": "https://human-world-model.github.io/",
-        "paper": "https://arxiv.org/abs/2308.10901",
+        "paper": "https://huggingface.co/papers/2308.10901",
         "citation_bibtex": dedent(r"""
             @inproceedings{mendonca2023structured,
                 title={Structured World Models from Human Videos},
@@ -401,7 +401,7 @@ DATASETS = {
         "tasks_col": "language_instruction",
         "license": "mit",
         "url": "https://play-fusion.github.io/",
-        "paper": "https://arxiv.org/abs/2312.04549",
+        "paper": "https://huggingface.co/papers/2312.04549",
         "citation_bibtex": dedent(r"""
             @inproceedings{chen2023playfusion,
                 title={PlayFusion: Skill Acquisition via Diffusion from Language-Annotated Play},
@@ -414,7 +414,7 @@ DATASETS = {
         "tasks_col": "language_instruction",
         "license": "mit",
         "url": "https://robo-affordances.github.io/",
-        "paper": "https://arxiv.org/abs/2304.08488",
+        "paper": "https://huggingface.co/papers/2304.08488",
         "citation_bibtex": dedent(r"""
             @inproceedings{bahl2023affordances,
                 title={Affordances from Human Videos as a Versatile Representation for Robotics},
@@ -433,7 +433,7 @@ DATASETS = {
         "tasks_col": "language_instruction",
         "license": "mit",
         "url": "https://diffusion-policy.cs.columbia.edu/",
-        "paper": "https://arxiv.org/abs/2303.04137v5",
+        "paper": "https://huggingface.co/papers/2303.04137",
         "citation_bibtex": dedent(r"""
             @inproceedings{chi2023diffusionpolicy,
                 title={Diffusion Policy: Visuomotor Policy Learning via Action Diffusion},
@@ -505,7 +505,7 @@ DATASETS = {
         "tasks_col": "language_instruction",
         "license": "mit",
         "url": "https://droid-dataset.github.io/",
-        "paper": "https://arxiv.org/abs/2403.12945",
+        "paper": "https://huggingface.co/papers/2403.12945",
         "citation_bibtex": dedent(r"""
             @article{khazatsky2024droid,
                 title   = {DROID: A Large-Scale In-The-Wild Robot Manipulation Dataset},
@@ -517,7 +517,7 @@ DATASETS = {
         "tasks_col": "language_instruction",
         "license": "cc-by-4.0",
         "url": "https://functional-manipulation-benchmark.github.io/",
-        "paper": "https://arxiv.org/abs/2401.08553",
+        "paper": "https://huggingface.co/papers/2401.08553",
         "citation_bibtex": dedent(r"""
             @article{luo2024fmb,
                 title={FMB: a Functional Manipulation Benchmark for Generalizable Robotic Learning},
@@ -530,7 +530,7 @@ DATASETS = {
         "tasks_col": "language_instruction",
         "license": "mit",
         "url": "https://openreview.net/forum?id=WuBv9-IGDUA",
-        "paper": "https://arxiv.org/abs/2401.14502",
+        "paper": "https://huggingface.co/papers/2401.14502",
         "citation_bibtex": dedent(r"""
             @inproceedings{saxena2023multiresolution,
                 title={Multi-Resolution Sensing for Real-Time Control with Vision-Language Models},
@@ -575,7 +575,7 @@ DATASETS = {
         "tasks_col": "language_instruction",
         "license": "mit",
         "url": "https://jyopari.github.io/VINN/",
-        "paper": "https://arxiv.org/abs/2112.01511",
+        "paper": "https://huggingface.co/papers/2112.01511",
         "citation_bibtex": dedent(r"""
             @misc{pari2021surprising,
                 title={The Surprising Effectiveness of Representation Learning for Visual Imitation},
@@ -590,7 +590,7 @@ DATASETS = {
         "tasks_col": "language_instruction",
         "license": "mit",
         "url": "https://play-to-policy.github.io/",
-        "paper": "https://arxiv.org/abs/2210.10047",
+        "paper": "https://huggingface.co/papers/2210.10047",
         "citation_bibtex": dedent(r"""
             @article{cui2022play,
                 title   = {From Play to Policy: Conditional Behavior Generation from Uncurated Robot Data},
@@ -603,7 +603,7 @@ DATASETS = {
         "tasks_col": "language_instruction",
         "license": "mit",
         "url": "https://rot-robot.github.io/",
-        "paper": "https://arxiv.org/abs/2206.15469",
+        "paper": "https://huggingface.co/papers/2206.15469",
         "citation_bibtex": dedent(r"""
             @inproceedings{haldar2023watch,
                 title={Watch and match: Supercharging imitation with regularized optimal transport},
@@ -633,7 +633,7 @@ DATASETS = {
         "tasks_col": "language_instruction",
         "license": "mit",
         "url": "https://sites.google.com/view/hydra-il-2023",
-        "paper": "https://arxiv.org/abs/2306.17237",
+        "paper": "https://huggingface.co/papers/2306.17237",
         "citation_bibtex": dedent(r"""
             @article{belkhale2023hydra,
                 title={HYDRA: Hybrid Robot Actions for Imitation Learning},
@@ -646,21 +646,21 @@ DATASETS = {
         "tasks_col": "language_instruction",
         "license": "mit",
         "url": "https://sites.google.com/view/visionandtouch",
-        "paper": "https://arxiv.org/abs/1810.10191",
+        "paper": "https://huggingface.co/papers/1810.10191",
         "citation_bibtex": dedent(r"""
             @inproceedings{lee2019icra,
                 title={Making sense of vision and touch: Self-supervised learning of multimodal representations for contact-rich tasks},
                 author={Lee, Michelle A and Zhu, Yuke and Srinivasan, Krishnan and Shah, Parth and Savarese, Silvio and Fei-Fei, Li and  Garg, Animesh and Bohg, Jeannette},
                 booktitle={2019 IEEE International Conference on Robotics and Automation (ICRA)},
                 year={2019},
-                url={https://arxiv.org/abs/1810.10191}
+                url={https://huggingface.co/papers/1810.10191}
             }""").lstrip(),
     },
     "stanford_robocook": {
         "tasks_col": "language_instruction",
         "license": "mit",
         "url": "https://hshi74.github.io/robocook/",
-        "paper": "https://arxiv.org/abs/2306.14447",
+        "paper": "https://huggingface.co/papers/2306.14447",
         "citation_bibtex": dedent(r"""
             @article{shi2023robocook,
                 title={RoboCook: Long-Horizon Elasto-Plastic Object Manipulation with Diverse Tools},
@@ -673,7 +673,7 @@ DATASETS = {
         "tasks_col": "language_instruction",
         "license": "cc-by-4.0",
         "url": "https://www.kaggle.com/datasets/oiermees/taco-robot",
-        "paper": "https://arxiv.org/abs/2209.08959, https://arxiv.org/abs/2210.01911",
+        "paper": "https://huggingface.co/papers/2209.08959, https://huggingface.co/papers/2210.01911",
         "citation_bibtex": dedent(r"""
             @inproceedings{rosete2022tacorl,
                 author = {Erick Rosete-Beas and Oier Mees and Gabriel Kalweit and Joschka Boedecker and Wolfram Burgard},
@@ -693,7 +693,7 @@ DATASETS = {
         "tasks_col": "language_instruction",
         "license": "mit",
         "url": "URL",
-        "paper": "https://arxiv.org/abs/2107.05842",
+        "paper": "https://huggingface.co/papers/2107.05842",
         "citation_bibtex": dedent(r"""
             @Article{Osa22,
                 author  = {Takayuki Osa},
@@ -709,7 +709,7 @@ DATASETS = {
         "tasks_col": "language_instruction",
         "license": "mit",
         "url": "https://toto-benchmark.org/",
-        "paper": "https://arxiv.org/abs/2306.00942",
+        "paper": "https://huggingface.co/papers/2306.00942",
         "citation_bibtex": dedent(r"""
             @inproceedings{zhou2023train,
                 author={Zhou, Gaoyue and Dean, Victoria and Srirama, Mohan Kumar and Rajeswaran, Aravind and Pari, Jyothish and Hatch, Kyle and Jain, Aryan and Yu, Tianhe and Abbeel, Pieter and Pinto, Lerrel and Finn, Chelsea and Gupta, Abhinav},
@@ -733,7 +733,7 @@ DATASETS = {
         "tasks_col": "language_instruction",
         "license": "mit",
         "url": "https://owmcorl.github.io/#",
-        "paper": "https://arxiv.org/abs/2310.16029",
+        "paper": "https://huggingface.co/papers/2310.16029",
         "citation_bibtex": dedent(r"""
             @preprint{Feng2023Finetuning,
                 title={Finetuning Offline World Models in the Real World},
@@ -745,7 +745,7 @@ DATASETS = {
         "tasks_col": "language_instruction",
         "license": "mit",
         "url": "https://robopil.github.io/d3fields/",
-        "paper": "https://arxiv.org/abs/2309.16118",
+        "paper": "https://huggingface.co/papers/2309.16118",
         "citation_bibtex": dedent(r"""
             @article{wang2023d3field,
                 title={D^3Field: Dynamic 3D Descriptor Fields for Generalizable Robotic Manipulation},
@@ -758,7 +758,7 @@ DATASETS = {
         "tasks_col": "language_instruction",
         "license": "mit",
         "url": "https://uscresl.github.io/dmfd/",
-        "paper": "https://arxiv.org/abs/2207.10148",
+        "paper": "https://huggingface.co/papers/2207.10148",
         "citation_bibtex": dedent(r"""
             @article{salhotra2022dmfd,
                 author={Salhotra, Gautam and Liu, I-Chun Arthur and Dominguez-Kuhne, Marcus and Sukhatme, Gaurav S.},
@@ -775,7 +775,7 @@ DATASETS = {
         "tasks_col": "language_instruction",
         "license": "mit",
         "url": "https://ut-austin-rpl.github.io/MUTEX/",
-        "paper": "https://arxiv.org/abs/2309.14320",
+        "paper": "https://huggingface.co/papers/2309.14320",
         "citation_bibtex": dedent(r"""
             @inproceedings{shah2023mutex,
                 title={{MUTEX}: Learning Unified Policies from Multimodal Task Specifications},
@@ -811,7 +811,7 @@ DATASETS = {
         "tasks_col": "language_instruction",
         "license": "mit",
         "url": "https://saytap.github.io/",
-        "paper": "https://arxiv.org/abs/2306.07580",
+        "paper": "https://huggingface.co/papers/2306.07580",
         "citation_bibtex": dedent(r"""
             @article{saytap2023,
                 author = {Yujin Tang and Wenhao Yu and Jie Tan and Heiga Zen and Aleksandra Faust and
@@ -847,7 +847,7 @@ DATASETS = {
         "tasks_col": "language_instruction",
         "license": "mit",
         "url": "https://ut-austin-rpl.github.io/VIOLA/",
-        "paper": "https://arxiv.org/abs/2210.11339",
+        "paper": "https://huggingface.co/papers/2210.11339",
         "citation_bibtex": dedent(r"""
             @article{zhu2022viola,
                 title={VIOLA: Imitation Learning for Vision-Based Manipulation with Object Proposal Priors},
