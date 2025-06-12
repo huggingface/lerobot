@@ -36,7 +36,7 @@ logging.basicConfig(level=logging.INFO)
 
 def eval_policy(env, policy, n_episodes):
     sum_reward_episode = []
-    for i in range(n_episodes):
+    for _ in range(n_episodes):
         obs, _ = env.reset()
         episode_reward = 0.0
         while True:
