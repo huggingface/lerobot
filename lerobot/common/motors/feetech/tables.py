@@ -151,6 +151,32 @@ SCS_SERIES_CONTROL_TABLE = {
     "Acceleration_2": (83, 1),  # don't know what that is
 }
 
+HLS3625_CONTROL_TABLE = {
+    # EPROM ---------------------------------------------------------
+    "ID": (0x05, 1),
+    "Baud_Rate": (0x06, 1),
+    "Return_Delay_Time": (0x07, 1),
+    "Min_Position_Limit": (0x09, 2),
+    "Max_Position_Limit": (0x0B, 2),
+    "Operating_Mode": (0x21, 1),
+    "Homing_Offset": (0x1F, 2),
+    # SRAM control -----------------------------------------------
+    "Torque_Enable": (0x28, 1),
+    "Acceleration": (0x29, 1),
+    "Phase": (0x12, 1),
+    "Target_Position": (0x2A, 2),
+    "Target_Torque": (0x2C, 2),
+    "Running_Speed": (0x2E, 2),
+    "Torque_Limit": (0x30, 2),
+    "Lock": (0x37, 1),
+    # SRAM feedback ----------------------------------------------
+    "Present_Position": (0x38, 2),
+    "Present_Velocity": (0x3A, 2),
+    "Present_Current": (0x45, 2),
+    # Factory / limits -------------------------------------------
+    "Maximum_Acceleration": (0x55, 1),
+}
+
 STS_SMS_SERIES_BAUDRATE_TABLE = {
     1_000_000: 0,
     500_000: 1,
@@ -181,6 +207,7 @@ MODEL_CONTROL_TABLE = {
     "sts3250": STS_SMS_SERIES_CONTROL_TABLE,
     "scs0009": SCS_SERIES_CONTROL_TABLE,
     "sm8512bl": STS_SMS_SERIES_CONTROL_TABLE,
+    "hls3625": HLS3625_CONTROL_TABLE,
 }
 
 MODEL_RESOLUTION = {
@@ -191,6 +218,7 @@ MODEL_RESOLUTION = {
     "sts3250": 4096,
     "sm8512bl": 65536,
     "scs0009": 1024,
+    "hls3625": 4096,
 }
 
 MODEL_BAUDRATE_TABLE = {
@@ -201,6 +229,7 @@ MODEL_BAUDRATE_TABLE = {
     "sts3215": STS_SMS_SERIES_BAUDRATE_TABLE,
     "sts3250": STS_SMS_SERIES_BAUDRATE_TABLE,
     "scs0009": SCS_SERIES_BAUDRATE_TABLE,
+    "hls3625": STS_SMS_SERIES_BAUDRATE_TABLE,
 }
 
 # Sign-Magnitude encoding bits
@@ -218,6 +247,7 @@ MODEL_ENCODING_TABLE = {
     "sts3250": STS_SMS_SERIES_ENCODINGS_TABLE,
     "sm8512bl": STS_SMS_SERIES_ENCODINGS_TABLE,
     "scs0009": {},
+    "hls3625": {"Target_Torque": 15, "Homing_Offset": 15},
 }
 
 SCAN_BAUDRATES = [
@@ -239,6 +269,7 @@ MODEL_NUMBER_TABLE = {
     "sts3250": 2825,
     "sm8512bl": 11272,
     "scs0009": 1284,
+    "hls3625": 3338,
 }
 
 MODEL_PROTOCOL = {
@@ -249,4 +280,5 @@ MODEL_PROTOCOL = {
     "sts3250": 0,
     "sm8512bl": 0,
     "scs0009": 1,
+    "hls3625": 0,
 }
