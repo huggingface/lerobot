@@ -16,8 +16,7 @@
 
 import threading
 import time
-
-from torch.multiprocessing import Queue
+from queue import Queue
 
 from lerobot.common.utils.queue import get_last_item_from_queue
 
