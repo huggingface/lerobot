@@ -14,22 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import logging
-import time
-from collections import deque
-from threading import Lock
-from typing import Annotated, Any, Sequence
-
-import gymnasium as gym
-import numpy as np
-import torch
-import torchvision.transforms.functional as F  # noqa: N812
 
 from lerobot.common.cameras import opencv  # noqa: F401
-from lerobot.common.envs.configs import EnvConfig
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.configs.train import TrainRLServerPipelineConfig
-from lerobot.common.envs.utils import preprocess_observation
-from lerobot.common.model.kinematics import RobotKinematics
+from lerobot.common.policies.factory import make_policy
 from lerobot.common.robots import (  # noqa: F401
     RobotConfig,
     make_robot_from_config,
@@ -37,19 +25,13 @@ from lerobot.common.robots import (  # noqa: F401
 )
 from lerobot.common.teleoperators import (
     gamepad,  # noqa: F401
-    make_teleoperator_from_config,
     so101_leader,  # noqa: F401
 )
-
-from lerobot.common.policies.factory import make_policy
-from lerobot.common.teleoperators.gamepad.teleop_gamepad import GamepadTeleop
-from lerobot.common.utils.robot_utils import busy_wait
-from lerobot.common.utils.utils import log_say
 from lerobot.configs import parser
+from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.scripts.rl.gym_manipulator import make_robot_env
 
 logging.basicConfig(level=logging.INFO)
-
 
 
 def eval_policy(env, policy, n_episodes):
@@ -71,7 +53,6 @@ def eval_policy(env, policy, n_episodes):
 
 @parser.wrap()
 def main(cfg: TrainRLServerPipelineConfig):
-
     env_cfg = cfg.env
     env = make_robot_env(env_cfg)
     dataset_cfg = cfg.dataset
@@ -86,11 +67,7 @@ def main(cfg: TrainRLServerPipelineConfig):
     policy.from_pretrained(env_cfg.pretrained_policy_name_or_path)
     policy.eval()
 
-    eval_policy(
-        env,
-        policy=policy,
-        n_episodes=10)
-
+    eval_policy(env, policy=policy, n_episodes=10)
 
 
 if __name__ == "__main__":
