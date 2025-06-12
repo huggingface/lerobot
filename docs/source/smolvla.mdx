@@ -29,9 +29,6 @@ We recommend starting from [recording a dataset](https://huggingface.co/docs/ler
 
 <Tip>
 
-Small tip for the dataset:
-
-
 In your dataset, make sure to have enough demonstrations per each variation you are introducing.
 
 We recommend checking out this dataset for reference that was used in the [SmolVLA paper](https://huggingface.co/papers/2506.01844):
@@ -42,7 +39,7 @@ In this dataset, we recorded 50 episodes across 5 distinct cube positions. For e
 After you have your dataset available on the Hub, you are good to go to use our finetuning script to adapt SmolVLA to your application!
 </Tip>
 
-### Finetune SmolVLA on your data
+## Finetune SmolVLA on your data
 
 Use [`smolvla_base`](https://hf.co/lerobot/smolvla_base), our pretrained 450M model, and fine-tune it on your data!
 Training the model for 20k steps will roughly take ~3hrs on a single A100 GPU. You should tune the number of steps based on performance and your use-case.
