@@ -233,15 +233,12 @@ def visualize_dataset(
 
 def main():
     parser = argparse.ArgumentParser()
+
     parser.add_argument(
         "--repo-id",
         type=str,
+        required=True,
         help="Name of hugging face repository containing a LeRobotDataset dataset (e.g. `lerobot/pusht`).",
-    )
-    parser.add_argument(
-        "--eval-data-dir",
-        type=Path,
-        help="Directory containing evaluation data (alternative to --repo-id)",
     )
     parser.add_argument(
         "--episode-index",
@@ -320,96 +317,18 @@ def main():
 
     args = parser.parse_args()
     kwargs = vars(args)
+    repo_id = kwargs.pop("repo_id")
+    root = kwargs.pop("root")
+    tolerance_s = kwargs.pop("tolerance_s")
 
-    if args.repo_id and args.eval_data_dir:
-        raise ValueError("Cannot specify both --repo-id and --eval-data-dir")
-    if not args.repo_id and not args.eval_data_dir:
-        raise ValueError("Must specify either --repo-id or --eval-data-dir")
+    logging.info("Loading dataset")
+    metadata = LeRobotDatasetMetadata(repo_id, root=root)
 
-    if args.repo_id:
-        # Original training data visualization
-        repo_id = kwargs.pop("repo_id")
-        root = kwargs.pop("root")
-        tolerance_s = kwargs.pop("tolerance_s")
-        eval_data_dir = kwargs.pop("eval_data_dir")
+    dataset = LeRobotDataset(repo_id, root=root, tolerance_s=tolerance_s)
 
-        logging.info("Loading dataset")
-        dataset = LeRobotDataset(repo_id, root=root, tolerance_s=tolerance_s)
-        visualize_dataset(dataset, **kwargs)
-    else:
-        # Evaluation data visualization
-        eval_data_dir = kwargs.pop("eval_data_dir")
-        episode_file = eval_data_dir / f"episode_{args.episode_index}.pt"
-        if not episode_file.exists():
-            raise ValueError(
-                f"No evaluation data found for episode {args.episode_index}"
-            )
-
-        episode_data = torch.load(episode_file)
-        logging.info(f"Loaded evaluation data for episode {args.episode_index}")
-
-        # Create a simple dataset-like object that matches the interface needed by visualize_dataset
-        class EvalDataset:
-            def __init__(self, data):
-                self.data = data
-                # Create metadata using the existing LeRobotDatasetMetadata class
-                # We'll create a temporary info dict with the necessary fields
-                info = {
-                    "codebase_version": CODEBASE_VERSION,
-                    "fps": 30,  # Default value, should be passed from eval.py
-                    "features": {},
-                    "total_episodes": 1,
-                    "total_frames": len(data["index"]),
-                    "data_path": "",  # Not needed for eval visualization
-                    "video_path": None,  # Eval data doesn't use videos
-                    "robot_type": None,  # Could be passed from eval.py in future
-                    "total_tasks": 1,
-                    "total_chunks": 1,
-                    "chunks_size": len(data["index"]),
-                    "total_videos": 0,
-                }
-
-                # Extract features from the data
-                for key, value in data.items():
-                    if isinstance(value, torch.Tensor):
-                        if (
-                            len(value.shape) == 3 and value.shape[0] == 3
-                        ):  # Assuming CHW image format
-                            info["features"][key] = {
-                                "dtype": "image",
-                                "shape": list(value.shape),
-                            }
-                        else:
-                            info["features"][key] = {
-                                "dtype": "tensor",
-                                "shape": list(value.shape[1:]),
-                            }
-
-                # Add standard features that should always exist
-                info["features"]["index"] = {"dtype": "int64", "shape": []}
-                info["features"]["episode_index"] = {"dtype": "int64", "shape": []}
-                info["features"]["frame_index"] = {"dtype": "int64", "shape": []}
-                info["features"]["timestamp"] = {"dtype": "float32", "shape": []}
-
-                # Create the metadata object
-                self.meta = LeRobotDatasetMetadata(str(eval_data_dir), info=info)
-                self.meta.episode_data_index = {
-                    "from": torch.tensor([0]),
-                    "to": torch.tensor([len(data["index"])]),
-                }
-
-            def __getitem__(self, idx):
-                return {k: v[idx] for k, v in self.data.items()}
-
-            def __len__(self):
-                return len(self.data["index"])
-
-        eval_dataset = EvalDataset(episode_data)
-        del kwargs["repo_id"]
-        del kwargs["root"]
-        del kwargs["tolerance_s"]
-        print(kwargs)
-        visualize_dataset(eval_dataset, **kwargs)
+    # for i in range(args.episode_index, dataset.num_episodes):
+    #    print_failure_indices(dataset, i)
+    visualize_dataset(dataset, **vars(args))
 
 
 if __name__ == "__main__":
