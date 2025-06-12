@@ -27,26 +27,6 @@ Examples of usage:
 python lerobot/scripts/rl/actor.py --config_path lerobot/configs/train_config_hilserl_so100.json
 ```
 
-- Run with a specific robot type for a pick and place task:
-```bash
-python lerobot/scripts/rl/actor.py \
-    --config_path lerobot/configs/train_config_hilserl_so100.json \
-    --robot.type=so100 \
-    --task=pick_and_place
-```
-
-- Set a custom workspace bound for the robot's end-effector:
-```bash
-python lerobot/scripts/rl/actor.py \
-    --config_path lerobot/configs/train_config_hilserl_so100.json
-```
-
-- Run with specific camera crop parameters:
-```bash
-python lerobot/scripts/rl/actor.py \
-    --config_path lerobot/configs/train_config_hilserl_so100.json
-```
-
 **NOTE**: The actor server requires a running learner server to connect to. Ensure the learner
 server is started before launching the actor.
 
