@@ -25,7 +25,7 @@ from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnecte
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
-from ...motors.franka_api.API import API
+from ...motors.franka_api.api import API
 from .config_panda_follower import PandaConfig
 
 logger = logging.getLogger(__name__)
@@ -126,7 +126,7 @@ class PandaRobot(Robot):
             self.api = API(server_address=self.config.ip)
             
             # Test connection by getting joint state
-            _ = self.api.get_JointState()
+            _ = self.api.get_joint_state()
             self._connected = True
             
             # Connect cameras if any
@@ -185,7 +185,7 @@ class PandaRobot(Robot):
         try:
             # Get joint positions
             start_time = time.perf_counter()
-            joint_angles = self.api.get_JointAngles()
+            joint_angles = self.api.get_joint_position()
             
             # Convert to observation format
             for i, joint_name in enumerate(self.joint_names):
@@ -197,7 +197,7 @@ class PandaRobot(Robot):
             # Get force/torque if enabled
             if self.config.use_force_feedback:
                 start_time = time.perf_counter()
-                wrench = self.api.get_Wrench()
+                wrench = self.api.get_wrench()
                 
                 obs_dict.update({
                     "force.x": float(wrench.fx),
@@ -214,7 +214,7 @@ class PandaRobot(Robot):
             # Get Cartesian pose if enabled
             if self.config.use_cartesian_feedback:
                 start_time = time.perf_counter()
-                cart_pose = self.api.get_CartPose()
+                cart_pose = self.api.get_cart_pose()
                 
                 obs_dict.update({
                     "pose.x": float(cart_pose.x),
@@ -255,8 +255,8 @@ class PandaRobot(Robot):
             raise DeviceNotConnectedError(f"{self} is not connected")
         action = self._validate_joint_positions(action)
         action_array = np.array([action[joint + ".pos"] for joint in self.joint_names], dtype=np.float32)
-        response_msg = self.api.set_JointPosition(list(action_array))
-        joint_angles = self.api.get_JointAngles()
+        response_msg = self.api.set_joint_position(list(action_array))
+        joint_angles = self.api.get_joint_position()
         response = {f"{joint}.pos": float(joint_angles[i]) for i, joint in enumerate(self.joint_names)}
         return response
 

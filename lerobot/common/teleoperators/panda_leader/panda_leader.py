@@ -24,7 +24,7 @@ from lerobot.common.motors import Motor, MotorCalibration, MotorNormMode
 from ..teleoperator import Teleoperator
 from .config_panda_leader import PandaTeleoperatorConfig
 
-from lerobot.common.motors.franka_api.API import *
+from lerobot.common.motors.franka_api.api import *
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +81,7 @@ class PandaTeleoperator(Teleoperator):
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
         start = time.perf_counter()
-        joint_angles = self.api.get_JointAngles()
+        joint_angles = self.api.get_joint_position()
         #action = {f"{motor}.pos": val for motor, val in action.items()}
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read action: {dt_ms:.1f}ms")
