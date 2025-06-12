@@ -12,7 +12,7 @@
   title: "Tutorials"
 - sections:
   - local: smolvla
-    title: Finetune and Use SmolVLA
+    title: Finetune SmolVLA
   title: "Policies"
 - sections:
   - local: so101

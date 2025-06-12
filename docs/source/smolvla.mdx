@@ -1,4 +1,4 @@
-# Finetune and Use SmolVLA
+# Finetune SmolVLA
 
 SmolVLA is Hugging Face’s compact foundation model for robotics. We designed SmolVLA to make it easy to finetune on lerobot data, jumpstarting your development!
 
@@ -12,11 +12,11 @@ SmolVLA is Hugging Face’s compact foundation model for robotics. We designed S
 
 First, use the following instructions to properly setup your environment!
 
-```python
-
 To install LeRobot, follow our [Installation Guide](./installation)
 
 In addition to these instructions, you need to install the SmolVLA dependencies:
+
+```python
 
 pip install -e ".[smolvla]"
 
@@ -33,7 +33,7 @@ We recommend starting from [recording a dataset](https://huggingface.co/docs/ler
 
 In your dataset, make sure to have enough demonstrations per each variation (e.g. the cube position on the table if it is cube pick-place task) you are introducing.
 
-We recommend checking out this dataset for reference that was used in the [SmolVLA paper](https://huggingface.co/papers/2506.01844):
+We recommend checking out the dataset linked below for reference that was used in the [SmolVLA paper](https://huggingface.co/papers/2506.01844):
 
 🔗 [SVLA SO100 PickPlace](https://huggingface.co/spaces/lerobot/visualize_dataset?path=%2Flerobot%2Fsvla_so100_pickplace%2Fepisode_0)
 
