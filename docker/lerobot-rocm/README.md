@@ -1,6 +1,6 @@
 # LeRobot Docker Setup
 
-This repository contains a Docker setup for running LeRobot with ROCm GPU support.
+This page contains a Docker setup instructions for running LeRobot with ROCm GPU support.
 
 ## Prerequisites
 
