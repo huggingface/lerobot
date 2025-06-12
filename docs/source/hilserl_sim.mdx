@@ -14,10 +14,10 @@ Currently, the main environment is a Franka Panda robot simulation based on MuJo
 
 ## Installation
 
-First, install the `gym_hil` package within the LeRobot environment:
+First, install the `gym_hil` package within the LeRobot environment, go to your LeRobot folder and run this command:
 
 ```bash
-pip install -e .[hilserl]
+pip install -e ".[hilserl]"
 ```
 
 ## What do I need?
@@ -25,11 +25,9 @@ pip install -e .[hilserl]
 - A gamepad or keyboard to control the robot
 - A Nvidia GPU
 
-
-
 ## Configuration
 
-To use `gym_hil` with LeRobot, you need to create a configuration file. An example is provided [here](https://huggingface.co/datasets/aractingi/lerobot-example-config-files/blob/main/gym_hil_env.json). Key configuration sections include:
+To use `gym_hil` with LeRobot, you need to use a configuration file. An example config file is stored under `lerobot/examples/rl_config/gym_hil_serl.json`.Key configuration sections include:
 
 ### Environment Type and Task
 
@@ -77,7 +75,7 @@ Important parameters:
 To run the environment, set mode to null:
 
 ```python
-python lerobot/scripts/rl/gym_manipulator.py --config_path path/to/gym_hil_env.json
+python lerobot/scripts/rl/gym_manipulator.py --config_path examples/rl_config/gym_hil_serl.json
 ```
 
 ### Recording a Dataset
@@ -85,21 +83,21 @@ python lerobot/scripts/rl/gym_manipulator.py --config_path path/to/gym_hil_env.j
 To collect a dataset, set the mode to `record` whilst defining the repo_id and number of episodes to record:
 
 ```python
-python lerobot/scripts/rl/gym_manipulator.py --config_path path/to/gym_hil_env.json
+python lerobot/scripts/rl/gym_manipulator.py --config_path examples/rl_config/gym_hil_serl.json
 ```
 
 ### Training a Policy
 
-To train a policy, checkout the configuration example available [here](https://huggingface.co/datasets/aractingi/lerobot-example-config-files/blob/main/train_gym_hil_env.json) and run the actor and learner servers:
+To train a policy, checkout the configuration example available here: `lerobot/examples/rl_config/train_gym_hil_env.json` and run the actor and learner servers:
 
 ```python
-python lerobot/scripts/rl/actor.py --config_path path/to/train_gym_hil_env.json
+python lerobot/scripts/rl/actor.py --config_path examples/rl_config/train_gym_hil_env.json
 ```
 
 In a different terminal, run the learner server:
 
 ```python
-python lerobot/scripts/rl/learner.py --config_path path/to/train_gym_hil_env.json
+python lerobot/scripts/rl/learner.py --config_path examples/rl_config/train_gym_hil_env.json
 ```
 
 The simulation environment provides a safe and repeatable way to develop and test your Human-In-the-Loop reinforcement learning components before deploying to real robots.

@@ -43,7 +43,7 @@ One can use HIL-SERL to train on a variety of manipulation tasks. Some recommend
 To install LeRobot with HIL-SERL, you need to install the `hilserl` extra.
 
 ```bash
-pip install -e .[hilserl]
+pip install -e ".[hilserl]"
 ```
 
 ## 1. Real Robot Training Workflow
@@ -121,7 +121,7 @@ With the bounds defined, you can safely collect demonstrations for training. Tra
 
 **Setting Up Record Mode**
 
-Create a configuration file for recording demonstrations (or edit an existing one like [env_config_so100.json](https://huggingface.co/datasets/aractingi/lerobot-example-config-files/blob/main/env_config_so100.json)):
+Create a configuration file for recording demonstrations (or edit an existing one) that can be found here: `lerobot/examples/rl_config/env_config_so100.json`.
 
 1. Set `mode` to `"record"`
 2. Specify a unique `repo_id` for your dataset (e.g., "username/task_name")
@@ -150,10 +150,10 @@ Example configuration section:
 
 **Recording Demonstrations**
 
-Start the recording process, an example of the config file can be found [here](https://huggingface.co/datasets/aractingi/lerobot-example-config-files/blob/main/env_config_so100.json):
+Start the recording process, an example of the config file can be found here: `lerobot/examples/rl_config/env_config_so100.json`.
 
 ```bash
-python lerobot/scripts/rl/gym_manipulator.py --config_path lerobot/configs/env_config_so100.json
+python lerobot/scripts/rl/gym_manipulator.py --config_path examples/rl_config/env_config_so100.json
 ```
 
 During recording:
@@ -226,7 +226,7 @@ The LeRobot system uses a distributed actor-learner architecture for training. T
 
 **Configuration Setup**
 
-Create a training configuration file (example available [here](https://huggingface.co/datasets/aractingi/lerobot-example-config-files/blob/main/train_config_hilserl_so100.json)). The training config is based on the main `TrainRLServerPipelineConfig` class in `lerobot/configs/train.py`.
+Create a training configuration file (example available here: `lerobot/examples/rl_config/train_config_hilserl_so100.json`). The training config is based on the main `TrainRLServerPipelineConfig` class in `lerobot/configs/train.py`.
 
 1. Configure the policy settings (`type="sac"`, `device`, etc.)
 2. Set `dataset` to your cropped dataset
@@ -239,7 +239,7 @@ Create a training configuration file (example available [here](https://huggingfa
 First, start the learner server process:
 
 ```bash
-python lerobot/scripts/rl/learner.py --config_path lerobot/configs/train_config_hilserl_so100.json
+python lerobot/scripts/rl/learner.py --config_path examples/rl_config/train_config_hilserl_so100.json
 ```
 
 The learner:
@@ -253,7 +253,7 @@ The learner:
 In a separate terminal, start the actor process with the same configuration:
 
 ```bash
-python lerobot/scripts/rl/actor.py --config_path lerobot/configs/train_config_hilserl_so100.json
+python lerobot/scripts/rl/actor.py --config_path examples/rl_config/train_config_hilserl_so100.json
 ```
 
 The actor:
@@ -354,7 +354,7 @@ The reward classifier is configured using `configuration_classifier.py`. Here ar
 - **dropout_rate**: Regularization parameter
 - **learning_rate**: Learning rate for optimizer
 
-Example configuration for training the [reward classifier](https://huggingface.co/datasets/aractingi/lerobot-example-config-files/blob/main/reward_classifier_train_config.json):
+Example configuration for training the reward classifier can be found here: `lerobot/examples/rl_config/reward_classifier_train_config.json`:
 
 ```json
 {
@@ -388,7 +388,7 @@ Example configuration for training the [reward classifier](https://huggingface.c
 To train the classifier, use the `train.py` script with your configuration:
 
 ```bash
-python lerobot/scripts/train.py --config_path path/to/reward_classifier_train_config.json
+python lerobot/scripts/train.py --config_path examples/rl_config/reward_classifier_train_config.json
 ```
 
 ### 2.4 Deploying and Testing the Model

@@ -8,45 +8,40 @@ This tutorial will explain how to train a neural network to control a robot in s
 3. How to evaluate your policy in simulation and visualize the results.
 
 For the simulation environment we use the same [repo](https://github.com/huggingface/gym-hil) that is also being used by the Human-In-the-Loop (HIL) reinforcement learning algorithm.
-This environment is based on [MuJoCo](https://mujoco.org) and allows you to record datasets in LeRobotDataset format.
+This environment is based on [MuJoCo](https://mujoco.org) and allows you to record datasets in LeRobotDataset format. Due to a limitation you cannot use the keyboard for doing teleoperation on MacOS.
+Thus you need to use a controller like the Logitech F710 to teleoperate the robot on MacOS.
 
 ## Installation
 
-First we will install the environment. we follow the installation instructions from the [repo](https://github.com/huggingface/gym-hil#installation).
+First, install the `gym_hil` package within the LeRobot environment, go to your LeRobot folder and run this command:
 
-Create a virtual environment with Python 3.10 and activate it, e.g. with [`miniconda`](https://docs.anaconda.com/free/miniconda/index.html):
 ```bash
-conda create -y -n gym_hil python=3.10 && conda activate gym_hil
+pip install -e ".[hilserl]"
 ```
 
-Install gym-hil from PyPI:
+## Teleoperate and Record a Dataset
+
+To use `gym_hil` with LeRobot, you need to use a configuration file. An example config file is stored under `examples/rl_config/hil_serl.json`.
+
+To teleoperate and collect a dataset, we need to set the mode to `record` and define the `repo_id` and `number of episodes` to record. ....
+
+Then we can run this command to start:
+
+<hfoptions id="teleop_sim">
+<hfoption id="Linux">
 ```bash
-pip install gym-hil
+python lerobot/scripts/rl/gym_manipulator.py --config_path path/to/gym_hil_env.json
+
 ```
-or from source:
+</hfoption>
+<hfoption id="MacOS">
 ```bash
-git clone https://github.com/HuggingFace/gym-hil.git && cd gym-hil
-pip install -e .
+mjpython lerobot/scripts/rl/gym_manipulator.py --config_path path/to/gym_hil_env.json
 ```
+</hfoption>
+</hfoptions>
 
-## Teleoperate and record dataset
-
-To teleoperate a Franka Panda robot in simulation and record a dataset, run this script `examples/test_teleoperation.py` from inside the repo:
-
-```bash
-python examples/test_teleoperation.py --use-keyboard
-``
-
-Once rendered you can teleoperate the robot by using your keyboard like this:
-
-```bash
-Keyboard controls:
-  Arrow keys: Move in X-Y plane
-  Shift and Shift_R: Move in Z axis
-  Enter: End episode with SUCCESS
-  Backspace: End episode with FAILURE
-  ESC: Exit
-```
+Once rendered you can teleoperate the robot with......
 
 ## Train a policy
 

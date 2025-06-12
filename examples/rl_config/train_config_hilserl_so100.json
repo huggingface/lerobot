@@ -1,0 +1,326 @@
+{
+    "output_dir": null,
+    "job_name": "default",
+    "resume": false,
+    "seed": 1000,
+    "num_workers": 4,
+    "batch_size": 256,
+    "steps": 100000,
+    "log_freq": 500,
+    "save_checkpoint": true,
+    "save_freq": 2000000,
+    "wandb": {
+        "enable": true,
+        "project": "so100_real",
+        "disable_artifact": true
+    },
+    "dataset": {
+        "repo_id": "hf_username/dataset_name",
+        "use_imagenet_stats": false
+    },
+    "policy": {
+        "type": "sac",
+        "n_obs_steps": 1,
+        "normalization_mapping": {
+            "VISUAL": "MEAN_STD",
+            "STATE": "MIN_MAX",
+            "ENV": "MIN_MAX",
+            "ACTION": "MIN_MAX"
+        },
+        "input_features": {
+            "observation.images.side": {
+                "type": "VISUAL",
+                "shape": [
+                    3,
+                    128,
+                    128
+                ]
+            },
+            "observation.images.front": {
+                "type": "VISUAL",
+                "shape": [
+                    3,
+                    128,
+                    128
+                ]
+            },
+            "observation.state": {
+                "type": "STATE",
+                "shape": [
+                    15
+                ]
+            }
+        },
+        "device": "cuda",
+        "use_amp": false,
+        "dataset_stats": {
+            "observation.images.side": {
+                "mean": [
+                    0.485,
+                    0.456,
+                    0.406
+                ],
+                "std": [
+                    0.229,
+                    0.224,
+                    0.225
+                ]
+            },
+            "observation.images.front": {
+                "mean": [
+                    0.485,
+                    0.456,
+                    0.406
+                ],
+                "std": [
+                    0.229,
+                    0.224,
+                    0.225
+                ]
+            },
+            "observation.state": {
+                "min": [
+                    -15.0,
+                    -20.0,
+                    10.0,
+                    65.0,
+                    0.0,
+                    0.0,
+                    -40.0,
+                    -60.0,
+                    -50.0,
+                    -80.0,
+                    -10.0,
+                    -110.0,
+                    -15.0,
+                    -20.0,
+                    15.0,
+                    70.0,
+                    -5.0,
+                    0.0,
+                    0.26,
+                    -0.06,
+                    0.25
+                ],
+                "max": [
+                    15.0,
+                    15.0,
+                    40.0,
+                    110.0,
+                    0.5,
+                    31.0,
+                    53.0,
+                    61.0,
+                    67.0,
+                    90.0,
+                    6.0,
+                    100.0,
+                    15.0,
+                    12.0,
+                    40.0,
+                    110.0,
+                    0.5,
+                    31.0,
+                    0.32,
+                    0.06,
+                    0.35
+                ]
+            },
+            "action": {
+                "min": [
+                    -0.03,
+                    -0.03,
+                    -0.03
+                ],
+                "max": [
+                    0.03,
+                    0.03,
+                    0.03
+                ]
+            }
+        },
+        "num_discrete_actions": 3,
+        "storage_device": "cuda",
+        "vision_encoder_name": "helper2424/resnet10",
+        "freeze_vision_encoder": true,
+        "image_encoder_hidden_dim": 32,
+        "shared_encoder": true,
+        "online_steps": 1000000,
+        "online_env_seed": 10000,
+        "online_buffer_capacity": 30000,
+        "offline_buffer_capacity": 10000,
+        "online_step_before_learning": 100,
+        "policy_update_freq": 1,
+        "discount": 0.97,
+        "async_prefetch": false,
+        "temperature_init": 0.01,
+        "num_critics": 2,
+        "num_subsample_critics": null,
+        "critic_lr": 0.0003,
+        "actor_lr": 0.0003,
+        "temperature_lr": 0.0003,
+        "critic_target_update_weight": 0.005,
+        "utd_ratio": 2,
+        "state_encoder_hidden_dim": 256,
+        "latent_dim": 256,
+        "target_entropy": null,
+        "use_backup_entropy": true,
+        "grad_clip_norm": 40.0,
+        "critic_network_kwargs": {
+            "hidden_dims": [
+                256,
+                256
+            ],
+            "activate_final": true,
+            "final_activation": null
+        },
+        "actor_network_kwargs": {
+            "hidden_dims": [
+                256,
+                256
+            ],
+            "activate_final": true
+        },
+        "policy_kwargs": {
+            "use_tanh_squash": true,
+            "log_std_min": -5,
+            "log_std_max": 2,
+            "init_final": 0.05
+        },
+        "actor_learner_config": {
+            "learner_host": "127.0.0.1",
+            "learner_port": 50051,
+            "policy_parameters_push_frequency": 4
+        },
+        "concurrency": {
+            "actor": "threads",
+            "learner": "threads"
+        }
+    },
+    "env": {
+        "type": "gym_manipulator",
+        "robot": {
+            "type": "so100_follower_end_effector",
+            "port": "/dev/ttyACM0",
+            "cameras": {
+                "front": {
+                    "type": "opencv",
+                    "index_or_path": 2,
+                    "height": 480,
+                    "width": 640,
+                    "fps": 30
+                },
+                "wrist": {
+                    "type": "opencv",
+                    "index_or_path": 8,
+                    "height": 480,
+                    "width": 640,
+                    "fps": 30
+                }
+            },
+            "end_effector_bounds": {
+                "min": [
+                    0.26,
+                    -0.06,
+                    0.25
+                ],
+                "max": [
+                    0.32,
+                    0.06,
+                    0.35
+                ]
+            },
+            "max_gripper_pos": 30
+        },
+        "teleop": {
+            "type": "gamepad",
+            "use_gripper": true
+        },
+        "wrapper": {
+            "display_cameras": false,
+            "add_joint_velocity_to_observation": true,
+            "add_current_to_observation": true,
+            "add_ee_pose_to_observation": true,
+            "crop_params_dict": {
+                "observation.images.front": [
+                    270,
+                    170,
+                    90,
+                    190
+                ],
+                "observation.images.wrist": [
+                    0,
+                    0,
+                    480,
+                    640
+                ]
+            },
+            "resize_size": [
+                128,
+                128
+            ],
+            "control_time_s": 20.0,
+            "use_gripper": true,
+            "gripper_quantization_threshold": null,
+            "gripper_penalty": -0.02,
+            "gripper_penalty_in_reward": false,
+            "fixed_reset_joint_positions": [
+                0.0,
+                -20.0,
+                20.0,
+                90.0,
+                0.0,
+                30.0
+            ],
+            "reset_time_s": 2.5,
+            "control_mode": "gamepad"
+        },
+        "name": "real_robot",
+        "mode": null,
+        "repo_id": null,
+        "dataset_root": null,
+        "task": "",
+        "num_episodes": 0,
+        "episode": 0,
+        "pretrained_policy_name_or_path": null,
+        "device": "cuda",
+        "push_to_hub": true,
+        "fps": 10,
+        "features": {
+            "observation.images.front": {
+                "type": "VISUAL",
+                "shape": [
+                    3,
+                    128,
+                    128
+                ]
+            },
+            "observation.images.wrist": {
+                "type": "VISUAL",
+                "shape": [
+                    3,
+                    128,
+                    128
+                ]
+            },
+            "observation.state": {
+                "type": "STATE",
+                "shape": [
+                    15
+                ]
+            },
+            "action": {
+                "type": "ACTION",
+                "shape": [
+                    3
+                ]
+            }
+        },
+        "features_map": {
+            "observation.images.front": "observation.images.side",
+            "observation.images.wrist": "observation.images.wrist",
+            "observation.state": "observation.state",
+            "action": "action"
+        }
+    }
+}
