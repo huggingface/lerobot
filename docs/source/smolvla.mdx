@@ -1,80 +1,78 @@
-# Use SmolVLA
+# Finetune and Use SmolVLA
 
-SmolVLA is designed to be easy to use and integrate—whether you're finetuning on your own data or plugging it into an existing robotics stack.
+SmolVLA is Hugging Face's robotics base model, designed to be easy to finetune on data for your own robotics application.
 
 <p align="center">
   <img src="https://cdn-uploads.huggingface.co/production/uploads/640e21ef3c82bd463ee5a76d/aooU0a3DMtYmy_1IWMaIM.png" alt="SmolVLA architecture." width="500"/>
   <br/>
-  <em>Figure 1. SmolVLA takes as input a sequence of RGB images from multiple cameras, the robot’s current sensorimotor state, and a natural language instruction. The VLM encodes these into contextual features, which condition the action expert to generate a continuous sequence of actions.</em>
+  <em>Figure 1. SmolVLA takes as input (i) multiple cameras views, (ii) the robot’s current sensorimotor state, and (iii) a natural language instruction, encoded into contextual features used to condition the action expert when generating an action chunk.</em>
 </p>
 
-###  Install
+### Setup your environment
 
-First, install the required dependencies:
+First, use the following instructions to properly setup your environment! ([source](https://github.com/huggingface/lerobot?tab=readme-ov-file#installation))
 
 ```python
 git clone https://github.com/huggingface/lerobot.git
 cd lerobot
+
+conda create -n smolvlaenv python=3.10 -y
+conda activate smolvlaenv
 pip install -e ".[smolvla]"
-conda install ffmpeg -c conda-forge
+conda install -c conda-forge ffmpeg -y  # correct ffmpeg only installs with conda as of now
 ```
 
-### Finetune the pretrained model
-Use [`smolvla_base`](https://hf.co/lerobot/smolvla_base), our pretrained 450M model, with the lerobot training framework:
-Training the model for 20k steps will take around 3h on A100 GPU.  You should increase the number of training steps based on your use-case.
+### Collect a dataset
+SmolVLA is great to jumpstart your development! Its compactness makes it ideal to run as a robotic application, and we are excited for you to get your hands dirty with it. 
 
-Run the command below with your `repo_id` to start training.
+SmolVLA is a base model-finetune it on data per your demonstrations. We recommend starting [recording a dataset](https://huggingface.co/docs/lerobot/getting_started_real_world_robot#record-a-dataset) of ~50 episodes.
+After you have your dataset available on the Hub, you are good to go to use our finetuning script to adapt SmolVLA to your application!
+
+### Finetune SmolVLA on your data
+
+Use [`smolvla_base`](https://hf.co/lerobot/smolvla_base), our pretrained 450M model, and fine-tune it on your data!
+Training the model for 20k steps will roughly take ~3hrs on a single A100 GPU. 
+As always in Machine Learning, you should tune the number of steps based on performance and your use-case (no silver bullet there, sorry! 🥲)
+
+Pass your dataset to the training script using `--dataset.repo_id`. If you want to test your installation, run the following command where we use one of the datasets we collected for the [SmolVLA Paper](https://arxiv.org/abs/2506.01844).
+
 ```python
+# Note: Path to the model to finetune: --policy.path
+# Note: Change dataset to your HF_USER/DATASET_NAME: --dataset.repo_id
 python lerobot/scripts/train.py \
   --policy.path=lerobot/smolvla_base \
   --dataset.repo_id=lerobot/svla_so100_stacking \
   --batch_size=64 \
-  --steps=20000 # 10% of total training budget
+  --steps=20000  # trains for 10% of our total training budget for adaptation to your usecase
+```
+
+Again, there is no perfect recipe For a complete overview of the options for finetuning, run
+```
+python lerobot/scripts/train.py --help
 ```
 
 <p align="center">
   <img src="https://cdn-uploads.huggingface.co/production/uploads/640e21ef3c82bd463ee5a76d/S-3vvVCulChREwHDkquoc.gif" alt="Comparison of SmolVLA across task variations." width="500"/>
   <br/>
-  <em>Figure 2: Comparison of SmolVLA across task variations. From left to right: (1) asynchronous pick-place cube counting, (2) synchronous pick-place cube counting, (3) pick-place cube counting under perturbations, and (4) generalization on pick-and-place of the lego block with real-world SO101.</em>
+  <em>Figure 2: Comparison of SmolVLA across task variations. From left to right: (1) pick-place cube counting, (2) pick-place cube counting, (3) pick-place cube counting under perturbations, and (4) generalization on pick-and-place of the lego block with real-world SO101.</em>
 </p>
 
 
-### Train from scratch
-
-​​If you'd like to build the architecture from scratch (pretrained VLM + action expert) rather than a pretrained checkpoint:
-
-```python
-python lerobot/scripts/train.py \
-  --policy.type=smolvla \
-  --dataset.repo_id=lerobot/svla_so100_stacking \
-  --batch_size=64 \
-  --steps=200000
-```
-You can also load `SmolVLAPolicy` directly:
-
-```python
-from lerobot.common.policies.smolvla.modeling_smolvla import SmolVLAPolicy
-policy = SmolVLAPolicy.from_pretrained("lerobot/smolvla_base")
-```
-
 ## Evaluate the pretrained policy and run it in real-time
 
-**Important**
-
-> In the `config.json` of the pre-trained policy, set `n_action_steps` to `50` so the robot arm executes a chunk of actions in a single timestep.
-
-If you want to record the evaluation process and safe the videos on the hub, login to your HF account by running:
+Record the evaluation process and save your evaluation to the hub by running:
 
 ```python
 huggingface-cli login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
 ```
 
-Store your Hugging Face repository name in a variable to run these commands:
+Store your Hugging Face user name in a variable to run these commands:
 
 ```python
 HF_USER=$(huggingface-cli whoami | head -n 1)
 echo $HF_USER
 ```
+
 Now, indicate the path to the policy, which is `lerobot/smolvla_base` in this case, and run:
 
 ```python
@@ -88,7 +86,7 @@ python -m lerobot.record \
   --teleop.id=my_blue_leader_arm \
   --dataset.fps=30 \
   --dataset.single_task="Grasp a lego block and put it in the bin." \
-  --dataset.repo_id=${HF_USER}/eval_svla_base_test \
+  --dataset.repo_id=${HF_USER}/eval_svla_base_test \  # <-- Note: this will be the dataset name on HF Hub!
   --dataset.tags='["tutorial"]' \
   --dataset.episode_time_s=30 \
   --dataset.reset_time_s=30 \
@@ -98,8 +96,3 @@ python -m lerobot.record \
 
 ```
 Depending on your evaluation setup, you can configure the duration and the number of episodes to record for your evaluation suite.
-
-**Note!**
-
-> SmolVLA was pretrained on SO100 arms and is not expected to perform well zero-shot on SO101. We strongly recommend finetuning the model on an SO101-based dataset before deployment/ running this command.
-> Additionally, running the base model zero-shot on SO100 arms with the updated `lerobot` repo may also lead to issues. The codebase has undergone significant refactoring and now includes a new calibration method, which uses a different range of motions from those used during pretraining. As a result, **finetuning is essential before executing the command above and testing on a real robot.**
