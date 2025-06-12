@@ -170,7 +170,7 @@ def create_camera_instance(cam_meta: Dict[str, Any]) -> Dict[str, Any] | None:
             instance = OpenCVCamera(cv_config)
         elif cam_type == "RealSense":
             rs_config = RealSenseCameraConfig(
-                serial_number_or_name=int(cam_id),
+                serial_number_or_name=cam_id,
                 color_mode=ColorMode.RGB,
             )
             instance = RealSenseCamera(rs_config)
@@ -283,7 +283,7 @@ def save_images_from_all_cameras(
             print("\nFinalizing image saving...")
             executor.shutdown(wait=True)
             cleanup_cameras(cameras_to_use)
-            logger.info(f"Image capture finished. Images saved to {output_dir}")
+            print(f"Image capture finished. Images saved to {output_dir}")
 
 
 if __name__ == "__main__":
