@@ -1,6 +1,6 @@
 # Finetune and Use SmolVLA
 
-SmolVLA is Hugging Face's robotics base model, designed to be easy to finetune on data for your own robotics application.
+SmolVLA is Hugging Face’s compact foundation model for robotics: designed to be easy to finetune on lerobot data, and is great to jumpstart your development!
 
 <p align="center">
   <img src="https://cdn-uploads.huggingface.co/production/uploads/640e21ef3c82bd463ee5a76d/aooU0a3DMtYmy_1IWMaIM.png" alt="SmolVLA architecture." width="500"/>
@@ -8,7 +8,7 @@ SmolVLA is Hugging Face's robotics base model, designed to be easy to finetune o
   <em>Figure 1. SmolVLA takes as input (i) multiple cameras views, (ii) the robot’s current sensorimotor state, and (iii) a natural language instruction, encoded into contextual features used to condition the action expert when generating an action chunk.</em>
 </p>
 
-### Setup your environment
+## Setup your environment
 
 First, use the following instructions to properly setup your environment! ([source](https://github.com/huggingface/lerobot?tab=readme-ov-file#installation))
 
@@ -21,20 +21,31 @@ conda activate smolvlaenv
 pip install -e ".[smolvla]"
 conda install -c conda-forge ffmpeg -y  # correct ffmpeg only installs with conda as of now
 ```
+Try installing using this command if you encounter the errors related to `ffmpeg`.
 
-### Collect a dataset
-SmolVLA is great to jumpstart your development! Its compactness makes it ideal to run as a robotic application, and we are excited for you to get your hands dirty with it.
+`conda install ffmpeg=7.1.1 -c conda-forge`
+
+## Collect a dataset
 
 SmolVLA is a base model-finetune it on data per your demonstrations. We recommend starting [recording a dataset](https://huggingface.co/docs/lerobot/getting_started_real_world_robot#record-a-dataset) of ~50 episodes.
+
+**Small tips on the dataset:**
+
+Make sure to have enough demonstrations per each variation you are introducing.
+
+We recommend checking out this dataset for reference that was used in the [SmolVLA paper](https://huggingface.co/papers/2506.01844):
+
+🔗 [SVLA SO100 PickPlace](https://huggingface.co/spaces/lerobot/visualize_dataset?path=%2Flerobot%2Fsvla_so100_pickplace%2Fepisode_0)
+
+In this dataset, we recorded 50 episodes across 5 distinct cube positions. For each position, we collected 10 episodes of pick-and-place interactions. This structure, repeating each variation several times, helped the model generalize better. We tried similar dataset with 25 episodes, and it was not enough leading to a bad performance. So, the data quality and quantity is definitely a key!
 After you have your dataset available on the Hub, you are good to go to use our finetuning script to adapt SmolVLA to your application!
 
 ### Finetune SmolVLA on your data
 
 Use [`smolvla_base`](https://hf.co/lerobot/smolvla_base), our pretrained 450M model, and fine-tune it on your data!
-Training the model for 20k steps will roughly take ~3hrs on a single A100 GPU.
-As always in Machine Learning, you should tune the number of steps based on performance and your use-case (no silver bullet there, sorry! 🥲)
+Training the model for 20k steps will roughly take ~3hrs on a single A100 GPU. You should tune the number of steps based on performance and your use-case.
 
-Pass your dataset to the training script using `--dataset.repo_id`. If you want to test your installation, run the following command where we use one of the datasets we collected for the [SmolVLA Paper](https://arxiv.org/abs/2506.01844).
+Pass your dataset to the training script using `--dataset.repo_id`. If you want to test your installation, run the following command where we use one of the datasets we collected for the [SmolVLA Paper](https://huggingface.co/papers/2506.01844).
 
 ```python
 # Note: Path to the model to finetune: --policy.path
@@ -46,7 +57,9 @@ python lerobot/scripts/train.py \
   --steps=20000  # trains for 10% of our total training budget for adaptation to your usecase
 ```
 
-Again, there is no perfect recipe For a complete overview of the options for finetuning, run
+Again, there is no perfect recipe for the finetuning.
+
+For a complete overview of the options for finetuning, run
 ```
 python lerobot/scripts/train.py --help
 ```
