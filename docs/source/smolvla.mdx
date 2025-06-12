@@ -23,7 +23,7 @@ conda install -c conda-forge ffmpeg -y  # correct ffmpeg only installs with cond
 ```
 
 ### Collect a dataset
-SmolVLA is great to jumpstart your development! Its compactness makes it ideal to run as a robotic application, and we are excited for you to get your hands dirty with it. 
+SmolVLA is great to jumpstart your development! Its compactness makes it ideal to run as a robotic application, and we are excited for you to get your hands dirty with it.
 
 SmolVLA is a base model-finetune it on data per your demonstrations. We recommend starting [recording a dataset](https://huggingface.co/docs/lerobot/getting_started_real_world_robot#record-a-dataset) of ~50 episodes.
 After you have your dataset available on the Hub, you are good to go to use our finetuning script to adapt SmolVLA to your application!
@@ -31,7 +31,7 @@ After you have your dataset available on the Hub, you are good to go to use our 
 ### Finetune SmolVLA on your data
 
 Use [`smolvla_base`](https://hf.co/lerobot/smolvla_base), our pretrained 450M model, and fine-tune it on your data!
-Training the model for 20k steps will roughly take ~3hrs on a single A100 GPU. 
+Training the model for 20k steps will roughly take ~3hrs on a single A100 GPU.
 As always in Machine Learning, you should tune the number of steps based on performance and your use-case (no silver bullet there, sorry! 🥲)
 
 Pass your dataset to the training script using `--dataset.repo_id`. If you want to test your installation, run the following command where we use one of the datasets we collected for the [SmolVLA Paper](https://arxiv.org/abs/2506.01844).
