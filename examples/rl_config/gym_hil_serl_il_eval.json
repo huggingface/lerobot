@@ -1,0 +1,173 @@
+{
+    "output_dir": null,
+    "job_name": "default",
+    "resume": false,
+    "seed": 1000,
+    "num_workers": 4,
+    "batch_size": 256,
+    "steps": 100000,
+    "log_freq": 500,
+    "save_checkpoint": true,
+    "save_freq": 2000000,
+    "wandb": {
+        "enable": true,
+        "project": "so100_real",
+        "disable_artifact": true
+    },
+    "dataset": {
+        "repo_id": "pepijn223/il_gym0",
+        "use_imagenet_stats": false
+    },
+    "policy": {
+        "type": "act",
+        "n_obs_steps": 1,
+        "normalization_mapping": {
+            "VISUAL": "MEAN_STD",
+            "STATE": "MEAN_STD",
+            "ACTION": "MEAN_STD"
+        },
+        "input_features": {
+            "observation.state": {
+                "type": "STATE",
+                "shape": [
+                    18
+                ]
+            },
+            "observation.images.front": {
+                "type": "VISUAL",
+                "shape": [
+                    3,
+                    128,
+                    128
+                ]
+            },
+            "observation.images.wrist": {
+                "type": "VISUAL",
+                "shape": [
+                    3,
+                    128,
+                    128
+                ]
+            }
+        },
+        "output_features": {
+            "action": {
+                "type": "ACTION",
+                "shape": [
+                    4
+                ]
+            }
+        },
+        "device": "cpu",
+        "use_amp": false,
+        "chunk_size": 100,
+        "n_action_steps": 100,
+        "vision_backbone": "resnet18",
+        "pretrained_backbone_weights": "ResNet18_Weights.IMAGENET1K_V1",
+        "replace_final_stride_with_dilation": false,
+        "pre_norm": false,
+        "dim_model": 512,
+        "n_heads": 8,
+        "dim_feedforward": 3200,
+        "feedforward_activation": "relu",
+        "n_encoder_layers": 4,
+        "n_decoder_layers": 1,
+        "use_vae": true,
+        "latent_dim": 32,
+        "n_vae_encoder_layers": 4,
+        "temporal_ensemble_coeff": null,
+        "dropout": 0.1,
+        "kl_weight": 10.0,
+        "optimizer_lr": 1e-05,
+        "optimizer_weight_decay": 0.0001,
+        "optimizer_lr_backbone": 1e-05
+    },
+    "env": {
+        "type": "hil",
+        "wrapper": {
+            "gripper_penalty": 0,
+            "display_cameras": false,
+            "add_joint_velocity_to_observation": true,
+            "add_ee_pose_to_observation": true,
+            "crop_params_dict": {
+                "observation.images.front": [
+                    0,
+                    0,
+                    128,
+                    128
+                ],
+                "observation.images.wrist": [
+                    0,
+                    0,
+                    128,
+                    128
+                ]
+            },
+            "resize_size": [
+                128,
+                128
+            ],
+            "control_time_s": 15.0,
+            "use_gripper": true,
+            "fixed_reset_joint_positions": [
+                0.0,
+                0.195,
+                0.0,
+                -2.43,
+                0.0,
+                2.62,
+                0.785
+            ],
+            "reset_time_s": 2.0,
+            "control_mode": "gamepad"
+        },
+        "name": "franka_sim",
+        "mode": "eval",
+        "repo_id": null,
+        "dataset_root": null,
+        "task": "PandaPickCubeGamepad-v0",
+        "num_episodes": 30,
+        "episode": 0,
+        "pretrained_policy_name_or_path": "pepijn223/il_sim_test0",
+        "device": "cpu",
+        "push_to_hub": true,
+        "fps": 10,
+        "features": {
+            "observation.images.front": {
+                "type": "VISUAL",
+                "shape": [
+                    3,
+                    128,
+                    128
+                ]
+            },
+            "observation.images.wrist": {
+                "type": "VISUAL",
+                "shape": [
+                    3,
+                    128,
+                    128
+                ]
+            },
+            "observation.state": {
+                "type": "STATE",
+                "shape": [
+                    18
+                ]
+            },
+            "action": {
+                "type": "ACTION",
+                "shape": [
+                    3
+                ]
+            }
+        },
+        "features_map": {
+            "observation.images.front": "observation.images.front",
+            "observation.images.wrist": "observation.images.wrist",
+            "observation.state": "observation.state",
+            "action": "action"
+        },
+        "reward_classifier_pretrained_path": null
+    }
+}

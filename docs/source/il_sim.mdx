@@ -106,7 +106,21 @@ huggingface-cli upload ${HF_USER}/il_sim_test${CKPT} \
 
 ## Evaluate your policy in Sim
 
+To evaluate your policy we have to use the config file that can be found here: `lerobot/examples/rl_config/gym_hil_serl_il_eval.json`
 
+Then you can run this command to visualize your trained policy
+<hfoption id="Linux">
+```bash
+python lerobot/scripts/rl/eval_policy.py --config_path=examples/rl_config/gym_hil_serl_il_eval.json
+
+```
+</hfoption>
+<hfoption id="MacOS">
+```bash
+mjpython lerobot/scripts/rl/eval_policy.py --config_path=examples/rl_config/gym_hil_serl_il_eval.json
+```
+</hfoption>
+</hfoptions>
 
 Congrats 🎉, you have finished this tutorial. If you want to continue with using LeRobot in simulation follow this [Tutorial on reinforcement learning in sim with HIL-SERL](https://huggingface.co/docs/lerobot/hilserl_sim)
 
