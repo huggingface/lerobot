@@ -18,23 +18,7 @@ Teleoperates two robots simultaneously.
 Example:
 
 ```shell
-python -m lerobot.teleoperate_two_arm \
-    --robot1.type=so101_follower_1 \
-    --robot1.port=/dev/tty.usbmodem5A460850071 \
-    --robot1.cameras="{laptop: {type: opencv, camera_index: 0, width: 640, height: 480}}" \
-    --robot1.id=blue \
-    --teleop1.type=so101_leader_1 \
-    --teleop1.port=/dev/tty.usbmodem5A460827881 \
-    --teleop1.id=black \
-    --robot2.type=so101_follower_2 \
-    --robot2.port=/dev/tty.usbmodem5A460815141 \
-    --robot2.cameras="{laptop: {type: opencv, camera_index: 1, width: 640, height: 480}}" \
-    --robot2.id=green \
-    --teleop2.type=so101_leader_2 \
-    --teleop2.port=/dev/tty.usbmodem5A460827091 \
-    --teleop2.id=red \
-    --fps=30 \
-    --display_data
+python -m lerobot.teleoperate_two_arm --config_path=./robot_config/two_arm_config.yaml
 ```
 """
 
