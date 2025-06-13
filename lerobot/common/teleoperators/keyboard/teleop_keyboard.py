@@ -204,9 +204,9 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
             elif key == keyboard.Key.down:
                 delta_x = -int(val)
             elif key == keyboard.Key.left:
-                delta_y = -int(val)
-            elif key == keyboard.Key.right:
                 delta_y = int(val)
+            elif key == keyboard.Key.right:
+                delta_y = -int(val)
             elif key == keyboard.Key.shift:
                 delta_z = -int(val)
             elif key == keyboard.Key.shift_r:

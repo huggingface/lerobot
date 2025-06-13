@@ -1741,7 +1741,6 @@ class KeyboardControlWrapper(GamepadControlWrapper):
         print("  s: End episode with SUCCESS")
         print("  r: End episode with RERECORD")
         print("  i: Start/Stop Intervention")
-        print("  ESC: Exit")
 
     def get_teleop_commands(
         self,
