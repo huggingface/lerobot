@@ -63,7 +63,7 @@ ALOHA_STATIC_INFO = {
 PUSHT_INFO = {
     "license": "mit",
     "url": "https://diffusion-policy.cs.columbia.edu/",
-    "paper": "https://huggingface.co/papers/2303.04137v5",
+    "paper": "https://huggingface.co/papers/2303.04137",
     "citation_bibtex": dedent(r"""
         @article{chi2024diffusionpolicy,
             author = {Cheng Chi and Zhenjia Xu and Siyuan Feng and Eric Cousineau and Yilun Du and Benjamin Burchfiel and Russ Tedrake and Shuran Song},
