@@ -109,7 +109,7 @@ class SO101Leader(Teleoperator):
 
         self.bus.write_calibration(self.calibration)
         self._save_calibration()
-        logger.info(f"Calibration saved to {self.calibration_fpath}")
+        print(f"Calibration saved to {self.calibration_fpath}")
 
     def configure(self) -> None:
         self.bus.disable_torque()
