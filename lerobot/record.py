@@ -139,7 +139,7 @@ class RecordConfig:
     resume: bool = False
 
     def __post_init__(self):
-        if bool(self.teleop) == bool(self.policy):
+        if self.teleop is not None and self.policy is not None:
             raise ValueError("Choose either a policy or a teleoperator to control the robot")
 
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
