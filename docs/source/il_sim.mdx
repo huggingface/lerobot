@@ -109,7 +109,9 @@ huggingface-cli upload ${HF_USER}/il_sim_test${CKPT} \
 
 ## Evaluate your policy in Sim
 
-To evaluate your policy we have to use the config file that can be found here: `lerobot/examples/rl_config/gym_hil_serl_il_eval.json`
+To evaluate your policy we have to use the config file that can be found here: `lerobot/examples/configs/eval_config_gym_hil.json`
+
+Make sure to replace the `repo_id` with the dataset you trained on, for example `pepijn223/il_sim_dataset` and replace the `pretrained_policy_name_or_path` with your model id, for example `pepijn223/il_sim_model`
 
 Then you can run this command to visualize your trained policy
 
@@ -117,14 +119,14 @@ Then you can run this command to visualize your trained policy
 <hfoption id="Linux">
 
 ```bash
-python lerobot/scripts/rl/eval_policy.py --config_path=examples/rl_config/gym_hil_serl_il_eval.json
+python lerobot/scripts/rl/eval_policy.py --config_path=examples/configs/eval_config_gym_hil.json
 ```
 
 </hfoption>
 <hfoption id="MacOS">
 
 ```bash
-mjpython lerobot/scripts/rl/eval_policy.py --config_path=examples/rl_config/gym_hil_serl_il_eval.json
+mjpython lerobot/scripts/rl/eval_policy.py --config_path=examples/configs/eval_config_gym_hil.json
 ```
 
 </hfoption>
