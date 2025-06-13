@@ -119,7 +119,6 @@ class SO100Leader(Teleoperator):
         self.bus.configure_motors()
         for motor in self.bus.motors:
             self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
-            self.bus.write("Phase", motor, 12)
 
     def setup_motors(self) -> None:
         for motor in reversed(self.bus.motors):
