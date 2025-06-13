@@ -11,9 +11,6 @@ For the simulation environment we use the same [repo](https://github.com/hugging
 This environment is based on [MuJoCo](https://mujoco.org) and allows you to record datasets in LeRobotDataset format.
 Teleoperation is easiest with a controller like the Logitech F710, but you can also use your keyboard if you are up for the challenge.
 
-> [!WARNING]
-> This is warning
-
 ## Installation
 
 First, install the `gym_hil` package within the LeRobot environment, go to your LeRobot folder and run this command:
@@ -145,6 +142,9 @@ mjpython lerobot/scripts/rl/eval_policy.py --config_path=examples/configs/eval_c
 
 </hfoption>
 </hfoptions>
+
+> [!WARNING]
+> While the main workflow of training ACT in simulation is straightforward, there is significant room for exploring  how to set up the task, define the initial state of the environment, and determine the type of data required during collection to learn the most effective policy. If your trained policy doesn't perform well, investigate the quality of the dataset it was trained on using our visualizers, as well as the action values and various hyperparameters related to ACT and the simulation.
 
 Congrats 🎉, you have finished this tutorial. If you want to continue with using LeRobot in simulation follow this [Tutorial on reinforcement learning in sim with HIL-SERL](https://huggingface.co/docs/lerobot/hilserl_sim)
 
