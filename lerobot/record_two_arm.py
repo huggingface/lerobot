@@ -20,19 +20,19 @@ Example:
 ```shell
 python -m lerobot.record_two_arm \
     --robot1.type=so101_follower_1 \
-    --robot1.port=/dev/tty.usbmodem58760431541 \
+    --robot1.port=/dev/tty.usbmodem5A460850071 \
     --robot1.cameras="{laptop: {type: opencv, camera_index: 0, width: 640, height: 480}}" \
-    --robot1.id=fol1 \
+    --robot1.id=blue \
     --teleop1.type=so101_leader_1 \
-    --teleop1.port=/dev/tty.usbmodem58760431551 \
-    --teleop1.id=lead1 \
+    --teleop1.port=/dev/tty.usbmodem5A460827881 \
+    --teleop1.id=black \
     --robot2.type=so101_follower_2 \
-    --robot2.port=/dev/tty.usbmodem58760431561 \
+    --robot2.port=/dev/tty.usbmodem5A460815141 \
     --robot2.cameras="{laptop: {type: opencv, camera_index: 1, width: 640, height: 480}}" \
-    --robot2.id=fol2 \
+    --robot2.id=green \
     --teleop2.type=so101_leader_2 \
-    --teleop2.port=/dev/tty.usbmodem58760431571 \
-    --teleop2.id=lead2 \
+    --teleop2.port=/dev/tty.usbmodem5A460827091 \
+    --teleop2.id=red \
     --dataset.repo_id=aliberts/record-test \
     --dataset.num_episodes=2 \
     --dataset.single_task="Grab the cube"
@@ -130,14 +130,15 @@ class DatasetRecordConfig:
             raise ValueError("You need to provide a task as argument in `single_task`.")
 
 
+
 @dataclass
-class RecordConfig:
+class RecordTwoArmConfig:
     robot1: RobotConfig
-    robot2: RobotConfig = None
+    robot2: RobotConfig
     dataset: DatasetRecordConfig
-    
     # Whether to control the robot with a teleoperator
-    teleop: TeleoperatorConfig | None = None
+    teleop1: TeleoperatorConfig | None = None
+    teleop2: TeleoperatorConfig | None = None
     # Whether to control the robot with a policy
     policy: PreTrainedConfig | None = None
     # Display all cameras on screen
@@ -146,6 +147,7 @@ class RecordConfig:
     play_sounds: bool = True
     # Resume recording on an existing dataset.
     resume: bool = False
+    
 
     def __post_init__(self):
         if bool(self.teleop) == bool(self.policy):
@@ -162,7 +164,6 @@ class RecordConfig:
     def __get_path_fields__(cls) -> list[str]:
         """This enables the parser to load config from the policy using `--policy.path=local/dir`"""
         return ["policy"]
-
 
 @safe_stop_image_writer
 def record_loop(
@@ -256,7 +257,7 @@ def record_loop(
 
 
 @parser.wrap()
-def record(cfg: RecordConfig) -> LeRobotDataset:
+def record(cfg: RecordTwoArmConfig) -> LeRobotDataset:
     init_logging()
     logging.info(pformat(asdict(cfg)))
     if cfg.display_data:
