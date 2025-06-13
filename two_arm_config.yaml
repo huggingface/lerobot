@@ -1,0 +1,37 @@
+robot1:
+  type: so101_follower
+  port: /dev/tty.usbmodem5A460850071
+  id: blue
+  cameras:
+    wrist:
+      type: opencv
+      index_or_path: 2
+      width: 640
+      height: 480
+      fps: 30
+
+robot2:
+  type: so101_follower
+  port: /dev/tty.usbmodem5A460815141
+  id: green
+  cameras:
+    wrist:
+      type: opencv
+      index_or_path: 1
+      width: 640
+      height: 480
+      fps: 30
+
+teleop1:
+  type: so101_leader
+  port: /dev/tty.usbmodem5A460827881
+  id: black
+
+teleop2:
+  type: so101_leader
+  port: /dev/tty.usbmodem5A460827091
+  id: red
+
+fps: 30
+display_data: true
+play_sounds: true
