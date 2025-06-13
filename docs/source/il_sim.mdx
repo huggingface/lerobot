@@ -8,8 +8,8 @@ This tutorial will explain how to train a neural network to control a robot in s
 3. How to evaluate your policy in simulation and visualize the results.
 
 For the simulation environment we use the same [repo](https://github.com/huggingface/gym-hil) that is also being used by the Human-In-the-Loop (HIL) reinforcement learning algorithm.
-This environment is based on [MuJoCo](https://mujoco.org) and allows you to record datasets in LeRobotDataset format. Due to a limitation you cannot use the keyboard for doing teleoperation on MacOS.
-Thus you need to use a controller like the Logitech F710 to teleoperate the robot on MacOS.
+This environment is based on [MuJoCo](https://mujoco.org) and allows you to record datasets in LeRobotDataset format.
+Teleoperation is easiest with a controller like the Logitech F710, but you can also use your keyboard if you are up for the challenge.
 
 > [!WARNING]
 > This is warning
@@ -30,6 +30,8 @@ To teleoperate and collect a dataset, we need to modify this config file and you
 
 If you do not have a Nvidia GPU also change `"device": "cuda"` parameter in the config file (for example to `mps` for MacOS).
 
+By default the config file assumes you use a controller. To use your keyboard please change `"task"` in config file to `"PandaPickCubeKeyboard-v0"`.
+
 Then we can run this command to start:
 
 <hfoptions id="teleop_sim">
@@ -49,7 +51,7 @@ mjpython lerobot/scripts/rl/gym_manipulator.py --config_path examples/configs/en
 </hfoption>
 </hfoptions>
 
-Once rendered you can teleoperate the robot with the gamepad, below you can find the gamepad controls.
+Once rendered you can teleoperate the robot with the gamepad or keyboard, below you can find the gamepad/keyboard controls.
 
 Note that to teleoperate the robot you have to hold the "Human Take Over Pause Policy" Button `RB` to enable control!
 
@@ -60,6 +62,16 @@ Note that to teleoperate the robot you have to hold the "Human Take Over Pause P
 </p>
 <p align="center"><i>Gamepad button mapping for robot control and episode management</i></p>
 
+**Keyboard controls**
+
+For keyboard controls use the `spacebar` to enable control and the following keys to move the robot:
+```
+  Arrow keys: Move in X-Y plane
+  Shift and Shift_R: Move in Z axis
+  Right Ctrl and Left Ctrl: Open and close gripper
+  Space: Start/Stop Intervention
+  ESC: Exit
+```
 
 ## Visualize a dataset
 
