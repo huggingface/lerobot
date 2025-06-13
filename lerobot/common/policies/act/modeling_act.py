@@ -19,6 +19,7 @@ As per Learning Fine-Grained Bimanual Manipulation with Low-Cost Hardware (https
 The majority of changes here involve removing unused code, unifying naming, and adding helpful comments.
 """
 
+import logging
 import math
 from collections import deque
 from itertools import chain
@@ -76,11 +77,16 @@ class ACTPolicy(PreTrainedPolicy):
         self.model = ACT(config)
 
         if config.temporal_ensemble_coeff is not None:
+            logging.info("Initializing temporal ensembler")
             self.temporal_ensembler = ACTTemporalEnsembler(
                 config.temporal_ensemble_coeff, config.chunk_size
             )
 
         self.reset()
+        self.did_reset = False
+        self.initial_action = None
+        self.steps_since_reset = 0
+        self.last_actions = []
 
     def get_optim_params(self) -> dict:
         # TODO(aliberts, rcadene): As of now, lr_backbone == lr
@@ -109,6 +115,8 @@ class ACTPolicy(PreTrainedPolicy):
             self.temporal_ensembler.reset()
         else:
             self._action_queue = deque([], maxlen=self.config.n_action_steps)
+        self.last_actions = []
+        self.steps_since_reset = 0
 
     @torch.no_grad
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
@@ -118,6 +126,10 @@ class ACTPolicy(PreTrainedPolicy):
         environment. It works by managing the actions in a queue and only calling `select_actions` when the
         queue is empty.
         """
+        self.steps_since_reset += 1
+        RESET_STEPS = 120
+        RESET_WALKBACK_STEPS = 80
+
         self.eval()
 
         batch = self.normalize_inputs(batch)
@@ -128,6 +140,9 @@ class ACTPolicy(PreTrainedPolicy):
             batch["observation.images"] = [
                 batch[key] for key in self.config.image_features
             ]
+            #   print(
+            #       f"select action from ACTPolicy; num images: {len(batch['observation.images'])}"
+            #   )
 
         # If we are doing temporal ensembling, do online updates where we keep track of the number of actions
         # we are ensembling over.
@@ -139,6 +154,8 @@ class ACTPolicy(PreTrainedPolicy):
 
         # Action queue logic for n_action_steps > 1. When the action_queue is depleted, populate it by
         # querying the policy.
+        if self.steps_since_reset == RESET_STEPS + RESET_WALKBACK_STEPS:
+            self._action_queue = deque([], maxlen=self.config.n_action_steps)
         if len(self._action_queue) == 0:
             actions = self.model(batch)[0][:, : self.config.n_action_steps]
 
@@ -148,7 +165,21 @@ class ACTPolicy(PreTrainedPolicy):
             # `self.model.forward` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
             # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
             self._action_queue.extend(actions.transpose(0, 1))
-        return self._action_queue.popleft()
+        action = self._action_queue.popleft()
+        if (
+            self.steps_since_reset > RESET_STEPS
+            and self.steps_since_reset < RESET_STEPS + RESET_WALKBACK_STEPS
+        ):
+            logging.info("RESETTING")
+            action = self.last_actions[-1]
+            self.last_actions.pop()
+            logging.info(f"Action reset: {action.shape}; first index: {action[0][0]}")
+            if self.config.temporal_ensemble_coeff is not None:
+                self.temporal_ensembler.reset()
+            return action
+        self.last_actions.append(action)
+        logging.info(f"last action: {action.shape}; first index: {action[0][0]}")
+        return action
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
         """Run the batch through the model and compute the loss for training or validation."""
@@ -252,7 +283,6 @@ class ACTTemporalEnsembler:
         Takes a (batch, chunk_size, action_dim) sequence of actions, update the temporal ensemble for all
         time steps, and pop/return the next batch of actions in the sequence.
         """
-        print("ACT action ensemble update")
         self.ensemble_weights = self.ensemble_weights.to(device=actions.device)
         self.ensemble_weights_cumsum = self.ensemble_weights_cumsum.to(
             device=actions.device
