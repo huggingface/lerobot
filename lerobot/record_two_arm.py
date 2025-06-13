@@ -191,13 +191,13 @@ def record_loop(
     while timestamp < control_time_s:
         start_loop_t = time.perf_counter()
 
-        observation1 = robot1.get_observation()
-        observation2 = robot2.get_observation()
-        
+        observation1 = { f"robot_one_{k}":v for k,v in robot1.get_observation().items()}
+        observation2 = {f"robot_two_{k}":v for k,v in robot2.get_observation().items()}
+        print(f"Observation1: {observation1.keys()}\nObservation2: {observation2.keys()}")
         # TODO : check if the keys need to be renamed to avoid conflicts
         observation = {**observation1, **observation2}  # Combine observations from both robots 
-
-        if len(observation1.keys() + observation2.keys()) != len(observation.keys()):
+        print(f"Observation: {observation.keys()}")
+        if len(observation1.keys()) + len(observation2.keys()) != len(observation.keys()):
             raise ValueError(
                 "Observation keys from both robots should be unique. "
                 f"Got robot1 {observation1.keys()}\n and\n robot2 {observation2.keys()}."
@@ -268,14 +268,24 @@ def record(cfg: RecordTwoArmConfig) -> LeRobotDataset:
     
     robot_two = make_robot_from_config(cfg.robot2)
     teleop_two = make_teleoperator_from_config(cfg.teleop2) if cfg.teleop2 is not None else None
+    
+    robot_one_action_features = {f"robot_one_{k}": v for k, v in robot_one.action_features.items()}
+    robot_two_action_features = {f"robot_two_{k}": v for k, v in robot_two.action_features.items()}
+    
+    robot_action_features = {**robot_one_action_features, **robot_two_action_features}
+    
+    robot_one_observation_features = {f"robot_one_{k}": v for k, v in robot_one.observation_features.items()}
+    robot_two_observation_features = {f"robot_two_{k}": v for k, v in robot_two.observation_features.items()}
+    
+    robot_obeservation_features = {**robot_one_observation_features, **robot_two_observation_features}
 
     action_features = hw_to_dataset_features(
-        [ f"robot_one_{r1}" for r1 in robot_one.action_features] + [ f"robot_two_{r2}" for r2 in robot_two.action_features], 
+        robot_action_features, 
         "action", 
         cfg.dataset.video
     )
     obs_features = hw_to_dataset_features(
-        [ f"robot_one_{ob1}" for ob1 in robot_one.observation_features] + [ f"robot_two_{ob2}" for ob2 in robot_two.observation_features], 
+        robot_obeservation_features, 
         "observation", 
         cfg.dataset.video
     )
