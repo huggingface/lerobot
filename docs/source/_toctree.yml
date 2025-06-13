@@ -9,6 +9,8 @@
     title: Getting Started with Real-World Robots
   - local: cameras
     title: Cameras
+  - local: integrate_hardware
+    title: Bring Your Own Hardware
   - local: hilserl
     title: Train a Robot with RL
   - local: hilserl_sim
