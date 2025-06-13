@@ -77,9 +77,6 @@ python -m lerobot.record \
   --robot.port=/dev/ttyACM0 \ # <- Use your port
   --robot.id=my_blue_follower_arm \ # <- Use your robot id
   --robot.cameras="{ front: {type: opencv, index_or_path: 8, width: 640, height: 480, fps: 30}}" \ # <- Use your cameras
-  --teleop.type=so101_leader \
-  --teleop.port=/dev/ttyACM0 \ # <- Use your port
-  --teleop.id=my_blue_leader_arm \ # <- Use your teleop id
   --dataset.single_task="Grasp a lego block and put it in the bin." \ # <- Use the same task description you used in your dataset recording
   --dataset.repo_id=${HF_USER}/eval_DATASET_NAME_test \  # <- This will be the dataset name on HF Hub
   --dataset.episode_time_s=50 \
