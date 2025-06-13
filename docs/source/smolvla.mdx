@@ -1,0 +1,93 @@
+# Finetune SmolVLA
+
+SmolVLA is Hugging Face’s lightweight foundation model for robotics. Designed for easy fine-tuning on LeRobot datasets, it helps accelerate your development!
+
+<p align="center">
+  <img src="https://cdn-uploads.huggingface.co/production/uploads/640e21ef3c82bd463ee5a76d/aooU0a3DMtYmy_1IWMaIM.png" alt="SmolVLA architecture." width="500"/>
+  <br/>
+  <em>Figure 1. SmolVLA takes as input (i) multiple cameras views, (ii) the robot’s current sensorimotor state, and (iii) a natural language instruction, encoded into contextual features used to condition the action expert when generating an action chunk.</em>
+</p>
+
+## Set Up Your Environment
+
+1. Install LeRobot by following our [Installation Guide](./installation).
+2. Install SmolVLA dependencies by running:
+
+   ```bash
+   pip install -e ".[smolvla]"
+   ```
+
+## Collect a dataset
+
+SmolVLA is a base model, so fine-tuning on your own data is required for optimal performance in your setup.
+We recommend recording ~50 episodes of your task as a starting point. Follow our guide to get started: [Recording a Dataset](https://huggingface.co/docs/lerobot/getting_started_real_world_robot#record-a-dataset)
+
+<Tip>
+
+In your dataset, make sure to have enough demonstrations per each variation (e.g. the cube position on the table if it is cube pick-place task) you are introducing.
+
+We recommend checking out the dataset linked below for reference that was used in the [SmolVLA paper](https://huggingface.co/papers/2506.01844):
+
+🔗 [SVLA SO100 PickPlace](https://huggingface.co/spaces/lerobot/visualize_dataset?path=%2Flerobot%2Fsvla_so100_pickplace%2Fepisode_0)
+
+In this dataset, we recorded 50 episodes across 5 distinct cube positions. For each position, we collected 10 episodes of pick-and-place interactions. This structure, repeating each variation several times, helped the model generalize better. We tried similar dataset with 25 episodes, and it was not enough leading to a bad performance. So, the data quality and quantity is definitely a key.
+After you have your dataset available on the Hub, you are good to go to use our finetuning script to adapt SmolVLA to your application.
+</Tip>
+
+## Finetune SmolVLA on your data
+
+Use [`smolvla_base`](https://hf.co/lerobot/smolvla_base), our pretrained 450M model, and fine-tune it on your data.
+Training the model for 20k steps will roughly take ~4 hrs on a single A100 GPU. You should tune the number of steps based on performance and your use-case.
+
+If you don't have a gpu device, you can train using our notebook on [![Google Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/huggingface/notebooks/blob/main/lerobot/training-smolvla.ipynb)
+
+Pass your dataset to the training script using `--dataset.repo_id`. If you want to test your installation, run the following command where we use one of the datasets we collected for the [SmolVLA Paper](https://huggingface.co/papers/2506.01844).
+
+```bash
+cd lerobot && python lerobot/scripts/train.py \
+  --policy.path=lerobot/smolvla_base \
+  --dataset.repo_id=${HF_USER}/mydataset \
+  --batch_size=64 \
+  --steps=20000 \
+  --output_dir=outputs/train/my_smolvla \
+  --job_name=my_smolvla_training \
+  --policy.device=cuda \
+  --wandb.enable=true
+```
+
+<Tip>
+You can start with a small batch size and increase it incrementally, if the GPU allows it, as long as loading times remain short.
+</Tip>
+
+Fine-tuning is an art. For a complete overview of the options for finetuning, run
+
+```bash
+python lerobot/scripts/train.py --help
+```
+
+<p align="center">
+  <img src="https://cdn-uploads.huggingface.co/production/uploads/640e21ef3c82bd463ee5a76d/S-3vvVCulChREwHDkquoc.gif" alt="Comparison of SmolVLA across task variations." width="500"/>
+  <br/>
+  <em>Figure 2: Comparison of SmolVLA across task variations. From left to right: (1) pick-place cube counting, (2) pick-place cube counting, (3) pick-place cube counting under perturbations, and (4) generalization on pick-and-place of the lego block with real-world SO101.</em>
+</p>
+
+
+## Evaluate the finetuned model and run it in real-time
+
+Similarly for when recording an episode, it is recommended that you are logged in to the HuggingFace Hub. You can follow the corresponding steps: [Record a dataset](./getting_started_real_world_robot#record-a-dataset).
+Once you are logged in, you can run inference in your setup by doing:
+
+```bash
+python -m lerobot.record \
+  --robot.type=so101_follower \
+  --robot.port=/dev/ttyACM0 \ # <- Use your port
+  --robot.id=my_blue_follower_arm \ # <- Use your robot id
+  --robot.cameras="{ front: {type: opencv, index_or_path: 8, width: 640, height: 480, fps: 30}}" \ # <- Use your cameras
+  --dataset.single_task="Grasp a lego block and put it in the bin." \ # <- Use the same task description you used in your dataset recording
+  --dataset.repo_id=${HF_USER}/eval_DATASET_NAME_test \  # <- This will be the dataset name on HF Hub
+  --dataset.episode_time_s=50 \
+  --dataset.num_episodes=10 \
+  --policy.path=HF_USER/FINETUNE_MODEL_NAME # <- Use your fine-tuned model
+```
+
+Depending on your evaluation setup, you can configure the duration and the number of episodes to record for your evaluation suite.
