@@ -150,7 +150,7 @@ class RecordTwoArmConfig:
     
 
     def __post_init__(self):
-        if bool(self.teleop) == bool(self.policy):
+        if (bool(self.teleop1) and bool(self.teleop2)) == bool(self.policy):
             raise ValueError("Choose either a policy or a teleoperator to control the robot")
 
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
