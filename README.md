@@ -452,3 +452,6 @@ python lerobot/scripts/visualize_dataset.py --eval-data-dir fancy_eval_outputs/e
 python lerobot/scripts/visualize_dataset.py --repo-id=lerobot/pusht --root=./outputs/train/2025-06-10/16-01-31_pusht_diffusion/eval --episode-index 1
 
 python lerobot/scripts/visualize_dataset.py --repo-id=lerobot/aloha_sim_transfer_cube_human --root=./outputs/finetuning/eval/videos_step_001000 --episode-index 0
+
+python3 lerobot/scripts/eval.py --policy.path=outputs/train/act_aloha_transfer/checkpoints/last/pretrained_model --output_dir=eval/aloha3 --env.type=aloha --env.task=AlohaTransferCube-v0 --eval.n_episodes=1 --eval.batch_size=1
+"Stepping through eval batches"
