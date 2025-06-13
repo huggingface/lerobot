@@ -1,8 +1,8 @@
 # Bring Your Own Hardware
 
-This tutorial will explain how to integrate your own robot design into the LeRobot ecosystem and have it access all of our tools (data collection, control pipelines, policy training an inference).
+This tutorial will explain how to integrate your own robot design into the LeRobot ecosystem and have it access all of our tools (data collection, control pipelines, policy training and inference).
 
-To that end, we provide the [`Robot`] base class in the LeRobot which specifies a standard interface for physical robot integration. Let's see how to implement it.
+To that end, we provide the [`Robot`](https://github.com/huggingface/lerobot/blob/main/lerobot/common/robots/robot.py) base class in the LeRobot which specifies a standard interface for physical robot integration. Let's see how to implement it.
 
 ## Prerequisites
 
@@ -14,10 +14,10 @@ To that end, we provide the [`Robot`] base class in the LeRobot which specifies 
 
 If you're using Feetech or Dynamixel motors, LeRobot provides built-in bus interfaces:
 
-- [`FeetechMotorsBus`] – for controlling Feetech servos
-- [`DynamixelMotorsBus`] – for controlling Dynamixel servos
+- [`FeetechMotorsBus`](https://github.com/huggingface/lerobot/blob/main/lerobot/common/motors/feetech/feetech.py) – for controlling Feetech servos
+- [`DynamixelMotorsBus`](https://github.com/huggingface/lerobot/blob/main/lerobot/common/motors/dynamixel/dynamixel.py) – for controlling Dynamixel servos
 
-Please refer to the [`MotorsBus`] abstract class to learn about its API.
+Please refer to the [`MotorsBus`](https://github.com/huggingface/lerobot/blob/main/lerobot/common/motors/motors_bus.py) abstract class to learn about its API.
 For a good example of how it can be used, you can have a look at our own [SO101 follower implementation](https://github.com/huggingface/lerobot/blob/main/lerobot/common/robots/so101_follower/so101_follower.py)
 
 Use these if compatible! Otherwise, you'll need to find or write a Python interface (not covered in this tutorial):
@@ -210,12 +210,41 @@ def is_calibrated(self) -> bool:
 
 ### `calibrate()`
 
-It should implement the logic for calibration and updates the `self.calibration` dictionary. If you're using Feetech or Dynamixel motors, our bus interfaces already include methods to help with this.
+The goal of the calibration is twofold:
+    - Know the physical range of motion of each motors in order to only send commands within this range.
+    - Normalize raw motors positions to sensible continuous values (e.g. percentages, degrees) instead of arbitrary discrete value dependant on the specific motor used that will not replicate elsewhere.
 
-<!-- ```python
+It should implement the logic for calibration (if relevant) and update the `self.calibration` dictionary. If you are using Feetech or Dynamixel motors, our bus interfaces already include methods to help with this.
+
+```python
 def calibrate(self) -> None:
-    TODO
-``` -->
+    self.bus.disable_torque()
+    for motor in self.bus.motors:
+        self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
+
+    input(f"Move {self} to the middle of its range of motion and press ENTER....")
+    homing_offsets = self.bus.set_half_turn_homings()
+
+    print(
+        "Move all joints sequentially through their entire ranges "
+        "of motion.\nRecording positions. Press ENTER to stop..."
+    )
+    range_mins, range_maxes = self.bus.record_ranges_of_motion()
+
+    self.calibration = {}
+    for motor, m in self.bus.motors.items():
+        self.calibration[motor] = MotorCalibration(
+            id=m.id,
+            drive_mode=0,
+            homing_offset=homing_offsets[motor],
+            range_min=range_mins[motor],
+            range_max=range_maxes[motor],
+        )
+
+    self.bus.write_calibration(self.calibration)
+    self._save_calibration()
+    print("Calibration saved to", self.calibration_fpath)
+```
 
 ### `configure()`
 
@@ -274,6 +303,12 @@ def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
 <!-- ## Putting it all together (TODO)
 ```python
 ``` -->
+
+## Adding a Teleoperator
+
+For implementing teleoperation devices, we also provide a [`Teleoperator`](https://github.com/huggingface/lerobot/blob/main/lerobot/common/teleoperators/teleoperator.py) base class. This class is very similar to the `Robot` base class and also doesn't assume anything on form factor.
+
+The main differences are in the I/O functions: a teleoperator allows you to produce action via `get_action` and can receive feedback actions via `send_feedback`. Feedback could be anything controllable on the teleoperation device that could help the person controlling it understand the consequences of the actions sent. Think motion/force feedback on a leader arm, vibrations on a gamepad controller for example. To implement a teleoperator, you can follow this same tutorial and adapt it for these two methods.
 
 ## Wrapping Up
 
