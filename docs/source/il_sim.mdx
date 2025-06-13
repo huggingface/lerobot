@@ -31,15 +31,18 @@ Then we can run this command to start:
 
 <hfoptions id="teleop_sim">
 <hfoption id="Linux">
+
 ```bash
 python lerobot/scripts/rl/gym_manipulator.py --config_path examples/configs/env_config_gym_hil_il.json
-
 ```
+
 </hfoption>
 <hfoption id="MacOS">
+
 ```bash
 mjpython lerobot/scripts/rl/gym_manipulator.py --config_path examples/configs/env_config_gym_hil_il.json
 ```
+
 </hfoption>
 </hfoptions>
 
@@ -110,16 +113,20 @@ To evaluate your policy we have to use the config file that can be found here: `
 
 Then you can run this command to visualize your trained policy
 
+<hfoptions id="eval_policy">
 <hfoption id="Linux">
+
 ```bash
 python lerobot/scripts/rl/eval_policy.py --config_path=examples/rl_config/gym_hil_serl_il_eval.json
-
 ```
+
 </hfoption>
 <hfoption id="MacOS">
+
 ```bash
 mjpython lerobot/scripts/rl/eval_policy.py --config_path=examples/rl_config/gym_hil_serl_il_eval.json
 ```
+
 </hfoption>
 </hfoptions>
 
