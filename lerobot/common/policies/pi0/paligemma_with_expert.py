@@ -239,7 +239,11 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         use_cache: Optional[bool] = None,
         fill_kv_cache: Optional[bool] = None,
     ):
-        language_model = self.paligemma.language_model if hasattr(self.paligemma.language_model, "embed_tokens") else self.paligemma.language_model.model
+        language_model = (
+            self.paligemma.language_model
+            if hasattr(self.paligemma.language_model, "embed_tokens")
+            else self.paligemma.language_model.model
+        )
         models = [language_model, self.gemma_expert.model]
 
         for hidden_states in inputs_embeds:
