@@ -440,6 +440,20 @@ def build_dataset_frame(
     return frame
 
 
+def build_dataset_frame_two_arm(
+    ds_features: dict[str, dict], values: dict[str, Any], prefix: str
+) -> dict[str, np.ndarray]:
+    frame = {}
+    for key, ft in ds_features.items():
+        if key in DEFAULT_FEATURES or not key.startswith(prefix):
+            continue
+        elif ft["dtype"] == "float32" and len(ft["shape"]) == 1:
+            frame[key] = np.array([values[name] for name in ft["names"]], dtype=np.float32)
+        elif ft["dtype"] in ["image", "video"]:
+            frame[key] = values[key.removeprefix(f"{prefix}.images.")]
+
+    return frame
+
 def get_features_from_robot(robot: Robot, use_videos: bool = True) -> dict:
     camera_ft = {}
     if robot.cameras:

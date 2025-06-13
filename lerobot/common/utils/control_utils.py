@@ -22,6 +22,7 @@ import traceback
 from contextlib import nullcontext
 from copy import copy
 from functools import cache
+from typing import List
 
 import numpy as np
 import torch
@@ -213,3 +214,8 @@ def sanity_check_dataset_robot_compatibility(
         raise ValueError(
             "Dataset metadata compatibility check failed with mismatches:\n" + "\n".join(mismatches)
         )
+
+def sanity_check_dataset_and_multi_robots_compatibility(
+    dataset: LeRobotDataset, robots: List[Robot], fps: int, features: dict
+) -> None:
+    pass
