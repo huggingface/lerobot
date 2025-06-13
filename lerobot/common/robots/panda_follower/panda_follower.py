@@ -25,7 +25,7 @@ from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnecte
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
-from ...motors.franka_api.api import API
+from ...motors.franka_api.API import API
 from .config_panda_follower import PandaConfig
 
 logger = logging.getLogger(__name__)

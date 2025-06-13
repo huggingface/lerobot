@@ -24,7 +24,7 @@ from lerobot.common.motors import Motor, MotorCalibration, MotorNormMode
 from ..teleoperator import Teleoperator
 from .config_panda_leader import PandaTeleoperatorConfig
 
-from lerobot.common.motors.franka_api.api import *
+from lerobot.common.motors.franka_api.API import *
 
 logger = logging.getLogger(__name__)
 
