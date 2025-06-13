@@ -17,7 +17,7 @@ import importlib
 
 import gymnasium as gym
 
-from lerobot.common.envs.configs import AlohaEnv, EnvConfig, PushtEnv, XarmEnv
+from lerobot.common.envs.configs import AlohaEnv, EnvConfig, HILEnvConfig, PushtEnv, XarmEnv
 
 
 def make_env_config(env_type: str, **kwargs) -> EnvConfig:
@@ -27,6 +27,8 @@ def make_env_config(env_type: str, **kwargs) -> EnvConfig:
         return PushtEnv(**kwargs)
     elif env_type == "xarm":
         return XarmEnv(**kwargs)
+    elif env_type == "hil":
+        return HILEnvConfig(**kwargs)
     else:
         raise ValueError(f"Policy type '{env_type}' is not available.")
 

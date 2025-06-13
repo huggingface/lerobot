@@ -9,7 +9,15 @@
     title: Getting Started with Real-World Robots
   - local: cameras
     title: Cameras
+  - local: hilserl
+    title: Train a Robot with RL
+  - local: hilserl_sim
+    title: Train RL in Simulation
   title: "Tutorials"
+- sections:
+  - local: smolvla
+    title: Finetune SmolVLA
+  title: "Policies"
 - sections:
   - local: so101
     title: SO-101
