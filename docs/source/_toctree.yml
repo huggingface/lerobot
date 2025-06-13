@@ -11,6 +11,10 @@
     title: Cameras
   - local: byoh
     title: Bring Your Own Hardware
+  - local: hilserl
+    title: Train a Robot with RL
+  - local: hilserl_sim
+    title: Train RL in Simulation
   title: "Tutorials"
 - sections:
   - local: so101
