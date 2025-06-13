@@ -81,7 +81,6 @@ def receive_bytes_in_chunks(iterator, queue: Queue, shutdown_event: Event, log_p
             bytes_buffer.write(item.data)
             logging.debug(f"{log_prefix} Received data at step 0")
             step = 0
-            continue
         elif item.transfer_state == services_pb2.TransferState.TRANSFER_MIDDLE:
             bytes_buffer.write(item.data)
             step += 1
@@ -97,6 +96,9 @@ def receive_bytes_in_chunks(iterator, queue: Queue, shutdown_event: Event, log_p
             step = 0
 
             logging.debug(f"{log_prefix} Queue updated")
+        else:
+            logging.warning(f"{log_prefix} Received unknown transfer state {item.transfer_state}")
+            raise ValueError(f"Received unknown transfer state {item.transfer_state}")
 
 
 def state_to_bytes(state_dict: dict[str, torch.Tensor]) -> bytes:

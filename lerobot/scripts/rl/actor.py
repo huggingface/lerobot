@@ -27,29 +27,6 @@ Examples of usage:
 python lerobot/scripts/rl/actor.py --config_path lerobot/configs/train_config_hilserl_so100.json
 ```
 
-- Run with a specific robot type for a pick and place task:
-```bash
-python lerobot/scripts/rl/actor.py \
-    --config_path lerobot/configs/train_config_hilserl_so100.json \
-    --robot.type=so100 \
-    --task=pick_and_place
-```
-
-- Set a custom workspace bound for the robot's end-effector:
-```bash
-python lerobot/scripts/rl/actor.py \
-    --config_path lerobot/configs/train_config_hilserl_so100.json \
-    --env.ee_action_space_params.bounds.max="[0.24, 0.20, 0.10]" \
-    --env.ee_action_space_params.bounds.min="[0.16, -0.08, 0.03]"
-```
-
-- Run with specific camera crop parameters:
-```bash
-python lerobot/scripts/rl/actor.py \
-    --config_path lerobot/configs/train_config_hilserl_so100.json \
-    --env.crop_params_dict="{'observation.images.side': [180, 207, 180, 200], 'observation.images.front': [180, 250, 120, 150]}"
-```
-
 **NOTE**: The actor server requires a running learner server to connect to. Ensure the learner
 server is started before launching the actor.
 
@@ -662,9 +639,9 @@ def interactions_stream(
 
 
 def update_policy_parameters(policy: SACPolicy, parameters_queue: Queue, device):
-    if not parameters_queue.empty():
+    bytes_state_dict = get_last_item_from_queue(parameters_queue, block=False)
+    if bytes_state_dict is not None:
         logging.info("[ACTOR] Load new parameters from Learner.")
-        bytes_state_dict = get_last_item_from_queue(parameters_queue)
         state_dict = bytes_to_state_dict(bytes_state_dict)
         state_dict = move_state_dict_to_device(state_dict, device=device)
         policy.load_state_dict(state_dict)

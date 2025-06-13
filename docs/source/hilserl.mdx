@@ -7,7 +7,7 @@ HIL-SERL is a sample-efficient reinforcement learning algorithm that combines hu
 It combines three key ingredients:
 	1.	**Offline demonstrations & reward classifier:** a handful of human-teleop episodes plus a vision-based success detector give the policy a shaped starting point.
 	2.	**On-robot actor / learner loop with human interventions:** a distributed Soft Actor Critic (SAC) learner updates the policy while an actor explores on the physical robot; the human can jump in at any time to correct dangerous or unproductive behaviour.
-	3.	**Safety & efficiency tools:** joint/end-effector (EE) bounds, impedance control, crop region of interest (ROI) preprocessing and WandB monitoring keep the data useful and the hardware safe.
+	3.	**Safety & efficiency tools:** joint/end-effector (EE) bounds, crop region of interest (ROI) preprocessing and WandB monitoring keep the data useful and the hardware safe.
 
 Together these elements let HIL-SERL reach near-perfect task success and faster cycle times than imitation-only baselines.
 
@@ -38,7 +38,7 @@ One can use HIL-SERL to train on a variety of manipulation tasks. Some recommend
   - Hand-over tasks to transfer objects from one arm to another
   - Go crazy!
 
-## 0. Install LeRobot with HIL-SERL
+## Install LeRobot with HIL-SERL
 
 To install LeRobot with HIL-SERL, you need to install the `hilserl` extra.
 
@@ -46,9 +46,9 @@ To install LeRobot with HIL-SERL, you need to install the `hilserl` extra.
 pip install -e ".[hilserl]"
 ```
 
-## 1. Real Robot Training Workflow
+## Real Robot Training Workflow
 
-### 1.1 Understanding Configuration
+### Understanding Configuration
 
 The training process begins with proper configuration for the HILSerl environment. The configuration class of interest is `HILSerlRobotEnvConfig` in `lerobot/common/envs/configs.py`. Which is defined as:
 
@@ -73,7 +73,7 @@ class HILSerlRobotEnvConfig(EnvConfig):
 ```
 
 
-### 1.2 Finding Robot Workspace Bounds
+### Finding Robot Workspace Bounds
 
 Before collecting demonstrations, you need to determine the appropriate operational bounds for your robot.
 
@@ -115,13 +115,13 @@ python -m lerobot.scripts.find_joint_limits \
 }
 ```
 
-### 1.3 Collecting Demonstrations
+### Collecting Demonstrations
 
 With the bounds defined, you can safely collect demonstrations for training. Training RL with off-policy algorithm allows us to use offline datasets collected in order to improve the efficiency of the learning process.
 
 **Setting Up Record Mode**
 
-Create a configuration file for recording demonstrations (or edit an existing one) that can be found here: `lerobot/examples/rl_config/env_config_so100.json`.
+Create a configuration file for recording demonstrations (or edit an existing one like [env_config_so100.json](https://huggingface.co/datasets/aractingi/lerobot-example-config-files/blob/main/env_config_so100.json)):
 
 1. Set `mode` to `"record"`
 2. Specify a unique `repo_id` for your dataset (e.g., "username/task_name")
@@ -140,35 +140,106 @@ Example configuration section:
 "push_to_hub": true
 ```
 
-**Gamepad Controls**
+### Using a Teleoperation Device
+
+Along with your robot, you will need a teleoperation device to control it in order to collect datasets of your task and perform interventions during the online training.
+We support using a gamepad or a keyboard or the leader arm of the robot.
+
+HIL-Serl learns actions in the end-effector space of the robot. Therefore, the teleoperation will control the end-effector's x,y,z displacements.
+
+For that we need to define a version of the robot that takes actions in the end-effector space. Check the robot class `SO100FollowerEndEffector` and its configuration `SO100FollowerEndEffectorConfig` for the default parameters related to the end-effector space.
+
+```python
+class SO100FollowerEndEffectorConfig(SO100FollowerConfig):
+    """Configuration for the SO100FollowerEndEffector robot."""
+
+    # Default bounds for the end-effector position (in meters)
+    end_effector_bounds: dict[str, list[float]] = field( # bounds for the end-effector in x,y,z direction
+        default_factory=lambda: {
+            "min": [-1.0, -1.0, -1.0],  # min x, y, z
+            "max": [1.0, 1.0, 1.0],  # max x, y, z
+        }
+    )
+
+    max_gripper_pos: float = 50 # maximum gripper position that the gripper will be open at
+
+    end_effector_step_sizes: dict[str, float] = field( # maximum step size for the end-effector in x,y,z direction
+        default_factory=lambda: {
+            "x": 0.02,
+            "y": 0.02,
+            "z": 0.02,
+        }
+    )
+```
+
+The `Teleoperator` defines the teleoperation device. You can check the list of available teleoperators in `lerobot/common/teleoperators`.
+
+**Setting up the Gamepad**
+
+The gamepad provides a very convenient way to control the robot and the episode state.
+
+To setup the gamepad, you need to set the `control_mode` to `"gamepad"` and define the `teleop` section in the configuration file.
+
+```json
+    "teleop": {
+        "type": "gamepad",
+        "use_gripper": true
+    },
+```
 
 <p align="center">
   <img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/gamepad_guide.jpg?raw=true" alt="Figure shows the control mappings on a Logitech gamepad." title="Gamepad Control Mapping" width="100%"></img>
 </p>
 <p align="center"><i>Gamepad button mapping for robot control and episode management</i></p>
 
+**Setting up the SO101 leader**
+
+The SO101 leader arm has reduced gears that allows it to move and track the follower arm during exploration. Therefore, taking over is much smoother than the gearless SO100.
+
+To setup the SO101 leader, you need to set the `control_mode` to `"leader"` and define the `teleop` section in the configuration file.
+
+```json
+    "teleop": {
+        "type": "so101_leader",
+        "port": "/dev/tty.usbmodem585A0077921", # check your port number
+        "use_degrees": true
+    },
+```
+
+In order to annotate the success/failure of the episode, **you will need** to use a keyboard to press `s` for success, `esc` for failure.
+During the online training, press `space` to take over the policy and `space` again to give the control back to the policy.
+
+<details>
+<summary><strong>Video: SO101 leader teleoperation</strong></summary>
+
+<div class="video-container">
+  <video controls width="600">
+    <source src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/so101_leader_tutorial.mp4" type="video/mp4" />
+  </video>
+</div>
+
+<p align="center"><i>SO101 leader teleoperation example, the leader tracks the follower, press `space` to intervene</i></p>
+</details>
 
 **Recording Demonstrations**
 
-Start the recording process, an example of the config file can be found here: `lerobot/examples/rl_config/env_config_so100.json`.
+Start the recording process, an example of the config file can be found [here](https://huggingface.co/datasets/aractingi/lerobot-example-config-files/blob/main/env_config_so100.json):
 
 ```bash
-python lerobot/scripts/rl/gym_manipulator.py --config_path examples/rl_config/env_config_so100.json
+python lerobot/scripts/rl/gym_manipulator.py --config_path lerobot/configs/env_config_so100.json
 ```
 
 During recording:
 1. The robot will reset to the initial position defined in the configuration file `fixed_reset_joint_positions`
-2. Use the gamepad to control the robot by setting `"control_mode"="gamepad"` in the configuration file
-3. Complete the task successfully
-4. The episode ends with a reward of 1 when you press the "success" button
-5. If the time limit is reached, or the fail button is pressed, the episode ends with a reward of 0
-6. You can rerecord an episode by pressing the "rerecord" button
-7. The process automatically continues to the next episode
-8. After recording all episodes, the dataset is pushed to the Hugging Face Hub (optional) and saved locally
+2. Complete the task successfully
+3. The episode ends with a reward of 1 when you press the "success" button
+4. If the time limit is reached, or the fail button is pressed, the episode ends with a reward of 0
+5. You can rerecord an episode by pressing the "rerecord" button
+6. The process automatically continues to the next episode
+7. After recording all episodes, the dataset is pushed to the Hugging Face Hub (optional) and saved locally
 
 
-
-### 1.4 Processing the Dataset
+### Processing the Dataset
 
 After collecting demonstrations, process them to determine optimal camera crops.
 Reinforcement learning is sensitive to background distractions, so it is important to crop the images to the relevant workspace area.
@@ -220,95 +291,23 @@ Add these crop parameters to your training configuration:
 "resize_size": [128, 128]
 ```
 
-### 1.5 Training with Actor-Learner
+**Recommended image resolution**
 
-The LeRobot system uses a distributed actor-learner architecture for training. This architecture decouples robot interactions from the learning process, allowing them to run concurrently without blocking each other. The actor server handles robot observations and actions, sending interaction data to the learner server. The learner server performs gradient descent and periodically updates the actor's policy weights. You will need to start two processes: a learner and an actor.
+Most vision-based policies have been validated on square inputs of either **128×128** (default) or **64×64** pixels.  We therefore advise setting the resize_size parameter to [128, 128] – or [64, 64] if you need to save GPU memory and bandwidth.  Other resolutions are possible but have not been extensively tested.
 
-**Configuration Setup**
 
-Create a training configuration file (example available here: `lerobot/examples/rl_config/train_config_hilserl_so100.json`). The training config is based on the main `TrainRLServerPipelineConfig` class in `lerobot/configs/train.py`.
-
-1. Configure the policy settings (`type="sac"`, `device`, etc.)
-2. Set `dataset` to your cropped dataset
-3. Configure environment settings with crop parameters
-4. Check the other parameters related to SAC in [configuration_sac.py](https://github.com/huggingface/lerobot/blob/19bb621a7d0a31c20cd3cc08b1dbab68d3031454/lerobot/common/policies/sac/configuration_sac.py#L79).
-5. Verify that the `policy` config is correct with the right `input_features` and `output_features` for your task.
-
-**Starting the Learner**
-
-First, start the learner server process:
-
-```bash
-python lerobot/scripts/rl/learner.py --config_path examples/rl_config/train_config_hilserl_so100.json
-```
-
-The learner:
-- Initializes the policy network
-- Prepares replay buffers
-- Opens a gRPC server to communicate with actors
-- Processes transitions and updates the policy
-
-**Starting the Actor**
-
-In a separate terminal, start the actor process with the same configuration:
-
-```bash
-python lerobot/scripts/rl/actor.py --config_path examples/rl_config/train_config_hilserl_so100.json
-```
-
-The actor:
-- Connects to the learner via gRPC
-- Initializes the environment
-- Execute rollouts of the policy to collect experience
-- Sends transitions to the learner
-- Receives updated policy parameters
-
-**Training Flow**
-
-The training proceeds automatically:
-
-1. The actor executes the policy in the environment
-2. Transitions are collected and sent to the learner
-3. The learner updates the policy based on these transitions
-4. Updated policy parameters are sent back to the actor
-5. The process continues until the specified step limit is reached
-
-**Human in the Loop**
-
-- The key to learning efficiently is to have human interventions to provide corrective feedback and completing the task to aide the policy learning and exploration.
-- To perform human interventions, you can press the upper right trigger button on the gamepad. This will pause the policy actions and allow you to take over.
-- A successful experiment is one where the human has to intervene at the start but then reduces the amount of interventions as the policy improves. You can monitor the intervention rate in the `wandb` dashboard.
-
-<p align="center">
-  <img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/hil_effect.png?raw=true" alt="Figure shows the control mappings on a Logitech gamepad." title="Gamepad Control Mapping" width="100%"></img>
-</p>
-
-<p align="center"><i>Example showing how human interventions help guide policy learning over time</i></p>
-
-- The figure shows the plot of the episodic reward over interaction step. The figure shows the effect of human interventions on the policy learning.
-- The orange curve is an experiment without any human interventions. While the pink and blue curves are experiments with human interventions.
-- We can observe that the number of steps where the policy starts achieving the maximum reward is cut by a quarter when human interventions are present.
-
-**Guide to Human Interventions**
-The strategy to follow is to intervene heavily at the start of training and then reduce the amount of interventions as the training progresses. Some tips and hints:
-- Interevene for almost the length of the entire episode at the first few episodes.
-- When the policy is less chaotic, gradually reduce the intervention time during one episode and let the policy explore for a longer time.
-- Once the policy start guiding the robot towards achieving the task, even if its not perfect, you can limit your interventions to simple quick actions like a grasping command, or grasp and lift command.
-
-### 1.6 Monitoring and Debugging
-
-If you have `wandb.enable` set to `true` in your configuration, you can monitor training progress in real-time through the [Weights & Biases](https://wandb.ai/site/) dashboard.
-
-## 2. Training a Reward Classifier with LeRobot
+### Training a Reward Classifier
 
 The reward classifier plays an important role in the HIL-SERL workflow by automating reward assignment and automatically detecting episode success. Instead of manually defining reward functions or relying on human feedback for every timestep, the reward classifier learns to predict success/failure from visual observations. This enables the RL algorithm to learn efficiently by providing consistent and automated reward signals based on the robot's camera inputs.
 
 This guide explains how to train a reward classifier for human-in-the-loop reinforcement learning implementation of LeRobot. Reward classifiers learn to predict the reward value given a state which can be used in an RL setup to train a policy.
 
+**Note**: Training a reward classifier is optional. You can start the first round of RL experiments by annotating the success manually with your gamepad or keyboard device.
 
 The reward classifier implementation in `modeling_classifier.py` uses a pretrained vision model to process the images. It can output either a single value for binary rewards to predict success/fail cases or multiple values for multi-class settings.
 
-### 2.1 Collecting a Dataset
+**Collecting a Dataset for the reward classifier**
+
 Before training, you need to collect a dataset with labeled examples. The `record_dataset` function in `gym_manipulator.py` enables the process of collecting a dataset of observations, actions, and rewards.
 
 To collect a dataset, you need to modify some parameters in the environment configuration based on HILSerlRobotEnvConfig.
@@ -342,7 +341,7 @@ Example configuration section for data collection:
 }
 ```
 
-### 2.2 Reward Classifier Configuration
+**Reward Classifier Configuration**
 
 The reward classifier is configured using `configuration_classifier.py`. Here are the key parameters:
 
@@ -354,7 +353,7 @@ The reward classifier is configured using `configuration_classifier.py`. Here ar
 - **dropout_rate**: Regularization parameter
 - **learning_rate**: Learning rate for optimizer
 
-Example configuration for training the reward classifier can be found here: `lerobot/examples/rl_config/reward_classifier_train_config.json`:
+Example configuration for training the [reward classifier](https://huggingface.co/datasets/aractingi/lerobot-example-config-files/blob/main/reward_classifier_train_config.json):
 
 ```json
 {
@@ -383,15 +382,15 @@ Example configuration for training the reward classifier can be found here: `ler
 }
 ```
 
-### 2.3 Training the Classifier
+**Training the Classifier**
 
 To train the classifier, use the `train.py` script with your configuration:
 
 ```bash
-python lerobot/scripts/train.py --config_path examples/rl_config/reward_classifier_train_config.json
+python lerobot/scripts/train.py --config_path path/to/reward_classifier_train_config.json
 ```
 
-### 2.4 Deploying and Testing the Model
+**Deploying and Testing the Model**
 
 To use your trained reward classifier, configure the `HILSerlRobotEnvConfig` to use your model:
 
@@ -416,7 +415,7 @@ python lerobot/scripts/rl/gym_manipulator.py --config_path path/to/env_config.js
 
 The reward classifier will automatically provide rewards based on the visual input from the robot's cameras.
 
-### 2.5 Example Workflow
+**Example Workflow for training the reward classifier**
 
 1. **Create the configuration files**:
    Create the necessary json configuration files for the reward classifier and the environment. Check the examples [here](https://huggingface.co/datasets/aractingi/lerobot-example-config-files/tree/main).
@@ -435,6 +434,102 @@ The reward classifier will automatically provide rewards based on the visual inp
    ```bash
    python lerobot/scripts/rl/gym_manipulator.py --config_path lerobot/configs/env_config.json
    ```
+
+### Training with Actor-Learner
+
+The LeRobot system uses a distributed actor-learner architecture for training. This architecture decouples robot interactions from the learning process, allowing them to run concurrently without blocking each other. The actor server handles robot observations and actions, sending interaction data to the learner server. The learner server performs gradient descent and periodically updates the actor's policy weights. You will need to start two processes: a learner and an actor.
+
+**Configuration Setup**
+
+Create a training configuration file (example available [here](https://huggingface.co/datasets/aractingi/lerobot-example-config-files/blob/main/train_config_hilserl_so100.json)). The training config is based on the main `TrainRLServerPipelineConfig` class in `lerobot/configs/train.py`.
+
+1. Configure the policy settings (`type="sac"`, `device`, etc.)
+2. Set `dataset` to your cropped dataset
+3. Configure environment settings with crop parameters
+4. Check the other parameters related to SAC in [configuration_sac.py](https://github.com/huggingface/lerobot/blob/19bb621a7d0a31c20cd3cc08b1dbab68d3031454/lerobot/common/policies/sac/configuration_sac.py#L79).
+5. Verify that the `policy` config is correct with the right `input_features` and `output_features` for your task.
+
+**Starting the Learner**
+
+First, start the learner server process:
+
+```bash
+python lerobot/scripts/rl/learner.py --config_path lerobot/configs/train_config_hilserl_so100.json
+```
+
+The learner:
+- Initializes the policy network
+- Prepares replay buffers
+- Opens a `gRPC` server to communicate with actors
+- Processes transitions and updates the policy
+
+**Starting the Actor**
+
+In a separate terminal, start the actor process with the same configuration:
+
+```bash
+python lerobot/scripts/rl/actor.py --config_path lerobot/configs/train_config_hilserl_so100.json
+```
+
+The actor:
+- Connects to the learner via `gRPC`
+- Initializes the environment
+- Execute rollouts of the policy to collect experience
+- Sends transitions to the learner
+- Receives updated policy parameters
+
+**Training Flow**
+
+The training proceeds automatically:
+
+1. The actor executes the policy in the environment
+2. Transitions are collected and sent to the learner
+3. The learner updates the policy based on these transitions
+4. Updated policy parameters are sent back to the actor
+5. The process continues until the specified step limit is reached
+
+**Human in the Loop**
+
+- The key to learning efficiently is to have human interventions to provide corrective feedback and completing the task to aide the policy learning and exploration.
+- To perform human interventions, you can press the upper right trigger button on the gamepad (or the `space` key on the keyboard). This will pause the policy actions and allow you to take over.
+- A successful experiment is one where the human has to intervene at the start but then reduces the amount of interventions as the policy improves. You can monitor the intervention rate in the `wandb` dashboard.
+
+<p align="center">
+  <img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/hil_effect.png?raw=true" alt="Figure shows the control mappings on a Logitech gamepad." title="Gamepad Control Mapping" width="100%"></img>
+</p>
+
+<p align="center"><i>Example showing how human interventions help guide policy learning over time</i></p>
+
+- The figure shows the plot of the episodic reward over interaction step. The figure shows the effect of human interventions on the policy learning.
+- The orange curve is an experiment without any human interventions. While the pink and blue curves are experiments with human interventions.
+- We can observe that the number of steps where the policy starts achieving the maximum reward is cut by a quarter when human interventions are present.
+
+**Monitoring and Debugging**
+
+If you have `wandb.enable` set to `true` in your configuration, you can monitor training progress in real-time through the [Weights & Biases](https://wandb.ai/site/) dashboard.
+
+### Guide to Human Interventions
+The learning process is very sensitive to the intervention strategy. It will takes a few runs to understand how to intervene effectively. Some tips and hints:
+- Allow the policy to explore for a few episodes at the start of training.
+- Avoid intervening for long periods of time. Try to intervene in situation to correct the robot's behaviour when it goes off track.
+- Once the policy starts achieving the task, even if its not perfect, you can limit your interventions to simple quick actions like a simple grasping commands.
+
+The ideal behaviour is that your intervention rate should drop gradually during training as shown in the figure below.
+
+<p align="center">
+  <img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/intervention_rate_tutorial_rl.png?raw=true" alt="Intervention rate" title="Intervention rate during training" width="100%"></img>
+</p>
+
+<p align="center"><i>Plot of the intervention rate during a training run on a pick and lift cube task</i></p>
+
+### Key hyperparameters to tune
+
+Some configuration values have a disproportionate impact on training stability and speed:
+
+- **`temperature_init`** (`policy.temperature_init`) – initial entropy temperature in SAC. Higher values encourage more exploration; lower values make the policy more deterministic early on. A good starting point is `1e-2`. We observed that setting it too high can make human interventions ineffective and slow down learning.
+- **`policy_parameters_push_frequency`** (`policy.actor_learner_config.policy_parameters_push_frequency`) – interval in *seconds* between two weight pushes from the learner to the actor. The default is `4 s`. Decrease to **1-2 s** to provide fresher weights (at the cost of more network traffic); increase only if your connection is slow, as this will reduce sample efficiency.
+- **`storage_device`** (`policy.storage_device`) – device on which the learner keeps the policy parameters. If you have spare GPU memory, set this to `"cuda"` (instead of the default `"cpu"`). Keeping the weights on-GPU removes CPU→GPU transfer overhead and can significantly increase the number of learner updates per second.
+
 
 Congrats 🎉, you have finished this tutorial!
 

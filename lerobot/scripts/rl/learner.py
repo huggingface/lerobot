@@ -28,37 +28,6 @@ Examples of usage:
 python lerobot/scripts/rl/learner.py --config_path lerobot/configs/train_config_hilserl_so100.json
 ```
 
-- Run with specific SAC hyperparameters:
-```bash
-python lerobot/scripts/rl/learner.py \
-    --config_path lerobot/configs/train_config_hilserl_so100.json \
-    --learner.sac.alpha=0.1 \
-    --learner.sac.gamma=0.99
-```
-
-- Run with a specific dataset and wandb logging:
-```bash
-python lerobot/scripts/rl/learner.py \
-    --config_path lerobot/configs/train_config_hilserl_so100.json \
-    --dataset.repo_id=username/pick_lift_cube \
-    --wandb.enable=true \
-    --wandb.project=hilserl_training
-```
-
-- Run with a pretrained policy for fine-tuning:
-```bash
-python lerobot/scripts/rl/learner.py \
-    --config_path lerobot/configs/train_config_hilserl_so100.json \
-    --pretrained_policy_name_or_path=outputs/previous_training/checkpoints/080000/pretrained_model
-```
-
-- Run with a reward classifier model:
-```bash
-python lerobot/scripts/rl/learner.py \
-    --config_path lerobot/configs/train_config_hilserl_so100.json \
-    --reward_classifier_pretrained_path=outputs/reward_model/best_model
-```
-
 **NOTE**: Start the learner server before launching the actor server. The learner opens a gRPC server
 to communicate with actors.
 
@@ -683,6 +652,7 @@ def start_learner(
         seconds_between_pushes=cfg.policy.actor_learner_config.policy_parameters_push_frequency,
         transition_queue=transition_queue,
         interaction_message_queue=interaction_message_queue,
+        queue_get_timeout=cfg.policy.actor_learner_config.queue_get_timeout,
     )
 
     server = grpc.server(

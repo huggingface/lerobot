@@ -13,6 +13,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import threading
+import time
 from concurrent import futures
 from multiprocessing import Event, Queue
 
@@ -44,6 +46,7 @@ def create_learner_service_stub(
     transitions_queue: Queue,
     interactions_queue: Queue,
     seconds_between_pushes: int,
+    queue_get_timeout: float = 0.1,
 ):
     import grpc
 
@@ -58,6 +61,7 @@ def create_learner_service_stub(
         seconds_between_pushes=seconds_between_pushes,
         transition_queue=transitions_queue,
         interaction_message_queue=interactions_queue,
+        queue_get_timeout=queue_get_timeout,
     )
 
     # Create a gRPC server and add our servicer to it.
@@ -206,8 +210,10 @@ def test_send_transitions_empty_stream():
 
 
 @require_package("grpc")
-@pytest.mark.timeout(3)  # force cross-platform watchdog
+@pytest.mark.timeout(10)  # force cross-platform watchdog
 def test_stream_parameters():
+    import time
+
     from lerobot.common.transport import services_pb2
 
     """Test the StreamParameters method."""
@@ -215,14 +221,14 @@ def test_stream_parameters():
     parameters_queue = Queue()
     transitions_queue = Queue()
     interactions_queue = Queue()
-    seconds_between_pushes = 0.1  # Short delay for testing
+    seconds_between_pushes = 0.2  # Short delay for testing
 
     client, channel, server = create_learner_service_stub(
         shutdown_event, parameters_queue, transitions_queue, interactions_queue, seconds_between_pushes
     )
 
     # Add test parameters to the queue
-    test_params = [b"param_batch_1", b"param_batch_2", b"param_batch_3"]
+    test_params = [b"param_batch_1", b"param_batch_2"]
     for param in test_params:
         parameters_queue.put(param)
 
@@ -230,19 +236,35 @@ def test_stream_parameters():
     request = services_pb2.Empty()
     stream = client.StreamParameters(request)
 
-    # Collect streamed parameters
+    # Collect streamed parameters and timestamps
     received_params = []
+    timestamps = []
 
     for response in stream:
         received_params.append(response.data)
+        timestamps.append(time.time())
 
-        if len(test_params) == len(received_params):
-            break
+        # We should receive one last item
+        break
+
+    parameters_queue.put(b"param_batch_3")
+
+    for response in stream:
+        received_params.append(response.data)
+        timestamps.append(time.time())
+
+        # We should receive only one item
+        break
 
     shutdown_event.set()
     close_learner_service_stub(channel, server)
 
-    assert received_params == test_params
+    assert received_params == [b"param_batch_2", b"param_batch_3"]
+
+    # Check the time difference between the two sends
+    time_diff = timestamps[1] - timestamps[0]
+    # Check if the time difference is close to the expected push frequency
+    assert time_diff == pytest.approx(seconds_between_pushes, abs=0.1)
 
 
 @require_package("grpc")
@@ -256,16 +278,27 @@ def test_stream_parameters_with_shutdown():
     transitions_queue = Queue()
     interactions_queue = Queue()
     seconds_between_pushes = 0.1
+    queue_get_timeout = 0.001
 
     client, channel, server = create_learner_service_stub(
-        shutdown_event, parameters_queue, transitions_queue, interactions_queue, seconds_between_pushes
+        shutdown_event,
+        parameters_queue,
+        transitions_queue,
+        interactions_queue,
+        seconds_between_pushes,
+        queue_get_timeout=queue_get_timeout,
     )
 
     test_params = [b"param_batch_1", b"stop", b"param_batch_3", b"param_batch_4"]
 
-    # Add one parameter batch
-    for param in test_params:
-        parameters_queue.put(param)
+    # create a thread that will put the parameters in the queue
+    def producer():
+        for param in test_params:
+            parameters_queue.put(param)
+            time.sleep(0.1)
+
+    producer_thread = threading.Thread(target=producer)
+    producer_thread.start()
 
     # Start streaming
     request = services_pb2.Empty()
@@ -280,6 +313,62 @@ def test_stream_parameters_with_shutdown():
         if response.data == b"stop":
             shutdown_event.set()
 
+    producer_thread.join()
     close_learner_service_stub(channel, server)
 
     assert received_params == [b"param_batch_1", b"stop"]
+
+
+@require_package("grpc")
+@pytest.mark.timeout(3)  # force cross-platform watchdog
+def test_stream_parameters_waits_and_retries_on_empty_queue():
+    import threading
+    import time
+
+    from lerobot.common.transport import services_pb2
+
+    """Test that StreamParameters waits and retries when the queue is empty."""
+    shutdown_event = Event()
+    parameters_queue = Queue()
+    transitions_queue = Queue()
+    interactions_queue = Queue()
+    seconds_between_pushes = 0.05
+    queue_get_timeout = 0.01
+
+    client, channel, server = create_learner_service_stub(
+        shutdown_event,
+        parameters_queue,
+        transitions_queue,
+        interactions_queue,
+        seconds_between_pushes,
+        queue_get_timeout=queue_get_timeout,
+    )
+
+    request = services_pb2.Empty()
+    stream = client.StreamParameters(request)
+
+    received_params = []
+
+    def producer():
+        # Let the consumer start and find an empty queue.
+        # It will wait `seconds_between_pushes` (0.05s), then `get` will timeout after `queue_get_timeout` (0.01s).
+        # Total time for the first empty loop is > 0.06s. We wait a bit longer to be safe.
+        time.sleep(0.06)
+        parameters_queue.put(b"param_after_wait")
+        time.sleep(0.05)
+        parameters_queue.put(b"param_after_wait_2")
+
+    producer_thread = threading.Thread(target=producer)
+    producer_thread.start()
+
+    # The consumer will block here until the producer sends an item.
+    for response in stream:
+        received_params.append(response.data)
+        if response.data == b"param_after_wait_2":
+            break  # We only need one item for this test.
+
+    shutdown_event.set()
+    producer_thread.join()
+    close_learner_service_stub(channel, server)
+
+    assert received_params == [b"param_after_wait", b"param_after_wait_2"]
