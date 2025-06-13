@@ -1,0 +1,147 @@
+# MoveIt2
+
+This guide shows you how to integrate any MoveIt2-compatible robot with LeRobot. The integration uses MoveIt Servo for real-time cartesian velocity control.
+
+## Overview
+
+**Supported control modes:**
+- ✅ Cartesian velocity control
+- 🚧 End-effector pose and joint position control (coming soon)
+
+**Compatible robots:** Any robot with a working MoveIt2 configuration package
+
+## Prerequisites
+
+### System Requirements
+
+Before getting started, ensure you have the following installed:
+
+- [ROS 2 Jazzy](https://docs.ros.org/en/jazzy/Installation.html)  
+- [MoveIt2](https://moveit.ai/install-moveit2/binary)
+
+
+Since ROS 2 Jazzy uses Python 3.12, you must run LeRobot in a Python 3.12 virtual environment, i.e:
+```bash
+uv venv --python 3.12 && source .venv/bin/activate
+```
+
+### Robot Setup
+
+Your robot must be properly configured and working with MoveIt2 before integration:
+
+- ✅ MoveIt2 configuration package exists for your robot
+- ✅ `move_group` and `moveit_servo` nodes can be launched successfully
+- ✅ Robot is calibrated and ready for operation
+
+See [AR4 ROS Driver](https://github.com/ycheng517/ar4_ros_driver) for an example of a MoveIt2-enabled robot that works with LeRobot.
+
+## Configuration
+
+Create a config class for your robot by sub-classing `MoveIt2Config`. 
+You may override joint names, gripper configurations, and other parameters as needed. 
+An example config class may look like this:
+
+```python
+from dataclasses import dataclass, field
+from lerobot.common.robots.config import RobotConfig
+from lerobot.common.robots.moveit2.config_moveit2 import MoveIt2Config, MoveIt2InterfaceConfig
+
+@RobotConfig.register_subclass("my_moveit2_robot")
+@dataclass
+class MyRobotConfig(MoveIt2Config):
+    moveit2_interface: MoveIt2InterfaceConfig = field(
+        default_factory=lambda: MoveIt2InterfaceConfig(
+            base_link="base_link",
+            arm_joint_names=[
+                "joint_1",
+                "joint_2", 
+                "joint_3",
+                "joint_4",
+                "joint_5",
+                "joint_6",
+            ],
+            gripper_joint_name="gripper_joint",
+            gripper_open_position=0.0,
+            gripper_close_position=1.0,
+            max_linear_velocity=0.05,  # m/s
+            max_angular_velocity=0.25,  # rad/s
+        )
+    )
+```
+
+## Getting Started
+
+### Step 1: Launch Your Robot
+
+Start your MoveIt2-enabled robot stack.
+The exact commands depend on your robot model and configuration. 
+
+**Example: Annin Robotics AR4**
+```bash
+# Launch the robot driver
+ros2 launch annin_ar4_driver driver.launch.py ar_model:=mk1 calibrate:=True
+
+# Launch MoveIt2 with Moveit Servo enabled
+ros2 launch annin_ar4_moveit_config moveit.launch.py ar_model:=mk1 moveit_servo:=True
+```
+
+### Step 2: Verify Robot Status
+
+Before teleoperation, verify your robot is ready:
+
+1. **Check that required nodes are running**:
+   ```bash
+   ros2 node list | grep -E "(move_group|servo_node)"
+   ```
+
+2. **Verify joint states are being published**:
+   ```bash
+   ros2 topic echo /joint_states --once
+   ```
+
+3. **Check MoveIt Servo services are available**:
+   ```bash
+   ros2 service list | grep servo_node
+   ```
+
+### Step 3: Teleoperation (with keyboard)
+
+Once your robot is launched and ready, you can teleoperate it using keyboard controls:
+
+```bash
+# Source the ROS environment
+source /opt/ros/jazzy/setup.bash
+
+python -m lerobot.teleoperate \
+    --robot.type=my_robot \
+    --robot.id=my_robot_arm \
+    --robot.action_from_keyboard=True \
+    --teleop.type=keyboard \
+    --teleop.id=keyboard_controller \
+    --display_data=true
+```
+
+#### Control Mapping
+
+The default keyboard mapping provides intuitive control:
+
+| Key | Action |
+|-----|--------|
+| `A/D` | Move left/right (X-axis) |
+| `W/S` | Move backward/forward (Y-axis) |
+| `N/M` | Move down/up (Z-axis) |
+| `I/K` | Rotate around X-axis |
+| `J/L` | Rotate around Y-axis |
+| `U/O` | Rotate around Z-axis |
+| `Space` | Close gripper (hold to close) |
+
+> **Note**: The gripper closes when Space is held down, and opens when released. All movements are velocity-based and stop when keys are released.
+
+### Next Steps
+
+Once you have teleoperation working, you can use all standard LeRobot features as usual:
+
+- Incorporate cameras and other sensors
+- Use `lerobot.record` to collect demonstration datasets
+- Use `lerobot.replay` to test recorded trajectories  
+- Train policies on your robot's data
