@@ -418,6 +418,19 @@ Additionally, if you are using any of the particular policy architecture, pretra
   year={2024}
 }
 ```
+
+
+- [HIL-SERL](https://hil-serl.github.io/)
+```bibtex
+@Article{luo2024hilserl,
+title={Precise and Dexterous Robotic Manipulation via Human-in-the-Loop Reinforcement Learning},
+author={Jianlan Luo and Charles Xu and Jeffrey Wu and Sergey Levine},
+year={2024},
+eprint={2410.21845},
+archivePrefix={arXiv},
+primaryClass={cs.RO}
+}
+```
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=huggingface/lerobot&type=Timeline)](https://star-history.com/#huggingface/lerobot&Timeline)
