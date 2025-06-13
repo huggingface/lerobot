@@ -14,7 +14,7 @@
 
 exclude: "tests/artifacts/.*\\.safetensors$"
 default_language_version:
-    python: python3.12
+    python: python3.10
 repos:
   ##### Meta #####
   - repo: meta
