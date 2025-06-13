@@ -101,20 +101,20 @@ class Robot(abc.ABC):
 
         Args:
             calibrate (bool): If True, automatically calibrate the robot after connecting if it's not
-                calibration or needs calibration (this is hardware-dependant).
+                calibrated or needs calibration (this is hardware-dependant).
         """
         pass
 
     @property
     @abc.abstractmethod
     def is_calibrated(self) -> bool:
-        """Whether the robot is currently calibrated or not."""
+        """Whether the robot is currently calibrated or not. Should be always `True` if not applicable"""
         pass
 
     @abc.abstractmethod
     def calibrate(self) -> None:
         """
-        Calibrate the robot.
+        Calibrate the robot if applicable. If not, this should be a no-op.
 
         This method should collect any necessary data (e.g., motor offsets) and update the
         :pyattr:`calibration` dictionary accordingly.
