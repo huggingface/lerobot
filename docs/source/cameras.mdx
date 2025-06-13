@@ -75,13 +75,13 @@ finally:
 <hfoption id="Intel Realsense Camera">
 
 ```python
-from lerobot.common.cameras.intel.configuration_realsense import RealSenseCameraConfig
-from lerobot.common.cameras.intel.camera_realsense import RealSenseCamera
+from lerobot.common.cameras.realsense.configuration_realsense import RealSenseCameraConfig
+from lerobot.common.cameras.realsense.camera_realsense import RealSenseCamera
 from lerobot.common.cameras.configs import ColorMode, Cv2Rotation
 
 # Create a `RealSenseCameraConfig` specifying your camera’s serial number and enabling depth.
 config = RealSenseCameraConfig(
-    serial_number="233522074606",
+    serial_number_or_name="233522074606",
     fps=15,
     width=640,
     height=480,
