@@ -16,7 +16,7 @@ This guide shows you how to integrate any MoveIt2-compatible robot with LeRobot.
 
 Before getting started, ensure you have the following installed:
 
-- [ROS 2 Jazzy](https://docs.ros.org/en/jazzy/Installation.html)  
+- [ROS 2 Jazzy](https://docs.ros.org/en/jazzy/Installation.html)
 - [MoveIt2](https://moveit.ai/install-moveit2/binary)
 
 
@@ -37,8 +37,8 @@ See [AR4 ROS Driver](https://github.com/ycheng517/ar4_ros_driver) for an example
 
 ## Configuration
 
-Create a config class for your robot by sub-classing `MoveIt2Config`. 
-You may override joint names, gripper configurations, and other parameters as needed. 
+Create a config class for your robot by sub-classing `MoveIt2Config`.
+You may override joint names, gripper configurations, and other parameters as needed.
 An example config class may look like this:
 
 ```python
@@ -54,7 +54,7 @@ class MyRobotConfig(MoveIt2Config):
             base_link="base_link",
             arm_joint_names=[
                 "joint_1",
-                "joint_2", 
+                "joint_2",
                 "joint_3",
                 "joint_4",
                 "joint_5",
@@ -74,7 +74,7 @@ class MyRobotConfig(MoveIt2Config):
 ### Step 1: Launch Your Robot
 
 Start your MoveIt2-enabled robot stack.
-The exact commands depend on your robot model and configuration. 
+The exact commands depend on your robot model and configuration.
 
 **Example: Annin Robotics AR4**
 ```bash
@@ -143,5 +143,5 @@ Once you have teleoperation working, you can use all standard LeRobot features a
 
 - Incorporate cameras and other sensors
 - Use `lerobot.record` to collect demonstration datasets
-- Use `lerobot.replay` to test recorded trajectories  
+- Use `lerobot.replay` to test recorded trajectories
 - Train policies on your robot's data
