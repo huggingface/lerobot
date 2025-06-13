@@ -165,8 +165,8 @@ class Teleoperator(abc.ABC):
         Send a feedback action command to the teleoperator.
 
         Args:
-            action (dict[str, Any]): Dictionary representing the desired action. Its structure should match
-                :pymeth:`action_features`.
+            feedback (dict[str, Any]): Dictionary representing the desired feedback. Its structure should match
+                :pymeth:`feedback_features`.
 
         Returns:
             dict[str, Any]: The action actually sent to the motors potentially clipped or modified, e.g. by
