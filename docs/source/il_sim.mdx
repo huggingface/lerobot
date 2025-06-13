@@ -21,7 +21,7 @@ pip install -e ".[hilserl]"
 
 ## Teleoperate and Record a Dataset
 
-To use `gym_hil` with LeRobot, you need to use a configuration file. An example config file is stored under `lerobot/examples/rl_config/gym_hil_serl_il.json`.
+To use `gym_hil` with LeRobot, you need to use a configuration file. An example config file is stored under `lerobot/examples/configs/env_config_gym_hil_il.json`.
 
 To teleoperate and collect a dataset, we need to modify this config file and you should add your `repo_id` here: `"repo_id": "il_gym",` and `"num_episodes": 30,` and make sure you set `mode` to `record`, "mode": "record".
 
@@ -32,13 +32,13 @@ Then we can run this command to start:
 <hfoptions id="teleop_sim">
 <hfoption id="Linux">
 ```bash
-python lerobot/scripts/rl/gym_manipulator.py --config_path examples/rl_config/gym_hil_serl_il.json
+python lerobot/scripts/rl/gym_manipulator.py --config_path examples/configs/env_config_gym_hil_il.json
 
 ```
 </hfoption>
 <hfoption id="MacOS">
 ```bash
-mjpython lerobot/scripts/rl/gym_manipulator.py --config_path examples/rl_config/gym_hil_serl_il.json
+mjpython lerobot/scripts/rl/gym_manipulator.py --config_path examples/configs/env_config_gym_hil_il.json
 ```
 </hfoption>
 </hfoptions>
