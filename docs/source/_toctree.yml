@@ -9,6 +9,8 @@
     title: Getting Started with Real-World Robots
   - local: cameras
     title: Cameras
+  - local: byoh
+    title: Bring Your Own Hardware
   title: "Tutorials"
 - sections:
   - local: so101
