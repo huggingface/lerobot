@@ -1737,9 +1737,10 @@ class KeyboardControlWrapper(GamepadControlWrapper):
         print("  Arrow keys: Move in X-Y plane")
         print("  Shift and Shift_R: Move in Z axis")
         print("  Right Ctrl and Left Ctrl: Open and close gripper")
-        print("  Enter: End episode with SUCCESS")
-        print("  Backspace: End episode with FAILURE")
-        print("  Space: Start/Stop Intervention")
+        print("  f: End episode with FAILURE")
+        print("  s: End episode with SUCCESS")
+        print("  r: End episode with RERECORD")
+        print("  i: Start/Stop Intervention")
         print("  ESC: Exit")
 
     def get_teleop_commands(
@@ -1751,7 +1752,7 @@ class KeyboardControlWrapper(GamepadControlWrapper):
         # Unroll the misc_keys_queue to check for events related to intervention, episode success, etc.
         while not self.teleop_device.misc_keys_queue.empty():
             key = self.teleop_device.misc_keys_queue.get()
-            if key == "space":
+            if key == "i":
                 self.is_intervention_active = not self.is_intervention_active
             elif key == "f":
                 episode_end_status = "failure"
