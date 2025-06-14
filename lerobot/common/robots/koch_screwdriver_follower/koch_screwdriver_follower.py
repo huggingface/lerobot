@@ -193,10 +193,28 @@ class KochScrewdriverFollower(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        # Read arm position
+        # TODO(jackvial) needs review
+        # Old implementation for reference:
+        # start = time.perf_counter()
+        # obs_dict = self.bus.sync_read("Present_Position")
+        # obs_dict = {f"{motor}.pos": val for motor, val in obs_dict.items()}
+        # dt_ms = (time.perf_counter() - start) * 1e3
+        # logger.debug(f"{self} read state: {dt_ms:.1f}ms")
+        # Read arm joint positions (except screwdriver) and screwdriver velocity
         start = time.perf_counter()
-        obs_dict = self.bus.sync_read("Present_Position")
-        obs_dict = {f"{motor}.pos": val for motor, val in obs_dict.items()}
+
+        pos_dict = self.bus.sync_read("Present_Position")
+        obs_dict = {}
+        for motor, val in pos_dict.items():
+            if motor == "screwdriver":
+                # Skip position for screwdriver; velocity will be read below.
+                continue
+            obs_dict[f"{motor}.pos"] = val
+
+        # Read screwdriver present velocity (raw) and map to normalized value.
+        screwdriver_vel_raw = self.bus.sync_read("Present_Velocity", ["screwdriver"])["screwdriver"]
+        obs_dict["screwdriver.vel"] = screwdriver_vel_raw
+
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
 
@@ -225,18 +243,43 @@ class KochScrewdriverFollower(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
+        # TODO(jackvial) needs review
+        # Old implementation for reference:
+        # goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
+        #
+        # if self.config.max_relative_target is not None:
+        #     present_pos = self.bus.sync_read("Present_Position")
+        #     goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in goal_pos.items()}
+        #     goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
+        #
+        # self.bus.sync_write("Goal_Position", goal_pos)
+        # return {f"{motor}.pos": val for motor, val in goal_pos.items()}
+
+        # Split positional and velocity commands
+        goal_pos = {
+            key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")
+        }
+        goal_vel = {
+            key.removesuffix(".vel"): val for key, val in action.items() if key.endswith(".vel")
+        }
 
         # Cap goal position when too far away from present position.
         # /!\ Slower fps expected due to reading from the follower.
-        if self.config.max_relative_target is not None:
+        if self.config.max_relative_target is not None and goal_pos:
             present_pos = self.bus.sync_read("Present_Position")
             goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in goal_pos.items()}
             goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
 
-        # Send goal position to the arm
-        self.bus.sync_write("Goal_Position", goal_pos)
-        return {f"{motor}.pos": val for motor, val in goal_pos.items()}
+        # Send commands to the arm
+        if goal_pos:
+            self.bus.sync_write("Goal_Position", goal_pos)
+        if goal_vel:
+            self.bus.sync_write("Goal_Velocity", goal_vel)
+
+        # Merge and return the actually sent commands
+        sent_action = {f"{motor}.pos": val for motor, val in goal_pos.items()}
+        sent_action.update({f"{motor}.vel": val for motor, val in goal_vel.items()})
+        return sent_action
 
     def disconnect(self):
         if not self.is_connected:

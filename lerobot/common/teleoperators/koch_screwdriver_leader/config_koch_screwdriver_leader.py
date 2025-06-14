@@ -27,4 +27,5 @@ class KochScrewdriverLeaderConfig(TeleoperatorConfig):
 
     # Sets the arm in torque mode with the gripper motor set to this value. This makes it possible to squeeze
     # the gripper and have it spring back to an open position on its own.
-    gripper_open_pos: float = 50.0
+    # @TODO(jackvial) - probably need to tune this
+    screwdriver_open_pos: float = 50.0
