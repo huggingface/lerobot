@@ -17,9 +17,11 @@
 import logging
 import time
 import os
+import copy
 from typing import Any
 
 import numpy as np
+import transforms3d as t3d
 from xarm.wrapper import XArmAPI
 from teleop.utils.jacobi_robot import JacobiRobot
 
@@ -114,8 +116,8 @@ class XarmEndEffector(Robot):
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
         gripper = action["gripper"] if "gripper" in action else None
-        full_action = action.copy()
-        full_action["gripper.pos"] = gripper if gripper is not None else 0.0
+        action = copy.deepcopy(action)
+        action["gripper.pos"] = gripper if gripper is not None else 0.0
 
         if (
             "delta_x" in action
@@ -137,7 +139,10 @@ class XarmEndEffector(Robot):
             yaw = action["delta_yaw"]
             delta_rotation = t3d.euler.euler2mat(roll, pitch, yaw)
             delta_pose[:3, :3] = delta_rotation
-            action["pose"] = delta_pose @ pose
+
+            action["pose"] = np.eye(4)
+            action["pose"][:3, :3] = delta_rotation @ pose[:3, :3]
+            action["pose"][:3, 3] = pose[:3, 3] + delta_pose[:3, 3]
 
         if "pose" in action:
             # Convert pose to joint positions using Jacobi
@@ -148,7 +153,7 @@ class XarmEndEffector(Robot):
             for i in range(1, 7):  # joints 1-6
                 joint_pos = self.jacobi.get_joint_position(f"joint{i}")
                 joint_positions.append(joint_pos)
-                full_action[f"joint{i}.pos"] = joint_pos
+                action[f"joint{i}.pos"] = joint_pos
             self.arm.set_servo_angle_j(joint_positions)
 
         # Send gripper command
@@ -158,7 +163,7 @@ class XarmEndEffector(Robot):
             else:
                 self.arm.open_lite6_gripper()
 
-        return super().send_action(full_action)
+        return super().send_action(action)
 
     def get_observation(self) -> dict[str, Any]:
         if not self.is_connected:

@@ -49,6 +49,10 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from .viperx import ViperX
 
         return ViperX(config)
+    elif config.type == "xarm_end_effector":
+        from .xarm import XarmEndEffector
+
+        return XarmEndEffector(config)
     elif config.type == "mock_robot":
         from tests.mocks.mock_robot import MockRobot
 

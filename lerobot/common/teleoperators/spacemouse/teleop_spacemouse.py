@@ -138,8 +138,8 @@ class SpacemouseTeleop(Teleoperator):
             -state.x,
             state.z,
             state.roll,
-            -state.pitch,
-            state.yaw,
+            state.pitch,
+            -state.yaw,
         ]
 
         # Clamp, apply deadzone & scaling
