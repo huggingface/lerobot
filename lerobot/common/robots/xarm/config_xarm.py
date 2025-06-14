@@ -21,9 +21,9 @@ from ..config import RobotConfig
 
 @RobotConfig.register_subclass("xarm_end_effector")
 @dataclass
-class XarmEndEffector(RobotConfig):
+class XarmEndEffectorConfig(RobotConfig):
     # Port to connect to the arm
-    ip: str
+    ip: str = "192.168.1.184"
 
     # cameras
     cameras: dict[str, CameraConfig] = field(default_factory=dict)

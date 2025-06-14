@@ -27,26 +27,26 @@ from lerobot.common.cameras import make_cameras_from_configs
 from lerobot.common.errors import DeviceNotConnectedError, DeviceAlreadyConnectedError
 from lerobot.common.robots.robot import Robot
 
-from lerobot.common.robots.xarm.config_xarm import XarmEndEffector
+from lerobot.common.robots.xarm.config_xarm import XarmEndEffectorConfig
 
 logger = logging.getLogger(__name__)
 
 
 # pip install xarm-python-sdk
 class XarmEndEffector(Robot):
-    config_class = XarmEndEffector
+    config_class = XarmEndEffectorConfig
     name = "xarm_end_effector"
 
-    def __init__(self, config: XarmEndEffector):
+    def __init__(self, config: XarmEndEffectorConfig):
         super().__init__(config)
         self.cameras = make_cameras_from_configs(config.cameras)
 
         this_dir = os.path.dirname(os.path.abspath(__file__))
 
         self.config = config
-        self.is_connected = False
+        self._is_connected = False
         self.arm = None
-        self.jacobi = JacobiRobot(this_dir, "lite6.urdf", ee_link="link6")
+        self.jacobi = JacobiRobot(os.path.join(this_dir, "lite6.urdf"), ee_link="link6")
 
     def connect(self, calibrate: bool = True) -> None:
         """
@@ -181,21 +181,129 @@ class XarmEndEffector(Robot):
     def reset(self):
         pass
 
+    def disconnect(self) -> None:
+        """Disconnect from the robot and cameras."""
+        if not self.is_connected:
+            return
+        
+        if self.arm is not None:
+            self.arm.disconnect()
+            self.arm = None
+        
+        for cam in self.cameras.values():
+            cam.disconnect()
+        
+        self.is_connected = False
+        logger.info(f"{self} disconnected.")
+
+    def calibrate(self) -> None:
+        """Calibrate the robot (optional for xarm)."""
+        if not self.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+        
+        # XArm doesn't typically require calibration
+        # This could be used for homing or setting reference positions
+        logger.info(f"{self} calibration completed.")
+
+    def configure(self) -> None:
+        """Configure robot settings."""
+        if not self.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+        
+        # Set motion parameters
+        self.arm.set_tcp_maxacc(1000)  # Max acceleration
+        logger.info(f"{self} configured.")
+
+    def is_calibrated(self) -> bool:
+        """Check if robot is calibrated."""
+        # XArm is considered always calibrated when connected
+        return self.is_connected
+
+    @property
+    def is_connected(self) -> bool:
+        """Check if robot is connected."""
+        return self._is_connected
+
+    @is_connected.setter
+    def is_connected(self, value: bool) -> None:
+        """Set connection status."""
+        self._is_connected = value
+
+    @property
+    def observation_features(self) -> dict[str, Any]:
+        """Define observation features."""
+        features = {
+            "dtype": "float32",
+            "shape": {},
+            "names": {},
+        }
+        
+        # Joint positions
+        for i in range(1, 7):
+            joint_name = f"joint{i}.pos"
+            features["shape"][joint_name] = (1,)
+            features["names"][joint_name] = joint_name
+        
+        # Gripper position
+        features["shape"]["gripper.pos"] = (1,)
+        features["names"]["gripper.pos"] = "gripper.pos"
+        
+        # Camera features
+        for cam_key, cam in self.cameras.items():
+            features["shape"][cam_key] = cam.shape
+            features["names"][cam_key] = cam_key
+        
+        return features
+
+    @property
+    def cameras(self):
+        return self._cameras
+
+    @cameras.setter
+    def cameras(self, value):
+        self._cameras = value
+
+    @property
+    def config(self):
+        return self._config
+
+    @config.setter
+    def config(self, value):
+        self._config = value
+
+    @property
+    def arm(self):
+        return self._arm
+
+    @arm.setter
+    def arm(self, value):
+        self._arm = value
+
+    @property
+    def jacobi(self):
+        return self._jacobi
+
+    @jacobi.setter
+    def jacobi(self, value):
+        self._jacobi = value
+
 
 
 if __name__ == "__main__":
+    import transforms3d as t3d
+
     # Example usage
-    config = XarmEndEffector(
-        cameras=[],
-        max_relative_target=0.1,
-        disable_torque_on_disconnect=True,
-    )
+    config = XarmEndEffectorConfig()
     robot = XarmEndEffector(config)
     robot.connect()
     
     # Example action
     action = {
-        "pose": np.array([0.5, 0.0, 0.2, 0.0, 0.0, 0.0]),
+        "pose": t3d.affines.compose(
+            [0.5, 0.0, 0.2],  # Translation
+            t3d.euler.euler2mat(0.0, 3.14, 0.0),  # Rotation (no rotation)
+            [1.0, 1.0, 1.0]  # Scale
+        ),
         "gripper": 1.0,
     }
     
