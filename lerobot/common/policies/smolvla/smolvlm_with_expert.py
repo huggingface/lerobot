@@ -22,6 +22,7 @@ from transformers import (
     AutoModel,
     AutoModelForImageTextToText,
     AutoProcessor,
+    AutoVideoProcessor,
     SmolVLMForConditionalGeneration,
 )
 
@@ -131,12 +132,31 @@ class SmolVLMWithExpertModel(nn.Module):
         self.train_expert_only = train_expert_only
         self.attention_mode = attention_mode
         self.expert_hidden_size = lm_expert_config.hidden_size
+
+        # VJEPA2
+        if self.config.vjepa:
+            self.vjepa2_processor = AutoVideoProcessor.from_pretrained("facebook/vjepa2-vitl-fpc64-256")
+            self.vjepa2 = AutoModel.from_pretrained(
+                "facebook/vjepa2-vitl-fpc64-256",
+                torch_dtype=torch.float16,
+                device_map="auto",
+                attn_implementation="sdpa"
+            )
+            self.vjepa2_to_expert_proj = nn.Linear(
+                self.vjepa2.config.hidden_size, self.expert_hidden_size
+            )
+
         self.set_requires_grad()
 
     def get_vlm_model(self):
         return self.vlm.model
 
     def set_requires_grad(self):
+        # For now - always freeze VJEPA2
+        if self.config.vjepa:
+            for params in self.vjepa2.parameters():
+                params.requires_grad = False
+
         if self.freeze_vision_encoder:
             self.get_vlm_model().vision_model.eval()
             for params in self.get_vlm_model().vision_model.parameters():
@@ -170,6 +190,10 @@ class SmolVLMWithExpertModel(nn.Module):
 
     def train(self, mode: bool = True):
         super().train(mode)
+
+        # For now - always freeze VJEPA2
+        if self.config.vjepa:
+            self.vjepa2.eval()
 
         if self.freeze_vision_encoder:
             self.get_vlm_model().vision_model.eval()
