@@ -72,9 +72,6 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
     Args:
         cfg (TrainPipelineConfig): A TrainPipelineConfig config which contains a DatasetConfig and a PreTrainedConfig.
 
-    Raises:
-        NotImplementedError: The MultiLeRobotDataset is currently deactivated.
-
     Returns:
         LeRobotDataset | MultiLeRobotDataset
     """
@@ -83,6 +80,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
     )
 
     if isinstance(cfg.dataset.repo_id, str):
+        # Single dataset case
         ds_meta = LeRobotDatasetMetadata(
             cfg.dataset.repo_id, root=cfg.dataset.root, revision=cfg.dataset.revision
         )
@@ -97,22 +95,50 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             video_backend=cfg.dataset.video_backend,
         )
     else:
-        raise NotImplementedError("The MultiLeRobotDataset isn't supported for now.")
+        # Multiple datasets case
+        repo_ids = cfg.dataset.repo_id
+        
+        # For multi-dataset, we need to handle delta_timestamps per dataset
+        # For now, we'll use the first dataset's metadata to resolve delta_timestamps
+        # This assumes all datasets have similar structure
+        first_ds_meta = LeRobotDatasetMetadata(
+            repo_ids[0], root=cfg.dataset.root, revision=cfg.dataset.revision
+        )
+        delta_timestamps = resolve_delta_timestamps(cfg.policy, first_ds_meta)
+        
+        # Handle episodes configuration for multiple datasets
+        episodes = None
+        if cfg.dataset.episodes is not None:
+            # If episodes is specified, apply to all datasets
+            episodes = {repo_id: cfg.dataset.episodes for repo_id in repo_ids}
+        
         dataset = MultiLeRobotDataset(
-            cfg.dataset.repo_id,
-            # TODO(aliberts): add proper support for multi dataset
-            # delta_timestamps=delta_timestamps,
+            repo_ids,
+            root=cfg.dataset.root,
+            episodes=episodes,
+            delta_timestamps=delta_timestamps,
             image_transforms=image_transforms,
             video_backend=cfg.dataset.video_backend,
+            revision=cfg.dataset.revision,
         )
+        
         logging.info(
             "Multiple datasets were provided. Applied the following index mapping to the provided datasets: "
             f"{pformat(dataset.repo_id_to_index, indent=2)}"
         )
 
     if cfg.dataset.use_imagenet_stats:
-        for key in dataset.meta.camera_keys:
-            for stats_type, stats in IMAGENET_STATS.items():
-                dataset.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
+        # Handle ImageNet stats for both single and multi-dataset cases
+        if isinstance(dataset, MultiLeRobotDataset):
+            # For multi-dataset, apply to each sub-dataset
+            for sub_dataset in dataset._datasets:
+                for key in sub_dataset.meta.camera_keys:
+                    for stats_type, stats in IMAGENET_STATS.items():
+                        sub_dataset.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
+        else:
+            # For single dataset
+            for key in dataset.meta.camera_keys:
+                for stats_type, stats in IMAGENET_STATS.items():
+                    dataset.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
 
     return dataset
