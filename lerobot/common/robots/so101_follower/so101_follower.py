@@ -170,14 +170,19 @@ class SO101Follower(Robot):
 
         return obs_dict
 
-    def diff(self, cur, nxt, names):
-        THRESH = 1
+    def diff(self, cur, nxt, names, THRESH):
         resp = {}
         for name in names:
             if abs(nxt[name] - cur[name]) > THRESH:
                 resp[name] = nxt[name] - cur[name]
         return resp
 
+    def get_action(self) -> dict[str, float]:
+        start = time.perf_counter()
+        action = self.bus.sync_read("Present_Position")
+        action = {f"{motor}.pos": val for motor, val in action.items()}
+        dt_ms = (time.perf_counter() - start) * 1e3
+        logger.debug(f"{self} read action: {dt_ms:.1f}ms")
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         """Command arm to move to a target joint configuration.
@@ -208,7 +213,6 @@ class SO101Follower(Robot):
         goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
         self.bus.sync_write("Goal_Position", goal_pos)
         present_pos = self.bus.sync_read("Present_Position")
-        diff = self.diff(present_pos, goal_pos, names)
 
         return {f"{motor}.pos": val for motor, val in goal_pos.items()}, diff
 
