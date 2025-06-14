@@ -121,10 +121,10 @@ python -m lerobot.record \
     --robot.port=/dev/servo_5837053138 \
     --robot.cameras="{ screwdriver: {type: opencv, index_or_path: /dev/video0, width: 800, height: 600, fps: 30}, side: {type: opencv, index_or_path: /dev/video2, width: 800, height: 600, fps: 30}}" \
     --robot.id=koch_screwdriver_follower_testing \
-    --dataset.repo_id=jackvial/koch_screwdriver_follower_test_01 \
+    --dataset.repo_id=jackvial/koch_screwdriver_follower_test_02 \
     --dataset.num_episodes=2 \
     --dataset.single_task="Screw the silver screw into the M4x0.7 thread on the red thread checker board" \
     --teleop.type=koch_screwdriver_leader \
     --teleop.port=/dev/servo_585A007782 \
     --teleop.id=koch_screwdriver_leader_testing \
-    --display_data=true
+    --display_data=false
