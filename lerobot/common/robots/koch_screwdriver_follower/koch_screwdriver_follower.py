@@ -203,12 +203,14 @@ class KochScrewdriverFollower(Robot):
         # Read arm joint positions (except screwdriver) and screwdriver velocity
         start = time.perf_counter()
 
-        pos_dict = self.bus.sync_read("Present_Position")
+        # TODO(jackvial) needs review
+        # Old implementation for reference:
+        # pos_dict = self.bus.sync_read("Present_Position")
+        # Read positions only for joints that are in position mode (exclude screwdriver)
+        pos_motors = [m for m in self.bus.motors if m != "screwdriver"]
+        pos_dict = self.bus.sync_read("Present_Position", pos_motors)
         obs_dict = {}
         for motor, val in pos_dict.items():
-            if motor == "screwdriver":
-                # Skip position for screwdriver; velocity will be read below.
-                continue
             obs_dict[f"{motor}.pos"] = val
 
         # Read screwdriver present velocity (raw) and map to normalized value.
@@ -266,7 +268,10 @@ class KochScrewdriverFollower(Robot):
         # Cap goal position when too far away from present position.
         # /!\ Slower fps expected due to reading from the follower.
         if self.config.max_relative_target is not None and goal_pos:
-            present_pos = self.bus.sync_read("Present_Position")
+            # TODO(jackvial) needs review
+            # Old implementation for reference:
+            # present_pos = self.bus.sync_read("Present_Position")
+            present_pos = self.bus.sync_read("Present_Position", [m for m in self.bus.motors if m != "screwdriver"])
             goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in goal_pos.items()}
             goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
 

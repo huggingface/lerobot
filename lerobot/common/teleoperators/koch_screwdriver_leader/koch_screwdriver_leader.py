@@ -104,8 +104,11 @@ class KochScrewdriverLeader(Teleoperator):
         for motor in self.bus.motors:
             self.bus.write("Operating_Mode", motor, OperatingMode.EXTENDED_POSITION.value)
 
-        self.bus.write("Drive_Mode", "elbow_flex", DriveMode.INVERTED.value)
-        drive_modes = {motor: 1 if motor == "elbow_flex" else 0 for motor in self.bus.motors}
+
+        # TODO(jackvial) - inverting the elbow seems like it should not be hardcoded here and should instead be a config option
+        self.bus.write("Drive_Mode", "elbow_flex", DriveMode.NOT_INVERTED.value)
+        # drive_modes = {motor: 1 if motor == "elbow_flex" else 0 for motor in self.bus.motors}
+        drive_modes = {0 for motor in self.bus.motors}
 
         input(f"Move {self} to the middle of its range of motion and press ENTER....")
         homing_offsets = self.bus.set_half_turn_homings()
@@ -191,8 +194,8 @@ class KochScrewdriverLeader(Teleoperator):
                 # Scale so that the maximum displacement (±50 when using the default open position
                 # of 50 in a 0-100 range) maps to ±100 in normalized velocity space. Feel free to
                 # tune the gain if your specific hardware has a different useful range.
-                # Flip direction so that closing the trigger results in clockwise rotation on the follower
-                vel_cmd = max(min(-delta * 2.0, 100.0), -100.0)
+                # @TODO(jackvial) - negate delta to flip so the closing of the trigger results in clockwise rotation on the follower screwdriver
+                vel_cmd = max(min(delta * 2.0, 100.0), -100.0)
 
                 # Small jitters around the neutral point are ignored.
                 if abs(vel_cmd) < 2.0:
