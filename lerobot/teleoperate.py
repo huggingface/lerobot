@@ -34,7 +34,6 @@ import logging
 import time
 from dataclasses import asdict, dataclass
 from pprint import pformat
-
 import draccus
 import numpy as np
 import rerun as rr
@@ -111,7 +110,7 @@ def teleop_loop(
                     rr.log(f"action_{act}", rr.Scalar(val))
 
         THRESHOLD_DIFF = 2
-        THRESHOLD_TIME= 2
+        THRESHOLD_TIME= 0.1 
 
         motors = list(robot.bus.motors.keys())
 
@@ -139,12 +138,21 @@ def teleop_loop(
 
         print("last -> ", last)
         print("mark -> ", mark)
+        teleop.send_action(robot.get_action())
         for motor in motors:
             if (mark[motor]):
                 print("diference -> ", time.perf_counter() - last[motor])
             if mark[motor] and time.perf_counter() - last[motor] > THRESHOLD_TIME:
                 # tem que ter isso
-                teleop.send_action(robot.get_action())
+                #teleop.bus.enable_torque(motor, 5)
+                #print("get action",robot.get_action())
+                #print("get action motor",robot.get_action()[motor+".pos"])
+                #print("motor", motor)
+                #teleop.bus.write("Operating_Mode", motor, robot.get_action()[motor+".pos"])
+                pass
+            else:
+                teleop.bus.disable_torque(motor, 5)
+                
 
         dt_s = time.perf_counter() - loop_start
         busy_wait(1 / fps - dt_s)

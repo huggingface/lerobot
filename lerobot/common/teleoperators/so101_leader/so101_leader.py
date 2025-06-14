@@ -149,7 +149,6 @@ class SO101Leader(Teleoperator):
             the action sent to the motors, potentially clipped.
         """
 
-        print("opaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 

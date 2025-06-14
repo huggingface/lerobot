@@ -347,7 +347,7 @@ class MotorsBus(abc.ABC):
         else:
             raise TypeError(motors)
 
-    def _get_ids_values_dict(self, values: Value | dict[str, Value] | None) -> list[str]:
+    def _get_ids_values_dict(self, values: Value | dict[str, Value] | str | None) -> list[str]:
         if isinstance(values, (int, float)):
             return dict.fromkeys(self.ids, values)
         elif isinstance(values, dict):
@@ -1171,6 +1171,7 @@ class MotorsBus(abc.ABC):
             )
 
         ids_values = self._get_ids_values_dict(values)
+        print("IDS VALUES")
         models = [self._id_to_model(id_) for id_ in ids_values]
         if self._has_different_ctrl_tables:
             assert_same_address(self.model_ctrl_table, models, data_name)

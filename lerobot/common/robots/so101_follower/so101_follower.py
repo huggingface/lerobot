@@ -25,6 +25,7 @@ from lerobot.common.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.common.motors.feetech import (
     FeetechMotorsBus,
     OperatingMode,
+    TorqueMode,
 )
 
 from ..robot import Robot
@@ -210,7 +211,6 @@ class SO101Follower(Robot):
 
         # Send goal position to the arm
 
-        names = ['shoulder_pan', 'shoulder_lift', 'elbow_flex', 'wrist_flex', 'wrist_roll', 'gripper']
         goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
         self.bus.sync_write("Goal_Position", goal_pos)
         present_pos = self.bus.sync_read("Present_Position")
