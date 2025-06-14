@@ -230,7 +230,8 @@ def record_loop(
         # so action actually sent is saved in the dataset.
         sent_action1 = robot1.send_action(action1)
         sent_action2 = robot2.send_action(action2)
-        sent_action = {**sent_action1, **sent_action2}  # Combine actions from both robots
+        sent_action = {**{f"robot_one_{k}":v for k,v in sent_action1.items()}, **{f"robot_two_{k}":v for k,v in sent_action2.items()}}
+        # {**sent_action1, **sent_action2}  # Combine actions from both robots
         
         if dataset is not None:
             action_frame = build_dataset_frame(dataset.features, sent_action, prefix="action")
