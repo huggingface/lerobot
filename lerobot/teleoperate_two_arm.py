@@ -156,7 +156,7 @@ def teleoperate(cfg: TeleoperateTwoArmConfig):
 
     log_say("Starting teleoperation for two arms. Press 'q' to quit.", cfg.play_sounds)
 
-    listener, events = init_keyboard_listener(custom_keys={"q": "stop_teleoperation"})
+    listener, events = init_keyboard_listener()
     events["stop_teleoperation"] = False # Initialize stop flag
 
     try:
