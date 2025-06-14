@@ -49,6 +49,10 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from .viperx import ViperX
 
         return ViperX(config)
+    elif config.type == "annin_ar4":
+        from .moveit2 import MoveIt2
+
+        return MoveIt2(config)
     elif config.type == "mock_robot":
         from tests.mocks.mock_robot import MockRobot
 
