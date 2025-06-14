@@ -18,6 +18,7 @@
 
 
 import logging
+import os
 import traceback
 from contextlib import nullcontext
 from copy import copy
@@ -80,9 +81,18 @@ def log_control_info(robot: Robot, dt_s, episode_index=None, frame_index=None, f
 
 @cache
 def is_headless():
-    """Detects if python is running without a monitor."""
+    """Detects if python is running in a non-interactive/headless environment."""
+
+    # TODO(jackvial): remove this before merging – temporary workaround for SSH sessions without X server
+
+    import sys  # local import to keep global namespace clean
+
+    # No DISPLAY on Linux usually means we cannot open any X window nor use the X-RECORD extension.
+    if ("DISPLAY" not in os.environ) and ("linux" in sys.platform.lower()):
+        return True
+
     try:
-        import pynput  # noqa
+        import pynput  # noqa: WPS433 (runtime import for detection)
 
         return False
     except Exception:
@@ -90,7 +100,7 @@ def is_headless():
             "Error trying to import pynput. Switching to headless mode. "
             "As a result, the video stream from the cameras won't be shown, "
             "and you won't be able to change the control flow with keyboards. "
-            "For more info, see traceback below.\n"
+            "For more info, see traceback below.\n",
         )
         traceback.print_exc()
         print()
@@ -151,27 +161,47 @@ def init_keyboard_listener():
         listener = None
         return listener, events
 
-    # Only import pynput if not in a headless environment
-    from pynput import keyboard
+    # TODO(jackvial): remove this before merging – make keyboard listener robust in headless/SSH envs
+    import os
+    # If running over SSH or no local display, force pynput to use the dummy backend to avoid X-RECORD errors.
+    # TODO(jackvial): remove this before merging – temporary workaround.
+    if ("SSH_CONNECTION" in os.environ) or ("DISPLAY" not in os.environ):
+        os.environ.setdefault("PYNPUT_BACKEND", "dummy")
 
-    def on_press(key):
+    try:
+        from pynput import keyboard  # noqa: WPS433 (import inside function is intentional)
+
+        def on_press(key):
+            try:
+                if key == keyboard.Key.right:
+                    print("Right arrow key pressed. Exiting loop...")
+                    events["exit_early"] = True
+                elif key == keyboard.Key.left:
+                    print("Left arrow key pressed. Exiting loop and rerecord the last episode...")
+                    events["rerecord_episode"] = True
+                    events["exit_early"] = True
+                elif key == keyboard.Key.esc:
+                    print("Escape key pressed. Stopping data recording...")
+                    events["stop_recording"] = True
+                    events["exit_early"] = True
+            except Exception as exc:  # pragma: no cover – safeguard
+                print(f"Error handling key press: {exc}")
+
         try:
-            if key == keyboard.Key.right:
-                print("Right arrow key pressed. Exiting loop...")
-                events["exit_early"] = True
-            elif key == keyboard.Key.left:
-                print("Left arrow key pressed. Exiting loop and rerecord the last episode...")
-                events["rerecord_episode"] = True
-                events["exit_early"] = True
-            elif key == keyboard.Key.esc:
-                print("Escape key pressed. Stopping data recording...")
-                events["stop_recording"] = True
-                events["exit_early"] = True
-        except Exception as e:
-            print(f"Error handling key press: {e}")
-
-    listener = keyboard.Listener(on_press=on_press)
-    listener.start()
+            listener = keyboard.Listener(on_press=on_press)
+            listener.start()
+        except Exception as exc:  # noqa: WPS440 (broad-except)
+            logging.warning(
+                "Failed to start pynput keyboard listener – falling back to headless mode. Keyboard shortcuts disabled.",
+                exc_info=exc,
+            )
+            listener = None
+    except Exception as exc:  # noqa: WPS440 (broad-except)
+        logging.warning(
+            "pynput not available – running in headless mode. Keyboard shortcuts disabled.",
+            exc_info=exc,
+        )
+        listener = None
 
     return listener, events
 
@@ -213,3 +243,7 @@ def sanity_check_dataset_robot_compatibility(
         raise ValueError(
             "Dataset metadata compatibility check failed with mismatches:\n" + "\n".join(mismatches)
         )
+
+# TODO(jackvial): remove this before merging – ensures no X-backend is loaded by pynput
+if ("DISPLAY" not in os.environ or "SSH_CONNECTION" in os.environ) and "PYNPUT_BACKEND" not in os.environ:
+    os.environ["PYNPUT_BACKEND"] = "dummy"
