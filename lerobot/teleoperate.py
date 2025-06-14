@@ -32,6 +32,11 @@ python -m lerobot.teleoperate \
     --robot.type=xarm_end_effector \
     --robot.id=black \
     --teleop.type=spes_teleop
+
+python -m lerobot.teleoperate \
+    --robot.type=xarm_end_effector \
+    --robot.id=black \
+    --teleop.type=spacemouse
 ```
 """
 
@@ -65,7 +70,7 @@ from lerobot.common.utils.utils import init_logging, move_cursor_up
 from lerobot.common.utils.visualization_utils import _init_rerun
 from tests.mocks.mock_robot import MockRobot
 
-from .common.teleoperators import gamepad, koch_leader, so100_leader, so101_leader, spes_teleop  # noqa: F401
+from .common.teleoperators import gamepad, koch_leader, so100_leader, so101_leader, spes_teleop, spacemouse  # noqa: F401
 
 
 @dataclass

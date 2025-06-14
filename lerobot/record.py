@@ -23,10 +23,10 @@ python -m lerobot.record \
     --robot.cameras="{laptop: {type: opencv, index_or_path: 4, width: 640, height: 480, fps: 30}}" \
     --dataset.reset_time_s=8 \
     --robot.id=black \
-    --dataset.repo_id=lukicdarkoo/xarm_real \
-    --dataset.root=${HOME}/hfdata/first_test \
-    --dataset.num_episodes=2 \
-    --dataset.single_task="Pick an object" \
+    --dataset.repo_id=lukicdarkoo/pick_plazma \
+    --dataset.root=${HOME}/hfdata/pick_plazma \
+    --dataset.num_episodes=15 \
+    --dataset.single_task="Pick plazma" \
     --teleop.type=spacemouse \
     --teleop.id=blue \
     --display_data=true
