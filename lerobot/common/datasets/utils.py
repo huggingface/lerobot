@@ -429,11 +429,11 @@ def build_dataset_frame(
     ds_features: dict[str, dict], values: dict[str, Any], prefix: str
 ) -> dict[str, np.ndarray]:
     frame = {}
-    print(" ds_features KEYS: ", ds_features.keys())
-    print(" values KEYS: ", values.keys())
+    # print(" ds_features KEYS: ", ds_features.keys())
+    # print(" values KEYS: ", values.keys())
     
     for key, ft in ds_features.items():
-        print(f"key: {key} ft name :",ft["names"])
+        # print(f"key: {key} ft name :",ft["names"])
         if key in DEFAULT_FEATURES or not key.startswith(prefix):
             continue
         elif ft["dtype"] == "float32" and len(ft["shape"]) == 1:
