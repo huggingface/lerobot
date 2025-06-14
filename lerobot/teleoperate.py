@@ -91,7 +91,10 @@ def teleop_loop(
                 if isinstance(val, float):
                     rr.log(f"action_{act}", rr.Scalar(val))
 
-        _, diff = robot.send_action(action)
+        THRESHOLD_DIFF = 1
+        THRESHOLD_TIME= 200
+
+        _, diff = robot.send_action(action, THRESHOLD_DIFF)
         print("diff -> ", diff)
         dt_s = time.perf_counter() - loop_start
         busy_wait(1 / fps - dt_s)
