@@ -170,10 +170,13 @@ class SO101Follower(Robot):
 
         return obs_dict
 
-    def print_diff(cur, nxt):
-        for k,v in cur:
-            if nxt[k] - v > 0:
-                print("DIFF",k,nxt[k]-v)
+    def diff(self, cur, nxt, names):
+        THRESH = 1
+        resp = {}
+        for name in names:
+            if abs(nxt[name] - cur[name]) > THRESH:
+                resp[name] = nxt[name] - cur[name]
+        return resp
 
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
@@ -192,8 +195,6 @@ class SO101Follower(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
-
         # Cap goal position when too far away from present position.
         # /!\ Slower fps expected due to reading from the follower.
         if self.config.max_relative_target is not None:
@@ -202,9 +203,14 @@ class SO101Follower(Robot):
             goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
 
         # Send goal position to the arm
+
+        names = ['shoulder_pan', 'shoulder_lift', 'elbow_flex', 'wrist_flex', 'wrist_roll', 'gripper']
+        goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
         self.bus.sync_write("Goal_Position", goal_pos)
-        print_diff(present_pos, goal_pos)
-        return {f"{motor}.pos": val for motor, val in goal_pos.items()}
+        present_pos = self.bus.sync_read("Present_Position")
+        diff = self.diff(present_pos, goal_pos, names)
+
+        return {f"{motor}.pos": val for motor, val in goal_pos.items()}, diff
 
     def disconnect(self):
         if not self.is_connected:

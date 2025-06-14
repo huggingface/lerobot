@@ -91,22 +91,25 @@ def teleop_loop(
                 if isinstance(val, float):
                     rr.log(f"action_{act}", rr.Scalar(val))
 
-        robot.send_action(action)
+        _, diff = robot.send_action(action)
+        print("diff -> ", diff)
         dt_s = time.perf_counter() - loop_start
         busy_wait(1 / fps - dt_s)
 
         loop_s = time.perf_counter() - loop_start
 
-        print("\n" + "-" * (display_len + 10))
-        print(f"{'NAME':<{display_len}} | {'NORM':>7}")
-        for motor, value in action.items():
-            print(f"{motor:<{display_len}} | {value:>7.2f}")
-        print(f"\ntime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
+        # print("\n" + "-" * (display_len + 10))
+        # print(f"{'NAME':<{display_len}} | {'NORM':>7}")
+        # for motor, value in action.items():
+        #     print(f"{motor:<{display_len}} | {value:>7.2f}")
+        # print(f"\ntime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
+
+        #print(action)
 
         if duration is not None and time.perf_counter() - start >= duration:
             return
 
-        move_cursor_up(len(action) + 5)
+        # move_cursor_up(len(action) + 5)
 
 
 @draccus.wrap()
