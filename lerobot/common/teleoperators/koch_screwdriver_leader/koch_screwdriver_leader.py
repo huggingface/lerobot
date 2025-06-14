@@ -151,6 +151,7 @@ class KochScrewdriverLeader(Teleoperator):
             self.bus.setup_motor(motor)
             print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
 
+    # @TODO(jackvial) - this is probably where we want to map the gripper positions to the screwdriver velocity
     def get_action(self) -> dict[str, float]:
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
