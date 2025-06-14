@@ -193,10 +193,10 @@ def record_loop(
 
         observation1 = { f"robot_one_{k}":v for k,v in robot1.get_observation().items()}
         observation2 = {f"robot_two_{k}":v for k,v in robot2.get_observation().items()}
-        print(f"Observation1: {observation1.keys()}\nObservation2: {observation2.keys()}")
+        # print(f"Observation1: {observation1.keys()}\nObservation2: {observation2.keys()}")
         # TODO : check if the keys need to be renamed to avoid conflicts
         observation = {**observation1, **observation2}  # Combine observations from both robots 
-        print(f"Observation: {observation.keys()}")
+        # print(f"Observation: {observation.keys()}")
         if len(observation1.keys()) + len(observation2.keys()) != len(observation.keys()):
             raise ValueError(
                 "Observation keys from both robots should be unique. "
@@ -211,7 +211,7 @@ def record_loop(
                 prefix="observation"
             )
 
-        if policy is not None:
+        if policy is not None: # TODO
             action_values = predict_action(
                 observation_frame,
                 policy,
@@ -244,9 +244,12 @@ def record_loop(
                     rr.log(f"observation.{obs}", rr.Scalar(val))
                 elif isinstance(val, np.ndarray):
                     rr.log(f"observation.{obs}", rr.Image(val), static=True)
-            for act, val in action.items():
+            for act, val in action1.items():
                 if isinstance(val, float):
-                    rr.log(f"action.{act}", rr.Scalar(val))
+                    rr.log(f"action1.{act}", rr.Scalar(val))
+            for act, val in action2.items():
+                if isinstance(val, float):
+                    rr.log(f"action2.{act}", rr.Scalar(val))
 
         dt_s = time.perf_counter() - start_loop_t
         busy_wait(1 / fps - dt_s)
@@ -262,7 +265,7 @@ def record(cfg: RecordTwoArmConfig) -> LeRobotDataset:
     init_logging()
     logging.info(pformat(asdict(cfg)))
     if cfg.display_data:
-        _init_rerun(session_name="recording")
+        _init_rerun(session_name="recording_two_arm")
 
     robot_one = make_robot_from_config(cfg.robot1)
     teleop_one = make_teleoperator_from_config(cfg.teleop1) if cfg.teleop1 is not None else None
@@ -359,9 +362,11 @@ def record(cfg: RecordTwoArmConfig) -> LeRobotDataset:
             log_say("Reset the environment", cfg.play_sounds)
             record_loop(
                 robot1=robot_one,
+                robot2=robot_two,
                 events=events,
                 fps=cfg.dataset.fps,
                 teleop1=teleop_one,
+                teleop2=teleop_two,
                 control_time_s=cfg.dataset.reset_time_s,
                 single_task=cfg.dataset.single_task,
                 display_data=cfg.display_data,
