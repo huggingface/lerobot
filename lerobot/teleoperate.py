@@ -94,7 +94,7 @@ def teleop_loop(
         THRESHOLD_DIFF = 1
         THRESHOLD_TIME= 200
 
-        _, diff = robot.send_action(action, THRESHOLD_DIFF)
+        _, diff = robot.send_action(action)
         print("diff -> ", diff)
         dt_s = time.perf_counter() - loop_start
         busy_wait(1 / fps - dt_s)
