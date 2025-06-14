@@ -155,7 +155,9 @@ class XarmEndEffector(Robot):
             else:
                 self.arm.open_lite6_gripper()
 
-        return super().send_action(action)
+        # Return the joint-space command dictionary so that the recorder can
+        # store every value in the dataset.
+        return action
 
     def get_observation(self) -> dict[str, Any]:
         if not self.is_connected:
