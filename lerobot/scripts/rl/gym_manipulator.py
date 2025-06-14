@@ -1343,7 +1343,7 @@ class BaseLeaderControlWrapper(gym.Wrapper):
 
         # Add intervention info
         info["is_intervention"] = is_intervention
-        info["action_intervention"] = action if is_intervention else None
+        info["action_intervention"] = action
 
         self.prev_leader_gripper = np.clip(
             self.robot_leader.bus.sync_read("Present_Position")["gripper"],
