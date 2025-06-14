@@ -84,7 +84,7 @@ from lerobot.common.utils.visualization_utils import _init_rerun
 from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
 
-from .common.teleoperators import koch_leader, so100_leader, so101_leader  # noqa: F401
+from .common.teleoperators import koch_leader, so100_leader, so101_leader, spacemouse  # noqa: F401
 
 
 @dataclass
