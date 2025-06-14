@@ -94,8 +94,30 @@ def teleop_loop(
         THRESHOLD_DIFF = 1
         THRESHOLD_TIME= 200
 
-        _, diff = robot.send_action(action)
-        print("diff -> ", diff)
+        names = ['shoulder_pan', 'shoulder_lift', 'elbow_flex', 'wrist_flex', 'wrist_roll', 'gripper']
+        last = {}
+        mark  = {}
+
+        # pegar diff com o action e o get action
+        # cur_robot = robot.get_action()
+        robot.send_action(action, THRESHOLD_DIFF)
+
+        for s in names:
+            if diff[s]:
+                if mark[s]:
+                    continue
+                else:
+                    last[s] = time.perf_counter()
+                    mark[s] = True
+            else:
+                last[s] = time.perf_counter()
+                mark[s] = False
+
+        for s in names:
+            if mark[s] and time.perf_counter() - last[s] > THRESHOLD_TIME:
+                # tem que ter isso
+                # teleop.send_action(robot.get_action)
+
         dt_s = time.perf_counter() - loop_start
         busy_wait(1 / fps - dt_s)
 
