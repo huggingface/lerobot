@@ -19,7 +19,7 @@ from tqdm import tqdm
 
 from lerobot.common.datasets.compute_stats import aggregate_stats, get_feature_stats, sample_indices
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.datasets.utils import write_episode_stats
+from lerobot.common.datasets.utils import translate_episode_index_to_position, write_episode_stats
 
 
 def sample_episode_video_frames(dataset: LeRobotDataset, episode_index: int, ft_key: str) -> np.ndarray:
@@ -31,8 +31,9 @@ def sample_episode_video_frames(dataset: LeRobotDataset, episode_index: int, ft_
 
 
 def convert_episode_stats(dataset: LeRobotDataset, ep_idx: int):
-    ep_start_idx = dataset.episode_data_index["from"][ep_idx]
-    ep_end_idx = dataset.episode_data_index["to"][ep_idx]
+    index_position = translate_episode_index_to_position(dataset.meta.episodes, ep_idx)
+    ep_start_idx = dataset.episode_data_index["from"][index_position]
+    ep_end_idx = dataset.episode_data_index["to"][index_position]
     ep_data = dataset.hf_dataset.select(range(ep_start_idx, ep_end_idx))
 
     ep_stats = {}
