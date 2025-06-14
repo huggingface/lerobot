@@ -208,13 +208,19 @@ class KochScrewdriverFollower(Robot):
         # pos_dict = self.bus.sync_read("Present_Position")
         # Read positions only for joints that are in position mode (exclude screwdriver)
         pos_motors = [m for m in self.bus.motors if m != "screwdriver"]
-        pos_dict = self.bus.sync_read("Present_Position", pos_motors)
+
+        # Added retries to help prevent:
+        # ConnectionError: Failed to sync read 'Present_Velocity' on ids=[6] after 1 tries. [TxRxResult] There is no status packet!
+        # FATAL: exception not rethrown
+        pos_dict = self.bus.sync_read("Present_Position", pos_motors, num_retry=3)
         obs_dict = {}
         for motor, val in pos_dict.items():
             obs_dict[f"{motor}.pos"] = val
 
         # Read screwdriver present velocity (raw) and map to normalized value.
-        screwdriver_vel_raw = self.bus.sync_read("Present_Velocity", ["screwdriver"])["screwdriver"]
+        # ConnectionError: Failed to sync read 'Present_Velocity' on ids=[6] after 1 tries. [TxRxResult] There is no status packet!
+        # FATAL: exception not rethrown
+        screwdriver_vel_raw = self.bus.sync_read("Present_Velocity", ["screwdriver"], num_retry=3)["screwdriver"]
         obs_dict["screwdriver.vel"] = screwdriver_vel_raw
 
         dt_ms = (time.perf_counter() - start) * 1e3

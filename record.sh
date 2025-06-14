@@ -119,6 +119,20 @@
 # accept a test number as an argument
 TEST_NUMBER=$1
 
+# python -m lerobot.record \
+#     --robot.type=koch_screwdriver_follower \
+#     --robot.port=/dev/servo_5837053138 \
+#     --robot.cameras="{ screwdriver: {type: opencv, index_or_path: /dev/video0, width: 800, height: 600, fps: 30}, side: {type: opencv, index_or_path: /dev/video2, width: 800, height: 600, fps: 30}}" \
+#     --robot.id=koch_screwdriver_follower_testing \
+#     --dataset.repo_id=jackvial/koch_screwdriver_follower_test_${TEST_NUMBER} \
+#     --dataset.num_episodes=2 \
+#     --dataset.single_task="Screw the silver screw into the M4x0.7 thread on the red thread checker board" \
+#     --teleop.type=koch_screwdriver_leader \
+#     --teleop.port=/dev/servo_585A007782 \
+#     --teleop.id=koch_screwdriver_leader_testing \
+#     --display_data=false
+
+
 python -m lerobot.record \
     --robot.type=koch_screwdriver_follower \
     --robot.port=/dev/servo_5837053138 \
@@ -126,8 +140,12 @@ python -m lerobot.record \
     --robot.id=koch_screwdriver_follower_testing \
     --dataset.repo_id=jackvial/koch_screwdriver_follower_test_${TEST_NUMBER} \
     --dataset.num_episodes=2 \
+    --dataset.episode_time_s=30 \
+    --dataset.reset_time_s=10 \
+    --dataset.push_to_hub=false \
     --dataset.single_task="Screw the silver screw into the M4x0.7 thread on the red thread checker board" \
     --teleop.type=koch_screwdriver_leader \
     --teleop.port=/dev/servo_585A007782 \
     --teleop.id=koch_screwdriver_leader_testing \
-    --display_data=false
+    --display_data=true \
+    --play_sounds=false
