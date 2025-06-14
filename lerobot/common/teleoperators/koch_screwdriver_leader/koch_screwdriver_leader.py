@@ -106,9 +106,9 @@ class KochScrewdriverLeader(Teleoperator):
 
 
         # TODO(jackvial) - inverting the elbow seems like it should not be hardcoded here and should instead be a config option
-        self.bus.write("Drive_Mode", "elbow_flex", DriveMode.NOT_INVERTED.value)
+        # self.bus.write("Drive_Mode", "elbow_flex", DriveMode.NON_INVERTED.value)
         # drive_modes = {motor: 1 if motor == "elbow_flex" else 0 for motor in self.bus.motors}
-        drive_modes = {0 for motor in self.bus.motors}
+        drive_modes = {motor: 0 for motor in self.bus.motors}
 
         input(f"Move {self} to the middle of its range of motion and press ENTER....")
         homing_offsets = self.bus.set_half_turn_homings()
