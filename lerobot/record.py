@@ -180,6 +180,10 @@ def record_loop(
     while timestamp < control_time_s:
         start_loop_t = time.perf_counter()
 
+        if events["exit_early"]:
+            events["exit_early"] = False
+            break
+
         observation = robot.get_observation()
 
         if policy is not None or dataset is not None:
@@ -228,9 +232,6 @@ def record_loop(
         busy_wait(1 / fps - dt_s)
 
         timestamp = time.perf_counter() - start_episode_t
-        if events["exit_early"]:
-            events["exit_early"] = False
-            break
 
 
 @parser.wrap()
