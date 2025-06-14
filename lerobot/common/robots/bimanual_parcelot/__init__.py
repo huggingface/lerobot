@@ -1,0 +1,2 @@
+from .bimanual_parcelot import BimanualParcelot
+from .config_bimanual_parcelot import BimanualParcelotConfig 
