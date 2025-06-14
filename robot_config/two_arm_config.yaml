@@ -17,7 +17,7 @@ robot2:
   cameras:
     wrist:
       type: opencv
-      index_or_path: 1
+      index_or_path: 3
       width: 640
       height: 480
       fps: 30
@@ -31,6 +31,13 @@ teleop2:
   type: so101_leader
   port: /dev/tty.usbmodem5A460827091
   id: red
+
+global_camera:
+  type: opencv
+  index_or_path: 1
+  width: 640
+  height: 480
+  fps: 30
 
 fps: 30
 display_data: true

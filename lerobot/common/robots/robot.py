@@ -42,6 +42,7 @@ class Robot(abc.ABC):
         self.calibration_dir.mkdir(parents=True, exist_ok=True)
         self.calibration_fpath = self.calibration_dir / f"{self.id}.json"
         self.calibration: dict[str, MotorCalibration] = {}
+        print(f"Loading calibration from {self.calibration_fpath}")
         if self.calibration_fpath.is_file():
             self._load_calibration()
 
@@ -80,6 +81,7 @@ class Robot(abc.ABC):
         pass
 
     def _load_calibration(self, fpath: Path | None = None) -> None:
+        print(f"Loading calibration from {fpath}")
         fpath = self.calibration_fpath if fpath is None else fpath
         with open(fpath) as f, draccus.config_type("json"):
             self.calibration = draccus.load(dict[str, MotorCalibration], f)

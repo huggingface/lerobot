@@ -33,8 +33,10 @@ import rerun as rr
 from lerobot.common.cameras import (  # noqa: F401
     CameraConfig,  # noqa: F401
 )
+from lerobot.common.cameras.camera import Camera
 from lerobot.common.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.common.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
+from lerobot.common.cameras.utils import make_cameras_from_configs
 from lerobot.common.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -69,6 +71,8 @@ class TeleoperateTwoArmConfig:
     robot2: RobotConfig
     teleop1: TeleoperatorConfig
     teleop2: TeleoperatorConfig
+    # Global camera
+    global_camera: CameraConfig
     # Limit the frames per second.
     fps: int = 30
     # Display all cameras on screen
@@ -82,6 +86,7 @@ def teleoperate_loop(
     robot2: Robot,
     teleop1: Teleoperator,
     teleop2: Teleoperator,
+    global_camera: Camera,
     events: dict,
     fps: int,
     display_data: bool = False,
@@ -96,6 +101,8 @@ def teleoperate_loop(
         # For simplicity, we assume unique keys or that the user handles potential conflicts
         observation = {**{f"robot1_{k}": v for k,v in observation1.items()}, 
                        **{f"robot2_{k}": v for k,v in observation2.items()}}
+        
+        observation["global"] = global_camera.async_read()
 
         action1 = teleop1.get_action()
         action2 = teleop2.get_action()
@@ -149,10 +156,14 @@ def teleoperate(cfg: TeleoperateTwoArmConfig):
     robot_two = make_robot_from_config(cfg.robot2)
     teleop_two = make_teleoperator_from_config(cfg.teleop2)
 
-    robot_one.connect()
-    teleop_one.connect()
-    robot_two.connect()
-    teleop_two.connect()
+    global_camera_dict = {"global": cfg.global_camera}
+    global_camera = make_cameras_from_configs(global_camera_dict)["global"]
+
+    robot_one.connect(calibrate=False)
+    teleop_one.connect(calibrate=False)
+    robot_two.connect(calibrate=False)
+    teleop_two.connect(calibrate=False)
+    global_camera.connect()
 
     log_say("Starting teleoperation for two arms. Press 'q' to quit.", cfg.play_sounds)
 
@@ -165,6 +176,7 @@ def teleoperate(cfg: TeleoperateTwoArmConfig):
             robot2=robot_two,
             teleop1=teleop_one,
             teleop2=teleop_two,
+            global_camera=global_camera,
             events=events,
             fps=cfg.fps,
             display_data=cfg.display_data,
@@ -178,6 +190,7 @@ def teleoperate(cfg: TeleoperateTwoArmConfig):
         teleop_one.disconnect()
         robot_two.disconnect()
         teleop_two.disconnect()
+        global_camera.disconnect()
 
         if not is_headless() and listener is not None:
             listener.stop()
