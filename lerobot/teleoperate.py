@@ -44,6 +44,7 @@ from lerobot.common.cameras.realsense.configuration_realsense import RealSenseCa
 from lerobot.common.robots import (  # noqa: F401
     Robot,
     RobotConfig,
+    bimanual_parcelot,
     koch_follower,
     make_robot_from_config,
     so100_follower,
