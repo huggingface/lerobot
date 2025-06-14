@@ -37,11 +37,14 @@ from lerobot.common.robots import (  # noqa: F401
     Robot,
     RobotConfig,
     koch_follower,
+    koch_screwdriver_follower,
     lekiwi,
     make_robot_from_config,
     so100_follower,
     so101_follower,
 )
+
+# TODO(jackvial) - import the koch_screwdriver_leader
 from lerobot.common.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
