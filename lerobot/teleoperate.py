@@ -51,7 +51,6 @@ from lerobot.common.robots import (  # noqa: F401
     koch_screwdriver_follower,
 )
 
-# TODO(jackvial) - import the koch_screwdriver_leader
 from lerobot.common.teleoperators import (
     Teleoperator,
     TeleoperatorConfig,
@@ -61,7 +60,7 @@ from lerobot.common.utils.robot_utils import busy_wait
 from lerobot.common.utils.utils import init_logging, move_cursor_up
 from lerobot.common.utils.visualization_utils import _init_rerun
 
-from .common.teleoperators import gamepad, koch_leader, so100_leader, so101_leader  # noqa: F401
+from .common.teleoperators import gamepad, koch_leader, koch_screwdriver_leader, so100_leader, so101_leader  # noqa: F401
 
 
 @dataclass
