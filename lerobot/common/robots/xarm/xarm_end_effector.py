@@ -46,6 +46,7 @@ class XarmEndEffector(Robot):
         self.config = config
         self._is_connected = False
         self.arm = None
+        self.gripper_state = 0.0
         self.jacobi = JacobiRobot(os.path.join(this_dir, "lite6.urdf"), ee_link="link6")
 
     def connect(self, calibrate: bool = True) -> None:
@@ -57,11 +58,21 @@ class XarmEndEffector(Robot):
             raise DeviceAlreadyConnectedError(f"{self} already connected")
 
         # Connect to the robot and set it to a servo mode
-        self.arm = XArmAPI("192.168.1.184")
+        self.arm = XArmAPI("192.168.1.184", is_radian=True)
         self.arm.connect()
         self.arm.motion_enable(enable=True)
-        self.arm.set_mode(0)  # Position mode
+        self.arm.set_mode(1)  # Position mode
         self.arm.set_state(state=0)  # Sport state
+
+        # set joint positions to jacobi, read from arm
+        code, joint_positions = self.arm.get_servo_angle()
+        if code != 0:
+            raise DeviceNotConnectedError(f"Failed to get joint angles from {self}")
+        for i in range(1, 7):  # joints 1-6
+            joint_name = f"joint{i}"
+            self.jacobi.set_joint_position(
+                joint_name, joint_positions[i - 1]
+            )
 
         for cam in self.cameras.values():
             cam.connect()
@@ -112,41 +123,23 @@ class XarmEndEffector(Robot):
         if "pose" in action:
             # Convert pose to joint positions using Jacobi
             pose = action["pose"]
-            success = self.jacobi.servo_to_pose(pose)
-            if success:
-                # Get joint positions from Jacobi
-                joint_positions = []
-                for i in range(1, 7):  # joints 1-6
-                    joint_pos = self.jacobi.get_joint_position(f"joint{i}")
-                    joint_positions.append(joint_pos)
-                    full_action[f"joint{i}.pos"] = joint_pos
-
-                # Send joint positions to xarm
-                self.arm.set_servo_angle(angle=joint_positions, wait=False)
-            else:
-                logger.warning("Failed to solve inverse kinematics for pose")
-
-        # Extract joint actions for motors
-        joint_action = {"gripper.pos": gripper}
-        for i in range(1, 7):
-            if f"joint{i}" in action:
-                joint_action[f"joint{i}.pos"] = action[f"joint{i}"]
-                # Send individual joint command if direct joint control
-                if "pose" not in action:
-                    current_angles = self.arm.get_servo_angle()[
-                        1
-                    ]  # [1] contains the angles
-                    current_angles[i - 1] = action[f"joint{i}"]
-                    self.arm.set_servo_angle(angle=current_angles, wait=False)
+            self.jacobi.servo_to_pose(pose)
+            # Get joint positions from Jacobi
+            joint_positions = []
+            for i in range(1, 7):  # joints 1-6
+                joint_pos = self.jacobi.get_joint_position(f"joint{i}")
+                joint_positions.append(joint_pos)
+                full_action[f"joint{i}.pos"] = joint_pos
+            self.arm.set_servo_angle_j(joint_positions)
 
         # Send gripper command
         if gripper is not None:
-            if gripper < 0.5:
-                self.arm.set_gripper_enable(enable=False)
+            if gripper < 1.0:
+                self.arm.close_lite6_gripper()
             else:
-                self.arm.set_gripper_enable(enable=True)
+                self.arm.open_lite6_gripper()
 
-        return super().send_action(joint_action)
+        return super().send_action(full_action)
 
     def get_observation(self) -> dict[str, Any]:
         if not self.is_connected:
@@ -157,17 +150,14 @@ class XarmEndEffector(Robot):
 
         # Read joint positions from xarm
         ret, joint_angles = self.arm.get_servo_angle()
-        ret_gripper, gripper_pos = self.arm.get_gripper_position()
 
         obs_dict = {}
         if ret == 0:  # Success
             # Convert joint angles to observation dict
-            for i, angle in enumerate(joint_angles):
+            for i, angle in enumerate(joint_angles[:6]):  # First 6 angles are joints
                 obs_dict[f"joint{i+1}.pos"] = angle
 
-        if ret_gripper == 0:  # Success
-            # Normalize gripper position to 0-1 range
-            obs_dict["gripper.pos"] = gripper_pos / 850.0
+        obs_dict["gripper.pos"] = joint_angles[6]
 
         # Capture images from cameras
         for cam_key, cam in self.cameras.items():
@@ -187,6 +177,7 @@ class XarmEndEffector(Robot):
             return
         
         if self.arm is not None:
+            # self.arm.set_gripper_enable(False)
             self.arm.disconnect()
             self.arm = None
         
@@ -211,7 +202,7 @@ class XarmEndEffector(Robot):
             raise DeviceNotConnectedError(f"{self} is not connected.")
         
         # Set motion parameters
-        self.arm.set_tcp_maxacc(1000)  # Max acceleration
+        # self.arm.set_tcp_maxacc(1000)  # Max acceleration
         logger.info(f"{self} configured.")
 
     def is_calibrated(self) -> bool:
@@ -300,15 +291,17 @@ if __name__ == "__main__":
     # Example action
     action = {
         "pose": t3d.affines.compose(
-            [0.5, 0.0, 0.2],  # Translation
-            t3d.euler.euler2mat(0.0, 3.14, 0.0),  # Rotation (no rotation)
+            [0.25, 0.0, 0.2],  # Translation
+            t3d.euler.euler2mat(3.14, 0, 0.0),  # Rotation (no rotation)
             [1.0, 1.0, 1.0]  # Scale
         ),
-        "gripper": 1.0,
+        "gripper": 2.0,
     }
     
-    robot.send_action(action)
+    for _ in range(30):
+        robot.send_action(action)
+        time.sleep(0.05)
+
     obs = robot.get_observation()
-    print(obs)
     
     robot.disconnect()
