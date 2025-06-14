@@ -21,6 +21,7 @@ Example:
 python -m lerobot.record \
     --robot.type=xarm_end_effector \
     --robot.cameras="{laptop: {type: opencv, index_or_path: 4, width: 640, height: 480, fps: 30}}" \
+    --dataset.reset_time_s=8 \
     --robot.id=black \
     --dataset.repo_id=lukicdarkoo/xarm_real \
     --dataset.root=${HOME}/hfdata/first_test \
@@ -87,7 +88,7 @@ from lerobot.common.utils.visualization_utils import _init_rerun
 from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
 
-from .common.teleoperators import koch_leader, so100_leader, so101_leader, spacemouse  # noqa: F401
+from .common.teleoperators import koch_leader, so100_leader, so101_leader, spacemouse, spes_teleop  # noqa: F401
 
 
 @dataclass

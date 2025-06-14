@@ -27,6 +27,11 @@ python -m lerobot.teleoperate \
     --teleop.use_gripper=false \
     --teleop.id=blue \
     --display_data=true
+
+python -m lerobot.teleoperate \
+    --robot.type=xarm_end_effector \
+    --robot.id=black \
+    --teleop.type=spes_teleop
 ```
 """
 
@@ -48,6 +53,7 @@ from lerobot.common.robots import (  # noqa: F401
     make_robot_from_config,
     so100_follower,
     so101_follower,
+    xarm,
 )
 from lerobot.common.teleoperators import (
     Teleoperator,
