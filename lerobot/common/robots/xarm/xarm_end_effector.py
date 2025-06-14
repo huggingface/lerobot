@@ -107,9 +107,11 @@ class XarmEndEffector(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        gripper = action["gripper"] if "gripper" in action else None
+        self.gripper_state = action["gripper"] if "gripper" in action else None
         action = copy.deepcopy(action)
-        action["gripper.pos"] = gripper if gripper is not None else 0.0
+        action["gripper.pos"] = (
+            self.gripper_state if self.gripper_state is not None else 0.0
+        )
 
         if (
             "delta_x" in action
@@ -149,8 +151,8 @@ class XarmEndEffector(Robot):
             self.arm.set_servo_angle_j(joint_positions)
 
         # Send gripper command
-        if gripper is not None:
-            if gripper < 1.0:
+        if self.gripper_state is not None:
+            if self.gripper_state < 1.0:
                 self.arm.close_lite6_gripper()
             else:
                 self.arm.open_lite6_gripper()
@@ -167,15 +169,14 @@ class XarmEndEffector(Robot):
         start = time.perf_counter()
 
         # Read joint positions from xarm
-        ret, joint_angles = self.arm.get_servo_angle()
+        code, (joint_angles, joint_velocities, joint_currents) = (
+            self.arm.get_joint_states()
+        )
 
         obs_dict = {}
-        if ret == 0:  # Success
-            # Convert joint angles to observation dict
-            for i, angle in enumerate(joint_angles[:6]):  # First 6 angles are joints
-                obs_dict[f"joint{i+1}.pos"] = angle
-
-        obs_dict["gripper.pos"] = joint_angles[6]
+        for i, angle in enumerate(joint_angles[:6]):  # First 6 angles are joints
+            obs_dict[f"joint{i+1}.pos"] = angle
+        obs_dict["gripper.pos"] = self.gripper_state
 
         # Capture images from cameras
         for cam_key, cam in self.cameras.items():
@@ -241,7 +242,8 @@ class XarmEndEffector(Robot):
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
         return {
-            cam: (self.config.cameras[cam].height, self.config.cameras[cam].width, 3) for cam in self.cameras
+            cam: (self.config.cameras[cam].height, self.config.cameras[cam].width, 3)
+            for cam in self.cameras
         }
 
     @property
