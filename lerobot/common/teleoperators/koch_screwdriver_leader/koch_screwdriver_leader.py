@@ -195,7 +195,7 @@ class KochScrewdriverLeader(Teleoperator):
                 # of 50 in a 0-100 range) maps to ±100 in normalized velocity space. Feel free to
                 # tune the gain if your specific hardware has a different useful range.
                 # @TODO(jackvial) - negate delta to flip so the closing of the trigger results in clockwise rotation on the follower screwdriver
-                vel_cmd = max(min(delta * 2.0, 100.0), -100.0)
+                vel_cmd = max(min(-delta * 2.0, 100.0), -100.0)
 
                 # Small jitters around the neutral point are ignored.
                 if abs(vel_cmd) < 2.0:
