@@ -52,9 +52,6 @@ class SpacemouseTeleop(Teleoperator):
         self.config = config
         self.robot_type = config.type
 
-        # Attempt to import the real SpaceMouse driver. Fallback to the mock driver if requested or import fails.
-        self.sm = None
-
         self._connected = False
         # Gripper toggle state: assume starts OPEN
         self._gripper_state: int = GripperAction.OPEN.value
@@ -101,9 +98,9 @@ class SpacemouseTeleop(Teleoperator):
 
         # Call open with or without explicit device name depending on alias resolution
         if device_alias is None:
-            self._connected = bool(self.sm.open())
+            self._connected = bool(pyspacemouse.open())
         else:
-            self._connected = bool(self.sm.open(device=device_alias))
+            self._connected = bool(pyspacemouse.open(device=device_alias))
 
         # Start background reader to avoid piling up driver messages (reduces perceived latency)
         if self._connected:
@@ -119,7 +116,7 @@ class SpacemouseTeleop(Teleoperator):
 
                 while not self._stop_reader:
                     try:
-                        self._latest_state = self.sm.read()
+                        self._latest_state = pyspacemouse.read()
                     except Exception:
                         # In case device is unplugged mid-run; exit thread gracefully
                         break
@@ -134,7 +131,7 @@ class SpacemouseTeleop(Teleoperator):
 
         # Prefer the state produced by the background reader (most recent),
         # fall back to direct read if thread hasn't produced anything yet.
-        state = self._latest_state if self._latest_state is not None else self.sm.read()
+        state = self._latest_state if self._latest_state is not None else pyspacemouse.read()
 
         deltas = [
             state.y,
