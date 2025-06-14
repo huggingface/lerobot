@@ -117,6 +117,7 @@ def teleop_loop(
             if mark[s] and time.perf_counter() - last[s] > THRESHOLD_TIME:
                 # tem que ter isso
                 # teleop.send_action(robot.get_action)
+                pass
 
         dt_s = time.perf_counter() - loop_start
         busy_wait(1 / fps - dt_s)
