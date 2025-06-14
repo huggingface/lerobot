@@ -197,10 +197,10 @@ leader.disconnect()
 
 To teleoperate, SSH into your Raspberry Pi, and run `conda activate lerobot` and this command:
 ```bash
-python -m lerobot.common.robots.lekiwi.lekiwi_host
+python -m lerobot.common.robots.lekiwi.lekiwi_host --robot.id=my_awesome_kiwi
 ```
 
-Then on your laptop, also run `conda activate lerobot` and run the API example, make sure you set the correct `remote_ip` and `port`.
+Then on your laptop, also run `conda activate lerobot` and run the API example, make sure you set the correct `remote_ip` and `port` in `examples/lekiwi/teleoperate.py`.
 
 ```bash
 python examples/lekiwi/teleoperate.py
