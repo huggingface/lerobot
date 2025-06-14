@@ -71,6 +71,15 @@ class TeleoperateConfig:
     # Display all cameras on screen
     display_data: bool = False
 
+def is_wrong(self, cur, nxt, names, THRESH):
+    is_wrong = {}
+    for name in names:
+        if abs(nxt[name] - cur[name]) > THRESH:
+            is_wrong[name] = True
+        else:
+            is_wrong[name] = False
+    return is_wrong
+
 
 def teleop_loop(
     teleop: Teleoperator, robot: Robot, fps: int, display_data: bool = False, duration: float | None = None
@@ -94,29 +103,28 @@ def teleop_loop(
         THRESHOLD_DIFF = 1
         THRESHOLD_TIME= 200
 
-        names = ['shoulder_pan', 'shoulder_lift', 'elbow_flex', 'wrist_flex', 'wrist_roll', 'gripper']
+        motors = robot.bus.motors
         last = {}
         mark  = {}
 
         # pegar diff com o action e o get action
-        # cur_robot = robot.get_action()
-        robot.send_action(action, THRESHOLD_DIFF)
+        cur_robot = robot.get_action()
+        robot.send_action(action)
 
-        for s in names:
-            if diff[s]:
-                if mark[s]:
+        for motor in motors:
+            if is_wrong[motor]:
+                if mark[motor]:
                     continue
                 else:
-                    last[s] = time.perf_counter()
-                    mark[s] = True
+                    last[motor] = time.perf_counter()
+                    mark[motor] = True
             else:
-                last[s] = time.perf_counter()
-                mark[s] = False
+                mark[motor] = False
 
-        for s in names:
-            if mark[s] and time.perf_counter() - last[s] > THRESHOLD_TIME:
+        for motor in motors:
+            if mark[motor] and time.perf_counter() - last[motor] > THRESHOLD_TIME:
                 # tem que ter isso
-                # teleop.send_action(robot.get_action)
+                teleop.send_action(robot.get_action)
                 pass
 
         dt_s = time.perf_counter() - loop_start
