@@ -61,6 +61,9 @@ from lerobot.common.utils.visualization_utils import _init_rerun
 from .common.teleoperators import gamepad, koch_leader, so100_leader, so101_leader  # noqa: F401
 
 
+last = {}
+mark  = {}
+
 @dataclass
 class TeleoperateConfig:
     teleop: TeleoperatorConfig
@@ -71,10 +74,17 @@ class TeleoperateConfig:
     # Display all cameras on screen
     display_data: bool = False
 
-def is_wrong(self, cur, nxt, names, THRESH):
+def diff(cur, nxt, names, THRESH):
+    cur2 = cur.copy()
+    nxt2 = nxt.copy()
+    nxt2 = {key.removesuffix(".pos"): val for key, val in nxt2.items() if key.endswith(".pos")}
+    cur2 = {key.removesuffix(".pos"): val for key, val in cur2.items() if key.endswith(".pos")}
+    # print("-------------------")
+    # print(nxt2)
+    # print(cur2)
     is_wrong = {}
     for name in names:
-        if abs(nxt[name] - cur[name]) > THRESH:
+        if abs(nxt2[name] - cur2[name]) > THRESH:
             is_wrong[name] = True
         else:
             is_wrong[name] = False
@@ -100,16 +110,22 @@ def teleop_loop(
                 if isinstance(val, float):
                     rr.log(f"action_{act}", rr.Scalar(val))
 
-        THRESHOLD_DIFF = 1
-        THRESHOLD_TIME= 200
+        THRESHOLD_DIFF = 2
+        THRESHOLD_TIME= 2
 
-        motors = robot.bus.motors
-        last = {}
-        mark  = {}
+        motors = list(robot.bus.motors.keys())
+
+        # print("--------------------")
+        # print(action)
 
         # pegar diff com o action e o get action
         cur_robot = robot.get_action()
         robot.send_action(action)
+        is_wrong = diff(cur_robot, action, motors, THRESHOLD_DIFF)
+        
+        print("----------------------------")
+        print("Motors -> ", motors)
+        print("is_wrong -> ", is_wrong)
 
         for motor in motors:
             if is_wrong[motor]:
@@ -121,11 +137,14 @@ def teleop_loop(
             else:
                 mark[motor] = False
 
+        print("last -> ", last)
+        print("mark -> ", mark)
         for motor in motors:
+            if (mark[motor]):
+                print("diference -> ", time.perf_counter() - last[motor])
             if mark[motor] and time.perf_counter() - last[motor] > THRESHOLD_TIME:
                 # tem que ter isso
-                teleop.send_action(robot.get_action)
-                pass
+                teleop.send_action(robot.get_action())
 
         dt_s = time.perf_counter() - loop_start
         busy_wait(1 / fps - dt_s)
@@ -158,6 +177,10 @@ def teleoperate(cfg: TeleoperateConfig):
 
     teleop.connect()
     robot.connect()
+
+    motors = list(robot.bus.motors.keys())
+    for motor in motors:
+        mark[motor] = False
 
     try:
         teleop_loop(teleop, robot, cfg.fps, display_data=cfg.display_data, duration=cfg.teleop_time_s)

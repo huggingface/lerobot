@@ -19,6 +19,7 @@ import time
 
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.common.motors import Motor, MotorCalibration, MotorNormMode
+from typing import Any
 from lerobot.common.motors.feetech import (
     FeetechMotorsBus,
     OperatingMode,
@@ -26,6 +27,8 @@ from lerobot.common.motors.feetech import (
 
 from ..teleoperator import Teleoperator
 from .config_so101_leader import SO101LeaderConfig
+
+from lerobot.common.robots.utils import ensure_safe_goal_position
 
 logger = logging.getLogger(__name__)
 
@@ -129,9 +132,10 @@ class SO101Leader(Teleoperator):
         action = {f"{motor}.pos": val for motor, val in action.items()}
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read action: {dt_ms:.1f}ms")
+        return action
 
 
-    def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
+    def send_action(self, action: dict[str, Any]) -> dict[str, float]:
         """Command arm to move to a target joint configuration.
 
         The relative action magnitude may be clipped depending on the configuration parameter
@@ -144,24 +148,25 @@ class SO101Leader(Teleoperator):
         Returns:
             the action sent to the motors, potentially clipped.
         """
+
+        print("opaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
         # Cap goal position when too far away from present position.
         # /!\ Slower fps expected due to reading from the follower.
-        if self.config.max_relative_target is not None:
-            present_pos = self.bus.sync_read("Present_Position")
-            goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in goal_pos.items()}
-            goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
+        # if self.config.max_relative_target is not None:
+        #     present_pos = self.bus.sync_read("Present_Position")
+        #     goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in goal_pos.items()}
+        #     goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
 
         # Send goal position to the arm
 
-        names = ['shoulder_pan', 'shoulder_lift', 'elbow_flex', 'wrist_flex', 'wrist_roll', 'gripper']
         goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
         self.bus.sync_write("Goal_Position", goal_pos)
         present_pos = self.bus.sync_read("Present_Position")
 
-        return {f"{motor}.pos": val for motor, val in goal_pos.items()}, diff
+        return {f"{motor}.pos": val for motor, val in goal_pos.items()}
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
         # TODO(rcadene, aliberts): Implement force feedback

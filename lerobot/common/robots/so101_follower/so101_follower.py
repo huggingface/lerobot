@@ -183,6 +183,7 @@ class SO101Follower(Robot):
         action = {f"{motor}.pos": val for motor, val in action.items()}
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read action: {dt_ms:.1f}ms")
+        return action
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         """Command arm to move to a target joint configuration.
@@ -214,7 +215,7 @@ class SO101Follower(Robot):
         self.bus.sync_write("Goal_Position", goal_pos)
         present_pos = self.bus.sync_read("Present_Position")
 
-        return {f"{motor}.pos": val for motor, val in goal_pos.items()}, diff
+        return {f"{motor}.pos": val for motor, val in goal_pos.items()}
 
     def disconnect(self):
         if not self.is_connected:
