@@ -260,7 +260,7 @@ class KochScrewdriverFollower(Robot):
             key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")
         }
         goal_vel = {
-            key.removesuffix(".vel"): val for key, val in action.items() if key.endswith(".vel")
+            key.removesuffix(".vel"): int(val) for key, val in action.items() if key.endswith(".vel")
         }
 
         # Cap goal position when too far away from present position.

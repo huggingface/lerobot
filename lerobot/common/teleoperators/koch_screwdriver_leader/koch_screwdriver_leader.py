@@ -191,7 +191,8 @@ class KochScrewdriverLeader(Teleoperator):
                 # Scale so that the maximum displacement (±50 when using the default open position
                 # of 50 in a 0-100 range) maps to ±100 in normalized velocity space. Feel free to
                 # tune the gain if your specific hardware has a different useful range.
-                vel_cmd = max(min(delta * 2.0, 100.0), -100.0)
+                # Flip direction so that closing the trigger results in clockwise rotation on the follower
+                vel_cmd = max(min(-delta * 2.0, 100.0), -100.0)
 
                 # Small jitters around the neutral point are ignored.
                 if abs(vel_cmd) < 2.0:
