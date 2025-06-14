@@ -20,9 +20,10 @@ from typing import Any
 
 import numpy as np
 
-from ..teleoperator import Teleoperator
-from .configuration_spacemouse import SpacemouseTeleopConfig
+from lerobot.common.teleoperators.teleoperator import Teleoperator
+from lerobot.common.teleoperators.spacemouse.configuration_spacemouse import SpacemouseTeleopConfig
 
+import pyspacemouse
 
 class GripperAction(IntEnum):
     CLOSE = 0
@@ -53,16 +54,6 @@ class SpacemouseTeleop(Teleoperator):
 
         # Attempt to import the real SpaceMouse driver. Fallback to the mock driver if requested or import fails.
         self.sm = None
-        if not config.mock:
-            try:
-                import pyspacemouse
-                self.sm = pyspacemouse
-            except ImportError as e:
-                print("Warning: pyspacemouse could not be imported (", e, "). Falling back to mock driver.")
-        # If the real driver couldn't be loaded or mock explicitly requested, use the mock implementation
-        if self.sm is None:
-            from lerobot.common.teleoperators.spacemouse.driver_spacemouse import SpaceMouseMock as _Mock
-            self.sm = _Mock()
 
         self._connected = False
         # Gripper toggle state: assume starts OPEN
@@ -95,9 +86,6 @@ class SpacemouseTeleop(Teleoperator):
 
     def connect(self) -> None:
         """Connect to the SpaceMouse device (real or mock)."""
-        if self.sm is None:
-            raise RuntimeError("SpaceMouse driver not initialized.")
-
         # Map short device aliases to full names for convenience
         device_alias: str | None
         if self.config.device in {"e", "E"}:
