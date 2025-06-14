@@ -45,5 +45,13 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
         from tests.mocks.mock_teleop import MockTeleop
 
         return MockTeleop(config)
+    elif config.type == "gamepad":
+        from .gamepad.teleop_gamepad import GamepadTeleop
+
+        return GamepadTeleop(config)
+    elif config.type == "keyboard_ee":
+        from .keyboard.teleop_keyboard import KeyboardEndEffectorTeleop
+
+        return KeyboardEndEffectorTeleop(config)
     else:
         raise ValueError(config.type)

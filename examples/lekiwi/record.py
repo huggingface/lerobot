@@ -23,7 +23,7 @@ obs_features = hw_to_dataset_features(robot.observation_features, "observation")
 dataset_features = {**action_features, **obs_features}
 
 dataset = LeRobotDataset.create(
-    repo_id="user/lekiwi" + str(int(time.time())),
+    repo_id="pepijn223/lekiwi" + str(int(time.time())),
     fps=10,
     features=dataset_features,
     robot_type=robot.name,
@@ -36,7 +36,7 @@ robot.connect()
 if not robot.is_connected or not leader_arm.is_connected or not keyboard.is_connected:
     exit()
 
-print("Starting LeKiwi teleoperation")
+print("Starting LeKiwi recording")
 i = 0
 while i < NB_CYCLES_CLIENT_CONNECTION:
     arm_action = leader_arm.get_action()
