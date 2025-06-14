@@ -14,7 +14,7 @@
 
 import abc
 from pathlib import Path
-from typing import Any
+from typing import Any, Type
 
 import draccus
 
@@ -37,7 +37,7 @@ class Teleoperator(abc.ABC):
     """
 
     # Set these in ALL subclasses
-    config_class: TeleoperatorConfig
+    config_class: Type[TeleoperatorConfig]
     name: str
 
     def __init__(self, config: TeleoperatorConfig):
