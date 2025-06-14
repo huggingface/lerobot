@@ -53,6 +53,10 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from .xarm import XarmEndEffector
 
         return XarmEndEffector(config)
+    elif config.type == "webots_xarm_end_effector":
+        from .webots_xarm import WebotsXarmEndEffector
+
+        return WebotsXarmEndEffector(config)
     elif config.type == "mock_robot":
         from tests.mocks.mock_robot import MockRobot
 
