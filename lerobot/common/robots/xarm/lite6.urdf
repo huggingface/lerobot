@@ -1,0 +1,59 @@
+<?xml version="1.0"?>
+<robot name="lite6"
+  xmlns:xacro="http://ros.org/wiki/xacro">
+  <link name="link_base" />
+  <joint name="joint1" type="revolute">
+    <parent link="link_base" />
+    <child link="link1" />
+    <axis xyz="0 0 1" />
+    <limit effort="50" lower="-6.28319" upper="6.28319" velocity="3.14" />
+    <origin xyz="0 0 0.2435" rpy="0 0 0" />
+  </joint>
+  <link name="link1">
+  </link>
+  <joint name="joint2" type="revolute">
+    <parent link="link1" />
+    <child link="link2" />
+    <axis xyz="0.000001 0 1" />
+    <limit effort="50" lower="-2.61799" upper="2.61799" velocity="3.14" />
+    <origin xyz="0 0 0" rpy="-1.724127 -1.570792 0.153342" />
+  </joint>
+  <link name="link2">
+  </link>
+  <joint name="joint3" type="revolute">
+    <parent link="link2" />
+    <child link="link3" />
+    <axis xyz="0 -0.000001 1" />
+    <limit effort="32" lower="-0.061087" upper="5.23599" velocity="3.14" />
+    <origin xyz="0.2002 0 0" rpy="3.141585 0 1.570801" />
+  </joint>
+  <link name="link3">
+  </link>
+  <joint name="joint4" type="revolute">
+    <parent link="link3" />
+    <child link="link4" />
+    <axis xyz="0 0 1" />
+    <limit effort="32" lower="-6.28319" upper="6.28319" velocity="3.14" />
+    <origin xyz="0.087 -0.22761 0" rpy="1.5708 0 0" />
+  </joint>
+  <link name="link4">
+  </link>
+  <joint name="joint5" type="revolute">
+    <parent link="link4" />
+    <child link="link5" />
+    <axis xyz="0 0 1" />
+    <limit effort="32" lower="-2.1642" upper="2.1642" velocity="3.14" />
+    <origin xyz="0 0 0" rpy="1.5708 0 0" />
+  </joint>
+  <link name="link5">
+  </link>
+  <joint name="joint6" type="revolute">
+    <parent link="link5" />
+    <child link="link6" />
+    <axis xyz="0 0 1" />
+    <limit effort="20" lower="-6.28319" upper="6.28319" velocity="3.14" />
+    <origin xyz="0 0.0625 0" rpy="-1.5708 0 0" />
+  </joint>
+  <link name="link6">
+  </link>
+</robot>
