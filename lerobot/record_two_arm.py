@@ -204,13 +204,14 @@ def record_loop(
         
         # Add global camera observation
         observation["global"] = global_camera.async_read()
-        print("check")
+        print("check")  
         
         # print(f"Observation: {observation.keys()}")
-        if len(observation1.keys()) + len(observation2.keys()) != len(observation.keys()):
+        if len(observation1.keys()) + len(observation2.keys()) + 1 != len(observation.keys()):
             raise ValueError(
                 "Observation keys from both robots should be unique. "
                 f"Got robot1 {observation1.keys()}\n and\n robot2 {observation2.keys()}."
+                f"Got observation {observation.keys()}"
             )
 
         # Checking if the observation is compatible with the dataset
@@ -344,13 +345,13 @@ def record(cfg: RecordTwoArmConfig) -> LeRobotDataset:
     # Load pretrained policy
     policy = None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
 
-    robot_one.connect()
-    robot_two.connect()
+    robot_one.connect(calibrate=False)
+    robot_two.connect(calibrate=False)
     
     if teleop_one is not None:
-        teleop_one.connect()
+        teleop_one.connect(calibrate=False)
     if teleop_two is not None:
-        teleop_two.connect()
+        teleop_two.connect(calibrate=False)
     
     global_camera.connect()
     
