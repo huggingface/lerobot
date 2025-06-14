@@ -57,16 +57,18 @@ class KochScrewdriverFollower(Robot):
                 "wrist_flex": Motor(4, "xl330-m288", norm_mode_body),
                 "wrist_roll": Motor(5, "xl330-m288", norm_mode_body),
                 
-                # @TODO - change to wheel mode for the screwdriver
-                "gripper": Motor(6, "xl330-m288", MotorNormMode.RANGE_0_100),
+                # Using MotorNormMode.RANGE_M100_100. Using lekiwi's wheel servos as a reference lerobot/common/robots/lekiwi/lekiwi.py
+                "screwdriver": Motor(6, "xl330-m288", MotorNormMode.RANGE_M100_100),
             },
             calibration=self.calibration,
         )
         self.cameras = make_cameras_from_configs(config.cameras)
 
+    # called by observation_features method
     @property
     def _motors_ft(self) -> dict[str, type]:
-        return {f"{motor}.pos": float for motor in self.bus.motors}
+        # Set the screwdriver to .vel. Using lekiwi's wheel servos as a reference lerobot/common/robots/lekiwi/lekiwi.py
+        return {f"{motor}.vel" if motor == "screwdriver" else f"{motor}.pos": float for motor in self.bus.motors}
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
@@ -112,12 +114,21 @@ class KochScrewdriverFollower(Robot):
         logger.info(f"\nRunning calibration of {self}")
         self.bus.disable_torque()
         for motor in self.bus.motors:
-            self.bus.write("Operating_Mode", motor, OperatingMode.EXTENDED_POSITION.value)
+            # TODO(jackvial) - confirm this is correct
+            # Screwdriver needs to be in velocity (aka wheel mode)
+            if motor == "screwdriver":
+                print(f"Operating_Mode: {motor} {OperatingMode.VELOCITY.value}")
+                self.bus.write("Operating_Mode", motor, OperatingMode.VELOCITY.value)
+            else:
+                print(f"Operating_Mode: {motor} {OperatingMode.EXTENDED_POSITION.value}")
+                self.bus.write("Operating_Mode", motor, OperatingMode.EXTENDED_POSITION.value)
+            
+        # self.bus.write("Operating_Mode", "screwdriver", OperatingMode.VELOCITY.value)
 
         input(f"Move {self} to the middle of its range of motion and press ENTER....")
         homing_offsets = self.bus.set_half_turn_homings()
 
-        full_turn_motors = ["shoulder_pan", "wrist_roll"]
+        full_turn_motors = ["shoulder_pan", "wrist_roll", "screwdriver"]
         unknown_range_motors = [motor for motor in self.bus.motors if motor not in full_turn_motors]
         print(
             f"Move all joints except {full_turn_motors} sequentially through their entire "
@@ -152,16 +163,22 @@ class KochScrewdriverFollower(Robot):
                 if motor != "gripper":
                     self.bus.write("Operating_Mode", motor, OperatingMode.EXTENDED_POSITION.value)
 
+            # TODO(jackvial) - remove the old gripper config and comment
             # Use 'position control current based' for gripper to be limited by the limit of the current. For
             # the follower gripper, it means it can grasp an object without forcing too much even tho, its
             # goal position is a complete grasp (both gripper fingers are ordered to join and reach a touch).
             # For the leader gripper, it means we can use it as a physical trigger, since we can force with
             # our finger to make it move, and it will move back to its original target position when we
             # release the force.
-            self.bus.write("Operating_Mode", "gripper", OperatingMode.CURRENT_POSITION.value)
+            # self.bus.write("Operating_Mode", "gripper", OperatingMode.CURRENT_POSITION.value)
+            
+            # Screwdriver needs to be in velocity mode. Using lekiwi's base_motors wheel servos config as a reference lerobot/common/robots/lekiwi/lekiwi.py
+            self.bus.write("Operating_Mode", "screwdriver", OperatingMode.VELOCITY.value)
+            
 
             # Set better PID values to close the gap between recorded states and actions
             # TODO(rcadene): Implement an automatic procedure to set optimal PID values for each motor
+            # TODO(jackvial) - "Professional PD Gain Tuning for Dynamixel Motors might" be useful here https://github.com/zuoxingdong/lerobokinson
             self.bus.write("Position_P_Gain", "elbow_flex", 1500)
             self.bus.write("Position_I_Gain", "elbow_flex", 0)
             self.bus.write("Position_D_Gain", "elbow_flex", 600)
