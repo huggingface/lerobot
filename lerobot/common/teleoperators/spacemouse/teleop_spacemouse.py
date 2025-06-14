@@ -134,9 +134,9 @@ class SpacemouseTeleop(Teleoperator):
         state = self._latest_state if self._latest_state is not None else pyspacemouse.read()
 
         deltas = [
-            state.y,
-            -state.x,
-            state.z,
+            state.y ** 3,
+            -state.x ** 3,
+            state.z ** 3,
             state.roll,
             state.pitch,
             -state.yaw,

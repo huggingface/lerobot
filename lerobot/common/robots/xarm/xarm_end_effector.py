@@ -245,6 +245,12 @@ class XarmEndEffector(Robot):
         self._is_connected = value
 
     @property
+    def _cameras_ft(self) -> dict[str, tuple]:
+        return {
+            cam: (self.config.cameras[cam].height, self.config.cameras[cam].width, 3) for cam in self.cameras
+        }
+
+    @property
     def observation_features(self) -> dict[str, Any]:
         """Define observation features."""
         features = {
@@ -263,12 +269,10 @@ class XarmEndEffector(Robot):
         features["shape"]["gripper.pos"] = (1,)
         features["names"]["gripper.pos"] = "gripper.pos"
 
-        # Camera features
-        for cam_key, cam in self.cameras.items():
-            features["shape"][cam_key] = cam.shape
-            features["names"][cam_key] = cam_key
-
-        return features
+        return {
+            **features,
+            **self._cameras_ft,
+        }
 
     @property
     def cameras(self):

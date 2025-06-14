@@ -27,5 +27,5 @@ class SpacemouseTeleopConfig(TeleoperatorConfig):
     device: str = "" # "e":SpacePilot Enterprise"  "p":SpaceMouse Pro"
     translation_scale: float = 0.01
     rotation_scale: float = 0.1
-    deadzone: float = 0.6
+    deadzone: float = 0.1
     yaw_scale: float = 3.0

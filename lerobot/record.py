@@ -19,19 +19,21 @@ Example:
 
 ```shell
 python -m lerobot.record \
-    --robot.type=so100_follower \
-    --robot.port=/dev/tty.usbmodem58760431541 \
-    --robot.cameras="{laptop: {type: opencv, camera_index: 0, width: 640, height: 480}}" \
+    --robot.type=xarm_end_effector \
+    --robot.cameras="{laptop: {type: opencv, index_or_path: 4, width: 640, height: 480, fps: 30}}" \
     --robot.id=black \
-    --dataset.repo_id=aliberts/record-test \
+    --dataset.repo_id=lukicdarkoo/xarm_real \
+    --dataset.root=${HOME}/hfdata/first_test \
     --dataset.num_episodes=2 \
-    --dataset.single_task="Grab the cube" \
-    # <- Teleop optional if you want to teleoperate to record or in between episodes with a policy \
-    # --teleop.type=so100_leader \
-    # --teleop.port=/dev/tty.usbmodem58760431551 \
-    # --teleop.id=blue \
-    # <- Policy optional if you want to record with a policy \
-    # --policy.path=${HF_USER}/my_policy \
+    --dataset.single_task="Pick an object" \
+    --teleop.type=spacemouse \
+    --teleop.id=blue \
+    --display_data=true
+
+python ~/lerobot/lerobot/scripts/visualize_dataset.py --repo-id local --root ${HOME}/hfdata/first_test --episode-index 0
+
+python ~/lerobot/lerobot/scripts/visualize_dataset_html.py --repo-id local/dataset --root ${HOME}/hfdata/first_test
+
 ```
 """
 
@@ -61,6 +63,7 @@ from lerobot.common.robots import (  # noqa: F401
     make_robot_from_config,
     so100_follower,
     so101_follower,
+    xarm,
 )
 from lerobot.common.teleoperators import (  # noqa: F401
     Teleoperator,
