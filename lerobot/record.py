@@ -26,10 +26,12 @@ python -m lerobot.record \
     --dataset.repo_id=aliberts/record-test \
     --dataset.num_episodes=2 \
     --dataset.single_task="Grab the cube" \
-    # <- Teleop optional if you want to teleoperate in between episodes \
-    --teleop.type=so100_leader \
-    --teleop.port=/dev/tty.usbmodem58760431551 \
-    --teleop.id=blue \
+    # <- Teleop optional if you want to teleoperate to record or in between episodes with a policy \
+    # --teleop.type=so100_leader \
+    # --teleop.port=/dev/tty.usbmodem58760431551 \
+    # --teleop.id=blue \
+    # <- Policy optional if you want to record with a policy \
+    # --policy.path=${HF_USER}/my_policy \
 ```
 """
 
