@@ -59,10 +59,12 @@ from lerobot.common.utils.visualization_utils import _init_rerun
 
 from .common.teleoperators import gamepad, koch_leader, so100_leader, so101_leader  # noqa: F401
 
-
-last_wrong = {}
-last_right = {}
-mark  = {}
+# 0 -> sinal vermelho
+# 1 -> sinal amarelo
+# 2 -> sinal verde
+state = {}
+stall = {}
+pos = {}
 
 @dataclass
 class TeleoperateConfig:
@@ -74,22 +76,51 @@ class TeleoperateConfig:
     # Display all cameras on screen
     display_data: bool = False
 
-def diff(cur, nxt, names, THRESH):
-    cur2 = cur.copy()
-    nxt2 = nxt.copy()
-    nxt2 = {key.removesuffix(".pos"): val for key, val in nxt2.items() if key.endswith(".pos")}
-    cur2 = {key.removesuffix(".pos"): val for key, val in cur2.items() if key.endswith(".pos")}
-    # print("-------------------")
-    # print(nxt2)
-    # print(cur2)
-    is_wrong = {}
-    for name in names:
-        if abs(nxt2[name] - cur2[name]) > THRESH[name]:
-            is_wrong[name] = True
-        else:
-            is_wrong[name] = False
-    return is_wrong
+def green_light(motor):
+    state[motor] = 2
 
+def yellow_light(motor):
+    state[motor] = 1
+
+def red_light(motor):
+    state[motor] = 0
+
+def is_green(motor):
+    return state[motor] == 2
+
+def is_yellow(motor):
+    return state[motor] == 1
+
+def is_red(motor):
+    return state[motor] == 0
+
+
+def check_stall(robot,teleop,motors,THRESHOLD_DIFF):
+    for motor in motors:
+        if robot.bus.is_stalled(motor):
+            stall[motor] = True
+        elif abs(robot.get_action()[motor+".pos"] - pos[motor]) > THRESHOLD_DIFF[motor]:
+            stall[motor] = False
+
+
+def check_state(robot,teleop,motors):
+    for motor in motors:
+        if is_green(motor):
+            if stall[motor]:
+                red_light(motor)
+            pos[motor] = robot.get_action()[motor+".pos"]
+        elif is_yellow(motor):
+            if not stall[motor]:
+                green_light(motor)
+            else:
+                if robot.bus.is_stalled(motor):
+                    red_light(motor)
+                elif teleop.bus.is_torqued:
+                    teleop.bus.disable_torque(motor,5)
+        else:
+            teleop.bus.sync_write("Goal_Position",{motor:pos[motor]})
+            if not robot.bus.is_stalled(motor):
+                yellow_light(motor)
 
 def teleop_loop(
     teleop: Teleoperator, robot: Robot, fps: int, display_data: bool = False, duration: float | None = None
@@ -110,52 +141,18 @@ def teleop_loop(
                 if isinstance(val, float):
                     rr.log(f"action_{act}", rr.Scalar(val))
 
-        THRESHOLD_TIME_LOCK = 0.375
-        THRESHOLD_TIME_UNLOCK = 1
         THRESHOLD_DIFF = {'shoulder_pan': 2, 'shoulder_lift': 2, 'elbow_flex': 2, 'wrist_flex': 2, 'wrist_roll': 2, 'gripper': 1}
 
         motors = list(robot.bus.motors.keys())
 
         # pegar diff com o action e o get action
-        cur_robot = robot.get_action()
         robot.send_action(action)
-        is_wrong = diff(cur_robot, action, motors, THRESHOLD_DIFF)
-        
-        for motor in motors:
-            if is_wrong[motor]:
-                if mark[motor]:
-                    continue
-                else:
-                    last_wrong[motor] = time.perf_counter()
-                    mark[motor] = True
-            else:
-                last_right[motor] = time.perf_counter()
-                mark[motor] = False
 
-        #teleop.send_action(robot.get_action())
-        motors = ["gripper"]
-        for motor in motors:
-            #print("-------------------------------")
-            #print("motor is stalled", motor, robot.bus.is_stalled(motor))
-            #robot.bus.is_stalled(motor) 
+        check_stall(robot,teleop,motors, THRESHOLD_DIFF)
+        check_state(robot,teleop,motors)
 
-            #print("-------------------------------")
-            #print("motor",motor, mark[motor])
-            #print(time.perf_counter() - last_wrong[motor])
-            #print(time.perf_counter() - last_right[motor])
-            #print("torqued", teleop.bus.is_torqued(motor))
-
-            if mark[motor] and time.perf_counter() - last_wrong[motor] > THRESHOLD_TIME_LOCK:
-                # tem que ter isso
-                # print("lock ", motor)
-                teleop.bus.sync_write("Goal_Position",{motor: robot.get_action()[motor+".pos"]})
-            else:
-                # teleop.bus.is_torqued(motor) 
-                #if time.perf_counter() - last_right[motor] > THRESHOLD_TIME_UNLOCK:
-                # print("release ", motor)
-                last_right[motor] = time.perf_counter()
-                teleop.bus.disable_torque(motor)
-                
+        print("stall",stall)
+        print("state",state)
 
         dt_s = time.perf_counter() - loop_start
         busy_wait(1 / fps - dt_s)
@@ -175,7 +172,6 @@ def teleop_loop(
 
         # move_cursor_up(len(action) + 5)
 
-
 @draccus.wrap()
 def teleoperate(cfg: TeleoperateConfig):
     init_logging()
@@ -189,11 +185,10 @@ def teleoperate(cfg: TeleoperateConfig):
     teleop.connect()
     robot.connect()
 
-    motors = list(robot.bus.motors.keys())
-    for motor in motors:
-        mark[motor] = False
-        last_right[motor] = time.perf_counter()
-        last_wrong[motor] = time.perf_counter()
+    for motor in list(robot.bus.motors.keys()):
+        green_light(motor)
+        pos[motor] = robot.get_action()[motor+".pos"]
+        stall[motor] = False
 
     try:
         teleop_loop(teleop, robot, cfg.fps, display_data=cfg.display_data, duration=cfg.teleop_time_s)
