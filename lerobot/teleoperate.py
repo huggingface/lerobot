@@ -60,7 +60,8 @@ from lerobot.common.utils.visualization_utils import _init_rerun
 from .common.teleoperators import gamepad, koch_leader, so100_leader, so101_leader  # noqa: F401
 
 
-last = {}
+last_wrong = {}
+last_right = {}
 mark  = {}
 
 @dataclass
@@ -83,7 +84,7 @@ def diff(cur, nxt, names, THRESH):
     # print(cur2)
     is_wrong = {}
     for name in names:
-        if abs(nxt2[name] - cur2[name]) > THRESH:
+        if abs(nxt2[name] - cur2[name]) > THRESH[name]:
             is_wrong[name] = True
         else:
             is_wrong[name] = False
@@ -109,49 +110,51 @@ def teleop_loop(
                 if isinstance(val, float):
                     rr.log(f"action_{act}", rr.Scalar(val))
 
-        THRESHOLD_DIFF = 2
-        THRESHOLD_TIME= 0.1 
+        THRESHOLD_TIME_LOCK = 0.375
+        THRESHOLD_TIME_UNLOCK = 1
+        THRESHOLD_DIFF = {'shoulder_pan': 2, 'shoulder_lift': 2, 'elbow_flex': 2, 'wrist_flex': 2, 'wrist_roll': 2, 'gripper': 1}
 
         motors = list(robot.bus.motors.keys())
-
-        # print("--------------------")
-        # print(action)
 
         # pegar diff com o action e o get action
         cur_robot = robot.get_action()
         robot.send_action(action)
         is_wrong = diff(cur_robot, action, motors, THRESHOLD_DIFF)
         
-        print("----------------------------")
-        print("Motors -> ", motors)
-        print("is_wrong -> ", is_wrong)
-
         for motor in motors:
             if is_wrong[motor]:
                 if mark[motor]:
                     continue
                 else:
-                    last[motor] = time.perf_counter()
+                    last_wrong[motor] = time.perf_counter()
                     mark[motor] = True
             else:
+                last_right[motor] = time.perf_counter()
                 mark[motor] = False
 
-        print("last -> ", last)
-        print("mark -> ", mark)
-        teleop.send_action(robot.get_action())
+        #teleop.send_action(robot.get_action())
+        motors = ["gripper"]
         for motor in motors:
-            if (mark[motor]):
-                print("diference -> ", time.perf_counter() - last[motor])
-            if mark[motor] and time.perf_counter() - last[motor] > THRESHOLD_TIME:
+            #print("-------------------------------")
+            #print("motor is stalled", motor, robot.bus.is_stalled(motor))
+            #robot.bus.is_stalled(motor) 
+
+            #print("-------------------------------")
+            #print("motor",motor, mark[motor])
+            #print(time.perf_counter() - last_wrong[motor])
+            #print(time.perf_counter() - last_right[motor])
+            #print("torqued", teleop.bus.is_torqued(motor))
+
+            if mark[motor] and time.perf_counter() - last_wrong[motor] > THRESHOLD_TIME_LOCK:
                 # tem que ter isso
-                #teleop.bus.enable_torque(motor, 5)
-                #print("get action",robot.get_action())
-                #print("get action motor",robot.get_action()[motor+".pos"])
-                #print("motor", motor)
-                #teleop.bus.write("Operating_Mode", motor, robot.get_action()[motor+".pos"])
-                pass
+                # print("lock ", motor)
+                teleop.bus.sync_write("Goal_Position",{motor: robot.get_action()[motor+".pos"]})
             else:
-                teleop.bus.disable_torque(motor, 5)
+                # teleop.bus.is_torqued(motor) 
+                #if time.perf_counter() - last_right[motor] > THRESHOLD_TIME_UNLOCK:
+                # print("release ", motor)
+                last_right[motor] = time.perf_counter()
+                teleop.bus.disable_torque(motor)
                 
 
         dt_s = time.perf_counter() - loop_start
@@ -189,6 +192,8 @@ def teleoperate(cfg: TeleoperateConfig):
     motors = list(robot.bus.motors.keys())
     for motor in motors:
         mark[motor] = False
+        last_right[motor] = time.perf_counter()
+        last_wrong[motor] = time.perf_counter()
 
     try:
         teleop_loop(teleop, robot, cfg.fps, display_data=cfg.display_data, duration=cfg.teleop_time_s)

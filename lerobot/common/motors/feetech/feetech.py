@@ -296,6 +296,17 @@ class FeetechMotorsBus(MotorsBus):
         for motor in self._get_motors_list(motors):
             self.write("Torque_Enable", motor, TorqueMode.DISABLED.value, num_retry=num_retry)
             self.write("Lock", motor, 0, num_retry=num_retry)
+    
+    def is_torqued(self, motors):
+        # NAO USAR COM MAIS DE UM MOTOR
+        for motor in self._get_motors_list(motors):
+            return self.read("Torque_Enable", motor)
+    
+    def is_stalled(self, motors):
+        # NAO USAR COM MAIS DE UM MOTOR
+        for motor in self._get_motors_list(motors):
+            return self.read("Present_Current", motor) > 150
+
 
     def _disable_torque(self, motor_id: int, model: str, num_retry: int = 0) -> None:
         addr, length = get_address(self.model_ctrl_table, model, "Torque_Enable")

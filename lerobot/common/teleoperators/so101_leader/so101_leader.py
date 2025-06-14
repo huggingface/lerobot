@@ -163,7 +163,6 @@ class SO101Leader(Teleoperator):
 
         goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
         self.bus.sync_write("Goal_Position", goal_pos)
-        present_pos = self.bus.sync_read("Present_Position")
 
         return {f"{motor}.pos": val for motor, val in goal_pos.items()}
 
