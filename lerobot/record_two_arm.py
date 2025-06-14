@@ -51,8 +51,10 @@ import rerun as rr
 from lerobot.common.cameras import (  # noqa: F401
     CameraConfig,  # noqa: F401
 )
+from lerobot.common.cameras.camera import Camera
 from lerobot.common.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.common.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
+from lerobot.common.cameras.utils import make_cameras_from_configs
 from lerobot.common.datasets.image_writer import safe_stop_image_writer
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.datasets.utils import build_dataset_frame, build_dataset_frame_two_arm, hw_to_dataset_features
@@ -141,6 +143,8 @@ class RecordTwoArmConfig:
     teleop2: TeleoperatorConfig | None = None
     # Whether to control the robot with a policy
     policy: PreTrainedConfig | None = None
+    # Global camera
+    global_camera: CameraConfig
     # Display all cameras on screen
     display_data: bool = False
     # Use vocal synthesis to read events.
@@ -171,6 +175,7 @@ def record_loop(
     robot2: Robot,
     events: dict,
     fps: int,
+    global_camera: Camera,
     dataset: LeRobotDataset | None = None,
     teleop1: Teleoperator | None = None,
     teleop2: Teleoperator | None = None,
@@ -196,6 +201,10 @@ def record_loop(
         # print(f"Observation1: {observation1.keys()}\nObservation2: {observation2.keys()}")
         # TODO : check if the keys need to be renamed to avoid conflicts
         observation = {**observation1, **observation2}  # Combine observations from both robots 
+        
+        # Add global camera observation
+        observation["global"] = global_camera.async_read()
+        
         # print(f"Observation: {observation.keys()}")
         if len(observation1.keys()) + len(observation2.keys()) != len(observation.keys()):
             raise ValueError(
@@ -220,8 +229,9 @@ def record_loop(
                 task=single_task,
                 robot_type=robot1.robot_type,
             )
-            action = {key: action_values[i].item() for i, key in enumerate(robot1.action_features)}
-
+            action1 = {key: action_values[i].item() for i, key in enumerate(robot1.action_features)}
+            action2 = {key: action_values[i].item() for i, key in enumerate(robot2.action_features)}
+            action = {**action1, **action2}
         else:
             action1 = teleop1.get_action()
             action2 = teleop2.get_action()
@@ -273,6 +283,10 @@ def record(cfg: RecordTwoArmConfig) -> LeRobotDataset:
     robot_two = make_robot_from_config(cfg.robot2)
     teleop_two = make_teleoperator_from_config(cfg.teleop2) if cfg.teleop2 is not None else None
     
+    # Create global camera
+    global_camera_dict = {"global": cfg.global_camera}
+    global_camera = make_cameras_from_configs(global_camera_dict)["global"]
+    
     robot_one_action_features = {f"robot_one_{k}": v for k, v in robot_one.action_features.items()}
     robot_two_action_features = {f"robot_two_{k}": v for k, v in robot_two.action_features.items()}
     
@@ -282,6 +296,9 @@ def record(cfg: RecordTwoArmConfig) -> LeRobotDataset:
     robot_two_observation_features = {f"robot_two_{k}": v for k, v in robot_two.observation_features.items()}
     
     robot_obeservation_features = {**robot_one_observation_features, **robot_two_observation_features}
+    
+    # Add global camera to observation features
+    robot_obeservation_features["global"] = global_camera.async_read()
 
     action_features = hw_to_dataset_features(
         robot_action_features, 
@@ -302,9 +319,10 @@ def record(cfg: RecordTwoArmConfig) -> LeRobotDataset:
         )
 
         if (hasattr(robot_one, "cameras") and len(robot_one.cameras) > 0) or (hasattr(robot_two, "cameras") and len(robot_two.cameras) > 0):
+            total_cameras = len(robot_one.cameras or []) + len(robot_two.cameras or []) + 1 # extra one for global camera
             dataset.start_image_writer(
                 num_processes=cfg.dataset.num_image_writer_processes,
-                num_threads=cfg.dataset.num_image_writer_threads_per_camera * len([ (robot_one.cameras or []) + (robot_two.cameras or []) ]),
+                num_threads=cfg.dataset.num_image_writer_threads_per_camera * total_cameras,
             )
         # TODO: Not sure how to do this yet for multiple robots used under the same dataset/policy
         # sanity_check_dataset_robot_compatibility(dataset, robot_one, cfg.dataset.fps, dataset_features)
@@ -319,7 +337,7 @@ def record(cfg: RecordTwoArmConfig) -> LeRobotDataset:
             features=dataset_features,
             use_videos=cfg.dataset.video,
             image_writer_processes=cfg.dataset.num_image_writer_processes,
-            image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * len(robot_one.cameras),
+            image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * (len(robot_one.cameras or []) + len(robot_two.cameras or []) + 1), # extra one for global camera
         )
 
     # Load pretrained policy
@@ -332,6 +350,8 @@ def record(cfg: RecordTwoArmConfig) -> LeRobotDataset:
         teleop_one.connect()
     if teleop_two is not None:
         teleop_two.connect()
+    
+    global_camera.connect()
     
     if teleop_one and teleop_two is None:
         log_say("No teleoperator provided, using policy to control the robot", cfg.play_sounds)
@@ -352,6 +372,7 @@ def record(cfg: RecordTwoArmConfig) -> LeRobotDataset:
             control_time_s=cfg.dataset.episode_time_s,
             single_task=cfg.dataset.single_task,
             display_data=cfg.display_data,
+            global_camera=global_camera,
         )
 
         # Execute a few seconds without recording to give time to manually reset the environment
@@ -370,6 +391,7 @@ def record(cfg: RecordTwoArmConfig) -> LeRobotDataset:
                 control_time_s=cfg.dataset.reset_time_s,
                 single_task=cfg.dataset.single_task,
                 display_data=cfg.display_data,
+                global_camera=global_camera,
             )
 
         if events["rerecord_episode"]:
@@ -387,7 +409,14 @@ def record(cfg: RecordTwoArmConfig) -> LeRobotDataset:
     log_say("Stop recording", cfg.play_sounds, blocking=True)
 
     robot_one.disconnect()
-    teleop_one.disconnect()
+    robot_two.disconnect()
+    
+    if teleop_one is not None:
+        teleop_one.disconnect()
+    if teleop_two is not None:
+        teleop_two.disconnect()
+    
+    global_camera.disconnect()
 
     if not is_headless() and listener is not None:
         listener.stop()
