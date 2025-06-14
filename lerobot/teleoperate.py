@@ -95,16 +95,16 @@ def is_red(motor):
     return state[motor] == 0
 
 
-def check_stall(robot,teleop,motors,THRESHOLD_DIFF):
+def check_stall(robot,teleop,motors,THRESHOLD_CURRENT):
     for motor in motors:
-        if robot.bus.is_stalled(motor):
+        if robot.bus.get_current(motor) > THRESHOLD_CURRENT:
             stall[motor] = True
-        elif abs(robot.get_action()[motor+".pos"] - pos[motor]) > THRESHOLD_DIFF[motor]:
+        elif abs(robot.get_action()[motor+".pos"] - pos[motor]) > 0: 
             stall[motor] = False
 
 
 
-def check_state(robot,teleop,motors):
+def check_state(robot,teleop,motors,THRESHOLD_CURRENT):
     for motor in motors:
         if is_green(motor):
             if stall[motor]:
@@ -116,14 +116,14 @@ def check_state(robot,teleop,motors):
                     teleop.bus.disable_torque(motor,5)
                 green_light(motor)
             else:
-                if robot.bus.is_stalled(motor):
+                if robot.bus.get_current(motor) > THRESHOLD_CURRENT:
                     red_light(motor)
                 elif teleop.bus.is_torqued:
                     teleop.bus.disable_torque(motor,5)
         else:
             teleop.bus.sync_write("Goal_Position",{motor:pos[motor]})
             teleop.bus.enable_torque(motor)
-            if not robot.bus.is_stalled(motor) and not teleop.bus.get_current(motor) > 0:
+            if not robot.bus.get_current(motor) > THRESHOLD_CURRENT and not teleop.bus.get_current(motor) > 0:
                 yellow_light(motor)
 
 def teleop_loop(
@@ -146,14 +146,15 @@ def teleop_loop(
                     rr.log(f"action_{act}", rr.Scalar(val))
 
         THRESHOLD_DIFF = {'shoulder_pan': 2, 'shoulder_lift': 2, 'elbow_flex': 2, 'wrist_flex': 2, 'wrist_roll': 2, 'gripper': 1}
+        THRESHOLD_CURRENT = 37.5
 
         motors = list(robot.bus.motors.keys())
 
         # pegar diff com o action e o get action
         robot.send_action(action)
 
-        check_stall(robot,teleop,motors, THRESHOLD_DIFF)
-        check_state(robot,teleop,motors)
+        check_stall(robot,teleop,motors,THRESHOLD_CURRENT)
+        check_state(robot,teleop,motors,THRESHOLD_CURRENT)
 
         print("stall",stall)
         print("state",state)

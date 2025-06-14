@@ -302,11 +302,6 @@ class FeetechMotorsBus(MotorsBus):
         for motor in self._get_motors_list(motors):
             return self.read("Torque_Enable", motor)
     
-    def is_stalled(self, motors):
-        # NAO USAR COM MAIS DE UM MOTOR
-        for motor in self._get_motors_list(motors):
-            return self.read("Present_Current", motor) > 150
-
     def get_current(self, motors):
         # NAO USAR COM MAIS DE UM MOTOR
         for motor in self._get_motors_list(motors):
