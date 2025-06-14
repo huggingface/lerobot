@@ -158,7 +158,7 @@ def load_smolvla(
     state_dict, _ = standardise_state_dict(state_dict, set(model.state_dict().keys()))
 
     # HACK(aliberts): to not overwrite normalization parameters as they should come from the dataset
-    norm_keys = ("normalize_inputs", "normalize_targets", "unnormalize_outputs")
+    norm_keys = ("normalize_inputs", "normalize_targets", "unnormalize_outputs", 'model.vlm_with_expert.vjepa2')
     state_dict = {k: v for k, v in state_dict.items() if not k.startswith(norm_keys)}
 
     missing, unexpected = model.load_state_dict(state_dict, strict=False)
@@ -632,9 +632,15 @@ class VLAFlowMatching(nn.Module):
         self.action_in_proj = nn.Linear(self.config.max_action_dim, self.vlm_with_expert.expert_hidden_size)
         self.action_out_proj = nn.Linear(self.vlm_with_expert.expert_hidden_size, self.config.max_action_dim)
 
-        self.action_time_mlp_in = nn.Linear(
-            self.vlm_with_expert.expert_hidden_size * 2, self.vlm_with_expert.expert_hidden_size
-        )
+        if self.config.vjepa:
+            # Widen the MLP to accept a third input: the VJEPA-2 embedding summary
+            self.action_time_mlp_in = nn.Linear(
+                self.vlm_with_expert.expert_hidden_size * 3, self.vlm_with_expert.expert_hidden_size
+            )
+        else:
+            self.action_time_mlp_in = nn.Linear(
+                self.vlm_with_expert.expert_hidden_size * 2, self.vlm_with_expert.expert_hidden_size
+            )
         self.action_time_mlp_out = nn.Linear(
             self.vlm_with_expert.expert_hidden_size, self.vlm_with_expert.expert_hidden_size
         )
@@ -668,6 +674,29 @@ class VLAFlowMatching(nn.Module):
         time_beta = sample_beta(1.5, 1.0, bsize, device)
         time = time_beta * 0.999 + 0.001
         return time.to(dtype=torch.float32, device=device)
+
+    def embed_vjepa(self, images: list[torch.Tensor]) -> torch.Tensor | None:
+        """
+        Processes images with VJEPA-2, projects them to the expert's dimension,
+        and returns a single summary vector per batch item.
+        """
+        if not self.config.vjepa:
+            return None
+
+        # Process video frames with VJEPA-2
+        processed_video = self.vlm_with_expert.vjepa2_processor(
+            torch.stack(images, dim=1),
+            return_tensors="pt"
+        ).to(self.vlm_with_expert.vlm.device)
+        vjepa2_output = self.vlm_with_expert.vjepa2(**processed_video)
+        vjepa2_embeds = vjepa2_output.predictor_output.last_hidden_state.to(dtype=torch.float32)
+
+        # Project VJEPA-2 embeddings to match the action expert's hidden dimension
+        projected_embeds = self.vlm_with_expert.vjepa2_to_expert_proj(vjepa2_embeds)
+
+        # Summarize patch embeddings into a single vector (B, num_patches, H) -> (B, H)
+        summary_embed = torch.mean(projected_embeds, dim=1)
+        return summary_embed
 
     def embed_prefix(
         self, images, img_masks, lang_tokens, lang_masks, state: torch.Tensor = None
@@ -763,7 +792,7 @@ class VLAFlowMatching(nn.Module):
 
         return embs, pad_masks, att_masks
 
-    def embed_suffix(self, noisy_actions, timestep):
+    def embed_suffix(self, noisy_actions, timestep, vjepa_summary_embed):
         """Embed state, noisy_actions, timestep to prepare for Expert Gemma processing."""
         embs = []
         pad_masks = []
@@ -785,7 +814,10 @@ class VLAFlowMatching(nn.Module):
         time_emb = time_emb.type(dtype=dtype)
 
         time_emb = time_emb[:, None, :].expand_as(action_emb)
-        action_time_emb = torch.cat([action_emb, time_emb], dim=2)
+
+        if self.config.vjepa:
+            vjepa_embed_expanded = vjepa_summary_embed[:, None, :].expand_as(action_emb)
+            action_time_emb = torch.cat([action_emb, time_emb, vjepa_embed_expanded], dim=2)
 
         action_time_emb = self.action_time_mlp_in(action_time_emb)
         action_time_emb = F.silu(action_time_emb)  # swish == silu
@@ -822,7 +854,7 @@ class VLAFlowMatching(nn.Module):
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
             images, img_masks, lang_tokens, lang_masks, state=state
         )
-        suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(x_t, time)
+        suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(x_t, time, self.embed_vjepa(images))
 
         pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
         att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
