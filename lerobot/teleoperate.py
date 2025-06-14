@@ -103,6 +103,7 @@ def check_stall(robot,teleop,motors,THRESHOLD_DIFF):
             stall[motor] = False
 
 
+
 def check_state(robot,teleop,motors):
     for motor in motors:
         if is_green(motor):
@@ -111,6 +112,8 @@ def check_state(robot,teleop,motors):
             pos[motor] = robot.get_action()[motor+".pos"]
         elif is_yellow(motor):
             if not stall[motor]:
+                if teleop.bus.is_torqued:
+                    teleop.bus.disable_torque(motor,5)
                 green_light(motor)
             else:
                 if robot.bus.is_stalled(motor):
@@ -119,7 +122,8 @@ def check_state(robot,teleop,motors):
                     teleop.bus.disable_torque(motor,5)
         else:
             teleop.bus.sync_write("Goal_Position",{motor:pos[motor]})
-            if not robot.bus.is_stalled(motor):
+            teleop.bus.enable_torque(motor)
+            if not robot.bus.is_stalled(motor) and not teleop.bus.get_current(motor) > 0:
                 yellow_light(motor)
 
 def teleop_loop(
@@ -153,6 +157,14 @@ def teleop_loop(
 
         print("stall",stall)
         print("state",state)
+
+        mx_teleop = 0
+        for motor in motors:
+            mx_teleop = max(mx_teleop,teleop.bus.get_current(motor))
+            print("motor, current", motor, mx_teleop)
+            if(mx_teleop > 150):
+                pass
+                #exit(0)
 
         dt_s = time.perf_counter() - loop_start
         busy_wait(1 / fps - dt_s)

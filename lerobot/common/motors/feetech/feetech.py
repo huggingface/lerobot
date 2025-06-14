@@ -307,6 +307,11 @@ class FeetechMotorsBus(MotorsBus):
         for motor in self._get_motors_list(motors):
             return self.read("Present_Current", motor) > 150
 
+    def get_current(self, motors):
+        # NAO USAR COM MAIS DE UM MOTOR
+        for motor in self._get_motors_list(motors):
+            return self.read("Present_Current", motor)
+
 
     def _disable_torque(self, motor_id: int, model: str, num_retry: int = 0) -> None:
         addr, length = get_address(self.model_ctrl_table, model, "Torque_Enable")
