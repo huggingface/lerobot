@@ -52,13 +52,13 @@ class SpesTeleop(Teleoperator):
         }
 
         self._server = PhoneTeleop(host=config.host, port=int(config.port))
-        self._server.subscribe(self._on_pose_update)
+        self._server.subscribe_delta_dict(self._on_delta_dict_update)
         self._gripper_state = GripperAction.STAY.value
 
-    def _on_pose_update(self, pose: dict, msg: dict):
-        self._pose = pose
-        print(f"Pose: {pose}")
-    
+    def _on_delta_dict_update(self, delta: dict, msg: dict):
+        self._pose.update(delta)
+        print(f"Pose updated with delta: {delta}")
+
     @property
     def action_features(self) -> dict:
         if self.config.use_gripper:

@@ -80,6 +80,8 @@ class Teleop:
         self.__previous_received_pose = None
         self.__callbacks = []
         self.__pose = np.eye(4)
+        self.__delta_from_previous = np.eye(4)
+        self.__delta_dict_callbacks = []
 
         if natural_phone_orientation_euler is None:
             natural_phone_orientation_euler = [0, math.radians(-45), 0]
@@ -112,21 +114,46 @@ class Teleop:
         """
         self.__pose = pose
 
-    def subscribe(self, callback: Callable[[dict, dict], None]) -> None:
+    def subscribe(self, callback: Callable[[np.ndarray, dict], None]) -> None:
         """
         Subscribe to receive updates from the teleop module.
 
         Parameters:
-            callback (Callable[[dict, dict], None]): A callback function that will be called when pose updates are received.
+            callback (Callable[[np.ndarray, dict], None]): A callback function that will be called when pose updates are received.
                 The callback function should take two arguments:
-                    - dict: A dictionary containing the end-effector target pose.
+                    - np.ndarray: A 4x4 transformation matrix representing the end-effector target pose.
                     - dict: A dictionary containing additional information.
         """
         self.__callbacks.append(callback)
 
+    def subscribe_delta_dict(self, callback: Callable[[dict, dict], None]) -> None:
+        """
+        Subscribe to receive delta updates as a dictionary.
+
+        Parameters:
+            callback (Callable[[dict, dict], None]): A callback that receives:
+                - dict: The delta as {"dx", "dy", "dz", "roll", "pitch", "yaw"}
+                - dict: The original message
+        """
+        self.__delta_dict_callbacks.append(callback)
+
     def __notify_subscribers(self, pose, message):
         for callback in self.__callbacks:
             callback(pose, message)
+
+    def __notify_delta_dict_subscribers(self, delta: np.ndarray, message: dict):
+        dx, dy, dz = delta[:3, 3]
+        roll, pitch, yaw = t3d.euler.mat2euler(delta[:3, :3])
+        delta_dict = {
+            "dx": dx,
+            "dy": dy,
+            "dz": dz,
+            "roll": roll,
+            "pitch": pitch,
+            "yaw": yaw,
+        }
+        for callback in self.__delta_dict_callbacks:
+            callback(delta_dict, message)
 
     def __update(self, message):
         move = message["move"]
@@ -147,24 +174,7 @@ class Teleop:
         if not move:
             self.__relative_pose_init = None
             self.__absolute_pose_init = None
-
-            x = float(self.__pose[0, 3])
-            y = float(self.__pose[1, 3])
-            z = float(self.__pose[2, 3])
-
-            rot_mat = self.__pose[:3, :3]
-            roll, pitch, yaw = t3d.euler.mat2euler(rot_mat, axes="sxyz")
-
-            pose_dict = {
-                "delta_x": x,
-                "delta_y": y,
-                "delta_z": z,
-                "delta_roll": roll,
-                "delta_pitch": pitch,
-                "delta_yaw": yaw,
-            }
-
-            self.__notify_subscribers(pose_dict, message)
+            self.__notify_subscribers(self.__pose, message)
             return
 
         received_pose_rub = t3d.affines.compose(
@@ -178,6 +188,8 @@ class Teleop:
 
         # Pose jump protection
         if self.__previous_received_pose is not None:
+            self.__delta_from_previous = np.linalg.inv(self.__previous_received_pose) @ received_pose
+            self.__notify_delta_dict_subscribers(self.__delta_from_previous, message)
             if not are_close(
                 received_pose,
                 self.__previous_received_pose,
@@ -188,6 +200,9 @@ class Teleop:
                 self.__relative_pose_init = None
                 self.__previous_received_pose = received_pose
                 return
+        else:
+            self.__delta_from_previous = np.eye(4)
+            self.__notify_delta_dict_subscribers(self.__delta_from_previous, message)
         self.__previous_received_pose = received_pose
 
         # Accumulate the pose and publish
@@ -206,22 +221,8 @@ class Teleop:
                 relative_pose[:3, :3] @ self.__absolute_pose_init[:3, :3]
             )
 
-        x = float(self.__pose[0, 3])
-        y = float(self.__pose[1, 3])
-        z = float(self.__pose[2, 3])
-        roll, pitch, yaw = t3d.euler.mat2euler(self.__pose[:3, :3], axes="sxyz")
-
-        pose_dict = {
-            "delta_x": x,
-            "delta_y": y,
-            "delta_z": z,
-            "delta_roll": roll,
-            "delta_pitch": pitch,
-            "delta_yaw": yaw,
-        }
-
         # Notify the subscribers
-        self.__notify_subscribers(pose_dict, message)
+        self.__notify_subscribers(self.__pose, message)
 
     def __register_routes(self):
         @self.__app.route("/<path:filename>")
