@@ -138,13 +138,13 @@ class RecordTwoArmConfig:
     robot1: RobotConfig
     robot2: RobotConfig
     dataset: DatasetRecordConfig
+    global_camera: CameraConfig
     # Whether to control the robot with a teleoperator
     teleop1: TeleoperatorConfig | None = None
     teleop2: TeleoperatorConfig | None = None
     # Whether to control the robot with a policy
     policy: PreTrainedConfig | None = None
     # Global camera
-    global_camera: CameraConfig
     # Display all cameras on screen
     display_data: bool = False
     # Use vocal synthesis to read events.
@@ -204,6 +204,7 @@ def record_loop(
         
         # Add global camera observation
         observation["global"] = global_camera.async_read()
+        print("check")
         
         # print(f"Observation: {observation.keys()}")
         if len(observation1.keys()) + len(observation2.keys()) != len(observation.keys()):
@@ -298,7 +299,7 @@ def record(cfg: RecordTwoArmConfig) -> LeRobotDataset:
     robot_obeservation_features = {**robot_one_observation_features, **robot_two_observation_features}
     
     # Add global camera to observation features
-    robot_obeservation_features["global"] = global_camera.async_read()
+    robot_obeservation_features["global"] = (cfg.global_camera.height, cfg.global_camera.width, 3)
 
     action_features = hw_to_dataset_features(
         robot_action_features, 
