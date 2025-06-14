@@ -25,9 +25,9 @@ from teleop.utils.jacobi_robot import JacobiRobot
 
 from lerobot.common.cameras import make_cameras_from_configs
 from lerobot.common.errors import DeviceNotConnectedError, DeviceAlreadyConnectedError
-from ..robot import Robot
+from lerobot.common.robots.robot import Robot
 
-from .config_xarm import XarmEndEffector
+from lerobot.common.robots.xarm.config_xarm import XarmEndEffector
 
 logger = logging.getLogger(__name__)
 
@@ -56,12 +56,17 @@ class XarmEndEffector(Robot):
         if self.is_connected:
             raise DeviceAlreadyConnectedError(f"{self} already connected")
 
-        # TODO: Connect to the robot and set it to a servo mode
+        # Connect to the robot and set it to a servo mode
         self.arm = XArmAPI("192.168.1.184")
+        self.arm.connect()
+        self.arm.motion_enable(enable=True)
+        self.arm.set_mode(0)  # Position mode
+        self.arm.set_state(state=0)  # Sport state
 
         for cam in self.cameras.values():
             cam.connect()
 
+        self.is_connected = True
         self.configure()
         logger.info(f"{self} connected.")
 
@@ -101,17 +106,45 @@ class XarmEndEffector(Robot):
 
         gripper = action["gripper"]
 
-        full_action = action.copy
+        full_action = action.copy()
         full_action["gripper.pos"] = gripper
 
         if "pose" in action:
-            # Convert pose to joint positions
-            # Fill full_action with joint positions (jointX.pos)
-            # TODO: Use jacobi.servo_to_pose() and jacobi.get_joint_position(joint_name)
-            pass
+            # Convert pose to joint positions using Jacobi
+            pose = action["pose"]
+            success = self.jacobi.servo_to_pose(pose)
+            if success:
+                # Get joint positions from Jacobi
+                joint_positions = []
+                for i in range(1, 7):  # joints 1-6
+                    joint_pos = self.jacobi.get_joint_position(f"joint{i}")
+                    joint_positions.append(joint_pos)
+                    full_action[f"joint{i}.pos"] = joint_pos
 
+                # Send joint positions to xarm
+                self.arm.set_servo_angle(angle=joint_positions, wait=False)
+            else:
+                logger.warning("Failed to solve inverse kinematics for pose")
+
+        # Extract joint actions for motors
         joint_action = {"gripper.pos": gripper}
-        # TODO: Add joint positions for other motors
+        for i in range(1, 7):
+            if f"joint{i}" in action:
+                joint_action[f"joint{i}.pos"] = action[f"joint{i}"]
+                # Send individual joint command if direct joint control
+                if "pose" not in action:
+                    current_angles = self.arm.get_servo_angle()[
+                        1
+                    ]  # [1] contains the angles
+                    current_angles[i - 1] = action[f"joint{i}"]
+                    self.arm.set_servo_angle(angle=current_angles, wait=False)
+
+        # Send gripper command
+        if gripper is not None:
+            if gripper < 0.5:
+                self.arm.set_gripper_enable(enable=False)
+            else:
+                self.arm.set_gripper_enable(enable=True)
 
         return super().send_action(joint_action)
 
@@ -122,8 +155,19 @@ class XarmEndEffector(Robot):
         # Read arm position
         start = time.perf_counter()
 
-        # TODO: Read joint positions from xarm
-        obs_dict = {f"{motor}.pos": val for motor, val in obs_dict.items()}
+        # Read joint positions from xarm
+        ret, joint_angles = self.arm.get_servo_angle()
+        ret_gripper, gripper_pos = self.arm.get_gripper_position()
+
+        obs_dict = {}
+        if ret == 0:  # Success
+            # Convert joint angles to observation dict
+            for i, angle in enumerate(joint_angles):
+                obs_dict[f"joint{i+1}.pos"] = angle
+
+        if ret_gripper == 0:  # Success
+            # Normalize gripper position to 0-1 range
+            obs_dict["gripper.pos"] = gripper_pos / 850.0
 
         # Capture images from cameras
         for cam_key, cam in self.cameras.items():
@@ -136,3 +180,27 @@ class XarmEndEffector(Robot):
 
     def reset(self):
         pass
+
+
+
+if __name__ == "__main__":
+    # Example usage
+    config = XarmEndEffector(
+        cameras=[],
+        max_relative_target=0.1,
+        disable_torque_on_disconnect=True,
+    )
+    robot = XarmEndEffector(config)
+    robot.connect()
+    
+    # Example action
+    action = {
+        "pose": np.array([0.5, 0.0, 0.2, 0.0, 0.0, 0.0]),
+        "gripper": 1.0,
+    }
+    
+    robot.send_action(action)
+    obs = robot.get_observation()
+    print(obs)
+    
+    robot.disconnect()
