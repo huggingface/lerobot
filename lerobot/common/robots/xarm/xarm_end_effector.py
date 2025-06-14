@@ -70,9 +70,7 @@ class XarmEndEffector(Robot):
             raise DeviceNotConnectedError(f"Failed to get joint angles from {self}")
         for i in range(1, 7):  # joints 1-6
             joint_name = f"joint{i}"
-            self.jacobi.set_joint_position(
-                joint_name, joint_positions[i - 1]
-            )
+            self.jacobi.set_joint_position(joint_name, joint_positions[i - 1])
 
         for cam in self.cameras.values():
             cam.connect()
@@ -115,10 +113,31 @@ class XarmEndEffector(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        gripper = action["gripper"]
-
+        gripper = action["gripper"] if "gripper" in action else None
         full_action = action.copy()
-        full_action["gripper.pos"] = gripper
+        full_action["gripper.pos"] = gripper if gripper is not None else 0.0
+
+        if (
+            "delta_x" in action
+            and "delta_y" in action
+            and "delta_z" in action
+            and "delta_roll" in action
+            and "delta_pitch" in action
+            and "delta_yaw" in action
+        ):
+            pose = self.jacobi.get_ee_pose()
+            delta_pose = np.eye(4)
+            delta_pose[:3, 3] = [
+                action["delta_x"],
+                action["delta_y"],
+                action["delta_z"],
+            ]
+            roll = action["delta_roll"]
+            pitch = action["delta_pitch"]
+            yaw = action["delta_yaw"]
+            delta_rotation = t3d.euler.euler2mat(roll, pitch, yaw)
+            delta_pose[:3, :3] = delta_rotation
+            action["pose"] = delta_pose @ pose
 
         if "pose" in action:
             # Convert pose to joint positions using Jacobi
@@ -175,15 +194,15 @@ class XarmEndEffector(Robot):
         """Disconnect from the robot and cameras."""
         if not self.is_connected:
             return
-        
+
         if self.arm is not None:
             # self.arm.set_gripper_enable(False)
             self.arm.disconnect()
             self.arm = None
-        
+
         for cam in self.cameras.values():
             cam.disconnect()
-        
+
         self.is_connected = False
         logger.info(f"{self} disconnected.")
 
@@ -191,7 +210,7 @@ class XarmEndEffector(Robot):
         """Calibrate the robot (optional for xarm)."""
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
-        
+
         # XArm doesn't typically require calibration
         # This could be used for homing or setting reference positions
         logger.info(f"{self} calibration completed.")
@@ -200,7 +219,7 @@ class XarmEndEffector(Robot):
         """Configure robot settings."""
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
-        
+
         # Set motion parameters
         # self.arm.set_tcp_maxacc(1000)  # Max acceleration
         logger.info(f"{self} configured.")
@@ -228,22 +247,22 @@ class XarmEndEffector(Robot):
             "shape": {},
             "names": {},
         }
-        
+
         # Joint positions
         for i in range(1, 7):
             joint_name = f"joint{i}.pos"
             features["shape"][joint_name] = (1,)
             features["names"][joint_name] = joint_name
-        
+
         # Gripper position
         features["shape"]["gripper.pos"] = (1,)
         features["names"]["gripper.pos"] = "gripper.pos"
-        
+
         # Camera features
         for cam_key, cam in self.cameras.items():
             features["shape"][cam_key] = cam.shape
             features["names"][cam_key] = cam_key
-        
+
         return features
 
     @property
@@ -279,7 +298,6 @@ class XarmEndEffector(Robot):
         self._jacobi = value
 
 
-
 if __name__ == "__main__":
     import transforms3d as t3d
 
@@ -287,21 +305,28 @@ if __name__ == "__main__":
     config = XarmEndEffectorConfig()
     robot = XarmEndEffector(config)
     robot.connect()
-    
+
     # Example action
     action = {
         "pose": t3d.affines.compose(
             [0.25, 0.0, 0.2],  # Translation
             t3d.euler.euler2mat(3.14, 0, 0.0),  # Rotation (no rotation)
-            [1.0, 1.0, 1.0]  # Scale
+            [1.0, 1.0, 1.0],  # Scale
         ),
-        "gripper": 2.0,
+        # "gripper": 2.0,
     }
-    
+
+    action["delta_x"] = 0.0
+    action["delta_y"] = 0.0
+    action["delta_z"] = 0.01
+    action["delta_roll"] = 0.0
+    action["delta_pitch"] = 0.0
+    action["delta_yaw"] = 0.0
+
     for _ in range(30):
         robot.send_action(action)
         time.sleep(0.05)
 
     obs = robot.get_observation()
-    
+
     robot.disconnect()
