@@ -24,3 +24,9 @@ from ..config import TeleoperatorConfig
 class KeyboardTeleopConfig(TeleoperatorConfig):
     # TODO(Steven): Consider setting in here the keys that we want to capture/listen
     mock: bool = False
+
+
+@TeleoperatorConfig.register_subclass("keyboard_ee")
+@dataclass
+class KeyboardEndEffectorTeleopConfig(KeyboardTeleopConfig):
+    use_gripper: bool = True
