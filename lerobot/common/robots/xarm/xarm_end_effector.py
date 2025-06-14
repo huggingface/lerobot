@@ -82,24 +82,16 @@ class XarmEndEffector(Robot):
         logger.info(f"{self} connected.")
 
     @property
-    def action_features(self) -> dict[str, Any]:
-        """
-        Define action features for end-effector control.
-        Returns dictionary with dtype, shape, and names.
-        """
-        return {
-            "dtype": "float32",
-            "shape": (7),
-            "names": {
-                "joint1": 0,
-                "joint2": 1,
-                "joint3": 2,
-                "joint4": 3,
-                "joint5": 4,
-                "joint6": 5,
-                "gripper": 6,
-            },
-        }
+    def _motors_ft(self) -> dict[str, type]:
+        """Return mapping of motor feature names to their Python types (float)."""
+        motors = {f"joint{i}.pos": float for i in range(1, 7)}
+        motors["gripper.pos"] = float
+        return motors
+
+    @property
+    def action_features(self) -> dict[str, type]:
+        """Joint commands expected by the robot (all scalar floats)."""
+        return self._motors_ft
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         """
@@ -252,27 +244,8 @@ class XarmEndEffector(Robot):
 
     @property
     def observation_features(self) -> dict[str, Any]:
-        """Define observation features."""
-        features = {
-            "dtype": "float32",
-            "shape": {},
-            "names": {},
-        }
-
-        # Joint positions
-        for i in range(1, 7):
-            joint_name = f"joint{i}.pos"
-            features["shape"][joint_name] = (1,)
-            features["names"][joint_name] = joint_name
-
-        # Gripper position
-        features["shape"]["gripper.pos"] = (1,)
-        features["names"]["gripper.pos"] = "gripper.pos"
-
-        return {
-            **features,
-            **self._cameras_ft,
-        }
+        """Joint positions and camera image shapes returned by the robot."""
+        return {**self._motors_ft, **self._cameras_ft}
 
     @property
     def cameras(self):
