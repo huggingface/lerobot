@@ -25,6 +25,8 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
         from .koch_leader import KochLeader
 
         return KochLeader(config)
+    
+    # TODO(jackvial) - add config for koch_screwdriver_leader
     elif config.type == "so100_leader":
         from .so100_leader import SO100Leader
 

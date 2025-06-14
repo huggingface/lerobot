@@ -42,7 +42,7 @@ class KochScrewdriverFollower(Robot):
     """
 
     config_class = KochScrewdriverFollowerConfig
-    name = "koch_follower"
+    name = "koch_screwdriver_follower"
 
     def __init__(self, config: KochScrewdriverFollowerConfig):
         super().__init__(config)

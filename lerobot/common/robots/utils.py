@@ -25,6 +25,10 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from .koch_follower import KochFollower
 
         return KochFollower(config)
+    elif config.type == "koch_screwdriver_follower":
+        from .koch_screwdriver_follower import KochScrewdriverFollower
+
+        return KochScrewdriverFollower(config)
     elif config.type == "so100_follower":
         from .so100_follower import SO100Follower
 
