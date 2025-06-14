@@ -189,13 +189,11 @@ class KochScrewdriverLeader(Teleoperator):
         for motor, pos in pos_dict.items():
             if motor == "screwdriver":
                 # Map the positional deviation from the neutral (open) pose to a velocity value.
+                # @TODO(jackvial) - lift this to the config
                 delta = pos - self.config.screwdriver_open_pos
-
-                # Scale so that the maximum displacement (±50 when using the default open position
-                # of 50 in a 0-100 range) maps to ±100 in normalized velocity space. Feel free to
-                # tune the gain if your specific hardware has a different useful range.
-                # @TODO(jackvial) - flip delta so closing of the leader trigger results in clockwise rotation on the follower screwdriver
-                vel_cmd = max(min(-delta * 2.0, 100.0), -100.0)
+                GAIN     = 10.0
+                MAX_VEL  = 700
+                vel_cmd = max(min(-delta * GAIN,  MAX_VEL), -MAX_VEL)
 
                 # Small jitters around the neutral point are ignored.
                 if abs(vel_cmd) < 2.0:
