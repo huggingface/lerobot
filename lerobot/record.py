@@ -23,12 +23,13 @@ python -m lerobot.record \
     --robot.port=/dev/tty.usbmodem58760431541 \
     --robot.cameras="{laptop: {type: opencv, camera_index: 0, width: 640, height: 480}}" \
     --robot.id=black \
+    --dataset.repo_id=aliberts/record-test \
+    --dataset.num_episodes=2 \
+    --dataset.single_task="Grab the cube" \
+    # <- Teleop optional if you want to teleoperate in between episodes \
     --teleop.type=so100_leader \
     --teleop.port=/dev/tty.usbmodem58760431551 \
     --teleop.id=blue \
-    --dataset.repo_id=aliberts/record-test \
-    --dataset.num_episodes=2 \
-    --dataset.single_task="Grab the cube"
 ```
 """
 
@@ -194,8 +195,15 @@ def record_loop(
                 robot_type=robot.robot_type,
             )
             action = {key: action_values[i].item() for i, key in enumerate(robot.action_features)}
-        else:
+        elif policy is None and teleop is not None:
             action = teleop.get_action()
+        else:
+            logging.info(
+                "No policy or teleoperator provided, skipping action generation."
+                "This is likely to happen when resetting the environment without a teleop device."
+                "The robot won't be at its rest position at the start of the next episode."
+            )
+            continue
 
         # Action can eventually be clipped using `max_relative_target`,
         # so action actually sent is saved in the dataset.
