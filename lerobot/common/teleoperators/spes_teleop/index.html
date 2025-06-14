@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teleop</title>
+
+    <script src='https://cdn.jsdelivr.net/npm/webxr-polyfill@latest/build/webxr-polyfill.js'></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Arial', sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background: linear-gradient(to bottom, #1a237e, #3949ab);
+            color: white;
+            overflow: hidden;
+        }
+
+        .container {
+            text-align: center;
+            max-width: 350px;
+            padding: 20px;
+        }
+
+        .intro-content h1 {
+            font-size: 24px;
+            margin-bottom: 10px;
+            color: #ffc107;
+        }
+
+        .intro-content p {
+            font-size: 16px;
+            margin-bottom: 20px;
+            line-height: 1.5;
+        }
+
+        @media (min-width: 768px) {
+            .container {
+                max-width: 400px;
+            }
+
+            .intro-content h1 {
+                font-size: 28px;
+            }
+        }
+
+        .bottom-controls {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .button {
+            background-color: #ffca28;
+            color: #1a237e;
+            border: none;
+            padding: 10px 20px;
+            font-size: 18px;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+            user-select: none;
+        }
+
+        .button:hover {
+            background-color: #ffb300;
+        }
+
+        .message {
+            margin: 10px;
+            font-size: 12px;
+        }
+
+        .app {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            display: none;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="intro-content">
+            <h1>Teleop</h1>
+            <p>Teleop your robot arm with ease. No hardware. No firmware. Just your phone.</p>
+            <button class="button" id="start-button">Start</button>
+            <div class="message" id="log"></div>
+        </div>
+    </div>
+
+    <div class="app" id="app">
+        <div class="bottom-controls">
+            <div class="message" id="message"></div>
+            <button class="button" id="exit-button">X</button>
+            <button class="button" id="frame-button">Base</button>
+            <button class="button" id="move-button">Move</button>
+        </div>
+    </div>
+
+    <script>
+        var polyfill = new WebXRPolyfill();
+
+        const setMessage = (message) => {
+            console.log(message);
+
+            document.querySelector('#message').textContent = message;
+            document.querySelector('#log').textContent = message;
+        }
+
+        const sendPose = (pose) => {
+            fetch('/pose', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(pose)
+            }).then((response) => {
+                return response.json();
+            }).then((data) => {
+                console.log(data);
+            }).catch((err) => {
+                console.error('Failed to send pose to server:', err);
+            });
+        }
+
+        let moveButtonPressed = false;
+        let referenceFrame = 'base';
+
+        const appDom = document.querySelector('#app');
+        const moveButtonDom = document.querySelector('#move-button');
+        const exitButtonDom = document.querySelector('#exit-button');
+        const startButtonDom = document.querySelector('#start-button');
+        const frameButtonDom = document.querySelector('#frame-button');
+
+        moveButtonDom.addEventListener('touchstart', () => {
+            moveButtonPressed = true;
+        });
+        moveButtonDom.addEventListener('touchend', () => {
+            moveButtonPressed = false;
+        });
+
+        frameButtonDom.addEventListener('click', () => {
+            if (referenceFrame === 'gripper') {
+                referenceFrame = 'base';
+                frameButtonDom.textContent = 'Base';
+            } else {
+                referenceFrame = 'gripper';
+                frameButtonDom.textContent = 'Gripper';
+            }
+        });
+
+        setMessage('Click the button to start WebXR');
+        let lastSendTime = performance.now();
+        startButtonDom.addEventListener('click', () => {
+            if (navigator.xr) {
+                navigator.xr.requestSession('immersive-ar', {
+                    requiredFeatures: ['unbounded', 'local-floor'],
+                    optionalFeatures: ['dom-overlay', 'dom-overlay-for-handheld-ar'],
+                    domOverlay: { root: document.querySelector('#app') }
+                }).then((session) => {
+                    exitButtonDom.addEventListener('click', () => {
+                        session.end()
+                    });
+
+                    session.addEventListener('end', () => {
+                        appDom.style.display = 'none';
+                        setMessage('Click the button to start WebXR');
+                    });
+
+                    appDom.style.display = 'block';
+                    moveButtonPressed = false;
+
+                    const glCanvas = document.createElement('canvas');
+                    const gl = glCanvas.getContext('webgl', { xrCompatible: true });
+                    session.updateRenderState({
+                        baseLayer: new XRWebGLLayer(session, gl)
+                    });
+
+                    session.requestReferenceSpace('local-floor').then((referenceSpace) => {
+                        let xrReferenceSpace = referenceSpace;
+
+                        function onXRFrame(time, frame) {
+                            let pose = frame.getViewerPose(xrReferenceSpace);
+                            pose = pose ? pose.views[0] : null;
+
+                            if (pose) {
+                                let position = pose.transform.position;
+                                let orientation = pose.transform.orientation;
+
+                                if (time - lastSendTime > 100) {
+                                    lastSendTime = time;
+                                    if (pose.emulatedPosition) {
+                                        setMessage('Viewer pose is emulated');
+                                    }
+                                    setMessage(`
+                                        Position: x=${position.x.toFixed(3)}, y=${position.y.toFixed(3)}, z=${position.z.toFixed(3)}
+                                        Orientation: x=${orientation.x.toFixed(2)}, y=${orientation.y.toFixed(2)}, z=${orientation.z.toFixed(2)}, w=${orientation.w.toFixed(2)}
+                                        Move: ${moveButtonPressed}
+                                    `);
+                                    sendPose({
+                                        position: {
+                                            x: position.x,
+                                            y: position.y,
+                                            z: position.z
+                                        },
+                                        orientation: {
+                                            x: orientation.x,
+                                            y: orientation.y,
+                                            z: orientation.z,
+                                            w: orientation.w
+                                        },
+                                        move: moveButtonPressed,
+                                        reference_frame: referenceFrame
+                                    });
+                                }
+                            } else {
+                                setMessage('No viewer pose available');
+                            }
+                            session.requestAnimationFrame(onXRFrame);
+                        }
+                        session.requestAnimationFrame(onXRFrame);
+                    }).catch((err) => {
+                        setMessage('Failed to request reference space: ' + err);
+                    });
+                }).catch((err) => {
+                    setMessage('Failed to start WebXR session: ' + err);
+                });
+            } else {
+                setMessage('WebXR is not supported on this device');
+            }
+        });
+    </script>
+</body>
+
+</html>

@@ -19,10 +19,14 @@ Example:
 
 ```shell
 python -m lerobot.teleoperate \
-    --robot.type=xarm_end_effector \
+    --robot.type=mock_robot \
     --robot.id=black \
-    --teleop.type=spacemouse \
-    --teleop.id=blue
+    --teleop.type=spes_teleop \
+    --teleop.host=0.0.0.0 \
+    --teleop.port=4443 \
+    --teleop.use_gripper=false \
+    --teleop.id=blue \
+    --display_data=true
 ```
 """
 
@@ -44,7 +48,6 @@ from lerobot.common.robots import (  # noqa: F401
     make_robot_from_config,
     so100_follower,
     so101_follower,
-    xarm,
 )
 from lerobot.common.teleoperators import (
     Teleoperator,
@@ -54,8 +57,9 @@ from lerobot.common.teleoperators import (
 from lerobot.common.utils.robot_utils import busy_wait
 from lerobot.common.utils.utils import init_logging, move_cursor_up
 from lerobot.common.utils.visualization_utils import _init_rerun
+from tests.mocks.mock_robot import MockRobot
 
-from .common.teleoperators import gamepad, koch_leader, so100_leader, so101_leader, spacemouse  # noqa: F401
+from .common.teleoperators import gamepad, koch_leader, so100_leader, so101_leader, spes_teleop  # noqa: F401
 
 
 @dataclass
@@ -97,7 +101,6 @@ def teleop_loop(
         print("\n" + "-" * (display_len + 10))
         print(f"{'NAME':<{display_len}} | {'NORM':>7}")
         for motor, value in action.items():
-            print(motor, value)
             print(f"{motor:<{display_len}} | {value:>7.2f}")
         print(f"\ntime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
 
