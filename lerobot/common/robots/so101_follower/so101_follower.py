@@ -170,6 +170,12 @@ class SO101Follower(Robot):
 
         return obs_dict
 
+    def print_diff(cur, nxt):
+        for k,v in cur:
+            if nxt[k] - v > 0:
+                print("DIFF",k,nxt[k]-v)
+
+
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         """Command arm to move to a target joint configuration.
 
@@ -197,6 +203,7 @@ class SO101Follower(Robot):
 
         # Send goal position to the arm
         self.bus.sync_write("Goal_Position", goal_pos)
+        print_diff(present_pos, goal_pos)
         return {f"{motor}.pos": val for motor, val in goal_pos.items()}
 
     def disconnect(self):
