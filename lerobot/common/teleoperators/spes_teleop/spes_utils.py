@@ -156,12 +156,12 @@ class Teleop:
             roll, pitch, yaw = t3d.euler.mat2euler(rot_mat, axes="sxyz")
 
             pose_dict = {
-                "x": x,
-                "y": y,
-                "z": z,
-                "roll": roll,
-                "pitch": pitch,
-                "yaw": yaw,
+                "delta_x": x,
+                "delta_y": y,
+                "delta_z": z,
+                "delta_roll": roll,
+                "delta_pitch": pitch,
+                "delta_yaw": yaw,
             }
 
             self.__notify_subscribers(pose_dict, message)
@@ -212,12 +212,12 @@ class Teleop:
         roll, pitch, yaw = t3d.euler.mat2euler(self.__pose[:3, :3], axes="sxyz")
 
         pose_dict = {
-            "x": x,
-            "y": y,
-            "z": z,
-            "roll": roll,
-            "pitch": pitch,
-            "yaw": yaw,
+            "delta_x": x,
+            "delta_y": y,
+            "delta_z": z,
+            "delta_roll": roll,
+            "delta_pitch": pitch,
+            "delta_yaw": yaw,
         }
 
         # Notify the subscribers

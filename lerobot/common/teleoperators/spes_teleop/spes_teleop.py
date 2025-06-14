@@ -43,12 +43,12 @@ class SpesTeleop(Teleoperator):
         self._connected = False
         self._calibrated = True
         self._pose: dict = {
-            "x": 0.0,
-            "y": 0.0,
-            "z": 0.0,
-            "roll": 0.0,
-            "pitch": 0.0,
-            "yaw": 0.0,
+            "delta_x": 0.0,
+            "delta_y": 0.0,
+            "delta_z": 0.0,
+            "delta_roll": 0.0,
+            "delta_pitch": 0.0,
+            "delta_yaw": 0.0,
         }
 
         self._server = PhoneTeleop(host=config.host, port=int(config.port))
@@ -66,12 +66,12 @@ class SpesTeleop(Teleoperator):
                 "dtype": "float32",
                 "shape": (7,),
                 "names": {
-                    "x": 0,
-                    "y": 1,
-                    "z": 2,
-                    "roll": 3,
-                    "pitch": 4,
-                    "yaw": 5,
+                    "delta_x": 0,
+                    "delta_y": 1,
+                    "delta_z": 2,
+                    "delta_roll": 3,
+                    "delta_pitch": 4,
+                    "delta_yaw": 5,
                     "gripper": 6,
                 },
             }
@@ -80,12 +80,12 @@ class SpesTeleop(Teleoperator):
                 "dtype": "float32",
                 "shape": (6,),
                 "names": {
-                    "x": 0,
-                    "y": 1,
-                    "z": 2,
-                    "roll": 3,
-                    "pitch": 4,
-                    "yaw": 5,
+                    "delta_x": 0,
+                    "delta_y": 1,
+                    "delta_z": 2,
+                    "delta_roll": 3,
+                    "delta_pitch": 4,
+                    "delta_yaw": 5,
                 },
             }
 
