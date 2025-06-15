@@ -72,6 +72,7 @@ class SmolVLMWithExpertModel(nn.Module):
         num_vlm_layers: int = -1,
         self_attn_every_n_layers: int = -1,
         expert_width_multiplier: float = 0.5,
+        use_vjepa2: bool = True,
     ):
         super().__init__()
         if load_vlm_weights:
@@ -134,7 +135,7 @@ class SmolVLMWithExpertModel(nn.Module):
         self.expert_hidden_size = lm_expert_config.hidden_size
 
         # VJEPA2
-        if self.config.vjepa:
+        if use_vjepa2:
             self.vjepa2_processor = AutoVideoProcessor.from_pretrained("facebook/vjepa2-vitl-fpc64-256")
             self.vjepa2 = AutoModel.from_pretrained(
                 "facebook/vjepa2-vitl-fpc64-256",
@@ -153,7 +154,7 @@ class SmolVLMWithExpertModel(nn.Module):
 
     def set_requires_grad(self):
         # For now - always freeze VJEPA2
-        if self.config.vjepa:
+        if self.vjepa2:
             for params in self.vjepa2.parameters():
                 params.requires_grad = False
 
@@ -192,7 +193,7 @@ class SmolVLMWithExpertModel(nn.Module):
         super().train(mode)
 
         # For now - always freeze VJEPA2
-        if self.config.vjepa:
+        if self.vjepa2:
             self.vjepa2.eval()
 
         if self.freeze_vision_encoder:
