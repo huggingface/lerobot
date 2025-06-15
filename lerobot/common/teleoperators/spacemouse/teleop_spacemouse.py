@@ -191,6 +191,10 @@ class SpacemouseTeleop(Teleoperator):
 
             action_dict["gripper"] = self._gripper_state
 
+            home_btn = state.buttons[0]
+            if home_btn:
+                action_dict["home"] = True
+
         return action_dict
 
     def disconnect(self) -> None:

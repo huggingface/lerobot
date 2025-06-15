@@ -18,6 +18,7 @@ import logging
 import time
 import os
 import copy
+import math
 from typing import Any
 
 import numpy as np
@@ -211,6 +212,23 @@ class XarmEndEffector(Robot):
             for i in range(1, 7):
                 joint_pos = self._jacobi.get_joint_position(f"joint{i}")
                 action[f"joint{i}.pos"] = joint_pos
+
+        if "home" in action:
+            joint_targets = [
+                0,
+                math.radians(10),
+                math.radians(32),
+                0,
+                math.radians(22),
+                0,
+            ]
+            for i in range(1, 7):
+                joint_name = f"joint{i}"
+                joint_pos = self._jacobi.get_joint_position(joint_name)
+                error_dir = 1 if joint_targets[i - 1] - joint_pos > 0 else -1
+                target_pos = joint_pos + error_dir * 0.007
+                self._jacobi.set_joint_position(joint_name, target_pos)
+                action[f"joint{i}.pos"] = target_pos
 
         # Execute joint positions
         joint_positions = []

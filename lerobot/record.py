@@ -55,10 +55,25 @@ python -m lerobot.record \
     --policy.path=/home/lukic/hf/models/pick_broken_plazma/checkpoints/last/pretrained_model \
     --robot.id=black
 
+python -m lerobot.record \
+    --dataset.repo_id=lukicdarkoo/eval_pick_plazma \
+    --dataset.single_task="Pick plazma" \
+    --robot.type=xarm_end_effector \
+    --robot.cameras="{laptop: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
+    --policy.path=vladimirvincan/act_pick_plazmas \
+    --robot.id=black
+
 python ~/lerobot/lerobot/scripts/visualize_dataset.py --repo-id local --root ${HOME}/hfdata/first_test --episode-index 0
 
 python ~/lerobot/lerobot/scripts/visualize_dataset_html.py --repo-id local/dataset --root ${HOME}/hfdata/first_test
 
+python3 ~/lerobot/lerobot/scripts/train.py \
+    --dataset.repo_id=lukicdarkoo/pick_broken_plazma \
+    --policy.type=act \
+    --output_dir=/hf/models/pick_broken_plazma_act \
+    --save_checkpoint=true \
+    --save_freq=20000 \
+    --policy.dim_model=512
 ```
 """
 
