@@ -57,9 +57,9 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
         from .spacemouse.teleop_spacemouse import SpacemouseTeleop
         
         return SpacemouseTeleop(config)
-    elif config.type == "spes_teleop":
-        from .spes_teleop.spes_teleop import SpesTeleop
+    elif config.type == "telephone":
+        from .telephone.telephone import Telephone
 
-        return SpesTeleop(config)
+        return Telephone(config)
     else:
         raise ValueError(config.type)

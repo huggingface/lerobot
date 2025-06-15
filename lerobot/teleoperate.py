@@ -21,7 +21,7 @@ Example:
 python -m lerobot.teleoperate \
     --robot.type=mock_robot \
     --robot.id=black \
-    --teleop.type=spes_teleop \
+    --teleop.type=telephone \
     --teleop.host=0.0.0.0 \
     --teleop.port=4443 \
     --teleop.use_gripper=false \
@@ -31,7 +31,7 @@ python -m lerobot.teleoperate \
 python -m lerobot.teleoperate \
     --robot.type=xarm_end_effector \
     --robot.id=black \
-    --teleop.type=spes_teleop
+    --teleop.type=telephone
 
 python -m lerobot.teleoperate \
     --robot.type=xarm_end_effector \
@@ -70,7 +70,7 @@ from lerobot.common.utils.utils import init_logging, move_cursor_up
 from lerobot.common.utils.visualization_utils import _init_rerun
 from tests.mocks.mock_robot import MockRobot
 
-from .common.teleoperators import gamepad, koch_leader, so100_leader, so101_leader, spes_teleop, spacemouse  # noqa: F401
+from .common.teleoperators import gamepad, koch_leader, so100_leader, so101_leader, telephone, spacemouse  # noqa: F401
 
 
 @dataclass
