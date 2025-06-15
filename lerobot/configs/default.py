@@ -29,7 +29,7 @@ class DatasetConfig:
     # keys common between the datasets are kept. Each dataset gets and additional transform that inserts the
     # "dataset_index" into the returned item. The index mapping is made according to the order in which the
     # datasets are provided.
-    repo_id: str
+    repo_id: str | list[str]
     # Root directory where the dataset will be stored (e.g. 'dataset/path').
     root: str | None = None
     episodes: list[int] | None = None
@@ -37,6 +37,29 @@ class DatasetConfig:
     revision: str | None = None
     use_imagenet_stats: bool = True
     video_backend: str = field(default_factory=get_safe_default_codec)
+
+    def __post_init__(self):
+        """Parse repo_id string that looks like a list into an actual list."""
+        if isinstance(self.repo_id, str):
+            # Check if the string looks like a JSON list
+            if self.repo_id.startswith("[") and self.repo_id.endswith("]"):
+                try:
+                    import json
+
+                    parsed = json.loads(self.repo_id)
+                    if isinstance(parsed, list):
+                        self.repo_id = parsed
+                except json.JSONDecodeError:
+                    # If JSON parsing fails, try to parse as Python list
+                    try:
+                        import ast
+
+                        parsed = ast.literal_eval(self.repo_id)
+                        if isinstance(parsed, list):
+                            self.repo_id = parsed
+                    except (ValueError, SyntaxError):
+                        # If both fail, keep as string (backward compatibility)
+                        pass
 
 
 @dataclass
