@@ -82,8 +82,6 @@ class WebotsXarmEndEffector(Robot):
         joint_positions = [sensor.getValue() for sensor in self.position_sensors]
         for motor, position in zip(self.motors_, joint_positions):
             motor.setPosition(position)
-        print(joint_positions)
-        print("00000000000")
 
         for joint in self.motors_:
             joint.setPosition(0)
@@ -96,7 +94,7 @@ class WebotsXarmEndEffector(Robot):
 
         logger.info(f"{self} connected.")
         if self.camera_ is None:
-            print("❌ Kamera nije pronađena. Proveri tačno ime u Webotsu.")
+            print("Camera not found, disabling camera.")
         else:
             self.camera_.enable(self.timestep_)
 
@@ -173,34 +171,22 @@ class WebotsXarmEndEffector(Robot):
 
             for motor, position in zip(self.motors_, joint_positions):
                 motor.setPosition(position)
-                # print(position)
 
         # Send gripper command
         if gripper is not None:
-            self.open_gripper(gripper)
+            gripper_pos = -0.01 if gripper < 1.0 else 0.0
+            print("Gripper position:", gripper_pos)
+            self.open_gripper(gripper_pos)
         
         self.step()
 
         return super().send_action(action)
 
-    def close_gripper(self, pos=-0.01):
-
-        if self.is_gripper_open:
-            self.left_motor_.setPosition(pos)
-            self.right_motor_.setPosition(pos)
-            self.is_gripper_open = False
-
     def open_gripper(self, pos=0.0):
-
-        if not self.is_gripper_open:
-            self.left_motor_.setPosition(pos)
-            self.right_motor_.setPosition(pos)
-            self.is_gripper_open = True
+        self.left_motor_.setPosition(pos)
+        self.right_motor_.setPosition(pos)
 
     def get_observation(self) -> dict[str, Any]:
-        # Read arm position
-        start = time.perf_counter()
-
         # Read joint positions from xarm
         joint_angles = [sensor.getValue() for sensor in self.position_sensors]
 
@@ -214,7 +200,7 @@ class WebotsXarmEndEffector(Robot):
             for i, angle in enumerate(joint_angles[:6]):  # First 6 angles are joints
                 obs_dict[f"joint{i+1}.pos"] = angle
 
-        obs_dict["gripper.pos"] = 1 if self.is_gripper_open else 0
+        obs_dict["gripper.pos"] = 0 if self.is_gripper_open else 2
 
         # Capture images from cameras
         image = self.camera_.getImage()
@@ -222,17 +208,6 @@ class WebotsXarmEndEffector(Robot):
         height = self.camera_.getHeight()
         img_array = np.frombuffer(image, np.uint8).reshape((height, width, 4))
         rgb_array = cv2.cvtColor(img_array, cv2.COLOR_BGR2RGB)
-        pil_image = Image.fromarray(rgb_array, "RGB")
-
-        # timestamp = int(time.time() * 1000)  # vreme u milisekundama
-        # filename = f"/home/marija/Documents/spes_lerobot/lerobot/lerobot/common/robots/webots_xarm/images/img_{timestamp}.png"
-        # pil_image.save(filename)
-
-        # for cam_key, cam in self.cameras.items():
-        #     start = time.perf_counter()
-        #     obs_dict[cam_key] = cam.async_read()
-        #     dt_ms = (time.perf_counter() - start) * 1e3
-        #     logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
 
         return obs_dict
 
@@ -344,8 +319,6 @@ if __name__ == "__main__":
     action["delta_roll"] = 0.0
     action["delta_pitch"] = 0.0
     action["delta_yaw"] = 0.0
-
-    robot.close_gripper(-0.01)
 
     while robot.step():
         robot.send_action(action)
