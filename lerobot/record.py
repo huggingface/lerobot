@@ -29,6 +29,7 @@ python -m lerobot.record \
     --dataset.single_task="Pick plazma" \
     --teleop.type=spacemouse \
     --teleop.id=blue \
+    --resume=true \
     --display_data=true
 
 python ~/lerobot/lerobot/scripts/visualize_dataset.py --repo-id local --root ${HOME}/hfdata/first_test --episode-index 0
