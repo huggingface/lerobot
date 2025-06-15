@@ -15,15 +15,9 @@
 # limitations under the License.
 
 import logging
-import time
-
-import logging
-import os
-import sys
-import time
 from typing import Any
 
-from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.common.errors import DeviceNotConnectedError
 
 from ..teleoperator import Teleoperator
 from .config_pose_estimation import PoseEstimationConfig
@@ -46,14 +40,19 @@ class PoseEstimation(Teleoperator):
 
     @property
     def action_features(self) -> dict[str, type]:
-            return {
-                "dtype": "float32",
-                "shape": (7,),
-                "names": {"delta_x": 0, "delta_y": 1, "delta_z": 2, "delta_roll": 3, \
-                          "delta_pitch": 4, "delta_yaw": 5, 
-                          # "delta_gripper": 6
-                          }
-            }
+        return {
+            "dtype": "float32",
+            "shape": (7,),
+            "names": {
+                "delta_x": 0,
+                "delta_y": 1,
+                "delta_z": 2,
+                "delta_roll": 3,
+                "delta_pitch": 4,
+                "delta_yaw": 5,
+                # "delta_gripper": 6
+            },
+        }
 
     def get_action(self) -> dict[str, Any]:
         if not self.is_connected:
@@ -65,7 +64,7 @@ class PoseEstimation(Teleoperator):
         self.pose = ...
         if self.pose is None:
             raise DeviceNotConnectedError("Pose estimation model is not initialized.")
-        
+
         action_dict = {
             "delta_x": delta_x,
             "delta_y": delta_y,
