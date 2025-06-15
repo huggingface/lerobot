@@ -56,7 +56,6 @@ class KochScrewdriverFollower(Robot):
                 "elbow_flex": Motor(3, "xl330-m288", norm_mode_body),
                 "wrist_flex": Motor(4, "xl330-m288", norm_mode_body),
                 "wrist_roll": Motor(5, "xl330-m288", norm_mode_body),
-                
                 # Using MotorNormMode.RANGE_M100_100. Using lekiwi's wheel servos as a reference lerobot/common/robots/lekiwi/lekiwi.py
                 "screwdriver": Motor(6, "xl330-m288", MotorNormMode.RANGE_M100_100),
             },
@@ -68,7 +67,9 @@ class KochScrewdriverFollower(Robot):
     @property
     def _motors_ft(self) -> dict[str, type]:
         # Set the screwdriver to .vel. Using lekiwi's wheel servos as a reference lerobot/common/robots/lekiwi/lekiwi.py
-        return {f"{motor}.vel" if motor == "screwdriver" else f"{motor}.pos": float for motor in self.bus.motors}
+        return {
+            f"{motor}.vel" if motor == "screwdriver" else f"{motor}.pos": float for motor in self.bus.motors
+        }
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
@@ -122,7 +123,7 @@ class KochScrewdriverFollower(Robot):
             else:
                 print(f"Operating_Mode: {motor} {OperatingMode.EXTENDED_POSITION.value}")
                 self.bus.write("Operating_Mode", motor, OperatingMode.EXTENDED_POSITION.value)
-            
+
         # self.bus.write("Operating_Mode", "screwdriver", OperatingMode.VELOCITY.value)
 
         input(f"Move {self} to the middle of its range of motion and press ENTER....")
@@ -171,10 +172,9 @@ class KochScrewdriverFollower(Robot):
             # our finger to make it move, and it will move back to its original target position when we
             # release the force.
             # self.bus.write("Operating_Mode", "gripper", OperatingMode.CURRENT_POSITION.value)
-            
+
             # Screwdriver needs to be in velocity mode. Using lekiwi's base_motors wheel servos config as a reference lerobot/common/robots/lekiwi/lekiwi.py
             self.bus.write("Operating_Mode", "screwdriver", OperatingMode.VELOCITY.value)
-            
 
             # Set better PID values to close the gap between recorded states and actions
             # TODO(rcadene): Implement an automatic procedure to set optimal PID values for each motor
@@ -220,7 +220,9 @@ class KochScrewdriverFollower(Robot):
         # Read screwdriver present velocity (raw) and map to normalized value.
         # ConnectionError: Failed to sync read 'Present_Velocity' on ids=[6] after 1 tries. [TxRxResult] There is no status packet!
         # FATAL: exception not rethrown
-        screwdriver_vel_raw = self.bus.sync_read("Present_Velocity", ["screwdriver"], num_retry=3)["screwdriver"]
+        screwdriver_vel_raw = self.bus.sync_read("Present_Velocity", ["screwdriver"], num_retry=3)[
+            "screwdriver"
+        ]
         obs_dict["screwdriver.vel"] = screwdriver_vel_raw
 
         dt_ms = (time.perf_counter() - start) * 1e3
@@ -264,12 +266,8 @@ class KochScrewdriverFollower(Robot):
         # return {f"{motor}.pos": val for motor, val in goal_pos.items()}
 
         # Split positional and velocity commands
-        goal_pos = {
-            key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")
-        }
-        goal_vel = {
-            key.removesuffix(".vel"): int(val) for key, val in action.items() if key.endswith(".vel")
-        }
+        goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
+        goal_vel = {key.removesuffix(".vel"): int(val) for key, val in action.items() if key.endswith(".vel")}
 
         # Cap goal position when too far away from present position.
         # /!\ Slower fps expected due to reading from the follower.
@@ -277,7 +275,9 @@ class KochScrewdriverFollower(Robot):
             # TODO(jackvial) needs review
             # Old implementation for reference:
             # present_pos = self.bus.sync_read("Present_Position")
-            present_pos = self.bus.sync_read("Present_Position", [m for m in self.bus.motors if m != "screwdriver"])
+            present_pos = self.bus.sync_read(
+                "Present_Position", [m for m in self.bus.motors if m != "screwdriver"]
+            )
             goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in goal_pos.items()}
             goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
 

@@ -110,7 +110,6 @@ X_SERIES_ENCODINGS_TABLE = {
     "Present_PWM": X_SERIES_CONTROL_TABLE["Present_PWM"][1],
     "Present_Current": X_SERIES_CONTROL_TABLE["Present_Current"][1],
     "Present_Velocity": X_SERIES_CONTROL_TABLE["Present_Velocity"][1],
-    
     # @TODO(jackvial) Confirm this is correct. Add as bug fix for ValueError: Value -4294965236 out of range for 4-byte two's complement: [-2147483648, 2147483647] error when calibrating koch leader.
     "Present_Position": X_SERIES_CONTROL_TABLE["Present_Position"][1],
     "Goal_Position": X_SERIES_CONTROL_TABLE["Goal_Position"][1],

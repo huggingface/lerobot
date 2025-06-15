@@ -15,12 +15,10 @@
 # limitations under the License.
 
 import logging
-import time
 
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.common.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.common.motors.dynamixel import (
-    DriveMode,
     DynamixelMotorsBus,
     OperatingMode,
 )
@@ -52,7 +50,6 @@ class KochScrewdriverLeader(Teleoperator):
                 "elbow_flex": Motor(3, "xl330-m077", MotorNormMode.RANGE_M100_100),
                 "wrist_flex": Motor(4, "xl330-m077", MotorNormMode.RANGE_M100_100),
                 "wrist_roll": Motor(5, "xl330-m077", MotorNormMode.RANGE_M100_100),
-                
                 # @TODO(jackvial) - might need to configure this to map correctly the follower wheel mode screwdriver servo
                 "screwdriver": Motor(6, "xl330-m077", MotorNormMode.RANGE_0_100),
             },
@@ -71,8 +68,7 @@ class KochScrewdriverLeader(Teleoperator):
         # Old implementation for reference:
         # return {f"{motor}.pos": float for motor in self.bus.motors}
         return {
-            (f"{motor}.vel" if motor == "screwdriver" else f"{motor}.pos"): float
-            for motor in self.bus.motors
+            (f"{motor}.vel" if motor == "screwdriver" else f"{motor}.pos"): float for motor in self.bus.motors
         }
 
     @property
@@ -104,11 +100,10 @@ class KochScrewdriverLeader(Teleoperator):
         for motor in self.bus.motors:
             self.bus.write("Operating_Mode", motor, OperatingMode.EXTENDED_POSITION.value)
 
-
         # TODO(jackvial) - inverting the elbow seems like it should not be hardcoded here and should instead be a config option
         # self.bus.write("Drive_Mode", "elbow_flex", DriveMode.NON_INVERTED.value)
         # drive_modes = {motor: 1 if motor == "elbow_flex" else 0 for motor in self.bus.motors}
-        drive_modes = {motor: 0 for motor in self.bus.motors}
+        drive_modes = dict.fromkeys(self.bus.motors, 0)
 
         input(f"Move {self} to the middle of its range of motion and press ENTER....")
         homing_offsets = self.bus.set_half_turn_homings()
@@ -191,9 +186,9 @@ class KochScrewdriverLeader(Teleoperator):
                 # Map the positional deviation from the neutral (open) pose to a velocity value.
                 # @TODO(jackvial) - lift this to the config
                 delta = pos - self.config.screwdriver_open_pos
-                GAIN     = 10.0
-                MAX_VEL  = 700
-                vel_cmd = max(min(-delta * GAIN,  MAX_VEL), -MAX_VEL)
+                GAIN = 10.0
+                MAX_VEL = 700
+                vel_cmd = max(min(-delta * GAIN, MAX_VEL), -MAX_VEL)
 
                 # Small jitters around the neutral point are ignored.
                 if abs(vel_cmd) < 2.0:
