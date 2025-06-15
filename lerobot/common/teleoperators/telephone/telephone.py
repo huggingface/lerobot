@@ -38,6 +38,8 @@ class Telephone(Teleoperator):
 
     def _on_teleop_callback(self, pose, message):
         self._last_pose = pose
+        if message["gripper"] is not None:
+            self._gripper_state = 2.0 if message["gripper"] == "open" else 0.0
 
     @property
     def action_features(self) -> dict[str, type]:
