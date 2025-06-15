@@ -138,12 +138,12 @@ python -m lerobot.record \
     --robot.port=/dev/servo_5837053138 \
     --robot.cameras="{ screwdriver: {type: opencv, index_or_path: /dev/video0, width: 800, height: 600, fps: 30}, side: {type: opencv, index_or_path: /dev/video2, width: 800, height: 600, fps: 30}, top: {type: opencv, index_or_path: /dev/video6, width: 800, height: 600, fps: 30}}" \
     --robot.id=koch_screwdriver_follower_testing \
-    --dataset.repo_id=jackvial/koch_screwdriver_follower_test_${TEST_NUMBER} \
+    --dataset.repo_id=jackvial/koch_screwdriver_thread_checker_${TEST_NUMBER} \
     --dataset.num_episodes=2 \
     --dataset.episode_time_s=30 \
-    --dataset.reset_time_s=10 \
+    --dataset.reset_time_s=5 \
     --dataset.push_to_hub=true \
-    --dataset.single_task="Screw the silver screw into the M4x0.7 thread on the red thread checker board" \
+    --dataset.single_task="Move towards the M4x0.7 thread near the top of the red metal thread checker board. Then screw the silver screw into the M4x0.7 thread, then unscrew it again but not all of the way. The screw should still be partially in the thread. Then move back to rest position on the wooden block, with the screwdriver bit facing towards the shoulder servo." \
     --teleop.type=koch_screwdriver_leader \
     --teleop.port=/dev/servo_585A007782 \
     --teleop.id=koch_screwdriver_leader_testing \
