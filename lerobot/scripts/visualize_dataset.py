@@ -59,9 +59,6 @@ distant$ python lerobot/scripts/visualize_dataset.py \
 local$ rerun ws://localhost:9087
 ```
 
-Example usage:
-python lerobot/scripts/visualize_dataset.py     --repo-id lerobot/svla_so101_pickplace     --episode-index 10
-
 """
 
 import argparse
@@ -77,10 +74,7 @@ import torch
 import torch.utils.data
 import tqdm
 
-from lerobot.common.datasets.lerobot_dataset import (
-    LeRobotDataset,
-    LeRobotDatasetMetadata,
-)
+from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 
 
 class EpisodeSampler(torch.utils.data.Sampler):
@@ -100,42 +94,9 @@ def to_hwc_uint8_numpy(chw_float32_torch: torch.Tensor) -> np.ndarray:
     assert chw_float32_torch.dtype == torch.float32
     assert chw_float32_torch.ndim == 3
     c, h, w = chw_float32_torch.shape
-    assert (
-        c < h and c < w
-    ), f"expect channel first images, but instead {chw_float32_torch.shape}"
-    hwc_uint8_numpy = (
-        (chw_float32_torch * 255).type(torch.uint8).permute(1, 2, 0).numpy()
-    )
+    assert c < h and c < w, f"expect channel first images, but instead {chw_float32_torch.shape}"
+    hwc_uint8_numpy = (chw_float32_torch * 255).type(torch.uint8).permute(1, 2, 0).numpy()
     return hwc_uint8_numpy
-
-
-def print_failure_indices(dataset: LeRobotDataset, episode_index: int) -> None:
-    """Print the frame indices where failures occurred in the specified episode.
-
-    Args:
-        dataset: The LeRobot dataset to analyze
-        episode_index: The episode index to check for failures
-    """
-    from_idx = dataset.episode_data_index["from"][episode_index].item()
-    to_idx = dataset.episode_data_index["to"][episode_index].item()
-    print(dataset)
-    print(dataset.episodes_stats[episode_index])
-
-    failure_indices = []
-    for idx in range(from_idx, to_idx):
-        frame = dataset[idx]
-        # print(frame)
-        if "next.done" in frame and not frame["next.done"].item():
-            failure_indices.append(idx)
-
-    if failure_indices:
-        print(f"\nFailure frames in episode {episode_index}:")
-        print(f"Frame indices: {failure_indices}")
-        print(f"Total failures: {len(failure_indices)}\n")
-        return True
-    else:
-        print(f"\nNo failures found in episode {episode_index}\n")
-        return False
 
 
 def visualize_dataset(
@@ -150,9 +111,9 @@ def visualize_dataset(
     output_dir: Path | None = None,
 ) -> Path | None:
     if save:
-        assert (
-            output_dir is not None
-        ), "Set an output directory where to write .rrd files with `--output-dir path/to/directory`."
+        assert output_dir is not None, (
+            "Set an output directory where to write .rrd files with `--output-dir path/to/directory`."
+        )
 
     repo_id = dataset.repo_id
 
@@ -322,12 +283,8 @@ def main():
     tolerance_s = kwargs.pop("tolerance_s")
 
     logging.info("Loading dataset")
-    metadata = LeRobotDatasetMetadata(repo_id, root=root)
-
     dataset = LeRobotDataset(repo_id, root=root, tolerance_s=tolerance_s)
 
-    # for i in range(args.episode_index, dataset.num_episodes):
-    #    print_failure_indices(dataset, i)
     visualize_dataset(dataset, **vars(args))
 
 

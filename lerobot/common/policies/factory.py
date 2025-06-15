@@ -27,6 +27,8 @@ from lerobot.common.policies.diffusion.configuration_diffusion import DiffusionC
 from lerobot.common.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.common.policies.pi0fast.configuration_pi0fast import PI0FASTConfig
 from lerobot.common.policies.pretrained import PreTrainedPolicy
+from lerobot.common.policies.sac.configuration_sac import SACConfig
+from lerobot.common.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
 from lerobot.common.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.common.policies.tdmpc.configuration_tdmpc import TDMPCConfig
 from lerobot.common.policies.vqbet.configuration_vqbet import VQBeTConfig
@@ -45,7 +47,6 @@ def get_policy_class(name: str) -> PreTrainedPolicy:
 
         return DiffusionPolicy
     elif name == "act":
-        print("factoryg making ACTPolicy")
         from lerobot.common.policies.act.modeling_act import ACTPolicy
 
         return ACTPolicy
@@ -61,6 +62,14 @@ def get_policy_class(name: str) -> PreTrainedPolicy:
         from lerobot.common.policies.pi0fast.modeling_pi0fast import PI0FASTPolicy
 
         return PI0FASTPolicy
+    elif name == "sac":
+        from lerobot.common.policies.sac.modeling_sac import SACPolicy
+
+        return SACPolicy
+    elif name == "reward_classifier":
+        from lerobot.common.policies.sac.reward_model.modeling_classifier import Classifier
+
+        return Classifier
     elif name == "smolvla":
         from lerobot.common.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 
@@ -82,8 +91,12 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return PI0Config(**kwargs)
     elif policy_type == "pi0fast":
         return PI0FASTConfig(**kwargs)
+    elif policy_type == "sac":
+        return SACConfig(**kwargs)
     elif policy_type == "smolvla":
         return SmolVLAConfig(**kwargs)
+    elif policy_type == "reward_classifier":
+        return RewardClassifierConfig(**kwargs)
     else:
         raise ValueError(f"Policy type '{policy_type}' is not available.")
 
@@ -113,11 +126,8 @@ def make_policy(
     Returns:
         PreTrainedPolicy: _description_
     """
-    print("DEBUG: Inside make_policy function")
     if bool(ds_meta) == bool(env_cfg):
-        raise ValueError(
-            "Either one of a dataset metadata or a sim env must be provided."
-        )
+        raise ValueError("Either one of a dataset metadata or a sim env must be provided.")
 
     # NOTE: Currently, if you try to run vqbet with mps backend, you'll get this error.
     # TODO(aliberts, rcadene): Implement a check_backend_compatibility in policies?
@@ -133,8 +143,6 @@ def make_policy(
         )
 
     policy_cls = get_policy_class(cfg.type)
-    print("policy_cls", policy_cls)
-    logging.info("policy_cls", policy_cls)
 
     kwargs = {}
     if ds_meta is not None:
@@ -149,12 +157,8 @@ def make_policy(
             )
         features = env_to_policy_features(env_cfg)
 
-    cfg.output_features = {
-        key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION
-    }
-    cfg.input_features = {
-        key: ft for key, ft in features.items() if key not in cfg.output_features
-    }
+    cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
+    cfg.input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
     kwargs["config"] = cfg
 
     if cfg.pretrained_path:
