@@ -133,6 +133,5 @@ def teleoperate(cfg: TeleoperateConfig):
         teleop.disconnect()
         robot.disconnect()
 
-
 if __name__ == "__main__":
     teleoperate()

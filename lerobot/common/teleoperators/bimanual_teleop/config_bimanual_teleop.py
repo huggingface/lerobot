@@ -32,12 +32,3 @@ class BimanualTeleopConfig(TeleoperatorConfig):
     right_id: str | None = None
     
     use_degrees: bool = False
-
-    def __post_init__(self):
-        super().__post_init__()
-        
-        # Set default arm IDs if not provided
-        if self.left_id is None:
-            self.left_id = f"{self.id}_left" if self.id else "left_leader"
-        if self.right_id is None:
-            self.right_id = f"{self.id}_right" if self.id else "right_leader" 

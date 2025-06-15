@@ -46,18 +46,3 @@ class BimanualParcelotConfig(RobotConfig):
 
     # Set to `True` for backward compatibility with previous policies/dataset
     use_degrees: bool = False
-
-    def __post_init__(self):
-        super().__post_init__()
-        
-        # Set default arm IDs if not provided
-        if self.left_arm_id is None:
-            self.left_arm_id = f"{self.id}_left" if self.id else "left_arm"
-        if self.right_arm_id is None:
-            self.right_arm_id = f"{self.id}_right" if self.id else "right_arm"
-            
-        # Set per-arm max relative targets from global if not specified
-        if self.left_arm_max_relative_target is None:
-            self.left_arm_max_relative_target = self.max_relative_target
-        if self.right_arm_max_relative_target is None:
-            self.right_arm_max_relative_target = self.max_relative_target 
