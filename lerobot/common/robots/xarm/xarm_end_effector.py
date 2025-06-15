@@ -208,12 +208,16 @@ class XarmEndEffector(Robot):
             pose = action["pose"]
             self._jacobi.servo_to_pose(pose)
             # Get joint positions from Jacobi
-            joint_positions = []
-            for i in range(1, 7):  # joints 1-6
+            for i in range(1, 7):
                 joint_pos = self._jacobi.get_joint_position(f"joint{i}")
-                joint_positions.append(joint_pos)
                 action[f"joint{i}.pos"] = joint_pos
-            self._arm.set_servo_angle_j(joint_positions)
+
+        # Execute joint positions
+        joint_positions = []
+        for i in range(1, 7):
+            joint_pos = action[f"joint{i}.pos"]
+            joint_positions.append(joint_pos)
+        self._arm.set_servo_angle_j(joint_positions)
 
         # Send gripper command
         if "gripper" in action:

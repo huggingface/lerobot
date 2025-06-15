@@ -31,7 +31,7 @@ python -m lerobot.teleoperate \
 python -m lerobot.teleoperate \
     --robot.type=xarm_end_effector \
     --robot.id=black \
-    --teleop.type=telephone
+    --teleop.type=spacemouse
 
 python -m lerobot.teleoperate \
     --robot.type=webots_xarm_end_effector \
