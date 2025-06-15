@@ -85,7 +85,12 @@ from lerobot.common.utils.visualization_utils import _init_rerun
 from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
 
-from .common.teleoperators import koch_leader, koch_screwdriver_leader, so100_leader, so101_leader  # noqa: F401
+from .common.teleoperators import (  # noqa: F401
+    koch_leader,
+    koch_screwdriver_leader,
+    so100_leader,
+    so101_leader,
+)
 
 
 @dataclass
