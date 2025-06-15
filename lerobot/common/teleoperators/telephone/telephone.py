@@ -19,6 +19,7 @@ from lerobot.common.teleoperators.teleoperator import Teleoperator
 from .configuration_telephone import TelephoneConfig
 from teleop import Teleop
 import numpy as np
+import threading
 
 
 class Telephone(Teleoperator):
@@ -35,19 +36,18 @@ class Telephone(Teleoperator):
         self._server.subscribe(self._on_teleop_callback)
         self._gripper_state = 0.0
         self._last_pose = np.eye(4)
+        self._mutex = threading.Lock()
 
     def _on_teleop_callback(self, pose, message):
-        self._last_pose = pose
-        if message["gripper"] is not None:
-            self._gripper_state = 2.0 if message["gripper"] == "open" else 0.0
+        with self._mutex:
+            self._last_pose = pose
+            if message["gripper"] is not None:
+                self._gripper_state = 2.0 if message["gripper"] == "open" else 0.0
 
     @property
     def action_features(self) -> dict[str, type]:
         if self.config.use_gripper:
-            return {
-                "pose_from_initial": np.ndarray,
-                "gripper": float
-            }
+            return {"pose_from_initial": np.ndarray, "gripper": float}
         else:
             return {
                 "pose_from_initial": np.ndarray,
@@ -63,7 +63,6 @@ class Telephone(Teleoperator):
 
     def connect(self, calibrate: bool = True) -> None:
         self._connected = True
-        import threading
         threading.Thread(target=self._server.run, daemon=True).start()
 
     @property
@@ -77,7 +76,10 @@ class Telephone(Teleoperator):
         pass
 
     def get_action(self) -> dict[str, Any]:
-        action = {"pose_from_initial": self._last_pose}
+        with self._mutex:
+            last_pose = self._last_pose.copy()
+
+        action = {"pose_from_initial": last_pose}
         if self.config.use_gripper:
             action["gripper"] = self._gripper_state
         return action
