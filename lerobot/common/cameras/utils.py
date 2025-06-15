@@ -14,7 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import platform
 from pathlib import Path
 from typing import TypeAlias
 
@@ -59,7 +58,4 @@ def get_cv2_rotation(rotation: Cv2Rotation) -> int | None:
 def get_cv2_backend() -> int:
     import cv2
 
-    if platform.system() == "Windows":
-        return cv2.CAP_AVFOUNDATION
-    else:
-        return cv2.CAP_ANY
+    return cv2.CAP_ANY
