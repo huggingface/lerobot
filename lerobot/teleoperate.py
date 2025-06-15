@@ -59,9 +59,9 @@ from lerobot.common.utils.visualization_utils import _init_rerun
 
 from .common.teleoperators import gamepad, koch_leader, so100_leader, so101_leader  # noqa: F401
 
-# 0 -> sinal vermelho
-# 1 -> sinal amarelo
-# 2 -> sinal verde
+# 0 -> red
+# 1 -> yellow
+# 2 -> green
 state = {}
 stall = {}
 pos = {}
@@ -152,7 +152,6 @@ def teleop_loop(
 
         motors = list(robot.bus.motors.keys())
 
-        # pegar diff com o action e o get action
         robot.send_action(action)
 
         if time.perf_counter() - start_time > STARTUP_TIME:
@@ -167,16 +166,16 @@ def teleop_loop(
 
         loop_s = time.perf_counter() - loop_start
 
-        #print("\n" + "-LAELE-" * (display_len//3 + 1))
-        #print(f"{'NAME':<{display_len}} | {'NORM':>7}")
-        #for motor, value in action.items():
-        #    print(f"{motor:<{display_len}} | {value:>7.2f}")
-        #print(f"\ntime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
+        print("\n" + "-" * (display_len + 10))
+        print(f"{'NAME':<{display_len}} | {'NORM':>7}")
+        for motor, value in action.items():
+            print(f"{motor:<{display_len}} | {value:>7.2f}")
+        print(f"\ntime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
 
         if duration is not None and time.perf_counter() - start >= duration:
             return
 
-        #move_cursor_up(len(action) + 5)
+        move_cursor_up(len(action) + 5)
 
 @draccus.wrap()
 def teleoperate(cfg: TeleoperateConfig):

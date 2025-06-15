@@ -20,38 +20,6 @@
 [![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-v2.1%20adopted-ff69b4.svg)](https://github.com/huggingface/lerobot/blob/main/CODE_OF_CONDUCT.md)
 [![Discord](https://dcbadge.vercel.app/api/server/C5P34WJ68S?style=flat)](https://discord.gg/s3KuuzsPFb)
 
-<div align="center">
-
-🛠️ L.A.E.L.E's Force Feedback
-
-Our "force feedback" algorithm is an elegant hack (yes, it’s possible). It works based on current, position, and a traffic light system with three states per motor: green, yellow, and red. The idea is simple: when the current spikes, it means we hit something. And when we hit something, we lock the operator’s arm until the robot recovers.
-
-How it works
-
-Green State – All good! The follower is not struggling, so the operator can move the motor freely.
-
-Yellow State – Danger! The follower is stalled or under high current. We freeze the operator at the current position and monitor.
-
-Red State – Game over! The current stayed too high for too long. The leader is FORCED to imitate the follower’s position until things calm down. The operator loses control until it stabilizes.
-
-Stall Detection:
-If the motor’s current exceeds the threshold AND the position doesn’t change (it's stuck!), we mark the motor as stalled. If the position changes later, we consider it unstuck and back to normal.
-
-State Transitions:
-
-Green ➝ Yellow: if the motor is stalled.
-
-Yellow ➝ Red: current stays too high.
-
-Yellow ➝ Green: if the motor starts moving normally again.
-
-Red ➝ Yellow: once the current drops back to safe levels.
-
-That’s it. Simple, effective, and saves servos and fingers. 
-
-<div align="center">
-
-
 <h2 align="center">
     <p><a href="https://huggingface.co/docs/lerobot/so101">
         Build Your Own SO-101 Robot!</a></p>
