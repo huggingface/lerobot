@@ -231,9 +231,18 @@ def record_loop(
                 task=single_task,
                 robot_type=robot1.robot_type,
             )
-            action1 = {key: action_values[i].item() for i, key in enumerate(robot1.action_features)}
-            action2 = {key: action_values[i].item() for i, key in enumerate(robot2.action_features)}
-            action = {**action1, **action2}
+            
+            action1 = {}
+            action2 = {}
+            
+            for key, value in action_values.items():
+                if key.startswith("robot_one_"):
+                    action1[key] = value
+                elif key.startswith("robot_two_"):
+                    action2[key] = value
+                else:
+                    raise ValueError(f"Unknown action key: {key}")
+ 
         else:
             action1 = teleop1.get_action()
             action2 = teleop2.get_action()

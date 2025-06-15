@@ -95,6 +95,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             image_transforms=image_transforms,
             revision=cfg.dataset.revision,
             video_backend=cfg.dataset.video_backend,
+            force_cache_sync=input("Force dataset cache sync to huggingface? (y/n): ").strip().lower() == "y",
         )
     else:
         raise NotImplementedError("The MultiLeRobotDataset isn't supported for now.")
