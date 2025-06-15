@@ -66,6 +66,8 @@ state = {}
 stall = {}
 pos = {}
 
+start_time = 0
+
 @dataclass
 class TeleoperateConfig:
     teleop: TeleoperatorConfig
@@ -146,44 +148,35 @@ def teleop_loop(
                     rr.log(f"action_{act}", rr.Scalar(val))
 
         THRESHOLD_CURRENT = {'shoulder_pan': 50, 'shoulder_lift': 100, 'elbow_flex': 75, 'wrist_flex': 50, 'wrist_roll': 50, 'gripper': 20}
-        # THRESHOLD_CURRENT = 35
+        STARTUP_TIME = 5
 
         motors = list(robot.bus.motors.keys())
 
         # pegar diff com o action e o get action
         robot.send_action(action)
 
-        check_stall(robot,teleop,motors,THRESHOLD_CURRENT)
-        check_state(robot,teleop,motors,THRESHOLD_CURRENT)
+        if time.perf_counter() - start_time > STARTUP_TIME:
+            check_stall(robot,teleop,motors,THRESHOLD_CURRENT)
+            check_state(robot,teleop,motors,THRESHOLD_CURRENT)
 
-        print("stall",stall)
-        print("state",state)
-
-        mx_teleop = 0
-        for motor in motors:
-            mx_teleop = max(mx_teleop,teleop.bus.get_current(motor))
-            print("motor, current", motor, mx_teleop)
-            if(mx_teleop > 150):
-                pass
-                #exit(0)
+        #print("stall",stall)
+        #print("state",state)
 
         dt_s = time.perf_counter() - loop_start
         busy_wait(1 / fps - dt_s)
 
         loop_s = time.perf_counter() - loop_start
 
-        # print("\n" + "-" * (display_len + 10))
-        # print(f"{'NAME':<{display_len}} | {'NORM':>7}")
-        # for motor, value in action.items():
-        #     print(f"{motor:<{display_len}} | {value:>7.2f}")
-        # print(f"\ntime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
-
-        #print(action)
+        print("\n" + "-LAELE-" * (display_len//3 + 1))
+        print(f"{'NAME':<{display_len}} | {'NORM':>7}")
+        for motor, value in action.items():
+            print(f"{motor:<{display_len}} | {value:>7.2f}")
+        print(f"\ntime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
 
         if duration is not None and time.perf_counter() - start >= duration:
             return
 
-        # move_cursor_up(len(action) + 5)
+        move_cursor_up(len(action) + 5)
 
 @draccus.wrap()
 def teleoperate(cfg: TeleoperateConfig):
@@ -202,6 +195,8 @@ def teleoperate(cfg: TeleoperateConfig):
         green_light(motor)
         pos[motor] = robot.get_action()[motor+".pos"]
         stall[motor] = False
+    
+    start_time = time.perf_counter()
 
     try:
         teleop_loop(teleop, robot, cfg.fps, display_data=cfg.display_data, duration=cfg.teleop_time_s)
