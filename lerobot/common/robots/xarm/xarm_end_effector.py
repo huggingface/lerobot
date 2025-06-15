@@ -225,8 +225,9 @@ class XarmEndEffector(Robot):
             for i in range(1, 7):
                 joint_name = f"joint{i}"
                 joint_pos = self._jacobi.get_joint_position(joint_name)
-                error_dir = 1 if joint_targets[i - 1] - joint_pos > 0 else -1
-                target_pos = joint_pos + error_dir * 0.007
+                error = joint_targets[i - 1] - joint_pos
+                error = np.clip(error, -0.1, 0.1)
+                target_pos = joint_pos + error * 0.07
                 self._jacobi.set_joint_position(joint_name, target_pos)
                 action[f"joint{i}.pos"] = target_pos
 

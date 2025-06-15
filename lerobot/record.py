@@ -70,7 +70,7 @@ python ~/lerobot/lerobot/scripts/visualize_dataset_html.py --repo-id local/datas
 python3 ~/lerobot/lerobot/scripts/train.py \
     --dataset.repo_id=lukicdarkoo/pick_broken_plazma \
     --policy.type=act \
-    --output_dir=/hf/models/pick_broken_plazma_act \
+    --output_dir=$HOME/hf/models/pick_broken_plazma_act \
     --save_checkpoint=true \
     --save_freq=20000 \
     --policy.dim_model=512
