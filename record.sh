@@ -118,6 +118,13 @@
 
 # accept a test number as an argument
 TEST_NUMBER=$1
+EPISODES=$2
+
+# Check the arguments
+if [ -z "$TEST_NUMBER" ] || [ -z "$EPISODES" ]; then
+    echo "Usage: $0 <test_number> <episodes>"
+    exit 1
+fi
 
 # python -m lerobot.record \
 #     --robot.type=koch_screwdriver_follower \
@@ -138,8 +145,8 @@ python -m lerobot.record \
     --robot.port=/dev/servo_5837053138 \
     --robot.cameras="{ screwdriver: {type: opencv, index_or_path: /dev/video0, width: 800, height: 600, fps: 30}, side: {type: opencv, index_or_path: /dev/video2, width: 800, height: 600, fps: 30}, top: {type: opencv, index_or_path: /dev/video6, width: 800, height: 600, fps: 30}}" \
     --robot.id=koch_screwdriver_follower_testing \
-    --dataset.repo_id=jackvial/koch_screwdriver_thread_checker_${TEST_NUMBER} \
-    --dataset.num_episodes=2 \
+    --dataset.repo_id=jackvial/koch_screwdriver_thread_checker_${TEST_NUMBER}_e${EPISODES} \
+    --dataset.num_episodes=${EPISODES} \
     --dataset.episode_time_s=30 \
     --dataset.reset_time_s=5 \
     --dataset.push_to_hub=true \
