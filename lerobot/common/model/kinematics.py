@@ -161,6 +161,60 @@ class RobotKinematics:
     ) -> NDArray[np.float32]:
         """Create a 4x4 translation matrix."""
         return np.array([[1, 0, 0, x], [0, 1, 0, y], [0, 0, 1, z], [0, 0, 0, 1]])
+    
+    def create_rototranslation_matrix(
+        self, rotation: NDArray[np.float32],
+        translation: NDArray[np.float32],
+        rotation_format: str = "euler"
+        ) -> NDArray[np.float32]:
+            """
+            Creates a 4x4 rototranslation matrix from rotation and translation.
+
+            Args:
+                rotation: Rotation specified as:
+                    - If rotation_format="euler": [roll, pitch, yaw] in radians
+                    - If rotation_format="matrix": 3x3 rotation matrix
+                    - If rotation_format="quaternion": [x, y, z, w] quaternion
+                translation: [x, y, z] translation vector
+                rotation_format: Format of rotation input ("euler", "matrix", "quaternion")
+
+            Returns:
+                np.ndarray: 4x4 homogeneous transformation matrix
+            
+            Example:
+                ```python
+                # Using euler angles (in radians)
+                R = create_rototranslation_matrix(
+                    rotation=[0, np.pi/2, 0],  # 90° pitch
+                    translation=[1, 0, 2],      # 1m x, 2m z
+                    rotation_format="euler"
+                )
+                ```
+            """
+            # Convert inputs to numpy arrays
+            translation = np.array(translation, dtype=np.float32)
+            
+            # Initialize 4x4 identity matrix
+            matrix = np.eye(4, dtype=np.float32)
+            
+            # Handle rotation based on format
+            if rotation_format == "euler":
+                rotation = np.array(rotation, dtype=np.float32)
+                rot_matrix = Rotation.from_euler('xyz', rotation).as_matrix()
+            elif rotation_format == "matrix":
+                pass
+            elif rotation_format == "quaternion":
+                pass
+            else:
+                raise ValueError("Invalid rotation_format. Use 'euler', 'matrix', or 'quaternion'")
+            
+            # Fill rotation part (top-left 3x3)
+            matrix[:3, :3] = rot_matrix
+            
+            # Fill translation part (top-right 3x1)
+            matrix[:3, 3] = translation
+            
+            return matrix
 
     def _setup_transforms(self):
         """Setup all transformation matrices and screw axes for the robot."""

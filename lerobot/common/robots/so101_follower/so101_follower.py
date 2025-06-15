@@ -21,6 +21,7 @@ from typing import Any
 
 from lerobot.common.cameras.utils import make_cameras_from_configs
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.common.model.kinematics import RobotKinematics
 from lerobot.common.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.common.motors.feetech import (
     FeetechMotorsBus,
@@ -58,6 +59,7 @@ class SO101Follower(Robot):
             },
             calibration=self.calibration,
         )
+        self.kinematics = RobotKinematics(robot_type='so_new_calibration')
         self.cameras = make_cameras_from_configs(config.cameras)
 
     @property
@@ -187,6 +189,21 @@ class SO101Follower(Robot):
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
         goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
+        goal_pose = {key.removesuffix(".pose"): val for key, val in action.items() if key.endswith(".pose")}
+
+        if goal_pose:
+            present_pos = self.bus.sync_read("Present_Position")
+            target_pose = self.kinematics.create_rototranslation_matrix(
+                [goal_pose["x"], goal_pose["y"], goal_pose["z"]], 
+                [goal_pose["roll"], goal_pose["pitch"], goal_pose["yaw"]])
+            goal_pos = self.kinematics.ik(
+                    current_joint_pos=present_pos,
+                    desired_ee_pose=target_pose,
+                    position_only=False,
+                    frame="gripper_tip",
+                    max_iterations=5,
+                    learning_rate=1.0
+                    )
 
         # Cap goal position when too far away from present position.
         # /!\ Slower fps expected due to reading from the follower.
