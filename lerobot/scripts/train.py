@@ -773,8 +773,90 @@ def train(cfg: TrainPipelineConfig):
     torch.backends.cuda.matmul.allow_tf32 = True
 
     logging.info("Creating dataset")
-    cfg.dataset.repo_id = ["danielkorth/whiteboard-marker","danielkorth/bike-light"]
+    # Only change repo_id if it's set to "all/datasets"
+    if cfg.dataset.repo_id == "all/datasets":
+        cfg.dataset.repo_id = [
+            "danielkorth/whiteboard-marker", 
+            # "HovorunB/pick-data-merged", 
+            "danielkorth/usbc-cable-2", 
+            "danielkorth/bike-light", 
+            "danielkorth/usb-stick", 
+            "danielkorth/bike-light4am-part2",
+            "danielkorth/bike-light4am",
+            "danielkorth/usb-C-cable",
+            "danielkorth/green-marker-part2",
+            "danielkorth/supadummytest2",
+            "danielkorth/green-marker4am",
+            "danielkorth/green-marker2",
+            "danielkorth/green-marker",
+            "danielkorth/green-pe",
+            "danielkorth/green-pen4"
+            # "vectorcrumb/trash_pickup_v1", 
+            # "islexu/eval_record_test2_orange"
+        ]
+    else:
+        cfg.dataset.repo_id = [
+            "danielkorth/whiteboard-marker", 
+            "danielkorth/bike-light"
+        ]
     dataset = make_dataset(cfg)
+
+    # Log comprehensive dataset size information
+    logging.info("=== DATASET SIZE INFORMATION ===")
+    logging.info(f"Total frames: {dataset.num_frames:,} ({format_big_number(dataset.num_frames)})")
+    logging.info(f"Total episodes: {dataset.num_episodes:,}")
+    logging.info(f"Dataset length (samples): {len(dataset):,}")
+    
+    # Log individual dataset contributions if multiple repos
+    if hasattr(cfg.dataset, 'repo_id') and isinstance(cfg.dataset.repo_id, list):
+        logging.info(f"Combined from {len(cfg.dataset.repo_id)} datasets:")
+        for i, repo_id in enumerate(cfg.dataset.repo_id):
+            logging.info(f"  {i+1}. {repo_id}")
+    
+    # Calculate approximate memory usage if possible
+    try:
+        # Get a sample to estimate memory usage
+        sample = dataset[0]
+        sample_size_bytes = 0
+        
+        for key, value in sample.items():
+            if isinstance(value, torch.Tensor):
+                tensor_bytes = value.element_size() * value.numel()
+                sample_size_bytes += tensor_bytes
+                logging.debug(f"  {key}: {value.shape} -> {tensor_bytes:,} bytes")
+            elif isinstance(value, str):
+                sample_size_bytes += len(value.encode('utf-8'))
+        
+        total_dataset_size_gb = (sample_size_bytes * len(dataset)) / (1024**3)
+        logging.info(f"Estimated dataset size in memory: {total_dataset_size_gb:.2f} GB")
+        logging.info(f"Average sample size: {sample_size_bytes / (1024**2):.2f} MB")
+        
+    except Exception as e:
+        logging.warning(f"Could not estimate dataset memory usage: {e}")
+    
+    # Log dataset metadata if available
+    if hasattr(dataset, 'meta') and dataset.meta:
+        logging.info("Dataset metadata:")
+        try:
+            # Handle MultiDatasetMeta objects
+            if hasattr(dataset.meta, '__dict__'):
+                meta_dict = vars(dataset.meta)
+            elif hasattr(dataset.meta, 'items'):
+                meta_dict = dict(dataset.meta.items())
+            else:
+                meta_dict = {'meta_type': type(dataset.meta).__name__}
+            
+            for key, value in meta_dict.items():
+                if isinstance(value, (int, float, str, bool)):
+                    logging.info(f"  {key}: {value}")
+                elif isinstance(value, dict) and len(value) < 10:  # Only log small dicts
+                    logging.info(f"  {key}: {value}")
+                else:
+                    logging.info(f"  {key}: {type(value)} (length: {len(value) if hasattr(value, '__len__') else 'N/A'})")
+        except Exception as e:
+            logging.info(f"  Could not parse metadata: {type(dataset.meta)} - {e}")
+    
+    logging.info("=== END DATASET SIZE INFO ===")
 
     # Create environment used for evaluating checkpoints during training on simulation data.
     # On real-world data, no need to create an environment as evaluations are done outside train.py,
