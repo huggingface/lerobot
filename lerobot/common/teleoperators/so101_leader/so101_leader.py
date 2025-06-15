@@ -16,10 +16,10 @@
 
 import logging
 import time
+from typing import Any
 
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.common.motors import Motor, MotorCalibration, MotorNormMode
-from typing import Any
 from lerobot.common.motors.feetech import (
     FeetechMotorsBus,
     OperatingMode,
@@ -27,8 +27,6 @@ from lerobot.common.motors.feetech import (
 
 from ..teleoperator import Teleoperator
 from .config_so101_leader import SO101LeaderConfig
-
-from lerobot.common.robots.utils import ensure_safe_goal_position
 
 logger = logging.getLogger(__name__)
 
@@ -133,7 +131,6 @@ class SO101Leader(Teleoperator):
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read action: {dt_ms:.1f}ms")
         return action
-
 
     def send_action(self, action: dict[str, Any]) -> dict[str, float]:
         """Command arm to move to a target joint configuration.

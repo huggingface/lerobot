@@ -25,7 +25,6 @@ from lerobot.common.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.common.motors.feetech import (
     FeetechMotorsBus,
     OperatingMode,
-    TorqueMode,
 )
 
 from ..robot import Robot
