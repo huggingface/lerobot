@@ -1,13 +1,15 @@
-import time
 import os
-from dataclasses import asdict, dataclass
-from pynput import keyboard
-from lerobot.common.robots import (  # noqa: F401
-    make_robot_from_config,
-    RobotConfig,
-    Robot,
-)
+import time
+from dataclasses import dataclass
+
 import draccus
+from pynput import keyboard
+
+from lerobot.common.robots import (  # noqa: F401
+    Robot,
+    RobotConfig,
+    make_robot_from_config,
+)
 
 
 @dataclass
@@ -39,11 +41,7 @@ class PositionRecorder:
 
     def on_press(self, key):
         try:
-            if (
-                key == keyboard.Key.space
-                or key == keyboard.Key.enter
-                or key == keyboard.Key.right
-            ):
+            if key == keyboard.Key.space or key == keyboard.Key.enter or key == keyboard.Key.right:
                 print(f"\nRecording position {self.positions[self.current_index]}...")
                 observation = self.robot.get_observation()
                 print(f"Observation: {observation}")
