@@ -111,6 +111,7 @@ class XarmEndEffector(Robot):
             os.path.join(this_dir, "lite6.urdf"), ee_link="link6"
         )
         self._initial_pose = None
+        self._previous_action = None
 
     def connect(self, calibrate: bool = True) -> None:
         """
@@ -239,8 +240,10 @@ class XarmEndEffector(Robot):
         self._arm.set_servo_angle_j(joint_positions)
 
         # Send gripper command
-        if "gripper" in action:
-            self._gripper.set_gripper_state(action["gripper"])
+        if "gripper.pos" in action or "gripper" in action:
+            gripper_pos = action.get("gripper.pos", action.get("gripper", 0.0))
+            print(f"Setting gripper state to {gripper_pos}")
+            self._gripper.set_gripper_state(gripper_pos)
             action["gripper.pos"] = self._gripper.get_gripper_state()
 
         # Return the joint-space command dictionary so that the recorder can
