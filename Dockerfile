@@ -29,6 +29,23 @@ RUN pip install transformers
 
 RUN pip install --upgrade mani_skill torch
 
+RUN pip install -e ".[feetech]"
+
+COPY robot_MCP/requirements.txt mcp_requirements.txt
+
+RUN curl -fsSL https://github.com/block/goose/releases/download/stable/download_cli.sh | bash
+
+RUN pip install -e .
+RUN pip install keyboard
+
+COPY blue_follower.json /workspace/lerobot/robot_MCP/blue_follower.json
+COPY blue_follower.json /root/.cache/huggingface/lerobot/calibration/robots/so101_follower/blue_follower.json
+
+RUN pip install -r mcp_requirements.txt
+
+# Execute the command mcp run robot_MCP/mcp_robot_server.py
+#CMD ["mcp", "run", "robot_MCP/mcp_robot_server.py"]
+
 #RUN echo y | python -m mani_skill.utils.download_asset "ReplicaCAD"
 
 # Example command to run the container:
@@ -51,3 +68,13 @@ RUN pip install --upgrade mani_skill torch
 #    -v ${PROJECT_ROOT}:/workspace/lerobot \
 #    -w /workspace/lerobot \
 #    lerobot-gpu-x11
+
+# cached location: /root/.cache/huggingface/lerobot/calibration/robots/so101_follower/blue_follower.json
+# Leader calibration: -------------------------------------------
+# NAME            |    MIN |    POS |    MAX
+# shoulder_pan    |    590 |   2169 |   2891
+# shoulder_lift   |    938 |    965 |   3257
+# elbow_flex      |    936 |   3133 |   3134
+# wrist_flex      |    611 |   2758 |   3079
+# wrist_roll      |   1031 |   1914 |   3053
+# gripper         |   2046 |   2972 |   3005

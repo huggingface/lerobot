@@ -16,6 +16,8 @@ docker run -it --rm \
     --runtime=nvidia \
     --env NVIDIA_VISIBLE_DEVICES=all \
     --env NVIDIA_DRIVER_CAPABILITIES=all \
+    --device /dev/ttyACM0 \
+    --device /dev/ttyACM1 \
     --shm-size=2gb \
     -e DISPLAY=$DISPLAY \
     -e HF_TOKEN=$HF_TOKEN \
@@ -23,6 +25,7 @@ docker run -it --rm \
     -v $HOME/.Xauthority:/root/.Xauthority:ro \
     -v ${PROJECT_ROOT}:/workspace/lerobot \
     -w /workspace/lerobot \
+    -p 3001:3001 \
     lerobot-gpu-x11
     #huggingface/lerobot-gpu
 
@@ -30,3 +33,6 @@ docker run -it --rm \
 
 # Optional: Revoke X11 permissions after execution (uncomment if desired)
 # xhost -local:docker
+
+# ACM0 is follower
+# ACM1 is leader
