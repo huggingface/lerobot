@@ -68,6 +68,7 @@ dependencies = [
     "pyserial>=3.5",
     "pyzmq>=26.2.1",
     "rerun-sdk>=0.21.0",
+    "scipy>=1.14.0",
     "termcolor>=2.4.0",
     "torch>=2.2.1",
     "torchcodec>=0.2.1; sys_platform != 'win32' and (sys_platform != 'linux' or (platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l')) and (sys_platform != 'darwin' or platform_machine != 'x86_64')",
@@ -85,19 +86,21 @@ dora = [
 ]
 dynamixel = ["dynamixel-sdk>=3.7.31"]
 feetech = ["feetech-servo-sdk>=1.0.0"]
+gamepad = ["pygame>=2.5.1", "hidapi>=0.14.0"]
 intelrealsense = [
     "pyrealsense2>=2.55.1.6486 ; sys_platform != 'darwin'",
     "pyrealsense2-macosx>=2.54 ; sys_platform == 'darwin'",
 ]
-pi0 = ["transformers>=4.48.0"]
-smolvla = ["transformers>=4.50.3", "num2words>=0.5.14", "accelerate>=1.7.0"]
+pi0 = ["transformers>=4.50.3"]
+smolvla = ["transformers>=4.50.3", "num2words>=0.5.14", "accelerate>=1.7.0", "safetensors>=0.4.3"]
 pusht = ["gym-pusht>=0.1.5 ; python_version < '4.0'"]
 stretch = [
     "hello-robot-stretch-body>=0.7.27 ; python_version < '4.0' and sys_platform == 'linux'",
     "pyrender @ git+https://github.com/mmatl/pyrender.git ; sys_platform == 'linux'",
     "pyrealsense2>=2.55.1.6486 ; sys_platform != 'darwin'"
 ]
-test = ["pytest>=8.1.0", "pytest-cov>=5.0.0", "mock-serial>=0.0.1 ; sys_platform != 'win32'"]
+test = ["pytest>=8.1.0", "pytest-timeout>=2.4.0", "pytest-cov>=5.0.0", "pyserial>=3.5", "mock-serial>=0.0.1 ; sys_platform != 'win32'"]
+hilserl = ["transformers>=4.50.3", "gym-hil>=0.1.8", "protobuf>=5.29.3", "grpcio==1.71.0"]
 umi = ["imagecodecs>=2024.1.1"]
 video_benchmark = ["scikit-image>=0.23.2", "pandas>=2.2.2"]
 xarm = ["gym-xarm>=0.1.1 ; python_version < '4.0'"]
@@ -108,7 +111,7 @@ requires-poetry = ">=2.1"
 [tool.ruff]
 line-length = 110
 target-version = "py310"
-exclude = ["tests/artifacts/**/*.safetensors"]
+exclude = ["tests/artifacts/**/*.safetensors", "*_pb2.py", "*_pb2_grpc.py"]
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "I", "N", "B", "C4", "SIM"]

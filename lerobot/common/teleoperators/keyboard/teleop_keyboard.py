@@ -24,7 +24,7 @@ from typing import Any
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..teleoperator import Teleoperator
-from .configuration_keyboard import KeyboardTeleopConfig
+from .configuration_keyboard import KeyboardEndEffectorTeleopConfig, KeyboardTeleopConfig
 
 PYNPUT_AVAILABLE = True
 try:
@@ -145,3 +145,93 @@ class KeyboardTeleop(Teleoperator):
             )
         if self.listener is not None:
             self.listener.stop()
+
+
+class KeyboardEndEffectorTeleop(KeyboardTeleop):
+    """
+    Teleop class to use keyboard inputs for end effector control.
+    Designed to be used with the `So100FollowerEndEffector` robot.
+    """
+
+    config_class = KeyboardEndEffectorTeleopConfig
+    name = "keyboard_ee"
+
+    def __init__(self, config: KeyboardEndEffectorTeleopConfig):
+        super().__init__(config)
+        self.config = config
+        self.misc_keys_queue = Queue()
+
+    @property
+    def action_features(self) -> dict:
+        if self.config.use_gripper:
+            return {
+                "dtype": "float32",
+                "shape": (4,),
+                "names": {"delta_x": 0, "delta_y": 1, "delta_z": 2, "gripper": 3},
+            }
+        else:
+            return {
+                "dtype": "float32",
+                "shape": (3,),
+                "names": {"delta_x": 0, "delta_y": 1, "delta_z": 2},
+            }
+
+    def _on_press(self, key):
+        if hasattr(key, "char"):
+            key = key.char
+        self.event_queue.put((key, True))
+
+    def _on_release(self, key):
+        if hasattr(key, "char"):
+            key = key.char
+        self.event_queue.put((key, False))
+
+    def get_action(self) -> dict[str, Any]:
+        if not self.is_connected:
+            raise DeviceNotConnectedError(
+                "KeyboardTeleop is not connected. You need to run `connect()` before `get_action()`."
+            )
+
+        self._drain_pressed_keys()
+        delta_x = 0.0
+        delta_y = 0.0
+        delta_z = 0.0
+
+        # Generate action based on current key states
+        for key, val in self.current_pressed.items():
+            if key == keyboard.Key.up:
+                delta_x = int(val)
+            elif key == keyboard.Key.down:
+                delta_x = -int(val)
+            elif key == keyboard.Key.left:
+                delta_y = int(val)
+            elif key == keyboard.Key.right:
+                delta_y = -int(val)
+            elif key == keyboard.Key.shift:
+                delta_z = -int(val)
+            elif key == keyboard.Key.shift_r:
+                delta_z = int(val)
+            elif key == keyboard.Key.ctrl_r:
+                # Gripper actions are expected to be between 0 (close), 1 (stay), 2 (open)
+                gripper_action = int(val) + 1
+            elif key == keyboard.Key.ctrl_l:
+                gripper_action = int(val) - 1
+            elif val:
+                # If the key is pressed, add it to the misc_keys_queue
+                # this will record key presses that are not part of the delta_x, delta_y, delta_z
+                # this is useful for retrieving other events like interventions for RL, episode success, etc.
+                self.misc_keys_queue.put(key)
+
+        self.current_pressed.clear()
+
+        action_dict = {
+            "delta_x": delta_x,
+            "delta_y": delta_y,
+            "delta_z": delta_z,
+        }
+
+        gripper_action = 1  # default gripper action is to stay
+        if self.config.use_gripper:
+            action_dict["gripper"] = gripper_action
+
+        return action_dict

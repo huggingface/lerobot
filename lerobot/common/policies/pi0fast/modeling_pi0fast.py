@@ -17,7 +17,7 @@
 """
 π0+FAST: Efficient Action Tokenization for Vision-Language-Action Models
 
-[Paper](https://arxiv.org/abs/2501.09747)
+[Paper](https://huggingface.co/papers/2501.09747)
 [Jax code](https://github.com/Physical-Intelligence/openpi)
 
 Designed by Physical Intelligence. Ported from Jax by Hugging Face.
@@ -878,7 +878,11 @@ class PI0FAST(nn.Module):
         return actions
 
     def embed_image(self, image: torch.Tensor):
-        return self.pi0_paligemma.get_image_features(image)
+        # Handle different transformers versions
+        if hasattr(self.pi0_paligemma, "get_image_features"):
+            return self.pi0_paligemma.get_image_features(image)
+        else:
+            return self.pi0_paligemma.model.get_image_features(image)
 
     def embed_inputs(
         self,
