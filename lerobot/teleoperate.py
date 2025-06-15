@@ -97,7 +97,7 @@ def is_red(motor):
 
 def check_stall(robot,teleop,motors,THRESHOLD_CURRENT):
     for motor in motors:
-        if robot.bus.get_current(motor) > THRESHOLD_CURRENT:
+        if robot.bus.get_current(motor) > THRESHOLD_CURRENT[motor]:
             stall[motor] = True
         elif abs(robot.get_action()[motor+".pos"] - pos[motor]) > 0: 
             stall[motor] = False
@@ -116,14 +116,14 @@ def check_state(robot,teleop,motors,THRESHOLD_CURRENT):
                     teleop.bus.disable_torque(motor,5)
                 green_light(motor)
             else:
-                if robot.bus.get_current(motor) > THRESHOLD_CURRENT:
+                if robot.bus.get_current(motor) > THRESHOLD_CURRENT[motor]:
                     red_light(motor)
                 elif teleop.bus.is_torqued:
                     teleop.bus.disable_torque(motor,5)
         else:
             teleop.bus.sync_write("Goal_Position",{motor:pos[motor]})
             teleop.bus.enable_torque(motor)
-            if not robot.bus.get_current(motor) > THRESHOLD_CURRENT and not teleop.bus.get_current(motor) > 0:
+            if not robot.bus.get_current(motor) > THRESHOLD_CURRENT[motor] and not teleop.bus.get_current(motor) > 0:
                 yellow_light(motor)
 
 def teleop_loop(
@@ -145,8 +145,8 @@ def teleop_loop(
                 if isinstance(val, float):
                     rr.log(f"action_{act}", rr.Scalar(val))
 
-        THRESHOLD_DIFF = {'shoulder_pan': 2, 'shoulder_lift': 2, 'elbow_flex': 2, 'wrist_flex': 2, 'wrist_roll': 2, 'gripper': 1}
-        THRESHOLD_CURRENT = 37.5
+        THRESHOLD_CURRENT = {'shoulder_pan': 50, 'shoulder_lift': 100, 'elbow_flex': 75, 'wrist_flex': 50, 'wrist_roll': 50, 'gripper': 20}
+        # THRESHOLD_CURRENT = 35
 
         motors = list(robot.bus.motors.keys())
 
