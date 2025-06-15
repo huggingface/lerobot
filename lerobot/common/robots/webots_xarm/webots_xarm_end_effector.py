@@ -32,9 +32,12 @@ from lerobot.common.cameras import make_cameras_from_configs
 from lerobot.common.errors import DeviceNotConnectedError, DeviceAlreadyConnectedError
 from lerobot.common.robots.robot import Robot
 
-from lerobot.common.robots.webots_xarm.webots_config_xarm import WebotsXarmEndEffectorConfig
+from lerobot.common.robots.webots_xarm.webots_config_xarm import (
+    WebotsXarmEndEffectorConfig,
+)
 
 logger = logging.getLogger(__name__)
+
 
 class WebotsXarmEndEffector(Robot):
     config_class = WebotsXarmEndEffectorConfig
@@ -48,44 +51,43 @@ class WebotsXarmEndEffector(Robot):
 
         self.config = config
         self.jacobi = JacobiRobot(os.path.join(this_dir, "lite6.urdf"), ee_link="link6")
-        
+
         self.arm_ = Supervisor()
         self.timestep_ = int(self.arm_.getBasicTimeStep())
         self.joint_names_ = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
         self.motors_ = [self.arm_.getDevice(name) for name in self.joint_names_]
-        
+
         self.position_sensors = []
         for motor in self.motors_:
             sensor = motor.getPositionSensor()
             sensor.enable(self.timestep_)
             self.position_sensors.append(sensor)
         self.arm_.step(self.timestep_)
-        
+
         self.left_motor_ = self.arm_.getDevice("gripper_left_joint")
         self.right_motor_ = self.arm_.getDevice("gripper_right_joint")
-        
+
         self.is_gripper_open = True
-        
+
         # open gripper on the begining
         self.left_motor_.setPosition(0.0)
         self.right_motor_.setPosition(0.0)
-                
 
     def connect(self, calibrate: bool = True) -> None:
         """
         We assume that at connection time, arm is in a rest position,
         and torque can be safely disabled to run calibration.
         """
-        
+
         joint_positions = [sensor.getValue() for sensor in self.position_sensors]
         for motor, position in zip(self.motors_, joint_positions):
             motor.setPosition(position)
         print(joint_positions)
         print("00000000000")
-        
+
         for joint in self.motors_:
             joint.setPosition(0)
-        
+
         for i in range(1, 7):  # joints 1-6
             joint_name = f"joint{i}"
             self.jacobi.set_joint_position(joint_name, joint_positions[i - 1])
@@ -168,31 +170,29 @@ class WebotsXarmEndEffector(Robot):
                 joint_pos = self.jacobi.get_joint_position(f"joint{i}")
                 joint_positions.append(joint_pos)
                 action[f"joint{i}.pos"] = joint_pos
-            
+
             for motor, position in zip(self.motors_, joint_positions):
                 motor.setPosition(position)
                 # print(position)
-            
 
         # Send gripper command
         if gripper is not None:
-            if gripper < 1.0:
-                self.arm.close_lite6_gripper()
-            else:
-                self.arm.open_lite6_gripper()
+            self.open_gripper(gripper)
+        
+        self.step()
 
         return super().send_action(action)
-    
+
     def close_gripper(self, pos=-0.01):
-        
-        if self.is_gripper_open: 
+
+        if self.is_gripper_open:
             self.left_motor_.setPosition(pos)
             self.right_motor_.setPosition(pos)
             self.is_gripper_open = False
-    
+
     def open_gripper(self, pos=0.0):
-        
-        if not self.is_gripper_open: 
+
+        if not self.is_gripper_open:
             self.left_motor_.setPosition(pos)
             self.right_motor_.setPosition(pos)
             self.is_gripper_open = True
@@ -203,11 +203,11 @@ class WebotsXarmEndEffector(Robot):
 
         # Read joint positions from xarm
         joint_angles = [sensor.getValue() for sensor in self.position_sensors]
-        
+
         ret = 0
         if joint_angles is None:
             ret = -1
-            
+
         obs_dict = {}
         if ret == 0:  # Success
             # Convert joint angles to observation dict
@@ -222,12 +222,12 @@ class WebotsXarmEndEffector(Robot):
         height = self.camera_.getHeight()
         img_array = np.frombuffer(image, np.uint8).reshape((height, width, 4))
         rgb_array = cv2.cvtColor(img_array, cv2.COLOR_BGR2RGB)
-        pil_image = Image.fromarray(rgb_array, 'RGB')
+        pil_image = Image.fromarray(rgb_array, "RGB")
 
         # timestamp = int(time.time() * 1000)  # vreme u milisekundama
         # filename = f"/home/marija/Documents/spes_lerobot/lerobot/lerobot/common/robots/webots_xarm/images/img_{timestamp}.png"
         # pil_image.save(filename)
-        
+
         # for cam_key, cam in self.cameras.items():
         #     start = time.perf_counter()
         #     obs_dict[cam_key] = cam.async_read()
@@ -250,10 +250,9 @@ class WebotsXarmEndEffector(Robot):
 
     def is_calibrated(self) -> bool:
         pass
-    
+
     def step(self) -> bool:
         return self.arm_.step(self.timestep_) != -1
-
 
     @property
     def is_connected(self) -> bool:
@@ -317,6 +316,7 @@ class WebotsXarmEndEffector(Robot):
     def jacobi(self, value):
         self._jacobi = value
 
+
 if __name__ == "__main__":
     import transforms3d as t3d
 
@@ -324,10 +324,9 @@ if __name__ == "__main__":
     config = WebotsXarmEndEffectorConfig()
     robot = WebotsXarmEndEffector(config)
     robot.connect()
-    
-    # export WEBOTS_HOME=/usr/local/webots
-    # $WEBOTS_HOME/webots-controller lerobot/common/robots/webots_xarm/webots_xarm_end_effector.py 
 
+    # export WEBOTS_HOME=/usr/local/webots
+    # $WEBOTS_HOME/webots-controller lerobot/common/robots/webots_xarm/webots_xarm_end_effector.py
 
     # Example action
     action = {
@@ -345,9 +344,9 @@ if __name__ == "__main__":
     action["delta_roll"] = 0.0
     action["delta_pitch"] = 0.0
     action["delta_yaw"] = 0.0
-    
+
     robot.close_gripper(-0.01)
-    
+
     while robot.step():
         robot.send_action(action)
         obs = robot.get_observation()

@@ -34,7 +34,7 @@ python -m lerobot.teleoperate \
     --teleop.type=telephone
 
 python -m lerobot.teleoperate \
-    --robot.type=xarm_end_effector \
+    --robot.type=webots_xarm_end_effector \
     --robot.id=black \
     --teleop.type=spacemouse
 ```
@@ -59,6 +59,7 @@ from lerobot.common.robots import (  # noqa: F401
     so100_follower,
     so101_follower,
     xarm,
+    webots_xarm,
 )
 from lerobot.common.teleoperators import (
     Teleoperator,
