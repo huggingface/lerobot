@@ -32,6 +32,20 @@ python -m lerobot.record \
     --resume=true \
     --display_data=true
 
+python -m lerobot.record \
+    --robot.type=xarm_end_effector \
+    --robot.cameras="{laptop: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, gripper: { type: intelrealsense, serial_number_or_name: 233522070823, width: 640, height: 480, fps: 30 }}" \
+    --dataset.reset_time_s=8 \
+    --robot.id=black \
+    --dataset.repo_id=lukicdarkoo/pick_plazma_two_cameras \
+    --dataset.root=${HOME}/hfdata/pick_plazma_two_cameras \
+    --dataset.num_episodes=15 \
+    --dataset.single_task="Pick plazma" \
+    --teleop.type=spacemouse \
+    --teleop.id=blue \
+    --resume=true \
+    --display_data=true
+
 python ~/lerobot/lerobot/scripts/visualize_dataset.py --repo-id local --root ${HOME}/hfdata/first_test --episode-index 0
 
 python ~/lerobot/lerobot/scripts/visualize_dataset_html.py --repo-id local/dataset --root ${HOME}/hfdata/first_test
