@@ -34,10 +34,10 @@ class Telephone(Teleoperator):
         self._server = Teleop(host=config.host, port=int(config.port))
         self._server.subscribe(self._on_teleop_callback)
         self._gripper_state = 0.0
-        self._last_pose = None
+        self._last_pose = np.eye(4)
 
     def _on_teleop_callback(self, pose, message):
-        self._pose = pose
+        self._last_pose = pose
 
     @property
     def action_features(self) -> dict[str, type]:
@@ -75,7 +75,7 @@ class Telephone(Teleoperator):
         pass
 
     def get_action(self) -> dict[str, Any]:
-        action = {"pose_from_initial": self._pose}
+        action = {"pose_from_initial": self._last_pose}
         if self.config.use_gripper:
             action["gripper"] = self._gripper_state
         return action

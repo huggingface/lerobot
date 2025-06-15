@@ -47,9 +47,15 @@ class XarmEndEffector(Robot):
 
         self.config = config
         self._is_connected = False
-        self.arm = None
-        self.gripper_state = 0.0
-        self.jacobi = JacobiRobot(os.path.join(this_dir, "lite6.urdf"), ee_link="link6")
+        self._arm = None
+        self._prev_gripper_state = None
+        self._gripper_state = 0.0
+        self._gripper_open_time = 0.0
+        self._gripper_stopped = False
+        self._jacobi = JacobiRobot(
+            os.path.join(this_dir, "lite6.urdf"), ee_link="link6"
+        )
+        self._initial_pose = None
 
     def connect(self, calibrate: bool = True) -> None:
         """
@@ -60,19 +66,19 @@ class XarmEndEffector(Robot):
             raise DeviceAlreadyConnectedError(f"{self} already connected")
 
         # Connect to the robot and set it to a servo mode
-        self.arm = XArmAPI("192.168.1.184", is_radian=True)
-        self.arm.connect()
-        self.arm.motion_enable(enable=True)
-        self.arm.set_mode(1)  # Position mode
-        self.arm.set_state(state=0)  # Sport state
+        self._arm = XArmAPI("192.168.1.184", is_radian=True)
+        self._arm.connect()
+        self._arm.motion_enable(enable=True)
+        self._arm.set_mode(1)  # Position mode
+        self._arm.set_state(state=0)  # Sport state
 
         # set joint positions to jacobi, read from arm
-        code, joint_positions = self.arm.get_servo_angle()
+        code, joint_positions = self._arm.get_servo_angle()
         if code != 0:
             raise DeviceNotConnectedError(f"Failed to get joint angles from {self}")
         for i in range(1, 7):  # joints 1-6
             joint_name = f"joint{i}"
-            self.jacobi.set_joint_position(joint_name, joint_positions[i - 1])
+            self._jacobi.set_joint_position(joint_name, joint_positions[i - 1])
 
         for cam in self.cameras.values():
             cam.connect()
@@ -107,11 +113,11 @@ class XarmEndEffector(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        self.gripper_state = action["gripper"] if "gripper" in action else None
         action = copy.deepcopy(action)
-        action["gripper.pos"] = (
-            self.gripper_state if self.gripper_state is not None else 0.0
-        )
+
+        if "gripper" in action:
+            self._gripper_state = action["gripper"]
+            action["gripper.pos"] = 2.0 if self._gripper_state > 1.0 else 0.0
 
         if (
             "delta_x" in action
@@ -121,7 +127,7 @@ class XarmEndEffector(Robot):
             and "delta_pitch" in action
             and "delta_yaw" in action
         ):
-            pose = self.jacobi.get_ee_pose()
+            pose = self._jacobi.get_ee_pose()
             delta_pose = np.eye(4)
             delta_pose[:3, 3] = [
                 action["delta_x"],
@@ -138,24 +144,46 @@ class XarmEndEffector(Robot):
             action["pose"][:3, :3] = delta_rotation @ pose[:3, :3]
             action["pose"][:3, 3] = pose[:3, 3] + delta_pose[:3, 3]
 
+        if "pose_from_initial" in action:
+            delta_pose = action["pose_from_initial"]
+            action["pose"] = np.eye(4)
+            action["pose"][:3, :3] = delta_pose[:3, :3] @ self._initial_pose[:3, :3]
+            action["pose"][:3, 3] = self._initial_pose[:3, 3] + delta_pose[:3, 3]
+
         if "pose" in action:
             # Convert pose to joint positions using Jacobi
             pose = action["pose"]
-            self.jacobi.servo_to_pose(pose)
+            self._jacobi.servo_to_pose(pose)
             # Get joint positions from Jacobi
             joint_positions = []
             for i in range(1, 7):  # joints 1-6
-                joint_pos = self.jacobi.get_joint_position(f"joint{i}")
+                joint_pos = self._jacobi.get_joint_position(f"joint{i}")
                 joint_positions.append(joint_pos)
                 action[f"joint{i}.pos"] = joint_pos
-            self.arm.set_servo_angle_j(joint_positions)
+            self._arm.set_servo_angle_j(joint_positions)
 
         # Send gripper command
-        if self.gripper_state is not None:
-            if self.gripper_state < 1.0:
-                self.arm.close_lite6_gripper()
-            else:
-                self.arm.open_lite6_gripper()
+        if self._gripper_state is not None:
+            if (
+                self._prev_gripper_state is None
+                or self._prev_gripper_state != self._gripper_state
+            ):
+                if self._gripper_state < 1.0:
+                    self._gripper_stopped = False
+                    self._arm.close_lite6_gripper()
+                else:
+                    self._gripper_open_time = time.time()
+                    self._gripper_stopped = False
+                    self._arm.open_lite6_gripper()
+            if (
+                not self._gripper_stopped
+                and self._gripper_state >= 1.0
+                and time.time() - self._gripper_open_time > 1.0
+            ):
+                # If gripper was closed and now is open, stop the gripper
+                self._gripper_stopped = True
+                self._arm.stop_lite6_gripper()
+        self._prev_gripper_state = self._gripper_state
 
         # Return the joint-space command dictionary so that the recorder can
         # store every value in the dataset.
@@ -170,13 +198,13 @@ class XarmEndEffector(Robot):
 
         # Read joint positions from xarm
         code, (joint_angles, joint_velocities, joint_currents) = (
-            self.arm.get_joint_states()
+            self._arm.get_joint_states()
         )
 
         obs_dict = {}
         for i, angle in enumerate(joint_angles[:6]):  # First 6 angles are joints
             obs_dict[f"joint{i+1}.pos"] = angle
-        obs_dict["gripper.pos"] = self.gripper_state
+        obs_dict["gripper.pos"] = self._gripper_state
 
         # Capture images from cameras
         for cam_key, cam in self.cameras.items():
@@ -195,10 +223,10 @@ class XarmEndEffector(Robot):
         if not self.is_connected:
             return
 
-        if self.arm is not None:
-            # self.arm.set_gripper_enable(False)
-            self.arm.disconnect()
-            self.arm = None
+        if self._arm is not None:
+            self._arm.stop_lite6_gripper()
+            self._arm.disconnect()
+            self._arm = None
 
         for cam in self.cameras.values():
             cam.disconnect()
@@ -220,8 +248,7 @@ class XarmEndEffector(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        # Set motion parameters
-        # self.arm.set_tcp_maxacc(1000)  # Max acceleration
+        self._initial_pose = self._jacobi.get_ee_pose()
         logger.info(f"{self} configured.")
 
     def is_calibrated(self) -> bool:
