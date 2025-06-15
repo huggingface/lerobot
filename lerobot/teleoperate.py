@@ -98,20 +98,20 @@ def is_red(motor):
 
 
 def check_stall(robot,teleop,motors,THRESHOLD_CURRENT):
+    action = robot.get_action()
     for motor in motors:
         if robot.bus.get_current(motor) > THRESHOLD_CURRENT[motor]:
             stall[motor] = True
-        elif abs(robot.get_action()[motor+".pos"] - pos[motor]) > 0: 
+        elif abs(action[motor+".pos"] - pos[motor]) > 0: 
             stall[motor] = False
 
-
-
 def check_state(robot,teleop,motors,THRESHOLD_CURRENT):
+    action = robot.get_action()
     for motor in motors:
         if is_green(motor):
             if stall[motor]:
                 red_light(motor)
-            pos[motor] = robot.get_action()[motor+".pos"]
+            pos[motor] = action[motor+".pos"]
         elif is_yellow(motor):
             if not stall[motor]:
                 if teleop.bus.is_torqued:
@@ -167,16 +167,16 @@ def teleop_loop(
 
         loop_s = time.perf_counter() - loop_start
 
-        print("\n" + "-LAELE-" * (display_len//3 + 1))
-        print(f"{'NAME':<{display_len}} | {'NORM':>7}")
-        for motor, value in action.items():
-            print(f"{motor:<{display_len}} | {value:>7.2f}")
-        print(f"\ntime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
+        #print("\n" + "-LAELE-" * (display_len//3 + 1))
+        #print(f"{'NAME':<{display_len}} | {'NORM':>7}")
+        #for motor, value in action.items():
+        #    print(f"{motor:<{display_len}} | {value:>7.2f}")
+        #print(f"\ntime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
 
         if duration is not None and time.perf_counter() - start >= duration:
             return
 
-        move_cursor_up(len(action) + 5)
+        #move_cursor_up(len(action) + 5)
 
 @draccus.wrap()
 def teleoperate(cfg: TeleoperateConfig):

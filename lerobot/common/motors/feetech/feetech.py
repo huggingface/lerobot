@@ -298,12 +298,16 @@ class FeetechMotorsBus(MotorsBus):
             self.write("Lock", motor, 0, num_retry=num_retry)
     
     def is_torqued(self, motors):
-        # NAO USAR COM MAIS DE UM MOTOR
+        #works for one motor
+        if not isinstance(motors, str):
+            raise RuntimeError(f"Motor '{motors}' type not supported. Expected str.")
         for motor in self._get_motors_list(motors):
             return self.read("Torque_Enable", motor)
     
     def get_current(self, motors):
-        # NAO USAR COM MAIS DE UM MOTOR
+        #works for one motor
+        if not isinstance(motors, str):
+            raise RuntimeError(f"Motor '{motors}' type not supported. Expected str.")
         for motor in self._get_motors_list(motors):
             return self.read("Present_Current", motor)
 
