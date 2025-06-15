@@ -7,8 +7,8 @@ python lerobot/scripts/train.py \
   --dataset.video_backend=pyav \
   --batch_size=32 \
   --steps=200000 \
-  --output_dir=outputs/smolvla-overfit-green-marker-part2-ep0-debug \
-  --job_name=smolvla-base-overfit-green-marker-part2-ep0-debug \
+  --output_dir=outputs/smolvla-overnight-datasets-100ksteps-v1-lr1e-4-FIXED-megamachine \
+  --job_name=smolvla-base-overnight-datasets-100ksteps-v1-lr1e-4-FIXED-megamachine \
   --wandb.enable=true \
   --wandb.project=lerobot-training \
   --num_workers=42 \
@@ -17,8 +17,8 @@ python lerobot/scripts/train.py \
   --log_freq=100 \
   --eval_freq=500 \
   --seed=1000 \
-  --hub_repo_id="a6047425318/smolvla-overfit-green-marker-part2-ep0-debug"
-  # --policy.path="a6047425318/smolvla-overnight-datasets-v1-lr1e-5"
+  --hub_repo_id="a6047425318/smolvla-overnight-datasets-100ksteps-v1-lr1e-4-FIXED-megamachine" \
+  --policy.path="a6047425318/smolvla-overnight-datasets-v1-lr1e-5"
 
 
 
