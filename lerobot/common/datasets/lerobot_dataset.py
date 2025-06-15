@@ -1159,14 +1159,14 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         combined_from = []
         combined_to = []
         offset = 0
-        
+
         for dataset in self._datasets:
             from_values = dataset.episode_data_index["from"] + offset
             to_values = dataset.episode_data_index["to"] + offset
             combined_from.extend(from_values.tolist())
             combined_to.extend(to_values.tolist())
             offset = to_values.max().item()
-        
+
         return {
             "from": torch.LongTensor(combined_from),
             "to": torch.LongTensor(combined_to),
@@ -1175,6 +1175,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
     @property
     def meta(self):
         """Provide a meta-like interface for compatibility with LeRobotDataset."""
+
         # Create a simple object to hold the metadata properties
         class MultiDatasetMeta:
             def __init__(self, dataset):

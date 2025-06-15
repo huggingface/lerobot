@@ -18,4 +18,4 @@ python lerobot/evaluate_smolvla_validation.py \
   --dataset.repo_id=all/datasets \
   --dataset.video_backend=pyav \
   --batch_size=16 \
-  --policy.device=cuda 
+  --policy.device=cuda

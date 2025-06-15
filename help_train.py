@@ -269,10 +269,10 @@ TrainPipelineConfig:
                         dataset shuffling) AND for the evaluation
                         environments. (default: 1000)
   --num_workers int     Number of workers for the dataloader. (default: 4)
-  --batch_size int      
-  --steps int           
-  --eval_freq int       
-  --log_freq int        
+  --batch_size int
+  --steps int
+  --eval_freq int
+  --log_freq int
   --save_checkpoint bool
   --save_freq int       Checkpoint is saved every `save_freq` training
                         iterations and after the last training step. (default:
@@ -297,12 +297,12 @@ DatasetConfig ['dataset']:
   --dataset.video_backend str
 
 ImageTransformsConfig ['dataset.image_transforms']:
-  
+
       These transforms are all using standard torchvision.transforms.v2
       You can find out how these transformations affect images here:
       https://pytorch.org/vision/0.18/auto_examples/transforms/plot_transforms_illustrations.html
       We use a custom RandomSubsetApply container to sample them.
-      
+
 
   --dataset.image_transforms.enable bool
                         Set this flag to `true` to enable transforms during
@@ -327,34 +327,34 @@ EnvConfig ['env']:
 
 AlohaEnv ['env']:
 
-  --env.task str        
-  --env.fps int         
-  --env.features Dict   
+  --env.task str
+  --env.fps int
+  --env.features Dict
   --env.features_map Dict
   --env.episode_length int
-  --env.obs_type str    
+  --env.obs_type str
   --env.render_mode str
 
 PushtEnv ['env']:
 
-  --env.task str        
-  --env.fps int         
-  --env.features Dict   
+  --env.task str
+  --env.fps int
+  --env.features Dict
   --env.features_map Dict
   --env.episode_length int
-  --env.obs_type str    
+  --env.obs_type str
   --env.render_mode str
   --env.visualization_width int
   --env.visualization_height int
 
 XarmEnv ['env']:
 
-  --env.task str        
-  --env.fps int         
-  --env.features Dict   
+  --env.task str
+  --env.fps int
+  --env.features Dict
   --env.features_map Dict
   --env.episode_length int
-  --env.obs_type str    
+  --env.obs_type str
   --env.render_mode str
   --env.visualization_width int
   --env.visualization_height int
@@ -362,18 +362,18 @@ XarmEnv ['env']:
 HILSerlRobotEnvConfig ['env']:
   Configuration for the HILSerlRobotEnv environment.
 
-  --env.task str        
-  --env.fps int         
-  --env.features Dict   
+  --env.task str
+  --env.fps int
+  --env.features Dict
   --env.features_map Dict
-  --env.name str        
+  --env.name str
   --env.mode str        Either "record", "replay", None (default: None)
   --env.repo_id [str]
   --env.dataset_root [str]
   --env.num_episodes int
                         only for record mode (default: 10)
-  --env.episode int     
-  --env.device str      
+  --env.episode int
+  --env.device str
   --env.push_to_hub bool
   --env.pretrained_policy_name_or_path [str]
   --env.reward_classifier_pretrained_path [str]
@@ -421,17 +421,17 @@ EnvTransformConfig ['env.wrapper']:
 HILEnvConfig ['env']:
   Configuration for the HIL environment.
 
-  --env.task str        
-  --env.fps int         
-  --env.features Dict   
+  --env.task str
+  --env.fps int
+  --env.features Dict
   --env.features_map Dict
-  --env.type str        
-  --env.name str        
+  --env.type str
+  --env.name str
   --env.use_viewer bool
   --env.gripper_penalty float
   --env.use_gamepad bool
-  --env.state_dim int   
-  --env.action_dim int  
+  --env.state_dim int
+  --env.action_dim int
   --env.episode_length int
   --env.reward_classifier_pretrained_path [str]
                         ################ args from hilserlrobotenv (default:
@@ -441,8 +441,8 @@ HILEnvConfig ['env']:
   --env.dataset_root [str]
   --env.num_episodes int
                         only for record mode (default: 10)
-  --env.episode int     
-  --env.device str      
+  --env.episode int
+  --env.device str
   --env.push_to_hub bool
   --env.pretrained_policy_name_or_path [str]
   --env.number_of_steps_after_success int
@@ -498,9 +498,9 @@ EnvTransformConfig ['env.wrapper']:
 Optional ['policy']:
 
 PreTrainedConfig ['policy']:
-  
+
       Base configuration class for policy models.
-  
+
       Args:
           n_obs_steps: Number of environment steps worth of observations to pass to the policy (takes the
               current step and additional steps going back).
@@ -510,7 +510,7 @@ PreTrainedConfig ['policy']:
               normalization mode to apply.
           output_normalization_modes: Similar dictionary as `input_normalization_modes`, but to unnormalize to
               the original scale.
-      
+
 
   --policy.type {act,diffusion,pi0,smolvla,tdmpc,vqbet,pi0fast,sac,reward_classifier}
                         Which type of PreTrainedConfig ['policy'] to use
@@ -518,12 +518,12 @@ PreTrainedConfig ['policy']:
 
 ACTConfig ['policy']:
   Configuration class for the Action Chunking Transformers policy.
-  
+
       Defaults are configured for training on bimanual Aloha tasks like "insertion" or "transfer".
-  
+
       The parameters you will most likely need to change are the ones which depend on the environment / sensors.
       Those are: `input_shapes` and 'output_shapes`.
-  
+
       Notes on the inputs and outputs:
           - Either:
               - At least one key starting with "observation.image is required as an input.
@@ -533,7 +533,7 @@ ACTConfig ['policy']:
             views. Right now we only support all images having the same shape.
           - May optionally work without an "observation.state" key for the proprioceptive robot state.
           - "action" is required as an output key.
-  
+
       Args:
           n_obs_steps: Number of environment steps worth of observations to pass to the policy (takes the
               current step and additional steps going back).
@@ -582,7 +582,7 @@ ACTConfig ['policy']:
           dropout: Dropout to use in the transformer layers (see code for details).
           kl_weight: The weight to use for the KL-divergence component of the loss if the variational objective
               is enabled. Loss is then calculated as: `reconstruction_loss + kl_weight * kld_loss`.
-      
+
 
   --policy.n_obs_steps int
   --policy.normalization_mapping Dict
@@ -601,7 +601,7 @@ ACTConfig ['policy']:
   --policy.replace_final_stride_with_dilation int
   --policy.pre_norm bool
   --policy.dim_model int
-  --policy.n_heads int  
+  --policy.n_heads int
   --policy.dim_feedforward int
   --policy.feedforward_activation str
   --policy.n_encoder_layers int
@@ -619,12 +619,12 @@ ACTConfig ['policy']:
 
 DiffusionConfig ['policy']:
   Configuration class for DiffusionPolicy.
-  
+
       Defaults are configured for training with PushT providing proprioceptive and single camera observations.
-  
+
       The parameters you will most likely need to change are the ones which depend on the environment / sensors.
       Those are: `input_shapes` and `output_shapes`.
-  
+
       Notes on the inputs and outputs:
           - "observation.state" is required as an input key.
           - Either:
@@ -634,7 +634,7 @@ DiffusionConfig ['policy']:
           - If there are multiple keys beginning with "observation.image" they are treated as multiple camera
             views. Right now we only support all images having the same shape.
           - "action" is required as an output key.
-  
+
       Args:
           n_obs_steps: Number of environment steps worth of observations to pass to the policy (takes the
               current step and additional steps going back).
@@ -694,7 +694,7 @@ DiffusionConfig ['policy']:
           do_mask_loss_for_padding: Whether to mask the loss when there are copy-padded actions. See
               `LeRobotDataset` and `load_previous_and_future_frames` for more information. Note, this defaults
               to False as the original Diffusion Policy implementation does the same.
-      
+
 
   --policy.n_obs_steps int
   --policy.normalization_mapping Dict
@@ -706,7 +706,7 @@ DiffusionConfig ['policy']:
                         `use_amp` determines whether to use Automatic Mixed
                         Precision (AMP) for training and evaluation. With AMP,
                         automatic gradient scaling is used. (default: False)
-  --policy.horizon int  
+  --policy.horizon int
   --policy.n_action_steps int
   --policy.drop_n_last_frames int
                         horizon - n_action_steps - n_obs_steps + 1 (default:
@@ -888,13 +888,13 @@ SmolVLAConfig ['policy']:
 
 TDMPCConfig ['policy']:
   Configuration class for TDMPCPolicy.
-  
+
       Defaults are configured for training with xarm_lift_medium_replay providing proprioceptive and single
       camera observations.
-  
+
       The parameters you will most likely need to change are the ones which depend on the environment / sensors.
       Those are: `input_shapes`, `output_shapes`, and perhaps `max_random_shift_ratio`.
-  
+
       Args:
           n_action_repeats: The number of times to repeat the action returned by the planning. (hint: Google
               action repeats in Q-learning or ask your favorite chatbot)
@@ -967,7 +967,7 @@ TDMPCConfig ['policy']:
           target_model_momentum: Momentum (α) used for EMA updates of the target models. Updates are calculated
               as ϕ ← αϕ + (1-α)θ where ϕ are the parameters of the target model and θ are the parameters of the
               model being trained.
-      
+
 
   --policy.n_obs_steps int
                         Input / output structure. (default: 1)
@@ -981,13 +981,13 @@ TDMPCConfig ['policy']:
                         Precision (AMP) for training and evaluation. With AMP,
                         automatic gradient scaling is used. (default: False)
   --policy.n_action_repeats int
-  --policy.horizon int  
+  --policy.horizon int
   --policy.n_action_steps int
   --policy.image_encoder_hidden_dim int
   --policy.state_encoder_hidden_dim int
   --policy.latent_dim int
   --policy.q_ensemble_size int
-  --policy.mlp_dim int  
+  --policy.mlp_dim int
   --policy.discount float
   --policy.use_mpc bool
   --policy.cem_iterations int
@@ -1013,19 +1013,19 @@ TDMPCConfig ['policy']:
 
 VQBeTConfig ['policy']:
   Configuration class for VQ-BeT.
-  
+
       Defaults are configured for training with PushT providing proprioceptive and single camera observations.
-  
+
       The parameters you will most likely need to change are the ones which depend on the environment / sensors.
       Those are: `input_shapes` and `output_shapes`.
-  
+
       Notes on the inputs and outputs:
           - "observation.state" is required as an input key.
           - At least one key starting with "observation.image is required as an input.
           - If there are multiple keys beginning with "observation.image" they are treated as multiple camera
             views. Right now we only support all images having the same shape.
           - "action" is required as an output key.
-  
+
       Args:
           n_obs_steps: Number of environment steps worth of observations to pass to the policy (takes the
               current step and additional steps going back).
@@ -1074,7 +1074,7 @@ VQBeTConfig ['policy']:
           bet_softmax_temperature: Sampling temperature of code for rollout with VQ-BeT
           sequentially_select: Whether select code of primary / secondary as sequentially (pick primary code,
               and then select secodnary code), or at the same time.
-      
+
 
   --policy.n_obs_steps int
   --policy.normalization_mapping Dict
@@ -1193,15 +1193,15 @@ PI0FASTConfig ['policy']:
 
 SACConfig ['policy']:
   Soft Actor-Critic (SAC) configuration.
-  
+
       SAC is an off-policy actor-critic deep RL algorithm based on the maximum entropy
       reinforcement learning framework. It learns a policy and a Q-function simultaneously
       using experience collected from the environment.
-  
+
       This configuration class contains all the parameters needed to define a SAC agent,
       including network architectures, optimization settings, and algorithm-specific
       hyperparameters.
-      
+
 
   --policy.n_obs_steps int
   --policy.normalization_mapping Dict
@@ -1352,12 +1352,12 @@ RewardClassifierConfig ['policy']:
   --policy.normalization_mapping Dict
   --policy.input_features Dict
   --policy.output_features Dict
-  --policy.device str   
+  --policy.device str
   --policy.use_amp bool
                         `use_amp` determines whether to use Automatic Mixed
                         Precision (AMP) for training and evaluation. With AMP,
                         automatic gradient scaling is used. (default: False)
-  --policy.name str     
+  --policy.name str
   --policy.num_classes int
   --policy.hidden_dim int
   --policy.latent_dim int
@@ -1381,7 +1381,7 @@ OptimizerConfig ['optimizer']:
 
 AdamConfig ['optimizer']:
 
-  --optimizer.lr float  
+  --optimizer.lr float
   --optimizer.weight_decay float
   --optimizer.grad_clip_norm float
   --optimizer.betas float float
@@ -1389,7 +1389,7 @@ AdamConfig ['optimizer']:
 
 AdamWConfig ['optimizer']:
 
-  --optimizer.lr float  
+  --optimizer.lr float
   --optimizer.weight_decay float
   --optimizer.grad_clip_norm float
   --optimizer.betas float float
@@ -1397,7 +1397,7 @@ AdamWConfig ['optimizer']:
 
 SGDConfig ['optimizer']:
 
-  --optimizer.lr float  
+  --optimizer.lr float
   --optimizer.weight_decay float
   --optimizer.grad_clip_norm float
   --optimizer.momentum float
@@ -1406,17 +1406,17 @@ SGDConfig ['optimizer']:
 
 MultiAdamConfig ['optimizer']:
   Configuration for multiple Adam optimizers with different parameter groups.
-  
+
       This creates a dictionary of Adam optimizers, each with its own hyperparameters.
-  
+
       Args:
           lr: Default learning rate (used if not specified for a group)
           weight_decay: Default weight decay (used if not specified for a group)
           optimizer_groups: Dictionary mapping parameter group names to their hyperparameters
           grad_clip_norm: Gradient clipping norm
-      
 
-  --optimizer.lr float  
+
+  --optimizer.lr float
   --optimizer.weight_decay float
   --optimizer.grad_clip_norm float
                         lr: float = 1e-3 weight_decay: float = 0.0
@@ -1438,7 +1438,7 @@ LRSchedulerConfig ['scheduler']:
 DiffuserSchedulerConfig ['scheduler']:
 
   --scheduler.num_warmup_steps [int]
-  --scheduler.name str  
+  --scheduler.name str
 
 VQBeTSchedulerConfig ['scheduler']:
 
@@ -1466,11 +1466,11 @@ EvalConfig ['eval']:
 
 WandBConfig ['wandb']:
 
-  --wandb.enable bool   
+  --wandb.enable bool
   --wandb.disable_artifact bool
                         Set to true to disable saving an artifact despite
                         training.save_checkpoint=True (default: False)
-  --wandb.project str   
+  --wandb.project str
   --wandb.entity [str]
   --wandb.notes [str]
   --wandb.run_id [str]

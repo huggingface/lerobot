@@ -97,7 +97,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
     else:
         # Multiple datasets case
         repo_ids = cfg.dataset.repo_id
-        
+
         # For multi-dataset, we need to handle delta_timestamps per dataset
         # For now, we'll use the first dataset's metadata to resolve delta_timestamps
         # This assumes all datasets have similar structure
@@ -105,13 +105,13 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             repo_ids[0], root=cfg.dataset.root, revision=cfg.dataset.revision
         )
         delta_timestamps = resolve_delta_timestamps(cfg.policy, first_ds_meta)
-        
+
         # Handle episodes configuration for multiple datasets
         episodes = None
         if cfg.dataset.episodes is not None:
             # If episodes is specified, apply to all datasets
-            episodes = {repo_id: cfg.dataset.episodes for repo_id in repo_ids}
-        
+            episodes = dict.fromkeys(repo_ids, cfg.dataset.episodes)
+
         dataset = MultiLeRobotDataset(
             repo_ids,
             root=cfg.dataset.root,
@@ -121,7 +121,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             video_backend=cfg.dataset.video_backend,
             revision=cfg.dataset.revision,
         )
-        
+
         logging.info(
             "Multiple datasets were provided. Applied the following index mapping to the provided datasets: "
             f"{pformat(dataset.repo_id_to_index, indent=2)}"

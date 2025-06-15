@@ -42,9 +42,10 @@ class DatasetConfig:
         """Parse repo_id string that looks like a list into an actual list."""
         if isinstance(self.repo_id, str):
             # Check if the string looks like a JSON list
-            if self.repo_id.startswith('[') and self.repo_id.endswith(']'):
+            if self.repo_id.startswith("[") and self.repo_id.endswith("]"):
                 try:
                     import json
+
                     parsed = json.loads(self.repo_id)
                     if isinstance(parsed, list):
                         self.repo_id = parsed
@@ -52,6 +53,7 @@ class DatasetConfig:
                     # If JSON parsing fails, try to parse as Python list
                     try:
                         import ast
+
                         parsed = ast.literal_eval(self.repo_id)
                         if isinstance(parsed, list):
                             self.repo_id = parsed
