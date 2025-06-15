@@ -14,15 +14,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import importlib
+from dataclasses import dataclass, field
 
 import gymnasium as gym
 import pytest
 import torch
+from gymnasium.envs.registration import register
+from gymnasium.envs.registration import registry as gym_registry
 from gymnasium.utils.env_checker import check_env
 
 import lerobot
+from lerobot.common.envs.configs import EnvConfig
 from lerobot.common.envs.factory import make_env, make_env_config
 from lerobot.common.envs.utils import preprocess_observation
+from lerobot.configs.types import PolicyFeature
 from tests.utils import require_env
 
 OBS_TYPES = ["state", "pixels", "pixels_agent_pos"]
@@ -61,3 +66,40 @@ def test_factory(env_name):
         assert img.min() >= 0.0
 
     env.close()
+
+
+def test_factory_custom_gym_id():
+    gym_id = "dummy_gym_pkg/DummyTask-v0"
+    if gym_id in gym_registry:
+        pytest.skip(f"Environment ID {gym_id} is already registered")
+
+    @EnvConfig.register_subclass("dummy")
+    @dataclass
+    class DummyEnv(EnvConfig):
+        task: str = "DummyTask-v0"
+        fps: int = 10
+        features: dict[str, PolicyFeature] = field(default_factory=dict)
+
+        @property
+        def package_name(self) -> str:
+            return "dummy_gym_pkg"
+
+        @property
+        def gym_id(self) -> str:
+            return gym_id
+
+        @property
+        def gym_kwargs(self) -> dict:
+            return {}
+
+    try:
+        register(id=gym_id, entry_point="gymnasium.envs.classic_control:CartPoleEnv")
+
+        cfg = DummyEnv()
+        env = make_env(cfg, n_envs=1)
+        assert env is not None
+        env.close()
+
+    finally:
+        if gym_id in gym_registry:
+            del gym_registry[gym_id]
