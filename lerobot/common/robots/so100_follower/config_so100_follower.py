@@ -18,7 +18,6 @@ from lerobot.common.cameras import CameraConfig
 
 from ..config import RobotConfig
 
-
 @RobotConfig.register_subclass("so100_follower")
 @dataclass
 class SO100FollowerConfig(RobotConfig):

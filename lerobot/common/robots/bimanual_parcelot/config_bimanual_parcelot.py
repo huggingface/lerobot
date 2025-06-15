@@ -20,7 +20,6 @@ from lerobot.common.cameras import CameraConfig
 
 from ..config import RobotConfig
 
-
 @RobotConfig.register_subclass("bimanual_parcelot")
 @dataclass
 class BimanualParcelotConfig(RobotConfig):
