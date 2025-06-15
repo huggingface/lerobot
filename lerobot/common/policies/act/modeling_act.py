@@ -15,11 +15,10 @@
 # limitations under the License.
 """Action Chunking Transformer Policy
 
-As per Learning Fine-Grained Bimanual Manipulation with Low-Cost Hardware (https://arxiv.org/abs/2304.13705).
+As per Learning Fine-Grained Bimanual Manipulation with Low-Cost Hardware (https://huggingface.co/papers/2304.13705).
 The majority of changes here involve removing unused code, unifying naming, and adding helpful comments.
 """
 
-import logging
 import math
 from collections import deque
 from itertools import chain
@@ -42,7 +41,7 @@ from lerobot.common.policies.pretrained import PreTrainedPolicy
 class ACTPolicy(PreTrainedPolicy):
     """
     Action Chunking Transformer Policy as per Learning Fine-Grained Bimanual Manipulation with Low-Cost
-    Hardware (paper: https://arxiv.org/abs/2304.13705, code: https://github.com/tonyzhaozh/act)
+    Hardware (paper: https://huggingface.co/papers/2304.13705, code: https://github.com/tonyzhaozh/act)
     """
 
     config_class = ACTConfig
@@ -64,9 +63,7 @@ class ACTPolicy(PreTrainedPolicy):
         config.validate_features()
         self.config = config
 
-        self.normalize_inputs = Normalize(
-            config.input_features, config.normalization_mapping, dataset_stats
-        )
+        self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
         self.normalize_targets = Normalize(
             config.output_features, config.normalization_mapping, dataset_stats
         )
@@ -77,16 +74,9 @@ class ACTPolicy(PreTrainedPolicy):
         self.model = ACT(config)
 
         if config.temporal_ensemble_coeff is not None:
-            logging.info("Initializing temporal ensembler")
-            self.temporal_ensembler = ACTTemporalEnsembler(
-                config.temporal_ensemble_coeff, config.chunk_size
-            )
+            self.temporal_ensembler = ACTTemporalEnsembler(config.temporal_ensemble_coeff, config.chunk_size)
 
         self.reset()
-        self.did_reset = False
-        self.initial_action = None
-        self.steps_since_reset = 0
-        self.last_actions = []
 
     def get_optim_params(self) -> dict:
         # TODO(aliberts, rcadene): As of now, lr_backbone == lr
@@ -115,8 +105,6 @@ class ACTPolicy(PreTrainedPolicy):
             self.temporal_ensembler.reset()
         else:
             self._action_queue = deque([], maxlen=self.config.n_action_steps)
-        self.last_actions = []
-        self.steps_since_reset = 0
 
     @torch.no_grad
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
@@ -126,23 +114,12 @@ class ACTPolicy(PreTrainedPolicy):
         environment. It works by managing the actions in a queue and only calling `select_actions` when the
         queue is empty.
         """
-        self.steps_since_reset += 1
-        RESET_STEPS = 120
-        RESET_WALKBACK_STEPS = 80
-
         self.eval()
 
         batch = self.normalize_inputs(batch)
         if self.config.image_features:
-            batch = dict(
-                batch
-            )  # shallow copy so that adding a key doesn't modify the original
-            batch["observation.images"] = [
-                batch[key] for key in self.config.image_features
-            ]
-            #   print(
-            #       f"select action from ACTPolicy; num images: {len(batch['observation.images'])}"
-            #   )
+            batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
+            batch["observation.images"] = [batch[key] for key in self.config.image_features]
 
         # If we are doing temporal ensembling, do online updates where we keep track of the number of actions
         # we are ensembling over.
@@ -154,8 +131,6 @@ class ACTPolicy(PreTrainedPolicy):
 
         # Action queue logic for n_action_steps > 1. When the action_queue is depleted, populate it by
         # querying the policy.
-        if self.steps_since_reset == RESET_STEPS + RESET_WALKBACK_STEPS:
-            self._action_queue = deque([], maxlen=self.config.n_action_steps)
         if len(self._action_queue) == 0:
             actions = self.model(batch)[0][:, : self.config.n_action_steps]
 
@@ -165,39 +140,20 @@ class ACTPolicy(PreTrainedPolicy):
             # `self.model.forward` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
             # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
             self._action_queue.extend(actions.transpose(0, 1))
-        action = self._action_queue.popleft()
-        if (
-            self.steps_since_reset > RESET_STEPS
-            and self.steps_since_reset < RESET_STEPS + RESET_WALKBACK_STEPS
-        ):
-            logging.info("RESETTING")
-            action = self.last_actions[-1]
-            self.last_actions.pop()
-            logging.info(f"Action reset: {action.shape}; first index: {action[0][0]}")
-            if self.config.temporal_ensemble_coeff is not None:
-                self.temporal_ensembler.reset()
-            return action
-        self.last_actions.append(action)
-        logging.info(f"last action: {action.shape}; first index: {action[0][0]}")
-        return action
+        return self._action_queue.popleft()
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
         """Run the batch through the model and compute the loss for training or validation."""
         batch = self.normalize_inputs(batch)
         if self.config.image_features:
-            batch = dict(
-                batch
-            )  # shallow copy so that adding a key doesn't modify the original
-            batch["observation.images"] = [
-                batch[key] for key in self.config.image_features
-            ]
+            batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
+            batch["observation.images"] = [batch[key] for key in self.config.image_features]
 
         batch = self.normalize_targets(batch)
         actions_hat, (mu_hat, log_sigma_x2_hat) = self.model(batch)
 
         l1_loss = (
-            F.l1_loss(batch["action"], actions_hat, reduction="none")
-            * ~batch["action_is_pad"].unsqueeze(-1)
+            F.l1_loss(batch["action"], actions_hat, reduction="none") * ~batch["action_is_pad"].unsqueeze(-1)
         ).mean()
 
         loss_dict = {"l1_loss": l1_loss.item()}
@@ -205,14 +161,9 @@ class ACTPolicy(PreTrainedPolicy):
             # Calculate Dₖₗ(latent_pdf || standard_normal). Note: After computing the KL-divergence for
             # each dimension independently, we sum over the latent dimension to get the total
             # KL-divergence per batch element, then take the mean over the batch.
-            # (See App. B of https://arxiv.org/abs/1312.6114 for more details).
+            # (See App. B of https://huggingface.co/papers/1312.6114 for more details).
             mean_kld = (
-                (
-                    -0.5
-                    * (1 + log_sigma_x2_hat - mu_hat.pow(2) - (log_sigma_x2_hat).exp())
-                )
-                .sum(-1)
-                .mean()
+                (-0.5 * (1 + log_sigma_x2_hat - mu_hat.pow(2) - (log_sigma_x2_hat).exp())).sum(-1).mean()
             )
             loss_dict["kld_loss"] = mean_kld.item()
             loss = l1_loss + mean_kld * self.config.kl_weight
@@ -224,7 +175,7 @@ class ACTPolicy(PreTrainedPolicy):
 
 class ACTTemporalEnsembler:
     def __init__(self, temporal_ensemble_coeff: float, chunk_size: int) -> None:
-        """Temporal ensembling as described in Algorithm 2 of https://arxiv.org/abs/2304.13705.
+        """Temporal ensembling as described in Algorithm 2 of https://huggingface.co/papers/2304.13705.
 
         The weights are calculated as wᵢ = exp(-temporal_ensemble_coeff * i) where w₀ is the oldest action.
         They are then normalized to sum to 1 by dividing by Σwᵢ. Here's some intuition around how the
@@ -266,9 +217,7 @@ class ACTTemporalEnsembler:
         ```
         """
         self.chunk_size = chunk_size
-        self.ensemble_weights = torch.exp(
-            -temporal_ensemble_coeff * torch.arange(chunk_size)
-        )
+        self.ensemble_weights = torch.exp(-temporal_ensemble_coeff * torch.arange(chunk_size))
         self.ensemble_weights_cumsum = torch.cumsum(self.ensemble_weights, dim=0)
         self.reset()
 
@@ -284,9 +233,7 @@ class ACTTemporalEnsembler:
         time steps, and pop/return the next batch of actions in the sequence.
         """
         self.ensemble_weights = self.ensemble_weights.to(device=actions.device)
-        self.ensemble_weights_cumsum = self.ensemble_weights_cumsum.to(
-            device=actions.device
-        )
+        self.ensemble_weights_cumsum = self.ensemble_weights_cumsum.to(device=actions.device)
         if self.ensembled_actions is None:
             # Initializes `self._ensembled_action` to the sequence of actions predicted during the first
             # time step of the episode.
@@ -294,34 +241,19 @@ class ACTTemporalEnsembler:
             # Note: The last dimension is unsqueeze to make sure we can broadcast properly for tensor
             # operations later.
             self.ensembled_actions_count = torch.ones(
-                (self.chunk_size, 1),
-                dtype=torch.long,
-                device=self.ensembled_actions.device,
+                (self.chunk_size, 1), dtype=torch.long, device=self.ensembled_actions.device
             )
         else:
             # self.ensembled_actions will have shape (batch_size, chunk_size - 1, action_dim). Compute
             # the online update for those entries.
-            self.ensembled_actions *= self.ensemble_weights_cumsum[
-                self.ensembled_actions_count - 1
-            ]
-            self.ensembled_actions += (
-                actions[:, :-1] * self.ensemble_weights[self.ensembled_actions_count]
-            )
-            self.ensembled_actions /= self.ensemble_weights_cumsum[
-                self.ensembled_actions_count
-            ]
-            self.ensembled_actions_count = torch.clamp(
-                self.ensembled_actions_count + 1, max=self.chunk_size
-            )
+            self.ensembled_actions *= self.ensemble_weights_cumsum[self.ensembled_actions_count - 1]
+            self.ensembled_actions += actions[:, :-1] * self.ensemble_weights[self.ensembled_actions_count]
+            self.ensembled_actions /= self.ensemble_weights_cumsum[self.ensembled_actions_count]
+            self.ensembled_actions_count = torch.clamp(self.ensembled_actions_count + 1, max=self.chunk_size)
             # The last action, which has no prior online average, needs to get concatenated onto the end.
-            self.ensembled_actions = torch.cat(
-                [self.ensembled_actions, actions[:, -1:]], dim=1
-            )
+            self.ensembled_actions = torch.cat([self.ensembled_actions, actions[:, -1:]], dim=1)
             self.ensembled_actions_count = torch.cat(
-                [
-                    self.ensembled_actions_count,
-                    torch.ones_like(self.ensembled_actions_count[-1:]),
-                ]
+                [self.ensembled_actions_count, torch.ones_like(self.ensembled_actions_count[-1:])]
             )
         # "Consume" the first action.
         action, self.ensembled_actions, self.ensembled_actions_count = (
@@ -387,9 +319,7 @@ class ACT(nn.Module):
                 config.dim_model,
             )
             # Projection layer from the VAE encoder's output to the latent distribution's parameter space.
-            self.vae_encoder_latent_output_proj = nn.Linear(
-                config.dim_model, config.latent_dim * 2
-            )
+            self.vae_encoder_latent_output_proj = nn.Linear(config.dim_model, config.latent_dim * 2)
             # Fixed sinusoidal positional embedding for the input to the VAE encoder. Unsqueeze for batch
             # dimension.
             num_input_token_encoder = 1 + config.chunk_size
@@ -397,28 +327,20 @@ class ACT(nn.Module):
                 num_input_token_encoder += 1
             self.register_buffer(
                 "vae_encoder_pos_enc",
-                create_sinusoidal_pos_embedding(
-                    num_input_token_encoder, config.dim_model
-                ).unsqueeze(0),
+                create_sinusoidal_pos_embedding(num_input_token_encoder, config.dim_model).unsqueeze(0),
             )
 
         # Backbone for image feature extraction.
         if self.config.image_features:
             backbone_model = getattr(torchvision.models, config.vision_backbone)(
-                replace_stride_with_dilation=[
-                    False,
-                    False,
-                    config.replace_final_stride_with_dilation,
-                ],
+                replace_stride_with_dilation=[False, False, config.replace_final_stride_with_dilation],
                 weights=config.pretrained_backbone_weights,
                 norm_layer=FrozenBatchNorm2d,
             )
             # Note: The assumption here is that we are using a ResNet model (and hence layer4 is the final
             # feature map).
             # Note: The forward method of this returns a dict: {"feature_map": output}.
-            self.backbone = IntermediateLayerGetter(
-                backbone_model, return_layers={"layer4": "feature_map"}
-            )
+            self.backbone = IntermediateLayerGetter(backbone_model, return_layers={"layer4": "feature_map"})
 
         # Transformer (acts as VAE decoder when training with the variational objective).
         self.encoder = ACTEncoder(config)
@@ -447,18 +369,14 @@ class ACT(nn.Module):
             n_1d_tokens += 1
         self.encoder_1d_feature_pos_embed = nn.Embedding(n_1d_tokens, config.dim_model)
         if self.config.image_features:
-            self.encoder_cam_feat_pos_embed = ACTSinusoidalPositionEmbedding2d(
-                config.dim_model // 2
-            )
+            self.encoder_cam_feat_pos_embed = ACTSinusoidalPositionEmbedding2d(config.dim_model // 2)
 
         # Transformer decoder.
         # Learnable positional embedding for the transformer's decoder (in the style of DETR object queries).
         self.decoder_pos_embed = nn.Embedding(config.chunk_size, config.dim_model)
 
         # Final action regression head on the output of the transformer's decoder.
-        self.action_head = nn.Linear(
-            config.dim_model, self.config.action_feature.shape[0]
-        )
+        self.action_head = nn.Linear(config.dim_model, self.config.action_feature.shape[0])
 
         self._reset_parameters()
 
@@ -468,9 +386,7 @@ class ACT(nn.Module):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-    def forward(
-        self, batch: dict[str, Tensor]
-    ) -> tuple[Tensor, tuple[Tensor, Tensor] | tuple[None, None]]:
+    def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, tuple[Tensor, Tensor] | tuple[None, None]]:
         """A forward pass through the Action Chunking Transformer (with optional VAE encoder).
 
         `batch` should have the following structure:
@@ -490,9 +406,9 @@ class ACT(nn.Module):
             latent dimension.
         """
         if self.config.use_vae and self.training:
-            assert (
-                "action" in batch
-            ), "actions must be provided when using the variational objective in training mode."
+            assert "action" in batch, (
+                "actions must be provided when using the variational objective in training mode."
+            )
 
         if "observation.images" in batch:
             batch_size = batch["observation.images"][0].shape[0]
@@ -506,20 +422,12 @@ class ACT(nn.Module):
                 self.vae_encoder_cls_embed.weight, "1 d -> b 1 d", b=batch_size
             )  # (B, 1, D)
             if self.config.robot_state_feature:
-                robot_state_embed = self.vae_encoder_robot_state_input_proj(
-                    batch["observation.state"]
-                )
+                robot_state_embed = self.vae_encoder_robot_state_input_proj(batch["observation.state"])
                 robot_state_embed = robot_state_embed.unsqueeze(1)  # (B, 1, D)
-            action_embed = self.vae_encoder_action_input_proj(
-                batch["action"]
-            )  # (B, S, D)
+            action_embed = self.vae_encoder_action_input_proj(batch["action"])  # (B, S, D)
 
             if self.config.robot_state_feature:
-                vae_encoder_input = [
-                    cls_embed,
-                    robot_state_embed,
-                    action_embed,
-                ]  # (B, S+2, D)
+                vae_encoder_input = [cls_embed, robot_state_embed, action_embed]  # (B, S+2, D)
             else:
                 vae_encoder_input = [cls_embed, action_embed]
             vae_encoder_input = torch.cat(vae_encoder_input, axis=1)
@@ -545,9 +453,7 @@ class ACT(nn.Module):
                 vae_encoder_input.permute(1, 0, 2),
                 pos_embed=pos_embed.permute(1, 0, 2),
                 key_padding_mask=key_padding_mask,
-            )[
-                0
-            ]  # select the class token, with shape (B, D)
+            )[0]  # select the class token, with shape (B, D)
             latent_pdf_params = self.vae_encoder_latent_output_proj(cls_token_out)
             mu = latent_pdf_params[:, : self.config.latent_dim]
             # This is 2log(sigma). Done this way to match the original implementation.
@@ -559,26 +465,20 @@ class ACT(nn.Module):
             # When not using the VAE encoder, we set the latent to be all zeros.
             mu = log_sigma_x2 = None
             # TODO(rcadene, alexander-soare): remove call to `.to` to speedup forward ; precompute and use buffer
-            latent_sample = torch.zeros(
-                [batch_size, self.config.latent_dim], dtype=torch.float32
-            ).to(batch["observation.state"].device)
+            latent_sample = torch.zeros([batch_size, self.config.latent_dim], dtype=torch.float32).to(
+                batch["observation.state"].device
+            )
 
         # Prepare transformer encoder inputs.
         encoder_in_tokens = [self.encoder_latent_input_proj(latent_sample)]
-        encoder_in_pos_embed = list(
-            self.encoder_1d_feature_pos_embed.weight.unsqueeze(1)
-        )
+        encoder_in_pos_embed = list(self.encoder_1d_feature_pos_embed.weight.unsqueeze(1))
         # Robot state token.
         if self.config.robot_state_feature:
-            encoder_in_tokens.append(
-                self.encoder_robot_state_input_proj(batch["observation.state"])
-            )
+            encoder_in_tokens.append(self.encoder_robot_state_input_proj(batch["observation.state"]))
         # Environment state token.
         if self.config.env_state_feature:
             encoder_in_tokens.append(
-                self.encoder_env_state_input_proj(
-                    batch["observation.environment_state"]
-                )
+                self.encoder_env_state_input_proj(batch["observation.environment_state"])
             )
 
         # Camera observation features and positional embeddings.
@@ -589,9 +489,7 @@ class ACT(nn.Module):
             # For a list of images, the H and W may vary but H*W is constant.
             for img in batch["observation.images"]:
                 cam_features = self.backbone(img)["feature_map"]
-                cam_pos_embed = self.encoder_cam_feat_pos_embed(cam_features).to(
-                    dtype=cam_features.dtype
-                )
+                cam_pos_embed = self.encoder_cam_feat_pos_embed(cam_features).to(dtype=cam_features.dtype)
                 cam_features = self.encoder_img_feat_input_proj(cam_features)
 
                 # Rearrange features to (sequence, batch, dim).
@@ -637,21 +535,12 @@ class ACTEncoder(nn.Module):
     def __init__(self, config: ACTConfig, is_vae_encoder: bool = False):
         super().__init__()
         self.is_vae_encoder = is_vae_encoder
-        num_layers = (
-            config.n_vae_encoder_layers
-            if self.is_vae_encoder
-            else config.n_encoder_layers
-        )
-        self.layers = nn.ModuleList(
-            [ACTEncoderLayer(config) for _ in range(num_layers)]
-        )
+        num_layers = config.n_vae_encoder_layers if self.is_vae_encoder else config.n_encoder_layers
+        self.layers = nn.ModuleList([ACTEncoderLayer(config) for _ in range(num_layers)])
         self.norm = nn.LayerNorm(config.dim_model) if config.pre_norm else nn.Identity()
 
     def forward(
-        self,
-        x: Tensor,
-        pos_embed: Tensor | None = None,
-        key_padding_mask: Tensor | None = None,
+        self, x: Tensor, pos_embed: Tensor | None = None, key_padding_mask: Tensor | None = None
     ) -> Tensor:
         for layer in self.layers:
             x = layer(x, pos_embed=pos_embed, key_padding_mask=key_padding_mask)
@@ -662,9 +551,7 @@ class ACTEncoder(nn.Module):
 class ACTEncoderLayer(nn.Module):
     def __init__(self, config: ACTConfig):
         super().__init__()
-        self.self_attn = nn.MultiheadAttention(
-            config.dim_model, config.n_heads, dropout=config.dropout
-        )
+        self.self_attn = nn.MultiheadAttention(config.dim_model, config.n_heads, dropout=config.dropout)
 
         # Feed forward layers.
         self.linear1 = nn.Linear(config.dim_model, config.dim_feedforward)
@@ -679,9 +566,7 @@ class ACTEncoderLayer(nn.Module):
         self.activation = get_activation_fn(config.feedforward_activation)
         self.pre_norm = config.pre_norm
 
-    def forward(
-        self, x, pos_embed: Tensor | None = None, key_padding_mask: Tensor | None = None
-    ) -> Tensor:
+    def forward(self, x, pos_embed: Tensor | None = None, key_padding_mask: Tensor | None = None) -> Tensor:
         skip = x
         if self.pre_norm:
             x = self.norm1(x)
@@ -706,9 +591,7 @@ class ACTDecoder(nn.Module):
     def __init__(self, config: ACTConfig):
         """Convenience module for running multiple decoder layers followed by normalization."""
         super().__init__()
-        self.layers = nn.ModuleList(
-            [ACTDecoderLayer(config) for _ in range(config.n_decoder_layers)]
-        )
+        self.layers = nn.ModuleList([ACTDecoderLayer(config) for _ in range(config.n_decoder_layers)])
         self.norm = nn.LayerNorm(config.dim_model)
 
     def forward(
@@ -720,10 +603,7 @@ class ACTDecoder(nn.Module):
     ) -> Tensor:
         for layer in self.layers:
             x = layer(
-                x,
-                encoder_out,
-                decoder_pos_embed=decoder_pos_embed,
-                encoder_pos_embed=encoder_pos_embed,
+                x, encoder_out, decoder_pos_embed=decoder_pos_embed, encoder_pos_embed=encoder_pos_embed
             )
         if self.norm is not None:
             x = self.norm(x)
@@ -733,12 +613,8 @@ class ACTDecoder(nn.Module):
 class ACTDecoderLayer(nn.Module):
     def __init__(self, config: ACTConfig):
         super().__init__()
-        self.self_attn = nn.MultiheadAttention(
-            config.dim_model, config.n_heads, dropout=config.dropout
-        )
-        self.multihead_attn = nn.MultiheadAttention(
-            config.dim_model, config.n_heads, dropout=config.dropout
-        )
+        self.self_attn = nn.MultiheadAttention(config.dim_model, config.n_heads, dropout=config.dropout)
+        self.multihead_attn = nn.MultiheadAttention(config.dim_model, config.n_heads, dropout=config.dropout)
 
         # Feed forward layers.
         self.linear1 = nn.Linear(config.dim_model, config.dim_feedforward)
@@ -779,9 +655,7 @@ class ACTDecoderLayer(nn.Module):
         if self.pre_norm:
             x = self.norm1(x)
         q = k = self.maybe_add_pos_embed(x, decoder_pos_embed)
-        x = self.self_attn(q, k, value=x)[
-            0
-        ]  # select just the output, not the attention weights
+        x = self.self_attn(q, k, value=x)[0]  # select just the output, not the attention weights
         x = skip + self.dropout1(x)
         if self.pre_norm:
             skip = x
@@ -793,9 +667,7 @@ class ACTDecoderLayer(nn.Module):
             query=self.maybe_add_pos_embed(x, decoder_pos_embed),
             key=self.maybe_add_pos_embed(encoder_out, encoder_pos_embed),
             value=encoder_out,
-        )[
-            0
-        ]  # select just the output, not the attention weights
+        )[0]  # select just the output, not the attention weights
         x = skip + self.dropout2(x)
         if self.pre_norm:
             skip = x
@@ -820,14 +692,9 @@ def create_sinusoidal_pos_embedding(num_positions: int, dimension: int) -> Tenso
     """
 
     def get_position_angle_vec(position):
-        return [
-            position / np.power(10000, 2 * (hid_j // 2) / dimension)
-            for hid_j in range(dimension)
-        ]
+        return [position / np.power(10000, 2 * (hid_j // 2) / dimension) for hid_j in range(dimension)]
 
-    sinusoid_table = np.array(
-        [get_position_angle_vec(pos_i) for pos_i in range(num_positions)]
-    )
+    sinusoid_table = np.array([get_position_angle_vec(pos_i) for pos_i in range(num_positions)])
     sinusoid_table[:, 0::2] = np.sin(sinusoid_table[:, 0::2])  # dim 2i
     sinusoid_table[:, 1::2] = np.cos(sinusoid_table[:, 1::2])  # dim 2i+1
     return torch.from_numpy(sinusoid_table).float()
@@ -872,9 +739,7 @@ class ACTSinusoidalPositionEmbedding2d(nn.Module):
         x_range = x_range / (x_range[:, :, -1:] + self._eps) * self._two_pi
 
         inverse_frequency = self._temperature ** (
-            2
-            * (torch.arange(self.dimension, dtype=torch.float32, device=x.device) // 2)
-            / self.dimension
+            2 * (torch.arange(self.dimension, dtype=torch.float32, device=x.device) // 2) / self.dimension
         )
 
         x_range = x_range.unsqueeze(-1) / inverse_frequency  # (1, H, W, 1)
@@ -882,15 +747,9 @@ class ACTSinusoidalPositionEmbedding2d(nn.Module):
 
         # Note: this stack then flatten operation results in interleaved sine and cosine terms.
         # pos_embed_x and pos_embed_y are (1, H, W, C // 2).
-        pos_embed_x = torch.stack(
-            (x_range[..., 0::2].sin(), x_range[..., 1::2].cos()), dim=-1
-        ).flatten(3)
-        pos_embed_y = torch.stack(
-            (y_range[..., 0::2].sin(), y_range[..., 1::2].cos()), dim=-1
-        ).flatten(3)
-        pos_embed = torch.cat((pos_embed_y, pos_embed_x), dim=3).permute(
-            0, 3, 1, 2
-        )  # (1, C, H, W)
+        pos_embed_x = torch.stack((x_range[..., 0::2].sin(), x_range[..., 1::2].cos()), dim=-1).flatten(3)
+        pos_embed_y = torch.stack((y_range[..., 0::2].sin(), y_range[..., 1::2].cos()), dim=-1).flatten(3)
+        pos_embed = torch.cat((pos_embed_y, pos_embed_x), dim=3).permute(0, 3, 1, 2)  # (1, C, H, W)
 
         return pos_embed
 
