@@ -28,6 +28,7 @@ def is_package_available(pkg_name: str, return_version: bool = False) -> tuple[b
         try:
             # Primary method to get the package version
             package_version = importlib.metadata.version(pkg_name)
+
         except importlib.metadata.PackageNotFoundError:
             # Fallback method: Only for "torch" and versions containing "dev"
             if pkg_name == "torch":
@@ -43,6 +44,9 @@ def is_package_available(pkg_name: str, return_version: bool = False) -> tuple[b
                 except ImportError:
                     # If the package can't be imported, it's not available
                     package_exists = False
+            elif pkg_name == "grpc":
+                package = importlib.import_module(pkg_name)
+                package_version = getattr(package, "__version__", "N/A")
             else:
                 # For packages other than "torch", don't attempt the fallback and set as not available
                 package_exists = False

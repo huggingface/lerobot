@@ -23,7 +23,6 @@ from typing import Any
 import numpy as np
 
 from lerobot.common.cameras.utils import make_cameras_from_configs
-from lerobot.common.constants import OBS_IMAGES, OBS_STATE
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.common.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.common.motors.feetech import (
@@ -65,8 +64,8 @@ class LeKiwi(Robot):
                 "arm_gripper": Motor(6, "sts3215", MotorNormMode.RANGE_0_100),
                 # base
                 "base_left_wheel": Motor(7, "sts3215", MotorNormMode.RANGE_M100_100),
-                "base_right_wheel": Motor(8, "sts3215", MotorNormMode.RANGE_M100_100),
-                "base_back_wheel": Motor(9, "sts3215", MotorNormMode.RANGE_M100_100),
+                "base_back_wheel": Motor(8, "sts3215", MotorNormMode.RANGE_M100_100),
+                "base_right_wheel": Motor(9, "sts3215", MotorNormMode.RANGE_M100_100),
             },
             calibration=self.calibration,
         )
@@ -249,7 +248,7 @@ class LeKiwi(Robot):
         velocity_vector = np.array([x, y, theta_rad])
 
         # Define the wheel mounting angles with a -90° offset.
-        angles = np.radians(np.array([240, 120, 0]) - 90)
+        angles = np.radians(np.array([240, 0, 120]) - 90)
         # Build the kinematic matrix: each row maps body velocities to a wheel’s linear speed.
         # The third column (base_radius) accounts for the effect of rotation.
         m = np.array([[np.cos(a), np.sin(a), base_radius] for a in angles])
@@ -295,10 +294,7 @@ class LeKiwi(Robot):
           base_radius : Distance from the robot center to each wheel (meters).
 
         Returns:
-          A dict (x_cmd, y_cmd, theta_cmd) where:
-             OBS_STATE.x_cmd      : Linear velocity in x (m/s).
-             OBS_STATE.y_cmd      : Linear velocity in y (m/s).
-             OBS_STATE.theta_cmd  : Rotational velocity in deg/s.
+          A dict (x.vel, y.vel, theta.vel) all in m/s
         """
 
         # Convert each raw command back to an angular speed in deg/s.
@@ -316,7 +312,7 @@ class LeKiwi(Robot):
         wheel_linear_speeds = wheel_radps * wheel_radius
 
         # Define the wheel mounting angles with a -90° offset.
-        angles = np.radians(np.array([240, 120, 0]) - 90)
+        angles = np.radians(np.array([240, 0, 120]) - 90)
         m = np.array([[np.cos(a), np.sin(a), base_radius] for a in angles])
 
         # Solve the inverse kinematics: body_velocity = M⁻¹ · wheel_linear_speeds.
@@ -347,16 +343,15 @@ class LeKiwi(Robot):
 
         arm_state = {f"{k}.pos": v for k, v in arm_pos.items()}
 
-        flat_states = {**arm_state, **base_vel}
+        obs_dict = {**arm_state, **base_vel}
 
-        obs_dict = {f"{OBS_STATE}": flat_states}
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
 
         # Capture images from cameras
         for cam_key, cam in self.cameras.items():
             start = time.perf_counter()
-            obs_dict[f"{OBS_IMAGES}.{cam_key}"] = cam.async_read()
+            obs_dict[cam_key] = cam.async_read()
             dt_ms = (time.perf_counter() - start) * 1e3
             logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
 
