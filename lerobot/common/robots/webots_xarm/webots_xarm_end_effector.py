@@ -26,6 +26,7 @@ from teleop.utils.jacobi_robot import JacobiRobot
 from controller import Supervisor
 from PIL import Image
 import cv2
+import time
 
 from lerobot.common.cameras import make_cameras_from_configs
 from lerobot.common.errors import DeviceNotConnectedError, DeviceAlreadyConnectedError
@@ -46,7 +47,6 @@ class WebotsXarmEndEffector(Robot):
         this_dir = os.path.dirname(os.path.abspath(__file__))
 
         self.config = config
-        self.gripper_state = 0.0
         self.jacobi = JacobiRobot(os.path.join(this_dir, "lite6.urdf"), ee_link="link6")
         
         self.arm_ = Supervisor()
@@ -65,7 +65,8 @@ class WebotsXarmEndEffector(Robot):
         self.right_motor_ = self.arm_.getDevice("gripper_right_joint")
         
         self.is_gripper_open = True
-
+        
+        # open gripper on the begining
         self.left_motor_.setPosition(0.0)
         self.right_motor_.setPosition(0.0)
                 
@@ -75,16 +76,7 @@ class WebotsXarmEndEffector(Robot):
         We assume that at connection time, arm is in a rest position,
         and torque can be safely disabled to run calibration.
         """
-        # print(joint_positions)
         
-        # position_sensors = []
-        # joint_angles = []
-        # for motor in self.motors_:
-        #     sensor = motor.getPositionSensor()
-        #     sensor.enable(self.timestep_)
-        #     print(sensor.getValue(), "===================")
-        #     joint_angles.append(sensor.getValue())
-        #     position_sensors.append(sensor)
         joint_positions = [sensor.getValue() for sensor in self.position_sensors]
         for motor, position in zip(self.motors_, joint_positions):
             motor.setPosition(position)
@@ -98,10 +90,8 @@ class WebotsXarmEndEffector(Robot):
             joint_name = f"joint{i}"
             self.jacobi.set_joint_position(joint_name, joint_positions[i - 1])
 
-        self.camera_ = self.arm_.getDevice("camera")  # zameni sa pravim imenom kamere
-        # self.camera_.enable(self.timestep_)
+        self.camera_ = self.arm_.getDevice("camera")
 
-        # self.arm_.step(self.timestep_)
         logger.info(f"{self} connected.")
         if self.camera_ is None:
             print("❌ Kamera nije pronađena. Proveri tačno ime u Webotsu.")
@@ -212,16 +202,8 @@ class WebotsXarmEndEffector(Robot):
         start = time.perf_counter()
 
         # Read joint positions from xarm
-        # position_sensors = []
         joint_angles = [sensor.getValue() for sensor in self.position_sensors]
-        # for motor in self.motors_:
-        #     sensor = motor.getPositionSensor()
-        #     sensor.enable(self.timestep_)
-        #     print(sensor.getValue(), "===================")
-        #     joint_angles.append(sensor.getValue())
-        #     position_sensors.append(sensor)
-            
-        print(joint_angles)
+        
         ret = 0
         if joint_angles is None:
             ret = -1
@@ -235,19 +217,16 @@ class WebotsXarmEndEffector(Robot):
         obs_dict["gripper.pos"] = 1 if self.is_gripper_open else 0
 
         # Capture images from cameras
-        
         image = self.camera_.getImage()
         width = self.camera_.getWidth()
         height = self.camera_.getHeight()
         img_array = np.frombuffer(image, np.uint8).reshape((height, width, 4))
         rgb_array = cv2.cvtColor(img_array, cv2.COLOR_BGR2RGB)
         pil_image = Image.fromarray(rgb_array, 'RGB')
-        # pil_image = Image.fromarray(img_array[:, :, :3], 'RGB')
-        # pil_image.save("output.jpg")
-        
-        print("==============")
-        # print(pil_image)
-        # print(joint_angles)
+
+        # timestamp = int(time.time() * 1000)  # vreme u milisekundama
+        # filename = f"/home/marija/Documents/spes_lerobot/lerobot/lerobot/common/robots/webots_xarm/images/img_{timestamp}.png"
+        # pil_image.save(filename)
         
         # for cam_key, cam in self.cameras.items():
         #     start = time.perf_counter()
@@ -372,5 +351,6 @@ if __name__ == "__main__":
     while robot.step():
         robot.send_action(action)
         obs = robot.get_observation()
+        print(obs)
         time.sleep(0.05)
-        robot.open_gripper(-0.01)
+        robot.open_gripper(0.0)
