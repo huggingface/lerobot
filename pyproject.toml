@@ -68,7 +68,6 @@ dependencies = [
     "pyserial>=3.5",
     "pyzmq>=26.2.1",
     "rerun-sdk>=0.21.0",
-    "scipy>=1.14.0",
     "termcolor>=2.4.0",
     "torch>=2.2.1",
     "torchcodec>=0.2.1; sys_platform != 'win32' and (sys_platform != 'linux' or (platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l')) and (sys_platform != 'darwin' or platform_machine != 'x86_64')",

@@ -44,6 +44,15 @@ class SO100FollowerConfig(RobotConfig):
 class SO100FollowerEndEffectorConfig(SO100FollowerConfig):
     """Configuration for the SO100FollowerEndEffector robot."""
 
+    # Path to URDF file for kinematics
+    urdf_path: str | None = None
+    
+    # End-effector frame name in the URDF
+    ee_frame_name: str = "gripperframe"
+    
+    # Joint names for kinematics (if None, uses default naming)
+    joint_names: list[str] | None = None
+
     # Default bounds for the end-effector position (in meters)
     end_effector_bounds: dict[str, list[float]] = field(
         default_factory=lambda: {

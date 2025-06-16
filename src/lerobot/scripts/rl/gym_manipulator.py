@@ -1293,6 +1293,7 @@ class BaseLeaderControlWrapper(gym.Wrapper):
                 gripper_action = 1
 
             action = np.append(action, gripper_action)
+            action = torch.from_numpy(action).float()
 
         return action
 
