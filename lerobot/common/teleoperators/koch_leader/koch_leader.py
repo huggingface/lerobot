@@ -19,11 +19,7 @@ import time
 
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.common.motors import Motor, MotorCalibration, MotorNormMode
-from lerobot.common.motors.dynamixel import (
-    DriveMode,
-    DynamixelMotorsBus,
-    OperatingMode,
-)
+from lerobot.common.motors.dynamixel import DriveMode, DynamixelMotorsBus, OperatingMode
 
 from ..teleoperator import Teleoperator
 from .config_koch_leader import KochLeaderConfig
@@ -85,12 +81,6 @@ class KochLeader(Teleoperator):
         return self.bus.is_calibrated
 
     def calibrate(self) -> None:
-<<<<<<< HEAD
-        if self.calibration: # from local file
-            logger.info("Using existing calibration file. "        
-                        f"If you wish to create a new one, please delete {self.calibration_fpath}")
-            self.bus.write_calibration(self.calibration)        
-=======
         if self.calibration:  # from local file
             logger.info(
                 "Using existing calibration file. "
@@ -98,7 +88,6 @@ class KochLeader(Teleoperator):
             )
             self.bus.write_calibration(self.calibration)
             return
->>>>>>> ebe0b100 (asf')
         logger.info(f"\nRunning calibration of {self}")
         self.bus.disable_torque()
         for motor in self.bus.motors:
