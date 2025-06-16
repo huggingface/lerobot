@@ -82,6 +82,11 @@ class SO100Leader(Teleoperator):
         return self.bus.is_calibrated
 
     def calibrate(self) -> None:
+        if self.calibration: # from local file
+            logger.info("Using existing calibration file. "        
+                        f"If you wish to create a new one, please delete {self.calibration_fpath}")
+            self.bus.write_calibration(self.calibration)
+            return
         logger.info(f"\nRunning calibration of {self}")
         self.bus.disable_torque()
         for motor in self.bus.motors:
