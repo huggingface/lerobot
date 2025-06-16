@@ -22,7 +22,7 @@ import numpy as np
 
 from lerobot.cameras import make_cameras_from_configs
 from lerobot.errors import DeviceNotConnectedError
-from lerobot.model.kinematics_utils import PlacoRobotKinematics
+from lerobot.model.kinematics import RobotKinematics
 from lerobot.motors import Motor, MotorNormMode
 from lerobot.motors.feetech import FeetechMotorsBus
 
@@ -68,11 +68,11 @@ class SO100FollowerEndEffector(SO100Follower):
                 "urdf_path must be provided in the configuration for end-effector control. "
                 "Please set urdf_path in your SO100FollowerEndEffectorConfig."
             )
-        
-        self.kinematics = PlacoRobotKinematics(
+
+        self.kinematics = RobotKinematics(
             urdf_path=self.config.urdf_path,
             ee_frame_name=self.config.ee_frame_name,
-            joint_names=self.config.joint_names
+            joint_names=self.config.joint_names,
         )
 
         # Store the bounds for end-effector position
@@ -135,7 +135,7 @@ class SO100FollowerEndEffector(SO100Follower):
 
         # Calculate current end-effector position using forward kinematics
         if self.current_ee_pos is None:
-            self.current_ee_pos = self.kinematics.forward_kinematics(self.current_joint_pos, frame=self.config.ee_frame_name)
+            self.current_ee_pos = self.kinematics.forward_kinematics(self.current_joint_pos)
 
         # Set desired end-effector position by adding delta
         desired_ee_pos = np.eye(4)
@@ -152,7 +152,7 @@ class SO100FollowerEndEffector(SO100Follower):
 
         # Compute inverse kinematics to get joint positions
         target_joint_values_in_degrees = self.kinematics.ik(
-            self.current_joint_pos, desired_ee_pos, position_only=True, frame=self.config.ee_frame_name
+            self.current_joint_pos, desired_ee_pos, position_only=True
         )
 
         target_joint_values_in_degrees = np.clip(target_joint_values_in_degrees, -180.0, 180.0)

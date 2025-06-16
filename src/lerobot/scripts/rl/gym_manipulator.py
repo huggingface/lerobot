@@ -264,7 +264,7 @@ class RobotEnv(gym.Env):
     def _get_observation(self) -> np.ndarray:
         """Helper to convert a dictionary from bus.sync_read to an ordered numpy array."""
         obs_dict = self.robot.get_observation()
-        joint_positions = np.array([obs_dict[name] for name in self._joint_names], dtype=np.float32)
+        joint_positions = np.array([obs_dict[name] for name in self._joint_names])
 
         images = {key: obs_dict[key] for key in self._image_keys}
         return {"agent_pos": joint_positions, "pixels": images}
@@ -1090,13 +1090,11 @@ class EEObservationWrapper(gym.ObservationWrapper):
             dtype=np.float32,
         )
 
-        # Initialize kinematics instance for the appropriate robot type
-        robot_type = getattr(env.unwrapped.robot.config, "robot_type", "so101")
-        if "so100" in robot_type or "so101" in robot_type:
-            # Note to be compatible with the rest of the codebase,
-            # we are using the new calibration method for so101 and so100
-            robot_type = "so_new_calibration"
-        self.kinematics = RobotKinematics(robot_type)
+        self.kinematics = RobotKinematics(
+            urdf_path=env.unwrapped.robot.config.urdf_path,
+            ee_frame_name=env.unwrapped.robot.config.ee_frame_name,
+            joint_names=env.unwrapped.robot.config.joint_names,
+        )
 
     def observation(self, observation):
         """
@@ -1110,7 +1108,7 @@ class EEObservationWrapper(gym.ObservationWrapper):
         """
         current_joint_pos = self.unwrapped._get_observation()["agent_pos"]
 
-        current_ee_pos = self.kinematics.forward_kinematics(current_joint_pos, frame="gripper_tip")[:3, 3]
+        current_ee_pos = self.kinematics.forward_kinematics(current_joint_pos)[:3, 3]
         observation["agent_pos"] = np.concatenate([observation["agent_pos"], current_ee_pos], -1)
         return observation
 
@@ -1157,12 +1155,11 @@ class BaseLeaderControlWrapper(gym.Wrapper):
         self.event_lock = Lock()  # Thread-safe access to events
 
         # Initialize robot control
-        robot_type = getattr(env.unwrapped.robot.config, "robot_type", "so101")
-        if "so100" in robot_type or "so101" in robot_type:
-            # Note to be compatible with the rest of the codebase,
-            # we are using the new calibration method for so101 and so100
-            robot_type = "so_new_calibration"
-        self.kinematics = RobotKinematics(robot_type)
+        self.kinematics = RobotKinematics(
+            urdf_path=env.unwrapped.robot.config.urdf_path,
+            ee_frame_name=env.unwrapped.robot.config.ee_frame_name,
+            joint_names=env.unwrapped.robot.config.joint_names,
+        )
         self.leader_torque_enabled = True
         self.prev_leader_gripper = None
 
@@ -1260,14 +1257,14 @@ class BaseLeaderControlWrapper(gym.Wrapper):
         leader_pos_dict = self.robot_leader.bus.sync_read("Present_Position")
         follower_pos_dict = self.robot_follower.bus.sync_read("Present_Position")
 
-        leader_pos = np.array([leader_pos_dict[name] for name in leader_pos_dict], dtype=np.float32)
-        follower_pos = np.array([follower_pos_dict[name] for name in follower_pos_dict], dtype=np.float32)
+        leader_pos = np.array([leader_pos_dict[name] for name in leader_pos_dict])
+        follower_pos = np.array([follower_pos_dict[name] for name in follower_pos_dict])
 
         self.leader_tracking_error_queue.append(np.linalg.norm(follower_pos[:-1] - leader_pos[:-1]))
 
         # [:3, 3] Last column of the transformation matrix corresponds to the xyz translation
-        leader_ee = self.kinematics.forward_kinematics(leader_pos, frame="gripper_tip")[:3, 3]
-        follower_ee = self.kinematics.forward_kinematics(follower_pos, frame="gripper_tip")[:3, 3]
+        leader_ee = self.kinematics.forward_kinematics(leader_pos)[:3, 3]
+        follower_ee = self.kinematics.forward_kinematics(follower_pos)[:3, 3]
 
         action = np.clip(leader_ee - follower_ee, -self.end_effector_step_sizes, self.end_effector_step_sizes)
         # Normalize the action to the range [-1, 1]
@@ -1293,7 +1290,6 @@ class BaseLeaderControlWrapper(gym.Wrapper):
                 gripper_action = 1
 
             action = np.append(action, gripper_action)
-            action = torch.from_numpy(action).float()
 
         return action
 
@@ -1341,6 +1337,9 @@ class BaseLeaderControlWrapper(gym.Wrapper):
 
         # NOTE:
         obs, reward, terminated, truncated, info = self.env.step(action)
+
+        if isinstance(action, np.ndarray):
+            action = torch.from_numpy(action)
 
         # Add intervention info
         info["is_intervention"] = is_intervention
