@@ -43,8 +43,68 @@ First, we will assemble the two SO100/SO101 arms. One to attach to the mobile ba
 - [Assemble SO101](./so101#step-by-step-assembly-instructions)
 - [Assemble LeKiwi](https://github.com/SIGRobotics-UIUC/LeKiwi/blob/main/Assembly.md)
 
+### Find the USB ports associated with motor board
+
+To find the port for each bus servo adapter, run this script:
+```bash
+python lerobot/find_port.py
+```
+
+<hfoptions id="example">
+<hfoption id="Mac">
+
+Example output:
+
+```
+Finding all available ports for the MotorBus.
+['/dev/tty.usbmodem575E0032081']
+Remove the USB cable from your MotorsBus and press Enter when done.
+
+[...Disconnect corresponding leader or follower arm and press Enter...]
+
+The port of this MotorsBus is /dev/tty.usbmodem575E0032081
+Reconnect the USB cable.
+```
+
+Where the found port is: `/dev/tty.usbmodem575E0032081` corresponding to your board.
+
+</hfoption>
+<hfoption id="Linux">
+
+On Linux, you might need to give access to the USB ports by running:
+```bash
+sudo chmod 666 /dev/ttyACM0
+sudo chmod 666 /dev/ttyACM1
+```
+
+Example output:
+
+```
+Finding all available ports for the MotorBus.
+['/dev/ttyACM0']
+Remove the usb cable from your MotorsBus and press Enter when done.
+
+[...Disconnect corresponding leader or follower arm and press Enter...]
+
+The port of this MotorsBus is /dev/ttyACM0
+Reconnect the USB cable.
+```
+
+Where the found port is: `/dev/ttyACM0` corresponding to your board.
+
+</hfoption>
+</hfoptions>
+
 ### Configure motors
 The instructions for configuring the motors can be found in the SO101 [docs](./so101#configure-the-motors). Besides the ids for the arm motors, we also need to set the motor ids for the mobile base. These need to be in a specific order to work. Below an image of the motor ids and motor mounting positions for the mobile base. Note that we only use one Motor Control board on LeKiwi. This means the motor ids for the wheels are 7, 8 and 9.
+
+You can run this command to setup motors for LeKiwi. It will first setup the motors for arm (id 6..1) and then setup motors for wheels (9,8,7)
+
+```bash
+python -m lerobot.setup_motors \
+    --robot.type=lekiwi \
+    --robot.port=/dev/tty.usbmodem58760431551 # <- paste here the port found at previous step
+```
 
 <img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/motor_ids.webp" alt="Motor ID's for mobile robot" title="Motor ID's for mobile robot" width="60%">
 
@@ -137,10 +197,10 @@ leader.disconnect()
 
 To teleoperate, SSH into your Raspberry Pi, and run `conda activate lerobot` and this command:
 ```bash
-python -m lerobot.common.robots.lekiwi.lekiwi_host
+python -m lerobot.common.robots.lekiwi.lekiwi_host --robot.id=my_awesome_kiwi
 ```
 
-Then on your laptop, also run `conda activate lerobot` and run the API example, make sure you set the correct `remote_ip` and `port`.
+Then on your laptop, also run `conda activate lerobot` and run the API example, make sure you set the correct `remote_ip` and `port` in `examples/lekiwi/teleoperate.py`.
 
 ```bash
 python examples/lekiwi/teleoperate.py

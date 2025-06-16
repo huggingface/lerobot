@@ -15,7 +15,7 @@
 # limitations under the License.
 """Action Chunking Transformer Policy
 
-As per Learning Fine-Grained Bimanual Manipulation with Low-Cost Hardware (https://arxiv.org/abs/2304.13705).
+As per Learning Fine-Grained Bimanual Manipulation with Low-Cost Hardware (https://huggingface.co/papers/2304.13705).
 The majority of changes here involve removing unused code, unifying naming, and adding helpful comments.
 """
 
@@ -41,7 +41,7 @@ from lerobot.common.policies.pretrained import PreTrainedPolicy
 class ACTPolicy(PreTrainedPolicy):
     """
     Action Chunking Transformer Policy as per Learning Fine-Grained Bimanual Manipulation with Low-Cost
-    Hardware (paper: https://arxiv.org/abs/2304.13705, code: https://github.com/tonyzhaozh/act)
+    Hardware (paper: https://huggingface.co/papers/2304.13705, code: https://github.com/tonyzhaozh/act)
     """
 
     config_class = ACTConfig
@@ -161,7 +161,7 @@ class ACTPolicy(PreTrainedPolicy):
             # Calculate Dₖₗ(latent_pdf || standard_normal). Note: After computing the KL-divergence for
             # each dimension independently, we sum over the latent dimension to get the total
             # KL-divergence per batch element, then take the mean over the batch.
-            # (See App. B of https://arxiv.org/abs/1312.6114 for more details).
+            # (See App. B of https://huggingface.co/papers/1312.6114 for more details).
             mean_kld = (
                 (-0.5 * (1 + log_sigma_x2_hat - mu_hat.pow(2) - (log_sigma_x2_hat).exp())).sum(-1).mean()
             )
@@ -175,7 +175,7 @@ class ACTPolicy(PreTrainedPolicy):
 
 class ACTTemporalEnsembler:
     def __init__(self, temporal_ensemble_coeff: float, chunk_size: int) -> None:
-        """Temporal ensembling as described in Algorithm 2 of https://arxiv.org/abs/2304.13705.
+        """Temporal ensembling as described in Algorithm 2 of https://huggingface.co/papers/2304.13705.
 
         The weights are calculated as wᵢ = exp(-temporal_ensemble_coeff * i) where w₀ is the oldest action.
         They are then normalized to sum to 1 by dividing by Σwᵢ. Here's some intuition around how the

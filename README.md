@@ -23,7 +23,7 @@
 </div>
 
 <h2 align="center">
-    <p><a href="https://github.com/huggingface/lerobot/blob/main/examples/12_use_so101.md">
+    <p><a href="https://huggingface.co/docs/lerobot/so101">
         Build Your Own SO-101 Robot!</a></p>
 </h2>
 
@@ -48,11 +48,11 @@
   <p>Train it in minutes with a few simple moves on your laptop.</p>
   <p>Then sit back and watch your creation act autonomously! 🤯</p>
 
-  <p><a href="https://github.com/huggingface/lerobot/blob/main/examples/12_use_so101.md">
+  <p><a href="https://huggingface.co/docs/lerobot/so101">
       See the full SO-101 tutorial here.</a></p>
 
   <p>Want to take it to the next level? Make your SO-101 mobile by building LeKiwi!</p>
-  <p>Check out the <a href="https://github.com/huggingface/lerobot/blob/main/examples/11_use_lekiwi.md">LeKiwi tutorial</a> and bring your robot to life on wheels.</p>
+  <p>Check out the <a href="https://huggingface.co/docs/lerobot/lekiwi">LeKiwi tutorial</a> and bring your robot to life on wheels.</p>
 
   <img src="media/lekiwi/kiwi.webp?raw=true" alt="LeKiwi mobile robot" title="LeKiwi mobile robot" width="50%">
 </div>
@@ -416,6 +416,19 @@ Additionally, if you are using any of the particular policy architecture, pretra
   author={Lee, Seungjae and Wang, Yibin and Etukuru, Haritheja and Kim, H Jin and Shafiullah, Nur Muhammad Mahi and Pinto, Lerrel},
   journal={arXiv preprint arXiv:2403.03181},
   year={2024}
+}
+```
+
+
+- [HIL-SERL](https://hil-serl.github.io/)
+```bibtex
+@Article{luo2024hilserl,
+title={Precise and Dexterous Robotic Manipulation via Human-in-the-Loop Reinforcement Learning},
+author={Jianlan Luo and Charles Xu and Jeffrey Wu and Sergey Levine},
+year={2024},
+eprint={2410.21845},
+archivePrefix={arXiv},
+primaryClass={cs.RO}
 }
 ```
 ## Star History
