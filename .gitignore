@@ -30,6 +30,7 @@ datasets
 
 # VS Code
 .vscode
+.devcontainer
 
 # HPC
 nautilus/*.yaml
