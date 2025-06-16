@@ -86,6 +86,7 @@ dora = [
 dynamixel = ["dynamixel-sdk>=3.7.31"]
 feetech = ["feetech-servo-sdk>=1.0.0"]
 gamepad = ["pygame>=2.5.1", "hidapi>=0.14.0"]
+kinematics = ["placo>=0.9.6"]
 intelrealsense = [
     "pyrealsense2>=2.55.1.6486 ; sys_platform != 'darwin'",
     "pyrealsense2-macosx>=2.54 ; sys_platform == 'darwin'",
