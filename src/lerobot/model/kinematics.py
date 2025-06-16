@@ -27,7 +27,13 @@ class RobotKinematics:
             ee_frame_name: Name of the end-effector frame in the URDF
             joint_names: List of joint names to control (if None, will use default naming)
         """
-        import placo
+        try:
+            import placo
+        except ImportError as e:
+            raise ImportError(
+                "placo is required for RobotKinematics. "
+                "Please install the optional dependencies of `kinematics` in the package."
+            ) from e
 
         self.robot = placo.RobotWrapper(urdf_path)
         self.solver = placo.KinematicsSolver(self.robot)
