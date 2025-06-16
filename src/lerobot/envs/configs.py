@@ -271,4 +271,3 @@ class HILEnvConfig(EnvConfig):
             "use_gamepad": self.use_gamepad,
             "gripper_penalty": self.gripper_penalty,
         }
-
