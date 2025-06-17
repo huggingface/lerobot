@@ -1,24 +1,26 @@
 import argparse
 import csv
+import ipaddress
 import json
 import logging
 import re
 import shutil
+import socket
 import tempfile
+import urllib.parse
 from io import StringIO
 from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import requests
 from flask import Flask, redirect, render_template, request, url_for
+
 from lerobot import available_datasets
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.datasets.utils import IterableNamespace
 from lerobot.common.utils.utils import init_logging
 
-import urllib.parse
-import ipaddress
-import socket
 
 def validate_url(url):
     """
@@ -27,37 +29,32 @@ def validate_url(url):
     """
     try:
         parsed = urllib.parse.urlparse(url)
-        
+
         # Only allow http and https schemes
-        if parsed.scheme not in ['http', 'https']:
+        if parsed.scheme not in ["http", "https"]:
             return False
-        
+
         # Allowlist of permitted hosts (add your allowed domains here)
-        allowed_hosts = [
-            'huggingface.co',
-            'cdn.huggingface.co', 
-            'raw.githubusercontent.com',
-            'github.com'
-        ]
-        
+        allowed_hosts = ["huggingface.co", "cdn.huggingface.co", "raw.githubusercontent.com", "github.com"]
+
         # Check if host is in allowlist
         if parsed.hostname not in allowed_hosts:
             return False
-        
+
         # Additional check: resolve hostname and ensure it's not a private IP
         try:
             ip = socket.gethostbyname(parsed.hostname)
             ip_obj = ipaddress.ip_address(ip)
-            
+
             # Reject private, loopback, and multicast addresses
             if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_multicast:
                 return False
-                
+
         except (socket.gaierror, ValueError):
             return False
-        
+
         return True
-        
+
     except Exception:
         return False
 
@@ -115,9 +112,6 @@ python lerobot/scripts/visualize_dataset_html.py \
     --episodes 7 3 5 1 4
 ```
 """
-
-
-
 
 
 def run_server(
