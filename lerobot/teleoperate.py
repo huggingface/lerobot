@@ -49,16 +49,19 @@ from lerobot.common.robots import (  # noqa: F401
     so100_follower,
     so101_follower,
 )
-from lerobot.common.teleoperators import (
+from lerobot.common.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
+    gamepad,
+    keyboard,
+    koch_leader,
     make_teleoperator_from_config,
+    so100_leader,
+    so101_leader,
 )
 from lerobot.common.utils.robot_utils import busy_wait
 from lerobot.common.utils.utils import init_logging, move_cursor_up
 from lerobot.common.utils.visualization_utils import _init_rerun
-
-from lerobot.common.teleoperators import gamepad, keyboard, koch_leader, so100_leader, so101_leader  # noqa: F401
 
 
 @dataclass
@@ -75,6 +78,7 @@ class TeleoperateConfig:
 def teleop_loop(
     teleop: Teleoperator, robot: Robot, fps: int, display_data: bool = False, duration: float | None = None
 ):
+    display_len = max(len(key) for key in robot.action_features)
     start = time.perf_counter()
     while True:
         loop_start = time.perf_counter()
@@ -93,6 +97,14 @@ def teleop_loop(
         robot.send_action(action)
         dt_s = time.perf_counter() - loop_start
         busy_wait(1 / fps - dt_s)
+
+        loop_s = time.perf_counter() - loop_start
+
+        print("\n" + "-" * (display_len + 10))
+        print(f"{'NAME':<{display_len}} | {'NORM':>7}")
+        for motor, value in action.items():
+            print(f"{motor:<{display_len}} | {value:>7.2f}")
+        print(f"\ntime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
 
         if duration is not None and time.perf_counter() - start >= duration:
             return
