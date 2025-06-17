@@ -31,9 +31,11 @@ python -m lerobot.teleoperate \
 """
 
 import logging
+from pathlib import Path
 import time
 from dataclasses import asdict, dataclass
 from pprint import pformat
+from typing import Dict, Optional
 
 import draccus
 import numpy as np
@@ -54,9 +56,11 @@ from lerobot.common.teleoperators import (
     TeleoperatorConfig,
     make_teleoperator_from_config,
 )
+from lerobot.common.utils.urdf_logger import URDFLogger
 from lerobot.common.utils.robot_utils import busy_wait
 from lerobot.common.utils.utils import init_logging, move_cursor_up
 from lerobot.common.utils.visualization_utils import _init_rerun
+from lerobot.common.constants import URDFS
 
 from .common.teleoperators import gamepad, koch_leader, so100_leader, so101_leader  # noqa: F401
 
@@ -73,23 +77,38 @@ class TeleoperateConfig:
 
 
 def teleop_loop(
-    teleop: Teleoperator, robot: Robot, fps: int, display_data: bool = False, duration: float | None = None
+    teleop: Teleoperator, robot: Robot, fps: int, robot_urdf_logger: Optional[URDFLogger] = None, display_data: bool = False, duration: float | None = None,
 ):
     display_len = max(len(key) for key in robot.action_features)
     start = time.perf_counter()
+    latest_image: Dict[str, np.ndarray] = {}
     while True:
         loop_start = time.perf_counter()
         action = teleop.get_action()
         if display_data:
             observation = robot.get_observation()
-            for obs, val in observation.items():
-                if isinstance(val, float):
-                    rr.log(f"observation_{obs}", rr.Scalar(val))
-                elif isinstance(val, np.ndarray):
-                    rr.log(f"observation_{obs}", rr.Image(val), static=True)
-            for act, val in action.items():
-                if isinstance(val, float):
-                    rr.log(f"action_{act}", rr.Scalar(val))
+
+            obs_joints = {obs: val for obs, val in observation.items() if isinstance(val, float)}
+            images = {obs: val for obs, val in observation.items() if isinstance(val, np.ndarray)}
+            act_joints = {act: val for act, val in action.items() if isinstance(val, float)}
+
+            if robot_urdf_logger is not None:
+                robot_urdf_logger.log_joint_angles(obs_joints)
+
+            for joint, value in obs_joints.items():
+                rr.log(["observation", joint], rr.Scalars(value))
+
+            for joint, value in act_joints.items():
+                rr.log(["action", joint], rr.Scalars(value))
+
+            for cam_name, img in images.items():
+                last_img = latest_image.get(cam_name)
+                if last_img is not None and np.array_equal(img, last_img):
+                    continue
+
+
+                latest_image[cam_name] = img
+                rr.log(f"observation/{cam_name}", rr.Image(img).compress(jpeg_quality=60), static=False)
 
         robot.send_action(action)
         dt_s = time.perf_counter() - loop_start
@@ -119,11 +138,19 @@ def teleoperate(cfg: TeleoperateConfig):
     teleop = make_teleoperator_from_config(cfg.teleop)
     robot = make_robot_from_config(cfg.robot)
 
+    urdf_logger = None
+    if cfg.display_data:
+        try:
+            urdf_logger = URDFLogger(robot)
+            urdf_logger.log_urdf()
+        except FileNotFoundError as e:
+            logging.error(f"URDF file not found for robot {cfg.robot.type}. Skipping URDF logging")
+
     teleop.connect()
     robot.connect()
 
     try:
-        teleop_loop(teleop, robot, cfg.fps, display_data=cfg.display_data, duration=cfg.teleop_time_s)
+        teleop_loop(teleop, robot, cfg.fps, robot_urdf_logger=urdf_logger, display_data=cfg.display_data, duration=cfg.teleop_time_s)
     except KeyboardInterrupt:
         pass
     finally:
