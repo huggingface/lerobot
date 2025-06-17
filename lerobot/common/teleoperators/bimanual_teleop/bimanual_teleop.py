@@ -20,8 +20,6 @@ from typing import Any
 
 from lerobot.common.constants import HF_LEROBOT_CALIBRATION, TELEOPERATORS
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from lerobot.common.motors import Motor, MotorCalibration, MotorNormMode
-from lerobot.common.motors.feetech import FeetechMotorsBus, OperatingMode
 from lerobot.lerobot.common.teleoperators.so101_leader.config_so101_leader import SO101LeaderConfig
 from lerobot.lerobot.common.teleoperators.so101_leader.so101_leader import SO101Leader
 
@@ -29,6 +27,7 @@ from ..teleoperator import Teleoperator
 from .config_bimanual_teleop import BimanualTeleopConfig
 
 logger = logging.getLogger(__name__)
+
 
 class BimanualTeleop(Teleoperator):
     """
@@ -73,14 +72,14 @@ class BimanualTeleop(Teleoperator):
     def send_feedback(self, feedback: dict[str, Any]) -> None:
         # TODO(rcadene, aliberts): Implement force feedback
         raise NotImplementedError
-    
+
     def connect(self, calibrate: bool = True) -> None:
         if self.is_connected:
             raise DeviceAlreadyConnectedError(f"{self} already connected")
 
         self.left_arm.connect()
         self.right_arm.connect()
-        
+
         # Leaders are assumed to be pre-calibrated
         # if not self.is_calibrated and calibrate:
         #     self.calibrate()
@@ -135,7 +134,7 @@ class BimanualTeleop(Teleoperator):
 
         left_action = self.left_arm.get_action()
         right_action = self.right_arm.get_action()
-        
+
         prefixed_left_action = {f"left_{key}": value for key, value in left_action.items()}
         prefixed_right_action = {f"right_{key}": value for key, value in right_action.items()}
 
@@ -146,4 +145,4 @@ class BimanualTeleop(Teleoperator):
             self.left_arm.disconnect()
         if self.right_arm.is_connected:
             self.right_arm.disconnect()
-        logger.info(f"{self} disconnected.") 
+        logger.info(f"{self} disconnected.")

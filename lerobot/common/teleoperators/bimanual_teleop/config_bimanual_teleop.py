@@ -25,10 +25,10 @@ from ..config import TeleoperatorConfig
 class BimanualTeleopConfig(TeleoperatorConfig):
     # Ports for the two leader arms
     left_port: str  # Left leader arm port
-    right_port: str # Right leader arm port
+    right_port: str  # Right leader arm port
 
     # Optional separate ID for each arm to load individual calibrations
     left_id: str | None = None
     right_id: str | None = None
-    
+
     use_degrees: bool = False

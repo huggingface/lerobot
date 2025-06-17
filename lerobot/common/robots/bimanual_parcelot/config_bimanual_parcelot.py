@@ -20,20 +20,21 @@ from lerobot.common.cameras import CameraConfig
 
 from ..config import RobotConfig
 
+
 @RobotConfig.register_subclass("bimanual_parcelot")
 @dataclass
 class BimanualParcelotConfig(RobotConfig):
     # Ports for the two follower arms
     left_arm_port: str  # Left follower arm port
     right_arm_port: str  # Right follower arm port
-    
+
     # Optional separate ID for each arm
     left_arm_id: str | None = None
     right_arm_id: str | None = None
 
     # Safety configurations
     disable_torque_on_disconnect: bool = True
-    
+
     # `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
     # Can be set per arm or globally
     max_relative_target: int | None = None

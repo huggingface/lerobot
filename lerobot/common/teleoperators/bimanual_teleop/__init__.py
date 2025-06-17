@@ -1,2 +1,2 @@
 from .bimanual_teleop import BimanualTeleop
-from .config_bimanual_teleop import BimanualTeleopConfig 
+from .config_bimanual_teleop import BimanualTeleopConfig

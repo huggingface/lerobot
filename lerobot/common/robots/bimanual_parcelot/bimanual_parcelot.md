@@ -75,7 +75,7 @@ python -m lerobot.calibrate \
 The calibration process will:
 1. Prompt you to move the LEFT arm to its middle position
 2. Record the range of motion for the LEFT arm
-3. Prompt you to move the RIGHT arm to its middle position  
+3. Prompt you to move the RIGHT arm to its middle position
 4. Record the range of motion for the RIGHT arm
 5. Save calibration data for both arms
 
@@ -149,4 +149,4 @@ The robot provides observations from:
 Actions control 12 joint positions:
 - Left arm: `left_shoulder_pan.pos`, `left_shoulder_lift.pos`, etc.
 - Right arm: `right_shoulder_pan.pos`, `right_shoulder_lift.pos`, etc.
-- Grippers: `left_gripper.pos`, `right_gripper.pos` (0-100 range) 
+- Grippers: `left_gripper.pos`, `right_gripper.pos` (0-100 range)

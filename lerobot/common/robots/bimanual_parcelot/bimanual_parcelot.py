@@ -14,26 +14,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
 import logging
 import time
 from functools import cached_property
 from typing import Any
 
 from lerobot.common.cameras.utils import make_cameras_from_configs
-from lerobot.common.constants import HF_LEROBOT_CALIBRATION, ROBOTS
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from lerobot.common.motors import Motor, MotorCalibration, MotorNormMode
-from lerobot.common.motors.feetech import (
-    FeetechMotorsBus,
-    OperatingMode,
-)
 
 from ..robot import Robot
-from ..utils import ensure_safe_goal_position
-from .config_bimanual_parcelot import BimanualParcelotConfig
 from ..so101_follower.config_so101_follower import SO101FollowerConfig
 from ..so101_follower.so101_follower import SO101Follower
+from .config_bimanual_parcelot import BimanualParcelotConfig
 
 logger = logging.getLogger(__name__)
 
@@ -76,8 +68,7 @@ class BimanualParcelot(Robot):
     def _cameras_ft(self) -> dict[str, tuple]:
         """Camera feature types"""
         return {
-            cam: (self.config.cameras[cam].height, self.config.cameras[cam].width, 3)
-            for cam in self.cameras
+            cam: (self.config.cameras[cam].height, self.config.cameras[cam].width, 3) for cam in self.cameras
         }
 
     @cached_property

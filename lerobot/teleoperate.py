@@ -59,7 +59,13 @@ from lerobot.common.utils.robot_utils import busy_wait
 from lerobot.common.utils.utils import init_logging, move_cursor_up
 from lerobot.common.utils.visualization_utils import _init_rerun
 
-from .common.teleoperators import bimanual_teleop, gamepad, koch_leader, so100_leader, so101_leader  # noqa: F401
+from .common.teleoperators import (  # noqa: F401
+    bimanual_teleop,
+    gamepad,
+    koch_leader,
+    so100_leader,
+    so101_leader,
+)
 
 
 @dataclass
@@ -132,6 +138,7 @@ def teleoperate(cfg: TeleoperateConfig):
             rr.rerun_shutdown()
         teleop.disconnect()
         robot.disconnect()
+
 
 if __name__ == "__main__":
     teleoperate()

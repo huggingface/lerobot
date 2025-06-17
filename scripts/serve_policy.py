@@ -26,6 +26,7 @@ from concurrent import futures
 from dataclasses import dataclass
 
 import grpc
+
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.transport import services_pb2, services_pb2_grpc
@@ -69,10 +70,10 @@ class PolicyServicer(services_pb2_grpc.PolicyServiceServicer):
                 self.policy.config.use_amp,
             )
             action = action_tensor.cpu().numpy()
-            
+
             action_bytes = pickle.dumps(action)
             return services_pb2.ActionMessage(data=action_bytes)
-        
+
         except Exception as e:
             logging.error(f"An error occurred during SelectActions: {e}")
             context.set_code(grpc.StatusCode.INTERNAL)
@@ -83,30 +84,30 @@ class PolicyServicer(services_pb2_grpc.PolicyServiceServicer):
 @parser.wrap()
 def serve_policy(cfg: ServePolicyConfig):
     init_logging()
-    
+
     # HACK: We parse again the cli args here to get the pretrained path if there was one.
     policy_path = parser.get_path_arg("policy")
     if policy_path:
         cli_overrides = parser.get_cli_overrides("policy")
         cfg.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
         cfg.policy.pretrained_path = policy_path
-        
+
     policy = make_policy(cfg.policy)
-    
+
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=cfg.max_workers))
     services_pb2_grpc.add_PolicyServiceServicer_to_server(PolicyServicer(policy), server)
-    
+
     server.add_insecure_port(f"[::]:{cfg.port}")
     server.start()
     logging.info(f"Server started. Listening on port {cfg.port}...")
-    
+
     try:
         while True:
-            time.sleep(86400) # One day
+            time.sleep(86400)  # One day
     except KeyboardInterrupt:
         logging.info("Shutting down server...")
         server.stop(0)
 
 
 if __name__ == "__main__":
-    serve_policy() 
+    serve_policy()

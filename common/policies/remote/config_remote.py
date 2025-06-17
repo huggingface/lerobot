@@ -22,11 +22,11 @@ class RemotePolicyConfig(PolicyConfig):
     """
     Configuration for a policy that connects to a remote server to get actions.
     """
-    
+
     # Inherits `name` from PolicyConfig, which will be 'remote'
-    
+
     # The address of the policy server.
     server_address: str = "localhost"
-    
+
     # The port of the policy server.
-    server_port: int = 50051 
+    server_port: int = 50051

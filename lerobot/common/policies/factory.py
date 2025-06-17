@@ -26,8 +26,8 @@ from lerobot.common.policies.act.configuration_act import ACTConfig
 from lerobot.common.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.common.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.common.policies.pi0fast.configuration_pi0fast import PI0FASTConfig
-from lerobot.common.policies.remote.config_remote import RemotePolicyConfig
 from lerobot.common.policies.pretrained import PreTrainedPolicy
+from lerobot.common.policies.remote.config_remote import RemotePolicyConfig
 from lerobot.common.policies.sac.configuration_sac import SACConfig
 from lerobot.common.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
 from lerobot.common.policies.smolvla.configuration_smolvla import SmolVLAConfig

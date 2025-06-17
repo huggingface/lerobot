@@ -17,6 +17,7 @@ import pickle
 
 import grpc
 import torch
+
 from lerobot.common.policies.base import BasePolicy
 from lerobot.common.transport import services_pb2, services_pb2_grpc
 
@@ -36,17 +37,17 @@ class RemotePolicy(BasePolicy):
             # Serialize the observation dictionary
             observation_bytes = pickle.dumps(observation)
             request = services_pb2.ObservationMessage(data=observation_bytes)
-            
+
             # Make the RPC call
             response = self.stub.SelectActions(request)
-            
+
             # Deserialize the received action
             action_array = pickle.loads(response.data)
-            
+
             # Convert numpy array to torch tensor
             action_tensor = torch.from_numpy(action_array)
             return action_tensor
-        
+
         except grpc.RpcError as e:
             logging.error(f"gRPC call failed: {e.details()}")
             # Return a zero tensor or handle the error as appropriate
@@ -57,18 +58,18 @@ class RemotePolicy(BasePolicy):
             # Assuming action is a flat tensor, this is a placeholder.
             # A more robust solution would get the action size from `dataset_meta`.
             return torch.zeros(self.config.action_dim)
-        
+
     def to(self, device):
         # This policy runs on a remote server, so this is a no-op.
         # The device of the returned tensor is handled by the server.
         # The client side will receive a numpy array and convert it to a tensor.
         logging.info("RemotePolicy `to(device)` called, but computation is remote. This is a no-op.")
         return self
-        
+
     def eval(self):
         # This policy is always in "eval" mode on the client side.
         pass
-        
+
     def train(self, mode: bool = True):
         # This policy cannot be trained directly.
-        pass 
+        pass
