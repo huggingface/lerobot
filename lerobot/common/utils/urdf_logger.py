@@ -46,6 +46,7 @@ class URDFLogger:
         self.robot = robot
         self.urdf_path = Path(urdf_path) if urdf_path else get_urdf_path_for_robot(robot)
         self.entity_path_prefix = entity_path_prefix or robot.robot_type
+        self._joint_paths: Optional[Dict[str, JointInfo]] = None
 
     @property
     def joint_paths(self):

@@ -81,6 +81,8 @@ from lerobot.common.utils.utils import (
     log_say,
 )
 from lerobot.common.utils.visualization_utils import _init_rerun
+from lerobot.common.utils.urdf_logger import URDFLogger
+from lerobot.common.utils.video_logger import VideoLogger
 from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
 
@@ -179,7 +181,17 @@ def record_loop(
 
     timestamp = 0
     start_episode_t = time.perf_counter()
-    while timestamp < control_time_s:
+
+    video_loggers = {}
+    urdf_logger = None
+    if display_data:
+        try:
+            urdf_logger = URDFLogger(robot)
+            urdf_logger.log_urdf()
+        except FileNotFoundError:
+            pass
+
+    while control_time_s is None or timestamp < control_time_s:
         start_loop_t = time.perf_counter()
 
         if events["exit_early"]:
@@ -187,17 +199,18 @@ def record_loop(
             break
 
         observation = robot.get_observation()
-
-        if policy is not None or dataset is not None:
+        observation_frame = None
+        if dataset is not None:
             observation_frame = build_dataset_frame(dataset.features, observation, prefix="observation")
 
-        if policy is not None:
+        if policy is not None and observation_frame is not None:
+            device = policy.config.device if hasattr(policy.config, "device") and policy.config.device is not None else "cpu"
             action_values = predict_action(
                 observation_frame,
                 policy,
-                get_safe_torch_device(policy.config.device),
-                policy.config.use_amp,
-                task=single_task,
+                get_safe_torch_device(device),
+                policy.config.use_amp if hasattr(policy.config, "use_amp") else False,
+                task=single_task if single_task is not None else "",
                 robot_type=robot.robot_type,
             )
             action = {key: action_values[i].item() for i, key in enumerate(robot.action_features)}
@@ -215,25 +228,38 @@ def record_loop(
         # so action actually sent is saved in the dataset.
         sent_action = robot.send_action(action)
 
-        if dataset is not None:
+        if dataset is not None and observation_frame is not None:
             action_frame = build_dataset_frame(dataset.features, sent_action, prefix="action")
             frame = {**observation_frame, **action_frame}
-            dataset.add_frame(frame, task=single_task)
+            dataset.add_frame(frame, task=single_task if single_task is not None else "")
 
         if display_data:
-            for obs, val in observation.items():
-                if isinstance(val, float):
-                    rr.log(f"observation.{obs}", rr.Scalar(val))
-                elif isinstance(val, np.ndarray):
-                    rr.log(f"observation.{obs}", rr.Image(val), static=True)
-            for act, val in action.items():
-                if isinstance(val, float):
-                    rr.log(f"action.{act}", rr.Scalar(val))
+            obs_joints = {obs: val for obs, val in observation.items() if isinstance(val, float)}
+            images = {cam: img for cam, img in observation.items() if isinstance(img, np.ndarray)}
+            act_joints = {act: val for act, val in action.items() if isinstance(val, float)}
+
+            if urdf_logger is not None:
+                urdf_logger.log_joint_angles(obs_joints)
+
+            for joint, value in obs_joints.items():
+                rr.log(["observation", joint], rr.Scalars(value))
+
+            for joint, value in act_joints.items():
+                rr.log(["action", joint], rr.Scalars(value))
+
+            for cam_name, img in images.items():
+                if cam_name not in video_loggers:
+                    height, width = img.shape[:2]
+                    video_loggers[cam_name] = VideoLogger(f"observation/{cam_name}", height=height, width=width, fps=fps)
+                video_loggers[cam_name].log_frame(img)
 
         dt_s = time.perf_counter() - start_loop_t
         busy_wait(1 / fps - dt_s)
 
         timestamp = time.perf_counter() - start_episode_t
+
+    for logger in video_loggers.values():
+        logger.close()
 
 
 @parser.wrap()
@@ -256,15 +282,17 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             root=cfg.dataset.root,
         )
 
-        if hasattr(robot, "cameras") and len(robot.cameras) > 0:
+        cameras = getattr(robot, "cameras", [])
+        if cameras and len(cameras) > 0:
             dataset.start_image_writer(
                 num_processes=cfg.dataset.num_image_writer_processes,
-                num_threads=cfg.dataset.num_image_writer_threads_per_camera * len(robot.cameras),
+                num_threads=cfg.dataset.num_image_writer_threads_per_camera * len(cameras),
             )
         sanity_check_dataset_robot_compatibility(dataset, robot, cfg.dataset.fps, dataset_features)
     else:
         # Create empty dataset or load existing saved episodes
         sanity_check_dataset_name(cfg.dataset.repo_id, cfg.policy)
+        cameras = getattr(robot, "cameras", [])
         dataset = LeRobotDataset.create(
             cfg.dataset.repo_id,
             cfg.dataset.fps,
@@ -273,7 +301,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             features=dataset_features,
             use_videos=cfg.dataset.video,
             image_writer_processes=cfg.dataset.num_image_writer_processes,
-            image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * len(robot.cameras),
+            image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * len(cameras),
         )
 
     # Load pretrained policy
@@ -330,7 +358,8 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     log_say("Stop recording", cfg.play_sounds, blocking=True)
 
     robot.disconnect()
-    teleop.disconnect()
+    if teleop is not None:
+        teleop.disconnect()
 
     if not is_headless() and listener is not None:
         listener.stop()
