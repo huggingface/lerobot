@@ -59,14 +59,25 @@ class KeyboardTeleop(Teleoperator):
         self.current_pressed = {}
         self.listener = None
         self.logs = {}
+        
+        # Initialize current positions
+        self.current_positions = {
+            f"{motor}.pos": 0.0 for motor in self.config.motor_mappings.keys()
+        }
+        
+        # Set limits for each motor
+        self.motor_limits = {
+            "shoulder_pan": (-100, 100),
+            "shoulder_lift": (-100, 100),
+            "elbow_flex": (-100, 100),
+            "wrist_flex": (-100, 100),
+            "wrist_roll": (-100, 100),
+            "gripper": (0, 100), 
+        }
 
     @property
     def action_features(self) -> dict:
-        return {
-            "dtype": "float32",
-            "shape": (len(self.arm),),
-            "names": {"motors": list(self.arm.motors)},
-        }
+        return {f"{motor}.pos": float for motor in self.config.motor_mappings.keys()}
 
     @property
     def feedback_features(self) -> dict:
@@ -78,7 +89,7 @@ class KeyboardTeleop(Teleoperator):
 
     @property
     def is_calibrated(self) -> bool:
-        pass
+        return True
 
     def connect(self) -> None:
         if self.is_connected:
@@ -119,9 +130,7 @@ class KeyboardTeleop(Teleoperator):
     def configure(self):
         pass
 
-    def get_action(self) -> dict[str, Any]:
-        before_read_t = time.perf_counter()
-
+    def get_action(self) -> dict[str, float]:
         if not self.is_connected:
             raise DeviceNotConnectedError(
                 "KeyboardTeleop is not connected. You need to run `connect()` before `get_action()`."
@@ -129,11 +138,20 @@ class KeyboardTeleop(Teleoperator):
 
         self._drain_pressed_keys()
 
-        # Generate action based on current key states
-        action = {key for key, val in self.current_pressed.items() if val}
-        self.logs["read_pos_dt_s"] = time.perf_counter() - before_read_t
+        for motor, mappings in self.config.motor_mappings.items():
+            for direction, key in mappings.items():
+                if key in self.current_pressed and self.current_pressed[key]:
+                    min_val, max_val = self.motor_limits[motor]
+                    current_val = self.current_positions[f"{motor}.pos"]
+                    
+                    if direction in ["up", "right", "open"]:
+                        new_val = min(current_val + self.config.step_size, max_val)
+                    else:  
+                        new_val = max(current_val - self.config.step_size, min_val)
+                    
+                    self.current_positions[f"{motor}.pos"] = new_val
 
-        return dict.fromkeys(action, None)
+        return self.current_positions
 
     def send_feedback(self, feedback: dict[str, Any]) -> None:
         pass
