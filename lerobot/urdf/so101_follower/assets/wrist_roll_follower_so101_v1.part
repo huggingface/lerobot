@@ -1,0 +1,14 @@
+{
+    "configuration": "default",
+    "documentId": "e02f1e1d3fdd766a19a55890",
+    "documentMicroversion": "03f1dfc090db6bbecdb14475",
+    "documentVersion": "8a15327cfbde0344e0951076",
+    "elementId": "2317bd70c68862eeebd64492",
+    "fullConfiguration": "default",
+    "id": "MpI0voU28BOAZ6D9x",
+    "isStandardContent": false,
+    "name": "Wrist_Roll_Follower_SO101 v1 <1>",
+    "partId": "JFD",
+    "suppressed": false,
+    "type": "Part"
+}
