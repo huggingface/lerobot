@@ -59,6 +59,7 @@ from lerobot.common.teleoperators import (
 from lerobot.common.utils.urdf_logger import URDFLogger
 from lerobot.common.utils.robot_utils import busy_wait
 from lerobot.common.utils.utils import init_logging, move_cursor_up
+from lerobot.common.utils.video_logger import VideoLogger
 from lerobot.common.utils.visualization_utils import _init_rerun
 from lerobot.common.constants import URDFS
 
@@ -81,7 +82,7 @@ def teleop_loop(
 ):
     display_len = max(len(key) for key in robot.action_features)
     start = time.perf_counter()
-    latest_image: Dict[str, np.ndarray] = {}
+    video_loggers: Dict[str, VideoLogger] = {}
     while True:
         loop_start = time.perf_counter()
         action = teleop.get_action()
@@ -89,7 +90,7 @@ def teleop_loop(
             observation = robot.get_observation()
 
             obs_joints = {obs: val for obs, val in observation.items() if isinstance(val, float)}
-            images = {obs: val for obs, val in observation.items() if isinstance(val, np.ndarray)}
+            images = {cam: img for cam, img in observation.items() if isinstance(img, np.ndarray)}
             act_joints = {act: val for act, val in action.items() if isinstance(val, float)}
 
             if robot_urdf_logger is not None:
@@ -102,13 +103,10 @@ def teleop_loop(
                 rr.log(["action", joint], rr.Scalars(value))
 
             for cam_name, img in images.items():
-                last_img = latest_image.get(cam_name)
-                if last_img is not None and np.array_equal(img, last_img):
-                    continue
-
-
-                latest_image[cam_name] = img
-                rr.log(f"observation/{cam_name}", rr.Image(img).compress(jpeg_quality=60), static=False)
+                if cam_name not in video_loggers:
+                    height, width = img.shape[:2]
+                    video_loggers[cam_name] = VideoLogger(f"observation/{cam_name}", height=height, width=width, fps=fps)
+                video_loggers[cam_name].log_frame(img)
 
         robot.send_action(action)
         dt_s = time.perf_counter() - loop_start
@@ -126,6 +124,9 @@ def teleop_loop(
             return
 
         move_cursor_up(len(action) + 5)
+
+    for logger in video_loggers.values():
+        logger.close()
 
 
 @draccus.wrap()
