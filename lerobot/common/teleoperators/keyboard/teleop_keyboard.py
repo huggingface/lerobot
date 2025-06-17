@@ -17,7 +17,6 @@
 import logging
 import os
 import sys
-import time
 from queue import Queue
 from typing import Any
 
@@ -59,12 +58,10 @@ class KeyboardTeleop(Teleoperator):
         self.current_pressed = {}
         self.listener = None
         self.logs = {}
-        
+
         # Initialize current positions
-        self.current_positions = {
-            f"{motor}.pos": 0.0 for motor in self.config.motor_mappings.keys()
-        }
-        
+        self.current_positions = {f"{motor}.pos": 0.0 for motor in self.config.motor_mappings.keys()}
+
         # Set limits for each motor
         self.motor_limits = {
             "shoulder_pan": (-100, 100),
@@ -72,7 +69,7 @@ class KeyboardTeleop(Teleoperator):
             "elbow_flex": (-100, 100),
             "wrist_flex": (-100, 100),
             "wrist_roll": (-100, 100),
-            "gripper": (0, 100), 
+            "gripper": (0, 100),
         }
 
     @property
@@ -143,12 +140,12 @@ class KeyboardTeleop(Teleoperator):
                 if key in self.current_pressed and self.current_pressed[key]:
                     min_val, max_val = self.motor_limits[motor]
                     current_val = self.current_positions[f"{motor}.pos"]
-                    
+
                     if direction in ["up", "right", "open"]:
                         new_val = min(current_val + self.config.step_size, max_val)
-                    else:  
+                    else:
                         new_val = max(current_val - self.config.step_size, min_val)
-                    
+
                     self.current_positions[f"{motor}.pos"] = new_val
 
         return self.current_positions

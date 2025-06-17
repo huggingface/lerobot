@@ -24,7 +24,7 @@ from ..config import TeleoperatorConfig
 class KeyboardTeleopConfig(TeleoperatorConfig):
     # TODO(Steven): Consider setting in here the keys that we want to capture/listen
     mock: bool = False
-    
+
     # Motor mappings for SO100 follower
     motor_mappings: dict[str, dict[str, str]] = field(
         default_factory=lambda: {
@@ -54,7 +54,7 @@ class KeyboardTeleopConfig(TeleoperatorConfig):
             },
         }
     )
-    
+
     # Step size for each motor movement
     step_size: float = 5.0
 
