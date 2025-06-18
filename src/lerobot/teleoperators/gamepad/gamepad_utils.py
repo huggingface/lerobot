@@ -307,8 +307,8 @@ class GamepadController(InputController):
             z_input = 0 if abs(z_input) < self.deadzone else z_input
 
             # Calculate deltas (note: may need to invert axes depending on controller)
-            delta_x = -y_input * self.y_step_size  # Forward/backward
-            delta_y = -x_input * self.x_step_size  # Left/right
+            delta_x = -x_input * self.x_step_size  # Forward/backward
+            delta_y = -y_input * self.y_step_size  # Left/right
             delta_z = -z_input * self.z_step_size  # Up/down
 
             return delta_x, delta_y, delta_z
@@ -465,8 +465,8 @@ class GamepadControllerHID(InputController):
     def get_deltas(self):
         """Get the current movement deltas from gamepad state."""
         # Calculate deltas - invert as needed based on controller orientation
-        delta_x = -self.left_y * self.x_step_size  # Forward/backward
-        delta_y = -self.left_x * self.y_step_size  # Left/right
+        delta_x = -self.left_x * self.x_step_size  # Forward/backward
+        delta_y = self.left_y * self.y_step_size  # Left/right
         delta_z = -self.right_y * self.z_step_size  # Up/down
 
         return delta_x, delta_y, delta_z

@@ -50,9 +50,6 @@ class SO100FollowerEndEffectorConfig(SO100FollowerConfig):
     # End-effector frame name in the URDF
     ee_frame_name: str = "gripperframe"
 
-    # Joint names for kinematics (if None, uses default naming)
-    joint_names: list[str] | None = None
-
     # Default bounds for the end-effector position (in meters)
     end_effector_bounds: dict[str, list[float]] = field(
         default_factory=lambda: {

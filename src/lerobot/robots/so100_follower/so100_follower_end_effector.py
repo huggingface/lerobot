@@ -72,7 +72,6 @@ class SO100FollowerEndEffector(SO100Follower):
         self.kinematics = RobotKinematics(
             urdf_path=self.config.urdf_path,
             ee_frame_name=self.config.ee_frame_name,
-            joint_names=self.config.joint_names,
         )
 
         # Store the bounds for end-effector position
