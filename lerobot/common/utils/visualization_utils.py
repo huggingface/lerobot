@@ -26,7 +26,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
-from typing import Dict, Optional, Protocol, Union, runtime_checkable
+from typing import Any, Dict, Optional, Protocol, Union, runtime_checkable
 
 import av
 import av.video.stream
@@ -440,33 +440,34 @@ class RerunRobotLogger:
         """
         if sync_time:
             rr.set_time("time", duration=np.timedelta64(time.time_ns(), "ns"))
-        self.log_observations()
-        self.log_actions()
-        self.log_joint_angles()
+        observations = self.robot.get_observation() if self.robot else {}
+        actions = self.teleop.get_action() if self.teleop else {}
+        self.log_observations(observations)
+        self.log_joint_angles(observations)
+        self.log_actions(actions)
 
-    def log_observations(self):
+    def log_observations(self, observations: Dict[str, Any]):
         if self.robot is None:
             logging.warning("No robot instance available for logging observations.")
             return
 
-        observations = self.robot.get_observation()
         for obs, val in observations.items():
             if isinstance(val, float):
                 rr.log(["observation", obs], rr.Scalars(val))
             elif isinstance(val, np.ndarray) and obs in self.video_loggers:
                 self.video_loggers[obs].log_frame(val)
 
-    def log_actions(self):
+    def log_actions(self, actions: Dict[str, Any]):
         if self.teleop is None:
             logging.warning("No teleoperator instance available for logging actions.")
             return
-        for act, val in self.teleop.get_action().items():
+        for act, val in actions.items():
             if isinstance(val, float):
                 rr.log(["action", act], rr.Scalars(val))
 
-    def log_joint_angles(self):
+    def log_joint_angles(self, angles: Dict[str, Any]):
         if self.robot is None:
             logging.warning("No robot instance available for logging joint angles.")
             return
         if self.log_urdf and self.robot_urdf_logger is not None:
-            self.robot_urdf_logger.log_joint_angles(self.robot.get_observation())
+            self.robot_urdf_logger.log_joint_angles(angles)

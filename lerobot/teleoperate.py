@@ -89,6 +89,7 @@ def teleop_loop(
         robot.send_action(action)
 
         if robot_logger is not None:
+            pass
             robot_logger.log_all(sync_time=True)
 
         dt_s = time.perf_counter() - loop_start
