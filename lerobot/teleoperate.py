@@ -60,7 +60,7 @@ from lerobot.common.utils.urdf_logger import URDFLogger
 from lerobot.common.utils.robot_utils import busy_wait
 from lerobot.common.utils.utils import init_logging, move_cursor_up
 from lerobot.common.utils.video_logger import VideoLogger
-from lerobot.common.utils.visualization_utils import _init_rerun
+from lerobot.common.utils.visualization_utils import RerunRobotLogger, _init_rerun
 from lerobot.common.constants import URDFS
 
 from .common.teleoperators import gamepad, koch_leader, so100_leader, so101_leader  # noqa: F401
@@ -76,70 +76,8 @@ class TeleoperateConfig:
     # Display all cameras on screen
     display_data: bool = False
 
-
-class RerunTeleopLogger:
-    def __init__(self, teleop: Teleoperator, robot: Robot, fps: int = 60):
-        self.robot = robot
-        self.teleop = teleop
-        self.video_loggers: Dict[str, VideoLogger] = {}
-        self.fps = fps
-        self.robot_urdf_logger: Optional[URDFLogger] = None
-        try:
-            self.robot_urdf_logger = URDFLogger(robot)
-        except FileNotFoundError as e:
-            logging.error(f"URDF file not found for robot {robot.robot_type}. Skipping URDF logging: {e}")
-    
-    def init(self):
-        _init_rerun(session_name="teleoperation")
-        if self.robot_urdf_logger is not None:
-            self.robot_urdf_logger.log_urdf()
-        self.video_loggers: Dict[str, VideoLogger] = {
-            cam_name: VideoLogger(stream_name=f"observation/{cam_name}", height=shape[0], width=shape[1], fps=self.fps)
-            for cam_name, shape in self.robot.observation_features.items()
-            if isinstance(shape, tuple)
-        }
-
-    def cleanup(self):
-        """
-        Cleanup the logger, closing any video loggers and shutting down Rerun.
-        """
-        for video_logger in self.video_loggers.values():
-            video_logger.close()
-        rr.rerun_shutdown()
-
-    def log_all(self, sync_time: bool = True):
-        """
-        Log all observations, actions, and joint angles to Rerun.
-        If `sync_time` is True, it will also set the current time in Rerun.
-        This is useful for synchronizing the logs with the robot's time.
-        """
-        if sync_time:
-            rr.set_time("time", duration=np.timedelta64(time.time_ns(), "ns"))
-        self.log_observations()
-        self.log_actions()
-        self.log_joint_angles()
-
-    def log_observations(self):
-        observations = self.robot.get_observation()
-        for obs, val in observations.items():
-            if isinstance(val, float):
-                rr.log(["observation", obs], rr.Scalars(val))
-            elif isinstance(val, np.ndarray) and obs in self.video_loggers:
-                self.video_loggers[obs].log_frame(val)
-
-    def log_actions(self):
-        for act, val in self.teleop.get_action().items():
-            if isinstance(val, float):
-                rr.log(["action", act], rr.Scalars(val))
-
-    def log_joint_angles(self):
-        if self.robot_urdf_logger is not None:
-            self.robot_urdf_logger.log_joint_angles(self.robot.get_observation())
-
-
-
 def teleop_loop(
-    teleop: Teleoperator, robot: Robot, fps: int, teleop_logger: Optional[RerunTeleopLogger] = None, duration: float | None = None,
+    teleop: Teleoperator, robot: Robot, fps: int, robot_logger: Optional[RerunRobotLogger] = None, duration: float | None = None,
 ):
     display_len = max(len(key) for key in robot.action_features)
     start = time.perf_counter()
@@ -150,8 +88,8 @@ def teleop_loop(
 
         robot.send_action(action)
 
-        if teleop_logger is not None:
-            teleop_logger.log_all(sync_time=True)
+        if robot_logger is not None:
+            robot_logger.log_all(sync_time=True)
 
         dt_s = time.perf_counter() - loop_start
         busy_wait(1 / fps - dt_s)
@@ -196,18 +134,18 @@ def teleoperate(cfg: TeleoperateConfig):
     teleop.connect()
     robot.connect()
 
-    teleop_logger = None
+    robot_logger = None
     if cfg.display_data:
-        teleop_logger = RerunTeleopLogger(teleop, robot, cfg.fps)
-        teleop_logger.init()
+        robot_logger = RerunRobotLogger(teleop=teleop, robot=robot, fps=cfg.fps)
+        robot_logger.init()
 
     try:
-        teleop_loop(teleop, robot, cfg.fps, teleop_logger=teleop_logger, duration=cfg.teleop_time_s)
+        teleop_loop(teleop, robot, cfg.fps, robot_logger=robot_logger, duration=cfg.teleop_time_s)
     except KeyboardInterrupt:
         pass
     finally:
-        if teleop_logger is not None:
-            teleop_logger.cleanup()
+        if robot_logger is not None:
+            robot_logger.cleanup()
         teleop.disconnect()
         robot.disconnect()
 

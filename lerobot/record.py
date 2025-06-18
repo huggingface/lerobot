@@ -80,7 +80,7 @@ from lerobot.common.utils.utils import (
     init_logging,
     log_say,
 )
-from lerobot.common.utils.visualization_utils import _init_rerun
+from lerobot.common.utils.visualization_utils import RerunRobotLogger, _init_rerun
 from lerobot.common.utils.urdf_logger import URDFLogger
 from lerobot.common.utils.video_logger import VideoLogger
 from lerobot.configs import parser
@@ -170,7 +170,7 @@ def record_loop(
     policy: PreTrainedPolicy | None = None,
     control_time_s: int | None = None,
     single_task: str | None = None,
-    display_data: bool = False,
+    robot_logger: RerunRobotLogger | None = None,
 ):
     if dataset is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
@@ -181,15 +181,6 @@ def record_loop(
 
     timestamp = 0
     start_episode_t = time.perf_counter()
-
-    video_loggers = {}
-    urdf_logger = None
-    if display_data:
-        try:
-            urdf_logger = URDFLogger(robot)
-            urdf_logger.log_urdf()
-        except FileNotFoundError:
-            pass
 
     while control_time_s is None or timestamp < control_time_s:
         start_loop_t = time.perf_counter()
@@ -233,33 +224,13 @@ def record_loop(
             frame = {**observation_frame, **action_frame}
             dataset.add_frame(frame, task=single_task if single_task is not None else "")
 
-        if display_data:
-            obs_joints = {obs: val for obs, val in observation.items() if isinstance(val, float)}
-            images = {cam: img for cam, img in observation.items() if isinstance(img, np.ndarray)}
-            act_joints = {act: val for act, val in action.items() if isinstance(val, float)}
-
-            if urdf_logger is not None:
-                urdf_logger.log_joint_angles(obs_joints)
-
-            for joint, value in obs_joints.items():
-                rr.log(["observation", joint], rr.Scalars(value))
-
-            for joint, value in act_joints.items():
-                rr.log(["action", joint], rr.Scalars(value))
-
-            for cam_name, img in images.items():
-                if cam_name not in video_loggers:
-                    height, width = img.shape[:2]
-                    video_loggers[cam_name] = VideoLogger(f"observation/{cam_name}", height=height, width=width, fps=fps)
-                video_loggers[cam_name].log_frame(img)
+        if robot_logger is not None:
+            robot_logger.log_all(sync_time=True)
 
         dt_s = time.perf_counter() - start_loop_t
         busy_wait(1 / fps - dt_s)
 
         timestamp = time.perf_counter() - start_episode_t
-
-    for logger in video_loggers.values():
-        logger.close()
 
 
 @parser.wrap()
@@ -311,6 +282,11 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     if teleop is not None:
         teleop.connect()
 
+    robot_logger = None
+    if cfg.display_data:
+        robot_logger = RerunRobotLogger(teleop=teleop, robot=robot, fps=cfg.dataset.fps)
+        robot_logger.init()
+
     listener, events = init_keyboard_listener()
 
     for recorded_episodes in range(cfg.dataset.num_episodes):
@@ -324,7 +300,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             dataset=dataset,
             control_time_s=cfg.dataset.episode_time_s,
             single_task=cfg.dataset.single_task,
-            display_data=cfg.display_data,
+            robot_logger=robot_logger
         )
 
         # Execute a few seconds without recording to give time to manually reset the environment
@@ -340,7 +316,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 teleop=teleop,
                 control_time_s=cfg.dataset.reset_time_s,
                 single_task=cfg.dataset.single_task,
-                display_data=cfg.display_data,
+                robot_logger=robot_logger
             )
 
         if events["rerecord_episode"]:
@@ -363,6 +339,9 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     if not is_headless() and listener is not None:
         listener.stop()
+    
+    if robot_logger is not None:
+        robot_logger.cleanup()
 
     if cfg.dataset.push_to_hub:
         dataset.push_to_hub(tags=cfg.dataset.tags, private=cfg.dataset.private)
