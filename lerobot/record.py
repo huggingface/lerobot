@@ -170,7 +170,7 @@ def record_loop(
     policy: PreTrainedPolicy | None = None,
     control_time_s: int | None = None,
     single_task: str | None = None,
-    robot_logger: RerunRobotLogger | None = None,
+    rerun_logger: RerunRobotLogger | None = None,
 ):
     if dataset is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
@@ -224,8 +224,8 @@ def record_loop(
             frame = {**observation_frame, **action_frame}
             dataset.add_frame(frame, task=single_task if single_task is not None else "")
 
-        if robot_logger is not None:
-            robot_logger.log_all(sync_time=True)
+        if rerun_logger is not None:
+            rerun_logger.log_all(sync_time=True)
 
         dt_s = time.perf_counter() - start_loop_t
         busy_wait(1 / fps - dt_s)
@@ -282,10 +282,10 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     if teleop is not None:
         teleop.connect()
 
-    robot_logger = None
+    rerun_logger = None
     if cfg.display_data:
-        robot_logger = RerunRobotLogger(teleop=teleop, robot=robot, fps=cfg.dataset.fps)
-        robot_logger.init()
+        rerun_logger = RerunRobotLogger(teleop=teleop, robot=robot, fps=cfg.dataset.fps)
+        rerun_logger.init()
 
     listener, events = init_keyboard_listener()
 
@@ -300,7 +300,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             dataset=dataset,
             control_time_s=cfg.dataset.episode_time_s,
             single_task=cfg.dataset.single_task,
-            robot_logger=robot_logger
+            rerun_logger=rerun_logger
         )
 
         # Execute a few seconds without recording to give time to manually reset the environment
@@ -316,7 +316,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 teleop=teleop,
                 control_time_s=cfg.dataset.reset_time_s,
                 single_task=cfg.dataset.single_task,
-                robot_logger=robot_logger
+                rerun_logger=rerun_logger
             )
 
         if events["rerecord_episode"]:
@@ -340,8 +340,8 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     if not is_headless() and listener is not None:
         listener.stop()
     
-    if robot_logger is not None:
-        robot_logger.cleanup()
+    if rerun_logger is not None:
+        rerun_logger.cleanup()
 
     if cfg.dataset.push_to_hub:
         dataset.push_to_hub(tags=cfg.dataset.tags, private=cfg.dataset.private)
