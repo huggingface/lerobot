@@ -1,4 +1,3 @@
-
 """
 Simulated teleoperation: reads teleoperator hardware input and uses it to control a Mujoco simulation.
 No physical robot is connected or commanded. Use this to control a robot in simulation.
@@ -13,26 +12,26 @@ mjpython -m lerobot.teleoperate_sim \
   --display_data=true
 """
 
-import time
 import logging
+import time
 from dataclasses import asdict, dataclass
 from pprint import pformat
 
 import draccus
-import rerun as rr
 import mujoco
 import mujoco.viewer
-from lerobot.common.robots import RobotConfig
+import numpy as np
+import rerun as rr
+
 from lerobot.common.teleoperators import (
-    Teleoperator,
     TeleoperatorConfig,
     make_teleoperator_from_config,
 )
 from lerobot.common.utils.utils import init_logging
 from lerobot.common.utils.visualization_utils import _init_rerun
-import numpy as np
 
 from .common.teleoperators import koch_leader, so100_leader, so101_leader  # noqa: F401
+
 
 @dataclass
 class TeleoperateSimConfig:
@@ -40,6 +39,7 @@ class TeleoperateSimConfig:
     mjcf_path: str
     fps: int = 10
     display_data: bool = False
+
 
 @draccus.wrap()
 def teleoperate_sim(cfg: TeleoperateSimConfig):
@@ -68,7 +68,7 @@ def teleoperate_sim(cfg: TeleoperateSimConfig):
                 joint_values = list(action.values())[:6]
                 # Convert from degrees to radians before sending to Mujoco
                 joint_values = np.deg2rad(joint_values)
-                for idx, val in zip(mujoco_indices, joint_values):
+                for idx, val in zip(mujoco_indices, joint_values, strict=False):
                     data.qpos[idx] = val
                 mujoco.mj_step(model, data)
                 viewer.sync()
@@ -86,6 +86,7 @@ def teleoperate_sim(cfg: TeleoperateSimConfig):
         if cfg.display_data:
             rr.rerun_shutdown()
         teleop.disconnect()
+
 
 if __name__ == "__main__":
     teleoperate_sim()
