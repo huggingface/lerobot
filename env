@@ -1,8 +1,0 @@
-# Defaults
-CAM_IDX=0
-TASK=""
-NUM_EP=2
-MODE="local"
-HF_USER="$(huggingface-cli whoami | head -n 1)"
-LEADER="/dev/tty.usbmodem5A680104201"
-FOLLOWER="/dev/tty.usbmodem5A680111061"
