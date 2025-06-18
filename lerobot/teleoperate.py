@@ -81,11 +81,8 @@ class RerunTeleopLogger:
     def __init__(self, teleop: Teleoperator, robot: Robot, fps: int = 60):
         self.robot = robot
         self.teleop = teleop
-        self.video_loggers: Dict[str, VideoLogger] = {
-            cam_name: VideoLogger(f"observation/{cam_name}", height=shape[0], width=shape[1], fps=fps)
-            for cam_name, shape in robot.observation_features.items()
-            if isinstance(shape, tuple)
-        }
+        self.video_loggers: Dict[str, VideoLogger] = {}
+        self.fps = fps
         self.robot_urdf_logger: Optional[URDFLogger] = None
         try:
             self.robot_urdf_logger = URDFLogger(robot)
@@ -96,6 +93,11 @@ class RerunTeleopLogger:
         _init_rerun(session_name="teleoperation")
         if self.robot_urdf_logger is not None:
             self.robot_urdf_logger.log_urdf()
+        self.video_loggers: Dict[str, VideoLogger] = {
+            cam_name: VideoLogger(stream_name=f"observation/{cam_name}", height=shape[0], width=shape[1], fps=self.fps)
+            for cam_name, shape in self.robot.observation_features.items()
+            if isinstance(shape, tuple)
+        }
 
     def cleanup(self):
         """
@@ -118,7 +120,8 @@ class RerunTeleopLogger:
         self.log_joint_angles()
 
     def log_observations(self):
-        for obs, val in self.robot.get_observation().items():
+        observations = self.robot.get_observation()
+        for obs, val in observations.items():
             if isinstance(val, float):
                 rr.log(["observation", obs], rr.Scalars(val))
             elif isinstance(val, np.ndarray) and obs in self.video_loggers:

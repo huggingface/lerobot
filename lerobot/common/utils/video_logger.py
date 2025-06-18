@@ -112,6 +112,9 @@ class VideoLogger:
                 self.container.close()
                 self._encoder_initialized = False
 
+    def __repr__(self):
+        return f"VideoLogger(stream_name={self.stream_name}, width={self._width}, height={self._height}, fps={self.fps})"
+
     def __enter__(self):
         return self
 
