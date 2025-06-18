@@ -141,8 +141,7 @@ from lerobot.common.datasets.video_utils import (
     get_image_pixel_channels,
     get_video_info,
 )
-from lerobot.common.robot_devices.robots.configs import RobotConfig
-from lerobot.common.robot_devices.robots.utils import make_robot_config
+from lerobot.common.robots import RobotConfig
 
 V16 = "v1.6"
 V20 = "v2.0"
@@ -481,7 +480,7 @@ def convert_dataset(
 
     # Tasks
     if single_task:
-        tasks_by_episodes = {ep_idx: single_task for ep_idx in episode_indices}
+        tasks_by_episodes = dict.fromkeys(episode_indices, single_task)
         dataset, tasks = add_task_index_by_episodes(dataset, tasks_by_episodes)
         tasks_by_episodes = {ep_idx: [task] for ep_idx, task in tasks_by_episodes.items()}
     elif tasks_path:
@@ -596,6 +595,30 @@ def convert_dataset(
 
     if not test_branch:
         create_branch(repo_id=repo_id, branch=V20, repo_type="dataset")
+
+
+def make_robot_config(robot_type: str, **kwargs) -> RobotConfig:
+    if robot_type == "aloha":
+        raise NotImplementedError  # TODO
+
+    elif robot_type == "koch_follower":
+        from lerobot.common.robots.koch_follower import KochFollowerConfig
+
+        return KochFollowerConfig(**kwargs)
+    elif robot_type == "so100_follower":
+        from lerobot.common.robots.so100_follower import SO100FollowerConfig
+
+        return SO100FollowerConfig(**kwargs)
+    elif robot_type == "stretch":
+        from lerobot.common.robots.stretch3 import Stretch3RobotConfig
+
+        return Stretch3RobotConfig(**kwargs)
+    elif robot_type == "lekiwi":
+        from lerobot.common.robots.lekiwi import LeKiwiConfig
+
+        return LeKiwiConfig(**kwargs)
+    else:
+        raise ValueError(f"Robot type '{robot_type}' is not available.")
 
 
 def main():

@@ -49,7 +49,7 @@ def resolve_delta_timestamps(
                 "observation.state": [-0.04, -0.02, 0]
                 "observation.action": [-0.02, 0, 0.02]
             }
-            returns `None` if the the resulting dict is empty.
+            returns `None` if the resulting dict is empty.
     """
     delta_timestamps = {}
     for key in ds_meta.features:

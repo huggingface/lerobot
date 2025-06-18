@@ -1,0 +1,173 @@
+# Cameras
+
+LeRobot offers multiple options for video capture, including phone cameras, built-in laptop cameras, external webcams, and Intel RealSense cameras. To efficiently record frames from most cameras, you can use either the `OpenCVCamera` or `RealSenseCamera` class. For additional compatibility details on the `OpenCVCamera` class, refer to the [Video I/O with OpenCV Overview](https://docs.opencv.org/4.x/d0/da7/videoio_overview.html).
+
+### Finding your camera
+
+To instantiate a camera, you need a camera identifier. This identifier might change if you reboot your computer or re-plug your camera, a behavior mostly dependant on your operating system.
+
+To find the camera indices of the cameras plugged into your system, run the following script:
+```bash
+python lerobot/find_cameras.py opencv # or realsense for Intel Realsense cameras
+```
+
+The output will look something like this if you have two cameras connected:
+```
+--- Detected Cameras ---
+Camera #0:
+  Name: OpenCV Camera @ 0
+  Type: OpenCV
+  Id: 0
+  Backend api: AVFOUNDATION
+  Default stream profile:
+    Format: 16.0
+    Width: 1920
+    Height: 1080
+    Fps: 15.0
+--------------------
+(more cameras ...)
+```
+
+> [!WARNING]
+> When using Intel RealSense cameras in `macOS`, you could get this [error](https://github.com/IntelRealSense/librealsense/issues/12307): `Error finding RealSense cameras: failed to set power state`, this can be solved by running the same command with `sudo` permissions. Note that using RealSense cameras in `macOS` is unstable.
+
+
+## Use Cameras
+
+Below are two examples, demonstrating how to work with the API.
+
+- **Asynchronous frame capture** using an OpenCV-based camera
+- **Color and depth capture** using an Intel RealSense camera
+
+
+<hfoptions id="shell_restart">
+<hfoption id="Open CV Camera">
+
+```python
+from lerobot.common.cameras.opencv.configuration_opencv import OpenCVCameraConfig
+from lerobot.common.cameras.opencv.camera_opencv import OpenCVCamera
+from lerobot.common.cameras.configs import ColorMode, Cv2Rotation
+
+# Construct an `OpenCVCameraConfig` with your desired FPS, resolution, color mode, and rotation.
+config = OpenCVCameraConfig(
+    index_or_path=0,
+    fps=15,
+    width=1920,
+    height=1080,
+    color_mode=ColorMode.RGB,
+    rotation=Cv2Rotation.NO_ROTATION
+)
+
+# Instantiate and connect an `OpenCVCamera`, performing a warm-up read (default).
+camera = OpenCVCamera(config)
+camera.connect()
+
+# Read frames asynchronously in a loop via `async_read(timeout_ms)`
+try:
+    for i in range(10):
+        frame = camera.async_read(timeout_ms=200)
+        print(f"Async frame {i} shape:", frame.shape)
+finally:
+    camera.disconnect()
+```
+
+</hfoption>
+<hfoption id="Intel Realsense Camera">
+
+```python
+from lerobot.common.cameras.realsense.configuration_realsense import RealSenseCameraConfig
+from lerobot.common.cameras.realsense.camera_realsense import RealSenseCamera
+from lerobot.common.cameras.configs import ColorMode, Cv2Rotation
+
+# Create a `RealSenseCameraConfig` specifying your camera’s serial number and enabling depth.
+config = RealSenseCameraConfig(
+    serial_number_or_name="233522074606",
+    fps=15,
+    width=640,
+    height=480,
+    color_mode=ColorMode.RGB,
+    use_depth=True,
+    rotation=Cv2Rotation.NO_ROTATION
+)
+
+# Instantiate and connect a `RealSenseCamera` with warm-up read (default).
+camera = RealSenseCamera(config)
+camera.connect()
+
+# Capture a color frame via `read()` and a depth map via `read_depth()`.
+try:
+    color_frame = camera.read()
+    depth_map = camera.read_depth()
+    print("Color frame shape:", color_frame.shape)
+    print("Depth map shape:", depth_map.shape)
+finally:
+    camera.disconnect()
+```
+</hfoption>
+</hfoptions>
+
+
+## Use your phone
+<hfoptions id="use phone">
+<hfoption id="Mac">
+
+To use your iPhone as a camera on macOS, enable the Continuity Camera feature:
+- Ensure your Mac is running macOS 13 or later, and your iPhone is on iOS 16 or later.
+- Sign in both devices with the same Apple ID.
+- Connect your devices with a USB cable or turn on Wi-Fi and Bluetooth for a wireless connection.
+
+For more details, visit [Apple support](https://support.apple.com/en-gb/guide/mac-help/mchl77879b8a/mac).
+
+Your iPhone should be detected automatically when running the camera setup script in the next section.
+
+</hfoption>
+<hfoption id="Linux">
+
+If you want to use your phone as a camera on Linux, follow these steps to set up a virtual camera
+
+1. *Install `v4l2loopback-dkms` and `v4l-utils`*. Those packages are required to create virtual camera devices (`v4l2loopback`) and verify their settings with the `v4l2-ctl` utility from `v4l-utils`. Install them using:
+```python
+sudo apt install v4l2loopback-dkms v4l-utils
+```
+2. *Install [DroidCam](https://droidcam.app) on your phone*. This app is available for both iOS and Android.
+3. *Install [OBS Studio](https://obsproject.com)*. This software will help you manage the camera feed. Install it using [Flatpak](https://flatpak.org):
+```python
+flatpak install flathub com.obsproject.Studio
+```
+4. *Install the DroidCam OBS plugin*. This plugin integrates DroidCam with OBS Studio. Install it with:
+```python
+flatpak install flathub com.obsproject.Studio.Plugin.DroidCam
+```
+5. *Start OBS Studio*. Launch with:
+```python
+flatpak run com.obsproject.Studio
+```
+6. *Add your phone as a source*. Follow the instructions [here](https://droidcam.app/obs/usage). Be sure to set the resolution to `640x480`.
+7. *Adjust resolution settings*. In OBS Studio, go to `File > Settings > Video`. Change the `Base(Canvas) Resolution` and the `Output(Scaled) Resolution` to `640x480` by manually typing it in.
+8. *Start virtual camera*. In OBS Studio, follow the instructions [here](https://obsproject.com/kb/virtual-camera-guide).
+9. *Verify the virtual camera setup*. Use `v4l2-ctl` to list the devices:
+```python
+v4l2-ctl --list-devices
+```
+You should see an entry like:
+```
+VirtualCam (platform:v4l2loopback-000):
+/dev/video1
+```
+10. *Check the camera resolution*. Use `v4l2-ctl` to ensure that the virtual camera output resolution is `640x480`. Change `/dev/video1` to the port of your virtual camera from the output of `v4l2-ctl --list-devices`.
+```python
+v4l2-ctl -d /dev/video1 --get-fmt-video
+```
+You should see an entry like:
+```
+>>> Format Video Capture:
+>>>	Width/Height      : 640/480
+>>>	Pixel Format      : 'YUYV' (YUYV 4:2:2)
+```
+
+Troubleshooting: If the resolution is not correct you will have to delete the Virtual Camera port and try again as it cannot be changed.
+
+If everything is set up correctly, you can proceed with the rest of the tutorial.
+
+</hfoption>
+</hfoptions>

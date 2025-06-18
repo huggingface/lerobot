@@ -17,8 +17,8 @@
 """Implementation of Finetuning Offline World Models in the Real World.
 
 The comments in this code may sometimes refer to these references:
-    TD-MPC paper: Temporal Difference Learning for Model Predictive Control (https://arxiv.org/abs/2203.04955)
-    FOWM paper: Finetuning Offline World Models in the Real World (https://arxiv.org/abs/2310.16029)
+    TD-MPC paper: Temporal Difference Learning for Model Predictive Control (https://huggingface.co/papers/2203.04955)
+    FOWM paper: Finetuning Offline World Models in the Real World (https://huggingface.co/papers/2310.16029)
 """
 
 # ruff: noqa: N806
@@ -35,7 +35,7 @@ import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
 
-from lerobot.common.constants import OBS_ENV, OBS_ROBOT
+from lerobot.common.constants import OBS_ENV_STATE, OBS_STATE
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.policies.tdmpc.configuration_tdmpc import TDMPCConfig
@@ -122,7 +122,7 @@ class TDMPCPolicy(PreTrainedPolicy):
 
         # When the action queue is depleted, populate it again by querying the policy.
         if len(self._queues["action"]) == 0:
-            batch = {key: torch.stack(list(self._queues[key]), dim=1) for key in batch}
+            batch = {key: torch.stack(list(self._queues[key]), dim=1) for key in batch if key in self._queues}
 
             # Remove the time dimensions as it is not handled yet.
             for key in batch:
@@ -753,9 +753,9 @@ class TDMPCObservationEncoder(nn.Module):
                 )
             )
         if self.config.env_state_feature:
-            feat.append(self.env_state_enc_layers(obs_dict[OBS_ENV]))
+            feat.append(self.env_state_enc_layers(obs_dict[OBS_ENV_STATE]))
         if self.config.robot_state_feature:
-            feat.append(self.state_enc_layers(obs_dict[OBS_ROBOT]))
+            feat.append(self.state_enc_layers(obs_dict[OBS_STATE]))
         return torch.stack(feat, dim=0).mean(0)
 
 
