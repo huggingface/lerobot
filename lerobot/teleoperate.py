@@ -77,7 +77,7 @@ class TeleoperateConfig:
     display_data: bool = False
 
 def teleop_loop(
-    teleop: Teleoperator, robot: Robot, fps: int, robot_logger: Optional[RerunRobotLogger] = None, duration: float | None = None,
+    teleop: Teleoperator, robot: Robot, fps: int, rerun_logger: Optional[RerunRobotLogger] = None, duration: float | None = None,
 ):
     display_len = max(len(key) for key in robot.action_features)
     start = time.perf_counter()
@@ -88,9 +88,9 @@ def teleop_loop(
 
         robot.send_action(action)
 
-        if robot_logger is not None:
+        if rerun_logger is not None:
             pass
-            robot_logger.log_all(sync_time=True)
+            rerun_logger.log_all(sync_time=True)
 
         dt_s = time.perf_counter() - loop_start
         busy_wait(1 / fps - dt_s)
@@ -135,18 +135,18 @@ def teleoperate(cfg: TeleoperateConfig):
     teleop.connect()
     robot.connect()
 
-    robot_logger = None
+    rerun_logger = None
     if cfg.display_data:
-        robot_logger = RerunRobotLogger(teleop=teleop, robot=robot, fps=cfg.fps)
-        robot_logger.init()
+        rerun_logger = RerunRobotLogger(teleop=teleop, robot=robot, fps=cfg.fps)
+        rerun_logger.init()
 
     try:
-        teleop_loop(teleop, robot, cfg.fps, robot_logger=robot_logger, duration=cfg.teleop_time_s)
+        teleop_loop(teleop, robot, cfg.fps, rerun_logger=rerun_logger, duration=cfg.teleop_time_s)
     except KeyboardInterrupt:
         pass
     finally:
-        if robot_logger is not None:
-            robot_logger.cleanup()
+        if rerun_logger is not None:
+            rerun_logger.cleanup()
         teleop.disconnect()
         robot.disconnect()
 
