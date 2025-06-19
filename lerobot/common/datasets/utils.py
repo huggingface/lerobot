@@ -209,7 +209,11 @@ def write_task(task_index: int, task: dict, local_dir: Path):
 def load_tasks(local_dir: Path) -> tuple[dict, dict]:
     tasks = load_jsonlines(local_dir / TASKS_PATH)
     tasks = {item["task_index"]: item["task"] for item in sorted(tasks, key=lambda x: x["task_index"])}
-    task_to_task_index = {task: task_index for task_index, task in tasks.items()}
+    task_to_task_index = {}
+    for task_index, task in tasks.items():
+        task = task[0] if isinstance(task, list) else task
+        task_to_task_index[task] = task_index
+
     return tasks, task_to_task_index
 
 
