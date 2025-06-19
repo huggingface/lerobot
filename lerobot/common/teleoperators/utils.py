@@ -53,5 +53,9 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
         from .keyboard.teleop_keyboard import KeyboardEndEffectorTeleop
 
         return KeyboardEndEffectorTeleop(config)
+    elif config.type == "multi_arm_leader":
+        from .multi_arm_leader import MultiArmLeader
+
+        return MultiArmLeader(config)
     else:
         raise ValueError(config.type)
