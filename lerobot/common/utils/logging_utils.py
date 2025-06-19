@@ -16,6 +16,7 @@
 from typing import Any
 
 from lerobot.common.utils.utils import format_big_number
+from termcolor import colored
 
 
 class AverageMeter:
@@ -133,17 +134,28 @@ class MetricsTracker:
         self.epochs = self.samples / self._num_frames
 
     def __str__(self) -> str:
-        display_list = [
-            f"step:{format_big_number(self.steps)}",
-            # number of samples seen during training
-            f"smpl:{format_big_number(self.samples)}",
-            # number of episodes seen during training
-            f"ep:{format_big_number(self.episodes)}",
-            # number of time all unique samples are seen
-            f"epch:{self.epochs:.2f}",
-            *[str(m) for m in self.metrics.values()],
-        ]
-        return " ".join(display_list)
+        # Create a progress bar
+        progress = (self.steps / self._num_frames) * 100
+        progress_bar = "=" * int(progress / 5) + ">" + " " * (20 - int(progress / 5))
+        
+        # Format the metrics with colors
+        metrics_str = (
+            f"\n{'='*80}\n"
+            f"Training Progress: [{progress_bar}] {progress:.1f}%\n"
+            f"{'='*80}\n"
+            f"Step: {colored(f'{format_big_number(self.steps)}', 'cyan')} / {format_big_number(self._num_frames)}\n"
+            f"Samples: {colored(f'{format_big_number(self.samples)}', 'green')}\n"
+            f"Episodes: {colored(f'{format_big_number(self.episodes)}', 'yellow')}\n"
+            f"Epochs: {colored(f'{self.epochs:.2f}', 'magenta')}\n"
+        )
+        
+        # Add colored metrics
+        for name, meter in self.metrics.items():
+            color = 'red' if name == 'loss' else 'blue' if name == 'grdn' else 'green' if name == 'lr' else 'yellow'
+            metrics_str += f"{name}: {colored(f'{meter.val:.3f}', color)}\n"
+            
+        metrics_str += f"{'='*80}"
+        return metrics_str
 
     def to_dict(self, use_avg: bool = True) -> dict[str, int | float]:
         """
