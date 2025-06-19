@@ -22,7 +22,6 @@ from transformers import (
     AutoConfig,
     AutoModel,
     GemmaForCausalLM,
-    PaliGemmaForConditionalGeneration,
     PretrainedConfig,
     PreTrainedModel,
 )
