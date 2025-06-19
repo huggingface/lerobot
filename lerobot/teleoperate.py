@@ -60,6 +60,15 @@ from lerobot.common.utils.visualization_utils import _init_rerun
 
 from .common.teleoperators import gamepad, koch_leader, so100_leader, so101_leader  # noqa: F401
 
+# 0 -> red
+# 1 -> yellow
+# 2 -> green
+state = {}
+stall = {}
+pos = {}
+
+start_time = 0
+
 
 @dataclass
 class TeleoperateConfig:
@@ -70,6 +79,66 @@ class TeleoperateConfig:
     teleop_time_s: float | None = None
     # Display all cameras on screen
     display_data: bool = False
+
+
+def green_light(motor):
+    state[motor] = 2
+
+
+def yellow_light(motor):
+    state[motor] = 1
+
+
+def red_light(motor):
+    state[motor] = 0
+
+
+def is_green(motor):
+    return state[motor] == 2
+
+
+def is_yellow(motor):
+    return state[motor] == 1
+
+
+def is_red(motor):
+    return state[motor] == 0
+
+
+def check_stall(robot, teleop, motors, THRESHOLD_CURRENT):
+    action = robot.get_action()
+    for motor in motors:
+        if robot.bus.get_current(motor) > THRESHOLD_CURRENT[motor]:
+            stall[motor] = True
+        elif abs(action[motor + ".pos"] - pos[motor]) > 0:
+            stall[motor] = False
+
+
+def check_state(robot, teleop, motors, THRESHOLD_CURRENT):
+    action = robot.get_action()
+    for motor in motors:
+        if is_green(motor):
+            if stall[motor]:
+                red_light(motor)
+            pos[motor] = action[motor + ".pos"]
+        elif is_yellow(motor):
+            if not stall[motor]:
+                if teleop.bus.is_torqued:
+                    teleop.bus.disable_torque(motor, 5)
+                green_light(motor)
+            else:
+                if robot.bus.get_current(motor) > THRESHOLD_CURRENT[motor]:
+                    red_light(motor)
+                elif teleop.bus.is_torqued:
+                    teleop.bus.disable_torque(motor, 5)
+        else:
+            teleop.bus.sync_write("Goal_Position", {motor: pos[motor]})
+            teleop.bus.enable_torque(motor)
+            if (
+                not robot.bus.get_current(motor) > THRESHOLD_CURRENT[motor]
+                and not teleop.bus.get_current(motor) > 0
+            ):
+                yellow_light(motor)
 
 
 def teleop_loop(
@@ -91,7 +160,27 @@ def teleop_loop(
                 if isinstance(val, float):
                     rr.log(f"action_{act}", rr.Scalar(val))
 
+        THRESHOLD_CURRENT = {
+            "shoulder_pan": 50,
+            "shoulder_lift": 100,
+            "elbow_flex": 75,
+            "wrist_flex": 50,
+            "wrist_roll": 50,
+            "gripper": 20,
+        }
+        STARTUP_TIME = 5
+
+        motors = list(robot.bus.motors.keys())
+
         robot.send_action(action)
+
+        if time.perf_counter() - start_time > STARTUP_TIME:
+            check_stall(robot, teleop, motors, THRESHOLD_CURRENT)
+            check_state(robot, teleop, motors, THRESHOLD_CURRENT)
+
+        # print("stall",stall)
+        # print("state",state)
+
         dt_s = time.perf_counter() - loop_start
         busy_wait(1 / fps - dt_s)
 
@@ -121,6 +210,13 @@ def teleoperate(cfg: TeleoperateConfig):
 
     teleop.connect()
     robot.connect()
+
+    for motor in list(robot.bus.motors.keys()):
+        green_light(motor)
+        pos[motor] = robot.get_action()[motor + ".pos"]
+        stall[motor] = False
+
+    start_time = time.perf_counter()
 
     try:
         teleop_loop(teleop, robot, cfg.fps, display_data=cfg.display_data, duration=cfg.teleop_time_s)

@@ -20,8 +20,6 @@
 [![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-v2.1%20adopted-ff69b4.svg)](https://github.com/huggingface/lerobot/blob/main/CODE_OF_CONDUCT.md)
 [![Discord](https://dcbadge.vercel.app/api/server/C5P34WJ68S?style=flat)](https://discord.gg/s3KuuzsPFb)
 
-</div>
-
 <h2 align="center">
     <p><a href="https://huggingface.co/docs/lerobot/so101">
         Build Your Own SO-101 Robot!</a></p>
