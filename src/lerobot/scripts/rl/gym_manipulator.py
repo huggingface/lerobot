@@ -254,20 +254,19 @@ class RobotEnv(gym.Env):
         self._joint_names = [f"{key}.pos" for key in self.robot.bus.motors]
         self._image_keys = self.robot.cameras.keys()
 
-        # Read initial joint positions using the bus
-        self.current_joint_positions = self._get_observation()["agent_pos"]
+        self.current_observation = None
 
         self.use_gripper = use_gripper
 
         self._setup_spaces()
 
-    def _get_observation(self) -> np.ndarray:
+    def _get_observation(self) -> dict[str, np.ndarray]:
         """Helper to convert a dictionary from bus.sync_read to an ordered numpy array."""
         obs_dict = self.robot.get_observation()
         joint_positions = np.array([obs_dict[name] for name in self._joint_names])
 
         images = {key: obs_dict[key] for key in self._image_keys}
-        return {"agent_pos": joint_positions, "pixels": images}
+        self.current_observation = {"agent_pos": joint_positions, "pixels": images}
 
     def _setup_spaces(self):
         """
@@ -281,24 +280,24 @@ class RobotEnv(gym.Env):
             - The action space is defined as a Box space representing joint position commands. It is defined as relative (delta)
               or absolute, based on the configuration.
         """
-        example_obs = self._get_observation()
+        self._get_observation()
 
         observation_spaces = {}
 
         # Define observation spaces for images and other states.
-        if "pixels" in example_obs:
-            prefix = "observation.images" if len(example_obs["pixels"]) > 1 else "observation.image"
+        if "pixels" in self.current_observation:
+            prefix = "observation.images" if len(self.current_observation["pixels"]) > 1 else "observation.image"
             observation_spaces = {
                 f"{prefix}.{key}": gym.spaces.Box(
-                    low=0, high=255, shape=example_obs["pixels"][key].shape, dtype=np.uint8
+                    low=0, high=255, shape=self.current_observation["pixels"][key].shape, dtype=np.uint8
                 )
-                for key in example_obs["pixels"]
+                for key in self.current_observation["pixels"]
             }
 
         observation_spaces["observation.state"] = gym.spaces.Box(
             low=0,
             high=10,
-            shape=example_obs["agent_pos"].shape,
+            shape=self.current_observation["agent_pos"].shape,
             dtype=np.float32,
         )
 
@@ -340,14 +339,13 @@ class RobotEnv(gym.Env):
 
         self.robot.reset()
 
-        # Capture the initial observation.
-        observation = self._get_observation()
-
         # Reset episode tracking variables.
         self.current_step = 0
         self.episode_data = None
+        self.current_observation = None
+        self._get_observation()
 
-        return observation, {"is_intervention": False}
+        return self.current_observation, {"is_intervention": False}
 
     def step(self, action) -> tuple[dict[str, np.ndarray], float, bool, bool, dict[str, Any]]:
         """
@@ -367,14 +365,14 @@ class RobotEnv(gym.Env):
                 - truncated (bool): True if the episode was truncated (e.g., time constraints).
                 - info (dict): Additional debugging information including intervention status.
         """
-        self.current_joint_positions = self._get_observation()["agent_pos"]
-
         action_dict = {"delta_x": action[0], "delta_y": action[1], "delta_z": action[2]}
 
         # 1.0 action corresponds to no-op action
         action_dict["gripper"] = action[3] if self.use_gripper else 1.0
 
         self.robot.send_action(action_dict)
+
+        self._get_observation()
 
         if self.display_cameras:
             self.render()
@@ -386,7 +384,7 @@ class RobotEnv(gym.Env):
         truncated = False
 
         return (
-            self._get_observation(),
+            self.current_observation,
             reward,
             terminated,
             truncated,
@@ -399,11 +397,10 @@ class RobotEnv(gym.Env):
         """
         import cv2
 
-        observation = self._get_observation()
-        image_keys = [key for key in observation if "image" in key]
+        image_keys = [key for key in self.current_observation if "image" in key]
 
         for key in image_keys:
-            cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
+            cv2.imshow(key, cv2.cvtColor(self.current_observation[key].numpy(), cv2.COLOR_RGB2BGR))
             cv2.waitKey(1)
 
     def close(self):
@@ -520,7 +517,8 @@ class AddCurrentToObservation(gym.ObservationWrapper):
         Returns:
             The modified observation with current values.
         """
-        present_current_observation = self.unwrapped._get_observation()["agent_pos"]
+        present_current_dict = self.env.unwrapped.robot.bus.sync_read("Present_Current")
+        present_current_observation = np.array([present_current_dict[name] for name in self.env.unwrapped.robot.bus.motors])
         observation["agent_pos"] = np.concatenate(
             [observation["agent_pos"], present_current_observation], axis=-1
         )
@@ -1105,7 +1103,7 @@ class EEObservationWrapper(gym.ObservationWrapper):
         Returns:
             Enhanced observation with end-effector pose information.
         """
-        current_joint_pos = self.unwrapped._get_observation()["agent_pos"]
+        current_joint_pos = self.unwrapped.current_observation["agent_pos"]
 
         current_ee_pos = self.kinematics.forward_kinematics(current_joint_pos)[:3, 3]
         observation["agent_pos"] = np.concatenate([observation["agent_pos"], current_ee_pos], -1)
