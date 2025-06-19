@@ -286,7 +286,9 @@ class RobotEnv(gym.Env):
 
         # Define observation spaces for images and other states.
         if "pixels" in self.current_observation:
-            prefix = "observation.images" if len(self.current_observation["pixels"]) > 1 else "observation.image"
+            prefix = (
+                "observation.images" if len(self.current_observation["pixels"]) > 1 else "observation.image"
+            )
             observation_spaces = {
                 f"{prefix}.{key}": gym.spaces.Box(
                     low=0, high=255, shape=self.current_observation["pixels"][key].shape, dtype=np.uint8
@@ -518,7 +520,9 @@ class AddCurrentToObservation(gym.ObservationWrapper):
             The modified observation with current values.
         """
         present_current_dict = self.env.unwrapped.robot.bus.sync_read("Present_Current")
-        present_current_observation = np.array([present_current_dict[name] for name in self.env.unwrapped.robot.bus.motors])
+        present_current_observation = np.array(
+            [present_current_dict[name] for name in self.env.unwrapped.robot.bus.motors]
+        )
         observation["agent_pos"] = np.concatenate(
             [observation["agent_pos"], present_current_observation], axis=-1
         )
