@@ -141,6 +141,7 @@ default.extend-ignore-identifiers-re = [
     "pn",
     "ser",
     "ein",
+    "HSA",
 ]
 
 [build-system]
