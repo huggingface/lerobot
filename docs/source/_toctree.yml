@@ -1,0 +1,44 @@
+- sections:
+  - local: index
+    title: LeRobot
+  - local: installation
+    title: Installation
+  title: Get started
+- sections:
+  - local: il_robots
+    title: Imitation Learning for Robots
+  - local: il_sim
+    title: Imitation Learning in Sim
+  - local: cameras
+    title: Cameras
+  - local: integrate_hardware
+    title: Bring Your Own Hardware
+  - local: hilserl
+    title: Train a Robot with RL
+  - local: hilserl_sim
+    title: Train RL in Simulation
+  title: "Tutorials"
+- sections:
+  - local: smolvla
+    title: Finetune SmolVLA
+  title: "Policies"
+- sections:
+  - local: so101
+    title: SO-101
+  - local: so100
+    title: SO-100
+  - local: koch
+    title: Koch v1.1
+  - local: lekiwi
+    title: LeKiwi
+  title: "Robots"
+- sections:
+  - local: notebooks
+    title: Notebooks
+  title: "Resources"
+- sections:
+  - local: contributing
+    title: Contribute to LeRobot
+  - local: backwardcomp
+    title: Backward compatibility
+  title: "About"

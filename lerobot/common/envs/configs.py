@@ -14,10 +14,13 @@
 
 import abc
 from dataclasses import dataclass, field
+from typing import Any, Optional
 
 import draccus
 
-from lerobot.common.constants import ACTION, OBS_ENV, OBS_IMAGE, OBS_IMAGES, OBS_ROBOT
+from lerobot.common.constants import ACTION, OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
+from lerobot.common.robots import RobotConfig
+from lerobot.common.teleoperators.config import TeleoperatorConfig
 from lerobot.configs.types import FeatureType, PolicyFeature
 
 
@@ -32,7 +35,8 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
     def type(self) -> str:
         return self.get_choice_name(self.__class__)
 
-    @abc.abstractproperty
+    @property
+    @abc.abstractmethod
     def gym_kwargs(self) -> dict:
         raise NotImplementedError()
 
@@ -53,7 +57,7 @@ class AlohaEnv(EnvConfig):
     features_map: dict[str, str] = field(
         default_factory=lambda: {
             "action": ACTION,
-            "agent_pos": OBS_ROBOT,
+            "agent_pos": OBS_STATE,
             "top": f"{OBS_IMAGE}.top",
             "pixels/top": f"{OBS_IMAGES}.top",
         }
@@ -94,8 +98,8 @@ class PushtEnv(EnvConfig):
     features_map: dict[str, str] = field(
         default_factory=lambda: {
             "action": ACTION,
-            "agent_pos": OBS_ROBOT,
-            "environment_state": OBS_ENV,
+            "agent_pos": OBS_STATE,
+            "environment_state": OBS_ENV_STATE,
             "pixels": OBS_IMAGE,
         }
     )
@@ -136,7 +140,7 @@ class XarmEnv(EnvConfig):
     features_map: dict[str, str] = field(
         default_factory=lambda: {
             "action": ACTION,
-            "agent_pos": OBS_ROBOT,
+            "agent_pos": OBS_STATE,
             "pixels": OBS_IMAGE,
         }
     )
@@ -153,4 +157,117 @@ class XarmEnv(EnvConfig):
             "visualization_width": self.visualization_width,
             "visualization_height": self.visualization_height,
             "max_episode_steps": self.episode_length,
+        }
+
+
+@dataclass
+class VideoRecordConfig:
+    """Configuration for video recording in ManiSkill environments."""
+
+    enabled: bool = False
+    record_dir: str = "videos"
+    trajectory_name: str = "trajectory"
+
+
+@dataclass
+class EnvTransformConfig:
+    """Configuration for environment wrappers."""
+
+    # ee_action_space_params: EEActionSpaceConfig = field(default_factory=EEActionSpaceConfig)
+    control_mode: str = "gamepad"
+    display_cameras: bool = False
+    add_joint_velocity_to_observation: bool = False
+    add_current_to_observation: bool = False
+    add_ee_pose_to_observation: bool = False
+    crop_params_dict: Optional[dict[str, tuple[int, int, int, int]]] = None
+    resize_size: Optional[tuple[int, int]] = None
+    control_time_s: float = 20.0
+    fixed_reset_joint_positions: Optional[Any] = None
+    reset_time_s: float = 5.0
+    use_gripper: bool = True
+    gripper_quantization_threshold: float | None = 0.8
+    gripper_penalty: float = 0.0
+    gripper_penalty_in_reward: bool = False
+
+
+@EnvConfig.register_subclass(name="gym_manipulator")
+@dataclass
+class HILSerlRobotEnvConfig(EnvConfig):
+    """Configuration for the HILSerlRobotEnv environment."""
+
+    robot: Optional[RobotConfig] = None
+    teleop: Optional[TeleoperatorConfig] = None
+    wrapper: Optional[EnvTransformConfig] = None
+    fps: int = 10
+    name: str = "real_robot"
+    mode: str = None  # Either "record", "replay", None
+    repo_id: Optional[str] = None
+    dataset_root: Optional[str] = None
+    task: str = ""
+    num_episodes: int = 10  # only for record mode
+    episode: int = 0
+    device: str = "cuda"
+    push_to_hub: bool = True
+    pretrained_policy_name_or_path: Optional[str] = None
+    reward_classifier_pretrained_path: Optional[str] = None
+    # For the reward classifier, to record more positive examples after a success
+    number_of_steps_after_success: int = 0
+
+    def gym_kwargs(self) -> dict:
+        return {}
+
+
+@EnvConfig.register_subclass("hil")
+@dataclass
+class HILEnvConfig(EnvConfig):
+    """Configuration for the HIL environment."""
+
+    type: str = "hil"
+    name: str = "PandaPickCube"
+    task: str = "PandaPickCubeKeyboard-v0"
+    use_viewer: bool = True
+    gripper_penalty: float = 0.0
+    use_gamepad: bool = True
+    state_dim: int = 18
+    action_dim: int = 4
+    fps: int = 100
+    episode_length: int = 100
+    video_record: VideoRecordConfig = field(default_factory=VideoRecordConfig)
+    features: dict[str, PolicyFeature] = field(
+        default_factory=lambda: {
+            "action": PolicyFeature(type=FeatureType.ACTION, shape=(4,)),
+            "observation.image": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 128, 128)),
+            "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(18,)),
+        }
+    )
+    features_map: dict[str, str] = field(
+        default_factory=lambda: {
+            "action": ACTION,
+            "observation.image": OBS_IMAGE,
+            "observation.state": OBS_STATE,
+        }
+    )
+    ################# args from hilserlrobotenv
+    reward_classifier_pretrained_path: Optional[str] = None
+    robot_config: Optional[RobotConfig] = None
+    teleop_config: Optional[TeleoperatorConfig] = None
+    wrapper: Optional[EnvTransformConfig] = None
+    mode: str = None  # Either "record", "replay", None
+    repo_id: Optional[str] = None
+    dataset_root: Optional[str] = None
+    num_episodes: int = 10  # only for record mode
+    episode: int = 0
+    device: str = "cuda"
+    push_to_hub: bool = True
+    pretrained_policy_name_or_path: Optional[str] = None
+    # For the reward classifier, to record more positive examples after a success
+    number_of_steps_after_success: int = 0
+    ############################
+
+    @property
+    def gym_kwargs(self) -> dict:
+        return {
+            "use_viewer": self.use_viewer,
+            "use_gamepad": self.use_gamepad,
+            "gripper_penalty": self.gripper_penalty,
         }
