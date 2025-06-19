@@ -381,8 +381,8 @@ class OpenCVCamera(Camera):
         Stops on DeviceNotConnectedError, logs other errors and continues.
         """
         low_fps_cam = self.fps is not None and self.fps < 30
-        min_frame_interval = 1.0 / self.fps if self.fps else 1/30 # Default to 30 FPS if not set
-        last_frame_time = 0.0 
+        min_frame_interval = 1.0 / self.fps if self.fps else 1 / 30  # Default to 30 FPS if not set
+        last_frame_time = 0.0
         while not self.stop_event.is_set():
             try:
                 now = time.perf_counter()
@@ -393,7 +393,7 @@ class OpenCVCamera(Camera):
                         if self.latest_frame is not None:
                             self.new_frame_event.set()
                     time.sleep(min_frame_interval - elapsed)
-                    continue                          
+                    continue
                 color_image = self.read()
                 last_frame_time = now
                 with self.frame_lock:
