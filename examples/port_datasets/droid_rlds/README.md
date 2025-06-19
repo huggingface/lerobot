@@ -2,9 +2,14 @@
 
 ## Download
 
-TODO
+If you haven't already, [setup `gsutils`](https://cloud.google.com/storage/docs/gsutil_install) (DROID is stored within a Google Cloud bucket).
 
-It will take 2 TB in your local disk.
+Then, download the whole dataset's RAW dataset with:
+```bash
+gsutil -m cp -r gs://gresearch/robotics/droid .
+```
+
+DROID 1.0.1 will use ~1.7TB on your local disk.
 
 ## Port on a single computer
 
@@ -81,7 +86,7 @@ sinfo -N -p your_partition -h -o "%N cpus=%c mem=%m"
 
 Check if your jobs are running:
 ```bash
-squeue -u $USER`
+squeue -u $USER
 ```
 
 You should see a list with job indices like `15125385_155` where `15125385` is the index of the run and `155` is the worker index. The output/print of this worker is written in real time in `/your/logs/job_name/slurm_jobs/15125385_155.out`. For instance, you can inspect the content of this file by running `less /your/logs/job_name/slurm_jobs/15125385_155.out`.
