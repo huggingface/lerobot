@@ -72,6 +72,7 @@ class SO100FollowerEndEffector(SO100Follower):
         self.kinematics = RobotKinematics(
             urdf_path=self.config.urdf_path,
             target_frame_name=self.config.target_frame_name,
+            orientation_weight=self.config.orientation_weight,
         )
 
         # Store the bounds for end-effector position
@@ -151,7 +152,7 @@ class SO100FollowerEndEffector(SO100Follower):
 
         # Compute inverse kinematics to get joint positions
         target_joint_values_in_degrees = self.kinematics.inverse_kinematics(
-            self.current_joint_pos, desired_ee_pos, position_only=True
+            self.current_joint_pos, desired_ee_pos
         )
 
         # Create joint space action dictionary

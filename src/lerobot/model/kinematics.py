@@ -19,7 +19,11 @@ class RobotKinematics:
     """Robot kinematics using placo library for forward and inverse kinematics."""
 
     def __init__(
-        self, urdf_path: str, target_frame_name: str = "gripperframe", joint_names: list[str] = None
+        self,
+        urdf_path: str,
+        target_frame_name: str = "gripperframe",
+        joint_names: list[str] = None,
+        orientation_weight: float = 0.01,
     ):
         """
         Initialize placo-based kinematics solver.
@@ -27,6 +31,8 @@ class RobotKinematics:
         Args:
             urdf_path: Path to the robot URDF file
             target_frame_name: Name of the end-effector frame in the URDF
+            joint_names: List of joint names to use for the kinematics solver
+            orientation_weight: Weight for orientation constraint in IK, set to 0.0 to only constrain position
         """
         try:
             import placo
@@ -47,6 +53,9 @@ class RobotKinematics:
 
         # Initialize frame task for IK
         self.tip_frame = self.solver.add_frame_task(self.target_frame_name, np.eye(4))
+
+        # Set orientation weight
+        self.orientation_weight = orientation_weight
 
     def forward_kinematics(self, robot_pos_deg):
         """
@@ -72,14 +81,13 @@ class RobotKinematics:
         # Get the transformation matrix
         return self.robot.get_T_world_frame(self.target_frame_name)
 
-    def inverse_kinematics(self, current_joint_pos, desired_ee_pose, position_only=True):
+    def inverse_kinematics(self, current_joint_pos, desired_ee_pose):
         """
         Compute inverse kinematics using placo solver.
 
         Args:
             current_joint_pos: Current joint positions in degrees (used as initial guess)
             desired_ee_pose: Target end-effector pose as a 4x4 transformation matrix
-            position_only: If True, only match position (not orientation)
 
         Returns:
             Joint positions in degrees that achieve the desired end-effector pose
@@ -96,13 +104,7 @@ class RobotKinematics:
         self.tip_frame.T_world_frame = desired_ee_pose
 
         # Configure the task based on position_only flag
-        if position_only:
-            # Only constrain position, not orientation
-            self.tip_frame.configure(self.target_frame_name, "soft", 1.0, 0.0)
-        else:
-            # Constrain both position and orientation
-            # TODO (maractingi-caroline): add variable weights for position and orientation
-            self.tip_frame.configure(self.target_frame_name, "soft", 1.0, 1.0)
+        self.tip_frame.configure(self.target_frame_name, "soft", 1.0, self.orientation_weight)
 
         # Solve IK
         self.solver.solve(True)
