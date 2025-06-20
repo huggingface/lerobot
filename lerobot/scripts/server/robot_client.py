@@ -6,14 +6,14 @@ import time
 from queue import Empty, Queue
 from typing import Callable, Optional
 
-from lerobot.scripts.server import (
-    async_inference_pb2,  # type: ignore
-    async_inference_pb2_grpc,  # type: ignore
-)
 import grpc
 import torch
 
 from lerobot.common.robot_devices.robots.utils import make_robot
+from lerobot.scripts.server import (
+    async_inference_pb2,  # type: ignore
+    async_inference_pb2_grpc,  # type: ignore
+)
 from lerobot.scripts.server.constants import environment_dt, idle_wait
 from lerobot.scripts.server.helpers import TimedAction, TimedObservation, TinyPolicyConfig, setup_logging
 

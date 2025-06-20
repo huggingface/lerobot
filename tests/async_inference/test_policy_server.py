@@ -186,4 +186,3 @@ def test_predict_action_chunk(monkeypatch, policy_server: PolicyServer):
     for i, ta in enumerate(timed_actions):
         expected_ts = obs.get_timestamp() + i * environment_dt
         assert abs(ta.get_timestamp() - expected_ts) < 1e-6
-
