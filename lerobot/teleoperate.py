@@ -31,11 +31,10 @@ python -m lerobot.teleoperate \
 """
 
 import logging
-from pathlib import Path
 import time
 from dataclasses import asdict, dataclass
 from pprint import pformat
-from typing import Dict, Optional
+from typing import Optional
 
 import draccus
 import numpy as np
@@ -56,11 +55,9 @@ from lerobot.common.teleoperators import (
     TeleoperatorConfig,
     make_teleoperator_from_config,
 )
-from lerobot.common.utils.urdf_logger import URDFLogger
 from lerobot.common.utils.robot_utils import busy_wait
 from lerobot.common.utils.utils import init_logging, move_cursor_up
-from lerobot.common.utils.video_logger import VideoLogger
-from lerobot.common.utils.visualization_utils import RerunRobotLogger, _init_rerun
+from lerobot.common.utils.visualization_utils import RerunRobotLogger
 from lerobot.common.constants import URDFS
 
 from .common.teleoperators import gamepad, koch_leader, so100_leader, so101_leader  # noqa: F401
@@ -75,6 +72,15 @@ class TeleoperateConfig:
     teleop_time_s: float | None = None
     # Display all cameras on screen
     display_data: bool = False
+    # Stream camera images as a video stream or as individual frames.
+    # Video streams can be played back, but have latency and memory impact.
+    # Only latest is saved for individual frames, but little latency or memory impact.
+    # Choices are 
+    #   "video" (h264 encoded)
+    #   "jpeg" (compressed, preferred for static images)
+    #   "raw" (uncompressed)
+    #   "none" (not displayed)
+    image_stream_type: str= "video"
 
 def teleop_loop(
     teleop: Teleoperator, robot: Robot, fps: int, rerun_logger: Optional[RerunRobotLogger] = None, duration: float | None = None,
@@ -89,8 +95,7 @@ def teleop_loop(
         robot.send_action(action)
 
         if rerun_logger is not None:
-            pass
-            rerun_logger.log_all(sync_time=True)
+            rerun_logger.log_all(action=action, sync_time=True)
 
         dt_s = time.perf_counter() - loop_start
         busy_wait(1 / fps - dt_s)
@@ -107,22 +112,6 @@ def teleop_loop(
 
         move_cursor_up(len(action) + 5)
 
-def log_to_rerun(observation, action, video_loggers: Dict[str, VideoLogger], robot_urdf_logger: Optional[URDFLogger]):
-    rr.set_time("log_time", duration=np.timedelta64(time.time_ns(), "ns"))
-
-    if robot_urdf_logger is not None:
-        robot_urdf_logger.log_joint_angles(observation)
-
-    for obs, val in observation.items():
-        if isinstance(val, float):
-            rr.log(["observation", obs], rr.Scalars(val))
-        elif isinstance(val, np.ndarray) and obs in video_loggers:
-            video_loggers[obs].log_frame(val)
-
-    for act, val in action.items():
-        if isinstance(val, float):
-            rr.log(["action", act], rr.Scalars(val))
-
 
 @draccus.wrap()
 def teleoperate(cfg: TeleoperateConfig):
@@ -137,8 +126,16 @@ def teleoperate(cfg: TeleoperateConfig):
 
     rerun_logger = None
     if cfg.display_data:
-        rerun_logger = RerunRobotLogger(teleop=teleop, robot=robot, fps=cfg.fps)
-        rerun_logger.init()
+        if cfg.image_stream_type not in ["video", "jpeg", "raw", "none"]:
+            logging.warning(
+                f"Invalid image_stream_type '{cfg.image_stream_type}'. "
+                "Using 'video' as default."
+            )
+            cfg.image_stream_type = "video"
+        rerun_logger = RerunRobotLogger(
+            teleop=teleop, robot=robot, fps=cfg.fps, # image_stream_type=cfg.image_stream_type
+        )
+        rerun_logger.init(session_name="teleoperation")
 
     try:
         teleop_loop(teleop, robot, cfg.fps, rerun_logger=rerun_logger, duration=cfg.teleop_time_s)
