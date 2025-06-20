@@ -5,7 +5,7 @@ import warnings
 
 from lerobot.common.transport import services_pb2 as lerobot_dot_common_dot_transport_dot_services__pb2
 
-GRPC_GENERATED_VERSION = '1.71.0'
+GRPC_GENERATED_VERSION = '1.73.0'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -222,6 +222,85 @@ class LearnerService:
             '/transport.LearnerService/Ready',
             lerobot_dot_common_dot_transport_dot_services__pb2.Empty.SerializeToString,
             lerobot_dot_common_dot_transport_dot_services__pb2.Empty.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+
+class PolicyServiceStub:
+    """PolicyService: A client calls this to get an action from a policy.
+    The server implements this service.
+    """
+
+    def __init__(self, channel):
+        """Constructor.
+
+        Args:
+            channel: A grpc.Channel.
+        """
+        self.SelectActions = channel.unary_unary(
+                '/transport.PolicyService/SelectActions',
+                request_serializer=lerobot_dot_common_dot_transport_dot_services__pb2.ObservationMessage.SerializeToString,
+                response_deserializer=lerobot_dot_common_dot_transport_dot_services__pb2.ActionMessage.FromString,
+                _registered_method=True)
+
+
+class PolicyServiceServicer:
+    """PolicyService: A client calls this to get an action from a policy.
+    The server implements this service.
+    """
+
+    def SelectActions(self, request, context):
+        """Client -> Server to get an action
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+
+def add_PolicyServiceServicer_to_server(servicer, server):
+    rpc_method_handlers = {
+            'SelectActions': grpc.unary_unary_rpc_method_handler(
+                    servicer.SelectActions,
+                    request_deserializer=lerobot_dot_common_dot_transport_dot_services__pb2.ObservationMessage.FromString,
+                    response_serializer=lerobot_dot_common_dot_transport_dot_services__pb2.ActionMessage.SerializeToString,
+            ),
+    }
+    generic_handler = grpc.method_handlers_generic_handler(
+            'transport.PolicyService', rpc_method_handlers)
+    server.add_generic_rpc_handlers((generic_handler,))
+    server.add_registered_method_handlers('transport.PolicyService', rpc_method_handlers)
+
+
+ # This class is part of an EXPERIMENTAL API.
+class PolicyService:
+    """PolicyService: A client calls this to get an action from a policy.
+    The server implements this service.
+    """
+
+    @staticmethod
+    def SelectActions(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/transport.PolicyService/SelectActions',
+            lerobot_dot_common_dot_transport_dot_services__pb2.ObservationMessage.SerializeToString,
+            lerobot_dot_common_dot_transport_dot_services__pb2.ActionMessage.FromString,
             options,
             channel_credentials,
             insecure,

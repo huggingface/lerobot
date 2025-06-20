@@ -53,6 +53,10 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from tests.mocks.mock_robot import MockRobot
 
         return MockRobot(config)
+    elif config.type == "bimanual_parcelot":
+        from .bimanual_parcelot import BimanualParcelot
+
+        return BimanualParcelot(config)
     else:
         raise ValueError(config.type)
 

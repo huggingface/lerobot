@@ -36,6 +36,7 @@ from lerobot.common.cameras.realsense.configuration_realsense import RealSenseCa
 from lerobot.common.robots import (  # noqa: F401
     Robot,
     RobotConfig,
+    bimanual_parcelot,
     koch_follower,
     lekiwi,
     make_robot_from_config,
@@ -45,6 +46,7 @@ from lerobot.common.robots import (  # noqa: F401
 from lerobot.common.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
+    bimanual_teleop,
     koch_leader,
     make_teleoperator_from_config,
     so100_leader,
