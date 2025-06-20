@@ -205,6 +205,7 @@ MODEL_BAUDRATE_TABLE = {
 
 # Sign-Magnitude encoding bits
 STS_SMS_SERIES_ENCODINGS_TABLE = {
+    "Present_Load": 10,
     "Homing_Offset": 11,
     "Goal_Velocity": 15,
     "Present_Velocity": 15,
