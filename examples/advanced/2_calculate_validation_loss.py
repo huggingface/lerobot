@@ -27,18 +27,18 @@ import math
 import torch
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
-from lerobot.common.policies.diffusion.modeling_diffusion import DiffusionPolicy
+from lerobot.common.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 
 
 def main():
     device = torch.device("cuda")
 
-    # Download the diffusion policy for pusht environment
-    pretrained_policy_path = "lerobot/diffusion_pusht"
+    # Download the smolvla policy for pusht environment
+    pretrained_policy_path = "a6047425318/smolvla-all-datasets-v1"
     # OR uncomment the following to evaluate a policy from the local outputs/train folder.
-    # pretrained_policy_path = Path("outputs/train/example_pusht_diffusion")
+    # pretrained_policy_path = Path("outputs/train/example_pusht_smolvla")
 
-    policy = DiffusionPolicy.from_pretrained(pretrained_policy_path)
+    policy = SmolVLAPolicy.from_pretrained(pretrained_policy_path)
     policy.eval()
     policy.to(device)
 
