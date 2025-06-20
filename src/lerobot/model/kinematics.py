@@ -18,13 +18,15 @@ import numpy as np
 class RobotKinematics:
     """Robot kinematics using placo library for forward and inverse kinematics."""
 
-    def __init__(self, urdf_path: str, ee_frame_name: str = "gripperframe"):
+    def __init__(
+        self, urdf_path: str, target_frame_name: str = "gripperframe", joint_names: list[str] = None
+    ):
         """
         Initialize placo-based kinematics solver.
 
         Args:
             urdf_path: Path to the robot URDF file
-            ee_frame_name: Name of the end-effector frame in the URDF
+            target_frame_name: Name of the end-effector frame in the URDF
         """
         try:
             import placo
@@ -38,29 +40,24 @@ class RobotKinematics:
         self.solver = placo.KinematicsSolver(self.robot)
         self.solver.mask_fbase(True)  # Fix the base
 
-        self.ee_frame_name = ee_frame_name
+        self.target_frame_name = target_frame_name
 
         # Set joint names
-        self.joint_names = list(self.robot.joint_names())
+        self.joint_names = list(self.robot.joint_names()) if joint_names is None else joint_names
 
         # Initialize frame task for IK
-        self.tip_starting_pose = np.eye(4)
-        self.tip_frame = self.solver.add_frame_task(self.ee_frame_name, self.tip_starting_pose)
-        self.tip_frame.configure(self.ee_frame_name, "soft", 1.0, 1.0)
+        self.tip_frame = self.solver.add_frame_task(frame=self.target_frame_name, T_world_frame=np.eye(4))
 
-    def forward_kinematics(self, robot_pos_deg, frame=None):
+    def forward_kinematics(self, robot_pos_deg):
         """
-        Compute forward kinematics for given joint configuration.
+        Compute forward kinematics for given joint configuration given the target frame name in the constructor.
 
         Args:
             robot_pos_deg: Joint positions in degrees (numpy array)
-            frame: Target frame name (if None, uses ee_frame_name)
 
         Returns:
             4x4 transformation matrix of the end-effector pose
         """
-        if frame is None:
-            frame = self.ee_frame_name
 
         # Convert degrees to radians
         robot_pos_rad = np.deg2rad(robot_pos_deg[: len(self.joint_names)])
@@ -73,9 +70,9 @@ class RobotKinematics:
         self.robot.update_kinematics()
 
         # Get the transformation matrix
-        return self.robot.get_T_world_frame(frame)
+        return self.robot.get_T_world_frame(self.target_frame_name)
 
-    def inverse_kinematics(self, current_joint_pos, desired_ee_pose, position_only=True, target_frame=None):
+    def inverse_kinematics(self, current_joint_pos, desired_ee_pose, position_only=True):
         """
         Compute inverse kinematics using placo solver.
 
@@ -83,13 +80,10 @@ class RobotKinematics:
             current_joint_pos: Current joint positions in degrees (used as initial guess)
             desired_ee_pose: Target end-effector pose as a 4x4 transformation matrix
             position_only: If True, only match position (not orientation)
-            frame: Target frame name (if None, uses ee_frame_name)
 
         Returns:
             Joint positions in degrees that achieve the desired end-effector pose
         """
-        if target_frame is None:
-            target_frame = self.ee_frame_name
 
         # Convert current joint positions to radians for initial guess
         current_joint_rad = np.deg2rad(current_joint_pos[: len(self.joint_names)])
@@ -104,10 +98,11 @@ class RobotKinematics:
         # Configure the task based on position_only flag
         if position_only:
             # Only constrain position, not orientation
-            self.tip_frame.configure(target_frame, "soft", 1.0, 0.0)
+            self.tip_frame.configure(self.target_frame_name, "soft", 1.0, 0.0)
         else:
             # Constrain both position and orientation
-            self.tip_frame.configure(target_frame, "soft", 1.0, 1.0)
+            # TODO (maractingi-caroline): add variable weights for position and orientation
+            self.tip_frame.configure(self.target_frame_name, "soft", 1.0, 1.0)
 
         # Solve IK
         self.solver.solve(True)
