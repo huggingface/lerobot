@@ -5,13 +5,15 @@ from concurrent import futures
 from queue import Queue
 from typing import Generator, List, Optional
 
-import async_inference_pb2  # type: ignore
-import async_inference_pb2_grpc  # type: ignore
 import grpc
 import torch
 from datasets import load_dataset
 
 from lerobot.common.policies.factory import get_policy_class
+from lerobot.scripts.server import (
+    async_inference_pb2,  # type: ignore
+    async_inference_pb2_grpc,  # type: ignore
+)
 from lerobot.scripts.server.constants import environment_dt, idle_wait, inference_latency, supported_policies
 from lerobot.scripts.server.helpers import (
     TimedAction,
