@@ -69,12 +69,12 @@ def patch_make_robot(monkeypatch):
 def robot_client() -> RobotClient:
     """Fresh `RobotClient` instance for each test case (no threads started).
     Uses DummyRobot."""
-    
+
     # Use an arbitrary port; the gRPC channel is never used in these tests.
     client = RobotClient(server_address="localhost:9999")
     yield client
 
-    if client.robot.connected:    
+    if client.robot.connected:
         client.stop()
 
 
@@ -82,13 +82,14 @@ def robot_client() -> RobotClient:
 # Helper utilities for tests
 # -----------------------------------------------------------------------------
 
+
 def _make_actions(start_ts: float, start_t: int, count: int) -> list[TimedAction]:
     """Generate `count` consecutive TimedAction objects starting at timestep `start_t`."""
     fps = 30  # emulates most common frame-rate
     actions: list[TimedAction] = []
     for i in range(count):
         timestep = start_t + i
-        timestamp = start_ts + i * (1/fps)
+        timestamp = start_ts + i * (1 / fps)
         action_tensor = torch.full((6,), timestep, dtype=torch.float32)
         actions.append(TimedAction(timestamp, action_tensor, timestep))
     return actions
@@ -120,12 +121,14 @@ def test_update_action_queue_discards_stale(robot_client: RobotClient):
     "chunk_size, queue_len, expected",
     [
         (20, 12, False),  # 12 / 20 = 0.6  > g=0.5 threshold, not ready to send
-        (20, 8, True),    # 8  / 20 = 0.4 <= g=0.5, ready to send
+        (20, 8, True),  # 8  / 20 = 0.4 <= g=0.5, ready to send
         (10, 5, True),
         (10, 6, False),
     ],
 )
-def test_ready_to_send_observation(robot_client: RobotClient, chunk_size: int, queue_len: int, expected: bool):
+def test_ready_to_send_observation(
+    robot_client: RobotClient, chunk_size: int, queue_len: int, expected: bool
+):
     """Validate `_ready_to_send_observation` ratio logic for various sizes."""
 
     robot_client.action_chunk_size = chunk_size
@@ -177,4 +180,3 @@ def test_ready_to_send_observation_with_varying_threshold(
         robot_client.action_queue.put(act)
 
     assert robot_client._ready_to_send_observation() is expected
-
