@@ -13,8 +13,8 @@
 # limitations under the License.
 
 import math
-import time
 import pickle
+import time
 
 import torch
 
@@ -114,4 +114,3 @@ def test_observations_similar_true():
 
     obs3 = _make_obs(2.0 * torch.ones(6))
     assert not observations_similar(obs1, obs3, atol=2.0)
-
