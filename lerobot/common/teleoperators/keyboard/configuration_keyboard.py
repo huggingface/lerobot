@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from ..config import TeleoperatorConfig
 
@@ -24,6 +24,39 @@ from ..config import TeleoperatorConfig
 class KeyboardTeleopConfig(TeleoperatorConfig):
     # TODO(Steven): Consider setting in here the keys that we want to capture/listen
     mock: bool = False
+
+    # Motor mappings for SO100 follower
+    motor_mappings: dict[str, dict[str, str]] = field(
+        default_factory=lambda: {
+            "shoulder_pan": {
+                "left": "a",
+                "right": "d",
+            },
+            "shoulder_lift": {
+                "up": "w",
+                "down": "s",
+            },
+            "elbow_flex": {
+                "up": "q",
+                "down": "e",
+            },
+            "wrist_flex": {
+                "up": "r",
+                "down": "f",
+            },
+            "wrist_roll": {
+                "left": "z",
+                "right": "x",
+            },
+            "gripper": {
+                "open": "g",
+                "close": "h",
+            },
+        }
+    )
+
+    # Step size for each motor movement
+    step_size: float = 5.0
 
 
 @TeleoperatorConfig.register_subclass("keyboard_ee")
