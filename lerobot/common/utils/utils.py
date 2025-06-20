@@ -70,6 +70,9 @@ def get_safe_torch_device(try_device: str, log: bool = False) -> torch.device:
             device = torch.device("cpu")
             if log:
                 logging.warning("Using CPU, this will be slow.")
+        case "xpu":
+            assert torch.xpu.is_available()
+            device = torch.device("xpu")
         case _:
             device = torch.device(try_device)
             if log:
@@ -84,7 +87,7 @@ def get_safe_dtype(dtype: torch.dtype, device: str | torch.device):
     """
     if isinstance(device, torch.device):
         device = device.type
-    if device == "mps" and dtype == torch.float64:
+    if (device == "mps" or device == "xpu") and dtype == torch.float64:
         return torch.float32
     else:
         return dtype
@@ -98,8 +101,10 @@ def is_torch_device_available(try_device: str) -> bool:
         return torch.backends.mps.is_available()
     elif try_device == "cpu":
         return True
+    elif try_device == "xpu":
+        return torch.xpu.is_available()
     else:
-        raise ValueError(f"Unknown device {try_device}. Supported devices are: cuda, mps or cpu.")
+        raise ValueError(f"Unknown device {try_device}. Supported devices are: cuda, mps, xpu or cpu.")
 
 
 def is_amp_available(device: str):
