@@ -26,7 +26,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
-from typing import Any, Dict, Optional, Protocol, Union, runtime_checkable
+from typing import Any, Dict, Optional, Protocol, Union, runtime_checkable, Literal
 
 import av
 import av.video.stream
@@ -125,7 +125,7 @@ class URDFLogger:
                 if self.entity_path_prefix:
                     path = f"{self.entity_path_prefix}/{path}"
                 fixed_axis = list(map(float, self.joint_paths[joint_name].xyz.split(" ")))
-                angle_rad = self._get_calibrated_angle(joint_name, position)
+                angle_rad = self._get_angle_rad(joint_name, position)
                 rr.log(
                     path,
                     rr.Transform3D(rotation=rr.datatypes.RotationAxisAngle(axis=fixed_axis, angle=angle_rad)),
@@ -141,13 +141,13 @@ class URDFLogger:
             return {name: motor.norm_mode for name, motor in self.robot.bus.motors.items()}
         return {}
 
-    def _get_calibrated_angle(self, joint_name: str, position: float) -> float:
+    def _get_angle_rad(self, joint_name: str, position: float) -> float:
         """
         Get the calibrated angle in radians for a joint.
 
         :param joint_name: Name of the joint.
         :param position: Raw position of the joint.
-        :return: Calibrated angle.
+        :return: Joint angle in radians.
         """
         # position is -100 to 100 range
         if joint_name not in self.joint_paths:
@@ -377,6 +377,7 @@ class RerunRobotLogger:
         self,
         teleop: Optional[Teleoperator] = None,
         robot: Optional[Robot] = None,
+        image_stream_type: str = "video",
         fps: int = 60,
         image_size: Optional[tuple[int, int]] = None,
         log_urdf: bool = True,
@@ -386,14 +387,17 @@ class RerunRobotLogger:
 
         :param teleop: Optional teleoperator instance to log actions.
         :param robot: Optional robot instance to log observations and joint angles.
+        :param image_stream_type: Type of image stream to log. Options are "video", "jpeg", "raw", or "none".
         :param fps: Frames per second for video logging.
-        :param image_size: Optional tuple (width, height) for video frame size. 
+        :param image_size: Optional tuple (width, height) for video frame size.
             If None, it will use the size from the robot's observation features.
+        :param log_urdf: Whether to log the URDF of the robot. Defaults to True.
         """
         self.robot = robot
         self.teleop = teleop
 
         self.robot_urdf_logger: Optional[URDFLogger] = None
+        self.image_stream_type = image_stream_type
         self.video_loggers: Dict[str, VideoLogger] = {}
 
         self.fps = fps
@@ -401,17 +405,12 @@ class RerunRobotLogger:
 
         self.log_urdf = log_urdf and robot is not None
 
-    def init(self):
-        _init_rerun(session_name="teleoperation")
+    def init(self, session_name: str = "lerobot_control_loop"):
+        _init_rerun(session_name=session_name)
 
-        if self.robot is not None:
+        if self.robot is not None and self.image_stream_type == "video":
             self.video_loggers: Dict[str, VideoLogger] = {
-                cam_name: VideoLogger(
-                    stream_name=f"observation/{cam_name}", 
-                    height=self.height or shape[0], 
-                    width=self.width or shape[1], 
-                    fps=self.fps
-                )
+                cam_name: self._create_video_logger(cam_name, shape)
                 for cam_name, shape in self.robot.observation_features.items()
                 if isinstance(shape, tuple)
             }
@@ -423,6 +422,9 @@ class RerunRobotLogger:
                 logging.warning(
                     f"URDF file not found for robot {self.robot.robot_type}. Skipping URDF logging: {e}"
                 )
+                self.log_urdf = False
+
+
 
     def cleanup(self):
         """
@@ -432,19 +434,24 @@ class RerunRobotLogger:
             video_logger.close()
         rr.rerun_shutdown()
 
-    def log_all(self, sync_time: bool = True):
+    def log_all(self, observation=None, action=None, sync_time: bool = True):
         """
         Log all observations, actions, and joint angles to Rerun.
+        If `observations` and `actions` are not provided, it will fetch them from the robot and teleoperator instances.
         If `sync_time` is True, it will also set the current time in Rerun.
         This is useful for synchronizing the logs with the robot's time.
         """
         if sync_time:
             rr.set_time("time", duration=np.timedelta64(time.time_ns(), "ns"))
-        observations = self.robot.get_observation() if self.robot else {}
-        actions = self.teleop.get_action() if self.teleop else {}
-        self.log_observations(observations)
-        self.log_joint_angles(observations)
-        self.log_actions(actions)
+
+        if observation is None:
+            observation = observation or self.robot.get_observation() if self.robot else {}
+        if action is None:
+            action = self.teleop.get_action() if self.teleop else {}
+
+        self.log_observations(observation)
+        self.log_joint_angles(observation)
+        self.log_actions(action)
 
     def log_observations(self, observations: Dict[str, Any]):
         if self.robot is None:
@@ -455,7 +462,7 @@ class RerunRobotLogger:
             if isinstance(val, float):
                 rr.log(["observation", obs], rr.Scalars(val))
             elif isinstance(val, np.ndarray) and obs in self.video_loggers:
-                self.video_loggers[obs].log_frame(val)
+                self.log_frame(val, obs)
 
     def log_actions(self, actions: Dict[str, Any]):
         if self.teleop is None:
@@ -471,3 +478,33 @@ class RerunRobotLogger:
             return
         if self.log_urdf and self.robot_urdf_logger is not None:
             self.robot_urdf_logger.log_joint_angles(angles)
+
+    def log_frame(self, frame: np.ndarray, cam_name: str):
+        """
+        Log a single video frame to the specified stream name.
+
+        :param frame: The image frame to log, expected to be in HWC format (height, width, channels).
+        :param stream_name: The name of the Rerun stream to log the frame to.
+        """
+        if self.image_stream_type == "video":
+            logger = self.video_loggers.get(cam_name, self._create_video_logger(cam_name, frame.shape[:2]))
+            logger.log_frame(frame)
+        elif self.image_stream_type == "jpeg":
+            rr.log(cam_name, rr.Image(frame).compress(jpeg_quality=60), static=True)
+        elif self.image_stream_type == "raw":
+            rr.log(cam_name, rr.Image(frame), static=True)
+
+    def _create_video_logger(self, cam_name: str, shape: tuple[int, int]) -> VideoLogger:
+        return VideoLogger(
+            stream_name=f"observation/{cam_name}",
+            height=self.height or shape[0],
+            width=self.width or shape[1],
+            fps=self.fps,
+        )
+    
+    def __repr__(self):
+        return (
+            f"RerunRobotLogger(teleop={self.teleop}, robot={self.robot}, "
+            f"image_stream_type={self.image_stream_type}, fps={self.fps}, "
+            f"image_size=({self.width}, {self.height}), log_urdf={self.log_urdf})"
+        )
