@@ -150,11 +150,10 @@ class SO100FollowerEndEffector(SO100Follower):
             )
 
         # Compute inverse kinematics to get joint positions
-        target_joint_values_in_degrees = self.kinematics.ik(
+        target_joint_values_in_degrees = self.kinematics.inverse_kinematics(
             self.current_joint_pos, desired_ee_pos, position_only=True
         )
 
-        target_joint_values_in_degrees = np.clip(target_joint_values_in_degrees, -180.0, 180.0)
         # Create joint space action dictionary
         joint_action = {
             f"{key}.pos": target_joint_values_in_degrees[i] for i, key in enumerate(self.bus.motors.keys())

@@ -75,7 +75,7 @@ class RobotKinematics:
         # Get the transformation matrix
         return self.robot.get_T_world_frame(frame)
 
-    def ik(self, current_joint_pos, desired_ee_pose, position_only=True, frame=None):
+    def inverse_kinematics(self, current_joint_pos, desired_ee_pose, position_only=True, target_frame=None):
         """
         Compute inverse kinematics using placo solver.
 
@@ -88,8 +88,8 @@ class RobotKinematics:
         Returns:
             Joint positions in degrees that achieve the desired end-effector pose
         """
-        if frame is None:
-            frame = self.ee_frame_name
+        if target_frame is None:
+            target_frame = self.ee_frame_name
 
         # Convert current joint positions to radians for initial guess
         current_joint_rad = np.deg2rad(current_joint_pos[: len(self.joint_names)])
@@ -104,10 +104,10 @@ class RobotKinematics:
         # Configure the task based on position_only flag
         if position_only:
             # Only constrain position, not orientation
-            self.tip_frame.configure(self.ee_frame_name, "soft", 1.0, 0.0)
+            self.tip_frame.configure(target_frame, "soft", 1.0, 0.0)
         else:
             # Constrain both position and orientation
-            self.tip_frame.configure(self.ee_frame_name, "soft", 1.0, 1.0)
+            self.tip_frame.configure(target_frame, "soft", 1.0, 1.0)
 
         # Solve IK
         self.solver.solve(True)
