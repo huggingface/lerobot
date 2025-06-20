@@ -6,8 +6,10 @@ import time
 from queue import Empty, Queue
 from typing import Callable, Optional
 
-import async_inference_pb2  # type: ignore
-import async_inference_pb2_grpc  # type: ignore
+from lerobot.scripts.server import (
+    async_inference_pb2,  # type: ignore
+    async_inference_pb2_grpc,  # type: ignore
+)
 import grpc
 import torch
 

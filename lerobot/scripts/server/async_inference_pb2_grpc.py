@@ -5,7 +5,7 @@
 import grpc
 import warnings
 
-import async_inference_pb2 as async__inference__pb2
+from lerobot.scripts.server import async_inference_pb2 as async__inference__pb2
 
 GRPC_GENERATED_VERSION = '1.71.0'
 GRPC_VERSION = grpc.__version__
