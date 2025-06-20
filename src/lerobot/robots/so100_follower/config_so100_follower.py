@@ -48,7 +48,7 @@ class SO100FollowerEndEffectorConfig(SO100FollowerConfig):
     urdf_path: str | None = None
 
     # End-effector frame name in the URDF
-    ee_frame_name: str = "gripperframe"
+    target_frame_name: str = "gripperframe"
 
     # Default bounds for the end-effector position (in meters)
     end_effector_bounds: dict[str, list[float]] = field(

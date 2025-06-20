@@ -1094,7 +1094,7 @@ class EEObservationWrapper(gym.ObservationWrapper):
 
         self.kinematics = RobotKinematics(
             urdf_path=env.unwrapped.robot.config.urdf_path,
-            ee_frame_name=env.unwrapped.robot.config.ee_frame_name,
+            target_frame_name=env.unwrapped.robot.config.target_frame_name,
         )
 
     def observation(self, observation):
@@ -1158,7 +1158,7 @@ class BaseLeaderControlWrapper(gym.Wrapper):
         # Initialize robot control
         self.kinematics = RobotKinematics(
             urdf_path=env.unwrapped.robot.config.urdf_path,
-            ee_frame_name=env.unwrapped.robot.config.ee_frame_name,
+            target_frame_name=env.unwrapped.robot.config.target_frame_name,
         )
         self.leader_torque_enabled = True
         self.prev_leader_gripper = None

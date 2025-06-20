@@ -46,7 +46,7 @@ class RobotKinematics:
         self.joint_names = list(self.robot.joint_names()) if joint_names is None else joint_names
 
         # Initialize frame task for IK
-        self.tip_frame = self.solver.add_frame_task(frame=self.target_frame_name, T_world_frame=np.eye(4))
+        self.tip_frame = self.solver.add_frame_task(self.target_frame_name, np.eye(4))
 
     def forward_kinematics(self, robot_pos_deg):
         """
