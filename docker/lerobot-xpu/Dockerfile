@@ -21,4 +21,4 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /lerobot
 COPY . ./
 
-RUN /opt/venv/bin/pip install --no-cache-dir ".[pusht]"
+RUN /opt/venv/bin/pip install --no-cache-dir ".[aloha, pusht, smolvla]"
