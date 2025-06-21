@@ -68,7 +68,7 @@ def test_timed_data_deserialization_data_getters():
     ta_in = TimedAction(timestamp=ts, action=original_action, timestep=13)
 
     # Serialize → bytes → deserialize
-    ta_bytes = pickle.dumps(ta_in)
+    ta_bytes = pickle.dumps(ta_in)  # nosec
     ta_out: TimedAction = pickle.loads(ta_bytes)  # nosec B301
 
     # Identity & content checks
@@ -82,7 +82,7 @@ def test_timed_data_deserialization_data_getters():
     obs_dict = {"observation.state": torch.arange(4).float()}
     to_in = TimedObservation(timestamp=ts, observation=obs_dict, timestep=7, transfer_state=2, must_go=True)
 
-    to_bytes = pickle.dumps(to_in)
+    to_bytes = pickle.dumps(to_in)  # nosec
     to_out: TimedObservation = pickle.loads(to_bytes)  # nosec B301
 
     assert math.isclose(to_out.get_timestamp(), ts, rel_tol=0, abs_tol=1e-6)
