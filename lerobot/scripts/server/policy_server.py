@@ -14,7 +14,9 @@ from lerobot.scripts.server import (
     async_inference_pb2,  # type: ignore
     async_inference_pb2_grpc,  # type: ignore
 )
-from lerobot.scripts.server.constants import environment_dt, idle_wait, inference_latency, supported_policies
+from lerobot.scripts.server.policy_server_config import PolicyServerConfig
+from lerobot.scripts.server.constants import supported_policies
+
 from lerobot.scripts.server.helpers import (
     TimedAction,
     TimedObservation,
@@ -29,16 +31,9 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
     info_bracket = "SERVER"
     logger = setup_logging(prefix, info_bracket)
 
-    def __init__(self):
-        # Initialize dataset action generator (to debug this first version, will be removed in the future)
-        self.action_generator = itertools.cycle(self._stream_action_chunks_from_dataset())
-
+    def __init__(self, config: PolicyServerConfig):
+        self.config = config
         self._setup_server()
-
-        self.actions_per_chunk = 20
-        self.actions_overlap = 10
-
-        self.running = True
 
     def _setup_server(self) -> None:
         """Flushes server state when new client connects."""
@@ -50,19 +45,25 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
     def Ready(self, request, context):  # noqa: N802
         client_id = context.peer()
         self.logger.info(f"Client {client_id} connected and ready")
-        self._setup_server()
+        self._setup_server()  # new client's handshake clears server state
 
         return async_inference_pb2.Empty()
-
+    
+    def _validate_policy_specs(self, policy_specs: TinyPolicyConfig) -> None:
+        assert isinstance(policy_specs, TinyPolicyConfig), (
+            f"Policy specs must be a TinyPolicyConfig. Got {type(policy_specs)}"
+        )
+        assert policy_specs.policy_type in supported_policies, (
+            f"Policy type {policy_specs.policy_type} not supported. Supported policies: {supported_policies}"
+        )
+    
     def SendPolicyInstructions(self, request, context):  # noqa: N802
         """Receive policy instructions from the robot client"""
         client_id = context.peer()
         self.logger.debug(f"Receiving policy instructions from {client_id}")
 
         policy_specs = pickle.loads(request.data)  # nosec
-        assert isinstance(policy_specs, TinyPolicyConfig), (
-            f"Policy specs must be a TinyPolicyConfig. Got {type(policy_specs)}"
-        )
+        self._validate_policy_specs(policy_specs)
 
         self.logger.info(
             f"Policy type: {policy_specs.policy_type} | "
@@ -70,19 +71,16 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
             f"Device: {policy_specs.device}"
         )
 
-        assert policy_specs.policy_type in supported_policies, (
-            f"Policy type {policy_specs.policy_type} not supported. Supported policies: {supported_policies}"
-        )
-
         self.device = policy_specs.device
         self.policy_type = policy_specs.policy_type  # act, pi0, etc.
 
         policy_class = get_policy_class(self.policy_type)
 
-        start = time.time()
+        start = time.perf_counter()
+
         self.policy = policy_class.from_pretrained(policy_specs.pretrained_name_or_path)
         self.policy.to(self.device)
-        end = time.time()
+        end = time.perf_counter()
 
         self.logger.info(f"Time taken to put policy on {self.device}: {end - start:.4f} seconds")
 
@@ -94,16 +92,16 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
         self.logger.debug(f"Receiving observations from {client_id}")
 
         for observation in request_iterator:
-            receive_time = time.time()
+            receive_time = time.perf_counter()
             timed_observation = pickle.loads(observation.data)  # nosec
-            deserialize_time = time.time()
+            deserialize_time = time.perf_counter()
 
             self.logger.debug(f"Received observation #{timed_observation.get_timestep()}")
 
             if not self._maybe_enqueue_observation(timed_observation):
                 continue
 
-            queue_time = time.time()
+            queue_time = time.perf_counter()
 
             obs_timestep = timed_observation.get_timestep()
             obs_timestamp = timed_observation.get_timestamp()
@@ -145,7 +143,6 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
                 self._predicted_timesteps.add(obs.get_timestep())
                 start_time = time.time()
                 action_chunk = self._predict_action_chunk(obs)
-                # action_chunk = self._read_action_chunk(obs)
                 inference_time = time.time() - start_time
 
                 start_time = time.time()
@@ -169,7 +166,7 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
                 yield action
             else:
                 self.logger.warning("No observation in queue yet!")
-                time.sleep(idle_wait)
+                time.sleep(self.idle_wait)
 
         except Exception as e:
             self.logger.error(f"Error in StreamActions: {e}")
@@ -221,7 +218,7 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
         t_0 + i*environment_dt for i in range(len(action_chunk))
         """
         return [
-            TimedAction(t_0 + i * environment_dt, action, i_0 + i) for i, action in enumerate(action_chunk)
+            TimedAction(t_0 + i * self.environment_dt, action, i_0 + i) for i, action in enumerate(action_chunk)
         ]
 
     @torch.no_grad()
@@ -334,70 +331,13 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
 
         chunk_time = time.time()
         self.logger.debug(f"Action chunk creation time: {chunk_time - post_inference_time:.6f}s")
+        
         time.sleep(
-            max(0, inference_latency - max(0, chunk_time - start_time))
+            max(0, DEFAULT_INFERENCE_LATENCY - max(0, chunk_time - start_time))
         )  # sleep to control inference latency
 
         return action_chunk
 
-    def _stream_action_chunks_from_dataset(self) -> Generator[List[torch.Tensor], None, None]:
-        """Stream chunks of actions from a prerecorded dataset.
-
-        Returns:
-            Generator that yields chunks of actions from the dataset
-        """
-        import warnings
-
-        warnings.warn(
-            "This method is deprecated and will be removed in the future.", DeprecationWarning, stacklevel=2
-        )
-
-        dataset = load_dataset("fracapuano/so100_test", split="train").with_format("torch")
-
-        # 1. Select the action column only, where you will find tensors with 6 elements
-        actions = dataset["action"]
-        action_indices = torch.arange(len(actions))
-
-        # 2. Chunk the iterable of tensors into chunks with 10 elements each
-        # sending only first element for debugging
-        indices_chunks = action_indices.unfold(
-            0, self.actions_per_chunk, self.actions_per_chunk - self.actions_overlap
-        )
-
-        for idx_chunk in indices_chunks:
-            yield actions[idx_chunk[0] : idx_chunk[-1] + 1, :]
-
-    def _read_action_chunk(self, observation: Optional[TimedObservation] = None) -> list[TimedAction]:
-        """Dummy function for predicting action chunk given observation.
-
-        Instead of computing actions on-the-fly, this method streams
-        actions from a prerecorded dataset.
-        """
-        import warnings
-
-        warnings.warn(
-            "This method is deprecated and will be removed in the future.", DeprecationWarning, stacklevel=2
-        )
-
-        start_time = time.time()
-        if not observation:
-            observation = TimedObservation(timestamp=time.time(), observation={}, timestep=0)
-
-        # Get chunk of actions from the generator
-        actions_chunk = next(self.action_generator)
-
-        # Return a list of TimedActions, with timestamps starting from the observation timestamp
-        actions_chunk = self._time_action_chunk(
-            observation.get_timestamp(), actions_chunk, observation.get_timestep()
-        )
-
-        chunk_time = time.time()
-        self.logger.debug(f"Action chunk creation time: {chunk_time - start_time:.6f}s")
-
-        # slow action generation, emulates inference time
-        time.sleep(max(0, inference_latency - max(0, chunk_time - start_time)))
-
-        return actions_chunk
 
     def stop(self):
         """Stop the server"""
