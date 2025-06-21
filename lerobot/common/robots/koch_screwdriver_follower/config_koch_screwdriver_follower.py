@@ -32,10 +32,14 @@ class KochScrewdriverFollowerConfig(RobotConfig):
     # the number of motors in your follower arms.
     max_relative_target: int | None = None
 
-    # cameras
-    # @TODO  - specify cameras here
+    # No need to specify cameras here, this is just for typing.
+    # You can set the cameras in your commands like this:
+    # python -m lerobot.record \
+    # --robot.type=koch_screwdriver_follower \
+    # --robot.port=/dev/servo_5837053138 \
+    # --robot.cameras="{ screwdriver: {type: opencv, index_or_path: /dev/video0, width: 800, height: 600, fps: 30}, side: {type: opencv, index_or_path: /dev/video2, width: 800, height: 600, fps: 30}}"
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
 
     # Set to `True` for backward compatibility with previous policies/dataset
-    # @TODO - learn what this is for
+    # See the [Hardware API Redesign PR](https://github.com/huggingface/lerobot/pull/777) for more details
     use_degrees: bool = False
