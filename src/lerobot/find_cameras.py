@@ -38,6 +38,8 @@ import numpy as np
 from PIL import Image
 
 from lerobot.cameras.configs import ColorMode
+from lerobot.cameras.depthai.camera_depthai import DepthAICamera
+from lerobot.cameras.depthai.configuration_depthai import DepthAICameraConfig
 from lerobot.cameras.opencv.camera_opencv import OpenCVCamera
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.cameras.realsense.camera_realsense import RealSenseCamera
@@ -88,12 +90,27 @@ def find_all_realsense_cameras() -> list[dict[str, Any]]:
     return all_realsense_cameras_info
 
 
+def find_all_depthai_cameras() -> list[dict[str, Any]]:
+    """Finds all available DepthAI cameras."""
+    logger.info("Searching for DepthAI cameras...")
+    try:
+        cameras = DepthAICamera.find_cameras()
+        logger.info(f"Found {len(cameras)} DepthAI cameras.")
+        return cameras
+    except ImportError:
+        logger.warning("Skipping DepthAI camera search: depthai library not found.")
+        return []
+    except Exception as e:
+        logger.error(f"Error finding DepthAI cameras: {e}")
+        return []
+
+
 def find_and_print_cameras(camera_type_filter: str | None = None) -> list[dict[str, Any]]:
     """
     Finds available cameras based on an optional filter and prints their information.
 
     Args:
-        camera_type_filter: Optional string to filter cameras ("realsense" or "opencv").
+        camera_type_filter: Optional string to filter cameras ("realsense", "opencv", or "depthai").
                             If None, lists all cameras.
 
     Returns:
@@ -108,12 +125,14 @@ def find_and_print_cameras(camera_type_filter: str | None = None) -> list[dict[s
         all_cameras_info.extend(find_all_opencv_cameras())
     if camera_type_filter is None or camera_type_filter == "realsense":
         all_cameras_info.extend(find_all_realsense_cameras())
+    if camera_type_filter is None or camera_type_filter == "depthai":
+        all_cameras_info.extend(find_all_depthai_cameras())
 
     if not all_cameras_info:
         if camera_type_filter:
             logger.warning(f"No {camera_type_filter} cameras were detected.")
         else:
-            logger.warning("No cameras (OpenCV or RealSense) were detected.")
+            logger.warning("No cameras (OpenCV, RealSense, or DepthAI) were detected.")
     else:
         print("\n--- Detected Cameras ---")
         for i, cam_info in enumerate(all_cameras_info):
@@ -174,6 +193,9 @@ def create_camera_instance(cam_meta: dict[str, Any]) -> dict[str, Any] | None:
                 color_mode=ColorMode.RGB,
             )
             instance = RealSenseCamera(rs_config)
+        elif cam_type == "DepthAI":
+            config = DepthAICameraConfig(mxid_or_name=cam_id, color_mode=ColorMode.RGB)
+            instance = DepthAICamera(config)
         else:
             logger.warning(f"Unknown camera type: {cam_type} for ID {cam_id}. Skipping.")
             return None
@@ -239,7 +261,7 @@ def save_images_from_all_cameras(
     Args:
         output_dir: Directory to save images.
         record_time_s: Duration in seconds to record images.
-        camera_type: Optional string to filter cameras ("realsense" or "opencv").
+        camera_type: Optional string to filter cameras ("realsense", "opencv", or "depthai").
                             If None, uses all detected cameras.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -296,8 +318,8 @@ if __name__ == "__main__":
         type=str,
         nargs="?",
         default=None,
-        choices=["realsense", "opencv"],
-        help="Specify camera type to capture from (e.g., 'realsense', 'opencv'). Captures from all if omitted.",
+        choices=["realsense", "opencv", "depthai"],
+        help="Specify camera type to capture from (e.g., 'realsense', 'opencv', 'depthai'). Captures from all if omitted.",
     )
     parser.add_argument(
         "--output-dir",
