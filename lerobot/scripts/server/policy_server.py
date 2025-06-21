@@ -405,17 +405,16 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
         self.logger.info("Server stopping...")
 
 
-def serve():
-    port = 8080
+def serve(host="localhost", port=8080):
     # Create the server instance first
     policy_server = PolicyServer()
-
+    
     # Setup and start gRPC server
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
     async_inference_pb2_grpc.add_AsyncInferenceServicer_to_server(policy_server, server)
-    server.add_insecure_port(f"[::]:{port}")
+    server.add_insecure_port(f"{host}:{port}")
     server.start()
-    policy_server.logger.info(f"PolicyServer started on port {port}")
+    policy_server.logger.info(f"PolicyServer started on {host}:{port}")
 
     try:
         # Use the running attribute to control server lifetime
@@ -428,4 +427,4 @@ def serve():
 
 
 if __name__ == "__main__":
-    serve()
+    serve()  # use default host and port
