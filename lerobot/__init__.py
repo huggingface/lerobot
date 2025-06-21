@@ -168,7 +168,7 @@ available_datasets = sorted(
 )
 
 # lists all available policies from `lerobot/common/policies`
-available_policies = ["act", "diffusion", "tdmpc", "vqbet"]
+available_policies = ["act", "diffusion", "tdmpc", "vqbet", "smolvla"]
 
 # lists all available robots from `lerobot/common/robot_devices/robots`
 available_robots = [
