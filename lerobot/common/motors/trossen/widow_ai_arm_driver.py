@@ -144,8 +144,20 @@ class TrossenArmDriver(MotorsBus):
         self._is_connected = False
         self.logs = {}
         self.fps = 30
-        self.home_pose = [0, np.pi / 3, np.pi / 6, np.pi / 5, 0, 0]
-        self.sleep_pose = [0, 0, 0, 0, 0, 0]
+        
+        # Attempt at dynamically creating home_pose based on number of motors
+        num_motors = len(motors)
+        if num_motors == 7:
+            # Leader arm: 6 joints + 1 gripper
+            self.home_pose = [0, np.pi / 3, np.pi / 6, np.pi / 5, 0, 0, 0]
+        elif num_motors == 6:
+            # Follower arm: 6 joints only
+            self.home_pose = [0, np.pi / 3, np.pi / 6, np.pi / 5, 0, 0]
+        else:
+            # Fallback: create pose with zeros for any number of motors
+            self.home_pose = [0] * num_motors
+            
+        self.sleep_pose = [0] * num_motors
 
         # Minimum time to move for the arm
         self.MIN_TIME_TO_MOVE = 3.0 / self.fps

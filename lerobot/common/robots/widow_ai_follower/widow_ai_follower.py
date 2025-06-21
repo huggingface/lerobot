@@ -54,7 +54,7 @@ class WidowAIFollower(Robot):
                 "wrist_1": Motor(4, "4310", norm_mode_body),
                 "wrist_2": Motor(5, "4310", norm_mode_body),
                 "wrist_3": Motor(6, "4310", norm_mode_body),
-                "gripper": Motor(7, "4310", MotorNormMode.RANGE_0_100),
+                "gripper": Motor(7, "4310", MotorNormMode.RANGE_0_100), # 6 vs 7 actuators is an issue here!
             },
             calibration=self.calibration,
             model=self.config.model,  # Use model from config
