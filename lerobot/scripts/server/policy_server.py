@@ -1,4 +1,4 @@
-import itertools
+
 import pickle  # nosec
 import time
 from concurrent import futures
@@ -77,7 +77,6 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
         policy_class = get_policy_class(self.policy_type)
 
         start = time.perf_counter()
-
         self.policy = policy_class.from_pretrained(policy_specs.pretrained_name_or_path)
         self.policy.to(self.device)
         end = time.perf_counter()
@@ -141,13 +140,13 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
             if obs:
                 self.last_predicted_obs = obs
                 self._predicted_timesteps.add(obs.get_timestep())
-                start_time = time.time()
+                start_time = time.perf_counter()
                 action_chunk = self._predict_action_chunk(obs)
-                inference_time = time.time() - start_time
+                inference_time = time.perf_counter() - start_time
 
-                start_time = time.time()
+                start_time = time.perf_counter()
                 action_bytes = pickle.dumps(action_chunk)  # nosec
-                serialize_time = time.time() - start_time
+                serialize_time = time.perf_counter() - start_time
 
                 # Create and return the Action
                 action = async_inference_pb2.Action(transfer_state=obs.transfer_state, data=action_bytes)
@@ -224,17 +223,17 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
     @torch.no_grad()
     def _run_act_policy(self, observation: dict[str, torch.Tensor]) -> torch.Tensor:
         """Run ACT-like policies"""
-        start_time = time.time()
+        start_time = time.perf_counter()
 
         # prepare observation for policy forward pass
         batch = self.policy.normalize_inputs(observation)
-        normalize_time = time.time()
+        normalize_time = time.perf_counter()
         self.logger.debug(f"Observation normalization time: {normalize_time - start_time:.6f}s")
 
         if self.policy.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
             batch["observation.images"] = [batch[key] for key in self.policy.config.image_features]
-            prep_time = time.time()
+            prep_time = time.perf_counter()
             self.logger.debug(f"Observation image preparation time: {prep_time - normalize_time:.6f}s")
 
         # forward pass outputs up to policy.config.n_action_steps != actions_per_chunk
@@ -242,7 +241,7 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
 
         actions = self.policy.unnormalize_outputs({"action": actions})["action"]
 
-        end_time = time.time()
+        end_time = time.perf_counter()
         self.logger.info(f"[ACT] Action chunk generation total time: {end_time - start_time:.6f}s")
 
         return actions
@@ -291,7 +290,7 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
     def _predict_action_chunk(self, observation_t: TimedObservation) -> list[TimedAction]:
         """Predict an action based on the observation"""
         """1. Prepare observation"""
-        start_time = time.time()
+        start_time = time.perf_counter()
 
         observation = {
             "robot_type": [self.policy.config.robot_type],
@@ -308,7 +307,7 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
             else:
                 observation[k] = v  # textual instructions are passed as a list of strings
 
-        prep_time = time.time()
+        prep_time = time.perf_counter()
         self.logger.debug(f"Observation preparation time: {prep_time - start_time:.6f}s")
 
         """2. Get action chunk"""
@@ -318,7 +317,7 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
         # Move to CPU before serializing
         action_tensor = action_tensor.cpu()
 
-        post_inference_time = time.time()
+        post_inference_time = time.perf_counter()
         self.logger.debug(f"Post-inference processing start: {post_inference_time - prep_time:.6f}s")
 
         if action_tensor.dim() == 1:
@@ -329,11 +328,11 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
             observation_t.get_timestamp(), list(action_tensor), observation_t.get_timestep()
         )
 
-        chunk_time = time.time()
+        chunk_time = time.perf_counter()
         self.logger.debug(f"Action chunk creation time: {chunk_time - post_inference_time:.6f}s")
         
         time.sleep(
-            max(0, DEFAULT_INFERENCE_LATENCY - max(0, chunk_time - start_time))
+            max(0, self.config.inference_latency - max(0, chunk_time - start_time))
         )  # sleep to control inference latency
 
         return action_chunk
