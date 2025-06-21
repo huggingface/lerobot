@@ -360,17 +360,20 @@ def convert_pi0_checkpoint(checkpoint_dir: str, precision: str, tokenizer_id: st
             empty_cameras=2,
             adapt_to_pi_aloha=True,
             use_delta_joint_actions_aloha=False,
+            paligemma_pretrained_path=None,
         )
     elif "pi0_aloha_towel" in checkpoint_dir:
         pi0_config = PI0Config(
             adapt_to_pi_aloha=True,
             use_delta_joint_actions_aloha=True,
+            paligemma_pretrained_path=None,
         )
     elif "pi0_base" in checkpoint_dir:
         pi0_config = PI0Config(
             empty_cameras=0,
             adapt_to_pi_aloha=False,
             use_delta_joint_actions_aloha=False,
+            paligemma_pretrained_path=None,
         )
     else:
         raise ValueError()
