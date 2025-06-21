@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import logging
+import time
 
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.common.motors import Motor, MotorCalibration, MotorNormMode
@@ -38,6 +39,11 @@ class KochScrewdriverLeader(Teleoperator):
 
     config_class = KochScrewdriverLeaderConfig
     name = "koch_screwdriver_leader"
+    
+    # Map the leader motor name to the follower motor and action name
+    motor_to_action_map = {
+        "gripper": "screwdriver"
+    }
 
     def __init__(self, config: KochScrewdriverLeaderConfig):
         super().__init__(config)
@@ -50,26 +56,24 @@ class KochScrewdriverLeader(Teleoperator):
                 "elbow_flex": Motor(3, "xl330-m077", MotorNormMode.RANGE_M100_100),
                 "wrist_flex": Motor(4, "xl330-m077", MotorNormMode.RANGE_M100_100),
                 "wrist_roll": Motor(5, "xl330-m077", MotorNormMode.RANGE_M100_100),
-                # @TODO(jackvial) - might need to configure this to map correctly the follower wheel mode screwdriver servo
-                "screwdriver": Motor(6, "xl330-m077", MotorNormMode.RANGE_0_100),
+                "gripper": Motor(6, "xl330-m077", MotorNormMode.RANGE_0_100),
             },
             calibration=self.calibration,
         )
 
     @property
     def action_features(self) -> dict[str, type]:
-        """Describe the leader action space.
-
-        All joints except the screwdriver are forwarded as target *positions* (normalized) while the
-        screwdriver, which is used like a trigger, is mapped to a *velocity* command that should be
-        applied to the follower screwdriver.
         """
-        # TODO(jackvial) needs review
-        # Old implementation for reference:
-        # return {f"{motor}.pos": float for motor in self.bus.motors}
-        return {
-            (f"{motor}.vel" if motor == "screwdriver" else f"{motor}.pos"): float for motor in self.bus.motors
-        }
+        Map gripper motor to screwdriver action name for follower compatibility.
+        """
+        features = {}
+        for motor in self.bus.motors:
+            action_name = self.motor_to_action_map.get(motor, motor)
+            if action_name == "screwdriver":
+                features[f"{action_name}.vel"] = float
+            else:
+                features[f"{action_name}.pos"] = float
+        return features
 
     @property
     def feedback_features(self) -> dict[str, type]:
@@ -95,14 +99,15 @@ class KochScrewdriverLeader(Teleoperator):
         return self.bus.is_calibrated
 
     def calibrate(self) -> None:
+        """
+        Same as the Koch leader but inverting the elbow flex motor has been removed as I don't think it should be
+        hardcoded here, but instead be handled by calibration.
+        """
         logger.info(f"\nRunning calibration of {self}")
         self.bus.disable_torque()
         for motor in self.bus.motors:
             self.bus.write("Operating_Mode", motor, OperatingMode.EXTENDED_POSITION.value)
 
-        # TODO(jackvial) - inverting the elbow seems like it should not be hardcoded here and should instead be a config option
-        # self.bus.write("Drive_Mode", "elbow_flex", DriveMode.NON_INVERTED.value)
-        # drive_modes = {motor: 1 if motor == "elbow_flex" else 0 for motor in self.bus.motors}
         drive_modes = dict.fromkeys(self.bus.motors, 0)
 
         input(f"Move {self} to the middle of its range of motion and press ENTER....")
@@ -137,7 +142,7 @@ class KochScrewdriverLeader(Teleoperator):
         self.bus.disable_torque()
         self.bus.configure_motors()
         for motor in self.bus.motors:
-            if motor != "screwdriver":
+            if motor != "gripper":
                 # Use 'extended position mode' for all motors except gripper, because in joint mode the servos
                 # can't rotate more than 360 degrees (from 0 to 4095) And some mistake can happen while
                 # assembling the arm, you could end up with a servo with a position 0 or 4095 at a crucial
@@ -149,14 +154,11 @@ class KochScrewdriverLeader(Teleoperator):
         # its goal position is a complete grasp (both gripper fingers are ordered to join and reach a touch).
         # For the leader gripper, it means we can use it as a physical trigger, since we can force with our finger
         # to make it move, and it will move back to its original target position when we release the force.
-        # self.bus.write("Operating_Mode", "gripper", OperatingMode.CURRENT_POSITION.value)
-        self.bus.write("Operating_Mode", "screwdriver", OperatingMode.CURRENT_POSITION.value)
+        self.bus.write("Operating_Mode", "gripper", OperatingMode.CURRENT_POSITION.value)
         # Set gripper's goal pos in current position mode so that we can use it as a trigger.
-        # self.bus.enable_torque("gripper")
-        self.bus.enable_torque("screwdriver")
+        self.bus.enable_torque("gripper")
         if self.is_calibrated:
-            # self.bus.write("Goal_Position", "gripper", self.config.gripper_open_pos)
-            self.bus.write("Goal_Position", "screwdriver", self.config.screwdriver_open_pos)
+            self.bus.write("Goal_Position", "gripper", self.config.gripper_open_pos)
 
     def setup_motors(self) -> None:
         for motor in reversed(self.bus.motors):
@@ -165,38 +167,67 @@ class KochScrewdriverLeader(Teleoperator):
             print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
 
     def get_action(self) -> dict[str, float]:
-        # TODO(jackvial) needs review
-        # Old implementation for reference:
-        # start = time.perf_counter()
-        # action = self.bus.sync_read("Present_Position")
-        # action = {f"{motor}.pos": val for motor, val in action.items()}
-        # dt_ms = (time.perf_counter() - start) * 1e3
-        # logger.debug(f"{self} read action: {dt_ms:.1f}ms")
-        # return action
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
         # Read all joint positions once.
+        start = time.perf_counter()
         pos_dict = self.bus.sync_read("Present_Position")
 
         # Build the action dictionary, converting the screwdriver position into a velocity command.
         action = {}
         for motor, pos in pos_dict.items():
-            if motor == "screwdriver":
-                # Map the positional deviation from the neutral (open) pose to a velocity value.
-                # @TODO(jackvial) - lift this to the config
+            action_name = self.motor_to_action_map.get(motor, motor)
+            
+            if action_name == "screwdriver":
+                # Map the leader gripper position to follower screwdriver velocity using relative normalization.
+                # 
+                # MAPPING OVERVIEW:
+                # Leader Gripper (CURRENT_POSITION mode):
+                #   - Position range: 0-100 (normalized)
+                #   - Neutral position: screwdriver_open_pos (e.g., 50)
+                #   - Operator can push/pull the handle against resistance
+                #   - Returns to neutral when released
+                # 
+                # Follower Screwdriver (VELOCITY mode):
+                #   - Velocity range: -700 to +700 (units)
+                #   - Zero velocity = no rotation
+                #   - Positive velocity = clockwise rotation
+                #   - Negative velocity = counter-clockwise rotation
+                # 
+                # TRANSFORMATION STEPS:
+                # 1. Calculate deviation from neutral: delta = pos - neutral_pos
+                # 2. Apply gain scaling: vel_cmd = -delta * GAIN
+                # 3. Clamp to velocity limits: vel_cmd = clamp(vel_cmd, -MAX_VEL, +MAX_VEL)
+                # 4. Filter small jitters: if |vel_cmd| < threshold, set to 0
+                #
+                # EXAMPLE MAPPING:
+                #   pos=80, neutral=50 → delta=30 → vel_cmd=-300 → clamp(-300, -700, 700) = -300
+                #   pos=20, neutral=50 → delta=-30 → vel_cmd=300 → clamp(300, -700, 700) = 300
+                #   pos=50, neutral=50 → delta=0 → vel_cmd=0 → no movement
+                
+                # Step 1: Calculate deviation from neutral position
                 delta = pos - self.config.screwdriver_open_pos
+                
+                # Step 2: Apply gain scaling with sign inversion for intuitive control
+                # Negative sign means: open gripper → negative velocity (counter-clockwise)
                 GAIN = 10.0
                 MAX_VEL = 700
-                vel_cmd = max(min(-delta * GAIN, MAX_VEL), -MAX_VEL)
+                vel_cmd = -delta * GAIN
+                
+                # Step 3: Clamp to velocity limits to prevent excessive speeds
+                vel_cmd = max(min(vel_cmd, MAX_VEL), -MAX_VEL)
 
-                # Small jitters around the neutral point are ignored.
-                if abs(vel_cmd) < 2.0:
+                # Step 4: Filter small jitters around neutral point for stability
+                if abs(vel_cmd) < 4.0:
                     vel_cmd = 0.0
 
-                action[f"{motor}.vel"] = vel_cmd
+                action[f"{action_name}.vel"] = vel_cmd
             else:
-                action[f"{motor}.pos"] = pos
+                action[f"{action_name}.pos"] = pos
+
+        dt_ms = (time.perf_counter() - start) * 1e3
+        logger.debug(f"{self} read action: {dt_ms:.1f}ms")
 
         return action
 
