@@ -22,10 +22,7 @@ from typing import Any
 from lerobot.common.cameras.utils import make_cameras_from_configs
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.common.motors import Motor, MotorCalibration, MotorNormMode
-from lerobot.common.motors.dynamixel import (
-    DynamixelMotorsBus,
-    TorqueMode,
-)
+from lerobot.common.motors.trossen import TrossenArmDriver
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
@@ -46,18 +43,21 @@ class WidowAIFollower(Robot):
         super().__init__(config)
         self.config = config
         norm_mode_body = MotorNormMode.DEGREES if config.use_degrees else MotorNormMode.RANGE_M100_100
-        self.bus = DynamixelMotorsBus(
+        
+        # Use TrossenArmDriver instead of DynamixelMotorsBus
+        self.bus = TrossenArmDriver(
             port=self.config.port,
             motors={
-                "shoulder_pan": Motor(1, "PLACEHOLDER_MODEL", norm_mode_body),
-                "shoulder_lift": Motor(2, "PLACEHOLDER_MODEL", norm_mode_body),
-                "elbow_flex": Motor(3, "PLACEHOLDER_MODEL", norm_mode_body),
-                "wrist_1": Motor(4, "PLACEHOLDER_MODEL", norm_mode_body),
-                "wrist_2": Motor(5, "PLACEHOLDER_MODEL", norm_mode_body),
-                "wrist_3": Motor(6, "PLACEHOLDER_MODEL", norm_mode_body),
-                "gripper": Motor(7, "PLACEHOLDER_MODEL", MotorNormMode.RANGE_0_100),
+                "shoulder_pan": Motor(1, "4340", norm_mode_body),
+                "shoulder_lift": Motor(2, "4340", norm_mode_body),
+                "elbow_flex": Motor(3, "4340", norm_mode_body),
+                "wrist_1": Motor(4, "4310", norm_mode_body),
+                "wrist_2": Motor(5, "4310", norm_mode_body),
+                "wrist_3": Motor(6, "4310", norm_mode_body),
+                "gripper": Motor(7, "4310", MotorNormMode.RANGE_0_100),
             },
             calibration=self.calibration,
+            model=self.config.model,  # Use model from config
         )
         self.cameras = make_cameras_from_configs(config.cameras)
 
@@ -107,10 +107,10 @@ class WidowAIFollower(Robot):
 
     def calibrate(self) -> None:
         logger.info(f"\nRunning calibration of {self}")
+        # For Trossen arms, calibration is typically pre-configured
+        # but we can still set up homing offsets if needed
         self.bus.disable_torque()
-        for motor in self.bus.motors:
-            self.bus.write("Operating_Mode", motor, TorqueMode.DISABLED.value)
-
+        
         input(f"Move {self} to the middle of its range of motion and press ENTER....")
         homing_offsets = self.bus.set_half_turn_homings()
 
@@ -137,12 +137,8 @@ class WidowAIFollower(Robot):
     def configure(self) -> None:
         with self.bus.torque_disabled():
             self.bus.configure_motors()
-            for motor in self.bus.motors:
-                self.bus.write("Operating_Mode", motor, TorqueMode.ENABLED.value)
-                # Set PID values for Dynamixel motors (placeholder values)
-                self.bus.write("Position_P_Gain", motor, 800)  # PLACEHOLDER
-                self.bus.write("Position_I_Gain", motor, 0)    # PLACEHOLDER
-                self.bus.write("Position_D_Gain", motor, 4000) # PLACEHOLDER
+            # For Trossen arms, torque is enabled by default in position mode
+            # No need to set specific PID values as they're pre-configured
 
     def setup_motors(self) -> None:
         for motor in reversed(self.bus.motors):

@@ -48,6 +48,7 @@ from lerobot.common.robots import (  # noqa: F401
     make_robot_from_config,
     so100_follower,
     so101_follower,
+    widow_ai_follower,
 )
 from lerobot.common.teleoperators import (
     Teleoperator,
@@ -58,7 +59,7 @@ from lerobot.common.utils.robot_utils import busy_wait
 from lerobot.common.utils.utils import init_logging, move_cursor_up
 from lerobot.common.utils.visualization_utils import _init_rerun
 
-from .common.teleoperators import koch_leader, so100_leader, so101_leader  # noqa: F401
+from .common.teleoperators import koch_leader, so100_leader, so101_leader, widow_ai_leader  # noqa: F401
 
 
 @dataclass

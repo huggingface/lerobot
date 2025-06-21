@@ -41,6 +41,10 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
         from .widowx import WidowX
 
         return WidowX(config)
+    elif config.type == "widow_ai_leader":
+        from .widow_ai_leader import WidowAILeader
+
+        return WidowAILeader(config)
     elif config.type == "mock_teleop":
         from tests.mocks.mock_teleop import MockTeleop
 

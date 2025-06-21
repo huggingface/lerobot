@@ -24,8 +24,11 @@ from ..config import RobotConfig
 @RobotConfig.register_subclass("widow_ai_follower")
 @dataclass
 class WidowAIFollowerConfig(RobotConfig):
-    # Port to connect to the arm
+    # Port to connect to the arm (IP address for Trossen arms)
     port: str
+    
+    # Trossen arm model to use
+    model: str = "V0_FOLLOWER"
 
     disable_torque_on_disconnect: bool = True
 
