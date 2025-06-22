@@ -8,6 +8,8 @@ DEFAULT_ENVIRONMENT_DT = 1 / 30
 """Server side: Running inference on (at most) environment_dt"""
 DEFAULT_INFERENCE_LATENCY = DEFAULT_ENVIRONMENT_DT
 
-"""Supported policies"""
 # TODO:  Support DiffusionPolicy, VQBet and Pi0
 supported_policies = ["act", "smolvla"]
+
+# TODO: Add all other robots
+supported_robots = ["so100"]

@@ -6,6 +6,8 @@ from lerobot.scripts.server.constants import (
     DEFAULT_INFERENCE_LATENCY,
 )
 
+from lerobot.common.robots.robot import Robot
+
 
 @dataclass
 class PolicyServerConfig:
@@ -83,6 +85,8 @@ class RobotClientConfig:
     This class defines all configurable parameters for the RobotClient,
     including network connection, policy settings, and control behavior.
     """
+    # Robot to wrap with async inference capabilities
+    robot: Robot = field(metadata={"help": "Robot instance to use"})
 
     # Network configuration
     server_address: str = field(default="localhost:8080", metadata={"help": "Server address to connect to"})
@@ -99,9 +103,6 @@ class RobotClientConfig:
     environment_dt: float = field(
         default=DEFAULT_ENVIRONMENT_DT, metadata={"help": "Environment time step, in seconds"}
     )
-
-    # Robot configuration - TODO(fracapuano): right now robot is string, then needs to an instance of the Robot class (after robot refactor)
-    robot: str = field(default="so100", metadata={"help": "Robot type to use"})
 
     camera_activation_delay: float = field(
         default=DEFAULT_IDLE_WAIT, metadata={"help": "Delay for camera activation in seconds"}

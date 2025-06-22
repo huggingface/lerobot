@@ -9,14 +9,15 @@ from typing import Callable, Optional
 import grpc
 import torch
 
-from lerobot.common.robot_devices.robots.utils import make_robot
+from lerobot.scripts.server.helpers import make_robot
+
 from lerobot.scripts.server import (
     async_inference_pb2,  # type: ignore
     async_inference_pb2_grpc,  # type: ignore
 )
 from lerobot.scripts.server.configs import RobotClientConfig
 from lerobot.scripts.server.helpers import TimedAction, TimedObservation, TinyPolicyConfig, setup_logging
-
+from lerobot.scripts.server.constants import supported_robots
 
 class RobotClient:
     prefix = "robot_client"
@@ -52,7 +53,7 @@ class RobotClient:
         self.start_barrier = threading.Barrier(2)  # 2 threads: action receiver, control loop
 
         start_time = time.time()
-        self.robot = make_robot(config.robot)
+        self.robot = self.config.robot
         self.robot.connect()
 
         connect_time = time.time()
@@ -91,6 +92,7 @@ class RobotClient:
 
             self.running = True
             self.available_actions_size = []
+            self.chunks_received = 0
             return True
 
         except grpc.RpcError as e:
@@ -160,6 +162,7 @@ class RobotClient:
 
     def _update_action_queue(self, actions: list[TimedAction]):
         """Update the action queue with new actions, without ever emptying the queue"""
+        self.chunks_received += 1
 
         new_queue = Queue()
         for action in actions:
@@ -478,8 +481,8 @@ class RobotClient:
 
 
 def async_client(task_instruction: str, verbose: int = 0):
-    config = RobotClientConfig()
-    client = RobotClient(config)
+    robot = ...
+    client = RobotClient(RobotClientConfig(robot))
 
     if client.start():
         # Function to get observations from the robot
@@ -558,7 +561,18 @@ if __name__ == "__main__":
         help="Robot name, as per the `make_robot` function (default: so100)",
     )
 
+    parser.add_argument(
+        "--robot-port",
+        type=str,
+        help="Port on which to read/write robot joint status (e.g., '/dev/tty.usbmodem575E0031751'). Find your port with lerobot/find_port.py"
+    )
+
     args = parser.parse_args()
+
+    if args.robot in supported_robots:
+        robot = make_robot(args)
+    else:
+        raise NotImplementedError("Robot {args.robot} still not supported for async inference!")
 
     # Create config from parsed arguments
     config = RobotClientConfig(
@@ -567,7 +581,7 @@ if __name__ == "__main__":
         pretrained_name_or_path=args.pretrained_name_or_path,
         policy_device=args.policy_device,
         chunk_size_threshold=args.chunk_size_threshold,
-        robot=args.robot,
+        robot=robot
     )
 
     # Create client with config
@@ -577,7 +591,7 @@ if __name__ == "__main__":
         # Function to get observations from the robot
         def get_observation():
             observation_content = None
-            observation_content = client.robot.capture_observation()
+            observation_content = client.robot.get_observation()
 
             observation_content["task"] = [args.task]
 

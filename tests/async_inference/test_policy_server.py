@@ -54,7 +54,7 @@ class _StubPolicy:
 @pytest.fixture
 def policy_server() -> PolicyServer:
     """Fresh `PolicyServer` instance with a stubbed-out policy model."""
-    test_config = PolicyServerConfig(host="localhost")
+    test_config = PolicyServerConfig(host="localhost", port=9999)
     server = PolicyServer(test_config)
     # Replace the real policy with our fast, deterministic stub.
     server.policy = _StubPolicy()
