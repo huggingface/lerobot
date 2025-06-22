@@ -65,7 +65,7 @@ class WebotsXarmEndEffector(Robot):
 
         self.is_gripper_open = True
 
-        # open gripper on the begining
+        # open gripper on the beginning
         self.left_motor_.setPosition(0.0)
         self.right_motor_.setPosition(0.0)
 
@@ -125,7 +125,7 @@ class WebotsXarmEndEffector(Robot):
             The joint-space action that was sent to the motors
         """
 
-        gripper = action["gripper"] if "gripper" in action else None
+        gripper = action.get("gripper", None)
         action = copy.deepcopy(action)
         action["gripper.pos"] = gripper if gripper is not None else 0.0
 
@@ -197,14 +197,6 @@ class WebotsXarmEndEffector(Robot):
                 obs_dict[f"joint{i+1}.pos"] = angle
 
         obs_dict["gripper.pos"] = 0 if self.is_gripper_open else 2
-
-        # Capture images from cameras
-        image = self._camera.getImage()
-        width = self._camera.getWidth()
-        height = self._camera.getHeight()
-        img_array = np.frombuffer(image, np.uint8).reshape((height, width, 4))
-        rgb_array = cv2.cvtColor(img_array, cv2.COLOR_BGR2RGB)
-
         return obs_dict
 
     def reset(self):
