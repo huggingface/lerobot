@@ -182,63 +182,65 @@ class KochScrewdriverLeader(Teleoperator):
             action_name = self.motor_to_action_map.get(motor, motor)
             
             if action_name == "screwdriver":
-                # Map the leader gripper position to follower screwdriver velocity using relative normalization.
+                # Map the leader gripper position to follower screwdriver velocity
                 # 
-                # MAPPING OVERVIEW:
                 # Leader Gripper (CURRENT_POSITION mode):
-                #   - Position range: 0-100 (normalized)
-                #   - Neutral position: screwdriver_open_pos (e.g., 50)
-                #   - Operator can push/pull the handle against resistance
-                #   - Returns to neutral when released
+                #   - Position range: 0-100
+                #   - Neutral position: screwdriver_open_pos default is 50
+                #   - Squeezing the gripper will move the screwdriver clockwise
+                #   - Opening the gripper will move the screwdriver counter-clockwise
+                #   - The gripper will return the neutral position when released
                 # 
                 # Follower Screwdriver (VELOCITY mode):
-                #   - Velocity range: -700 to +700 (units)
                 #   - Zero velocity = no rotation
                 #   - Positive velocity = clockwise rotation
                 #   - Negative velocity = counter-clockwise rotation
                 # 
-                # TRANSFORMATION STEPS:
+                # Mapping steps:
                 # 1. Calculate deviation from neutral: delta = pos - neutral_pos
                 # 2. Apply gain scaling: vel_cmd = -delta * GAIN
                 # 3. Clamp to velocity limits: vel_cmd = clamp(vel_cmd, -MAX_VEL, +MAX_VEL)
                 # 4. Filter small jitters: if |vel_cmd| < threshold, set to 0
                 #
-                # EXAMPLE MAPPING:
-                #   pos=80, neutral=50 → delta=30 → vel_cmd=-300 → clamp(-300, -700, 700) = -300
-                #   pos=20, neutral=50 → delta=-30 → vel_cmd=300 → clamp(300, -700, 700) = 300
-                #   pos=50, neutral=50 → delta=0 → vel_cmd=0 → no movement
+                # Example mappings:
+                # pos=80, screwdriver_open_pos=50, gain=10
+                # delta = 80 - 50 = 30
+                # vel_cmd = -30 * 10 = -300
+                # clamp(-300, -700, 700) = -300
+                # vel_cmd = -300
+                # 
+                # pos=10, screwdriver_open_pos=50, gain=10
+                # delta = 10 - 50 = -40
+                # vel_cmd = -(-40) * 10 = 400
+                # clamp(400, -700, 700) = 400
+                # vel_cmd = 400
+                #
+                # pos=50, screwdriver_open_pos=50, gain=10
+                # delta = 50 - 50 = 0
+                # vel_cmd = 0 * 10 = 0
+                # clamp(0, -700, 700) = 0
+                # vel_cmd = 0
                 
                 # Step 1: Calculate deviation from neutral position
                 delta = pos - self.config.screwdriver_open_pos
                 
-                # Step 2: Apply gain scaling with sign inversion for intuitive control
-                # Negative sign means: open gripper → negative velocity (counter-clockwise)
+                # Step 2: Apply a gain multipler to our detla since the screwdriver velocity range is much wider than the gripper position range
+                # The Goal velocity limit of the XL330-M077 is +-2047 by way of the default Velocity limit of 2047. See https://emanual.robotis.com/docs/en/dxl/x/xl330-m288/#control-table-of-eeprom-area
+                # A gain of 10 with with gripeper open pos of 50 would result in a max velocity of +- 500 which keeps us well within the goal velocity limit
+                # but still scales the velocity enough to be useful. With these settings, fully the max RPM of the screwdriver would be 114.5 RPM given that one unit of velocity 
+                # is 0.229 RPM.
                 GAIN = 10.0
-                
-                # VELOCITY RANGE RESEARCH (XL330-M077 Dynamixel):
-                # - No Load Speed: 383 RPM at 5.0V (most common operating voltage)
-                # - Velocity Limit Range: 0 ~ 2,047 raw units (default: 1,620)
-                # - Resolution: 0.229 rev/min per unit
-                # - Goal Velocity Range: -Velocity Limit ~ +Velocity Limit
-                # 
-                # Current MAX_VEL = 700 units = 160.3 RPM (700 × 0.229)
-                # This is conservative and appropriate because:
-                # 1. Safe: 42% of max speed (383 RPM), well within servo capability
-                # 2. Controllable: Good precision for screw driving operations
-                # 3. Responsive: Fast enough for practical use
-                # 4. Conservative: Leaves room for load variations
-                # 
-                # Note: With GAIN=10.0 and 0-100 position range, max calculated velocity
-                # would be 500 units (114.5 RPM), so clamping is still useful for safety.
-                MAX_VEL = 700
                 vel_cmd = -delta * GAIN
                 
-                # Step 3: Clamp to velocity limits to prevent excessive speeds
-                # With screwdriver open pos of 50 and gain of 10 we should not need clamping
+                # Step 3: Clamp velocity for safety
+                # With screwdriver open pos of 50 and gain of 10 we should not need clamping as the max would be +- 500
                 # But if gain was increased or the open pos was changed we might need to clamp.
+                # todo(jackvial): Consider setting self.bus.write("Velocity_Limit", "screwdriver", 700)
+                MAX_VEL = 700
                 vel_cmd = max(min(vel_cmd, MAX_VEL), -MAX_VEL)
 
-                # Step 4: Filter small jitters around neutral point for stability
+                # Step 4: Filter out small movements when the gripper is in the neutral position
+                # to be sure the screwdriver comes to a complete stop
                 if abs(vel_cmd) < 4.0:
                     vel_cmd = 0.0
 
