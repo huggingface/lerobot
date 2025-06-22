@@ -74,7 +74,9 @@ def test_async_inference_e2e(policy_server, monkeypatch):
     monkeypatch.setattr(PolicyServer, "SendPolicyInstructions", _fake_send_policy_instructions, raising=True)
 
     # Build gRPC server with our PolicyServer instance
-    grpc_server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
+    # Create ThreadPoolExecutor separately so we can shut it down properly
+    executor = futures.ThreadPoolExecutor(max_workers=4)
+    grpc_server = grpc.server(executor)
     async_inference_pb2_grpc.add_AsyncInferenceServicer_to_server(policy_server, grpc_server)
 
     # Use the host/port specified in the fixture's config
@@ -128,7 +130,10 @@ def test_async_inference_e2e(policy_server, monkeypatch):
     # 4. Shutdown and assert expectations
     # ------------------------------------------------------------------
     client.stop()
-    grpc_server.stop(grace=0.1)
+    grpc_server.stop(grace=1.0)
+
+    # Explicitly shutdown the ThreadPoolExecutor to prevent hanging
+    executor.shutdown(wait=False)
 
     assert client.chunks_received > 0, "Client did not receive any action chunks"
     assert len(policy_server._predicted_timesteps) > 0, "Server did not record any predicted timesteps"
