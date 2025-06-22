@@ -69,9 +69,12 @@ def patch_make_robot(monkeypatch):
 def robot_client() -> RobotClient:
     """Fresh `RobotClient` instance for each test case (no threads started).
     Uses DummyRobot."""
+    from lerobot.scripts.server.configs import RobotClientConfig
 
     # Use an arbitrary port; the gRPC channel is never used in these tests.
-    client = RobotClient(server_address="localhost:9999")
+    test_config = RobotClientConfig(server_address="localhost:9999")
+    client = RobotClient(test_config)
+
     yield client
 
     if client.robot.connected:

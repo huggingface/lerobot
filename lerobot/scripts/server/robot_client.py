@@ -14,7 +14,7 @@ from lerobot.scripts.server import (
     async_inference_pb2,  # type: ignore
     async_inference_pb2_grpc,  # type: ignore
 )
-from lerobot.scripts.server.constants import environment_dt, idle_wait
+from lerobot.scripts.server.configs import RobotClientConfig
 from lerobot.scripts.server.helpers import TimedAction, TimedObservation, TinyPolicyConfig, setup_logging
 
 
@@ -23,21 +23,17 @@ class RobotClient:
     info_bracket = "CLIENT"
     logger = setup_logging(prefix, info_bracket)
 
-    def __init__(
-        self,
-        server_address: Optional[str] = None,
-        policy_type: str = "smolvla",
-        pretrained_name_or_path: str = "lerobot/smolvla_base",
-        policy_device: str = "cuda",
-        chunk_size_threshold: float = 0.5,
-        robot: str = "so100",
-    ):
-        # Use environment variable if server_address is not provided
-        if server_address is None:
+    def __init__(self, config: RobotClientConfig):
+        # Store configuration
+        self.config = config
+        
+        # Use environment variable if server_address is not provided in config
+        server_address = config.server_address
+        if not server_address:
             server_address = os.getenv("SERVER_ADDRESS", "localhost:8080")
             self.logger.info(f"No server address provided, using default address: {server_address}")
 
-        self.policy_config = TinyPolicyConfig(policy_type, pretrained_name_or_path, policy_device)
+        self.policy_config = TinyPolicyConfig(config.policy_type, config.pretrained_name_or_path, config.policy_device)
         self.channel = grpc.insecure_channel(server_address)
         self.stub = async_inference_pb2_grpc.AsyncInferenceStub(self.channel)
         self.logger.info(f"Initializing client to connect to server at {server_address}")
@@ -48,19 +44,19 @@ class RobotClient:
         self.latest_action = -1
         self.action_chunk_size = -1
 
-        self._chunk_size_threshold = chunk_size_threshold
+        self._chunk_size_threshold = config.chunk_size_threshold
 
         self.action_queue = Queue()
         self.start_barrier = threading.Barrier(2)  # 2 threads: action receiver, control loop
 
         start_time = time.time()
-        self.robot = make_robot(robot)
+        self.robot = make_robot(config.robot)
         self.robot.connect()
 
         connect_time = time.time()
         self.logger.info(f"Robot connection time: {connect_time - start_time:.4f}s")
 
-        time.sleep(idle_wait)  # sleep waiting for cameras to activate
+        time.sleep(config.camera_activation_delay)  # small sleep waiting for cameras to activate
         self.logger.info("Robot connected and ready")
 
     def timestamps(self):
@@ -306,7 +302,7 @@ class RobotClient:
             except grpc.RpcError as e:
                 self.logger.error(f"Error receiving actions: {e}")
                 # Avoid tight loop on action receiver error
-                time.sleep(idle_wait)
+                time.sleep(self.config.camera_activation_delay)
 
     def _actions_available(self):
         """Check if there are actions available in the queue"""
@@ -338,7 +334,7 @@ class RobotClient:
         warnings.warn("This method is deprecated! Will be removed soon!", stacklevel=2)
         # Wait at barrier for synchronized start
         self.start_barrier.wait()
-        time.sleep(idle_wait)  # wait for observation capture to start
+        time.sleep(self.config.camera_activation_delay)  # wait for observation capture to start
 
         self.logger.info("Action execution thread starting")
 
@@ -350,11 +346,11 @@ class RobotClient:
                 timed_action = self._get_next_action()
                 self._perform_action(timed_action)
 
-                time.sleep(environment_dt)
+                time.sleep(self.config.environment_dt)
 
             else:
                 self.logger.debug("No action available | Sleeping")
-                time.sleep(idle_wait)
+                time.sleep(self.config.camera_activation_delay)
 
     def stream_observations(self, get_observation_fn):
         """Continuously stream observations to the server"""
@@ -393,12 +389,12 @@ class RobotClient:
                 else:
                     state = async_inference_pb2.TRANSFER_MIDDLE
 
-                time.sleep(environment_dt)
+                time.sleep(self.config.environment_dt)
                 self.send_observation(observation, state)
 
             except Exception as e:
                 self.logger.error(f"Error in observation sender: {e}")
-                time.sleep(idle_wait)
+                time.sleep(self.config.camera_activation_delay)
 
     def control_loop_action(self):
         """Reading and performing actions in local queue"""
@@ -475,12 +471,13 @@ class RobotClient:
                 self.control_loop_observation(get_observation_fn)
 
             # Dynamically adjust sleep time to maintain the desired control frequency
-            time.sleep(max(0, environment_dt - (time.time() - control_loop_start)))
+            time.sleep(max(0, self.config.environment_dt - (time.time() - control_loop_start)))
             control_loops += 1
 
 
 def async_client(task_instruction: str, verbose: int = 0):
-    client = RobotClient()
+    config = RobotClientConfig()
+    client = RobotClient(config)
 
     if client.start():
         # Function to get observations from the robot
@@ -511,7 +508,7 @@ def async_client(task_instruction: str, verbose: int = 0):
 
         try:
             while client.running:
-                time.sleep(idle_wait)
+                time.sleep(client.config.camera_activation_delay)
 
         except KeyboardInterrupt:
             pass
@@ -531,10 +528,10 @@ if __name__ == "__main__":
     )
     parser.add_argument("--verbose", type=int, default=0, help="Verbosity level (default: 0)")
     parser.add_argument(
-        "--server-port-address",
+        "--server-address",
         type=str,
         default="localhost:8080",
-        help="Server & port address (default: localhost:8080, or SERVER_ADDRESS env var)",
+        help="Server address (default: localhost:8080)",
     )
     parser.add_argument("--policy-type", type=str, default="smolvla", help="Policy type (default: smolvla)")
     parser.add_argument(
@@ -561,8 +558,8 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    # Create client with parsed arguments
-    client = RobotClient(
+    # Create config from parsed arguments
+    config = RobotClientConfig(
         server_address=args.server_address,
         policy_type=args.policy_type,
         pretrained_name_or_path=args.pretrained_name_or_path,
@@ -570,6 +567,9 @@ if __name__ == "__main__":
         chunk_size_threshold=args.chunk_size_threshold,
         robot=args.robot,
     )
+
+    # Create client with config
+    client = RobotClient(config)
 
     if client.start():
         # Function to get observations from the robot
@@ -600,7 +600,7 @@ if __name__ == "__main__":
 
         try:
             while client.running:
-                time.sleep(idle_wait)
+                time.sleep(client.config.camera_activation_delay)
 
         except KeyboardInterrupt:
             pass
