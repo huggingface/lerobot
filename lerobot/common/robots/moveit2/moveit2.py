@@ -15,22 +15,21 @@
 import logging
 import time
 from functools import cached_property
-from typing import Any, cast
+from typing import Any
 
 from lerobot.common.cameras.utils import make_cameras_from_configs
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
-from ..config import RobotConfig
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
-from .config_moveit2 import MoveIt2Config
+from .config_moveit2 import ActionType, MoveIt2Config
 from .moveit2_interface import MoveIt2Interface
 
 logger = logging.getLogger(__name__)
 
 
 class MoveIt2(Robot):
-    config_class = cast(MoveIt2Config, RobotConfig)
+    config_class = MoveIt2Config
     name = "moveit2"
 
     def __init__(self, config: MoveIt2Config):
@@ -55,15 +54,22 @@ class MoveIt2(Robot):
 
     @cached_property
     def action_features(self) -> dict[str, type]:
-        return {
-            "linear_vel_x": float,
-            "linear_vel_y": float,
-            "linear_vel_z": float,
-            "angular_vel_x": float,
-            "angular_vel_y": float,
-            "angular_vel_z": float,
-            "gripper_pos": float,
-        }
+        if self.config.action_type == ActionType.CARTESIAN_VELOCITY:
+            return {
+                "linear_x.vel": float,
+                "linear_y.vel": float,
+                "linear_z.vel": float,
+                "angular_x.vel": float,
+                "angular_y.vel": float,
+                "angular_z.vel": float,
+                "gripper.pos": float,
+            }
+        elif self.config.action_type == ActionType.JOINT_POSITION:
+            return {f"{joint}.pos": float for joint in self.config.moveit2_interface.arm_joint_names} | {
+                "gripper.pos": float
+            }
+        else:
+            raise ValueError(f"Unsupported action type: {self.config.action_type}")
 
     @property
     def is_connected(self) -> bool:
@@ -125,33 +131,90 @@ class MoveIt2(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        if self.config.action_from_keyboard:
-            action = self.from_keyboard_to_action(action)
+        if self.config.action_type == ActionType.CARTESIAN_VELOCITY:
+            if self.config.action_from_keyboard:
+                action = self.keyboard_to_velocity_action(action)
 
-        if self.config.max_relative_target is not None:
-            # We don't have the current velocity of the arm, so set it to 0.0
-            # Effectively the goal velocity gets clipped by max_relative_target
-            goal_present_vel = {key: (act, 0.0) for key, act in action.items()}
-            action = ensure_safe_goal_position(goal_present_vel, self.config.max_relative_target)
+            if self.config.max_relative_target is not None:
+                # We don't have the current velocity of the arm, so set it to 0.0
+                # Effectively the goal velocity gets clipped by max_relative_target
+                goal_present_vel = {key: (act, 0.0) for key, act in action.items()}
+                action = ensure_safe_goal_position(goal_present_vel, self.config.max_relative_target)
 
-        linear_vel = (
-            action["linear_vel_x"],
-            action["linear_vel_y"],
-            action["linear_vel_z"],
-        )
-        angular_vel = (
-            action["angular_vel_x"],
-            action["angular_vel_y"],
-            action["angular_vel_z"],
-        )
-        self.moveit2_interface.servo(linear=linear_vel, angular=angular_vel)
+            linear_vel = (
+                action["linear_x.vel"],
+                action["linear_y.vel"],
+                action["linear_z.vel"],
+            )
+            angular_vel = (
+                action["angular_x.vel"],
+                action["angular_y.vel"],
+                action["angular_z.vel"],
+            )
+            self.moveit2_interface.servo(linear=linear_vel, angular=angular_vel)
+        elif self.config.action_type == ActionType.JOINT_POSITION:
+            if self.config.action_from_keyboard:
+                action = self.keyboard_to_joint_position_action(action)
 
-        gripper_pos = action["gripper_pos"]
+            if self.config.max_relative_target is not None:
+                goal_present_pos = {}
+                joint_state = self.moveit2_interface.joint_state
+                if joint_state is None:
+                    raise ValueError("Joint state is not available yet.")
+
+                for key, goal in action.items():
+                    present_pos = joint_state["position"].get(key.replace(".pos", ""), 0.0)
+                    goal_present_pos[key] = (goal, present_pos)
+                action = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
+
+            joint_positions = [
+                action[joint + ".pos"] for joint in self.config.moveit2_interface.arm_joint_names
+            ]
+            self.moveit2_interface.send_joint_position_command(joint_positions)
+
+        gripper_pos = action["gripper.pos"]
         self.moveit2_interface.send_gripper_command(gripper_pos)
         return action
 
-    def from_keyboard_to_action(self, pressed_keys: dict[str, Any]) -> dict[str, float]:
-        """Convert pressed keys to action commands for teleop."""
+    def keyboard_to_joint_position_action(self, pressed_keys: dict[str, Any]) -> dict[str, float]:
+        """Convert pressed keys to joint position action commands for teleop.
+        hardcoded for a 6-DOF arm with a gripper.
+        """
+        action = {f"{joint}.pos": 0.0 for joint in self.config.moveit2_interface.arm_joint_names}
+        if "q" in pressed_keys:
+            action["joint_1.pos"] += 0.1
+        if "a" in pressed_keys:
+            action["joint_1.pos"] -= 0.1
+        if "w" in pressed_keys:
+            action["joint_2.pos"] += 0.1
+        if "s" in pressed_keys:
+            action["joint_2.pos"] -= 0.1
+        if "e" in pressed_keys:
+            action["joint_3.pos"] += 0.1
+        if "d" in pressed_keys:
+            action["joint_3.pos"] -= 0.1
+        if "r" in pressed_keys:
+            action["joint_4.pos"] += 0.1
+        if "f" in pressed_keys:
+            action["joint_4.pos"] -= 0.1
+        if "t" in pressed_keys:
+            action["joint_5.pos"] += 0.1
+        if "g" in pressed_keys:
+            action["joint_5.pos"] -= 0.1
+        if "y" in pressed_keys:
+            action["joint_6.pos"] += 0.1
+        if "h" in pressed_keys:
+            action["joint_6.pos"] -= 0.1
+
+        gripper_pos = 0.0
+        if "space" in pressed_keys:
+            gripper_pos = 1.0
+
+        action["gripper.pos"] = gripper_pos
+        return action
+
+    def keyboard_to_velocity_action(self, pressed_keys: dict[str, Any]) -> dict[str, float]:
+        """Convert pressed keys to velocity action commands for teleop."""
         lin_vel_x = 0.0
         if "a" in pressed_keys:
             lin_vel_x += 1.0
@@ -190,13 +253,13 @@ class MoveIt2(Robot):
             gripper_pos = 1.0
 
         return {
-            "linear_vel_x": lin_vel_x,
-            "linear_vel_y": lin_vel_y,
-            "linear_vel_z": lin_vel_z,
-            "angular_vel_x": ang_vel_x,
-            "angular_vel_y": ang_vel_y,
-            "angular_vel_z": ang_vel_z,
-            "gripper_pos": gripper_pos,
+            "linear_x.vel": lin_vel_x,
+            "linear_y.vel": lin_vel_y,
+            "linear_z.vel": lin_vel_z,
+            "angular_x.vel": ang_vel_x,
+            "angular_y.vel": ang_vel_y,
+            "angular_z.vel": ang_vel_z,
+            "gripper.pos": gripper_pos,
         }
 
     def disconnect(self):

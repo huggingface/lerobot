@@ -89,13 +89,13 @@ def test_send_action(moveit2_robot):
     moveit2_robot.connect()
 
     action = {
-        "linear_vel_x": 0.1,
-        "linear_vel_y": 0.2,
-        "linear_vel_z": 0.3,
-        "angular_vel_x": 0.4,
-        "angular_vel_y": 0.5,
-        "angular_vel_z": 0.6,
-        "gripper_pos": 0.8,
+        "lienar_x.vel": 0.1,
+        "linear_y.vel": 0.2,
+        "linear_z.vel": 0.3,
+        "angular_x.vel": 0.4,
+        "angular_y.vel": 0.5,
+        "angular_z.vel": 0.6,
+        "gripper.pos": 0.8,
     }
 
     returned_action = moveit2_robot.send_action(action)
@@ -115,20 +115,20 @@ def test_send_action_with_max_relative_target(moveit2_robot):
     moveit2_robot.connect()
 
     action = {
-        "linear_vel_x": 1.0,  # Large value that should be clipped
-        "linear_vel_y": 0.0,
-        "linear_vel_z": 0.0,
-        "angular_vel_x": 0.0,
-        "angular_vel_y": 0.0,
-        "angular_vel_z": 0.0,
-        "gripper_pos": 0.5,
+        "lienar_x.vel": 1.0,  # Large value that should be clipped
+        "linear_y.vel": 0.0,
+        "linear_z.vel": 0.0,
+        "angular_x.vel": 0.0,
+        "angular_y.vel": 0.0,
+        "angular_z.vel": 0.0,
+        "gripper.pos": 0.5,
     }
 
     returned_action = moveit2_robot.send_action(action)
 
     # The action should be clipped due to max_relative_target
-    assert returned_action["linear_vel_x"] <= 0.1
-    assert returned_action["gripper_pos"] <= 0.1
+    assert returned_action["lienar_x.vel"] <= 0.1
+    assert returned_action["gripper.pos"] <= 0.1
 
 
 def test_keyboard_action_conversion(moveit2_robot):
@@ -141,56 +141,56 @@ def test_keyboard_action_conversion(moveit2_robot):
     returned_action = moveit2_robot.send_action(pressed_keys)
 
     # Check that keyboard inputs were converted correctly
-    assert returned_action["linear_vel_x"] == 1.0  # 'd' key
-    assert returned_action["linear_vel_y"] == 1.0  # 'w' key
-    assert returned_action["linear_vel_z"] == 0.0
-    assert returned_action["gripper_pos"] == 1.0  # 'space' key
+    assert returned_action["lienar_x.vel"] == 1.0  # 'd' key
+    assert returned_action["linear_y.vel"] == 1.0  # 'w' key
+    assert returned_action["linear_z.vel"] == 0.0
+    assert returned_action["gripper.pos"] == 1.0  # 'space' key
 
 
 def test_from_keyboard_to_action(moveit2_robot):
     """Test the keyboard to action conversion method directly."""
     # Test all movement keys
     pressed_keys = {
-        "w": True,  # +linear_vel_y
-        "s": True,  # -linear_vel_y (should cancel with w)
-        "a": True,  # -linear_vel_x
-        "d": True,  # +linear_vel_x (should cancel with a)
-        "q": True,  # -linear_vel_z
-        "e": True,  # +linear_vel_z (should cancel with q)
-        "i": True,  # +angular_vel_x
-        "k": True,  # -angular_vel_x (should cancel with i)
-        "j": True,  # -angular_vel_y
-        "l": True,  # +angular_vel_y (should cancel with j)
-        "u": True,  # +angular_vel_z
-        "o": True,  # -angular_vel_z (should cancel with u)
+        "w": True,  # +linear_y.vel
+        "s": True,  # -linear_y.vel (should cancel with w)
+        "a": True,  # -lienar_x.vel
+        "d": True,  # +lienar_x.vel (should cancel with a)
+        "q": True,  # -linear_z.vel
+        "e": True,  # +linear_z.vel (should cancel with q)
+        "i": True,  # +angular_x.vel
+        "k": True,  # -angular_x.vel (should cancel with i)
+        "j": True,  # -angular_y.vel
+        "l": True,  # +angular_y.vel (should cancel with j)
+        "u": True,  # +angular_z.vel
+        "o": True,  # -angular_z.vel (should cancel with u)
         "space": True,  # gripper
     }
 
     action = moveit2_robot.from_keyboard_to_action(pressed_keys)
 
     # All opposing keys should cancel out to 0
-    assert action["linear_vel_x"] == 0.0
-    assert action["linear_vel_y"] == 0.0
-    assert action["linear_vel_z"] == 0.0
-    assert action["angular_vel_x"] == 0.0
-    assert action["angular_vel_y"] == 0.0
-    assert action["angular_vel_z"] == 0.0
-    assert action["gripper_pos"] == 1.0
+    assert action["lienar_x.vel"] == 0.0
+    assert action["linear_y.vel"] == 0.0
+    assert action["linear_z.vel"] == 0.0
+    assert action["angular_x.vel"] == 0.0
+    assert action["angular_y.vel"] == 0.0
+    assert action["angular_z.vel"] == 0.0
+    assert action["gripper.pos"] == 1.0
 
     # Test individual keys
     single_key_tests = [
-        ({"w": True}, {"linear_vel_y": 1.0}),
-        ({"s": True}, {"linear_vel_y": -1.0}),
-        ({"a": True}, {"linear_vel_x": -1.0}),
-        ({"d": True}, {"linear_vel_x": 1.0}),
-        ({"q": True}, {"linear_vel_z": -1.0}),
-        ({"e": True}, {"linear_vel_z": 1.0}),
-        ({"i": True}, {"angular_vel_x": -1.0}),
-        ({"k": True}, {"angular_vel_x": 1.0}),
-        ({"j": True}, {"angular_vel_y": -1.0}),
-        ({"l": True}, {"angular_vel_y": 1.0}),
-        ({"u": True}, {"angular_vel_z": 1.0}),
-        ({"o": True}, {"angular_vel_z": -1.0}),
+        ({"w": True}, {"linear_y.vel": 1.0}),
+        ({"s": True}, {"linear_y.vel": -1.0}),
+        ({"a": True}, {"lienar_x.vel": -1.0}),
+        ({"d": True}, {"lienar_x.vel": 1.0}),
+        ({"q": True}, {"linear_z.vel": -1.0}),
+        ({"e": True}, {"linear_z.vel": 1.0}),
+        ({"i": True}, {"angular_x.vel": -1.0}),
+        ({"k": True}, {"angular_x.vel": 1.0}),
+        ({"j": True}, {"angular_y.vel": -1.0}),
+        ({"l": True}, {"angular_y.vel": 1.0}),
+        ({"u": True}, {"angular_z.vel": 1.0}),
+        ({"o": True}, {"angular_z.vel": -1.0}),
     ]
 
     for pressed_keys, expected_non_zero in single_key_tests:
@@ -217,13 +217,13 @@ def test_action_features(moveit2_robot):
     features = moveit2_robot.action_features
 
     expected_actions = [
-        "linear_vel_x",
-        "linear_vel_y",
-        "linear_vel_z",
-        "angular_vel_x",
-        "angular_vel_y",
-        "angular_vel_z",
-        "gripper_pos",
+        "lienar_x.vel",
+        "linear_y.vel",
+        "linear_z.vel",
+        "angular_x.vel",
+        "angular_y.vel",
+        "angular_z.vel",
+        "gripper.pos",
     ]
 
     for action in expected_actions:
@@ -256,7 +256,7 @@ def test_error_handling_when_not_connected(moveit2_robot):
 
     # Should raise error when trying to send action without connection
     with pytest.raises(DeviceNotConnectedError):
-        moveit2_robot.send_action({"linear_vel_x": 0.1, "gripper_pos": 0.5})
+        moveit2_robot.send_action({"lienar_x.vel": 0.1, "gripper.pos": 0.5})
 
     # Should raise error when trying to disconnect without connection
     with pytest.raises(DeviceNotConnectedError):

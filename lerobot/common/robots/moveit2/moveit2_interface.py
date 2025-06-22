@@ -30,7 +30,9 @@ try:
     from rclpy.callback_groups import ReentrantCallbackGroup
     from rclpy.executors import Executor, SingleThreadedExecutor
     from rclpy.node import Node
+    from rclpy.publisher import Publisher
     from sensor_msgs.msg import JointState
+    from std_msgs.msg import Float64MultiArray
 
     ROS2_AVAILABLE = True
 except ImportError as e:
@@ -44,12 +46,13 @@ class MoveIt2Interface:
     def __init__(self, config: MoveIt2InterfaceConfig):
         self.config = config
         self.robot_node: Node | None = None
+        self.pos_cmd_pub: Publisher | None = None
         self.gripper_action_client: ActionClient | None = None
         self.executor: Executor | None = None
-        self._last_joint_state: dict[str, dict[str, float]] | None = None
         self.moveit2_servo: MoveIt2Servo | None = None
         self.executor_thread: threading.Thread | None = None
         self.is_connected = False
+        self._last_joint_state: dict[str, dict[str, float]] | None = None
 
     def connect(self) -> None:
         if not ROS2_AVAILABLE:
@@ -59,6 +62,9 @@ class MoveIt2Interface:
             rclpy.init()
 
         self.robot_node = Node("moveit2_interface_node", namespace=self.config.namespace)
+        self.pos_cmd_pub = self.robot_node.create_publisher(
+            Float64MultiArray, "position_controller/commands", 10
+        )
         self.moveit2_servo = MoveIt2Servo(
             node=self.robot_node,
             frame_id=self.config.base_link,
@@ -86,6 +92,41 @@ class MoveIt2Interface:
         time.sleep(3)  # Give some time to connect to services and receive messages
 
         self.is_connected = True
+
+    def send_joint_position_command(self, joint_positions: list[float], unnormalize: bool = True) -> None:
+        """
+        Send a command to the robot's joints.
+        Args:
+            joint_positions (list[float]): The target positions for the joints.
+            normalize (bool): Whether to unnormalize the joint positions based on the robot's configuration.
+        """
+        if not self.robot_node:
+            raise DeviceNotConnectedError("MoveIt2Interface is not connected. You need to call `connect()`.")
+
+        if unnormalize:
+            if self.config.min_joint_positions is None or self.config.max_joint_positions is None:
+                raise ValueError(
+                    "Joint position normalization requires min and max joint positions to be set."
+                )
+            joint_positions = [
+                min(max(pos, min_pos), max_pos)
+                for pos, min_pos, max_pos in zip(
+                    joint_positions,
+                    self.config.min_joint_positions,
+                    self.config.max_joint_positions,
+                    strict=True,
+                )
+            ]
+
+        if len(joint_positions) != len(self.config.arm_joint_names):
+            raise ValueError(
+                f"Expected {len(self.config.arm_joint_names)} joint positions, "
+                f"but got {len(joint_positions)}."
+            )
+        msg = Float64MultiArray()
+        msg.data = joint_positions
+        if self.pos_cmd_pub:
+            self.pos_cmd_pub.publish(msg)
 
     def servo(self, linear, angular, normalize: bool = True) -> None:
         if not self.moveit2_servo:
