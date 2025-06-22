@@ -17,6 +17,8 @@
 import logging
 import time
 
+import torch
+
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.common.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.common.motors.dynamixel import (
@@ -212,10 +214,28 @@ class KochScrewdriverLeader(Teleoperator):
                 # Step 2: Apply gain scaling with sign inversion for intuitive control
                 # Negative sign means: open gripper → negative velocity (counter-clockwise)
                 GAIN = 10.0
+                
+                # VELOCITY RANGE RESEARCH (XL330-M077 Dynamixel):
+                # - No Load Speed: 383 RPM at 5.0V (most common operating voltage)
+                # - Velocity Limit Range: 0 ~ 2,047 raw units (default: 1,620)
+                # - Resolution: 0.229 rev/min per unit
+                # - Goal Velocity Range: -Velocity Limit ~ +Velocity Limit
+                # 
+                # Current MAX_VEL = 700 units = 160.3 RPM (700 × 0.229)
+                # This is conservative and appropriate because:
+                # 1. Safe: 42% of max speed (383 RPM), well within servo capability
+                # 2. Controllable: Good precision for screw driving operations
+                # 3. Responsive: Fast enough for practical use
+                # 4. Conservative: Leaves room for load variations
+                # 
+                # Note: With GAIN=10.0 and 0-100 position range, max calculated velocity
+                # would be 500 units (114.5 RPM), so clamping is still useful for safety.
                 MAX_VEL = 700
                 vel_cmd = -delta * GAIN
                 
                 # Step 3: Clamp to velocity limits to prevent excessive speeds
+                # With screwdriver open pos of 50 and gain of 10 we should not need clamping
+                # But if gain was increased or the open pos was changed we might need to clamp.
                 vel_cmd = max(min(vel_cmd, MAX_VEL), -MAX_VEL)
 
                 # Step 4: Filter small jitters around neutral point for stability
