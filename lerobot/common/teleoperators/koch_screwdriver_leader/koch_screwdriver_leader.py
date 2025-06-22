@@ -183,7 +183,7 @@ class KochScrewdriverLeader(Teleoperator):
                 #
                 # Leader gripper:
                 #   • Position range: 0-100
-                #   • Neutral (open) position: `screwdriver_open_pos` (default 50)
+                #   • Neutral (open) position: `gripper_open_pos` (default 50)
                 #   • Squeezing  (pos > neutral)   → clockwise rotation  (negative velocity)
                 #   • Opening    (pos < neutral)   → counter-clockwise   (positive velocity)
                 #   • When released, the gripper springs back to the neutral position.
@@ -205,7 +205,7 @@ class KochScrewdriverLeader(Teleoperator):
                 #   pos = 50  → delta = 0   → vel_cmd =    0
 
                 # Step 1: Deviation from neutral position
-                delta = pos - self.config.screwdriver_open_pos
+                delta = pos - self.config.gripper_open_pos
 
                 # Step 2: Scale delta → velocity
                 #   • GAIN maps the 0-100 gripper position range to an appropriate velocity range.
