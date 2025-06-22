@@ -115,16 +115,13 @@ class KochScrewdriverFollower(Robot):
         logger.info(f"\nRunning calibration of {self}")
         self.bus.disable_torque()
         for motor in self.bus.motors:
-            # TODO(jackvial) - confirm this is correct
-            # Screwdriver needs to be in velocity (aka wheel mode)
+            # Set the screwdriver to velocity mode
             if motor == "screwdriver":
                 print(f"Operating_Mode: {motor} {OperatingMode.VELOCITY.value}")
                 self.bus.write("Operating_Mode", motor, OperatingMode.VELOCITY.value)
             else:
                 print(f"Operating_Mode: {motor} {OperatingMode.EXTENDED_POSITION.value}")
                 self.bus.write("Operating_Mode", motor, OperatingMode.EXTENDED_POSITION.value)
-
-        # self.bus.write("Operating_Mode", "screwdriver", OperatingMode.VELOCITY.value)
 
         input(f"Move {self} to the middle of its range of motion and press ENTER....")
         homing_offsets = self.bus.set_half_turn_homings()
@@ -157,28 +154,18 @@ class KochScrewdriverFollower(Robot):
     def configure(self) -> None:
         with self.bus.torque_disabled():
             self.bus.configure_motors()
-            # Use 'extended position mode' for all motors except gripper, because in joint mode the servos
+            # Use 'extended position mode' for all motors except screwdriver, because in joint mode the servos
             # can't rotate more than 360 degrees (from 0 to 4095) And some mistake can happen while assembling
             # the arm, you could end up with a servo with a position 0 or 4095 at a crucial point
             for motor in self.bus.motors:
-                if motor != "gripper":
+                if motor != "screwdriver":
                     self.bus.write("Operating_Mode", motor, OperatingMode.EXTENDED_POSITION.value)
-
-            # TODO(jackvial) - remove the old gripper config and comment
-            # Use 'position control current based' for gripper to be limited by the limit of the current. For
-            # the follower gripper, it means it can grasp an object without forcing too much even tho, its
-            # goal position is a complete grasp (both gripper fingers are ordered to join and reach a touch).
-            # For the leader gripper, it means we can use it as a physical trigger, since we can force with
-            # our finger to make it move, and it will move back to its original target position when we
-            # release the force.
-            # self.bus.write("Operating_Mode", "gripper", OperatingMode.CURRENT_POSITION.value)
 
             # Screwdriver needs to be in velocity mode. Using lekiwi's base_motors wheel servos config as a reference lerobot/common/robots/lekiwi/lekiwi.py
             self.bus.write("Operating_Mode", "screwdriver", OperatingMode.VELOCITY.value)
 
             # Set better PID values to close the gap between recorded states and actions
             # TODO(rcadene): Implement an automatic procedure to set optimal PID values for each motor
-            # TODO(jackvial) - "Professional PD Gain Tuning for Dynamixel Motors might" be useful here https://github.com/zuoxingdong/lerobokinson
             self.bus.write("Position_P_Gain", "elbow_flex", 1500)
             self.bus.write("Position_I_Gain", "elbow_flex", 0)
             self.bus.write("Position_D_Gain", "elbow_flex", 600)
@@ -192,32 +179,18 @@ class KochScrewdriverFollower(Robot):
     def get_observation(self) -> dict[str, Any]:
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
-
-        # TODO(jackvial) needs review
-        # Old implementation for reference:
-        # start = time.perf_counter()
-        # obs_dict = self.bus.sync_read("Present_Position")
-        # obs_dict = {f"{motor}.pos": val for motor, val in obs_dict.items()}
-        # dt_ms = (time.perf_counter() - start) * 1e3
-        # logger.debug(f"{self} read state: {dt_ms:.1f}ms")
-        # Read arm joint positions (except screwdriver) and screwdriver velocity
+        
         start = time.perf_counter()
 
-        # TODO(jackvial) needs review
-        # Old implementation for reference:
-        # pos_dict = self.bus.sync_read("Present_Position")
+
         # Read positions only for joints that are in position mode (exclude screwdriver)
         pos_motors = [m for m in self.bus.motors if m != "screwdriver"]
-
-        # Added retries to help prevent:
-        # ConnectionError: Failed to sync read 'Present_Velocity' on ids=[6] after 1 tries. [TxRxResult] There is no status packet!
-        # FATAL: exception not rethrown
-        pos_dict = self.bus.sync_read("Present_Position", pos_motors, num_retry=3)
+        pos_dict = self.bus.sync_read("Present_Position", pos_motors)
         obs_dict = {}
         for motor, val in pos_dict.items():
             obs_dict[f"{motor}.pos"] = val
 
-        # Read screwdriver present velocity (raw) and map to normalized value.
+        # Set num_retry=3 to help prevent:
         # ConnectionError: Failed to sync read 'Present_Velocity' on ids=[6] after 1 tries. [TxRxResult] There is no status packet!
         # FATAL: exception not rethrown
         screwdriver_vel_raw = self.bus.sync_read("Present_Velocity", ["screwdriver"], num_retry=3)[
@@ -253,18 +226,6 @@ class KochScrewdriverFollower(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        # TODO(jackvial) needs review
-        # Old implementation for reference:
-        # goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
-        #
-        # if self.config.max_relative_target is not None:
-        #     present_pos = self.bus.sync_read("Present_Position")
-        #     goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in goal_pos.items()}
-        #     goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
-        #
-        # self.bus.sync_write("Goal_Position", goal_pos)
-        # return {f"{motor}.pos": val for motor, val in goal_pos.items()}
-
         # Split positional and velocity commands
         goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
         goal_vel = {key.removesuffix(".vel"): int(val) for key, val in action.items() if key.endswith(".vel")}
@@ -272,9 +233,6 @@ class KochScrewdriverFollower(Robot):
         # Cap goal position when too far away from present position.
         # /!\ Slower fps expected due to reading from the follower.
         if self.config.max_relative_target is not None and goal_pos:
-            # TODO(jackvial) needs review
-            # Old implementation for reference:
-            # present_pos = self.bus.sync_read("Present_Position")
             present_pos = self.bus.sync_read(
                 "Present_Position", [m for m in self.bus.motors if m != "screwdriver"]
             )
