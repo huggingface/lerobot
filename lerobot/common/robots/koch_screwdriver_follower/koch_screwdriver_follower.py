@@ -179,9 +179,8 @@ class KochScrewdriverFollower(Robot):
     def get_observation(self) -> dict[str, Any]:
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
-        
-        start = time.perf_counter()
 
+        start = time.perf_counter()
 
         # Read positions only for joints that are in position mode (exclude screwdriver)
         pos_motors = [m for m in self.bus.motors if m != "screwdriver"]
