@@ -86,11 +86,12 @@ dora = [
 ]
 dynamixel = ["dynamixel-sdk>=3.7.31"]
 feetech = ["feetech-servo-sdk>=1.0.0"]
+gamepad = ["pygame>=2.5.1", "hidapi>=0.14.0"]
 intelrealsense = [
     "pyrealsense2>=2.55.1.6486 ; sys_platform != 'darwin'",
     "pyrealsense2-macosx>=2.54 ; sys_platform == 'darwin'",
 ]
-pi0 = ["transformers>=4.48.0"]
+pi0 = ["transformers>=4.50.3"]
 smolvla = ["transformers>=4.50.3", "num2words>=0.5.14", "accelerate>=1.7.0", "safetensors>=0.4.3"]
 pusht = ["gym-pusht>=0.1.5 ; python_version < '4.0'"]
 stretch = [
@@ -99,7 +100,7 @@ stretch = [
     "pyrealsense2>=2.55.1.6486 ; sys_platform != 'darwin'"
 ]
 test = ["pytest>=8.1.0", "pytest-timeout>=2.4.0", "pytest-cov>=5.0.0", "pyserial>=3.5", "mock-serial>=0.0.1 ; sys_platform != 'win32'"]
-hilserl = ["transformers>=4.48", "gym-hil>=0.1.8", "protobuf>=5.29.3", "grpcio==1.71.0"]
+hilserl = ["transformers>=4.50.3", "gym-hil>=0.1.8", "protobuf>=5.29.3", "grpcio==1.71.0"]
 umi = ["imagecodecs>=2024.1.1"]
 video_benchmark = ["scikit-image>=0.23.2", "pandas>=2.2.2"]
 xarm = ["gym-xarm>=0.1.1 ; python_version < '4.0'"]

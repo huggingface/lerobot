@@ -58,10 +58,12 @@ from lerobot.common.robots import (  # noqa: F401
 )
 from lerobot.common.teleoperators import (
     gamepad,  # noqa: F401
+    keyboard,  # noqa: F401
     make_teleoperator_from_config,
     so101_leader,  # noqa: F401
 )
 from lerobot.common.teleoperators.gamepad.teleop_gamepad import GamepadTeleop
+from lerobot.common.teleoperators.keyboard.teleop_keyboard import KeyboardEndEffectorTeleop
 from lerobot.common.utils.robot_utils import busy_wait
 from lerobot.common.utils.utils import log_say
 from lerobot.configs import parser
@@ -1191,7 +1193,7 @@ class BaseLeaderControlWrapper(gym.Wrapper):
             "rerecord_episode": False,
         }
 
-    def _handle_key_press(self, key, keyboard):
+    def _handle_key_press(self, key, keyboard_device):
         """
         Handle key press events.
 
@@ -1202,10 +1204,10 @@ class BaseLeaderControlWrapper(gym.Wrapper):
         This method should be overridden in subclasses for additional key handling.
         """
         try:
-            if key == keyboard.Key.esc:
+            if key == keyboard_device.Key.esc:
                 self.keyboard_events["episode_end"] = True
                 return
-            if key == keyboard.Key.left:
+            if key == keyboard_device.Key.left:
                 self.keyboard_events["rerecord_episode"] = True
                 return
             if hasattr(key, "char") and key.char == "s":
@@ -1221,13 +1223,13 @@ class BaseLeaderControlWrapper(gym.Wrapper):
 
         This method sets up keyboard event handling if not in headless mode.
         """
-        from pynput import keyboard
+        from pynput import keyboard as keyboard_device
 
         def on_press(key):
             with self.event_lock:
-                self._handle_key_press(key, keyboard)
+                self._handle_key_press(key, keyboard_device)
 
-        self.listener = keyboard.Listener(on_press=on_press)
+        self.listener = keyboard_device.Listener(on_press=on_press)
         self.listener.start()
 
     def _check_intervention(self):
@@ -1341,7 +1343,7 @@ class BaseLeaderControlWrapper(gym.Wrapper):
 
         # Add intervention info
         info["is_intervention"] = is_intervention
-        info["action_intervention"] = action if is_intervention else None
+        info["action_intervention"] = action
 
         self.prev_leader_gripper = np.clip(
             self.robot_leader.bus.sync_read("Present_Position")["gripper"],
@@ -1403,7 +1405,7 @@ class GearedLeaderControlWrapper(BaseLeaderControlWrapper):
         super()._init_keyboard_events()
         self.keyboard_events["human_intervention_step"] = False
 
-    def _handle_key_press(self, key, keyboard):
+    def _handle_key_press(self, key, keyboard_device):
         """
         Handle key presses including space for intervention toggle.
 
@@ -1413,8 +1415,8 @@ class GearedLeaderControlWrapper(BaseLeaderControlWrapper):
 
         Extends the base handler to respond to space key for toggling intervention.
         """
-        super()._handle_key_press(key, keyboard)
-        if key == keyboard.Key.space:
+        super()._handle_key_press(key, keyboard_device)
+        if key == keyboard_device.Key.space:
             if not self.keyboard_events["human_intervention_step"]:
                 logging.info(
                     "Space key pressed. Human intervention required.\n"
@@ -1574,7 +1576,7 @@ class GamepadControlWrapper(gym.Wrapper):
         print("  Y/Triangle button: End episode (SUCCESS)")
         print("  B/Circle button: Exit program")
 
-    def get_gamepad_action(
+    def get_teleop_commands(
         self,
     ) -> tuple[bool, np.ndarray, bool, bool, bool]:
         """
@@ -1643,7 +1645,7 @@ class GamepadControlWrapper(gym.Wrapper):
             terminate_episode,
             success,
             rerecord_episode,
-        ) = self.get_gamepad_action()
+        ) = self.get_teleop_commands()
 
         # Update episode ending state if requested
         if terminate_episode:
@@ -1698,6 +1700,90 @@ class GamepadControlWrapper(gym.Wrapper):
 
         # Call the parent close method
         return self.env.close()
+
+
+class KeyboardControlWrapper(GamepadControlWrapper):
+    """
+    Wrapper that allows controlling a gym environment with a keyboard.
+
+    This wrapper intercepts the step method and allows human input via keyboard
+    to override the agent's actions when desired.
+
+    Inherits from GamepadControlWrapper to avoid code duplication.
+    """
+
+    def __init__(
+        self,
+        env,
+        teleop_device,  # Accepts an instantiated teleoperator
+        use_gripper=False,  # This should align with teleop_device's config
+        auto_reset=False,
+    ):
+        """
+        Initialize the gamepad controller wrapper.
+
+        Args:
+            env: The environment to wrap.
+            teleop_device: The instantiated teleoperation device (e.g., GamepadTeleop).
+            use_gripper: Whether to include gripper control (should match teleop_device.config.use_gripper).
+            auto_reset: Whether to auto reset the environment when episode ends.
+        """
+        super().__init__(env, teleop_device, use_gripper, auto_reset)
+
+        self.is_intervention_active = False
+
+        logging.info("Keyboard control wrapper initialized with provided teleop_device.")
+        print("Keyboard controls:")
+        print("  Arrow keys: Move in X-Y plane")
+        print("  Shift and Shift_R: Move in Z axis")
+        print("  Right Ctrl and Left Ctrl: Open and close gripper")
+        print("  f: End episode with FAILURE")
+        print("  s: End episode with SUCCESS")
+        print("  r: End episode with RERECORD")
+        print("  i: Start/Stop Intervention")
+
+    def get_teleop_commands(
+        self,
+    ) -> tuple[bool, np.ndarray, bool, bool, bool]:
+        action_dict = self.teleop_device.get_action()
+        episode_end_status = None
+
+        # Unroll the misc_keys_queue to check for events related to intervention, episode success, etc.
+        while not self.teleop_device.misc_keys_queue.empty():
+            key = self.teleop_device.misc_keys_queue.get()
+            if key == "i":
+                self.is_intervention_active = not self.is_intervention_active
+            elif key == "f":
+                episode_end_status = "failure"
+            elif key == "s":
+                episode_end_status = "success"
+            elif key == "r":
+                episode_end_status = "rerecord_episode"
+
+        terminate_episode = episode_end_status is not None
+        success = episode_end_status == "success"
+        rerecord_episode = episode_end_status == "rerecord_episode"
+
+        # Convert action_dict to numpy array based on expected structure
+        # Order: delta_x, delta_y, delta_z, gripper (if use_gripper)
+        action_list = [action_dict["delta_x"], action_dict["delta_y"], action_dict["delta_z"]]
+        if self.use_gripper:
+            # GamepadTeleop returns gripper action as 0 (close), 1 (stay), 2 (open)
+            # This needs to be consistent with what EEActionWrapper expects if it's used downstream
+            # EEActionWrapper for gripper typically expects 0.0 (closed) to 2.0 (open)
+            # For now, we pass the direct value from GamepadTeleop, ensure downstream compatibility.
+            gripper_val = action_dict.get("gripper", 1.0)  # Default to 1.0 (stay) if not present
+            action_list.append(float(gripper_val))
+
+        gamepad_action_np = np.array(action_list, dtype=np.float32)
+
+        return (
+            self.is_intervention_active,
+            gamepad_action_np,
+            terminate_episode,
+            success,
+            rerecord_episode,
+        )
 
 
 class GymHilDeviceWrapper(gym.Wrapper):
@@ -1839,6 +1925,15 @@ def make_robot_env(cfg: EnvConfig) -> gym.Env:
             "teleop_device must be an instance of GamepadTeleop for gamepad control mode"
         )
         env = GamepadControlWrapper(
+            env=env,
+            teleop_device=teleop_device,
+            use_gripper=cfg.wrapper.use_gripper,
+        )
+    elif control_mode == "keyboard_ee":
+        assert isinstance(teleop_device, KeyboardEndEffectorTeleop), (
+            "teleop_device must be an instance of KeyboardEndEffectorTeleop for keyboard control mode"
+        )
+        env = KeyboardControlWrapper(
             env=env,
             teleop_device=teleop_device,
             use_gripper=cfg.wrapper.use_gripper,

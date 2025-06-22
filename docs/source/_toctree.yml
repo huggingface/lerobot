@@ -5,10 +5,14 @@
     title: Installation
   title: Get started
 - sections:
-  - local: getting_started_real_world_robot
-    title: Getting Started with Real-World Robots
+  - local: il_robots
+    title: Imitation Learning for Robots
+  - local: il_sim
+    title: Imitation Learning in Sim
   - local: cameras
     title: Cameras
+  - local: integrate_hardware
+    title: Bring Your Own Hardware
   - local: hilserl
     title: Train a Robot with RL
   - local: hilserl_sim
@@ -28,6 +32,10 @@
   - local: lekiwi
     title: LeKiwi
   title: "Robots"
+- sections:
+  - local: notebooks
+    title: Notebooks
+  title: "Resources"
 - sections:
   - local: contributing
     title: Contribute to LeRobot

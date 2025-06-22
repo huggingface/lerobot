@@ -23,12 +23,15 @@ python -m lerobot.record \
     --robot.port=/dev/tty.usbmodem58760431541 \
     --robot.cameras="{laptop: {type: opencv, camera_index: 0, width: 640, height: 480}}" \
     --robot.id=black \
-    --teleop.type=so100_leader \
-    --teleop.port=/dev/tty.usbmodem58760431551 \
-    --teleop.id=blue \
     --dataset.repo_id=aliberts/record-test \
     --dataset.num_episodes=2 \
-    --dataset.single_task="Grab the cube"
+    --dataset.single_task="Grab the cube" \
+    # <- Teleop optional if you want to teleoperate to record or in between episodes with a policy \
+    # --teleop.type=so100_leader \
+    # --teleop.port=/dev/tty.usbmodem58760431551 \
+    # --teleop.id=blue \
+    # <- Policy optional if you want to record with a policy \
+    # --policy.path=${HF_USER}/my_policy \
 ```
 """
 
@@ -139,15 +142,15 @@ class RecordConfig:
     resume: bool = False
 
     def __post_init__(self):
-        if self.teleop is not None and self.policy is not None:
-            raise ValueError("Choose either a policy or a teleoperator to control the robot")
-
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
         policy_path = parser.get_path_arg("policy")
         if policy_path:
             cli_overrides = parser.get_cli_overrides("policy")
             self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
             self.policy.pretrained_path = policy_path
+
+        if self.teleop is None and self.policy is None:
+            raise ValueError("Choose a policy, a teleoperator or both to control the robot")
 
     @classmethod
     def __get_path_fields__(cls) -> list[str]:
@@ -179,6 +182,10 @@ def record_loop(
     while timestamp < control_time_s:
         start_loop_t = time.perf_counter()
 
+        if events["exit_early"]:
+            events["exit_early"] = False
+            break
+
         observation = robot.get_observation()
 
         if policy is not None or dataset is not None:
@@ -194,8 +201,15 @@ def record_loop(
                 robot_type=robot.robot_type,
             )
             action = {key: action_values[i].item() for i, key in enumerate(robot.action_features)}
-        else:
+        elif policy is None and teleop is not None:
             action = teleop.get_action()
+        else:
+            logging.info(
+                "No policy or teleoperator provided, skipping action generation."
+                "This is likely to happen when resetting the environment without a teleop device."
+                "The robot won't be at its rest position at the start of the next episode."
+            )
+            continue
 
         # Action can eventually be clipped using `max_relative_target`,
         # so action actually sent is saved in the dataset.
@@ -220,9 +234,6 @@ def record_loop(
         busy_wait(1 / fps - dt_s)
 
         timestamp = time.perf_counter() - start_episode_t
-        if events["exit_early"]:
-            events["exit_early"] = False
-            break
 
 
 @parser.wrap()

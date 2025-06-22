@@ -1,4 +1,4 @@
-# Getting Started with Real-World Robots
+# Imitation Learning on Real-World Robots
 
 This tutorial will explain how to train a neural network to control a real robot autonomously.
 
@@ -190,7 +190,7 @@ The `record` function provides a suite of tools for capturing and managing data 
 
 ##### 2. Checkpointing and Resuming
 - Checkpoints are automatically created during recording.
-- If an issue occurs, you can resume by re-running the same command with `--control.resume=true`.
+- If an issue occurs, you can resume by re-running the same command with `--resume=true`.
 - To start recording from scratch, **manually delete** the dataset directory.
 
 ##### 3. Recording Parameters
@@ -273,6 +273,9 @@ python lerobot/scripts/train.py \
   --resume=true
 ```
 
+#### Train using Collab
+If your local computer doesn't have a powerful GPU you could utilize Google Collab to train your model by following the [ACT training notebook](./notebooks#training-act).
+
 #### Upload policy checkpoints
 
 Once training is done, upload the latest checkpoint with:
@@ -298,8 +301,12 @@ python -m lerobot.record  \
   --robot.cameras="{ up: {type: opencv, index_or_path: /dev/video10, width: 640, height: 480, fps: 30}, side: {type: intelrealsense, serial_number_or_name: 233522074606, width: 640, height: 480, fps: 30}}" \
   --robot.id=my_awesome_follower_arm \
   --display_data=false \
-  --dataset.repo_id=$HF_USER/eval_so100 \
+  --dataset.repo_id=${HF_USER}/eval_so100 \
   --dataset.single_task="Put lego brick into the transparent box" \
+  # <- Teleop optional if you want to teleoperate in between episodes \
+  # --teleop.type=so100_leader \
+  # --teleop.port=/dev/ttyACM0 \
+  # --teleop.id=my_awesome_leader_arm \
   --policy.path=${HF_USER}/my_policy
 ```
 
