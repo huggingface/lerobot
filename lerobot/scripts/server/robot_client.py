@@ -26,14 +26,16 @@ class RobotClient:
     def __init__(self, config: RobotClientConfig):
         # Store configuration
         self.config = config
-        
+
         # Use environment variable if server_address is not provided in config
         server_address = config.server_address
         if not server_address:
             server_address = os.getenv("SERVER_ADDRESS", "localhost:8080")
             self.logger.info(f"No server address provided, using default address: {server_address}")
 
-        self.policy_config = TinyPolicyConfig(config.policy_type, config.pretrained_name_or_path, config.policy_device)
+        self.policy_config = TinyPolicyConfig(
+            config.policy_type, config.pretrained_name_or_path, config.policy_device
+        )
         self.channel = grpc.insecure_channel(server_address)
         self.stub = async_inference_pb2_grpc.AsyncInferenceStub(self.channel)
         self.logger.info(f"Initializing client to connect to server at {server_address}")
