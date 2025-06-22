@@ -26,58 +26,30 @@ import torch
 
 from lerobot.scripts.server.helpers import TimedAction
 from lerobot.scripts.server.robot_client import RobotClient
+from lerobot.scripts.server.configs import RobotClientConfig
+from lerobot.common.robots.utils import make_robot_from_config
 
 # -----------------------------------------------------------------------------
 # Test fixtures
 # -----------------------------------------------------------------------------
 
 
-class _DummyRobot:
-    # TODO(fracapuano): move to robot_client.py, create a base class and make RobotClient and DummyRobotClient subclass
-    """Minimal stub matching the interface used by `RobotClient`."""
-
-    def __init__(self):
-        self.actions_sent: list[torch.Tensor] = []
-        self.connected = False
-
-    def connect(self):
-        self.connected = True
-
-    def disconnect(self):
-        self.connected = False
-
-    def send_action(self, action: torch.Tensor):
-        # Simply store what was sent for inspection, no actuation.
-        self.actions_sent.append(action)
-
-    def capture_observation(self):  # pragma: no cover – not used in this file
-        raise RuntimeError("Not needed for queue tests")
-
-
-@pytest.fixture(autouse=True)
-def patch_make_robot(monkeypatch):
-    """Replace `make_robot` with a deterministic dummy implementation."""
-
-    def _factory(*_a, **_kw):
-        return _DummyRobot()
-
-    # Patch the name 'make_robot' in the module where it is imported and used.
-    monkeypatch.setattr("lerobot.scripts.server.robot_client.make_robot", _factory, raising=True)
-
-
 @pytest.fixture()
 def robot_client() -> RobotClient:
     """Fresh `RobotClient` instance for each test case (no threads started).
     Uses DummyRobot."""
-    from lerobot.scripts.server.configs import RobotClientConfig
-
-    # Use an arbitrary port; the gRPC channel is never used in these tests.
-    test_config = RobotClientConfig(server_address="localhost:9999")
+    from tests.mocks.mock_robot import MockRobotConfig
+    
+    test_config = MockRobotConfig()
+    robot = make_robot_from_config(test_config)
+    
+    # gRPC channel is not actually used in tests, so using a dummy address
+    test_config = RobotClientConfig(robot=robot, server_address="localhost:9999")
     client = RobotClient(test_config)
 
     yield client
 
-    if client.robot.connected:
+    if client.robot.is_connected:
         client.stop()
 
 

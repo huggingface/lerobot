@@ -1,3 +1,4 @@
+import argparse
 import logging
 import logging.handlers
 import os
@@ -5,6 +6,18 @@ import time
 from typing import Any
 
 import torch
+
+from lerobot.common.robots.robot import Robot
+from lerobot.common.robots.utils import make_robot_from_config
+from lerobot.common.robots.so100_follower import SO100FollowerConfig
+
+
+def make_robot(args: argparse.Namespace) -> Robot:
+    if args.robot == "so100":
+        config = SO100FollowerConfig(port=args.robot_port)
+        return make_robot_from_config(config)
+    else:
+        raise ValueError(f"Robot {args.robot} not yet supported!")
 
 
 def setup_logging(prefix: str, info_bracket: str):
