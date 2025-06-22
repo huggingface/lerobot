@@ -1,12 +1,11 @@
 from dataclasses import dataclass, field
 
+from lerobot.common.robots.robot import Robot
 from lerobot.scripts.server.constants import (
     DEFAULT_ENVIRONMENT_DT,
     DEFAULT_IDLE_WAIT,
     DEFAULT_INFERENCE_LATENCY,
 )
-
-from lerobot.common.robots.robot import Robot
 
 
 @dataclass
@@ -85,6 +84,7 @@ class RobotClientConfig:
     This class defines all configurable parameters for the RobotClient,
     including network connection, policy settings, and control behavior.
     """
+
     # Robot to wrap with async inference capabilities
     robot: Robot = field(metadata={"help": "Robot instance to use"})
 

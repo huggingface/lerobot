@@ -8,8 +8,8 @@ from typing import Any
 import torch
 
 from lerobot.common.robots.robot import Robot
-from lerobot.common.robots.utils import make_robot_from_config
 from lerobot.common.robots.so100_follower import SO100FollowerConfig
+from lerobot.common.robots.utils import make_robot_from_config
 
 
 def make_robot(args: argparse.Namespace) -> Robot:

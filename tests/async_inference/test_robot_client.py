@@ -24,10 +24,10 @@ import time
 import pytest
 import torch
 
+from lerobot.common.robots.utils import make_robot_from_config
+from lerobot.scripts.server.configs import RobotClientConfig
 from lerobot.scripts.server.helpers import TimedAction
 from lerobot.scripts.server.robot_client import RobotClient
-from lerobot.scripts.server.configs import RobotClientConfig
-from lerobot.common.robots.utils import make_robot_from_config
 
 # -----------------------------------------------------------------------------
 # Test fixtures
@@ -39,10 +39,10 @@ def robot_client() -> RobotClient:
     """Fresh `RobotClient` instance for each test case (no threads started).
     Uses DummyRobot."""
     from tests.mocks.mock_robot import MockRobotConfig
-    
+
     test_config = MockRobotConfig()
     robot = make_robot_from_config(test_config)
-    
+
     # gRPC channel is not actually used in tests, so using a dummy address
     test_config = RobotClientConfig(robot=robot, server_address="localhost:9999")
     client = RobotClient(test_config)

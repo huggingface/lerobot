@@ -9,15 +9,20 @@ from typing import Callable, Optional
 import grpc
 import torch
 
-from lerobot.scripts.server.helpers import make_robot
-
 from lerobot.scripts.server import (
     async_inference_pb2,  # type: ignore
     async_inference_pb2_grpc,  # type: ignore
 )
 from lerobot.scripts.server.configs import RobotClientConfig
-from lerobot.scripts.server.helpers import TimedAction, TimedObservation, TinyPolicyConfig, setup_logging
 from lerobot.scripts.server.constants import supported_robots
+from lerobot.scripts.server.helpers import (
+    TimedAction,
+    TimedObservation,
+    TinyPolicyConfig,
+    make_robot,
+    setup_logging,
+)
+
 
 class RobotClient:
     prefix = "robot_client"
@@ -564,7 +569,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--robot-port",
         type=str,
-        help="Port on which to read/write robot joint status (e.g., '/dev/tty.usbmodem575E0031751'). Find your port with lerobot/find_port.py"
+        help="Port on which to read/write robot joint status (e.g., '/dev/tty.usbmodem575E0031751'). Find your port with lerobot/find_port.py",
     )
 
     args = parser.parse_args()
@@ -581,7 +586,7 @@ if __name__ == "__main__":
         pretrained_name_or_path=args.pretrained_name_or_path,
         policy_device=args.policy_device,
         chunk_size_threshold=args.chunk_size_threshold,
-        robot=robot
+        robot=robot,
     )
 
     # Create client with config
