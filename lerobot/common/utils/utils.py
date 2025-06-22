@@ -213,8 +213,6 @@ def say(text, blocking=False):
 
 
 def log_say(text, play_sounds, blocking=False):
-    # TODO(jackvial): Remove this before merging
-    print(text)
     logging.info(text)
 
     if play_sounds:
