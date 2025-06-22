@@ -17,8 +17,6 @@
 import logging
 import time
 
-import torch
-
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.common.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.common.motors.dynamixel import (
@@ -41,11 +39,9 @@ class KochScrewdriverLeader(Teleoperator):
 
     config_class = KochScrewdriverLeaderConfig
     name = "koch_screwdriver_leader"
-    
+
     # Map the leader motor name to the follower motor and action name
-    motor_to_action_map = {
-        "gripper": "screwdriver"
-    }
+    motor_to_action_map = {"gripper": "screwdriver"}
 
     def __init__(self, config: KochScrewdriverLeaderConfig):
         super().__init__(config)
@@ -180,7 +176,7 @@ class KochScrewdriverLeader(Teleoperator):
         action = {}
         for motor, pos in pos_dict.items():
             action_name = self.motor_to_action_map.get(motor, motor)
-            
+
             if action_name == "screwdriver":
                 # Map the leader gripper position (CURRENT_POSITION mode) to a velocity command for the
                 # follower screwdriver (VELOCITY mode).
@@ -207,19 +203,19 @@ class KochScrewdriverLeader(Teleoperator):
                 #   pos = 80  → delta = 30  → vel_cmd = -300
                 #   pos = 10  → delta = -40 → vel_cmd =  400
                 #   pos = 50  → delta = 0   → vel_cmd =    0
-                
+
                 # Step 1: Deviation from neutral position
                 delta = pos - self.config.screwdriver_open_pos
-                
+
                 # Step 2: Scale delta → velocity
                 #   • GAIN maps the 0-100 gripper position range to an appropriate velocity range.
                 #   • With GAIN = 10 and neutral = 50, the resulting velocity is within ±500.
                 #   • XL330-M077 goal-velocity limit is ±2047 (≈ ±468 RPM at 0.229 RPM/unit).
                 GAIN = 10.0
-                
+
                 # Invert the sign so sequeezing the gripper will move the screwdriver clockwise
                 vel_cmd = -delta * GAIN
-                
+
                 # Step 3: Clamp for safety (in case GAIN/neutral is changed)
                 MAX_VEL = 700
                 vel_cmd = max(min(vel_cmd, MAX_VEL), -MAX_VEL)
