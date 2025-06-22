@@ -22,7 +22,7 @@ import time
 import pytest
 import torch
 
-from lerobot.scripts.server.constants import environment_dt
+from lerobot.scripts.server.configs import PolicyServerConfig
 from lerobot.scripts.server.helpers import TimedObservation
 from lerobot.scripts.server.policy_server import PolicyServer
 
@@ -54,7 +54,8 @@ class _StubPolicy:
 @pytest.fixture
 def policy_server() -> PolicyServer:
     """Fresh `PolicyServer` instance with a stubbed-out policy model."""
-    server = PolicyServer()
+    test_config = PolicyServerConfig(host="localhost")
+    server = PolicyServer(test_config)
     # Replace the real policy with our fast, deterministic stub.
     server.policy = _StubPolicy()
     server.actions_per_chunk = 20
@@ -95,7 +96,11 @@ def test_time_action_chunk(policy_server: PolicyServer):
     # Check timesteps
     assert [ta.get_timestep() for ta in timed_actions] == [10, 11, 12]
     # Check timestamps
-    expected_timestamps = [start_ts, start_ts + environment_dt, start_ts + 2 * environment_dt]
+    expected_timestamps = [
+        start_ts,
+        start_ts + policy_server.config.environment_dt,
+        start_ts + 2 * policy_server.config.environment_dt,
+    ]
     for ta, expected_ts in zip(timed_actions, expected_timestamps, strict=True):
         assert abs(ta.get_timestamp() - expected_ts) < 1e-6
 
@@ -184,5 +189,5 @@ def test_predict_action_chunk(monkeypatch, policy_server: PolicyServer):
     assert [ta.get_timestep() for ta in timed_actions] == list(range(5, 5 + actions_per_chunk))
 
     for i, ta in enumerate(timed_actions):
-        expected_ts = obs.get_timestamp() + i * environment_dt
+        expected_ts = obs.get_timestamp() + i * policy_server.config.environment_dt
         assert abs(ta.get_timestamp() - expected_ts) < 1e-6

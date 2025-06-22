@@ -12,6 +12,7 @@ from lerobot.scripts.server import (
     async_inference_pb2,  # type: ignore
     async_inference_pb2_grpc,  # type: ignore
 )
+from lerobot.scripts.server.configs import PolicyServerConfig
 from lerobot.scripts.server.constants import supported_policies
 from lerobot.scripts.server.helpers import (
     TimedAction,
@@ -38,6 +39,8 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
         self.observation_queue = Queue(maxsize=1)
         self._predicted_timesteps = set()
         self._predicted_observations = Queue(maxsize=1)
+
+        self.running = True
 
     def Ready(self, request, context):  # noqa: N802
         client_id = context.peer()
@@ -162,7 +165,7 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
                 yield action
             else:
                 self.logger.warning("No observation in queue yet!")
-                time.sleep(self.idle_wait)
+                time.sleep(self.config.idle_wait)
 
         except Exception as e:
             self.logger.error(f"Error in StreamActions: {e}")
@@ -214,7 +217,7 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
         t_0 + i*environment_dt for i in range(len(action_chunk))
         """
         return [
-            TimedAction(t_0 + i * self.environment_dt, action, i_0 + i)
+            TimedAction(t_0 + i * self.config.environment_dt, action, i_0 + i)
             for i, action in enumerate(action_chunk)
         ]
 
@@ -235,7 +238,7 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
             self.logger.debug(f"Observation image preparation time: {prep_time - normalize_time:.6f}s")
 
         # forward pass outputs up to policy.config.n_action_steps != actions_per_chunk
-        actions = self.policy.model(batch)[0][:, : self.actions_per_chunk]
+        actions = self.policy.model(batch)[0][:, : self.config.actions_per_chunk]
 
         actions = self.policy.unnormalize_outputs({"action": actions})["action"]
 
@@ -310,17 +313,12 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
 
         """2. Get action chunk"""
         action_tensor = self._get_action_chunk(observation, self.policy_type)
-        action_tensor = action_tensor.squeeze(0)
 
         # Move to CPU before serializing
-        action_tensor = action_tensor.cpu()
+        action_tensor = action_tensor.cpu().squeeze(0)
 
         post_inference_time = time.perf_counter()
         self.logger.debug(f"Post-inference processing start: {post_inference_time - prep_time:.6f}s")
-
-        if action_tensor.dim() == 1:
-            # No chunk dimension, so repeat action to create a (dummy) chunk of actions
-            action_tensor = action_tensor.repeat(self.actions_per_chunk, 1)
 
         action_chunk = self._time_action_chunk(
             observation_t.get_timestamp(), list(action_tensor), observation_t.get_timestep()
@@ -341,16 +339,24 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
         self.logger.info("Server stopping...")
 
 
-def serve(host="localhost", port=8080):
+def serve(config: Optional[PolicyServerConfig] = None):
+    """Start the PolicyServer with the given configuration.
+
+    Args:
+        config: PolicyServerConfig instance. If None, uses default configuration.
+    """
+    if config is None:
+        config = PolicyServerConfig()
+
     # Create the server instance first
-    policy_server = PolicyServer()
+    policy_server = PolicyServer(config)
 
     # Setup and start gRPC server
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
     async_inference_pb2_grpc.add_AsyncInferenceServicer_to_server(policy_server, server)
-    server.add_insecure_port(f"{host}:{port}")
+    server.add_insecure_port(f"{config.host}:{config.port}")
     server.start()
-    policy_server.logger.info(f"PolicyServer started on {host}:{port}")
+    policy_server.logger.info(f"PolicyServer started on {config.host}:{config.port}")
 
     try:
         # Use the running attribute to control server lifetime
@@ -363,4 +369,4 @@ def serve(host="localhost", port=8080):
 
 
 if __name__ == "__main__":
-    serve()  # use default host and port
+    serve()  # use default configuration
