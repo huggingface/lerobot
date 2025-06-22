@@ -182,65 +182,49 @@ class KochScrewdriverLeader(Teleoperator):
             action_name = self.motor_to_action_map.get(motor, motor)
             
             if action_name == "screwdriver":
-                # Map the leader gripper position to follower screwdriver velocity
-                # 
-                # Leader Gripper (CURRENT_POSITION mode):
-                #   - Position range: 0-100
-                #   - Neutral position: screwdriver_open_pos default is 50
-                #   - Squeezing the gripper will move the screwdriver clockwise
-                #   - Opening the gripper will move the screwdriver counter-clockwise
-                #   - The gripper will return the neutral position when released
-                # 
-                # Follower Screwdriver (VELOCITY mode):
-                #   - Zero velocity = no rotation
-                #   - Positive velocity = clockwise rotation
-                #   - Negative velocity = counter-clockwise rotation
-                # 
-                # Mapping steps:
-                # 1. Calculate deviation from neutral: delta = pos - neutral_pos
-                # 2. Apply gain scaling: vel_cmd = -delta * GAIN
-                # 3. Clamp to velocity limits: vel_cmd = clamp(vel_cmd, -MAX_VEL, +MAX_VEL)
-                # 4. Filter small jitters: if |vel_cmd| < threshold, set to 0
+                # Map the leader gripper position (CURRENT_POSITION mode) to a velocity command for the
+                # follower screwdriver (VELOCITY mode).
                 #
-                # Example mappings:
-                # pos=80, screwdriver_open_pos=50, gain=10
-                # delta = 80 - 50 = 30
-                # vel_cmd = -30 * 10 = -300
-                # clamp(-300, -700, 700) = -300
-                # vel_cmd = -300
-                # 
-                # pos=10, screwdriver_open_pos=50, gain=10
-                # delta = 10 - 50 = -40
-                # vel_cmd = -(-40) * 10 = 400
-                # clamp(400, -700, 700) = 400
-                # vel_cmd = 400
+                # Leader gripper:
+                #   • Position range: 0-100
+                #   • Neutral (open) position: `screwdriver_open_pos` (default 50)
+                #   • Squeezing  (pos > neutral)   → clockwise rotation  (negative velocity)
+                #   • Opening    (pos < neutral)   → counter-clockwise   (positive velocity)
+                #   • When released, the gripper springs back to the neutral position.
                 #
-                # pos=50, screwdriver_open_pos=50, gain=10
-                # delta = 50 - 50 = 0
-                # vel_cmd = 0 * 10 = 0
-                # clamp(0, -700, 700) = 0
-                # vel_cmd = 0
+                # Follower screwdriver:
+                #   • vel = 0   → no rotation
+                #   • vel > 0   → clockwise
+                #   • vel < 0   → counter-clockwise
+                #
+                # Mapping procedure
+                #   1. delta   = pos - neutral
+                #   2. vel_cmd = -delta * GAIN
+                #   3. Clamp   → vel_cmd ∈ [-MAX_VEL, +MAX_VEL]
+                #   4. Dead-band → |vel_cmd| < THRESHOLD ⇒ vel_cmd = 0
+                #
+                # Example (GAIN = 10, neutral = 50):
+                #   pos = 80  → delta = 30  → vel_cmd = -300
+                #   pos = 10  → delta = -40 → vel_cmd =  400
+                #   pos = 50  → delta = 0   → vel_cmd =    0
                 
-                # Step 1: Calculate deviation from neutral position
+                # Step 1: Deviation from neutral position
                 delta = pos - self.config.screwdriver_open_pos
                 
-                # Step 2: Apply a gain multipler to our detla since the screwdriver velocity range is much wider than the gripper position range
-                # The Goal velocity limit of the XL330-M077 is +-2047 by way of the default Velocity limit of 2047. See https://emanual.robotis.com/docs/en/dxl/x/xl330-m288/#control-table-of-eeprom-area
-                # A gain of 10 with with gripeper open pos of 50 would result in a max velocity of +- 500 which keeps us well within the goal velocity limit
-                # but still scales the velocity enough to be useful. With these settings, fully the max RPM of the screwdriver would be 114.5 RPM given that one unit of velocity 
-                # is 0.229 RPM.
+                # Step 2: Scale delta → velocity
+                #   • GAIN maps the 0-100 gripper position range to an appropriate velocity range.
+                #   • With GAIN = 10 and neutral = 50, the resulting velocity is within ±500.
+                #   • XL330-M077 goal-velocity limit is ±2047 (≈ ±468 RPM at 0.229 RPM/unit).
                 GAIN = 10.0
+                
+                # Invert the sign so sequeezing the gripper will move the screwdriver clockwise
                 vel_cmd = -delta * GAIN
                 
-                # Step 3: Clamp velocity for safety
-                # With screwdriver open pos of 50 and gain of 10 we should not need clamping as the max would be +- 500
-                # But if gain was increased or the open pos was changed we might need to clamp.
-                # todo(jackvial): Consider setting self.bus.write("Velocity_Limit", "screwdriver", 700)
+                # Step 3: Clamp for safety (in case GAIN/neutral is changed)
                 MAX_VEL = 700
                 vel_cmd = max(min(vel_cmd, MAX_VEL), -MAX_VEL)
 
-                # Step 4: Filter out small movements when the gripper is in the neutral position
-                # to be sure the screwdriver comes to a complete stop
+                # Step 4: Dead-band — stop very small residual motions around neutral
                 if abs(vel_cmd) < 4.0:
                     vel_cmd = 0.0
 
