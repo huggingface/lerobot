@@ -31,13 +31,6 @@ class GripperAction(IntEnum):
     OPEN = 2
 
 
-gripper_action_map = {
-    "close": GripperAction.CLOSE.value,
-    "open": GripperAction.OPEN.value,
-    "stay": GripperAction.STAY.value,
-}
-
-
 class SpacemouseTeleop(Teleoperator):
     """
     Teleop class to use spacemouse inputs for control.
@@ -83,24 +76,7 @@ class SpacemouseTeleop(Teleoperator):
 
     def connect(self) -> None:
         """Connect to the SpaceMouse device (real or mock)."""
-        # Map short device aliases to full names for convenience
-        device_alias: str | None
-        if self.config.device in {"e", "E"}:
-            device_alias = "SpacePilot Enterprise"
-        elif self.config.device in {"p", "P"}:
-            device_alias = "SpaceMouse Pro"
-        else:
-            # Treat "", "default", or None as auto-detect (i.e., no device argument)
-            if not self.config.device or self.config.device.lower() in {"default", "auto"}:
-                device_alias = None
-            else:
-                device_alias = self.config.device
-
-        # Call open with or without explicit device name depending on alias resolution
-        if device_alias is None:
-            self._connected = bool(pyspacemouse.open())
-        else:
-            self._connected = bool(pyspacemouse.open(device=device_alias))
+        self._connected = bool(pyspacemouse.open())
 
         # Start background reader to avoid piling up driver messages (reduces perceived latency)
         if self._connected:
@@ -178,10 +154,8 @@ class SpacemouseTeleop(Teleoperator):
         # Assumption: the physical gripper starts in the OPEN state when the teleop script boots.
         # Each button press switches the command between OPEN and CLOSE accordingly.
         if self.config.use_gripper and hasattr(state, "buttons") and len(state.buttons) >= 2:
-            # Rising-edge detection on right button (index 1) to toggle gripper state
             btn = state.buttons[1]
             if btn and not self._prev_button_state:
-                # Toggle the stored gripper state
                 self._gripper_state = (
                     GripperAction.CLOSE.value
                     if self._gripper_state == GripperAction.OPEN.value
@@ -231,31 +205,3 @@ class SpacemouseTeleop(Teleoperator):
         """Send feedback to the spacemouse."""
         # Spacemouse doesn't support feedback
         pass
-
-
-if __name__ == "__main__":
-    # Quick test: create a configuration and read a few actions (auto-detect device)
-    config = SpacemouseTeleopConfig(use_gripper=True, device="")
-    
-    # Initialize the SpacemouseTeleop
-    teleop = SpacemouseTeleop(config)
-    
-    # Connect to the spacemouse
-    teleop.connect()
-    
-    # Check if connected
-    if teleop.is_connected():
-        print("Connected to spacemouse.")
-        
-        import time
-        print("Streaming actions…  Press Ctrl+C to stop.")
-        try:
-            while True:
-                action = teleop.get_action()
-                print("Action:", action)
-        except KeyboardInterrupt:
-            print("Stopping.")
-        finally:
-            teleop.disconnect()
-    else:
-        print("Failed to connect to spacemouse.")

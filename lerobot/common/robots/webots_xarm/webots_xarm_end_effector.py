@@ -15,7 +15,6 @@
 # limitations under the License.
 
 import logging
-import time
 import os
 import copy
 from typing import Any
@@ -24,12 +23,9 @@ import numpy as np
 import transforms3d as t3d
 from teleop.utils.jacobi_robot import JacobiRobot
 from controller import Supervisor
-from PIL import Image
 import cv2
-import time
 
 from lerobot.common.cameras import make_cameras_from_configs
-from lerobot.common.errors import DeviceNotConnectedError, DeviceAlreadyConnectedError
 from lerobot.common.robots.robot import Robot
 
 from lerobot.common.robots.webots_xarm.webots_config_xarm import (
@@ -41,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 class WebotsXarmEndEffector(Robot):
     config_class = WebotsXarmEndEffectorConfig
-    name = "webots_xarm_end_effector"
+    name = "webots_x_armend_effector"
 
     def __init__(self, config: WebotsXarmEndEffectorConfig):
         super().__init__(config)
@@ -52,20 +48,20 @@ class WebotsXarmEndEffector(Robot):
         self.config = config
         self.jacobi = JacobiRobot(os.path.join(this_dir, "lite6.urdf"), ee_link="link6")
 
-        self.arm_ = Supervisor()
-        self.timestep_ = int(self.arm_.getBasicTimeStep())
+        self._arm = Supervisor()
+        self.timestep_ = int(self._arm.getBasicTimeStep())
         self.joint_names_ = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
-        self.motors_ = [self.arm_.getDevice(name) for name in self.joint_names_]
+        self.motors_ = [self._arm.getDevice(name) for name in self.joint_names_]
 
         self.position_sensors = []
         for motor in self.motors_:
             sensor = motor.getPositionSensor()
             sensor.enable(self.timestep_)
             self.position_sensors.append(sensor)
-        self.arm_.step(self.timestep_)
+        self._arm.step(self.timestep_)
 
-        self.left_motor_ = self.arm_.getDevice("gripper_left_joint")
-        self.right_motor_ = self.arm_.getDevice("gripper_right_joint")
+        self.left_motor_ = self._arm.getDevice("gripper_left_joint")
+        self.right_motor_ = self._arm.getDevice("gripper_right_joint")
 
         self.is_gripper_open = True
 
@@ -90,13 +86,13 @@ class WebotsXarmEndEffector(Robot):
             joint_name = f"joint{i}"
             self.jacobi.set_joint_position(joint_name, joint_positions[i - 1])
 
-        self.camera_ = self.arm_.getDevice("camera")
+        self._camera = self._arm.getDevice("camera")
 
         logger.info(f"{self} connected.")
-        if self.camera_ is None:
+        if self._camera is None:
             print("Camera not found, disabling camera.")
         else:
-            self.camera_.enable(self.timestep_)
+            self._camera.enable(self.timestep_)
 
     @property
     def action_features(self) -> dict[str, Any]:
@@ -177,7 +173,7 @@ class WebotsXarmEndEffector(Robot):
             gripper_pos = -0.01 if gripper < 1.0 else 0.0
             print("Gripper position:", gripper_pos)
             self.open_gripper(gripper_pos)
-        
+
         self.step()
 
         return super().send_action(action)
@@ -203,9 +199,9 @@ class WebotsXarmEndEffector(Robot):
         obs_dict["gripper.pos"] = 0 if self.is_gripper_open else 2
 
         # Capture images from cameras
-        image = self.camera_.getImage()
-        width = self.camera_.getWidth()
-        height = self.camera_.getHeight()
+        image = self._camera.getImage()
+        width = self._camera.getWidth()
+        height = self._camera.getHeight()
         img_array = np.frombuffer(image, np.uint8).reshape((height, width, 4))
         rgb_array = cv2.cvtColor(img_array, cv2.COLOR_BGR2RGB)
 
@@ -227,7 +223,7 @@ class WebotsXarmEndEffector(Robot):
         pass
 
     def step(self) -> bool:
-        return self.arm_.step(self.timestep_) != -1
+        return self._arm.step(self.timestep_) != -1
 
     @property
     def is_connected(self) -> bool:
@@ -274,55 +270,3 @@ class WebotsXarmEndEffector(Robot):
     @config.setter
     def config(self, value):
         self._config = value
-
-    @property
-    def arm(self):
-        return self.arm_
-
-    @arm.setter
-    def arm(self, value):
-        self.arm_ = value
-
-    @property
-    def jacobi(self):
-        return self._jacobi
-
-    @jacobi.setter
-    def jacobi(self, value):
-        self._jacobi = value
-
-
-if __name__ == "__main__":
-    import transforms3d as t3d
-
-    # Example usage
-    config = WebotsXarmEndEffectorConfig()
-    robot = WebotsXarmEndEffector(config)
-    robot.connect()
-
-    # export WEBOTS_HOME=/usr/local/webots
-    # $WEBOTS_HOME/webots-controller lerobot/common/robots/webots_xarm/webots_xarm_end_effector.py
-
-    # Example action
-    action = {
-        "pose": t3d.affines.compose(
-            [0.25, 0.0, 0.4],  # Translation
-            t3d.euler.euler2mat(3.14, 0, 0.0),  # Rotation (no rotation)
-            [1.0, 1.0, 1.0],  # Scale
-        ),
-        # "gripper": 2.0,
-    }
-
-    action["delta_x"] = 0.5
-    action["delta_y"] = 0.0
-    action["delta_z"] = 0.01
-    action["delta_roll"] = 0.0
-    action["delta_pitch"] = 0.0
-    action["delta_yaw"] = 0.0
-
-    while robot.step():
-        robot.send_action(action)
-        obs = robot.get_observation()
-        print(obs)
-        time.sleep(0.05)
-        robot.open_gripper(0.0)

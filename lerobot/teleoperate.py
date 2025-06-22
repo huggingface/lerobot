@@ -19,24 +19,14 @@ Example:
 
 ```shell
 python -m lerobot.teleoperate \
-    --robot.type=mock_robot \
+    --robot.type=so101_follower \
+    --robot.port=/dev/tty.usbmodem58760431541 \
+    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \
     --robot.id=black \
-    --teleop.type=telephone \
-    --teleop.host=0.0.0.0 \
-    --teleop.port=4443 \
-    --teleop.use_gripper=false \
+    --teleop.type=so101_leader \
+    --teleop.port=/dev/tty.usbmodem58760431551 \
     --teleop.id=blue \
     --display_data=true
-
-python -m lerobot.teleoperate \
-    --robot.type=xarm_end_effector \
-    --robot.id=black \
-    --teleop.type=spacemouse
-
-python -m lerobot.teleoperate \
-    --robot.type=webots_xarm_end_effector \
-    --robot.id=black \
-    --teleop.type=spacemouse
 ```
 """
 
@@ -112,9 +102,6 @@ def teleop_loop(
 
         print("\n" + "-" * (display_len + 10))
         print(f"{'NAME':<{display_len}} | {'NORM':>7}")
-        # TODO: We should allow ability to pass more complex actions
-        # for motor, value in action.items():
-        #     print(f"{motor:<{display_len}} | {value:>7.2f}")
         print(f"\ntime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
 
         if duration is not None and time.perf_counter() - start >= duration:

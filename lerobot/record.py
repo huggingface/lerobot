@@ -19,61 +19,19 @@ Example:
 
 ```shell
 python -m lerobot.record \
-    --robot.type=xarm_end_effector \
-    --robot.cameras="{laptop: {type: opencv, index_or_path: 4, width: 640, height: 480, fps: 30}}" \
-    --dataset.reset_time_s=8 \
+    --robot.type=so100_follower \
+    --robot.port=/dev/tty.usbmodem58760431541 \
+    --robot.cameras="{laptop: {type: opencv, camera_index: 0, width: 640, height: 480}}" \
     --robot.id=black \
-    --dataset.repo_id=lukicdarkoo/pick_plazma \
-    --dataset.root=${HOME}/hfdata/pick_plazma \
-    --dataset.num_episodes=15 \
-    --dataset.single_task="Pick plazma" \
-    --teleop.type=spacemouse \
-    --teleop.id=blue \
-    --resume=true \
-    --display_data=true
-
-python -m lerobot.record \
-    --robot.type=xarm_end_effector \
-    --robot.cameras="{laptop: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, gripper: { type: intelrealsense, serial_number_or_name: 233522070823, width: 640, height: 480, fps: 30 }}" \
-    --dataset.reset_time_s=8 \
-    --robot.id=black \
-    --dataset.repo_id=lukicdarkoo/pick_plazma_two_cameras \
-    --dataset.root=${HOME}/hfdata/pick_plazma_two_cameras \
-    --dataset.num_episodes=15 \
-    --dataset.single_task="Pick plazma" \
-    --teleop.type=spacemouse \
-    --teleop.id=blue \
-    --resume=true \
-    --display_data=true
-
-    
-python -m lerobot.record \
-    --dataset.repo_id=lukicdarkoo/eval_pick_plazma \
-    --dataset.single_task="Pick plazma" \
-    --robot.type=xarm_end_effector \
-    --robot.cameras="{laptop: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
-    --policy.path=/home/lukic/hf/models/pick_broken_plazma/checkpoints/last/pretrained_model \
-    --robot.id=black
-
-python -m lerobot.record \
-    --dataset.repo_id=lukicdarkoo/eval_pick_plazma \
-    --dataset.single_task="Pick plazma" \
-    --robot.type=xarm_end_effector \
-    --robot.cameras="{laptop: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
-    --policy.path=vladimirvincan/act_pick_plazmas \
-    --robot.id=black
-
-python ~/lerobot/lerobot/scripts/visualize_dataset.py --repo-id local --root ${HOME}/hfdata/first_test --episode-index 0
-
-python ~/lerobot/lerobot/scripts/visualize_dataset_html.py --repo-id local/dataset --root ${HOME}/hfdata/first_test
-
-python3 ~/lerobot/lerobot/scripts/train.py \
-    --dataset.repo_id=lukicdarkoo/pick_broken_plazma \
-    --policy.type=act \
-    --output_dir=$HOME/hf/models/pick_broken_plazma_act \
-    --save_checkpoint=true \
-    --save_freq=20000 \
-    --policy.dim_model=512
+    --dataset.repo_id=aliberts/record-test \
+    --dataset.num_episodes=2 \
+    --dataset.single_task="Grab the cube" \
+    # <- Teleop optional if you want to teleoperate to record or in between episodes with a policy \
+    # --teleop.type=so100_leader \
+    # --teleop.port=/dev/tty.usbmodem58760431551 \
+    # --teleop.id=blue \
+    # <- Policy optional if you want to record with a policy \
+    # --policy.path=${HF_USER}/my_policy \
 ```
 """
 
@@ -244,7 +202,6 @@ def record_loop(
                 robot_type=robot.robot_type,
             )
             action = {key: action_values[i].item() for i, key in enumerate(robot.action_features)}
-            print(action)
         elif policy is None and teleop is not None:
             action = teleop.get_action()
         else:
