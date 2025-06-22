@@ -36,19 +36,17 @@ from concurrent import futures
 import grpc
 import torch
 
+from lerobot.common.robots.utils import make_robot_from_config
 from lerobot.scripts.server import async_inference_pb2_grpc  # type: ignore
 from lerobot.scripts.server.configs import RobotClientConfig
 from lerobot.scripts.server.helpers import TimedObservation
 from lerobot.scripts.server.policy_server import PolicyServer
 from lerobot.scripts.server.robot_client import RobotClient
-from lerobot.common.robots.utils import make_robot_from_config
-from lerobot.common.datasets.utils import build_dataset_frame
 
-
-from tests.async_inference.test_policy_server import policy_server
 # -----------------------------------------------------------------------------
 # End-to-end test
 # -----------------------------------------------------------------------------
+
 
 def test_async_inference_e2e(policy_server, monkeypatch):
     """Smoke-test the full asynchronous inference pipeline."""
@@ -64,7 +62,7 @@ def test_async_inference_e2e(policy_server, monkeypatch):
         action_dim = 6
         batch_size = 1
         actions_per_chunk = policy_server.actions_per_chunk
-        
+
         return torch.zeros(batch_size, actions_per_chunk, action_dim)
 
     monkeypatch.setattr(PolicyServer, "_get_action_chunk", _fake_get_action_chunk, raising=True)
@@ -94,7 +92,7 @@ def test_async_inference_e2e(policy_server, monkeypatch):
     client_config = RobotClientConfig(
         server_address=server_address,
         robot=mock_robot,
-        chunk_size_threshold=0.,
+        chunk_size_threshold=0.0,
     )
 
     client = RobotClient(client_config)
@@ -104,10 +102,8 @@ def test_async_inference_e2e(policy_server, monkeypatch):
     def _make_observation():
         obs_dict = mock_robot.get_observation()
 
-        obs_dict = {
-            "observation.state": torch.tensor(list(obs_dict.values()))
-        }
-        
+        obs_dict = {"observation.state": torch.tensor(list(obs_dict.values()))}
+
         return TimedObservation(
             timestamp=time.time(),
             observation=obs_dict,
@@ -131,9 +127,8 @@ def test_async_inference_e2e(policy_server, monkeypatch):
     # ------------------------------------------------------------------
     # 4. Shutdown and assert expectations
     # ------------------------------------------------------------------
-    client.stop()    
-    grpc_server.stop(grace=.1)
-
+    client.stop()
+    grpc_server.stop(grace=0.1)
 
     assert client.chunks_received > 0, "Client did not receive any action chunks"
     assert len(policy_server._predicted_timesteps) > 0, "Server did not record any predicted timesteps"
