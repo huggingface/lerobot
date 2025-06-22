@@ -26,7 +26,7 @@ from lerobot.common.optim import OptimizerConfig
 from lerobot.common.optim.schedulers import LRSchedulerConfig
 from lerobot.common.utils.hub import HubMixin
 from lerobot.configs import parser
-from lerobot.configs.default import DatasetConfig, EvalConfig, WandBConfig
+from lerobot.configs.default import DatasetConfig, EvalConfig, PeftConfig, WandBConfig
 from lerobot.configs.policies import PreTrainedConfig
 
 TRAIN_CONFIG_NAME = "train_config.json"
@@ -63,6 +63,8 @@ class TrainPipelineConfig(HubMixin):
     scheduler: LRSchedulerConfig | None = None
     eval: EvalConfig = field(default_factory=EvalConfig)
     wandb: WandBConfig = field(default_factory=WandBConfig)
+    use_peft: bool = False
+    peft: PeftConfig = field(default_factory=PeftConfig)
 
     def __post_init__(self):
         self.checkpoint_path = None

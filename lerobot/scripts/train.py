@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import dataclasses
 import logging
 import time
 from contextlib import nullcontext
@@ -105,6 +106,64 @@ def update_policy(
     return train_metrics, output_dict
 
 
+def get_default_peft_configuration(policy_type):
+    if policy_type == "smolvla":
+        return {
+            "target_modules": r"(model\.vlm_with_expert\.lm_expert\..*\.(q_proj|v_proj)|model\.action_.*|model\.state_proj.*)",
+            "modules_to_save": [
+                # These are inf on load otherwise
+                "normalize_inputs",
+                "normalize_targets",
+                "unnormalize_outputs",
+            ],
+        }
+
+    return {'modules_to_save': None}
+
+
+def wrap_policy_in_peft_model(cfg, policy):
+    from peft import get_peft_model, PEFT_TYPE_TO_CONFIG_MAPPING, PeftType
+
+    # Disable all gradients because we'll only train the parameters selected by the PEFT method.
+    # Layers that should receive gradients anyway need to be listed in `modules_to_save`.
+    for p in policy.parameters():
+        p.requires_grad_(False)
+
+    peft_config_policy = get_default_peft_configuration(cfg.policy.type)
+    peft_config_cli = dataclasses.asdict(cfg.peft) if cfg.peft else {}
+    peft_method_type = PeftType[peft_config_cli["method_type"].upper()]
+    peft_config_cls = PEFT_TYPE_TO_CONFIG_MAPPING[peft_method_type]
+
+    # Handle specific CLI overrides
+    for key in ["target_modules", "modules_to_save", "r"]:
+        if peft_config_cli[key] is not None:
+            peft_config_policy[key] = peft_config_cli[key]
+
+    if 'target_modules' not in peft_config_policy:
+        raise ValueError(
+            f"There is no default `target_modules` value for policy {cfg.policy.type}. Please pass it manually."
+        )
+
+    # Init method depends on the used PEFT method, your specific PEFT method
+    # might not be considered here, in that case an error is raised.
+    if peft_config_cli["init_type"] is not None:
+        if peft_method_type == "LORA":
+            peft_config_policy["init_lora_weights"] = peft_config_cli["init_type"]
+        elif peft_method_type == "BONE":
+            peft_config_policy["init_weights"] = peft_config_cli["init_type"]
+        else:
+            raise ValueError(
+                f"Init type {peft_config_cli['init_type']} unknown for PEFT method {peft_method_type}."
+            )
+
+    policy = get_peft_model(
+        policy,
+        peft_config_cls(**peft_config_policy),
+    )
+
+    return policy
+
+
 @parser.wrap()
 def train(cfg: TrainPipelineConfig):
     cfg.validate()
@@ -140,6 +199,10 @@ def train(cfg: TrainPipelineConfig):
         cfg=cfg.policy,
         ds_meta=dataset.meta,
     )
+
+    if cfg.use_peft:
+        logging.info("Using PEFT! Wrapping model.")
+        policy = wrap_policy_in_peft_model(cfg, policy)
 
     logging.info("Creating optimizer and scheduler")
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)

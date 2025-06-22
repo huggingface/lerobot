@@ -69,3 +69,27 @@ class EvalConfig:
                 f"to increase the number of episodes to match the batch size (e.g. `eval.n_episodes={self.batch_size}`), "
                 f"or lower the batch size (e.g. `eval.batch_size={self.n_episodes}`)."
             )
+
+
+@dataclass
+class PeftConfig:
+    # PEFT offers many methods, layer adapters are the most common and currently also the most effective methods so
+    # we'll focus on those in this high-level config interface.
+
+    # `target_modules` can be set by the user but default to specific values depending on the used policy. See
+    # `get_peft_configuration` in `scripts/train.py`.
+    #
+    target_modules: list[str] | None = None
+
+    # Similarly to `target_modules` this will have policy-dependent defaults which the user can override.
+    modules_to_save: list[str] | None = None
+
+    # The PEFT (adapter) method to apply to the policy.
+    method_type: str = "LORA"
+
+    # Adapter initialization method. Look at the specific adapter method documentation for defaults.
+    init_type: str | None = None
+
+    # We expect that all adapters are in some way doing rank-decomposition. This is not true, there are several
+    # methods that don't but we're focussing on these methods for now.
+    r: int = 16

@@ -44,6 +44,10 @@ from pprint import pformat
 import numpy as np
 import rerun as rr
 
+from peft import PeftConfig, PeftModel
+import importlib
+
+
 from lerobot.common.cameras import (  # noqa: F401
     CameraConfig,  # noqa: F401
 )
@@ -144,10 +148,36 @@ class RecordConfig:
     def __post_init__(self):
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
         policy_path = parser.get_path_arg("policy")
+
         if policy_path:
             cli_overrides = parser.get_cli_overrides("policy")
-            self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
-            self.policy.pretrained_path = policy_path
+
+            if (policy_path / 'adapter_config.json').exists():
+                # The pretrained checkpoint is a PEFT adapter, cool. Currently we don't upload the
+                # policy's config alongside the adapter config but to initialize the policy we
+                # need a policy config. We assume that the config hasn't changed and we infer
+                # the policy's config class from the base class mentioned in the adapter config.
+                self.peft_config = PeftConfig.from_pretrained(policy_path)
+
+                if getattr(self.peft_config, "auto_mapping", None) is None:
+                    raise ValueError(
+                        "No auto-mapping config found in adapter config. Cannot determine policy config."
+                    )
+
+                auto_mapping = getattr(self.peft_config, "auto_mapping", None)
+                base_model_class = auto_mapping["base_model_class"]
+                parent_library_name = auto_mapping["parent_library"]
+
+                parent_library = importlib.import_module(parent_library_name)
+                target_class = getattr(parent_library, base_model_class)
+                policy_config_class = target_class.config_class
+
+                self.policy = policy_config_class()
+                self.policy.pretrained_path = policy_path
+
+            else:
+                self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
+                self.policy.pretrained_path = policy_path
 
         if self.teleop is None and self.policy is None:
             raise ValueError("Choose a policy, a teleoperator or both to control the robot")
@@ -277,7 +307,19 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         )
 
     # Load pretrained policy
-    policy = None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
+
+    if cfg.use_peft:
+        # in case of PEFT we re-use the policy pretrained path to point to the adapter path.
+        peft_path = cfg.policy.pretrained_path
+        cfg.policy.pretrained_path = None
+
+        policy = make_policy(cfg.policy, ds_meta=dataset.meta)
+
+        policy = PeftModel.from_pretrained(policy, peft_path)
+        policy = policy.merge_and_unload()
+
+    else:
+        policy = None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
 
     robot.connect()
     if teleop is not None:

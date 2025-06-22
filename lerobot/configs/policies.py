@@ -74,6 +74,12 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
             )
             self.use_amp = False
 
+    def get(self, name, default=None):
+        return getattr(self, name, default)
+
+    def __contains__(self, name):
+        return hasattr(self, name)
+
     @property
     def type(self) -> str:
         return self.get_choice_name(self.__class__)
