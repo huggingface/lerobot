@@ -21,7 +21,6 @@ from lerobot.scripts.server.helpers import (
     observations_similar,
     setup_logging,
 )
-from lerobot.scripts.server.policy_server_config import PolicyServerConfig
 
 
 class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
