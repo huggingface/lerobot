@@ -1,22 +1,18 @@
-
 import pickle  # nosec
 import time
 from concurrent import futures
 from queue import Queue
-from typing import Generator, List, Optional
+from typing import Optional
 
 import grpc
 import torch
-from datasets import load_dataset
 
 from lerobot.common.policies.factory import get_policy_class
 from lerobot.scripts.server import (
     async_inference_pb2,  # type: ignore
     async_inference_pb2_grpc,  # type: ignore
 )
-from lerobot.scripts.server.policy_server_config import PolicyServerConfig
 from lerobot.scripts.server.constants import supported_policies
-
 from lerobot.scripts.server.helpers import (
     TimedAction,
     TimedObservation,
@@ -24,6 +20,7 @@ from lerobot.scripts.server.helpers import (
     observations_similar,
     setup_logging,
 )
+from lerobot.scripts.server.policy_server_config import PolicyServerConfig
 
 
 class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
@@ -48,7 +45,7 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
         self._setup_server()  # new client's handshake clears server state
 
         return async_inference_pb2.Empty()
-    
+
     def _validate_policy_specs(self, policy_specs: TinyPolicyConfig) -> None:
         assert isinstance(policy_specs, TinyPolicyConfig), (
             f"Policy specs must be a TinyPolicyConfig. Got {type(policy_specs)}"
@@ -56,7 +53,7 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
         assert policy_specs.policy_type in supported_policies, (
             f"Policy type {policy_specs.policy_type} not supported. Supported policies: {supported_policies}"
         )
-    
+
     def SendPolicyInstructions(self, request, context):  # noqa: N802
         """Receive policy instructions from the robot client"""
         client_id = context.peer()
@@ -217,7 +214,8 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
         t_0 + i*environment_dt for i in range(len(action_chunk))
         """
         return [
-            TimedAction(t_0 + i * self.environment_dt, action, i_0 + i) for i, action in enumerate(action_chunk)
+            TimedAction(t_0 + i * self.environment_dt, action, i_0 + i)
+            for i, action in enumerate(action_chunk)
         ]
 
     @torch.no_grad()
@@ -330,13 +328,12 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
 
         chunk_time = time.perf_counter()
         self.logger.debug(f"Action chunk creation time: {chunk_time - post_inference_time:.6f}s")
-        
+
         time.sleep(
             max(0, self.config.inference_latency - max(0, chunk_time - start_time))
         )  # sleep to control inference latency
 
         return action_chunk
-
 
     def stop(self):
         """Stop the server"""
@@ -347,7 +344,7 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
 def serve(host="localhost", port=8080):
     # Create the server instance first
     policy_server = PolicyServer()
-    
+
     # Setup and start gRPC server
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
     async_inference_pb2_grpc.add_AsyncInferenceServicer_to_server(policy_server, server)
