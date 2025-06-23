@@ -16,7 +16,9 @@
 # limitations under the License.
 
 import math
+from copy import deepcopy
 from dataclasses import asdict
+from pathlib import Path
 from typing import Callable, Literal
 
 import einops
@@ -24,6 +26,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
+from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
+from safetensors.torch import save_model as save_model_as_safetensor
 from torch import Tensor
 from torch.distributions import MultivariateNormal, TanhTransform, Transform, TransformedDistribution
 
@@ -479,6 +483,15 @@ class SACPolicy(
         temp_init = self.config.temperature_init
         self.log_alpha = nn.Parameter(torch.tensor([math.log(temp_init)]))
         self.temperature = self.log_alpha.exp().item()
+
+    def _save_pretrained(self, save_directory: Path) -> None:
+        # HACK: In order to resume training, we need to save the config the current temperature
+        # as initial temperature
+        config = deepcopy(self.config)
+        config.temperature_init = self.temperature
+        config._save_pretrained(save_directory)
+        model_to_save = self.module if hasattr(self, "module") else self
+        save_model_as_safetensor(model_to_save, str(save_directory / SAFETENSORS_SINGLE_FILE))
 
 
 class SACObservationEncoder(nn.Module):
