@@ -22,22 +22,20 @@ from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnecte
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
-from .config_moveit2 import ActionType, MoveIt2Config
-from .moveit2_interface import MoveIt2Interface
+from .config_ros2 import ActionType, ROS2Config
+from .ros2_interface import ROS2Interface
 
 logger = logging.getLogger(__name__)
 
 
-class MoveIt2(Robot):
-    config_class = MoveIt2Config
-    name = "moveit2"
+class ROS2Robot(Robot):
+    config_class = ROS2Config
+    name = "ros2"
 
-    def __init__(self, config: MoveIt2Config):
+    def __init__(self, config: ROS2Config):
         super().__init__(config)
         self.config = config
-        self.moveit2_interface = MoveIt2Interface(
-            config.moveit2_interface, config.action_type, config.arm_joint_names
-        )
+        self.ros2_interface = ROS2Interface(config.ros2_interface, config.action_type)
         self.cameras = make_cameras_from_configs(config.cameras)
 
     @property
@@ -48,9 +46,9 @@ class MoveIt2(Robot):
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
-        all_joint_names = self.config.arm_joint_names.copy()
-        if self.config.moveit2_interface.gripper_joint_name:
-            all_joint_names.append(self.config.moveit2_interface.gripper_joint_name)
+        all_joint_names = self.config.ros2_interface.arm_joint_names.copy()
+        if self.config.ros2_interface.gripper_joint_name:
+            all_joint_names.append(self.config.ros2_interface.gripper_joint_name)
         motor_state_ft = {f"{motor}.pos": float for motor in all_joint_names}
         return {**motor_state_ft, **self._cameras_ft}
 
@@ -67,13 +65,15 @@ class MoveIt2(Robot):
                 "gripper.pos": float,
             }
         elif self.config.action_type == ActionType.JOINT_POSITION:
-            return {f"{joint}.pos": float for joint in self.config.arm_joint_names} | {"gripper.pos": float}
+            return {f"{joint}.pos": float for joint in self.config.ros2_interface.arm_joint_names} | {
+                "gripper.pos": float
+            }
         else:
             raise ValueError(f"Unsupported action type: {self.config.action_type}")
 
     @property
     def is_connected(self) -> bool:
-        return self.moveit2_interface.is_connected and all(cam.is_connected for cam in self.cameras.values())
+        return self.ros2_interface.is_connected and all(cam.is_connected for cam in self.cameras.values())
 
     def connect(self, calibrate: bool = True) -> None:
         if self.is_connected:
@@ -81,7 +81,7 @@ class MoveIt2(Robot):
 
         for cam in self.cameras.values():
             cam.connect()
-        self.moveit2_interface.connect()
+        self.ros2_interface.connect()
 
     @property
     def is_calibrated(self) -> bool:
@@ -98,7 +98,7 @@ class MoveIt2(Robot):
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
         obs_dict: dict[str, Any] = {}
-        joint_state = self.moveit2_interface.joint_state
+        joint_state = self.ros2_interface.joint_state
         if joint_state is None:
             raise ValueError("Joint state is not available yet.")
         obs_dict.update({f"{joint}.pos": pos for joint, pos in joint_state["position"].items()})
@@ -151,14 +151,14 @@ class MoveIt2(Robot):
                 action["angular_y.vel"],
                 action["angular_z.vel"],
             )
-            self.moveit2_interface.servo(linear=linear_vel, angular=angular_vel)
+            self.ros2_interface.servo(linear=linear_vel, angular=angular_vel)
         elif self.config.action_type == ActionType.JOINT_POSITION:
             if self.config.action_from_keyboard:
                 action = self.keyboard_to_joint_position_action(action)
 
             if self.config.max_relative_target is not None:
                 goal_present_pos = {}
-                joint_state = self.moveit2_interface.joint_state
+                joint_state = self.ros2_interface.joint_state
                 if joint_state is None:
                     raise ValueError("Joint state is not available yet.")
 
@@ -167,18 +167,18 @@ class MoveIt2(Robot):
                     goal_present_pos[key] = (goal, present_pos)
                 action = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
 
-            joint_positions = [action[joint + ".pos"] for joint in self.config.arm_joint_names]
-            self.moveit2_interface.send_joint_position_command(joint_positions)
+            joint_positions = [action[joint + ".pos"] for joint in self.config.ros2_interface.arm_joint_names]
+            self.ros2_interface.send_joint_position_command(joint_positions)
 
         gripper_pos = action["gripper.pos"]
-        self.moveit2_interface.send_gripper_command(gripper_pos)
+        self.ros2_interface.send_gripper_command(gripper_pos)
         return action
 
     def keyboard_to_joint_position_action(self, pressed_keys: dict[str, Any]) -> dict[str, float]:
         """Convert pressed keys to joint position action commands for teleop.
         hardcoded for a 6-DOF arm with a gripper.
         """
-        action = {f"{joint}.pos": 0.5 for joint in self.config.arm_joint_names}
+        action = {f"{joint}.pos": 0.5 for joint in self.config.ros2_interface.arm_joint_names}
         if "q" in pressed_keys:
             action["joint_1.pos"] += 0.2
         if "a" in pressed_keys:
@@ -266,6 +266,6 @@ class MoveIt2(Robot):
 
         for cam in self.cameras.values():
             cam.disconnect()
-        self.moveit2_interface.disconnect()
+        self.ros2_interface.disconnect()
 
         logger.info(f"{self} disconnected.")

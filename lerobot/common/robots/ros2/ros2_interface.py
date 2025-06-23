@@ -18,7 +18,7 @@ import time
 
 from lerobot.common.errors import DeviceNotConnectedError
 
-from .config_moveit2 import ActionType, MoveIt2InterfaceConfig
+from .config_ros2 import ActionType, ROS2InterfaceConfig
 from .moveit2_servo import MoveIt2Servo
 
 logger = logging.getLogger(__name__)
@@ -40,13 +40,12 @@ except ImportError as e:
     ROS2_AVAILABLE = False
 
 
-class MoveIt2Interface:
+class ROS2Interface:
     """Class to interface with a MoveIt2 manipulator."""
 
-    def __init__(self, config: MoveIt2InterfaceConfig, action_type: ActionType, arm_joint_names: list[str]):
+    def __init__(self, config: ROS2InterfaceConfig, action_type: ActionType):
         self.config = config
         self.action_type = action_type
-        self.arm_joint_names = arm_joint_names
         self.robot_node: Node | None = None
         self.pos_cmd_pub: Publisher | None = None
         self.gripper_action_client: ActionClient | None = None
@@ -105,7 +104,7 @@ class MoveIt2Interface:
             normalize (bool): Whether to unnormalize the joint positions based on the robot's configuration.
         """
         if not self.robot_node:
-            raise DeviceNotConnectedError("MoveIt2Interface is not connected. You need to call `connect()`.")
+            raise DeviceNotConnectedError("ROS2Interface is not connected. You need to call `connect()`.")
 
         if unnormalize:
             if self.config.min_joint_positions is None or self.config.max_joint_positions is None:
@@ -122,9 +121,9 @@ class MoveIt2Interface:
                 )
             ]
 
-        if len(joint_positions) != len(self.arm_joint_names):
+        if len(joint_positions) != len(self.config.arm_joint_names):
             raise ValueError(
-                f"Expected {len(self.arm_joint_names)} joint positions, but got {len(joint_positions)}."
+                f"Expected {len(self.config.arm_joint_names)} joint positions, but got {len(joint_positions)}."
             )
         msg = Float64MultiArray()
         msg.data = joint_positions
@@ -134,7 +133,7 @@ class MoveIt2Interface:
 
     def servo(self, linear, angular, normalize: bool = True) -> None:
         if not self.moveit2_servo:
-            raise DeviceNotConnectedError("MoveIt2Interface is not connected. You need to call `connect()`.")
+            raise DeviceNotConnectedError("ROS2Interface is not connected. You need to call `connect()`.")
 
         if normalize:
             linear = [v * self.config.max_linear_velocity for v in linear]
@@ -150,7 +149,7 @@ class MoveIt2Interface:
             bool: True if the command was sent successfully, False otherwise.
         """
         if not self.gripper_action_client:
-            raise RuntimeError("MoveIt2Interface is not connected. You need to call `connect()`.")
+            raise RuntimeError("ROS2Interface is not connected. You need to call `connect()`.")
 
         if not self.gripper_action_client.wait_for_server(timeout_sec=1.0):
             logger.error("Gripper action server not available")
@@ -187,7 +186,7 @@ class MoveIt2Interface:
         positions = {}
         velocities = {}
         name_to_index = {name: i for i, name in enumerate(msg.name)}
-        for joint_name in self.arm_joint_names:
+        for joint_name in self.config.arm_joint_names:
             idx = name_to_index.get(joint_name)
             if idx is None:
                 raise ValueError(f"Joint '{joint_name}' not found in joint state.")

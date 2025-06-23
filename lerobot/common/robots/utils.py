@@ -50,9 +50,9 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
 
         return ViperX(config)
     elif config.type == "annin_ar4_mk1":
-        from .moveit2 import MoveIt2
+        from .ros2 import ROS2Robot
 
-        return MoveIt2(config)
+        return ROS2Robot(config)
     elif config.type == "mock_robot":
         from tests.mocks.mock_robot import MockRobot
 

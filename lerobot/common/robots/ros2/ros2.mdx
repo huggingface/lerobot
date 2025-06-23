@@ -37,20 +37,20 @@ See [AR4 ROS Driver](https://github.com/ycheng517/ar4_ros_driver) for an example
 
 ## Configuration
 
-Create a config class for your robot by sub-classing `MoveIt2Config`.
+Create a config class for your robot by sub-classing `ROS2Config`.
 You may override joint names, gripper configurations, and other parameters as needed.
 An example config class may look like this:
 
 ```python
 from dataclasses import dataclass, field
 from lerobot.common.robots.config import RobotConfig
-from lerobot.common.robots.moveit2.config_moveit2 import MoveIt2Config, MoveIt2InterfaceConfig
+from lerobot.common.robots.moveit2.config_ros2 import ROS2Config, ROS2InterfaceConfig
 
 @RobotConfig.register_subclass("my_moveit2_robot")
 @dataclass
-class MyRobotConfig(MoveIt2Config):
-    moveit2_interface: MoveIt2InterfaceConfig = field(
-        default_factory=lambda: MoveIt2InterfaceConfig(
+class MyRobotConfig(ROS2Config):
+    ros2_interface: ROS2InterfaceConfig = field(
+        default_factory=lambda: ROS2InterfaceConfig(
             base_link="base_link",
             arm_joint_names=[
                 "joint_1",

@@ -27,14 +27,25 @@ class ActionType(Enum):
 
 
 @dataclass
-class MoveIt2InterfaceConfig:
-    # Namespace used by MoveIt2 nodes
+class ROS2InterfaceConfig:
+    # Namespace used by ros2_control / MoveIt2 nodes
     namespace: str = ""
 
-    # The MoveIt2 base link name.
-    base_link: str = "base_link"
-
+    arm_joint_names: list[str] = field(
+        default_factory=lambda: [
+            "joint_1",
+            "joint_2",
+            "joint_3",
+            "joint_4",
+            "joint_5",
+            "joint_6",
+        ]
+    )
     gripper_joint_name: str = "gripper_joint"
+
+    # Base link name for computing end effector pose / velocity
+    # Only applicable for cartesian control
+    base_link: str = "base_link"
 
     # Only applicable if velocity control is used.
     max_linear_velocity: float = 0.05
@@ -49,20 +60,9 @@ class MoveIt2InterfaceConfig:
 
 
 @dataclass
-class MoveIt2Config(RobotConfig):
+class ROS2Config(RobotConfig):
     # Action type for controlling the robot. Can be 'cartesian_velocity' or 'joint_position'.
     action_type: ActionType = ActionType.JOINT_POSITION
-
-    arm_joint_names: list[str] = field(
-        default_factory=lambda: [
-            "joint_1",
-            "joint_2",
-            "joint_3",
-            "joint_4",
-            "joint_5",
-            "joint_6",
-        ]
-    )
 
     # `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
     # Set this to a positive scalar to have the same value for all motors, or a list that is the same length as
@@ -72,23 +72,23 @@ class MoveIt2Config(RobotConfig):
     # cameras
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
 
-    # MoveIt2 interface configuration
-    moveit2_interface: MoveIt2InterfaceConfig = field(default_factory=MoveIt2InterfaceConfig)
+    # ROS2 interface configuration
+    ros2_interface: ROS2InterfaceConfig = field(default_factory=ROS2InterfaceConfig)
 
     action_from_keyboard: bool = False
 
 
 @RobotConfig.register_subclass("annin_ar4_mk1")
 @dataclass
-class AnninAR4Config(MoveIt2Config):
-    """Annin Robotics AR4 robot configuration - extends MoveIt2Config with
+class AnninAR4Config(ROS2Config):
+    """Annin Robotics AR4 robot configuration - extends ROS2Config with
     AR4-specific settings
     """
 
     action_type: ActionType = ActionType.JOINT_POSITION
 
-    moveit2_interface: MoveIt2InterfaceConfig = field(
-        default_factory=lambda: MoveIt2InterfaceConfig(
+    ros2_interface: ROS2InterfaceConfig = field(
+        default_factory=lambda: ROS2InterfaceConfig(
             base_link="base_link",
             gripper_joint_name="gripper_jaw1_joint",
             min_joint_positions=[-2.9671, -0.7330, -1.5533, -2.8798, -1.8326, -2.7053],

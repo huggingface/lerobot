@@ -2,18 +2,18 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from lerobot.common.robots.moveit2 import MoveIt2, MoveIt2Config
+from lerobot.common.robots.moveit2 import MoveIt2, ROS2Config
 
 
 def _make_moveit2_interface_mock() -> MagicMock:
-    """Return a MoveIt2Interface mock with just the attributes used by the robot."""
+    """Return a ROS2Interface mock with just the attributes used by the robot."""
     interface = MagicMock(name="MoveIt2InterfaceMock")
     interface.is_connected = False
 
-    cfg = MoveIt2Config()
+    cfg = ROS2Config()
 
     # Mock joint state
-    all_joint_names = cfg.moveit2_interface.arm_joint_names + [cfg.moveit2_interface.gripper_joint_name]
+    all_joint_names = cfg.ros2_interface.arm_joint_names + [cfg.ros2_interface.gripper_joint_name]
     interface.joint_state = {
         "position": dict.fromkeys(all_joint_names, 0.1),
         "velocity": dict.fromkeys(all_joint_names, 0.2),
@@ -45,8 +45,8 @@ def _make_moveit2_interface_mock() -> MagicMock:
 def moveit2_robot():
     interface_mock = _make_moveit2_interface_mock()
 
-    with patch("lerobot.common.robots.moveit2.moveit2.MoveIt2Interface", return_value=interface_mock):
-        cfg = MoveIt2Config()
+    with patch("lerobot.common.robots.moveit2.moveit2.ROS2Interface", return_value=interface_mock):
+        cfg = ROS2Config()
         robot = MoveIt2(cfg)
         yield robot
         if robot.is_connected:
@@ -70,8 +70,8 @@ def test_get_observation(moveit2_robot):
     obs = moveit2_robot.get_observation()
 
     # Check that all expected joint positions are in the observation
-    expected_joints = moveit2_robot.config.moveit2_interface.arm_joint_names + [
-        moveit2_robot.config.moveit2_interface.gripper_joint_name
+    expected_joints = moveit2_robot.config.ros2_interface.arm_joint_names + [
+        moveit2_robot.config.ros2_interface.gripper_joint_name
     ]
     expected_keys = {f"{joint}.pos" for joint in expected_joints}
 
@@ -102,10 +102,10 @@ def test_send_action(moveit2_robot):
     assert returned_action == action
 
     # Verify that the interface methods were called correctly
-    moveit2_robot.moveit2_interface.servo.assert_called_once_with(
+    moveit2_robot.ros2_interface.servo.assert_called_once_with(
         linear=(0.1, 0.2, 0.3), angular=(0.4, 0.5, 0.6)
     )
-    moveit2_robot.moveit2_interface.send_gripper_command.assert_called_once_with(0.8)
+    moveit2_robot.ros2_interface.send_gripper_command.assert_called_once_with(0.8)
 
 
 def test_send_action_with_max_relative_target(moveit2_robot):
@@ -204,8 +204,8 @@ def test_observation_features(moveit2_robot):
     features = moveit2_robot.observation_features
 
     # Check that all joint position features are defined
-    expected_joints = moveit2_robot.config.moveit2_interface.arm_joint_names + [
-        moveit2_robot.config.moveit2_interface.gripper_joint_name
+    expected_joints = moveit2_robot.config.ros2_interface.arm_joint_names + [
+        moveit2_robot.config.ros2_interface.gripper_joint_name
     ]
     for joint in expected_joints:
         assert f"{joint}.pos" in features
