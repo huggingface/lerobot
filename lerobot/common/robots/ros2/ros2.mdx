@@ -1,14 +1,18 @@
-# MoveIt2
+# ROS 2
 
-This guide shows you how to integrate any MoveIt2-compatible robot with LeRobot. The integration uses MoveIt Servo for real-time cartesian velocity control.
+This guide illustrates how to integrate ros2_control or MoveIt2 compatible robots with LeRobot.
+For now, a single robot arm with a 1-DoF gripper is supported.
 
 ## Overview
 
 **Supported control modes:**
-- ✅ Cartesian velocity control
-- 🚧 End-effector pose and joint position control (coming soon)
+- ✅ Joint position via ros2_control
+- ✅ Cartesian velocity via MoveIt2
+- 🚧 End-effector pose (coming soon)
 
-**Compatible robots:** Any robot with a working MoveIt2 configuration package
+This integration allows you to use LeRobot's full range of features with your robot, including teleoperation, recording, and replay.
+A basic understanding of ROS 2, ros2_control, and MoveIt2 is required.
+Your robot should already be configured to work with these frameworks.
 
 ## Prerequisites
 
@@ -17,12 +21,22 @@ This guide shows you how to integrate any MoveIt2-compatible robot with LeRobot.
 Before getting started, ensure you have the following installed:
 
 - [ROS 2 Jazzy](https://docs.ros.org/en/jazzy/Installation.html)
-- [MoveIt2](https://moveit.ai/install-moveit2/binary)
+  - Older ROS 2 versions will still work but cartesian velocity control will be broken.
+- [MoveIt2](https://moveit.ai/install-moveit2/binary) if cartesian velocity control is desired
 
+For joint position control, the robot should be configured with the following:
+- `position_controllers/JointGroupPositionController` for the robot arm joints
+- `position_controllers/GripperActionController` for the gripper
+- `joint_state_broadcaster/JointStateBroadcaster` for joint state feedback
 
-Since ROS 2 Jazzy uses Python 3.12, you must run LeRobot in a Python 3.12 virtual environment, i.e:
+For cartesian velocity control, the robot should be configured with the same gripper and state feedback as above, and additionally:
+- `joint_trajectory_controller/JointTrajectoryController` for robot arm control
+- `moveit_servo` node for real-time control
+
+LeRobot should run in a virtual environment that has the same Python version as your ROS 2 distribution, i.e for jazzy, Python 3.12 should be used:
 ```bash
 uv venv --python 3.12 && source .venv/bin/activate
+source /opt/ros/jazzy/setup.bash
 ```
 
 ### Robot Setup
@@ -39,16 +53,18 @@ See [AR4 ROS Driver](https://github.com/ycheng517/ar4_ros_driver) for an example
 
 Create a config class for your robot by sub-classing `ROS2Config`.
 You may override joint names, gripper configurations, and other parameters as needed.
-An example config class may look like this:
+An example config class for velocity control may look like this:
 
 ```python
 from dataclasses import dataclass, field
 from lerobot.common.robots.config import RobotConfig
-from lerobot.common.robots.moveit2.config_ros2 import ROS2Config, ROS2InterfaceConfig
+from lerobot.common.robots.ros2.config_ros2 import ROS2Config, ROS2InterfaceConfig
 
-@RobotConfig.register_subclass("my_moveit2_robot")
+@RobotConfig.register_subclass("my_ros2_robot")
 @dataclass
 class MyRobotConfig(ROS2Config):
+    action_type: ActionType = ActionType.JOINT_VELOCITY
+
     ros2_interface: ROS2InterfaceConfig = field(
         default_factory=lambda: ROS2InterfaceConfig(
             base_link="base_link",
@@ -71,40 +87,23 @@ class MyRobotConfig(ROS2Config):
 
 ## Getting Started
 
+The following steps will guide you through launching your robot and performing keyboard teleoperation with cartesian velocity control.
+
 ### Step 1: Launch Your Robot
 
-Start your MoveIt2-enabled robot stack.
+Start your ROS2-enabled robot stack.
 The exact commands depend on your robot model and configuration.
 
-**Example: Annin Robotics AR4**
+**Example: [Annin Robotics AR4](https://github.com/ycheng517/ar4_ros_driver)**
 ```bash
-# Launch the robot driver
+# Launch the robot driver and ros2_control controllers
 ros2 launch annin_ar4_driver driver.launch.py ar_model:=mk1 calibrate:=True
 
 # Launch MoveIt2 with Moveit Servo enabled
 ros2 launch annin_ar4_moveit_config moveit.launch.py ar_model:=mk1 moveit_servo:=True
 ```
 
-### Step 2: Verify Robot Status
-
-Before teleoperation, verify your robot is ready:
-
-1. **Check that required nodes are running**:
-   ```bash
-   ros2 node list | grep -E "(move_group|servo_node)"
-   ```
-
-2. **Verify joint states are being published**:
-   ```bash
-   ros2 topic echo /joint_states --once
-   ```
-
-3. **Check MoveIt Servo services are available**:
-   ```bash
-   ros2 service list | grep servo_node
-   ```
-
-### Step 3: Teleoperation (with keyboard)
+### Step 2: Teleoperation (with keyboard)
 
 Once your robot is launched and ready, you can teleoperate it using keyboard controls:
 
@@ -121,7 +120,7 @@ python -m lerobot.teleoperate \
     --display_data=true
 ```
 
-#### Control Mapping
+#### Control Mapping (For Cartesian Velocity Control)
 
 The default keyboard mapping provides intuitive control:
 

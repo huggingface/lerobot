@@ -2,7 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from lerobot.common.robots.moveit2 import MoveIt2, ROS2Config
+from lerobot.common.robots.ros2 import ROS2Config, ROS2Robot
 
 
 def _make_moveit2_interface_mock() -> MagicMock:
@@ -47,7 +47,7 @@ def moveit2_robot():
 
     with patch("lerobot.common.robots.moveit2.moveit2.ROS2Interface", return_value=interface_mock):
         cfg = ROS2Config()
-        robot = MoveIt2(cfg)
+        robot = ROS2Robot(cfg)
         yield robot
         if robot.is_connected:
             robot.disconnect()
