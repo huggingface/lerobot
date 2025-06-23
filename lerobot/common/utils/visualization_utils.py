@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Helper utilties to visualize robot data with Rerun.
+Helper utilities to visualize robot data with Rerun.
 
 This module provides classes for logging URDF data, video streams, and teleoperation data to Rerun.
 """
@@ -22,15 +22,15 @@ import logging
 import os
 import threading
 import time
-import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
-from typing import Any, Dict, Optional, Protocol, Union, runtime_checkable, Literal
+from typing import Any, Dict, Optional, Protocol, Union, runtime_checkable
 
 import av
 import av.video.stream
 import cv2
+import defusedxml.ElementTree
 import numpy as np
 import rerun as rr
 
@@ -206,10 +206,10 @@ def get_revolute_joint_child_paths(urdf_path: Union[str, Path]) -> Dict[str, Joi
     :param urdf_path: Path to the URDF file.
     :return: A dictionary mapping joint names to JointInfo dataclasses containing the path, xyz coordinates, and limits.
     :raises FileNotFoundError: If the URDF file does not exist at the specified path.
-    :raises ET.ParseError: If the URDF file is not a valid XML file or cannot be parsed.
+    :raises defusedxml.ElementTree.ParseError: If the URDF file is not a valid XML file or cannot be parsed.
     :raises KeyError: If a required attribute is missing in the URDF file (e.g., 'name', 'link', 'xyz', 'lower', 'upper').
     """
-    tree = ET.parse(urdf_path)
+    tree = defusedxml.ElementTree.parse(urdf_path)
     root = tree.getroot()
 
     # Map child link to (parent link, joint name)
@@ -424,8 +424,6 @@ class RerunRobotLogger:
                 )
                 self.log_urdf = False
 
-
-
     def cleanup(self):
         """
         Cleanup the logger, closing any video loggers and shutting down Rerun.
@@ -501,7 +499,7 @@ class RerunRobotLogger:
             width=self.width or shape[1],
             fps=self.fps,
         )
-    
+
     def __repr__(self):
         return (
             f"RerunRobotLogger(teleop={self.teleop}, robot={self.robot}, "

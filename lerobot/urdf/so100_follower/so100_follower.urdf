@@ -1,6 +1,6 @@
 <?xml version='1.0' encoding='utf-8'?>
 <robot name="so100_follower">
-  
+
   <!-- Materials -->
   <material name="3d_printed">
     <color rgba="1.0 0.82 0.12 1.0"/>
@@ -297,4 +297,4 @@
     </actuator>
   </transmission>
 
-</robot> 
+</robot>

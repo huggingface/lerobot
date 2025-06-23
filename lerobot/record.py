@@ -41,9 +41,6 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from pprint import pformat
 
-import numpy as np
-import rerun as rr
-
 from lerobot.common.cameras import (  # noqa: F401
     CameraConfig,  # noqa: F401
 )
@@ -139,12 +136,12 @@ class RecordConfig:
     # Stream camera images as a video stream or as individual frames.
     # Video streams can be played back, but have latency and memory impact.
     # Only latest is saved for individual frames, but little latency or memory impact.
-    # Choices are 
+    # Choices are
     #   "video" (h264 encoded)
     #   "jpeg" (compressed, preferred for static images)
     #   "raw" (uncompressed)
     #   "none" (not displayed)
-    image_stream_type: str= "video"
+    image_stream_type: str = "video"
     # Use vocal synthesis to read events.
     play_sounds: bool = True
     # Resume recording on an existing dataset.
@@ -202,7 +199,11 @@ def record_loop(
             observation_frame = build_dataset_frame(dataset.features, observation, prefix="observation")
 
         if policy is not None and observation_frame is not None:
-            device = policy.config.device if hasattr(policy.config, "device") and policy.config.device is not None else "cpu"
+            device = (
+                policy.config.device
+                if hasattr(policy.config, "device") and policy.config.device is not None
+                else "cpu"
+            )
             action_values = predict_action(
                 observation_frame,
                 policy,
@@ -289,14 +290,11 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     rerun_logger = None
     if cfg.display_data:
         if cfg.image_stream_type not in ["video", "jpeg", "raw", "none"]:
-            logging.warning(
-                f"Invalid image_stream_type '{cfg.image_stream_type}'. "
-                "Using 'video' as default."
-            )
+            logging.warning(f"Invalid image_stream_type '{cfg.image_stream_type}'. Using 'video' as default.")
             cfg.image_stream_type = "video"
         rerun_logger = RerunRobotLogger(
             teleop=teleop, robot=robot, fps=cfg.dataset.fps, image_stream_type=cfg.image_stream_type
-            )
+        )
         rerun_logger.init("recording")
 
     listener, events = init_keyboard_listener()
@@ -312,7 +310,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             dataset=dataset,
             control_time_s=cfg.dataset.episode_time_s,
             single_task=cfg.dataset.single_task,
-            rerun_logger=rerun_logger
+            rerun_logger=rerun_logger,
         )
 
         # Execute a few seconds without recording to give time to manually reset the environment
@@ -328,7 +326,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 teleop=teleop,
                 control_time_s=cfg.dataset.reset_time_s,
                 single_task=cfg.dataset.single_task,
-                rerun_logger=rerun_logger
+                rerun_logger=rerun_logger,
             )
 
         if events["rerecord_episode"]:
@@ -351,7 +349,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     if not is_headless() and listener is not None:
         listener.stop()
-    
+
     if rerun_logger is not None:
         rerun_logger.cleanup()
 
