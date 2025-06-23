@@ -286,7 +286,12 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     listener, events = init_keyboard_listener()
 
-    for recorded_episodes in range(cfg.dataset.num_episodes):
+    if cfg.resume:
+        target_episodes = dataset.num_episodes + cfg.dataset.num_episodes
+    else:
+        target_episodes = cfg.dataset.num_episodes
+
+    while dataset.num_episodes < target_episodes:
         log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
         record_loop(
             robot=robot,
@@ -303,7 +308,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         # Execute a few seconds without recording to give time to manually reset the environment
         # Skip reset for the last episode to be recorded
         if not events["stop_recording"] and (
-            (recorded_episodes < cfg.dataset.num_episodes - 1) or events["rerecord_episode"]
+            (dataset.num_episodes < target_episodes - 1) or events["rerecord_episode"]
         ):
             log_say("Reset the environment", cfg.play_sounds)
             record_loop(
