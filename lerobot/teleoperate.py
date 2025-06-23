@@ -108,7 +108,7 @@ def teleop_loop(
         print(f"\ntime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
 
         if duration is not None and time.perf_counter() - start >= duration:
-            break
+            return
 
         move_cursor_up(len(action) + 5)
 

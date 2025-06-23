@@ -193,7 +193,6 @@ def record_loop(
         start_loop_t = time.perf_counter()
 
         if events["exit_early"]:
-            print("Preparing for next loop")
             events["exit_early"] = False
             break
 
@@ -253,14 +252,14 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     obs_features = hw_to_dataset_features(robot.observation_features, "observation", cfg.dataset.video)
     dataset_features = {**action_features, **obs_features}
 
+    cameras = getattr(robot, "cameras", [])
     if cfg.resume:
         dataset = LeRobotDataset(
             cfg.dataset.repo_id,
             root=cfg.dataset.root,
         )
 
-        cameras = getattr(robot, "cameras", [])
-        if cameras and len(cameras) > 0:
+        if len(cameras) > 0:
             dataset.start_image_writer(
                 num_processes=cfg.dataset.num_image_writer_processes,
                 num_threads=cfg.dataset.num_image_writer_threads_per_camera * len(cameras),
@@ -269,7 +268,6 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     else:
         # Create empty dataset or load existing saved episodes
         sanity_check_dataset_name(cfg.dataset.repo_id, cfg.policy)
-        cameras = getattr(robot, "cameras", [])
         dataset = LeRobotDataset.create(
             cfg.dataset.repo_id,
             cfg.dataset.fps,
