@@ -3,7 +3,7 @@
 
   <!-- Materials -->
   <material name="3d_printed">
-    <color rgba="1.0 0.82 0.12 1.0"/>
+    <color rgba="0.94 0.94 0.94 1.0"/>
   </material>
   <material name="sts3215">
     <color rgba="0.1 0.1 0.1 1.0"/>
@@ -29,11 +29,11 @@
       </geometry>
       <material name="sts3215"/>
     </visual>
-    <collision>
+    <!-- <collision>
       <geometry>
         <mesh filename="assets/Base.stl"/>
       </geometry>
-    </collision>
+    </collision> -->
   </link>
 
   <!-- Link shoulder -->
@@ -55,11 +55,11 @@
       </geometry>
       <material name="sts3215"/>
     </visual>
-    <collision>
+    <!-- <collision>
       <geometry>
         <mesh filename="assets/Rotation_Pitch.stl"/>
       </geometry>
-    </collision>
+    </collision> -->
   </link>
 
   <!-- Link upper_arm -->
@@ -81,11 +81,11 @@
       </geometry>
       <material name="sts3215"/>
     </visual>
-    <collision>
+    <!-- <collision>
       <geometry>
         <mesh filename="assets/Upper_Arm.stl"/>
       </geometry>
-    </collision>
+    </collision> -->
   </link>
 
   <!-- Link lower_arm -->
@@ -107,11 +107,11 @@
       </geometry>
       <material name="sts3215"/>
     </visual>
-    <collision>
+    <!-- <collision>
       <geometry>
         <mesh filename="assets/Lower_Arm.stl"/>
       </geometry>
-    </collision>
+    </collision> -->
   </link>
 
   <!-- Link wrist -->
@@ -133,11 +133,11 @@
       </geometry>
       <material name="sts3215"/>
     </visual>
-    <collision>
+    <!-- <collision>
       <geometry>
         <mesh filename="assets/Wrist_Pitch_Roll.stl"/>
       </geometry>
-    </collision>
+    </collision> -->
   </link>
 
   <!-- Link gripper -->
