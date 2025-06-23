@@ -14,7 +14,6 @@ from lerobot.scripts.server import (
     async_inference_pb2_grpc,  # type: ignore
 )
 from lerobot.scripts.server.configs import RobotClientConfig
-from lerobot.scripts.server.constants import supported_robots
 from lerobot.scripts.server.helpers import (
     TimedAction,
     TimedObservation,
@@ -46,7 +45,7 @@ class RobotClient:
         self.stub = async_inference_pb2_grpc.AsyncInferenceStub(self.channel)
         self.logger.info(f"Initializing client to connect to server at {server_address}")
 
-        self.running = False
+        self._running_event = threading.Event()
         self.must_go = True  # does the observation qualify for direct processing on the policy server?
 
         self.latest_action = -1
@@ -57,6 +56,8 @@ class RobotClient:
         self.action_queue = Queue()
         self.start_barrier = threading.Barrier(2)  # 2 threads: action receiver, control loop
 
+        self.chunks_received_lock = threading.Lock()
+
         start_time = time.time()
         self.robot = self.config.robot
         self.robot.connect()
@@ -66,6 +67,10 @@ class RobotClient:
 
         time.sleep(config.camera_activation_delay)  # small sleep waiting for cameras to activate
         self.logger.info("Robot connected and ready")
+
+    @property
+    def running(self):
+        return self._running_event.is_set()
 
     def timestamps(self):
         """Get the timestamps of the actions in the queue"""
@@ -95,9 +100,11 @@ class RobotClient:
 
             self.stub.SendPolicyInstructions(policy_setup)
 
-            self.running = True
+            self._running_event.set()
             self.available_actions_size = []
-            self.chunks_received = 0
+
+            with self.chunks_received_lock:
+                self.chunks_received = 0
             return True
 
         except grpc.RpcError as e:
@@ -106,7 +113,7 @@ class RobotClient:
 
     def stop(self):
         """Stop the robot client"""
-        self.running = False
+        self._running_event.clear()
 
         self.robot.disconnect()
         self.logger.info("Robot disconnected")
@@ -167,7 +174,8 @@ class RobotClient:
 
     def _update_action_queue(self, actions: list[TimedAction]):
         """Update the action queue with new actions, without ever emptying the queue"""
-        self.chunks_received += 1
+        with self.chunks_received_lock:
+            self.chunks_received += 1
 
         new_queue = Queue()
         for action in actions:
@@ -485,50 +493,7 @@ class RobotClient:
             control_loops += 1
 
 
-def async_client(task_instruction: str, verbose: int = 0):
-    robot = ...
-    client = RobotClient(RobotClientConfig(robot))
-
-    if client.start():
-        # Function to get observations from the robot
-        def get_observation():
-            observation_content = None
-            observation_content = client.robot.capture_observation()
-
-            observation_content["task"] = [task_instruction]
-
-            observation = TimedObservation(
-                timestamp=time.time(), observation=observation_content, timestep=max(client.latest_action, 0)
-            )
-
-            return observation
-
-        client.logger.info("Starting all threads...")
-
-        # Create and start action receiver thread
-        action_receiver_thread = threading.Thread(target=client.receive_actions)
-        action_receiver_thread.daemon = True
-
-        control_loop_thread = threading.Thread(target=client.control_loop, args=(get_observation,))
-        control_loop_thread.daemon = True
-
-        # Start all threads
-        action_receiver_thread.start()
-        control_loop_thread.start()
-
-        try:
-            while client.running:
-                time.sleep(client.config.camera_activation_delay)
-
-        except KeyboardInterrupt:
-            pass
-
-        finally:
-            client.stop()
-            client.logger.info("Client stopped")
-
-
-if __name__ == "__main__":
+def parse_args():
     parser = argparse.ArgumentParser(description="Robot client for executing tasks via policy server")
     parser.add_argument(
         "--task",
@@ -572,12 +537,11 @@ if __name__ == "__main__":
         help="Port on which to read/write robot joint status (e.g., '/dev/tty.usbmodem575E0031751'). Find your port with lerobot/find_port.py",
     )
 
-    args = parser.parse_args()
+    return parser.parse_args()
 
-    if args.robot in supported_robots:
-        robot = make_robot(args)
-    else:
-        raise NotImplementedError("Robot {args.robot} still not supported for async inference!")
+
+def async_client(args: argparse.Namespace):
+    robot = make_robot(args)
 
     # Create config from parsed arguments
     config = RobotClientConfig(
@@ -593,8 +557,8 @@ if __name__ == "__main__":
     client = RobotClient(config)
 
     if client.start():
-        # Function to get observations from the robot
-        def get_observation():
+        # Function to make observations from the robot's get_observation() method
+        def make_observation():
             observation_content = None
             observation_content = client.robot.get_observation()
 
@@ -609,11 +573,10 @@ if __name__ == "__main__":
         client.logger.info("Starting all threads...")
 
         # Create and start action receiver thread
-        action_receiver_thread = threading.Thread(target=client.receive_actions)
-        action_receiver_thread.daemon = True
-
-        control_loop_thread = threading.Thread(target=client.control_loop, args=(get_observation,))
-        control_loop_thread.daemon = True
+        action_receiver_thread = threading.Thread(target=client.receive_actions, daemon=True)
+        control_loop_thread = threading.Thread(
+            target=client.control_loop, args=(make_observation,), daemon=True
+        )
 
         # Start all threads
         action_receiver_thread.start()
@@ -621,11 +584,19 @@ if __name__ == "__main__":
 
         try:
             while client.running:
-                time.sleep(client.config.camera_activation_delay)
+                time.sleep(0.1)  # tiny sleep to avoid tight loop in main thread
 
         except KeyboardInterrupt:
-            pass
+            pass  # waits for KeyboardInterrupt to stop the client
 
         finally:
             client.stop()
+            action_receiver_thread.join()
+            control_loop_thread.join()
+
             client.logger.info("Client stopped")
+
+
+if __name__ == "__main__":
+    args = parse_args()
+    async_client(args)  # run the client

@@ -1,7 +1,8 @@
 import pickle  # nosec
+import threading
 import time
 from concurrent import futures
-from queue import Queue
+from queue import Empty, Queue
 from typing import Optional
 
 import grpc
@@ -30,7 +31,13 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
 
     def __init__(self, config: PolicyServerConfig):
         self.config = config
+        self._running_event = threading.Event()
+
         self._setup_server()
+
+    @property
+    def running(self):
+        return self._running_event.is_set()
 
     def _setup_server(self) -> None:
         """Flushes server state when new client connects."""
@@ -39,12 +46,12 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
         self._predicted_timesteps = set()
         self._predicted_observations = Queue(maxsize=1)
 
-        self.running = True
-
     def Ready(self, request, context):  # noqa: N802
         client_id = context.peer()
         self.logger.info(f"Client {client_id} connected and ready")
         self._setup_server()  # new client's handshake clears server state
+
+        self._running_event.set()
 
         return async_inference_pb2.Empty()
 
@@ -131,7 +138,7 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
 
         # Generate action based on the most recent observation and its timestep
         try:
-            obs = self.observation_queue.get()
+            obs = self.observation_queue.get(timeout=2)
             self.logger.info(
                 f"Running inference for observation #{obs.get_timestep()} (must_go: {obs.must_go})"
             )
@@ -166,10 +173,15 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
                 self.logger.warning("No observation in queue yet!")
                 time.sleep(self.config.idle_wait)
 
+        except Empty:
+            self.logger.warning("No observation in queue!")
+
+            return async_inference_pb2.Empty()
+
         except Exception as e:
             self.logger.error(f"Error in StreamActions: {e}")
 
-        return async_inference_pb2.Empty()
+            return async_inference_pb2.Empty()
 
     def _enqueue_and_go(self, obs: TimedObservation):
         # If queue is full, get the old observation to make room
@@ -334,18 +346,18 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
 
     def stop(self):
         """Stop the server"""
-        self.running = False
+        self._running_event.clear()
         self.logger.info("Server stopping...")
 
 
-def serve(config: Optional[PolicyServerConfig] = None):
+def serve(config: Optional[PolicyServerConfig] = None, host: str = "localhost", port: int = 8080):
     """Start the PolicyServer with the given configuration.
 
     Args:
         config: PolicyServerConfig instance. If None, uses default configuration.
     """
     if config is None:
-        config = PolicyServerConfig()
+        config = PolicyServerConfig(host=host, port=port)
 
     # Create the server instance first
     policy_server = PolicyServer(config)
@@ -354,18 +366,21 @@ def serve(config: Optional[PolicyServerConfig] = None):
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
     async_inference_pb2_grpc.add_AsyncInferenceServicer_to_server(policy_server, server)
     server.add_insecure_port(f"{config.host}:{config.port}")
-    server.start()
+
     policy_server.logger.info(f"PolicyServer started on {config.host}:{config.port}")
+    server.start()
 
     try:
-        # Use the running attribute to control server lifetime
+        # Use the running event to control server lifetime
         while policy_server.running:
-            time.sleep(1)  # Check every second instead of sleeping indefinitely
+            time.sleep(1.0)  # Check every second
 
     except KeyboardInterrupt:
-        policy_server.stop()
         policy_server.logger.info("Keyboard interrupt received")
+
+        policy_server.stop()
+        server.stop(grace=None)
 
 
 if __name__ == "__main__":
-    serve()  # use default configuration
+    serve()  # use default network configuration
