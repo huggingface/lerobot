@@ -35,7 +35,9 @@ class MoveIt2(Robot):
     def __init__(self, config: MoveIt2Config):
         super().__init__(config)
         self.config = config
-        self.moveit2_interface = MoveIt2Interface(config.moveit2_interface)
+        self.moveit2_interface = MoveIt2Interface(
+            config.moveit2_interface, config.action_type, config.arm_joint_names
+        )
         self.cameras = make_cameras_from_configs(config.cameras)
 
     @property
@@ -46,7 +48,7 @@ class MoveIt2(Robot):
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
-        all_joint_names = self.config.moveit2_interface.arm_joint_names.copy()
+        all_joint_names = self.config.arm_joint_names.copy()
         if self.config.moveit2_interface.gripper_joint_name:
             all_joint_names.append(self.config.moveit2_interface.gripper_joint_name)
         motor_state_ft = {f"{motor}.pos": float for motor in all_joint_names}
@@ -65,9 +67,7 @@ class MoveIt2(Robot):
                 "gripper.pos": float,
             }
         elif self.config.action_type == ActionType.JOINT_POSITION:
-            return {f"{joint}.pos": float for joint in self.config.moveit2_interface.arm_joint_names} | {
-                "gripper.pos": float
-            }
+            return {f"{joint}.pos": float for joint in self.config.arm_joint_names} | {"gripper.pos": float}
         else:
             raise ValueError(f"Unsupported action type: {self.config.action_type}")
 
@@ -167,9 +167,7 @@ class MoveIt2(Robot):
                     goal_present_pos[key] = (goal, present_pos)
                 action = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
 
-            joint_positions = [
-                action[joint + ".pos"] for joint in self.config.moveit2_interface.arm_joint_names
-            ]
+            joint_positions = [action[joint + ".pos"] for joint in self.config.arm_joint_names]
             self.moveit2_interface.send_joint_position_command(joint_positions)
 
         gripper_pos = action["gripper.pos"]
@@ -180,31 +178,31 @@ class MoveIt2(Robot):
         """Convert pressed keys to joint position action commands for teleop.
         hardcoded for a 6-DOF arm with a gripper.
         """
-        action = {f"{joint}.pos": 0.0 for joint in self.config.moveit2_interface.arm_joint_names}
+        action = {f"{joint}.pos": 0.5 for joint in self.config.arm_joint_names}
         if "q" in pressed_keys:
-            action["joint_1.pos"] += 0.1
+            action["joint_1.pos"] += 0.2
         if "a" in pressed_keys:
-            action["joint_1.pos"] -= 0.1
+            action["joint_1.pos"] -= 0.2
         if "w" in pressed_keys:
-            action["joint_2.pos"] += 0.1
+            action["joint_2.pos"] += 0.2
         if "s" in pressed_keys:
-            action["joint_2.pos"] -= 0.1
+            action["joint_2.pos"] -= 0.2
         if "e" in pressed_keys:
-            action["joint_3.pos"] += 0.1
+            action["joint_3.pos"] += 0.2
         if "d" in pressed_keys:
-            action["joint_3.pos"] -= 0.1
+            action["joint_3.pos"] -= 0.2
         if "r" in pressed_keys:
-            action["joint_4.pos"] += 0.1
+            action["joint_4.pos"] += 0.2
         if "f" in pressed_keys:
-            action["joint_4.pos"] -= 0.1
+            action["joint_4.pos"] -= 0.2
         if "t" in pressed_keys:
-            action["joint_5.pos"] += 0.1
+            action["joint_5.pos"] += 0.2
         if "g" in pressed_keys:
-            action["joint_5.pos"] -= 0.1
+            action["joint_5.pos"] -= 0.2
         if "y" in pressed_keys:
-            action["joint_6.pos"] += 0.1
+            action["joint_6.pos"] += 0.2
         if "h" in pressed_keys:
-            action["joint_6.pos"] -= 0.1
+            action["joint_6.pos"] -= 0.2
 
         gripper_pos = 0.0
         if "space" in pressed_keys:

@@ -177,7 +177,7 @@ available_robots = [
     "aloha",
     "so100",
     "so101",
-    "annin_ar4",
+    "annin_ar4_mk1",
 ]
 
 # lists all available cameras from `lerobot/common/robot_devices/cameras`

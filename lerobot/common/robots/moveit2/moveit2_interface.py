@@ -18,7 +18,7 @@ import time
 
 from lerobot.common.errors import DeviceNotConnectedError
 
-from .config_moveit2 import MoveIt2InterfaceConfig
+from .config_moveit2 import ActionType, MoveIt2InterfaceConfig
 from .moveit2_servo import MoveIt2Servo
 
 logger = logging.getLogger(__name__)
@@ -43,8 +43,10 @@ except ImportError as e:
 class MoveIt2Interface:
     """Class to interface with a MoveIt2 manipulator."""
 
-    def __init__(self, config: MoveIt2InterfaceConfig):
+    def __init__(self, config: MoveIt2InterfaceConfig, action_type: ActionType, arm_joint_names: list[str]):
         self.config = config
+        self.action_type = action_type
+        self.arm_joint_names = arm_joint_names
         self.robot_node: Node | None = None
         self.pos_cmd_pub: Publisher | None = None
         self.gripper_action_client: ActionClient | None = None
@@ -62,14 +64,16 @@ class MoveIt2Interface:
             rclpy.init()
 
         self.robot_node = Node("moveit2_interface_node", namespace=self.config.namespace)
-        self.pos_cmd_pub = self.robot_node.create_publisher(
-            Float64MultiArray, "position_controller/commands", 10
-        )
-        self.moveit2_servo = MoveIt2Servo(
-            node=self.robot_node,
-            frame_id=self.config.base_link,
-            callback_group=ReentrantCallbackGroup(),
-        )
+        if self.action_type == ActionType.JOINT_POSITION:
+            self.pos_cmd_pub = self.robot_node.create_publisher(
+                Float64MultiArray, "position_controller/commands", 10
+            )
+        elif self.action_type == ActionType.CARTESIAN_VELOCITY:
+            self.moveit2_servo = MoveIt2Servo(
+                node=self.robot_node,
+                frame_id=self.config.base_link,
+                callback_group=ReentrantCallbackGroup(),
+            )
         self.gripper_action_client = ActionClient(
             self.robot_node,
             GripperCommand,
@@ -118,15 +122,15 @@ class MoveIt2Interface:
                 )
             ]
 
-        if len(joint_positions) != len(self.config.arm_joint_names):
+        if len(joint_positions) != len(self.arm_joint_names):
             raise ValueError(
-                f"Expected {len(self.config.arm_joint_names)} joint positions, "
-                f"but got {len(joint_positions)}."
+                f"Expected {len(self.arm_joint_names)} joint positions, but got {len(joint_positions)}."
             )
         msg = Float64MultiArray()
         msg.data = joint_positions
-        if self.pos_cmd_pub:
-            self.pos_cmd_pub.publish(msg)
+        if self.pos_cmd_pub is None:
+            raise DeviceNotConnectedError("Position command publisher is not initialized.")
+        self.pos_cmd_pub.publish(msg)
 
     def servo(self, linear, angular, normalize: bool = True) -> None:
         if not self.moveit2_servo:
@@ -137,7 +141,7 @@ class MoveIt2Interface:
             angular = [v * self.config.max_angular_velocity for v in angular]
         self.moveit2_servo.servo(linear=linear, angular=angular)
 
-    def send_gripper_command(self, position: float, normalize: bool = True) -> bool:
+    def send_gripper_command(self, position: float, unnormalize: bool = True) -> bool:
         """
         Send a command to the gripper to move to a specific position.
         Args:
@@ -152,7 +156,7 @@ class MoveIt2Interface:
             logger.error("Gripper action server not available")
             return False
 
-        if normalize:
+        if unnormalize:
             # Map normalized position (0=open, 1=closed) to actual gripper joint position
             open_pos = self.config.gripper_open_position
             closed_pos = self.config.gripper_close_position
@@ -183,7 +187,7 @@ class MoveIt2Interface:
         positions = {}
         velocities = {}
         name_to_index = {name: i for i, name in enumerate(msg.name)}
-        for joint_name in self.config.arm_joint_names:
+        for joint_name in self.arm_joint_names:
             idx = name_to_index.get(joint_name)
             if idx is None:
                 raise ValueError(f"Joint '{joint_name}' not found in joint state.")
