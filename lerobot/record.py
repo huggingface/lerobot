@@ -330,7 +330,8 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     log_say("Stop recording", cfg.play_sounds, blocking=True)
 
     robot.disconnect()
-    teleop.disconnect()
+    if teleop is not None:
+        teleop.disconnect()
 
     if not is_headless() and listener is not None:
         listener.stop()
