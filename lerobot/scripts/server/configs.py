@@ -5,6 +5,7 @@ from lerobot.scripts.server.constants import (
     DEFAULT_ENVIRONMENT_DT,
     DEFAULT_IDLE_WAIT,
     DEFAULT_INFERENCE_LATENCY,
+    DEFAULT_OBS_QUEUE_TIMEOUT,
 )
 
 
@@ -17,7 +18,7 @@ class PolicyServerConfig:
     """
 
     # Networking configuration
-    host: str = field(default="0.0.0.0", metadata={"help": "Host address to bind the server to"})
+    host: str = field(default="localhost", metadata={"help": "Host address to bind the server to"})
     port: int = field(default=8080, metadata={"help": "Port number to bind the server to"})
 
     # Action chunking configuration
@@ -35,6 +36,10 @@ class PolicyServerConfig:
     # Queue configuration
     predicted_observations_queue_size: int = field(
         default=1, metadata={"help": "Maximum size of predicted observations queue"}
+    )
+
+    obs_queue_timeout: float = field(
+        default=DEFAULT_OBS_QUEUE_TIMEOUT, metadata={"help": "Timeout for observation queue in seconds"}
     )
 
     def __post_init__(self):

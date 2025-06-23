@@ -138,7 +138,7 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
 
         # Generate action based on the most recent observation and its timestep
         try:
-            obs = self.observation_queue.get(timeout=2)
+            obs = self.observation_queue.get(timeout=self.config.obs_queue_timeout)
             self.logger.info(
                 f"Running inference for observation #{obs.get_timestep()} (must_go: {obs.must_go})"
             )
@@ -173,9 +173,7 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
                 self.logger.warning("No observation in queue yet!")
                 time.sleep(self.config.idle_wait)
 
-        except Empty:
-            self.logger.warning("No observation in queue!")
-
+        except Empty:  # no observation added to queue in obs_queue_timeout
             return async_inference_pb2.Empty()
 
         except Exception as e:

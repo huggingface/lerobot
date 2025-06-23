@@ -8,6 +8,9 @@ DEFAULT_ENVIRONMENT_DT = 1 / 30
 """Server side: Running inference on (at most) environment_dt"""
 DEFAULT_INFERENCE_LATENCY = DEFAULT_ENVIRONMENT_DT
 
+"""Server side: Timeout for observation queue in seconds"""
+DEFAULT_OBS_QUEUE_TIMEOUT = 2
+
 # TODO:  Support DiffusionPolicy, VQBet and Pi0
 supported_policies = ["act", "smolvla"]
 

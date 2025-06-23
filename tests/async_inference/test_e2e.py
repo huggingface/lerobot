@@ -42,14 +42,15 @@ from lerobot.scripts.server.configs import RobotClientConfig
 from lerobot.scripts.server.helpers import TimedObservation
 from lerobot.scripts.server.policy_server import PolicyServer
 from lerobot.scripts.server.robot_client import RobotClient
+from tests.async_inference.test_policy_server import policy_server  # noqa: F401
 
 # -----------------------------------------------------------------------------
 # End-to-end test
 # -----------------------------------------------------------------------------
 
 
-def test_async_inference_e2e(policy_server, monkeypatch):
-    """Smoke-test the full asynchronous inference pipeline."""
+def test_async_inference_e2e(policy_server, monkeypatch):  # noqa: F811
+    """Tests the full asynchronous inference pipeline."""
     # ------------------------------------------------------------------
     # 1. Spawn a PolicyServer returning dummy action chunks
     # ------------------------------------------------------------------
@@ -73,19 +74,17 @@ def test_async_inference_e2e(policy_server, monkeypatch):
 
     monkeypatch.setattr(PolicyServer, "SendPolicyInstructions", _fake_send_policy_instructions, raising=True)
 
-    # Build gRPC server with our PolicyServer instance
-    # Create ThreadPoolExecutor separately so we can shut it down properly
-    executor = futures.ThreadPoolExecutor(max_workers=4)
-    grpc_server = grpc.server(executor)
-    async_inference_pb2_grpc.add_AsyncInferenceServicer_to_server(policy_server, grpc_server)
+    # Build gRPC server running a PolicyServer
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="policy_server"))
+    async_inference_pb2_grpc.add_AsyncInferenceServicer_to_server(policy_server, server)
 
     # Use the host/port specified in the fixture's config
     server_address = f"{policy_server.config.host}:{policy_server.config.port}"
-    grpc_server.add_insecure_port(server_address)
-    grpc_server.start()
+    server.add_insecure_port(server_address)
+    server.start()
 
     # ------------------------------------------------------------------
-    # 2. Create a RobotClient backed by a MockRobot
+    # 2. Create a RobotClient around a MockRobot
     # ------------------------------------------------------------------
     from tests.mocks.mock_robot import MockRobotConfig
 
@@ -119,21 +118,19 @@ def test_async_inference_e2e(policy_server, monkeypatch):
     control_thread.start()
 
     # ------------------------------------------------------------------
-    # 3. Let the system exchange a few messages
+    # 3. System exchanges a few messages
     # ------------------------------------------------------------------
-    # Wait for at least one chunk, but no more than 5 seconds
-    deadline = time.perf_counter() + 5.0
-    while client.running and time.perf_counter() < deadline:
-        time.sleep(0.05)
-
-    # ------------------------------------------------------------------
-    # 4. Shutdown and assert expectations
-    # ------------------------------------------------------------------
-    client.stop()
-    grpc_server.stop(grace=1.0)
-
-    # Explicitly shutdown the ThreadPoolExecutor to prevent hanging
-    executor.shutdown(wait=False)
+    # Wait for 5 seconds
+    server.wait_for_termination(timeout=5)
 
     assert client.chunks_received > 0, "Client did not receive any action chunks"
     assert len(policy_server._predicted_timesteps) > 0, "Server did not record any predicted timesteps"
+
+    # ------------------------------------------------------------------
+    # 4. Stop the system
+    # ------------------------------------------------------------------
+    client.stop()
+    action_thread.join()
+    control_thread.join()
+    policy_server.stop()
+    server.stop(grace=None)
