@@ -77,6 +77,7 @@ def _make_actions(start_ts: float, start_t: int, count: int) -> list[TimedAction
 
 def test_update_action_queue_discards_stale(robot_client: RobotClient):
     """`_update_action_queue` must drop actions with `timestep` <= `latest_action`."""
+    robot_client.chunks_received = 0
 
     # Pretend we already executed up to action #4
     robot_client.latest_action = 4
