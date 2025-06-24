@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python
 
 # Copyright 2024 The HuggingFace Inc. team. All rights reserved.
@@ -48,9 +47,11 @@ You can learn about the CLI options for this script in the `EvalPipelineConfig` 
 """
 
 import sys
-sys.path.insert(0, '/kaggle/working/myenv/lib/python3.11/site-packages')
-import os 
-os.environ['MUJOCO_GL'] = 'egl'
+
+sys.path.insert(0, "/kaggle/working/myenv/lib/python3.11/site-packages")
+import os
+
+os.environ["MUJOCO_GL"] = "egl"
 
 import json
 import logging
