@@ -116,6 +116,10 @@ class TrainPipelineConfig(HubMixin):
             self.optimizer = self.policy.get_optimizer_preset()
             self.scheduler = self.policy.get_scheduler_preset()
 
+        if isinstance(self.dataset.repo_id, list):
+            raise ValueError(f"This expects only one dataset, but got a list: {self.dataset.repo_id}")
+        self.policy.dataset_repo_id = self.dataset.repo_id
+
     @classmethod
     def __get_path_fields__(cls) -> list[str]:
         """This enables the parser to load config from the policy using `--policy.path=local/dir`"""

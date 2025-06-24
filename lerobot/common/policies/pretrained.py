@@ -155,11 +155,9 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         return model
 
     def generate_model_card(self) -> ModelCard:
-        repo_id = self.config_class.repo_id
-        print(f"repoId: ${repo_id}")
-        datasets = (
-            [repo_id] if repo_id and isinstance(repo_id, str) else None
-        )  # TODO: make sure this is corerectly uploaded
+        dataset_repo_id = self.config.dataset_repo_id
+        print(f"repoId: ${dataset_repo_id}")
+        datasets = [dataset_repo_id] if dataset_repo_id and isinstance(dataset_repo_id, str) else None
 
         model_name = self.name  # This is the policy name
         base_model = "lerobot/smolvla_base" if model_name == "smolvla" else None
