@@ -32,6 +32,6 @@ class TeleoperatorConfig(draccus.ChoiceRegistry, abc.ABC):
 
 
 @dataclass(kw_only=True)
-class LiveKitTeleoperatorConfig(TeleoperatorConfig):
+class RemoteTeleoperatorConfig(TeleoperatorConfig):
     livekit_url: str
     livekit_token: str

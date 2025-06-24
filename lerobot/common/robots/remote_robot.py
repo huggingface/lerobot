@@ -20,7 +20,7 @@ import time
 from typing import Any
 
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from lerobot.common.robots.config import LiveKitRobotConfig
+from lerobot.common.robots.config import RemoteRobotConfig
 from lerobot.common.robots.robot import Robot
 
 try:
@@ -32,7 +32,7 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
-class LiveKitRobot(Robot):
+class RemoteRobot(Robot):
     """
     LiveKit-based robot for remote control via WebRTC.
     
@@ -40,9 +40,9 @@ class LiveKitRobot(Robot):
     received via the send_action method to a remote robot.
     """
     
-    config_class = LiveKitRobotConfig
+    config_class = RemoteRobotConfig
     
-    def __init__(self, config: LiveKitRobotConfig):
+    def __init__(self, config: RemoteRobotConfig):
         super().__init__(config)
         
         if not LIVEKIT_AVAILABLE:

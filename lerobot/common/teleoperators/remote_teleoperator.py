@@ -20,7 +20,7 @@ import time
 from typing import Any
 
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from lerobot.common.teleoperators.config import LiveKitTeleoperatorConfig
+from lerobot.common.teleoperators.config import RemoteTeleoperatorConfig
 from lerobot.common.teleoperators.teleoperator import Teleoperator
 
 try:
@@ -32,17 +32,17 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
-class LiveKitTeleoperator(Teleoperator):
+class RemoteTeleoperator(Teleoperator):
     """
-    LiveKit-based teleoperator for remote control via WebRTC.
+    Remote teleoperator via WebRTC.
     
     This teleoperator enables receiving actions via WebRTC data channels,
     allowing operators to control robots over the internet with low latency.
     """
     
-    config_class = LiveKitTeleoperatorConfig
+    config_class = RemoteTeleoperatorConfig
     
-    def __init__(self, config: LiveKitTeleoperatorConfig):
+    def __init__(self, config: RemoteTeleoperatorConfig):
         super().__init__(config)
         
         if not LIVEKIT_AVAILABLE:

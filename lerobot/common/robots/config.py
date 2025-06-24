@@ -41,6 +41,6 @@ class RobotConfig(draccus.ChoiceRegistry, abc.ABC):
 
 
 @dataclass(kw_only=True)
-class LiveKitRobotConfig(RobotConfig):
+class RemoteRobotConfig(RobotConfig):
     livekit_url: str
     livekit_token: str
