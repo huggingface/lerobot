@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import abc
+import importlib.resources as pkg_resources
 import logging
 import os
 from pathlib import Path
@@ -19,7 +20,7 @@ from typing import Type, TypeVar
 
 import packaging
 import safetensors
-from huggingface_hub import hf_hub_download
+from huggingface_hub import ModelCard, ModelCardData, hf_hub_download
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from huggingface_hub.errors import HfHubHTTPError
 from safetensors.torch import load_model as load_model_as_safetensor
@@ -72,6 +73,9 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         self.config._save_pretrained(save_directory)
         model_to_save = self.module if hasattr(self, "module") else self
         save_model_as_safetensor(model_to_save, str(save_directory / SAFETENSORS_SINGLE_FILE))
+
+        card = self.generate_model_card()
+        card.save(str(save_directory / "README.md"))
 
     @classmethod
     def from_pretrained(
@@ -150,15 +154,30 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             safetensors.torch.load_model(model, model_file, strict=strict, device=map_location)
         return model
 
-    # def generate_model_card(self, *args, **kwargs) -> ModelCard:
-    #     card = ModelCard.from_template(
-    #         card_data=self._hub_mixin_info.model_card_data,
-    #         template_str=self._hub_mixin_info.model_card_template,
-    #         repo_url=self._hub_mixin_info.repo_url,
-    #         docs_url=self._hub_mixin_info.docs_url,
-    #         **kwargs,
-    #     )
-    #     return card
+    def generate_model_card(self) -> ModelCard:
+        repo_id = self.config_class.repo_id
+        print(f"repoId: ${repo_id}")
+        datasets = (
+            [repo_id] if repo_id and isinstance(repo_id, str) else None
+        )  # TODO: make sure this is corerectly uploaded
+
+        model_name = self.name  # This is the policy name
+        base_model = "lerobot/smolvla_base" if model_name == "smolvla" else None
+
+        card_data = ModelCardData(
+            license="apache-2.0",
+            library_name="lerobot",
+            pipeline_tag="robotics",
+            tags=["robotics", model_name],
+            model_name=model_name,
+            datasets=datasets,
+            base_model=base_model,
+        )
+
+        template_path = pkg_resources.files("lerobot.templates").joinpath("lerobot_modelcard_template.md")
+        card = ModelCard.from_template(card_data, template_path=str(template_path))
+        card.validate()
+        return card
 
     @abc.abstractmethod
     def get_optim_params(self) -> dict:
