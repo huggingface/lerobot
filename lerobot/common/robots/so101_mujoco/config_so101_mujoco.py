@@ -5,7 +5,7 @@ from lerobot.common.cameras.configs import CameraConfig
 
 @RobotConfig.register_subclass("so101_mujoco")
 @dataclass
-class SO101SimConfig(RobotConfig):
+class SO101MuJoCoConfig(RobotConfig):
     """Configuration for the SO100 simulated robot."""
     type: str = "so101_mujoco"
     mjcf_path: str = "lerobot-kinematics/examples/SO101/scene.xml"

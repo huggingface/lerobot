@@ -7,7 +7,12 @@ from typing import Any
 from functools import cached_property
 
 from lerobot.common.robots import Robot, RobotConfig
-from lerobot.common.cameras import CameraConfig, MuJoCoCamera
+from lerobot.common.cameras import CameraConfig
+from lerobot.common.cameras.utils import make_cameras_from_configs
+from lerobot.common.cameras.mujoco.configuration_mujoco import MuJoCoCameraConfig
+from lerobot.common.motors.mujoco_bus.mujoco_joint_bus import MuJoCoJointBus
+
+from .config_so101_mujoco import SO101MuJoCoConfig
 
 try:
     import rerun as rr
@@ -16,42 +21,15 @@ except ImportError:
     RERUN_AVAILABLE = False
 
 
-@RobotConfig.register_subclass("so101_mujoco")
-@dataclass
-class SO101SimConfig(RobotConfig):
-    """Configuration for the SO100 simulated robot."""
-    type: str = "so101_mujoco"
-    mjcf_path: str = "lerobot-kinematics/examples/SO101/scene.xml"
-    joint_names: list[str] = field(default_factory=lambda: ["Rotation", "Pitch", "Elbow", "Wrist_Pitch", "Wrist_Roll", "Jaw"])
-    n_substeps: int = 10
-    cameras: dict[str, CameraConfig] = field(default_factory=dict)
-    start_calibrated: bool = True
-    show_viewer: bool = True
-    enable_rerun: bool = True
-    rerun_session_name: str = "so101_mujoco"
-    # Joint mapping from dataset names to simulation names with offsets
-    joint_mapping: dict[str, tuple[str, float]] = field(default_factory=lambda: {
-        "shoulder_pan.pos": ("Rotation", 0.0),
-        "shoulder_lift.pos": ("Pitch", -90.0),
-        "elbow_flex.pos": ("Elbow", 100.0),
-        "wrist_flex.pos": ("Wrist_Pitch", 20.0),
-        "wrist_roll.pos": ("Wrist_Roll", -45.0),
-        "gripper.pos": ("Jaw", 0.0),
-    })
-    # Cube randomization settings
-    randomize_cube_position: bool = True
-    cube_base_position: list[float] = field(default_factory=lambda: [-0.00, -0.32, 0.016])
-    cube_randomization_radius: float = 0.05  # 4cm radius
-
 
 class SO101MuJoCo(Robot):
     """SO100 simulated robot using MuJoCo physics."""
-    config_class = SO101SimConfig
+    config_class = SO101MuJoCoConfig
     name = "so101_mujoco"
 
-    def __init__(self, config: SO101SimConfig | str):
+    def __init__(self, config: SO101MuJoCoConfig | str):
         if isinstance(config, str):
-            config = SO101SimConfig(mjcf_path=config, id="so100_sim")
+            config = SO101MuJoCoConfig(mjcf_path=config, id="so100_sim")
         
         super().__init__(config)
         self.config = config
@@ -64,7 +42,7 @@ class SO101MuJoCo(Robot):
         # Initialize actuators
         self.actuators = {"arm": MuJoCoJointBus(self.m, self.d, self.config.joint_names)}
         
-        # Initialize cameras - always use "top" to match trained models
+        # Initialize cameras
         self._init_cameras()
         
         # Initialize viewer and state
@@ -167,34 +145,68 @@ class SO101MuJoCo(Robot):
             print(f"Debug: No cube found in model (nq={self.m.nq} <= robot_joints={len(home_pos)})")
 
     def _init_cameras(self):
-        """Initialize cameras - always use 'top' name to match trained models."""
-        if self.config.cameras:
-            # Use first camera from config but rename to 'top'
-            cam_config = next(iter(self.config.cameras.values()))
-            self.cameras = {
-                "top": MuJoCoCamera(
-                    self.m, self.d,
-                    width=cam_config.width or 480,
-                    height=cam_config.height or 640,
-                    cam="top_view"
+        """Initialize cameras using `make_cameras_from_configs` – the returned dict will always contain a 'top' entry."""
+        import numpy as np
+
+        class _DummyCamera:
+            """Simple fallback camera that produces blank images when rendering fails."""
+
+            def __init__(self, width: int = 640, height: int = 480):
+                self.width = width
+                self.height = height
+
+            def connect(self):
+                pass
+
+            def async_read(self, timeout_ms: int = 0):  # noqa: D401
+                return np.zeros((self.height, self.width, 3), dtype=np.uint8)
+
+            def disconnect(self):
+                pass
+
+        try:
+            if self.config.cameras:
+                # Build cameras from provided configs
+                cameras = make_cameras_from_configs(self.config.cameras)
+
+                # Ensure a camera named 'top' exists – rename first camera if necessary
+                if "top" not in cameras and len(cameras) > 0:
+                    first_key = next(iter(cameras))
+                    cameras["top"] = cameras.pop(first_key)
+            else:
+                # When no camera configs are provided, create a sensible default MuJoCo camera config
+                default_cfg = MuJoCoCameraConfig(
+                    model=self.m,
+                    data=self.d,
+                    fps=30,
+                    width=480,
+                    height=640,
+                    cam="top_view",
                 )
-            }
-        else:
-            # Default camera
-            self.cameras = {
-                "top": MuJoCoCamera(self.m, self.d, width=480, height=640, cam="top_view")
-            }
+                cameras = make_cameras_from_configs({"top": default_cfg})
+
+        except Exception as e:
+            # Likely running in headless environment without OpenGL – fall back to dummy camera
+            print(f"Failed to initialize MuJoCo camera(s): {e}. Falling back to dummy camera.")
+            cameras = {"top": _DummyCamera(width=480, height=640)}
+
+        self.cameras = cameras
 
     @property
     def observation_features(self) -> dict:
         """Define observation features for the SO100 arm."""
-        # Individual joint features to match trained models
-        features = {f"{joint}.pos": float for joint in self.config.joint_names}
-        
+        # Individual joint and camera features
+        features: dict[str, Any] = {}
+        for joint in self.config.joint_names:
+            features[f"{joint}.pos"] = float
+
         # Camera features - MuJoCo produces (width, height, 3) shaped images
         for cam_key, cam in self.cameras.items():
-            features[cam_key] = (cam.width, cam.height, 3)
-        
+            # Provide default 0 when width/height is None to satisfy type checkers
+            w = cam.width if cam.width is not None else 0
+            h = cam.height if cam.height is not None else 0
+            features[cam_key] = (w, h, 3)
+
         return features
 
     @cached_property  
