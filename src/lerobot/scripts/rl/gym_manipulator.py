@@ -286,9 +286,7 @@ class RobotEnv(gym.Env):
 
         # Define observation spaces for images and other states.
         if "pixels" in self.current_observation:
-            prefix = (
-                "observation.images" if len(self.current_observation["pixels"]) > 1 else "observation.image"
-            )
+            prefix = "observation.images"
             observation_spaces = {
                 f"{prefix}.{key}": gym.spaces.Box(
                     low=0, high=255, shape=self.current_observation["pixels"][key].shape, dtype=np.uint8
@@ -346,7 +344,6 @@ class RobotEnv(gym.Env):
         self.episode_data = None
         self.current_observation = None
         self._get_observation()
-
         return self.current_observation, {"is_intervention": False}
 
     def step(self, action) -> tuple[dict[str, np.ndarray], float, bool, bool, dict[str, Any]]:
@@ -1877,7 +1874,6 @@ def make_robot_env(cfg: EnvConfig) -> gym.Env:
     if cfg.robot is None:
         raise ValueError("RobotConfig (cfg.robot) must be provided for gym_manipulator environment.")
     robot = make_robot_from_config(cfg.robot)
-
     teleop_device = make_teleoperator_from_config(cfg.teleop)
     teleop_device.connect()
 
