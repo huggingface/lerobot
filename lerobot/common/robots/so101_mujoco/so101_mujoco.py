@@ -146,49 +146,25 @@ class SO101MuJoCo(Robot):
 
     def _init_cameras(self):
         """Initialize cameras using `make_cameras_from_configs` – the returned dict will always contain a 'top' entry."""
-        import numpy as np
+        if self.config.cameras:
+            # Build cameras from provided configs
+            cameras = make_cameras_from_configs(self.config.cameras)
 
-        class _DummyCamera:
-            """Simple fallback camera that produces blank images when rendering fails."""
-
-            def __init__(self, width: int = 640, height: int = 480):
-                self.width = width
-                self.height = height
-
-            def connect(self):
-                pass
-
-            def async_read(self, timeout_ms: int = 0):  # noqa: D401
-                return np.zeros((self.height, self.width, 3), dtype=np.uint8)
-
-            def disconnect(self):
-                pass
-
-        try:
-            if self.config.cameras:
-                # Build cameras from provided configs
-                cameras = make_cameras_from_configs(self.config.cameras)
-
-                # Ensure a camera named 'top' exists – rename first camera if necessary
-                if "top" not in cameras and len(cameras) > 0:
-                    first_key = next(iter(cameras))
-                    cameras["top"] = cameras.pop(first_key)
-            else:
-                # When no camera configs are provided, create a sensible default MuJoCo camera config
-                default_cfg = MuJoCoCameraConfig(
-                    model=self.m,
-                    data=self.d,
-                    fps=30,
-                    width=480,
-                    height=640,
-                    cam="top_view",
-                )
-                cameras = make_cameras_from_configs({"top": default_cfg})
-
-        except Exception as e:
-            # Likely running in headless environment without OpenGL – fall back to dummy camera
-            print(f"Failed to initialize MuJoCo camera(s): {e}. Falling back to dummy camera.")
-            cameras = {"top": _DummyCamera(width=480, height=640)}
+            # Ensure a camera named 'top' exists – rename first camera if necessary
+            if "top" not in cameras and len(cameras) > 0:
+                first_key = next(iter(cameras))
+                cameras["top"] = cameras.pop(first_key)
+        else:
+            # When no camera configs are provided, create a sensible default MuJoCo camera config
+            default_cfg = MuJoCoCameraConfig(
+                model=self.m,
+                data=self.d,
+                fps=30,
+                width=480,
+                height=640,
+                cam="top_view",
+            )
+            cameras = make_cameras_from_configs({"top": default_cfg})
 
         self.cameras = cameras
 
