@@ -37,6 +37,11 @@ def make_cameras_from_configs(camera_configs: dict[str, CameraConfig]) -> dict[s
             from .realsense.camera_realsense import RealSenseCamera
 
             cameras[key] = RealSenseCamera(cfg)
+
+        elif cfg.type == "mujoco":
+            from .mujoco import MuJoCoCamera
+
+            cameras[key] = MuJoCoCamera(cfg)
         else:
             raise ValueError(f"The motor type '{cfg.type}' is not valid.")
 
