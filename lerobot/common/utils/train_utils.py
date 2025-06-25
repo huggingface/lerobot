@@ -161,22 +161,22 @@ def load_training_state(
     return step, optimizer, scheduler
 
 
-def push_policy_to_hub(policy: PreTrainedPolicy, cfg: TrainPipelineConfig):
+def push_policy_to_hub(cfg: TrainPipelineConfig, policy: PreTrainedPolicy):
     url = policy.push_to_hub(
         repo_id=cfg.policy.repo_id,
         private=False,
-        token=None,  # defaults to HF_TOKEN
         branch="main",
         allow_patterns=["*.safetensors", "*.json", "*.yaml", "*.md"],
         ignore_patterns=["*.tmp", "*.log"],
     )
-    logging.info(f"Model pushed to {url}")
 
-    config_url = TrainPipelineConfig.push_to_hub(
-        cfg,
+    cfg.push_to_hub(
         repo_id=cfg.policy.repo_id,
-        commit_message="Upload train_config.json",
-        allow_patterns=["train_config.json"],
+        private=False,
+        branch="main",
+        commit_message="Upload readme and train_config.json",
+        allow_patterns=["*.json", "*.yaml", "*.md"],
         ignore_patterns=None,
     )
-    logging.info(f"Train config pushed to {config_url}")
+
+    logging.info(f"Model pushed to {url}")

@@ -14,11 +14,12 @@
 import datetime as dt
 import os
 from dataclasses import dataclass, field
+from importlib.resources import files
 from pathlib import Path
 from typing import Type
 
 import draccus
-from huggingface_hub import hf_hub_download
+from huggingface_hub import ModelCard, ModelCardData, hf_hub_download
 from huggingface_hub.errors import HfHubHTTPError
 
 from lerobot.common import envs
@@ -131,6 +132,33 @@ class TrainPipelineConfig(HubMixin):
     def _save_pretrained(self, save_directory: Path) -> None:
         with open(save_directory / TRAIN_CONFIG_NAME, "w") as f, draccus.config_type("json"):
             draccus.dump(self, f, indent=4)
+
+        card = self.generate_model_card()
+        card.save(str(save_directory / "README.md"))
+
+        self.policy.save_pretrained(save_directory=save_directory)  # Also push model
+
+    def generate_model_card(self) -> ModelCard:
+        dataset_repo_id = self.dataset.repo_id
+        datasets = [dataset_repo_id] if dataset_repo_id and isinstance(dataset_repo_id, str) else None
+
+        model_type = self.policy.type  # This is the policy name
+        base_model = "lerobot/smolvla_base" if model_type == "smolvla" else None  # Set a base model
+
+        card_data = ModelCardData(
+            license="apache-2.0",
+            library_name="lerobot",
+            pipeline_tag="robotics",
+            tags=["robotics", model_type],
+            model_name=model_type,
+            datasets=datasets,
+            base_model=base_model,
+        )
+
+        template_path = files("lerobot.templates").joinpath("lerobot_modelcard_template.md")
+        card = ModelCard.from_template(card_data, template_path=str(template_path))
+        card.validate()
+        return card
 
     @classmethod
     def from_pretrained(

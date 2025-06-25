@@ -284,7 +284,7 @@ def train(cfg: TrainPipelineConfig):
     logging.info("End of training")
 
     if cfg.policy.push_to_hub and cfg.policy.repo_id:
-        push_policy_to_hub(policy, cfg)
+        push_policy_to_hub(cfg, policy)
 
 
 if __name__ == "__main__":
