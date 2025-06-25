@@ -164,16 +164,12 @@ def load_training_state(
 def push_policy_to_hub(cfg: TrainPipelineConfig, policy: PreTrainedPolicy):
     url = policy.push_to_hub(
         repo_id=cfg.policy.repo_id,
-        private=False,
-        branch="main",
         allow_patterns=["*.safetensors", "*.json", "*.yaml", "*.md"],
         ignore_patterns=["*.tmp", "*.log"],
     )
 
     cfg.push_to_hub(
         repo_id=cfg.policy.repo_id,
-        private=False,
-        branch="main",
         commit_message="Upload readme and train_config.json",
         allow_patterns=["*.json", "*.yaml", "*.md"],
         ignore_patterns=None,
