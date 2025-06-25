@@ -40,7 +40,7 @@ See the full documentation at [LeRobot Docs](https://huggingface.co/docs/lerobot
 For a complete walkthrough, see the [training guide](https://huggingface.co/docs/lerobot/il_robots#train-a-policy).
 Below is the short version on how to train and run inference/eval:
 
-### 1 Train from scratch
+### Train from scratch
 
 ```bash
 python lerobot/scripts/train.py \
@@ -55,7 +55,7 @@ python lerobot/scripts/train.py \
 
 *Writes checkpoints to `outputs/train/<desired_policy_repo_id>/checkpoints/`.*
 
-### 2 Evaluate the policy
+### Evaluate the policy/run inference
 
 ```bash
 python -m lerobot.record \
