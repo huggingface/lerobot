@@ -62,7 +62,6 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
 
     push_to_hub: bool = True
     repo_id: str | None = None
-    dataset_repo_id: str | None = None
 
     def __post_init__(self):
         self.pretrained_path = None

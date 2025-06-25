@@ -38,7 +38,6 @@ from lerobot.common.utils.train_utils import (
     get_step_checkpoint_dir,
     get_step_identifier,
     load_training_state,
-    push_policy_to_hub,
     save_checkpoint,
     update_last_checkpoint,
 )
@@ -283,8 +282,8 @@ def train(cfg: TrainPipelineConfig):
         eval_env.close()
     logging.info("End of training")
 
-    if cfg.policy.push_to_hub and cfg.policy.repo_id:
-        push_policy_to_hub(cfg, policy)
+    if cfg.policy.push_to_hub:
+        policy.push_to_hub(cfg)
 
 
 if __name__ == "__main__":

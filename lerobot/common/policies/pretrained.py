@@ -15,7 +15,7 @@ import abc
 import logging
 import os
 from pathlib import Path
-from typing import Type, TypeVar
+from typing import Any, Dict, Type, TypeVar
 
 import packaging
 import safetensors
@@ -28,6 +28,7 @@ from torch import Tensor, nn
 
 from lerobot.common.utils.hub import HubMixin
 from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs.train import TrainPipelineConfig
 
 T = TypeVar("T", bound="PreTrainedPolicy")
 
@@ -176,3 +177,40 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         with caching.
         """
         raise NotImplementedError
+
+    def push_to_hub(
+        self,
+        cfg: TrainPipelineConfig,
+        *,
+        commit_message: str | None = None,
+        card_kwargs: Dict[str, Any] | None = None,
+        allow_patterns: list[str] | str | None = None,
+        ignore_patterns: list[str] | str | None = None,
+        delete_patterns: list[str] | str | None = None,
+        **hub_kwargs: Any,
+    ):
+        if not cfg.policy.repo_id:
+            logging.warning("`policy.repo_id` is not specified, please specify it to use push_to_hub()")
+            return
+
+        url = super().push_to_hub(
+            repo_id=cfg.policy.repo_id,
+            commit_message=commit_message or "Upload policy weights",
+            allow_patterns=allow_patterns or ["*.safetensors", "*.json", "*.yaml", "*.md"],
+            ignore_patterns=ignore_patterns or ["*.tmp", "*.log"],
+            delete_patterns=delete_patterns,
+            card_kwargs=card_kwargs,
+            **hub_kwargs,
+        )
+
+        cfg.push_to_hub(
+            repo_id=cfg.policy.repo_id,
+            commit_message=commit_message or "Upload training config and readme",
+            allow_patterns=allow_patterns or ["*.json", "*.yaml", "*.md"],
+            ignore_patterns=ignore_patterns,
+            delete_patterns=delete_patterns,
+            card_kwargs=card_kwargs,
+            **hub_kwargs,
+        )
+
+        logging.info(f"Model pushed to {url}")

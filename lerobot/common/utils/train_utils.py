@@ -159,20 +159,3 @@ def load_training_state(
         scheduler = load_scheduler_state(scheduler, training_state_dir)
 
     return step, optimizer, scheduler
-
-
-def push_policy_to_hub(cfg: TrainPipelineConfig, policy: PreTrainedPolicy):
-    url = policy.push_to_hub(
-        repo_id=cfg.policy.repo_id,
-        allow_patterns=["*.safetensors", "*.json", "*.yaml", "*.md"],
-        ignore_patterns=["*.tmp", "*.log"],
-    )
-
-    cfg.push_to_hub(
-        repo_id=cfg.policy.repo_id,
-        commit_message="Upload readme and train_config.json",
-        allow_patterns=["*.json", "*.yaml", "*.md"],
-        ignore_patterns=None,
-    )
-
-    logging.info(f"Model pushed to {url}")

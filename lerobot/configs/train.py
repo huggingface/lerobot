@@ -136,8 +136,6 @@ class TrainPipelineConfig(HubMixin):
         card = self.generate_model_card()
         card.save(str(save_directory / "README.md"))
 
-        self.policy.save_pretrained(save_directory=save_directory)  # Also push model
-
     def generate_model_card(self) -> ModelCard:
         dataset_repo_id = self.dataset.repo_id
         datasets = [dataset_repo_id] if dataset_repo_id and isinstance(dataset_repo_id, str) else None
