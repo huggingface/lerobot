@@ -93,14 +93,15 @@ class RobotClientConfig:
 
     # Robot to wrap with async inference capabilities
     robot: Robot = field(metadata={"help": "Robot instance to use"})
-
-    # Network configuration
-    server_address: str = field(default="localhost:8080", metadata={"help": "Server address to connect to"})
-
     # Policy configuration
     policy_type: str = field(metadata={"help": "Type of policy to use"})
     pretrained_name_or_path: str = field(metadata={"help": "Pretrained model name or path"})
     policy_image_features: dict[str, PolicyFeature] = field(metadata={"help": "Image features for policy"})
+
+    # Network configuration
+    server_address: str = field(default="localhost:8080", metadata={"help": "Server address to connect to"})
+
+    # Device configuration
     policy_device: str = field(default="cpu", metadata={"help": "Device for policy inference"})
 
     # Control behavior configuration
