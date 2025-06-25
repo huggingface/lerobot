@@ -50,11 +50,11 @@ from lerobot.common.robots import (  # noqa: F401
     so101_follower,
 )
 from lerobot.common.teleoperators import (
-    RemoteTeleoperator,
     Teleoperator,
     TeleoperatorConfig,
     make_teleoperator_from_config,
 )
+from lerobot.common.teleoperators.remote_teleoperator import RemoteTeleoperator
 from lerobot.common.utils.robot_utils import busy_wait
 from lerobot.common.utils.utils import init_logging, move_cursor_up
 from lerobot.common.utils.visualization_utils import _init_rerun
