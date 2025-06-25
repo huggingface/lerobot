@@ -25,6 +25,8 @@ class TeleoperatorConfig(draccus.ChoiceRegistry, abc.ABC):
     id: str | None = None
     # Directory to store calibration file
     calibration_dir: Path | None = None
+    # Optional transport override (e.g. "network" to disable local hardware access)
+    transport: str | None = None
 
     @property
     def type(self) -> str:
