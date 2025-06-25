@@ -60,7 +60,7 @@ from lerobot.common.utils.utils import init_logging, move_cursor_up
 from lerobot.common.utils.visualization_utils import _init_rerun
 
 from .common.teleoperators import gamepad, koch_leader, so100_leader, so101_leader, keyboard  # noqa: F401
-from lerobot.common.transports.network import UDPTransportReceiver, UDPTransportSender
+from lerobot.common.transport.udp_transport import UDPTransportReceiver, UDPTransportSender
 
 
 @dataclass
