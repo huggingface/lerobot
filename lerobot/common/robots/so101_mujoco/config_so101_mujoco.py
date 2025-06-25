@@ -14,7 +14,7 @@ class SO101MuJoCoConfig(RobotConfig):
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
     start_calibrated: bool = True
     show_viewer: bool = True
-    enable_rerun: bool = True
+    enable_rerun: bool = False
     rerun_session_name: str = "so101_mujoco"
     # Joint mapping from dataset names to simulation names with offsets
     joint_mapping: dict[str, tuple[str, float]] = field(default_factory=lambda: {
