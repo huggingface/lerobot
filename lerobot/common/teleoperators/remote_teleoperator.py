@@ -12,16 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import asyncio
 import json
 import logging
 import threading
-import time
 from typing import Any
 
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.common.teleoperators.config import RemoteTeleoperatorConfig
 from lerobot.common.teleoperators.teleoperator import Teleoperator
+from lerobot.common.transport.livekit_service import LiveKitService, LiveKitServiceHandler
 
 try:
     from livekit import rtc
@@ -30,6 +29,29 @@ except ImportError:
     LIVEKIT_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
+
+
+class RemoteTeleoperatorHandler(LiveKitServiceHandler):
+    """
+    Handler for RemoteTeleoperator LiveKit events.
+    """
+    
+    def __init__(self, teleoperator: 'RemoteTeleoperator'):
+        self.teleoperator = teleoperator
+    
+    def on_data_received(self, data: rtc.DataPacket) -> None:
+        """
+        Handle incoming action messages from LiveKit data channel.
+        """
+        try:
+            # Check if this is the teleop_action topic
+            if data.topic == "teleop_action":
+                # Decode the JSON action message
+                action_data = json.loads(data.data.decode('utf-8'))
+                self.teleoperator._handle_action_message(action_data)
+                
+        except Exception as e:
+            logger.error(f"Error processing data packet: {e}")
 
 
 class RemoteTeleoperator(Teleoperator):
@@ -49,14 +71,14 @@ class RemoteTeleoperator(Teleoperator):
             raise ImportError("LiveKit SDK is required. Install with: pip install livekit")
             
         self.config = config
-        self.livekit_url = config.livekit_url
-        self.livekit_token = config.livekit_token
         
-        # LiveKit connection state
-        self.room: rtc.Room | None = None
-        self._is_connected = False
-        self._event_loop: asyncio.AbstractEventLoop | None = None
-        self._loop_thread: threading.Thread | None = None
+        # Create handler and LiveKit service
+        self._handler = RemoteTeleoperatorHandler(self)
+        self._livekit_service = LiveKitService(
+            config.livekit_url,
+            config.livekit_token,
+            self._handler
+        )
         
         # Action caching and validation
         self._cached_action: dict[str, Any] | None = None
@@ -68,7 +90,7 @@ class RemoteTeleoperator(Teleoperator):
         """
         Whether the teleoperator is currently connected or not.
         """
-        return self._is_connected and self.room is not None
+        return self._livekit_service.is_connected
 
     def connect(self, calibrate: bool = True) -> None:
         """
@@ -83,114 +105,12 @@ class RemoteTeleoperator(Teleoperator):
         # Get action features to determine expected message shape
         self._expected_action_shape = self.action_features.copy()
         
-        # Start the async event loop in a separate thread
-        self._loop_thread = threading.Thread(target=self._run_event_loop, daemon=True)
-        self._loop_thread.start()
-        
-        # Wait for connection to be established
-        timeout = 10  # 10 second timeout for better reliability
-        start_time = time.time()
-        while not self._is_connected and (time.time() - start_time) < timeout:
-            time.sleep(0.1)
-            
-        if not self._is_connected:
-            raise ConnectionError(f"Failed to connect to LiveKit server within {timeout}s")
-            
-        logger.info(f"{self} connected to LiveKit server")
-
-    def _run_event_loop(self) -> None:
-        """
-        Run the async event loop for LiveKit connection.
-        """
+        # Connect using the LiveKit service
         try:
-            # Create new event loop following example.py pattern
-            self._event_loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self._event_loop)
-            
-            # Create room instance
-            self.room = rtc.Room(loop=self._event_loop)
-            
-            # Start the main async task
-            asyncio.ensure_future(self._main_async_loop())
-            
-            # Run the event loop
-            self._event_loop.run_forever()
-            
-        except Exception as e:
-            logger.error(f"Error in LiveKit async loop: {e}")
-            self._is_connected = False
-        finally:
-            if self._event_loop and not self._event_loop.is_closed():
-                self._event_loop.close()
-
-    async def _main_async_loop(self) -> None:
-        """
-        Main async loop following example.py pattern.
-        """
-        try:
-            # Set up event handlers
-            @self.room.on("participant_joined")
-            def on_participant_joined(participant: rtc.RemoteParticipant):
-                logger.info(f"Participant {participant.identity} joined the room")
-
-            @self.room.on("participant_disconnected")
-            def on_participant_disconnected(participant: rtc.RemoteParticipant):
-                logger.info(f"Participant {participant.identity} disconnected")
-
-            @self.room.on("data_received")
-            def on_data_received(data: rtc.DataPacket):
-                try:
-                    # Check if this is the teleop_action topic
-                    if data.topic == "teleop_action":
-                        # Decode the JSON action message
-                        action_data = json.loads(data.data.decode('utf-8'))
-                        self._handle_action_message(action_data)
-                        
-                except Exception as e:
-                    logger.error(f"Error processing data packet: {e}")
-
-            @self.room.on("connected")
-            def on_connected():
-                logger.info("Successfully connected to LiveKit room")
-                self._is_connected = True
-
-            @self.room.on("disconnected")
-            def on_disconnected(reason):
-                logger.info(f"Disconnected from LiveKit room: {reason}")
-                self._is_connected = False
-
-            # Connect to the room with proper options
-            await self.room.connect(
-                self.livekit_url,
-                self.livekit_token,
-                rtc.RoomOptions(auto_subscribe=True)
-            )
-            
-            logger.info(f"Connected to room {self.room.name}")
-            
-            self._is_connected = True
-            
-            # Keep the event loop running while connected
-            while self._is_connected:
-                await asyncio.sleep(0.1)
-                
-        except Exception as e:
-            logger.error(f"Failed to connect to LiveKit room: {e}")
-            self._is_connected = False
-            raise
-
-    async def _cleanup(self) -> None:
-        """
-        Cleanup resources following example.py pattern.
-        """
-        logger.info("Cleaning up LiveKit connection...")
-        self._is_connected = False
-        
-        if self.room:
-            await self.room.disconnect()
-        
-        if self._event_loop:
-            self._event_loop.stop()
+            self._livekit_service.connect(timeout=10.0)
+            logger.info(f"{self} connected to LiveKit server")
+        except ConnectionError as e:
+            raise ConnectionError(f"Failed to connect {self}: {e}")
 
     def _handle_action_message(self, action_data: dict[str, Any]) -> None:
         """
@@ -280,18 +200,13 @@ class RemoteTeleoperator(Teleoperator):
 
         logger.info(f"Disconnecting {self} from LiveKit server")
         
-        self._is_connected = False
+        # Disconnect using the LiveKit service
+        try:
+            self._livekit_service.disconnect()
+        except RuntimeError:
+            pass  # Already disconnected
         
-        # Trigger cleanup if event loop is running
-        if self._event_loop and not self._event_loop.is_closed():
-            asyncio.run_coroutine_threadsafe(self._cleanup(), self._event_loop)
-        
-        # Wait for the event loop thread to finish
-        if self._loop_thread and self._loop_thread.is_alive():
-            self._loop_thread.join(timeout=10)  # Increased timeout for graceful shutdown
-            
         # Clean up state
-        self.room = None
         self._cached_action = None
         self._expected_action_shape = None
         
