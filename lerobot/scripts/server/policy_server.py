@@ -281,7 +281,7 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
         actions = actions[:, :, :original_action_dim]
 
         actions = self.policy.unnormalize_outputs(
-            {"action": actions, "robot_type": [self.policy.config.robot_type]}
+            {"action": actions, "robot_type": observation["robot_type"]}
         )["action"]
 
         return actions
@@ -302,9 +302,7 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
         """1. Prepare observation"""
         start_time = time.perf_counter()
 
-        observation = {
-            "robot_type": [self.policy.config.robot_type],
-        }
+        observation = {}
         for k, v in observation_t.get_observation().items():
             if isinstance(v, torch.Tensor):  # VLAs present natural-language instructions
                 if "image" in k:
@@ -370,14 +368,12 @@ def serve(config: Optional[PolicyServerConfig] = None, host: str = "localhost", 
 
     try:
         # Use the running event to control server lifetime
-        while policy_server.running:
-            time.sleep(1.0)  # Check every second
+        server.wait_for_termination()
 
     except KeyboardInterrupt:
         policy_server.logger.info("Keyboard interrupt received")
 
         policy_server.stop()
-        server.stop(grace=None)
 
 
 if __name__ == "__main__":
