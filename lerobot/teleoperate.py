@@ -96,7 +96,8 @@ def teleop_loop(
         
         # if teleop is a RemoteTeleoperator, send the observations to the remote teleoperator
         if isinstance(teleop, RemoteTeleoperator):
-            teleop.publish_observations(observation)
+            observation = robot.get_observation()
+            teleop.publish_observation(observation)
 
         dt_s = time.perf_counter() - loop_start
         busy_wait(1 / fps - dt_s)
