@@ -16,7 +16,7 @@
 
 from dataclasses import dataclass
 
-from ..config import TeleoperatorConfig
+from ..config import TeleoperatorConfig, RemoteTeleoperatorConfig
 
 
 @TeleoperatorConfig.register_subclass("so100_leader")
@@ -24,3 +24,8 @@ from ..config import TeleoperatorConfig
 class SO100LeaderConfig(TeleoperatorConfig):
     # Port to connect to the arm
     port: str
+
+@RemoteTeleoperatorConfig.register_subclass("so100_remote_leader")
+@dataclass
+class SO100RemoteLeaderConfig(RemoteTeleoperatorConfig):
+    pass
