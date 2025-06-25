@@ -14,12 +14,14 @@
 import abc
 import logging
 import os
+from importlib.resources import files
 from pathlib import Path
-from typing import Any, Dict, Type, TypeVar
+from tempfile import TemporaryDirectory
+from typing import List, Type, TypeVar
 
 import packaging
 import safetensors
-from huggingface_hub import hf_hub_download
+from huggingface_hub import HfApi, ModelCard, ModelCardData, hf_hub_download
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from huggingface_hub.errors import HfHubHTTPError
 from safetensors.torch import load_model as load_model_as_safetensor
@@ -178,39 +180,59 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         """
         raise NotImplementedError
 
-    def push_to_hub(
+    def push_model_to_hub(
         self,
         cfg: TrainPipelineConfig,
-        *,
-        commit_message: str | None = None,
-        card_kwargs: Dict[str, Any] | None = None,
-        allow_patterns: list[str] | str | None = None,
-        ignore_patterns: list[str] | str | None = None,
-        delete_patterns: list[str] | str | None = None,
-        **hub_kwargs: Any,
     ):
         if not cfg.policy.repo_id:
-            logging.warning("`policy.repo_id` is not specified, please specify it to use push_to_hub()")
+            logging.warning("`policy.repo_id` is not specified, please specify it to use push_model_to_hub()")
             return
 
-        url = super().push_to_hub(
-            repo_id=cfg.policy.repo_id,
-            commit_message=commit_message or "Upload policy weights",
-            allow_patterns=allow_patterns or ["*.safetensors", "*.json", "*.yaml", "*.md"],
-            ignore_patterns=ignore_patterns or ["*.tmp", "*.log"],
-            delete_patterns=delete_patterns,
-            card_kwargs=card_kwargs,
-            **hub_kwargs,
+        api = HfApi()
+        repo_id = api.create_repo(
+            repo_id=cfg.policy.repo_id, private=cfg.policy.private, exist_ok=True
+        ).repo_id
+
+        # Push the files to the repo in a single commit
+        with TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            saved_path = Path(tmp) / repo_id
+
+            self.save_pretrained(saved_path)  # Calls _save_pretrained and stores model tensors
+
+            card = self.generate_model_card(
+                cfg.dataset.repo_id, cfg.policy.type, cfg.policy.license, cfg.policy.tags
+            )
+            card.save(str(saved_path / "README.md"))
+
+            cfg.save_pretrained(saved_path)  # Calls _save_pretrained and stores train config
+
+            url = api.upload_folder(
+                repo_id=repo_id,
+                repo_type="model",
+                folder_path=saved_path,
+                commit_message="Upload policy weights, train config and readme",
+                allow_patterns=["*.safetensors", "*.json", "*.yaml", "*.md"],
+                ignore_patterns=["*.tmp", "*.log"],
+            )
+
+            logging.info(f"Model pushed to {url}")
+
+    def generate_model_card(
+        self, dataset_repo_id: str, model_type: str, license: str | None, tags: List[str] | None
+    ) -> ModelCard:
+        base_model = "lerobot/smolvla_base" if model_type == "smolvla" else None  # Set a base model
+
+        card_data = ModelCardData(
+            license=license or "apache-2.0",
+            library_name="lerobot",
+            pipeline_tag="robotics",
+            tags=tags or ["robotics", model_type],
+            model_name=model_type,
+            datasets=dataset_repo_id,
+            base_model=base_model,
         )
 
-        cfg.push_to_hub(
-            repo_id=cfg.policy.repo_id,
-            commit_message=commit_message or "Upload training config and readme",
-            allow_patterns=allow_patterns or ["*.json", "*.yaml", "*.md"],
-            ignore_patterns=ignore_patterns,
-            delete_patterns=delete_patterns,
-            card_kwargs=card_kwargs,
-            **hub_kwargs,
-        )
-
-        logging.info(f"Model pushed to {url}")
+        template_path = files("lerobot.templates").joinpath("lerobot_modelcard_template.md")
+        card = ModelCard.from_template(card_data, template_path=str(template_path))
+        card.validate()
+        return card

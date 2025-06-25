@@ -276,6 +276,8 @@ python lerobot/scripts/train.py \
 
 If you do not want to push your model to the hub after training use `--policy.push_to_hub=false`.
 
+Additionally you can provide extra `tags` or specify a `license` for your model or make the model repo `private` by adding this: `--policy.private=true --policy.tags=\[ppo,rl\] --policy.license=mit`
+
 #### Train using Collab
 If your local computer doesn't have a powerful GPU you could utilize Google Collab to train your model by following the [ACT training notebook](./notebooks#training-act).
 
