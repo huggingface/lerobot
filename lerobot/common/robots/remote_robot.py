@@ -117,9 +117,6 @@ class RemoteRobot(Robot):
         if self.is_connected:
             raise DeviceAlreadyConnectedError(f"{self} already connected")
 
-        print(f"Connecting {self} to LiveKit server: {self.livekit_url}")
-        print(f"LiveKit config - URL: {self.livekit_url}, Token: {'***' + self.livekit_token[-8:] if len(self.livekit_token) > 8 else '***'}")
-        
         # Start the async event loop in a separate thread
         self._loop_thread = threading.Thread(target=self._run_event_loop, daemon=True)
         self._loop_thread.start()
@@ -235,7 +232,7 @@ class RemoteRobot(Robot):
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         """
-        Send an action command to remote teleoperators via LiveKit data channel.
+        Send an action command to remote robot via LiveKit data channel.
 
         Args:
             action (dict[str, Any]): Dictionary representing the desired action.
@@ -295,7 +292,6 @@ class RemoteRobot(Robot):
                 reliable=False  # Use unreliable for real-time action data
             )
             
-            print(f"Published action: {action}")
         except Exception as e:
             logger.error(f"Error publishing action data: {e}")
             raise

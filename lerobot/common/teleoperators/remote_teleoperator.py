@@ -80,9 +80,6 @@ class RemoteTeleoperator(Teleoperator):
         if self.is_connected:
             raise DeviceAlreadyConnectedError(f"{self} already connected")
 
-        print(f"Connecting {self} to LiveKit server: {self.livekit_url}")
-        print(f"LiveKit config - URL: {self.livekit_url}, Token: {'***' + self.livekit_token[-8:] if len(self.livekit_token) > 8 else '***'}")
-        
         # Get action features to determine expected message shape
         self._expected_action_shape = self.action_features.copy()
         
@@ -148,7 +145,7 @@ class RemoteTeleoperator(Teleoperator):
                         # Decode the JSON action message
                         action_data = json.loads(data.data.decode('utf-8'))
                         self._handle_action_message(action_data)
-                        print(f"Received action: {action_data}")
+                        
                 except Exception as e:
                     logger.error(f"Error processing data packet: {e}")
 
