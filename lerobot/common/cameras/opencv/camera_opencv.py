@@ -449,7 +449,9 @@ class OpenCVCamera(Camera):
         if not self.new_frame_event.wait(timeout=timeout_ms / 1000.0):
             thread_alive = self.thread is not None and self.thread.is_alive()
             if thread_alive and not self.frame_counter > self.ratio_fps:
-                logger.warning(f"{self} async_read timed out after {timeout_ms} ms, but thread is still alive.")
+                logger.warning(
+                    f"{self} async_read timed out after {timeout_ms} ms, but thread is still alive."
+                )
                 frame = self.latest_frame
                 self.frame_counter += 1
             else:
