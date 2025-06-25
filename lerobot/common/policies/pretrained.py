@@ -145,7 +145,6 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
     def generate_model_card(self) -> ModelCard:
         dataset_repo_id = self.config.dataset_repo_id
-        print(f"repoId: ${dataset_repo_id}")
         datasets = [dataset_repo_id] if dataset_repo_id and isinstance(dataset_repo_id, str) else None
 
         model_name = self.name  # This is the policy name
