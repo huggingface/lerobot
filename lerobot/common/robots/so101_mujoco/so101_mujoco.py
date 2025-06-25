@@ -145,15 +145,10 @@ class SO101MuJoCo(Robot):
             print(f"Debug: No cube found in model (nq={self.m.nq} <= robot_joints={len(home_pos)})")
 
     def _init_cameras(self):
-        """Initialize cameras using `make_cameras_from_configs` – the returned dict will always contain a 'top' entry."""
+        """Initialize cameras using `make_cameras_from_configs`."""
         if self.config.cameras:
             # Build cameras from provided configs
             cameras = make_cameras_from_configs(self.config.cameras)
-
-            # Ensure a camera named 'top' exists – rename first camera if necessary
-            if "top" not in cameras and len(cameras) > 0:
-                first_key = next(iter(cameras))
-                cameras["top"] = cameras.pop(first_key)
         else:
             # When no camera configs are provided, create a sensible default MuJoCo camera config
             default_cfg = MuJoCoCameraConfig(
@@ -162,7 +157,7 @@ class SO101MuJoCo(Robot):
                 fps=30,
                 width=480,
                 height=640,
-                cam="top_view",
+                cam="top",
             )
             cameras = make_cameras_from_configs({"top": default_cfg})
 

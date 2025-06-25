@@ -38,7 +38,7 @@ class MuJoCoCameraConfig(CameraConfig):
     MuJoCoCameraConfig(model, data, 60, 1280, 720)  # 1280x720 @ 60FPS
 
     # Advanced configurations
-    MuJoCoCameraConfig(model, data, 30, 640, 480, cam="top_view")          # Named camera
+    MuJoCoCameraConfig(model, data, 30, 640, 480, cam="top")          # Named camera
     MuJoCoCameraConfig(model, data, 30, 640, 480, cam=0)                   # Camera index
     MuJoCoCameraConfig(model, data, 30, 640, 480, rotation=Cv2Rotation.ROTATE_90)  # With 90° rotation
     ```
