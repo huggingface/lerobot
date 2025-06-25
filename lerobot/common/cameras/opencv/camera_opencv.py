@@ -109,6 +109,9 @@ class OpenCVCamera(Camera):
         self.index_or_path = config.index_or_path
 
         self.fps = config.fps
+        self.dataset_fps = config.dataset_fps
+        self.ratio_fps = self.dataset_fps / self.fps if self.dataset_fps else 1.0
+        self.frame_counter = 0
         self.color_mode = config.color_mode
         self.warmup_s = config.warmup_s
 
@@ -380,22 +383,10 @@ class OpenCVCamera(Camera):
 
         Stops on DeviceNotConnectedError, logs other errors and continues.
         """
-        low_fps_cam = self.fps is not None and self.fps < 30
-        min_frame_interval = 1.0 / self.fps if self.fps else 1 / 30  # Default to 30 FPS if not set
-        last_frame_time = 0.0
         while not self.stop_event.is_set():
             try:
-                now = time.perf_counter()
-                elapsed = now - last_frame_time
-                if low_fps_cam and elapsed < min_frame_interval:
-                    # Not time for a new frame, return last frame if available
-                    with self.frame_lock:
-                        if self.latest_frame is not None:
-                            self.new_frame_event.set()
-                    time.sleep(min_frame_interval - elapsed)
-                    continue
                 color_image = self.read()
-                last_frame_time = now
+
                 with self.frame_lock:
                     self.latest_frame = color_image
                 self.new_frame_event.set()
@@ -446,7 +437,7 @@ class OpenCVCamera(Camera):
 
         Raises:
             DeviceNotConnectedError: If the camera is not connected.
-            TimeoutError: If no frame becomes available within the specified timeout.
+            TimeoutError: If no frame becomes available within the specified timeout and thread is dead.
             RuntimeError: If an unexpected error occurs.
         """
         if not self.is_connected:
@@ -457,10 +448,15 @@ class OpenCVCamera(Camera):
 
         if not self.new_frame_event.wait(timeout=timeout_ms / 1000.0):
             thread_alive = self.thread is not None and self.thread.is_alive()
-            raise TimeoutError(
-                f"Timed out waiting for frame from camera {self} after {timeout_ms} ms. "
-                f"Read thread alive: {thread_alive}."
-            )
+            if thread_alive and not self.frame_counter > self.ratio_fps:
+                logger.warning(f"{self} async_read timed out after {timeout_ms} ms, but thread is still alive.")
+                frame = self.latest_frame
+                self.frame_counter += 1
+            else:
+                raise TimeoutError(
+                    f"Timed out waiting for frame from camera {self} after {timeout_ms} ms. "
+                    f"Read thread is dead or not running."
+                )
 
         with self.frame_lock:
             frame = self.latest_frame
