@@ -11,14 +11,14 @@
 {{ model_summary | default("", true) }}
 
 This policy has been trained and pushed to the Hub using [LeRobot](https://github.com/huggingface/lerobot).
-See the full documentation at <https://huggingface.co/docs/lerobot/index>.
+See the full documentation at [LeRobot Docs](https://huggingface.co/docs/lerobot/index).
 
 ---
 
 ## How to Get Started with the Model
 
-For a complete walkthrough, see the **training guide** → <https://huggingface.co/docs/lerobot/il_robots#train-a-policy>.
-Below is the short version for the two tasks you’ll run most:
+For a complete walkthrough, see the [training guide](https://huggingface.co/docs/lerobot/il_robots#train-a-policy).
+Below is the short version on how to train and run inference/eval:
 
 ### 1 Train from scratch
 
