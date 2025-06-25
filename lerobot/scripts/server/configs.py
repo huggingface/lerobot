@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 
 from lerobot.common.robots.robot import Robot
+from lerobot.configs.types import PolicyFeature
 from lerobot.scripts.server.constants import (
     DEFAULT_ENVIRONMENT_DT,
     DEFAULT_IDLE_WAIT,
@@ -97,11 +98,10 @@ class RobotClientConfig:
     server_address: str = field(default="localhost:8080", metadata={"help": "Server address to connect to"})
 
     # Policy configuration
-    policy_type: str = field(default="smolvla", metadata={"help": "Type of policy to use"})
-    pretrained_name_or_path: str = field(
-        default="lerobot/smolvla_base", metadata={"help": "Pretrained model name or path"}
-    )
-    policy_device: str = field(default="cuda", metadata={"help": "Device for policy inference"})
+    policy_type: str = field(metadata={"help": "Type of policy to use"})
+    pretrained_name_or_path: str = field(metadata={"help": "Pretrained model name or path"})
+    policy_image_features: dict[str, PolicyFeature] = field(metadata={"help": "Image features for policy"})
+    policy_device: str = field(default="cpu", metadata={"help": "Device for policy inference"})
 
     # Control behavior configuration
     chunk_size_threshold: float = field(default=0.5, metadata={"help": "Threshold for chunk size control"})
