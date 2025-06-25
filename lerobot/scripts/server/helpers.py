@@ -34,7 +34,7 @@ def is_image_key(k: str) -> bool:
 def map_image_key_to_smolvla_key(idx: int) -> str:
     """Dataset contain image features keys named as observation.images.<camera_name>, but SmolVLA adapts this
     to observation.image, observation.image2, ..."""
-    idx_text = str(idx) if idx != 0 else ""
+    idx_text = str(idx + 1) if idx != 0 else ""
     return f"observation.image{idx_text}"
 
 
