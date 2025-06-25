@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import abc
-import importlib.resources as pkg_resources
 import logging
 import os
+from importlib.resources import files
 from pathlib import Path
 from typing import Type, TypeVar
 
@@ -181,7 +181,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             model_summary=model_summary,
         )
 
-        template_path = pkg_resources.files("lerobot.templates").joinpath("lerobot_modelcard_template.md")
+        template_path = files("lerobot.templates").joinpath("lerobot_modelcard_template.md")
         card = ModelCard.from_template(card_data, template_path=str(template_path))
         card.validate()
         return card
