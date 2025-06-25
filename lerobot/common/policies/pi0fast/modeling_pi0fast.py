@@ -17,7 +17,7 @@
 """
 π0+FAST: Efficient Action Tokenization for Vision-Language-Action Models
 
-[Paper](https://arxiv.org/abs/2501.09747)
+[Paper](https://huggingface.co/papers/2501.09747)
 [Jax code](https://github.com/Physical-Intelligence/openpi)
 
 Designed by Physical Intelligence. Ported from Jax by Hugging Face.
@@ -56,7 +56,7 @@ from transformers import AutoProcessor, AutoTokenizer, PaliGemmaForConditionalGe
 from transformers.cache_utils import HybridCache, StaticCache
 from transformers.models.auto import CONFIG_MAPPING
 
-from lerobot.common.constants import ACTION, OBS_ROBOT
+from lerobot.common.constants import ACTION, OBS_STATE
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.pi0fast.configuration_pi0fast import PI0FASTConfig
 from lerobot.common.policies.pretrained import PreTrainedPolicy
@@ -203,7 +203,7 @@ class PI0FASTPolicy(PreTrainedPolicy):
         self.eval()
 
         if self.config.adapt_to_pi_aloha:
-            batch[OBS_ROBOT] = self._pi_aloha_decode_state(batch[OBS_ROBOT])
+            batch[OBS_STATE] = self._pi_aloha_decode_state(batch[OBS_STATE])
 
         batch = self.normalize_inputs(batch)
 
@@ -231,7 +231,7 @@ class PI0FASTPolicy(PreTrainedPolicy):
 
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         if self.config.adapt_to_pi_aloha:
-            batch[OBS_ROBOT] = self._pi_aloha_decode_state(batch[OBS_ROBOT])
+            batch[OBS_STATE] = self._pi_aloha_decode_state(batch[OBS_STATE])
             batch[ACTION] = self._pi_aloha_encode_actions_inv(batch[ACTION])
         batch = self.normalize_inputs(batch)
         batch = self.normalize_targets(batch)
@@ -516,7 +516,7 @@ class PI0FAST(nn.Module):
                         interpolate_like_pi=self.config.interpolate_like_pi,
                     )
 
-                # Normalize from range [0,1] to [-1,1] as expacted by siglip
+                # Normalize from range [0,1] to [-1,1] as expected by siglip
                 img = img * 2.0 - 1.0
 
                 bsize = img.shape[0]
@@ -677,12 +677,12 @@ class PI0FAST(nn.Module):
         return new_tokens, new_ar_masks, new_padding_mask, new_loss_mask, new_targets, new_token_type_ids
 
     def forward(self, batch: dict[str, Tensor]):
-        device = batch[OBS_ROBOT].device
+        device = batch[OBS_STATE].device
         # TODO: keep like this or move to the policy .forward
         images, img_masks = self.prepare_images(batch)
 
         padded_outs = self.create_input_tokens(
-            state=batch[OBS_ROBOT],
+            state=batch[OBS_STATE],
             lang_text=batch["task"],
             actions=batch[ACTION],
         )
@@ -849,7 +849,7 @@ class PI0FAST(nn.Module):
         # TODO: keep like this or move to the policy .forward
         images, img_masks = self.prepare_images(batch)
 
-        padded_outs = self.create_input_tokens(state=batch[OBS_ROBOT], lang_text=batch["task"], actions=None)
+        padded_outs = self.create_input_tokens(state=batch[OBS_STATE], lang_text=batch["task"], actions=None)
         embs, pad_masks, att_masks2, targets, loss_mask, token_type_ids = self.embed_inputs(
             images,
             img_masks,
@@ -878,7 +878,11 @@ class PI0FAST(nn.Module):
         return actions
 
     def embed_image(self, image: torch.Tensor):
-        return self.pi0_paligemma.get_image_features(image)
+        # Handle different transformers versions
+        if hasattr(self.pi0_paligemma, "get_image_features"):
+            return self.pi0_paligemma.get_image_features(image)
+        else:
+            return self.pi0_paligemma.model.get_image_features(image)
 
     def embed_inputs(
         self,

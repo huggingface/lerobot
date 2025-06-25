@@ -30,9 +30,10 @@ def cfg_to_group(cfg: TrainPipelineConfig, return_list: bool = False) -> list[st
     """Return a group name for logging. Optionally returns group name as list."""
     lst = [
         f"policy:{cfg.policy.type}",
-        f"dataset:{cfg.dataset.repo_id}",
         f"seed:{cfg.seed}",
     ]
+    if cfg.dataset is not None:
+        lst.append(f"dataset:{cfg.dataset.repo_id}")
     if cfg.env is not None:
         lst.append(f"env:{cfg.env.type}")
     return lst if return_list else "-".join(lst)
@@ -92,6 +93,12 @@ class WandBLogger:
             resume="must" if cfg.resume else None,
             mode=self.cfg.mode if self.cfg.mode in ["online", "offline", "disabled"] else "online",
         )
+        run_id = wandb.run.id
+        # NOTE: We will override the cfg.wandb.run_id with the wandb run id.
+        # This is because we want to be able to resume the run from the wandb run id.
+        cfg.wandb.run_id = run_id
+        # Handle custom step key for rl asynchronous training.
+        self._wandb_custom_step_key: set[str] | None = None
         print(colored("Logs will be synced with wandb.", "blue", attrs=["bold"]))
         logging.info(f"Track this run --> {colored(wandb.run.get_url(), 'yellow', attrs=['bold'])}")
         self._wandb = wandb
@@ -108,17 +115,45 @@ class WandBLogger:
         artifact.add_file(checkpoint_dir / PRETRAINED_MODEL_DIR / SAFETENSORS_SINGLE_FILE)
         self._wandb.log_artifact(artifact)
 
-    def log_dict(self, d: dict, step: int, mode: str = "train"):
+    def log_dict(
+        self, d: dict, step: int | None = None, mode: str = "train", custom_step_key: str | None = None
+    ):
         if mode not in {"train", "eval"}:
             raise ValueError(mode)
+        if step is None and custom_step_key is None:
+            raise ValueError("Either step or custom_step_key must be provided.")
+
+        # NOTE: This is not simple. Wandb step must always monotonically increase and it
+        # increases with each wandb.log call, but in the case of asynchronous RL for example,
+        # multiple time steps is possible. For example, the interaction step with the environment,
+        # the training step, the evaluation step, etc. So we need to define a custom step key
+        # to log the correct step for each metric.
+        if custom_step_key is not None:
+            if self._wandb_custom_step_key is None:
+                self._wandb_custom_step_key = set()
+            new_custom_key = f"{mode}/{custom_step_key}"
+            if new_custom_key not in self._wandb_custom_step_key:
+                self._wandb_custom_step_key.add(new_custom_key)
+                self._wandb.define_metric(new_custom_key, hidden=True)
 
         for k, v in d.items():
             if not isinstance(v, (int, float, str)):
                 logging.warning(
-                    f'WandB logging of key "{k}" was ignored as its type is not handled by this wrapper.'
+                    f'WandB logging of key "{k}" was ignored as its type "{type(v)}" is not handled by this wrapper.'
                 )
                 continue
-            self._wandb.log({f"{mode}/{k}": v}, step=step)
+
+            # Do not log the custom step key itself.
+            if self._wandb_custom_step_key is not None and k in self._wandb_custom_step_key:
+                continue
+
+            if custom_step_key is not None:
+                value_custom_step = d[custom_step_key]
+                data = {f"{mode}/{k}": v, f"{mode}/{custom_step_key}": value_custom_step}
+                self._wandb.log(data)
+                continue
+
+            self._wandb.log(data={f"{mode}/{k}": v}, step=step)
 
     def log_video(self, video_path: str, step: int, mode: str = "train"):
         if mode not in {"train", "eval"}:
