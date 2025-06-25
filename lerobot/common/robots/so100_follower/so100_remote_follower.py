@@ -18,8 +18,6 @@ import logging
 from functools import cached_property
 from typing import Any
 
-from lerobot.common.cameras.utils import make_cameras_from_configs
-
 from ..remote_robot import RemoteRobot
 from .config_so100_follower import SO100RemoteFollowerConfig
 
@@ -29,7 +27,7 @@ logger = logging.getLogger(__name__)
 class SO100RemoteFollower(RemoteRobot):
     """
     Remote SO-100 Follower Arm via WebRTC.
-    
+
     This robot enables controlling SO-100 follower robots over the internet with low latency
     by receiving action commands via WebRTC data channels and publishing observations.
     """
@@ -40,7 +38,7 @@ class SO100RemoteFollower(RemoteRobot):
     def __init__(self, config: SO100RemoteFollowerConfig):
         super().__init__(config)
         self.config = config
-        self.cameras = {} #make_cameras_from_configs(config.cameras)
+        self.cameras = {}  # make_cameras_from_configs(config.cameras)
 
     @property
     def _motors_ft(self) -> dict[str, type]:
@@ -59,7 +57,7 @@ class SO100RemoteFollower(RemoteRobot):
         """Camera features based on configured cameras."""
         return {}
         # return {
-        #     cam: (self.config.cameras[cam].height, self.config.cameras[cam].width, 3) 
+        #     cam: (self.config.cameras[cam].height, self.config.cameras[cam].width, 3)
         #     for cam in self.cameras
         # }
 
@@ -88,13 +86,13 @@ class SO100RemoteFollower(RemoteRobot):
     def connect(self, calibrate: bool = True) -> None:
         """
         Establish communication with the LiveKit server and connect cameras.
-        
+
         Args:
             calibrate (bool): Ignored for remote robot
         """
         # Connect to LiveKit server
         super().connect(calibrate=calibrate)
-        
+
         # Connect cameras
         for cam in self.cameras.values():
             cam.connect()
@@ -116,12 +114,13 @@ class SO100RemoteFollower(RemoteRobot):
     def get_observation(self) -> dict[str, Any]:
         """
         Retrieve the current observation from the robot including motor positions and camera images.
-        
+
         Returns:
             dict[str, Any]: A flat dictionary representing the robot's current sensory state.
         """
         if not self.is_connected:
             from lerobot.common.errors import DeviceNotConnectedError
+
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
         # Get base observation from RemoteRobot (motor positions from remote state)
@@ -157,4 +156,4 @@ class SO100RemoteFollower(RemoteRobot):
         # Disconnect from LiveKit server
         super().disconnect()
 
-        logger.info(f"{self} disconnected from LiveKit server and cameras.") 
+        logger.info(f"{self} disconnected from LiveKit server and cameras.")

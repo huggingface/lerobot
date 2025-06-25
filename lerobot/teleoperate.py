@@ -93,7 +93,7 @@ def teleop_loop(
                     rr.log(f"action_{act}", rr.Scalar(val))
 
         robot.send_action(action)
-        
+
         # if teleop is a RemoteTeleoperator, send the observations to the remote teleoperator
         if isinstance(teleop, RemoteTeleoperator):
             observation = robot.get_observation()

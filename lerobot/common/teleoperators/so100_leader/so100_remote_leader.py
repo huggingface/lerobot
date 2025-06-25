@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 class SO100RemoteLeader(RemoteTeleoperator):
     """
     Remote SO-100 Leader Arm via WebRTC.
-    
+
     This teleoperator enables receiving SO-100 leader arm actions via WebRTC data channels,
     allowing operators to control SO-100 follower robots over the internet with low latency.
     """
@@ -62,7 +62,7 @@ class SO100RemoteLeader(RemoteTeleoperator):
     def connect(self, calibrate: bool = True) -> None:
         """
         Establish communication with the LiveKit server.
-        
+
         Args:
             calibrate (bool): Ignored for remote teleoperator
         """
@@ -96,7 +96,7 @@ class SO100RemoteLeader(RemoteTeleoperator):
     def get_action(self) -> dict[str, Any]:
         """
         Retrieve the current action from the remote teleoperator.
-        
+
         Returns:
             dict[str, Any]: A flat dictionary representing the teleoperator's current actions.
         """
@@ -112,4 +112,4 @@ class SO100RemoteLeader(RemoteTeleoperator):
         """
         Disconnect from the LiveKit server.
         """
-        super().disconnect() 
+        super().disconnect()
