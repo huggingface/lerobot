@@ -16,6 +16,7 @@ import json
 import logging
 import threading
 from typing import Any
+import numpy as np
 
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.common.teleoperators.config import RemoteTeleoperatorConfig
@@ -84,6 +85,11 @@ class RemoteTeleoperator(Teleoperator):
         self._cached_action: dict[str, Any] | None = None
         self._expected_action_shape: dict[str, type] | None = None
         self._action_lock = threading.Lock()
+
+        # Video track management for camera observations
+        self._video_sources: dict[str, rtc.VideoSource] = {}
+        self._video_tracks: dict[str, rtc.LocalVideoTrack] = {}
+        self._video_lock = threading.Lock()
 
     @property
     def is_connected(self) -> bool:
@@ -191,6 +197,132 @@ class RemoteTeleoperator(Teleoperator):
                     return {}
             return self._cached_action.copy()
 
+    def publish_observation(self, observation: dict[str, Any]) -> None:
+        """
+        Publish robot observation data to LiveKit for remote viewing.
+        
+        This method:
+        1. Extracts values from observation that match the action features
+        2. Publishes matching values as JSON data to the 'teleop_observation' topic
+        3. Creates/updates video tracks for any camera frame observations
+        
+        Args:
+            observation: The observation dictionary returned from Robot.get_observation()
+            
+        Raises:
+            DeviceNotConnectedError: If the teleoperator is not connected
+        """
+        if not self.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected")
+        
+        try:
+            # Extract observation values that match action features for JSON publishing
+            observation_data = {}
+            camera_frames = {}
+            
+            for key, value in observation.items():
+                # Check if this observation key matches any action feature
+                if self._expected_action_shape and key in self._expected_action_shape:
+                    observation_data[key] = value
+                # Check if this is a camera frame (numpy array with 3 dimensions for H, W, C)
+                elif isinstance(value, np.ndarray) and value.ndim == 3:
+                    camera_frames[key] = value
+                    
+            # Publish matching observation data as JSON if we have any
+            if observation_data:
+                try:
+                    self._livekit_service.publish_json_sync(
+                        observation_data, 
+                        "teleop_observation", 
+                        reliable=False,
+                        timeout=0.5
+                    )
+                    logger.debug(f"Published observation data: {list(observation_data.keys())}")
+                except Exception as e:
+                    logger.warning(f"Failed to publish observation data: {e}")
+            
+            # Handle video tracks for camera frames
+            if camera_frames:
+                self._publish_camera_frames(camera_frames)
+                
+        except Exception as e:
+            logger.error(f"Error publishing observation: {e}")
+
+    def _publish_camera_frames(self, camera_frames: dict[str, np.ndarray]) -> None:
+        """
+        Publish camera frames as video tracks to LiveKit.
+        
+        Args:
+            camera_frames: Dictionary mapping camera names to image arrays (H, W, C)
+        """
+        with self._video_lock:
+            for camera_name, frame_array in camera_frames.items():
+                try:
+                    # Ensure frame is in the correct format (H, W, C) with uint8 values
+                    if frame_array.dtype != np.uint8:
+                        # Convert to uint8 if needed
+                        if frame_array.max() <= 1.0:
+                            frame_array = (frame_array * 255).astype(np.uint8)
+                        else:
+                            frame_array = frame_array.astype(np.uint8)
+                    
+                    height, width, channels = frame_array.shape
+                    
+                    # Create video source and track if they don't exist
+                    if camera_name not in self._video_sources:
+                        self._video_sources[camera_name] = rtc.VideoSource(width, height)
+                        self._video_tracks[camera_name] = rtc.LocalVideoTrack.create_video_track(
+                            f"camera_{camera_name}", 
+                            self._video_sources[camera_name]
+                        )
+                        
+                        # Publish the video track
+                        if self._livekit_service.room and self._livekit_service.room.local_participant:
+                            options = rtc.TrackPublishOptions(
+                                source=rtc.TrackSource.SOURCE_CAMERA,
+                                simulcast=True,
+                                video_encoding=rtc.VideoEncoding(
+                                    max_framerate=30,
+                                    max_bitrate=2_000_000,
+                                ),
+                                video_codec=rtc.VideoCodec.H264,
+                            )
+                            
+                            # Schedule the track publishing asynchronously
+                            import asyncio
+                            if self._livekit_service._event_loop:
+                                asyncio.run_coroutine_threadsafe(
+                                    self._livekit_service.room.local_participant.publish_track(
+                                        self._video_tracks[camera_name], options
+                                    ),
+                                    self._livekit_service._event_loop
+                                )
+                    
+                    # Convert numpy array to video frame
+                    if channels == 3:
+                        # Assume RGB format, convert to RGBA
+                        rgba_frame = np.zeros((height, width, 4), dtype=np.uint8)
+                        rgba_frame[:, :, :3] = frame_array
+                        rgba_frame[:, :, 3] = 255  # Alpha channel
+                        frame_data = rgba_frame.flatten().tobytes()
+                        buffer_type = rtc.VideoBufferType.RGBA
+                    elif channels == 4:
+                        # Already RGBA
+                        frame_data = frame_array.flatten().tobytes()
+                        buffer_type = rtc.VideoBufferType.RGBA
+                    else:
+                        logger.warning(f"Unsupported number of channels for camera {camera_name}: {channels}")
+                        continue
+                    
+                    # Create and publish video frame
+                    video_frame = rtc.VideoFrame(width, height, buffer_type, frame_data)
+                    self._video_sources[camera_name].capture_frame(video_frame)
+                    
+                    logger.debug(f"Published video frame for camera: {camera_name}")
+                    
+                except Exception as e:
+                    logger.error(f"Error publishing camera frame for {camera_name}: {e}")
+
     def disconnect(self) -> None:
         """
         Disconnect from the LiveKit server and perform any necessary cleanup.
@@ -199,6 +331,11 @@ class RemoteTeleoperator(Teleoperator):
             raise DeviceNotConnectedError(f"{self} is not connected")
 
         logger.info(f"Disconnecting {self} from LiveKit server")
+        
+        # Clean up video tracks
+        with self._video_lock:
+            self._video_sources.clear()
+            self._video_tracks.clear()
         
         # Disconnect using the LiveKit service
         try:

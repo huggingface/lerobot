@@ -50,6 +50,7 @@ from lerobot.common.robots import (  # noqa: F401
     so101_follower,
 )
 from lerobot.common.teleoperators import (
+    RemoteTeleoperator,
     Teleoperator,
     TeleoperatorConfig,
     make_teleoperator_from_config,
@@ -92,6 +93,11 @@ def teleop_loop(
                     rr.log(f"action_{act}", rr.Scalar(val))
 
         robot.send_action(action)
+        
+        # if teleop is a RemoteTeleoperator, send the observations to the remote teleoperator
+        if isinstance(teleop, RemoteTeleoperator):
+            teleop.publish_observations(observation)
+
         dt_s = time.perf_counter() - loop_start
         busy_wait(1 / fps - dt_s)
 
