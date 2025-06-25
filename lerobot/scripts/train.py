@@ -38,6 +38,7 @@ from lerobot.common.utils.train_utils import (
     get_step_checkpoint_dir,
     get_step_identifier,
     load_training_state,
+    push_policy_to_hub,
     save_checkpoint,
     update_last_checkpoint,
 )
@@ -282,25 +283,8 @@ def train(cfg: TrainPipelineConfig):
         eval_env.close()
     logging.info("End of training")
 
-    # TODO: add this in train_utils.py
     if cfg.policy.push_to_hub and cfg.policy.repo_id:
-        url = policy.push_to_hub(
-            repo_id=cfg.policy.repo_id,
-            private=False,
-            token=None,  # defaults to HF_TOKEN
-            branch="main",
-            allow_patterns=["*.safetensors", "*.json", "*.yaml", "*.md"],
-            ignore_patterns=["*.tmp", "*.log"],
-        )
-        print(f"Model pushed to {url}")
-        config_url = TrainPipelineConfig.push_to_hub(
-            cfg,
-            repo_id=cfg.policy.repo_id,
-            commit_message="Upload train_config.json",
-            allow_patterns=["train_config.json"],
-            ignore_patterns=None,
-        )
-        print(f"Train config pushed to {config_url}")
+        push_policy_to_hub(policy, cfg)
 
 
 if __name__ == "__main__":

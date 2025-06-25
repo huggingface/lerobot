@@ -4,66 +4,51 @@
 {{ card_data }}
 ---
 
-# Model Card for {{ model_id | default("Model ID", true) }}
+# Model Card for {{ model_name | default("Model ID", true) }}
 
 <!-- Provide a quick summary of what the model is/does. -->
 
 {{ model_summary | default("", true) }}
 
-## Model Details
+This policy has been trained and pushed to the Hub using [LeRobot](https://github.com/huggingface/lerobot).
+See the full documentation at <https://huggingface.co/docs/lerobot/index>.
 
-### Model Description
-
-<!-- Provide a longer summary of what this model is. -->
-
-{{ model_description | default("", true) }}
-
-- **Developed by:** {{ developers | default("[More Information Needed]", true)}}
-- **Shared by [optional]:** {{ shared_by | default("[More Information Needed]", true)}}
-- **License:** {{ license | default("[More Information Needed]", true)}}
-- **Finetuned from model [optional]:** {{ base_model | default("[More Information Needed]", true)}}
-
-### Model Sources [optional]
-
-<!-- Provide the basic links for the model. -->
-
-- **Repository:** {{ repo | default("[More Information Needed]", true)}}
-- **Paper [optional]:** {{ paper | default("[More Information Needed]", true)}}
-- **Demo [optional]:** {{ demo | default("[More Information Needed]", true)}}
+---
 
 ## How to Get Started with the Model
 
-Use the code below to get started with the model.
+For a complete walkthrough, see the **training guide** → <https://huggingface.co/docs/lerobot/il_robots#train-a-policy>.
+Below is the short version for the two tasks you’ll run most:
 
-{{ get_started_code | default("[More Information Needed]", true)}}
+### 1 Train from scratch
 
-## Training Details
+```bash
+python lerobot/scripts/train.py \
+  --dataset.repo_id=${HF_USER}/<dataset> \
+  --policy.type=act \
+  --output_dir=outputs/train/<desired_policy_repo_id> \
+  --job_name=lerobot_training \
+  --policy.device=cuda \
+  --policy.repo_id=${HF_USER}/<desired_policy_repo_id>
+  --wandb.enable=true
+```
 
-### Training Data
+*Writes checkpoints to `outputs/train/<desired_policy_repo_id>/checkpoints/`.*
 
-<!-- This should link to a Dataset Card, perhaps with a short stub of information on what the training data is all about as well as documentation related to data pre-processing or additional filtering. -->
+### 2 Evaluate the policy
 
-{{ training_data | default("[More Information Needed]", true)}}
+```bash
+python -m lerobot.record \
+  --robot.type=so100_follower \
+  --dataset.repo_id=<hf_user>/eval_<dataset> \
+  --policy.path=<hf_user>/<desired_policy_repo_id> \
+  --episodes=10
+```
 
-### Training Procedure
+Prefix the dataset repo with **eval\_** and supply `--policy.path` pointing to a local or hub checkpoint.
 
-<!-- This relates heavily to the Technical Specifications. Content here should link to that section when it is relevant to the training procedure. -->
+---
 
+## Model Details
 
-## Technical Specifications [optional]
-
-### Model Architecture and Objective
-
-{{ model_specs | default("[More Information Needed]", true)}}
-
-#### Software
-
-{{ software | default("[More Information Needed]", true)}}
-
-## Citation [optional]
-
-<!-- If there is a paper or blog post introducing the model, the APA and Bibtex information for that should go in this section. -->
-
-**BibTeX:**
-
-{{ citation_bibtex | default("[More Information Needed]", true)}}
+* **License:** {{ license | default("\[More Information Needed]", true) }}

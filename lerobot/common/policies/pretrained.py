@@ -32,17 +32,6 @@ from lerobot.configs.policies import PreTrainedConfig
 
 T = TypeVar("T", bound="PreTrainedPolicy")
 
-DEFAULT_POLICY_CARD = """
----
-# For reference on model card metadata, see the spec: https://github.com/huggingface/hub-docs/blob/main/modelcard.md?plain=1
-# Doc / guide: https://huggingface.co/docs/hub/model-cards
-{{ card_data }}
----
-
-This policy has been pushed to the Hub using [LeRobot](https://github.com/huggingface/lerobot):
-- Docs: {{ docs_url | default("[More Information Needed]", true) }}
-"""
-
 
 class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
     """
@@ -160,7 +149,27 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         datasets = [dataset_repo_id] if dataset_repo_id and isinstance(dataset_repo_id, str) else None
 
         model_name = self.name  # This is the policy name
-        base_model = "lerobot/smolvla_base" if model_name == "smolvla" else None
+        base_model = "lerobot/smolvla_base" if model_name == "smolvla" else None  # Set a base model
+        model_summary = ""
+
+        if model_name == "smolvla":
+            model_summary = "[SmolVLA](https://huggingface.co/papers/2506.01844) is a compact, efficient vision-language-action model that achieves competitive performance at reduced computational costs and can be deployed on consumer-grade hardware."
+        elif model_name == "act":
+            model_summary = "[Action Chunking with Transformers (ACT)](https://huggingface.co/papers/2304.13705) is a imitation-learning method that, predicts short action chunks instead of single steps. It learns from tele-operated data and often achieves high success rates."
+        elif model_name == "tdmpc":
+            model_summary = "[TD-MPC](https://huggingface.co/papers/2203.04955) combines model-free and model-based approaches to improve sample efficiency and performance in continuous control tasks by using a learned latent dynamics model and terminal value function."
+        elif model_name == "diffusion":
+            model_summary = "[Diffusion Policy](https://huggingface.co/papers/2303.04137) treats visuomotor control as a generative diffusion process, producing smooth, multi-step action trajectories that excel at contact-rich manipulation."
+        elif model_name == "vqbet":
+            model_summary = "[VQ-BET](https://huggingface.co/papers/2403.03181) combines vector-quantised action tokens with Behaviour Transformers to discretise control and achieve data-efficient imitation across diverse skills."
+        elif model_name == "pi0":
+            model_summary = "[Pi0](https://huggingface.co/papers/2410.24164) is a generalist vision-language-action transformer that converts multimodal observations and text instructions into robot actions for zero-shot task transfer."
+        elif model_name == "pi0fast":
+            model_summary = "[Pi0-Fast](https://huggingface.co/papers/2501.09747) is variant of Pi0 that uses a new tokenization method called FAST, which enables training of a autoregressive vision-language-action policy for high-frequency robotic tasks with improved performance and reduced training time."
+        elif model_name == "sac":
+            model_summary = "[Soft Actor-Critic (SAC)](https://huggingface.co/papers/1801.01290) is an entropy-regularised actor-critic algorithm offering stable, sample-efficient learning in continuous-control environments."
+        elif model_name == "reward_classifier":
+            model_summary = "A reward classifier is a lightweight neural network that scores observations or trajectories for task success, providing a learned reward signal or offline evaluation when explicit rewards are unavailable."
 
         card_data = ModelCardData(
             license="apache-2.0",
@@ -170,6 +179,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             model_name=model_name,
             datasets=datasets,
             base_model=base_model,
+            model_summary=model_summary,
         )
 
         template_path = pkg_resources.files("lerobot.templates").joinpath("lerobot_modelcard_template.md")
