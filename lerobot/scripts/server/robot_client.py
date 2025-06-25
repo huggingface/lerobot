@@ -9,6 +9,7 @@ from typing import Callable, Optional
 import grpc
 import torch
 
+from lerobot.configs.policies import PreTrainedConfig
 from lerobot.scripts.server import (
     async_inference_pb2,  # type: ignore
     async_inference_pb2_grpc,  # type: ignore
@@ -19,6 +20,8 @@ from lerobot.scripts.server.helpers import (
     TimedObservation,
     TinyPolicyConfig,
     make_robot,
+    map_robot_keys_to_lerobot_features,
+    prepare_observation_for_policy,
     setup_logging,
 )
 
@@ -58,11 +61,11 @@ class RobotClient:
 
         self.chunks_received_lock = threading.Lock()
 
-        start_time = time.time()
+        start_time = time.perf_counter()
         self.robot = self.config.robot
         self.robot.connect()
 
-        connect_time = time.time()
+        connect_time = time.perf_counter()
         self.logger.info(f"Robot connection time: {connect_time - start_time:.4f}s")
 
         time.sleep(config.camera_activation_delay)  # small sleep waiting for cameras to activate
@@ -80,9 +83,9 @@ class RobotClient:
         """Start the robot client and connect to the policy server"""
         try:
             # client-server handshake
-            start_time = time.time()
+            start_time = time.perf_counter()
             self.stub.Ready(async_inference_pb2.Empty())
-            end_time = time.time()
+            end_time = time.perf_counter()
             self.logger.info(f"Connected to policy server in {end_time - start_time:.4f}s")
 
             # send policy instructions
@@ -134,17 +137,17 @@ class RobotClient:
 
         assert isinstance(obs, TimedObservation), "Input observation needs to be a TimedObservation!"
 
-        start_time = time.time()
+        start_time = time.perf_counter()
         observation_bytes = pickle.dumps(obs)
-        serialize_time = time.time()
+        serialize_time = time.perf_counter()
         self.logger.debug(f"Observation serialization time: {serialize_time - start_time:.6f}s")
 
         observation = async_inference_pb2.Observation(transfer_state=transfer_state, data=observation_bytes)
 
         try:
-            send_start = time.time()
+            send_start = time.perf_counter()
             _ = self.stub.SendObservations(iter([observation]))
-            send_end = time.time()
+            send_end = time.perf_counter()
 
             obs_timestep = obs.get_timestep()
 
@@ -233,7 +236,7 @@ class RobotClient:
 
     def _fill_action_queue(self, actions: list[TimedAction]):
         """Fill the action queue with incoming valid actions"""
-        start_time = time.time()
+        start_time = time.perf_counter()
         valid_count = 0
 
         for action in actions:
@@ -241,7 +244,7 @@ class RobotClient:
                 self.action_queue.put(action)
                 valid_count += 1
 
-        end_time = time.time()
+        end_time = time.perf_counter()
         self.logger.debug(
             f"Queue filled: {valid_count}/{len(actions)} valid actions added in {end_time - start_time:.6f}s"
         )
@@ -260,16 +263,16 @@ class RobotClient:
             try:
                 # Use StreamActions to get a stream of actions from the server
                 for actions_chunk in self.stub.StreamActions(async_inference_pb2.Empty()):
-                    receive_time = time.time()
+                    receive_time = time.perf_counter()
 
                     # Deserialize bytes back into list[TimedAction]
-                    deserialize_start = time.time()
+                    deserialize_start = time.perf_counter()
                     timed_actions = pickle.loads(actions_chunk.data)  # nosec
-                    deserialize_end = time.time()
+                    deserialize_end = time.perf_counter()
 
                     self.action_chunk_size = max(self.action_chunk_size, len(timed_actions))
 
-                    start_time = time.time()
+                    start_time = time.perf_counter()
 
                     self.logger.info(f"Current latest action: {self.latest_action}")
 
@@ -294,9 +297,9 @@ class RobotClient:
                         )
 
                     # Update action queue
-                    start_time = time.time()
+                    start_time = time.perf_counter()
                     self._update_action_queue(timed_actions)
-                    queue_update_time = time.time() - start_time
+                    queue_update_time = time.perf_counter() - start_time
 
                     self.must_go = (
                         True  # after receiving actions, next empty queue triggers must-go processing!
@@ -335,8 +338,12 @@ class RobotClient:
         except Empty:
             return None
 
+    def _action_tensor_to_action_dict(self, action_tensor: torch.Tensor) -> dict[str, float]:
+        action = {key: action_tensor[i].item() for i, key in enumerate(self.robot.action_features)}
+        return action
+
     def _perform_action(self, timed_action: TimedAction):
-        self.robot.send_action(timed_action.get_action())
+        self.robot.send_action(self._action_tensor_to_action_dict(timed_action.get_action()))
         self.latest_action = timed_action.get_timestep()
 
         self.logger.debug(
@@ -383,9 +390,9 @@ class RobotClient:
         while self.running:
             try:
                 # Get serialized observation bytes from the function
-                start_time = time.time()
+                start_time = time.perf_counter()
                 observation = get_observation_fn()
-                obs_capture_time = time.time() - start_time
+                obs_capture_time = time.perf_counter() - start_time
 
                 self.logger.debug(f"Capturing observation took {obs_capture_time:.6f}s")
 
@@ -419,9 +426,9 @@ class RobotClient:
         self.available_actions_size.append(self.action_queue.qsize())
         if self._actions_available():
             # Get action from queue
-            get_start = time.time()
+            get_start = time.perf_counter()
             timed_action = self._get_next_action()
-            get_end = time.time() - get_start
+            get_end = time.perf_counter() - get_start
 
             self.logger.debug(
                 f"Popping action from queue to perform took {get_end:.6f}s | "
@@ -437,9 +444,9 @@ class RobotClient:
     def control_loop_observation(self, get_observation_fn):
         try:
             # Get serialized observation bytes from the function
-            start_time = time.time()
+            start_time = time.perf_counter()
             observation = get_observation_fn()
-            obs_capture_time = time.time() - start_time
+            obs_capture_time = time.perf_counter() - start_time
 
             # If there are no actions left in the queue, the observation must go through processing!
             observation.must_go = self.must_go and self.action_queue.empty()
@@ -481,7 +488,7 @@ class RobotClient:
 
         control_loops = 0
         while self.running:
-            control_loop_start = time.time()
+            control_loop_start = time.perf_counter()
             self.control_loop_action()
 
             """Control loop: (2) Streaming observations to the remote policy server"""
@@ -489,7 +496,7 @@ class RobotClient:
                 self.control_loop_observation(get_observation_fn)
 
             # Dynamically adjust sleep time to maintain the desired control frequency
-            time.sleep(max(0, self.config.environment_dt - (time.time() - control_loop_start)))
+            time.sleep(max(0, self.config.environment_dt - (time.perf_counter() - control_loop_start)))
             control_loops += 1
 
 
@@ -498,7 +505,7 @@ def parse_args():
     parser.add_argument(
         "--task",
         type=str,
-        required=True,
+        default="Pick up the red cube and put in the box",
         help="Task instruction for the robot to execute (e.g., 'fold my tshirt')",
     )
     parser.add_argument("--verbose", type=int, default=0, help="Verbosity level (default: 0)")
@@ -508,15 +515,15 @@ def parse_args():
         default="localhost:8080",
         help="Server address (default: localhost:8080)",
     )
-    parser.add_argument("--policy-type", type=str, default="smolvla", help="Policy type (default: smolvla)")
+    parser.add_argument("--policy-type", type=str, default="act", help="Policy type (default: smolvla)")
     parser.add_argument(
         "--pretrained-name-or-path",
         type=str,
-        default="lerobot/smolvla_base",
+        default="fracapuano/act_so100_test",
         help="Pretrained model name or path (default: lerobot/smolvla_base)",
     )
     parser.add_argument(
-        "--policy-device", type=str, default="cuda", help="Device for policy inference (default: cuda)"
+        "--policy-device", type=str, default="cpu", help="Device for policy inference (default: cuda)"
     )
     parser.add_argument(
         "--chunk-size-threshold",
@@ -534,7 +541,15 @@ def parse_args():
     parser.add_argument(
         "--robot-port",
         type=str,
+        default="/dev/tty.usbmodem585A0076841",
         help="Port on which to read/write robot joint status (e.g., '/dev/tty.usbmodem575E0031751'). Find your port with lerobot/find_port.py",
+    )
+
+    parser.add_argument(
+        "--robot-id",
+        type=str,
+        default="follower_so100",
+        help="ID of the robot to connect to (default: follower_so100)",
     )
 
     return parser.parse_args()
@@ -542,30 +557,45 @@ def parse_args():
 
 def async_client(args: argparse.Namespace):
     robot = make_robot(args)
+    policy_config = PreTrainedConfig.from_pretrained(args.pretrained_name_or_path)
+    policy_image_features = policy_config.image_features
 
     # Create config from parsed arguments
     config = RobotClientConfig(
+        robot=robot,
+        policy_image_features=policy_image_features,
         server_address=args.server_address,
         policy_type=args.policy_type,
         pretrained_name_or_path=args.pretrained_name_or_path,
         policy_device=args.policy_device,
         chunk_size_threshold=args.chunk_size_threshold,
-        robot=robot,
     )
 
     # Create client with config
     client = RobotClient(config)
+    lerobot_features = map_robot_keys_to_lerobot_features(robot)
 
     if client.start():
         # Function to make observations from the robot's get_observation() method
         def make_observation():
-            observation_content = None
-            observation_content = client.robot.get_observation()
+            robot_obs = client.robot.get_observation()
+            observation_content = prepare_observation_for_policy(
+                robot_obs,
+                lerobot_features,
+                config.policy_image_features,
+                adapt_keys_to_smolvla=config.policy_type
+                == "smolvla",  # smolvla requires some extra processing on the keys
+            )
+
+            observation_content = {k: v.to(config.policy_device) for k, v in observation_content.items()}
 
             observation_content["task"] = [args.task]
+            observation_content["robot_type"] = [""]
 
             observation = TimedObservation(
-                timestamp=time.time(), observation=observation_content, timestep=max(client.latest_action, 0)
+                timestamp=time.perf_counter(),
+                observation=observation_content,
+                timestep=max(client.latest_action, 0),
             )
 
             return observation
