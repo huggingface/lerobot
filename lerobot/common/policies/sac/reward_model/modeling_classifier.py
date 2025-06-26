@@ -308,6 +308,13 @@ class Classifier(PreTrainedPolicy):
         """
         raise NotImplementedError("Reward classifiers do not select actions")
 
+    def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
+        """
+        This method is required by PreTrainedPolicy but not used for reward classifiers.
+        The reward classifier is not an actor and does not produce action chunks.
+        """
+        raise NotImplementedError("Reward classifiers do not predict action chunks")
+
     def reset(self):
         """
         This method is required by PreTrainedPolicy but not used for reward classifiers.
