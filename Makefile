@@ -114,10 +114,9 @@ test-tdmpc-ete-train:
 	python lerobot/scripts/train.py \
 		--policy.type=tdmpc \
 		--policy.device=$(DEVICE) \
-		--env.type=xarm \
-		--env.task=XarmLift-v0 \
+		--env.type=pusht \
 		--env.episode_length=5 \
-		--dataset.repo_id=lerobot/xarm_lift_medium \
+		--dataset.repo_id=lerobot/pusht \
 		--dataset.image_transforms.enable=true \
 		--dataset.episodes="[0]" \
 		--batch_size=2 \
