@@ -39,6 +39,7 @@ from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.robots import (  # noqa: F401
     Robot,
     RobotConfig,
+    bi_so100_follower,
     koch_follower,
     make_robot_from_config,
     so100_follower,
