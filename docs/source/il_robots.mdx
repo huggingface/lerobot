@@ -345,7 +345,7 @@ A useful feature is the `replay` function, which allows you to replay any episod
 
 You can replay the first episode on your robot with:
 
-<hfoptions id="record">
+<hfoptions id="replay">
 <hfoption id="Replay">
 ```bash
 python -m lerobot.replay \
@@ -445,9 +445,9 @@ huggingface-cli upload ${HF_USER}/act_so101_test${CKPT} \
   outputs/train/act_so101_test/checkpoints/${CKPT}/pretrained_model
 ```
 
-## Evaluate your policy
+## Run inference and evaluate your policy
 
-You can use the `record` script from [`lerobot/record.py`](https://github.com/huggingface/lerobot/blob/main/lerobot/record.py) but with a policy checkpoint as input. For instance, run this command to record 10 evaluation episodes or check out the API example:
+You can use the `record` script from [`lerobot/record.py`](https://github.com/huggingface/lerobot/blob/main/lerobot/record.py) but with a policy checkpoint as input. For instance, run this command or API example to run inference and record 10 evaluation episodes:
 
 <hfoptions id="eval">
 <hfoption id="Command">
@@ -479,7 +479,7 @@ from lerobot.common.utils.control_utils import init_keyboard_listener
 from lerobot.common.utils.utils import log_say
 from lerobot.record import record_loop
 
-num_episodes = 5
+num_episodes = 10
 fps = 30
 episode_time = 60
 task_description = "My task description"
