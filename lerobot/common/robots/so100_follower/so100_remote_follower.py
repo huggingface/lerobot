@@ -19,6 +19,7 @@ from functools import cached_property
 from typing import Any
 
 from lerobot.common.cameras.utils import make_cameras_from_configs
+
 from ..remote_robot import RemoteRobot
 from .config_so100_follower import SO100RemoteFollowerConfig
 
