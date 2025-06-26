@@ -150,7 +150,6 @@ test-tdmpc-ete-eval:
 test-act-ete-train:
 	python lerobot/scripts/train.py \
 		--policy.type=smolvla \
-		--policy.dim_model=64 \
 		--policy.n_action_steps=20 \
 		--policy.chunk_size=20 \
 		--policy.device=$(DEVICE) \
