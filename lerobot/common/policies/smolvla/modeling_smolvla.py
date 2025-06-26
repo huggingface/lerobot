@@ -390,15 +390,15 @@ class SmolVLAPolicy(PreTrainedPolicy):
             batch[OBS_STATE] = self._pi_aloha_decode_state(batch[OBS_STATE])
 
         batch = self.normalize_inputs(batch)
-        observation = self.normalize_inputs(batch)
+        for k in batch:
+            if k in self._queues:
+                batch[k] = torch.stack(list(self._queues[k]), dim=1)
 
-        images, img_masks = self.prepare_images(observation)
-        state = self.prepare_state(observation)
-        lang_tokens, lang_masks = self.policy.prepare_language(observation)
+        images, img_masks = self.prepare_images(batch)
+        state = self.prepare_state(batch)
+        lang_tokens, lang_masks = self.prepare_language(batch)
 
-        actions = self.policy.model.sample_actions(
-            images, img_masks, lang_tokens, lang_masks, state, noise=noise
-        )
+        actions = self.model.sample_actions(images, img_masks, lang_tokens, lang_masks, state, noise=noise)
 
         # Unpad actions
         original_action_dim = self.config.action_feature.shape[0]
@@ -423,6 +423,10 @@ class SmolVLAPolicy(PreTrainedPolicy):
         """
         self.eval()
 
+        if self.config.adapt_to_pi_aloha:
+            batch[OBS_STATE] = self._pi_aloha_decode_state(batch[OBS_STATE])
+
+        batch = self.normalize_inputs(batch)
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
         # Action queue logic for n_action_steps > 1. When the action_queue is depleted, populate it by
         # querying the policy.
