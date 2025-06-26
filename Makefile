@@ -147,7 +147,7 @@ test-tdmpc-ete-eval:
 		--eval.batch_size=1
 
 
-test-act-ete-train:
+test-smolvla-ete-train:
 	python lerobot/scripts/train.py \
 		--policy.type=smolvla \
 		--policy.n_action_steps=20 \
@@ -170,7 +170,7 @@ test-act-ete-train:
 		--wandb.enable=false \
 		--output_dir=tests/outputs/smolvla/
 
-test-act-ete-eval:
+test-smolvla-ete-eval:
 	python lerobot/scripts/eval.py \
 		--policy.path=tests/outputs/smolvla/checkpoints/000004/pretrained_model \
 		--policy.device=$(DEVICE) \
