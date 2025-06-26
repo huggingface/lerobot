@@ -336,8 +336,14 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             episodes_since_last_encoding += 1
 
             # Batch encode videos when we reach the batch size or when stopping
-            if episodes_since_last_encoding >= cfg.dataset.video_encoding_batch_size or events["stop_recording"]:
-                log_say(f"Batch encoding videos for {episodes_since_last_encoding} episodes, from episode {last_encoded_episode + 1} to episode {dataset.num_episodes - 1}", cfg.play_sounds)
+            if (
+                episodes_since_last_encoding >= cfg.dataset.video_encoding_batch_size
+                or events["stop_recording"]
+            ):
+                log_say(
+                    f"Batch encoding videos for {episodes_since_last_encoding} episodes, from episode {last_encoded_episode + 1} to episode {dataset.num_episodes - 1}",
+                    cfg.play_sounds,
+                )
                 start_ep = last_encoded_episode + 1
                 end_ep = dataset.num_episodes
                 dataset.batch_encode_videos(start_ep, end_ep)
