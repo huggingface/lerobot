@@ -250,6 +250,7 @@ class LeRobotDatasetMetadata:
         episode_length: int,
         episode_tasks: list[str],
         episode_stats: dict[str, dict],
+        update_video_info: bool = True,
     ) -> None:
         self.info["total_episodes"] += 1
         self.info["total_frames"] += episode_length
@@ -260,7 +261,7 @@ class LeRobotDatasetMetadata:
 
         self.info["splits"] = {"train": f"0:{self.info['total_episodes']}"}
         self.info["total_videos"] += len(self.video_keys)
-        if len(self.video_keys) > 0:
+        if len(self.video_keys) > 0 and update_video_info:
             self.update_video_info()
 
         write_info(self.info, self.root)
@@ -807,7 +808,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         self.episode_buffer["size"] += 1
 
-    def save_episode(self, episode_data: dict | None = None) -> None:
+    def save_episode(self, episode_data: dict | None = None, encode_videos: bool = True) -> None:
         """
         This will save to disk the current episode in self.episode_buffer.
 
@@ -815,6 +816,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
             episode_data (dict | None, optional): Dict containing the episode data to save. If None, this will
                 save the current episode in self.episode_buffer, which is filled with 'add_frame'. Defaults to
                 None.
+            encode_videos (bool, optional): Whether to encode videos immediately. If False, videos will be
+                encoded later in batch. Defaults to True for backward compatibility.
         """
         if not episode_data:
             episode_buffer = self.episode_buffer
@@ -850,13 +853,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self._save_episode_table(episode_buffer, episode_index)
         ep_stats = compute_episode_stats(episode_buffer, self.features)
 
-        if len(self.meta.video_keys) > 0:
+        # Only encode videos if requested
+        if encode_videos and len(self.meta.video_keys) > 0:
             video_paths = self.encode_episode_videos(episode_index)
             for key in self.meta.video_keys:
                 episode_buffer[key] = video_paths[key]
 
         # `meta.save_episode` be executed after encoding the videos
-        self.meta.save_episode(episode_index, episode_length, episode_tasks, ep_stats)
+        self.meta.save_episode(episode_index, episode_length, episode_tasks, ep_stats, update_video_info=encode_videos)
 
         ep_data_index = get_episode_data_index(self.meta.episodes, [episode_index])
         ep_data_index_np = {k: t.numpy() for k, t in ep_data_index.items()}
@@ -868,16 +872,18 @@ class LeRobotDataset(torch.utils.data.Dataset):
             self.tolerance_s,
         )
 
-        video_files = list(self.root.rglob("*.mp4"))
-        assert len(video_files) == self.num_episodes * len(self.meta.video_keys)
+        # Only do post-encoding cleanup if we actually encoded videos
+        if encode_videos:
+            video_files = list(self.root.rglob("*.mp4"))
+            assert len(video_files) == self.num_episodes * len(self.meta.video_keys)
 
-        parquet_files = list(self.root.rglob("*.parquet"))
-        assert len(parquet_files) == self.num_episodes
+            parquet_files = list(self.root.rglob("*.parquet"))
+            assert len(parquet_files) == self.num_episodes
 
-        # delete images
-        img_dir = self.root / "images"
-        if img_dir.is_dir():
-            shutil.rmtree(self.root / "images")
+            # delete images
+            img_dir = self.root / "images"
+            if img_dir.is_dir():
+                shutil.rmtree(self.root / "images")
 
         if not episode_data:  # Reset the buffer
             self.episode_buffer = self.create_episode_buffer()
@@ -958,6 +964,33 @@ class LeRobotDataset(torch.utils.data.Dataset):
             encode_video_frames(img_dir, video_path, self.fps, overwrite=True)
 
         return video_paths
+
+    def batch_encode_videos(self, start_episode: int = 0, end_episode: int | None = None) -> None:
+        """
+        Batch encode videos for multiple episodes.
+        
+        Args:
+            start_episode: Starting episode index (inclusive)
+            end_episode: Ending episode index (exclusive). If None, encodes all episodes from start_episode
+        """
+        if end_episode is None:
+            end_episode = self.meta.total_episodes
+        
+        logging.info(f"Starting batch video encoding for episodes {start_episode} to {end_episode-1}")
+        
+        for ep_idx in range(start_episode, end_episode):
+            logging.info(f"Encoding videos for episode {ep_idx}")
+            self.encode_episode_videos(ep_idx)
+        
+        # Update video info in metadata
+        self.meta.update_video_info()
+        
+        # Clean up image directories after successful encoding
+        img_dir = self.root / "images"
+        if img_dir.is_dir():
+            shutil.rmtree(img_dir)
+        
+        logging.info("Batch video encoding completed")
 
     @classmethod
     def create(
