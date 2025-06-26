@@ -116,6 +116,11 @@ class TrainPipelineConfig(HubMixin):
             self.optimizer = self.policy.get_optimizer_preset()
             self.scheduler = self.policy.get_scheduler_preset()
 
+        if self.policy.push_to_hub and not self.policy.repo_id:
+            raise ValueError(
+                "'policy.repo_id' argument missing. Please specify it to push the model to the hub."
+            )
+
     @classmethod
     def __get_path_fields__(cls) -> list[str]:
         """This enables the parser to load config from the policy using `--policy.path=local/dir`"""

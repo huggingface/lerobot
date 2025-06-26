@@ -32,7 +32,7 @@ def get_policy_stats(ds_repo_id: str, policy_name: str, policy_kwargs: dict):
     train_cfg = TrainPipelineConfig(
         # TODO(rcadene, aliberts): remove dataset download
         dataset=DatasetConfig(repo_id=ds_repo_id, episodes=[0]),
-        policy=make_policy_config(policy_name, **policy_kwargs),
+        policy=make_policy_config(policy_name, push_to_hub=False, **policy_kwargs),
     )
     train_cfg.validate()  # Needed for auto-setting some parameters
 

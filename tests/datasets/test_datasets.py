@@ -338,8 +338,9 @@ def test_factory(env_name, repo_id, policy_name):
         # TODO(rcadene, aliberts): remove dataset download
         dataset=DatasetConfig(repo_id=repo_id, episodes=[0]),
         env=make_env_config(env_name),
-        policy=make_policy_config(policy_name),
+        policy=make_policy_config(policy_name, push_to_hub=False),
     )
+    cfg.validate()
 
     dataset = make_dataset(cfg)
     delta_timestamps = dataset.delta_timestamps
