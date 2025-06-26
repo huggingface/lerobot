@@ -184,13 +184,9 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         self,
         cfg: TrainPipelineConfig,
     ):
-        if not cfg.policy.repo_id:
-            logging.warning("`policy.repo_id` is not specified, please specify it to use push_model_to_hub()")
-            return
-
         api = HfApi()
         repo_id = api.create_repo(
-            repo_id=cfg.policy.repo_id, private=cfg.policy.private, exist_ok=True
+            repo_id=self.config.repo_id, private=self.config.private, exist_ok=True
         ).repo_id
 
         # Push the files to the repo in a single commit
@@ -200,13 +196,13 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             self.save_pretrained(saved_path)  # Calls _save_pretrained and stores model tensors
 
             card = self.generate_model_card(
-                cfg.dataset.repo_id, cfg.policy.type, cfg.policy.license, cfg.policy.tags
+                cfg.dataset.repo_id, self.config.type, self.config.license, self.config.tags
             )
             card.save(str(saved_path / "README.md"))
 
             cfg.save_pretrained(saved_path)  # Calls _save_pretrained and stores train config
 
-            url = api.upload_folder(
+            commit_info = api.upload_folder(
                 repo_id=repo_id,
                 repo_type="model",
                 folder_path=saved_path,
@@ -215,7 +211,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                 ignore_patterns=["*.tmp", "*.log"],
             )
 
-            logging.info(f"Model pushed to {url}")
+            logging.info(f"Model pushed to {commit_info.repo_url.url}")
 
     def generate_model_card(
         self, dataset_repo_id: str, model_type: str, license: str | None, tags: List[str] | None
@@ -226,13 +222,13 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             license=license or "apache-2.0",
             library_name="lerobot",
             pipeline_tag="robotics",
-            tags=tags or ["robotics", model_type],
+            tags=list(set(tags or []).union({"robotics", "lerobot", model_type})),
             model_name=model_type,
             datasets=dataset_repo_id,
             base_model=base_model,
         )
 
-        template_path = files("lerobot.templates").joinpath("lerobot_modelcard_template.md")
-        card = ModelCard.from_template(card_data, template_path=str(template_path))
+        template_card = files("lerobot.templates").joinpath("lerobot_modelcard_template.md").read_text()
+        card = ModelCard.from_template(card_data, template_str=template_card)
         card.validate()
         return card
