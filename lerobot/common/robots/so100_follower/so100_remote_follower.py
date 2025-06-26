@@ -18,6 +18,7 @@ import logging
 from functools import cached_property
 from typing import Any
 
+from lerobot.common.cameras.utils import make_cameras_from_configs
 from ..remote_robot import RemoteRobot
 from .config_so100_follower import SO100RemoteFollowerConfig
 
@@ -38,7 +39,7 @@ class SO100RemoteFollower(RemoteRobot):
     def __init__(self, config: SO100RemoteFollowerConfig):
         super().__init__(config)
         self.config = config
-        self.cameras = {}  # make_cameras_from_configs(config.cameras)
+        self.cameras = make_cameras_from_configs(config.cameras)
 
     @property
     def _motors_ft(self) -> dict[str, type]:
