@@ -432,7 +432,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
         queue is empty.
         """
         self.eval()
-        batch = self.prepare_batch(batch)
+        batch = self._prepare_batch(batch)
 
         # Action queue logic for n_action_steps > 1. When the action_queue is depleted, populate it by
         # querying the policy.
