@@ -63,7 +63,7 @@ import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 from transformers import AutoProcessor
 
-from lerobot.common.constants import ACTION, OBS_STATE, ROBOT_TYPE
+from lerobot.common.constants import ACTION, OBS_STATE
 from lerobot.common.policies.normalize import (
     Normalize,
     Unnormalize,
@@ -398,7 +398,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
         original_action_dim = self.config.action_feature.shape[0]
         actions = actions[:, :, :original_action_dim]
 
-        actions = self.unnormalize_outputs({ACTION: actions, ROBOT_TYPE: [self.config.robot_type]})[ACTION]
+        actions = self.unnormalize_outputs({ACTION: actions})[ACTION]
 
         if self.config.adapt_to_pi_aloha:
             actions = self._pi_aloha_encode_actions(actions)
