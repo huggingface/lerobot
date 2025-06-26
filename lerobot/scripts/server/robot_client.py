@@ -23,6 +23,8 @@ from lerobot.scripts.server.helpers import (
     map_robot_keys_to_lerobot_features,
     prepare_observation_for_policy,
     setup_logging,
+    validate_robot_cameras_for_policy,
+    visualize_action_queue_size,
 )
 
 
@@ -51,6 +53,7 @@ class RobotClient:
         self._running_event = threading.Event()
         self.must_go = True  # does the observation qualify for direct processing on the policy server?
 
+        # Initialize client side variables
         self.latest_action = -1
         self.action_chunk_size = -1
 
@@ -104,7 +107,7 @@ class RobotClient:
             self.stub.SendPolicyInstructions(policy_setup)
 
             self._running_event.set()
-            self.available_actions_size = []
+            self.action_queue_size = []
 
             with self.chunks_received_lock:
                 self.chunks_received = 0
@@ -365,7 +368,7 @@ class RobotClient:
 
         while self.running:
             # constantly monitor the size of the action queue
-            self.available_actions_size.append(self.action_queue.qsize())
+            self.action_queue_size.append(self.action_queue.qsize())
 
             if self._actions_available():
                 timed_action = self._get_next_action()
@@ -423,7 +426,7 @@ class RobotClient:
 
     def control_loop_action(self):
         """Reading and performing actions in local queue"""
-        self.available_actions_size.append(self.action_queue.qsize())
+        self.action_queue_size.append(self.action_queue.qsize())
         if self._actions_available():
             # Get action from queue
             get_start = time.perf_counter()
@@ -523,7 +526,7 @@ def parse_args():
         help="Pretrained model name or path (default: lerobot/smolvla_base)",
     )
     parser.add_argument(
-        "--policy-device", type=str, default="cpu", help="Device for policy inference (default: cuda)"
+        "--policy-device", type=str, default="mps", help="Device for policy inference (default: cuda)"
     )
     parser.add_argument(
         "--chunk-size-threshold",
@@ -552,6 +555,19 @@ def parse_args():
         help="ID of the robot to connect to (default: follower_so100)",
     )
 
+    parser.add_argument(
+        "--robot-cameras",
+        type=str,
+        default='{"laptop": {"index_or_path": 0, "width": 1920, "height": 1080, "fps": 30}, "phone": {"index_or_path": 1, "width": 1920, "height": 1080, "fps": 30}}',
+        help="Cameras of the robot to connect to (default: {'laptop': {'index_or_path': 0, 'width': 1920, 'height': 1080, 'fps': 30}, 'phone': {'index_or_path': 1, 'width': 1920, 'height': 1080, 'fps': 30}})",
+    )
+
+    parser.add_argument(
+        "--debug-visualize-queue-size",
+        action="store_true",
+        help="Trigger visualization of action queue size upon stopping the client, to tweak client hyperparameters (default: False)",
+    )
+
     return parser.parse_args()
 
 
@@ -559,6 +575,11 @@ def async_client(args: argparse.Namespace):
     robot = make_robot(args)
     policy_config = PreTrainedConfig.from_pretrained(args.pretrained_name_or_path)
     policy_image_features = policy_config.image_features
+
+    lerobot_features = map_robot_keys_to_lerobot_features(robot)
+
+    # The cameras specified for inference must match the one supported by the policy chosen
+    validate_robot_cameras_for_policy(lerobot_features, policy_image_features)
 
     # Create config from parsed arguments
     config = RobotClientConfig(
@@ -573,24 +594,19 @@ def async_client(args: argparse.Namespace):
 
     # Create client with config
     client = RobotClient(config)
-    lerobot_features = map_robot_keys_to_lerobot_features(robot)
 
     if client.start():
-        # Function to make observations from the robot's get_observation() method
+        # Function to make observations starting from the robot's get_observation() method
         def make_observation():
             robot_obs = client.robot.get_observation()
             observation_content = prepare_observation_for_policy(
-                robot_obs,
-                lerobot_features,
-                config.policy_image_features,
-                adapt_keys_to_smolvla=config.policy_type
-                == "smolvla",  # smolvla requires some extra processing on the keys
+                robot_obs, lerobot_features, config.policy_image_features
             )
 
             observation_content = {k: v.to(config.policy_device) for k, v in observation_content.items()}
 
-            observation_content["task"] = [args.task]
-            observation_content["robot_type"] = [""]
+            observation_content["task"] = args.task
+            observation_content["robot_type"] = ""
 
             observation = TimedObservation(
                 timestamp=time.perf_counter(),
@@ -617,12 +633,13 @@ def async_client(args: argparse.Namespace):
                 time.sleep(0.1)  # tiny sleep to avoid tight loop in main thread
 
         except KeyboardInterrupt:
-            pass  # waits for KeyboardInterrupt to stop the client
-
-        finally:
             client.stop()
             action_receiver_thread.join()
             control_loop_thread.join()
+
+        finally:
+            if args.debug_visualize_queue_size:
+                visualize_action_queue_size(client.action_queue_size)
 
             client.logger.info("Client stopped")
 
