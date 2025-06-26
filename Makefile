@@ -48,6 +48,7 @@ test-act-ete-train:
 		--policy.n_action_steps=20 \
 		--policy.chunk_size=20 \
 		--policy.device=$(DEVICE) \
+		--policy.push_to_hub=false \
 		--env.type=aloha \
 		--env.episode_length=5 \
 		--dataset.repo_id=lerobot/aloha_sim_transfer_cube_human \
@@ -85,6 +86,7 @@ test-diffusion-ete-train:
 		--policy.diffusion_step_embed_dim=32 \
 		--policy.num_inference_steps=10 \
 		--policy.device=$(DEVICE) \
+		--policy.push_to_hub=false \
 		--env.type=pusht \
 		--env.episode_length=5 \
 		--dataset.repo_id=lerobot/pusht \
@@ -114,6 +116,7 @@ test-tdmpc-ete-train:
 	python lerobot/scripts/train.py \
 		--policy.type=tdmpc \
 		--policy.device=$(DEVICE) \
+		--policy.push_to_hub=false \
 		--env.type=xarm \
 		--env.task=XarmLift-v0 \
 		--env.episode_length=5 \
