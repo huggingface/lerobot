@@ -114,7 +114,6 @@ test-tdmpc-ete-train:
 	python lerobot/scripts/train.py \
 		--policy.type=tdmpc \
 		--policy.device=$(DEVICE) \
-		--policy.push_to_hub=false \
 		--env.type=xarm \
 		--env.task=XarmLift-v0 \
 		--env.episode_length=5 \
