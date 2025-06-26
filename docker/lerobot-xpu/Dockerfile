@@ -10,15 +10,28 @@ ENV PATH="/opt/venv/bin:$PATH"
 RUN apt-get update && apt-get install -y --no-install-recommends \
     software-properties-common \
     build-essential cmake git \
-    libglib2.0-0 libgl1-mesa-glx libegl1-mesa ffmpeg \
+    libglib2.0-0 libgl1-mesa-glx libegl1-mesa libglu1-mesa ffmpeg \
     speech-dispatcher libgeos-dev \
     python${PYTHON_VERSION}-dev \
     python${PYTHON_VERSION}-venv \
-    && apt-get clean && rm -rf /var/lib/apt/lists/* \
-    && python -m venv /opt/venv --system-site-packages \
-    && echo "source /opt/venv/bin/activate" >> /root/.bashrc
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+RUN useradd -u 1000 -g 100 -m lerobot
+
+USER 1000:100
+
+WORKDIR /home/lerobot
+RUN python -m venv ./venv --system-site-packages
+COPY --chown=1000:100 --chmod=555 <<EOF ./entrypoint.sh
+#!/bin/bash -eu
+source /home/lerobot/venv/bin/activate
+exec "\$@"
+EOF
+
+RUN ./venv/bin/pip install --no-cache-dir PyOpenGL PyOpenGL_accelerate
 
 WORKDIR /lerobot
-COPY . ./
+COPY --chown=1000:100 . ./
+RUN /home/lerobot/venv/bin/pip install --no-cache-dir ".[aloha, pusht, smolvla, hilserl]"
 
-RUN /opt/venv/bin/pip install --no-cache-dir ".[aloha, pusht, smolvla]"
+ENTRYPOINT ["/home/lerobot/entrypoint.sh"]
