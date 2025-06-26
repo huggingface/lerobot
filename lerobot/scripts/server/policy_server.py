@@ -20,6 +20,7 @@ from lerobot.scripts.server.helpers import (
     TimedObservation,
     TinyPolicyConfig,
     observations_similar,
+    prepare_image,
     setup_logging,
 )
 
@@ -146,11 +147,12 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
             if obs:
                 self.last_predicted_obs = obs
                 self._predicted_timesteps.add(obs.get_timestep())
-                start_time = time.perf_counter()
-                action_chunk = self._predict_action_chunk(obs)
-                inference_time = time.perf_counter() - start_time
 
-                start_time = time.perf_counter()
+                start_time = time.time()
+                action_chunk = self._predict_action_chunk(obs)
+                inference_time = time.time() - start_time
+
+                start_time = time.time()
                 action_bytes = pickle.dumps(action_chunk)  # nosec
                 serialize_time = time.perf_counter() - start_time
 
@@ -299,21 +301,21 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
 
     def _predict_action_chunk(self, observation_t: TimedObservation) -> list[TimedAction]:
         """Predict an action based on the observation"""
-        """1. Prepare observation"""
+        """1. Prepare observation.
+        To keep observation packet tiny we send int8 [0,255] images over the network and convert it
+        to float32 [0,1] images here, before running inference."""
         start_time = time.perf_counter()
 
         observation = {}
         for k, v in observation_t.get_observation().items():
-            if isinstance(v, torch.Tensor):  # VLAs present natural-language instructions
+            if isinstance(v, torch.Tensor):  # VLAs present natural-language instructions in observations
                 if "image" in k:
-                    # Add batch dimension first, then reorder to NCHW format, then normalize to [0, 1]
-                    observation[k] = (
-                        v.unsqueeze(0).permute(0, 3, 1, 2).to(self.device, non_blocking=True) / 255.0
-                    )
+                    # Policy expects images in shape (B, C, H, W)
+                    observation[k] = prepare_image(v).unsqueeze(0).to(self.device, non_blocking=True)
                 else:
-                    observation[k] = v.unsqueeze(0).to(self.device, non_blocking=True)
+                    observation[k] = v.to(self.device, non_blocking=True)
             else:
-                observation[k] = v  # textual instructions are passed as a list of strings
+                observation[k] = v
 
         prep_time = time.perf_counter()
         self.logger.debug(f"Observation preparation time: {prep_time - start_time:.6f}s")
@@ -332,7 +334,6 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
         )
 
         chunk_time = time.perf_counter()
-        self.logger.debug(f"Action chunk creation time: {chunk_time - post_inference_time:.6f}s")
 
         time.sleep(
             max(0, self.config.inference_latency - max(0, chunk_time - start_time))
@@ -359,7 +360,7 @@ def serve(config: Optional[PolicyServerConfig] = None, host: str = "localhost", 
     policy_server = PolicyServer(config)
 
     # Setup and start gRPC server
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
     async_inference_pb2_grpc.add_AsyncInferenceServicer_to_server(policy_server, server)
     server.add_insecure_port(f"{config.host}:{config.port}")
 
@@ -367,7 +368,6 @@ def serve(config: Optional[PolicyServerConfig] = None, host: str = "localhost", 
     server.start()
 
     try:
-        # Use the running event to control server lifetime
         server.wait_for_termination()
 
     except KeyboardInterrupt:
