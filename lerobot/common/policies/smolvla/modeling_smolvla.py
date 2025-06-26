@@ -398,9 +398,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
         original_action_dim = self.config.action_feature.shape[0]
         actions = actions[:, :, :original_action_dim]
 
-        actions = self.policy.unnormalize_outputs(
-            {ACTION: actions, ROBOT_TYPE: [self.policy.config.robot_type]}
-        )[ACTION]
+        actions = self.unnormalize_outputs({ACTION: actions, ROBOT_TYPE: [self.config.robot_type]})[ACTION]
 
         if self.config.adapt_to_pi_aloha:
             actions = self._pi_aloha_encode_actions(actions)
