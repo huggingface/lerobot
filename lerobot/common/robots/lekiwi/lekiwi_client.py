@@ -29,7 +29,7 @@ from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnecte
 
 from ..robot import Robot
 from .config_lekiwi import LeKiwiClientConfig
-
+from lerobot.common.constants import OBS_IMAGES, OBS_STATE
 
 class LeKiwiClient(Robot):
     config_class = LeKiwiClientConfig
@@ -195,7 +195,7 @@ class LeKiwiClient(Robot):
         self, observation: Dict[str, Any]
     ) -> Tuple[Dict[str, np.ndarray], Dict[str, Any]]:
         """Extracts frames, and state from the parsed observation."""
-        flat_state = {key: value for key, value in observation.items() if key in self._state_ft}
+        flat_state = observation[OBS_STATE]
 
         state_vec = np.array(
             [flat_state.get(k, 0.0) for k in self._state_order],
@@ -203,18 +203,14 @@ class LeKiwiClient(Robot):
         )
 
         # Decode images
-        image_observation = {
-            f"observation.images.{key}": value
-            for key, value in observation.items()
-            if key in self._cameras_ft
-        }
+        image_observation = {k: v for k, v in observation.items() if k.startswith(OBS_IMAGES)}
         current_frames: Dict[str, np.ndarray] = {}
         for cam_name, image_b64 in image_observation.items():
             frame = self._decode_image_from_b64(image_b64)
             if frame is not None:
                 current_frames[cam_name] = frame
 
-        return current_frames, {"observation.state": state_vec}
+        return current_frames, {OBS_STATE: state_vec}
 
     def _get_data(self) -> Tuple[Dict[str, np.ndarray], Dict[str, Any], Dict[str, Any]]:
         """
