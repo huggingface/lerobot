@@ -63,7 +63,7 @@ import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 from transformers import AutoProcessor
 
-from lerobot.common.constants import ACTION, OBS_STATE
+from lerobot.common.constants import ACTION, OBS_STATE, ROBOT_TYPE
 from lerobot.common.policies.normalize import (
     Normalize,
     Unnormalize,
@@ -384,6 +384,12 @@ class SmolVLAPolicy(PreTrainedPolicy):
         return self.parameters()
 
     def _predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
+        self.eval()
+
+        if self.config.adapt_to_pi_aloha:
+            batch[OBS_STATE] = self._pi_aloha_decode_state(batch[OBS_STATE])
+
+        batch = self.normalize_inputs(batch)
         observation = self.normalize_inputs(batch)
 
         images, img_masks = self.prepare_images(observation)
@@ -399,8 +405,11 @@ class SmolVLAPolicy(PreTrainedPolicy):
         actions = actions[:, :, :original_action_dim]
 
         actions = self.policy.unnormalize_outputs(
-            {"action": actions, "robot_type": [self.policy.config.robot_type]}
-        )["action"]
+            {ACTION: actions, ROBOT_TYPE: [self.policy.config.robot_type]}
+        )[ACTION]
+
+        if self.config.adapt_to_pi_aloha:
+            actions = self._pi_aloha_encode_actions(actions)
 
         return actions
 
@@ -414,23 +423,16 @@ class SmolVLAPolicy(PreTrainedPolicy):
         """
         self.eval()
 
-        if self.config.adapt_to_pi_aloha:
-            batch[OBS_STATE] = self._pi_aloha_decode_state(batch[OBS_STATE])
-
-        batch = self.normalize_inputs(batch)
-
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
         # Action queue logic for n_action_steps > 1. When the action_queue is depleted, populate it by
         # querying the policy.
         if len(self._queues[ACTION]) == 0:
             actions = self._predict_action_chunk(batch, noise)
 
-            if self.config.adapt_to_pi_aloha:
-                actions = self._pi_aloha_encode_actions(actions)
-
-            # `self.model.forward` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
+            # `self.predict_action_chunk` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
             # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
             self._queues[ACTION].extend(actions.transpose(0, 1)[: self.config.n_action_steps])
+
         return self._queues[ACTION].popleft()
 
     def forward(self, batch: dict[str, Tensor], noise=None, time=None) -> dict[str, Tensor]:

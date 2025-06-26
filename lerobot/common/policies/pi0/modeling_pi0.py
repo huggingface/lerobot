@@ -261,6 +261,12 @@ class PI0Policy(PreTrainedPolicy):
         return self.parameters()
 
     @torch.no_grad
+    def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
+        """Predict a chunk of actions given environment observations."""
+        # NOTE(fracapuano): PI0 does not work, so I am excluding from https://github.com/huggingface/lerobot/pull/1020
+        raise NotImplementedError("")
+
+    @torch.no_grad
     def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
         """Select a single action given environment observations.
 

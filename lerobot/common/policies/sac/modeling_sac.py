@@ -76,6 +76,11 @@ class SACPolicy(
         """Reset the policy"""
         pass
 
+    @torch.no_grad
+    def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
+        """Predict a chunk of actions given environment observations."""
+        raise NotImplementedError("SACPolicy does not support action chunking. It returns single actions!")
+
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
         """Select action for inference/evaluation"""
