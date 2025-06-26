@@ -412,7 +412,6 @@ class SmolVLAPolicy(PreTrainedPolicy):
             batch[OBS_STATE] = self._pi_aloha_decode_state(batch[OBS_STATE])
 
         batch = self.normalize_inputs(batch)
-        self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
 
         return batch
 
@@ -420,6 +419,8 @@ class SmolVLAPolicy(PreTrainedPolicy):
         self.eval()
 
         batch = self._prepare_batch(batch)
+        self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
+
         actions = self._get_action_chunk(batch, noise)
         return actions
 
@@ -433,6 +434,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
         """
         self.eval()
         batch = self._prepare_batch(batch)
+        self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
 
         # Action queue logic for n_action_steps > 1. When the action_queue is depleted, populate it by
         # querying the policy.
