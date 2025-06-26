@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import asyncio
+import contextlib
 import json
 import logging
 import threading
@@ -171,7 +172,7 @@ class RemoteRobot(Robot):
             self._setup_track_subscriptions()
             logger.info(f"{self} connected to LiveKit server")
         except ConnectionError as e:
-            raise ConnectionError(f"Failed to connect {self}: {e}")
+            raise ConnectionError(f"Failed to connect {self}: {e}") from e
 
     def _setup_track_subscriptions(self) -> None:
         """
@@ -204,13 +205,16 @@ class RemoteRobot(Robot):
 
         # Subscribe to existing video tracks
         for publication in participant.track_publications.values():
-            if publication.track and publication.track.kind == rtc.TrackKind.KIND_VIDEO:
+            if (
+                publication.track
+                and publication.track.kind == rtc.TrackKind.KIND_VIDEO
+                and self._livekit_service._event_loop
+            ):
                 # Schedule the video track handling on the LiveKit service's event loop
-                if self._livekit_service._event_loop:
-                    asyncio.run_coroutine_threadsafe(
-                        self._handle_video_track(publication.track, participant),
-                        self._livekit_service._event_loop,
-                    )
+                asyncio.run_coroutine_threadsafe(
+                    self._handle_video_track(publication.track, participant),
+                    self._livekit_service._event_loop,
+                )
 
     def _cleanup_leader_subscriptions(self) -> None:
         """
@@ -231,7 +235,7 @@ class RemoteRobot(Robot):
             # Remove any camera frames from cached observations
             keys_to_remove = [
                 key
-                for key in self._last_observation.keys()
+                for key in self._last_observation
                 if isinstance(self._last_observation.get(key), np.ndarray)
             ]
             for key in keys_to_remove:
@@ -400,10 +404,8 @@ class RemoteRobot(Robot):
         self._cleanup_leader_subscriptions()
 
         # Disconnect using the LiveKit service
-        try:
+        with contextlib.suppress(RuntimeError):
             self._livekit_service.disconnect()
-        except RuntimeError:
-            pass  # Already disconnected
 
         # Clean up state
         self._last_observation = {}

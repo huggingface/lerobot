@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import contextlib
 import json
 import logging
 import threading
@@ -114,7 +115,7 @@ class RemoteTeleoperator(Teleoperator):
             self._livekit_service.connect(timeout=10.0)
             logger.info(f"{self} connected to LiveKit server")
         except ConnectionError as e:
-            raise ConnectionError(f"Failed to connect {self}: {e}")
+            raise ConnectionError(f"Failed to connect {self}: {e}") from e
 
     def _handle_action_message(self, action_data: dict[str, Any]) -> None:
         """
@@ -333,10 +334,8 @@ class RemoteTeleoperator(Teleoperator):
             self._video_tracks.clear()
 
         # Disconnect using the LiveKit service
-        try:
+        with contextlib.suppress(RuntimeError):
             self._livekit_service.disconnect()
-        except RuntimeError:
-            pass  # Already disconnected
 
         # Clean up state
         self._cached_action = None
