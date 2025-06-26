@@ -213,7 +213,7 @@ def test_act_backbone_lr():
     cfg = TrainPipelineConfig(
         # TODO(rcadene, aliberts): remove dataset download
         dataset=DatasetConfig(repo_id="lerobot/aloha_sim_insertion_scripted", episodes=[0]),
-        policy=make_policy_config("act", optimizer_lr=0.01, optimizer_lr_backbone=0.001),
+        policy=make_policy_config("act", optimizer_lr=0.01, optimizer_lr_backbone=0.001, push_to_hub=False),
     )
     cfg.validate()  # Needed for auto-setting some parameters
 
@@ -234,7 +234,7 @@ def test_act_backbone_lr():
 def test_policy_defaults(dummy_dataset_metadata, policy_name: str):
     """Check that the policy can be instantiated with defaults."""
     policy_cls = get_policy_class(policy_name)
-    policy_cfg = make_policy_config(policy_name)
+    policy_cfg = make_policy_config(policy_name, push_to_hub=False)
     features = dataset_to_policy_features(dummy_dataset_metadata.features)
     policy_cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
     policy_cfg.input_features = {
@@ -246,7 +246,7 @@ def test_policy_defaults(dummy_dataset_metadata, policy_name: str):
 @pytest.mark.parametrize("policy_name", available_policies)
 def test_save_and_load_pretrained(dummy_dataset_metadata, tmp_path, policy_name: str):
     policy_cls = get_policy_class(policy_name)
-    policy_cfg = make_policy_config(policy_name)
+    policy_cfg = make_policy_config(policy_name, push_to_hub=False)
     features = dataset_to_policy_features(dummy_dataset_metadata.features)
     policy_cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
     policy_cfg.input_features = {
