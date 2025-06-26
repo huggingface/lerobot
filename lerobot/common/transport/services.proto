@@ -33,6 +33,13 @@ service LearnerService {
   rpc Ready(Empty) returns (Empty);
 }
 
+// PolicyService: A client calls this to get an action from a policy.
+// The server implements this service.
+service PolicyService {
+  // Client -> Server to get an action
+  rpc SelectActions(ObservationMessage) returns (ActionMessage);
+}
+
 enum TransferState {
     TRANSFER_UNKNOWN = 0;
     TRANSFER_BEGIN = 1;
@@ -54,6 +61,14 @@ message Parameters {
 message InteractionMessage {
   TransferState transfer_state = 1;
   bytes data = 2;
+}
+
+message ObservationMessage {
+  bytes data = 1;
+}
+
+message ActionMessage {
+  bytes data = 1;
 }
 
 message Empty {}
