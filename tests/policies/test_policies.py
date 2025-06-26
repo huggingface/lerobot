@@ -142,9 +142,10 @@ def test_policy(ds_repo_id, env_name, env_kwargs, policy_name, policy_kwargs):
     train_cfg = TrainPipelineConfig(
         # TODO(rcadene, aliberts): remove dataset download
         dataset=DatasetConfig(repo_id=ds_repo_id, episodes=[0]),
-        policy=make_policy_config(policy_name, **policy_kwargs),
+        policy=make_policy_config(policy_name, push_to_hub=False, **policy_kwargs),
         env=make_env_config(env_name, **env_kwargs),
     )
+    train_cfg.validate()
 
     # Check that we can make the policy object.
     dataset = make_dataset(train_cfg)
@@ -234,7 +235,7 @@ def test_act_backbone_lr():
 def test_policy_defaults(dummy_dataset_metadata, policy_name: str):
     """Check that the policy can be instantiated with defaults."""
     policy_cls = get_policy_class(policy_name)
-    policy_cfg = make_policy_config(policy_name, push_to_hub=False)
+    policy_cfg = make_policy_config(policy_name)
     features = dataset_to_policy_features(dummy_dataset_metadata.features)
     policy_cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
     policy_cfg.input_features = {
@@ -246,7 +247,7 @@ def test_policy_defaults(dummy_dataset_metadata, policy_name: str):
 @pytest.mark.parametrize("policy_name", available_policies)
 def test_save_and_load_pretrained(dummy_dataset_metadata, tmp_path, policy_name: str):
     policy_cls = get_policy_class(policy_name)
-    policy_cfg = make_policy_config(policy_name, push_to_hub=False)
+    policy_cfg = make_policy_config(policy_name)
     features = dataset_to_policy_features(dummy_dataset_metadata.features)
     policy_cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
     policy_cfg.input_features = {
@@ -415,7 +416,6 @@ def test_backward_compatibility(ds_repo_id: str, policy_name: str, policy_kwargs
     https://github.com/huggingface/lerobot/pull/1127.
 
     """
-    policy_kwargs = {**policy_kwargs, "push_to_hub": False}  # never push to hub
 
     # NOTE: ACT policy has different randomness, after PyTorch 2.7.0
     if policy_name == "act" and version.parse(torch.__version__) < version.parse("2.7.0"):
