@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 
 from lerobot.common.cameras import CameraConfig
 
-from ..config import RobotConfig, RemoteRobotConfig
+from ..config import RemoteRobotConfig, RobotConfig
 
 
 @RobotConfig.register_subclass("so100_follower")
@@ -62,10 +62,10 @@ class SO100FollowerEndEffectorConfig(SO100FollowerConfig):
         }
     )
 
+
 @RemoteRobotConfig.register_subclass("so100_remote_follower")
 @dataclass
 class SO100RemoteFollowerConfig(RemoteRobotConfig):
-
     disable_torque_on_disconnect: bool = True
 
     # `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
