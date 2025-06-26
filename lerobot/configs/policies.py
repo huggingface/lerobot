@@ -60,6 +60,16 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     # automatic gradient scaling is used.
     use_amp: bool = False
 
+    push_to_hub: bool = True
+    repo_id: str | None = None
+
+    # Upload on private repository on the Hugging Face hub.
+    private: bool | None = None
+    # Add tags to your policy on the hub.
+    tags: list[str] | None = None
+    # Add tags to your policy on the hub.
+    license: str | None = None
+
     def __post_init__(self):
         self.pretrained_path = None
         if not self.device or not is_torch_device_available(self.device):

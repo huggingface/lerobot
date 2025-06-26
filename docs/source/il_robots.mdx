@@ -255,7 +255,8 @@ python lerobot/scripts/train.py \
   --output_dir=outputs/train/act_so101_test \
   --job_name=act_so101_test \
   --policy.device=cuda \
-  --wandb.enable=true
+  --wandb.enable=true \
+  --policy.repo_id=${HF_USER}/my_policy
 ```
 
 Let's explain the command:
@@ -272,6 +273,10 @@ python lerobot/scripts/train.py \
   --config_path=outputs/train/act_so101_test/checkpoints/last/pretrained_model/train_config.json \
   --resume=true
 ```
+
+If you do not want to push your model to the hub after training use `--policy.push_to_hub=false`.
+
+Additionally you can provide extra `tags` or specify a `license` for your model or make the model repo `private` by adding this: `--policy.private=true --policy.tags=\[ppo,rl\] --policy.license=mit`
 
 #### Train using Collab
 If your local computer doesn't have a powerful GPU you could utilize Google Collab to train your model by following the [ACT training notebook](./notebooks#training-act).
