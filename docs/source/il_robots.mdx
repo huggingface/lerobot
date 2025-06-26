@@ -193,7 +193,7 @@ episode_time = 60
 reset_time = 10
 task_description = "My task description"
 
-camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=fps)}s
+camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=fps)}
 
 robot_config = SO100FollowerConfig(
     port="/dev/tty.usbmodem58760434471",
@@ -216,7 +216,7 @@ obs_features = hw_to_dataset_features(robot.observation_features, "observation")
 dataset_features = {**action_features, **obs_features}
 
 dataset = LeRobotDataset.create(
-    repo_id="pepijn223/so100_api_11",
+    repo_id="<hf_username>/<dataset_repo_id>",
     fps=fps,
     features=dataset_features,
     robot_type=robot.name,
@@ -346,7 +346,7 @@ A useful feature is the `replay` function, which allows you to replay any episod
 You can replay the first episode on your robot with:
 
 <hfoptions id="replay">
-<hfoption id="Replay">
+<hfoption id="Command">
 ```bash
 python -m lerobot.replay \
     --robot.type=so101_follower \
@@ -375,7 +375,7 @@ robot_config = SO100FollowerConfig(
 robot = SO100Follower(robot_config)
 robot.connect()
 
-dataset = LeRobotDataset("pepijn223/so100_api_11", episodes=[episode_idx])
+dataset = LeRobotDataset("<hf_username>/<dataset_repo_id>", episodes=[episode_idx])
 actions = dataset.hf_dataset.select_columns("action")
 
 log_say(f"Replaying episode {episode_idx}")
@@ -494,14 +494,14 @@ robot_config = SO100FollowerConfig(
 
 robot = SO100Follower(robot_config)
 
-policy = ACTPolicy.from_pretrained("pepijn223/act_api_test_1")
+policy = ACTPolicy.from_pretrained("<hf_username>/<my_policy_repo_id>")
 
 action_features = hw_to_dataset_features(robot.action_features, "action")
 obs_features = hw_to_dataset_features(robot.observation_features, "observation")
 dataset_features = {**action_features, **obs_features}
 
 dataset = LeRobotDataset.create(
-    repo_id="pepijn223/eval_so100_api_17",
+    repo_id="<hf_username>/<dataset_repo_id>",
     fps=fps,
     features=dataset_features,
     robot_type=robot.name,
