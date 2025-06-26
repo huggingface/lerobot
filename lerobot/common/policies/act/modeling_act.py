@@ -118,7 +118,7 @@ class ACTPolicy(PreTrainedPolicy):
         self.eval()  # keeping the policy in eval mode as it could be set to train mode while queue is consumed
 
         if self.config.temporal_ensemble_coeff is not None:
-            actions = self.predict_action_chunk(batch)[:, : self.config.n_action_steps]
+            actions = self.predict_action_chunk(batch)
             action = self.temporal_ensembler.update(actions)
             return action
 
