@@ -154,7 +154,7 @@ HF_USER=$(huggingface-cli whoami | head -n 1)
 echo $HF_USER
 ```
 
-Now you can record a dataset. To record 5 episodes and upload your dataset to the hub, adapt the code below for your robot and execute the command or API example .
+Now you can record a dataset. To record 5 episodes and upload your dataset to the hub, adapt the code below for your robot and execute the command or API example.
 
 <hfoptions id="record">
 <hfoption id="Command">
@@ -343,7 +343,7 @@ echo ${HF_USER}/so101_test
 
 A useful feature is the `replay` function, which allows you to replay any episode that you've recorded or episodes from any dataset out there. This function helps you test the repeatability of your robot's actions and assess transferability across robots of the same model.
 
-You can replay the first episode on your robot with:
+You can replay the first episode on your robot with either the command below or with the API example:
 
 <hfoptions id="replay">
 <hfoption id="Command">
@@ -447,7 +447,7 @@ huggingface-cli upload ${HF_USER}/act_so101_test${CKPT} \
 
 ## Run inference and evaluate your policy
 
-You can use the `record` script from [`lerobot/record.py`](https://github.com/huggingface/lerobot/blob/main/lerobot/record.py) but with a policy checkpoint as input. For instance, run this command or API example to run inference and record 10 evaluation episodes:
+You can use the `record` script from [`lerobot/record.py`](https://github.com/huggingface/lerobot/blob/main/lerobot/record.py) with a policy checkpoint as input, to run inference and evaluate your policy. For instance, run this command or API example to run inference and record 10 evaluation episodes:
 
 <hfoptions id="eval">
 <hfoption id="Command">
