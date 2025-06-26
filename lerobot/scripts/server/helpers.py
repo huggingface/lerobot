@@ -1,13 +1,16 @@
 import argparse
+import json
 import logging
 import logging.handlers
 import os
 import time
 from typing import Any
 
+import matplotlib.pyplot as plt
 import torch
 
 from lerobot.common.cameras.opencv.configuration_opencv import OpenCVCameraConfig
+from lerobot.common.constants import OBS_STATE
 from lerobot.common.datasets.utils import build_dataset_frame, hw_to_dataset_features
 
 # NOTE: Configs need to be loaded for the client to be able to instantiate the policy config
@@ -23,6 +26,25 @@ from lerobot.configs.types import PolicyFeature
 from lerobot.scripts.server.constants import supported_robots
 
 
+def visualize_action_queue_size(action_queue_size: list[int]) -> None:
+    fig, ax = plt.subplots()
+    ax.set_title("Action Queue Size Over Time")
+    ax.set_xlabel("Environment steps")
+    ax.set_ylabel("Action Queue Size")
+    ax.grid(True, alpha=0.3)
+    ax.plot(range(len(action_queue_size)), action_queue_size)
+    plt.show()
+
+
+def validate_robot_cameras_for_policy(
+    lerobot_observation_features: dict[str, dict], policy_image_features: dict[str, PolicyFeature]
+) -> None:
+    image_keys = list(filter(is_image_key, lerobot_observation_features))
+    assert set(image_keys) == set(policy_image_features.keys()), (
+        f"Policy image features must match robot cameras! Received {list(policy_image_features.keys())} != {image_keys}"
+    )
+
+
 def map_robot_keys_to_lerobot_features(robot: Robot) -> dict[str, dict]:
     return hw_to_dataset_features(robot.observation_features, "observation", use_video=False)
 
@@ -31,7 +53,7 @@ def is_image_key(k: str) -> bool:
     return k.startswith("observation.images")
 
 
-def map_image_key_to_smolvla_key(idx: int) -> str:
+def map_image_key_to_smolvla_base_key(idx: int) -> str:
     """Dataset contain image features keys named as observation.images.<camera_name>, but SmolVLA adapts this
     to observation.image, observation.image2, ..."""
     idx_text = str(idx + 1) if idx != 0 else ""
@@ -48,42 +70,44 @@ def resize_robot_observation_image(image: torch.tensor, resize_dims: tuple[int, 
     # Interpolate and remove batch dimension: (1, C, H, W) -> (C, H, W)
     resized = torch.nn.functional.interpolate(image_batched, size=dims, mode="bilinear", align_corners=False)
 
-    return resized.squeeze(0).permute(1, 2, 0)
+    return resized.squeeze(0)
+
+
+def prepare_image(image: torch.Tensor) -> torch.Tensor:
+    """Minimal preprocessing to turn int8 images to float32 in [0, 1], and create a memory-contiguous tensor"""
+    image = image.type(torch.float32) / 255
+    image = image.contiguous()
+
+    return image
 
 
 def prepare_observation_for_policy(
-    robot_obs: dict,
-    lerobot_features: dict[str, dict],
-    policy_image_features: dict[str, PolicyFeature],
-    adapt_keys_to_smolvla: bool = False,
+    robot_obs: dict, lerobot_features: dict[str, dict], policy_image_features: dict[str, PolicyFeature]
 ) -> dict[str, torch.tensor]:
-    """First, turns the {motor.pos1:value1, motor.pos2:value2, ..., laptop:np.ndarray} into {observation.state:[value1,value2,...], observation.images.laptop:np.ndarray}"""
+    """First, turns the {motor.pos1:value1, motor.pos2:value2, ..., laptop:np.ndarray} into
+    {observation.state:[value1,value2,...], observation.images.laptop:np.ndarray}"""
     lerobot_obs = build_dataset_frame(lerobot_features, robot_obs, prefix="observation")
 
     """1. Greps all observation.images.<> keys"""
     image_keys = list(filter(is_image_key, lerobot_obs))
-    state_dict = {"observation.state": torch.tensor(lerobot_obs["observation.state"])}
+    # state's shape is expected as (B, state_dim)
+    state_dict = {OBS_STATE: torch.tensor(lerobot_obs[OBS_STATE]).unsqueeze(0)}
     image_dict = {image_k: torch.tensor(lerobot_obs[image_k]) for image_k in image_keys}
-
-    """If using SmolVLA, further process the keys to make them match the final observation"""
-    if adapt_keys_to_smolvla:
-        """2. Reassign the keys to observation.image{i}"""
-        smolvla_keys = [map_image_key_to_smolvla_key(idx) for idx in range(len(image_keys))]
-        key_map = dict(zip(image_keys, smolvla_keys, strict=True))
-
-        image_dict = {key_map[image_k]: torch.tensor(lerobot_obs[image_k]) for image_k in image_keys}
 
     # turning image features to (C, H, W) with H, W matching the policy image features
     image_dict = {
-        key: resize_robot_observation_image(image_dict[key], policy_image_features[key].shape)
-        for key in image_dict
+        key: resize_robot_observation_image(torch.tensor(lerobot_obs[key]), policy_image_features[key].shape)
+        for key in image_keys
     }
 
     return {**state_dict, **image_dict}
 
 
-def make_default_camera_config(index_or_path: int = 1) -> OpenCVCameraConfig:
-    return OpenCVCameraConfig(index_or_path=index_or_path, fps=30, width=1920, height=1080)
+def make_default_camera_config(
+    index_or_path: int = 1, fps: int = 30, width: int = 1920, height: int = 1080
+) -> OpenCVCameraConfig:
+    # NOTE(fracapuano): This will be removed when moving to draccus parser
+    return OpenCVCameraConfig(index_or_path=index_or_path, fps=fps, width=width, height=height)
 
 
 def make_robot(args: argparse.Namespace) -> Robot:
@@ -93,8 +117,8 @@ def make_robot(args: argparse.Namespace) -> Robot:
     if args.robot == "so100":
         config = SO100FollowerConfig(
             port=args.robot_port,
-            id="follower_so100",
-            cameras={"laptop": make_default_camera_config(0), "phone": make_default_camera_config(1)},
+            id=args.robot_id,
+            cameras={k: make_default_camera_config(**v) for k, v in json.loads(args.robot_cameras).items()},
         )
 
     return make_robot_from_config(config)
