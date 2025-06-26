@@ -383,7 +383,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
     def get_optim_params(self) -> dict:
         return self.parameters()
 
-    def _predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
         self.eval()
 
         if self.config.adapt_to_pi_aloha:
