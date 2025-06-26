@@ -1,6 +1,37 @@
 import math
 import time
 
+## Pseudo code for Impedance control and 4 channel bilateral tele-op
+# 1. Read the leader and follower
+# 2. Compute the follower's impedance torque
+# 3. Compute the leader's torque
+# 4. Set the leader and follower's torque
+# # Read leader
+# θ_ℓ, ω_ℓ, F_ℓ = leader.read_state()
+# # Read the follower
+# θ_f, ω_f, F_f = follower.read_state()
+# # Compute the follower’s impedance torque
+# τ_f = (
+#     Kp*(θ_ℓ - θ_f)    # position coupling
+#   + Kd*(ω_ℓ - ω_f)    # velocity coupling
+#   + K_ff * F_ℓ        # force feed-forward from the leader
+# )
+# follower.set_torque(τ_f)
+# # Compute the leader’s  torque
+# τ_ℓ = (
+#     K_mp*(θ_f   - θ_ℓ)   # motion-feedback
+#   + K_md*(ω_f   - ω_ℓ)   # velocity-feedback
+#   - K_mf * F_f          # force-feedback (negative)
+# )
+# leader.set_torque(τ_ℓ)
+# Other details mentioned by Bi-ACT paper:
+# The controller design adopted a control of position and force
+# for each axis, as shown in Fig. 3. Angle information was
+# obtained from encoders, and angular velocity was calculated
+# by differentiating this information. The disturbance torque τdis
+# was calculated using a disturbance observer (DOB) [29], and
+# the torque response value τres was estimated using a force
+# reaction observer (RFOB) [30].
 from lerobot.common.robots.so101_follower_torque.config_so101_follower_t import SO101FollowerTConfig
 from lerobot.common.robots.so101_follower_torque.so101_follower_t import SO101FollowerT
 
