@@ -25,11 +25,12 @@ import numpy as np
 import torch
 import zmq
 
+from lerobot.common.constants import OBS_IMAGES, OBS_STATE
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..robot import Robot
 from .config_lekiwi import LeKiwiClientConfig
-from lerobot.common.constants import OBS_IMAGES, OBS_STATE
+
 
 class LeKiwiClient(Robot):
     config_class = LeKiwiClientConfig

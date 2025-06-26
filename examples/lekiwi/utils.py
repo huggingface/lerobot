@@ -1,6 +1,7 @@
-import rerun as rr
 import numpy as np
+import rerun as rr
 import torch
+
 
 def display_data(observation, arm_action, base_action):
     """Display all data in Rerun."""
@@ -32,4 +33,3 @@ def display_data(observation, arm_action, base_action):
         elif isinstance(val, np.ndarray):
             for i, v in enumerate(val):
                 rr.log(f"base_action_{act}_{i}", rr.Scalars(v))
-

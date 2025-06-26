@@ -1,24 +1,19 @@
 import time
 from dataclasses import dataclass
-from pprint import pformat
+
 import draccus
-import rerun as rr
-import os
-from pathlib import Path
 
 from examples.lekiwi.utils import display_data
-from lerobot.common.constants import HF_LEROBOT_HOME
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.datasets.utils import build_dataset_frame, hw_to_dataset_features
 from lerobot.common.robots.lekiwi.config_lekiwi import LeKiwiClientConfig
 from lerobot.common.robots.lekiwi.lekiwi_client import LeKiwiClient
 from lerobot.common.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop, KeyboardTeleopConfig
-from lerobot.common.teleoperators.so100_leader import SO100LeaderConfig
-from lerobot.common.teleoperators.so100_leader import SO100Leader
-from lerobot.common.utils.utils import init_logging, log_say
-from lerobot.common.utils.visualization_utils import _init_rerun
+from lerobot.common.teleoperators.so100_leader import SO100Leader, SO100LeaderConfig
 from lerobot.common.utils.control_utils import init_keyboard_listener, is_headless
 from lerobot.common.utils.robot_utils import busy_wait
+from lerobot.common.utils.utils import log_say
+from lerobot.common.utils.visualization_utils import _init_rerun
 
 
 @dataclass
@@ -91,14 +86,8 @@ def record(cfg: RecordConfig):
         _init_rerun(session_name=cfg.rerun_session_name)
 
     # Initialize robot and teleop devices
-    robot_config = LeKiwiClientConfig(
-        remote_ip=cfg.robot_ip,
-        id=cfg.robot_id
-    )
-    leader_arm_config = SO100LeaderConfig(
-        port=cfg.leader_arm_port,
-        id=cfg.leader_arm_id
-    )
+    robot_config = LeKiwiClientConfig(remote_ip=cfg.robot_ip, id=cfg.robot_id)
+    leader_arm_config = SO100LeaderConfig(port=cfg.leader_arm_port, id=cfg.leader_arm_id)
     keyboard_config = KeyboardTeleopConfig(id=cfg.keyboard_id)
 
     robot = LeKiwiClient(robot_config)

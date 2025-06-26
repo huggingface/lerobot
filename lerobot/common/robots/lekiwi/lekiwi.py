@@ -377,9 +377,11 @@ class LeKiwi(Robot):
         base_goal_vel = {k: v for k, v in action.items() if k.endswith(".vel")}
 
         # Check for NaN values and skip sending actions if any are found
-        if any(np.isnan(v) for v in arm_goal_pos.values()) or any(np.isnan(v) for v in base_goal_vel.values()):
+        if any(np.isnan(v) for v in arm_goal_pos.values()) or any(
+            np.isnan(v) for v in base_goal_vel.values()
+        ):
             logger.warning("NaN values detected in arm goal positions. Skipping action execution.")
-            base_goal_vel = {k: 0.0 for k in base_goal_vel}
+            base_goal_vel = dict.fromkeys(base_goal_vel, 0.0)
             # Set base velocities to 0 if they contain NaN values, keep arm positions as is
             return {**arm_goal_pos, **base_goal_vel}
 

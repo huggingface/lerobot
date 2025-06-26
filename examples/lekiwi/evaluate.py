@@ -1,23 +1,20 @@
+import time
 from dataclasses import dataclass
+from enum import Enum
+
 import draccus
 import rerun as rr
-import torch
-from enum import Enum
-import time
-from pprint import pformat
-import numpy as np
-import os
 
 from examples.lekiwi.utils import display_data
+from lerobot.common.datasets.utils import build_dataset_frame, hw_to_dataset_features
 from lerobot.common.policies.act.modeling_act import ACTPolicy
 from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.robots.lekiwi.config_lekiwi import LeKiwiClientConfig
 from lerobot.common.robots.lekiwi.lekiwi_client import LeKiwiClient
 from lerobot.common.utils.control_utils import predict_action
-from lerobot.common.utils.utils import get_safe_torch_device, init_logging, log_say
-from lerobot.common.utils.visualization_utils import _init_rerun
 from lerobot.common.utils.robot_utils import busy_wait
-from lerobot.common.datasets.utils import build_dataset_frame, hw_to_dataset_features
+from lerobot.common.utils.utils import get_safe_torch_device, log_say
+from lerobot.common.utils.visualization_utils import _init_rerun
 
 
 class PolicyType(Enum):
@@ -101,10 +98,7 @@ def evaluate(cfg: EvaluateConfig):
         _init_rerun(session_name=cfg.rerun_session_name)
 
     # Initialize robot
-    robot_config = LeKiwiClientConfig(
-        remote_ip=cfg.robot_ip,
-        id=cfg.robot_id
-    )
+    robot_config = LeKiwiClientConfig(remote_ip=cfg.robot_ip, id=cfg.robot_id)
     robot = LeKiwiClient(robot_config)
 
     # Load policy based on type
