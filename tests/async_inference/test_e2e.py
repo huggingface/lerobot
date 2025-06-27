@@ -23,7 +23,7 @@ is to exercise the full communication loop:
 4. Client executes received actions
 
 The test succeeds if at least one action is executed and the server records at
-least one predicted timestep – demonstrating that the gRPC round-trip works
+least one predicted timestep - demonstrating that the gRPC round-trip works
 end-to-end using real (but lightweight) protocol messages.
 """
 
@@ -37,7 +37,7 @@ import grpc
 import torch
 
 from lerobot.common.robots.utils import make_robot_from_config
-from lerobot.scripts.server import async_inference_pb2_grpc  # type: ignore
+from lerobot.common.transport import async_inference_pb2_grpc  # type: ignore
 from lerobot.scripts.server.configs import RobotClientConfig
 from lerobot.scripts.server.helpers import TimedObservation
 from lerobot.scripts.server.policy_server import PolicyServer
@@ -54,12 +54,12 @@ def test_async_inference_e2e(policy_server, monkeypatch):  # noqa: F811
     # ------------------------------------------------------------------
     # 1. Spawn a PolicyServer returning dummy action chunks
     # ------------------------------------------------------------------
-    from lerobot.scripts.server import async_inference_pb2  # type: ignore
+    from lerobot.common.transport import async_inference_pb2  # type: ignore
 
-    # Force server to act-style policy; patch method to return deterministic tensor
+    # Force server to produce deterministic action chunks in test mode
     policy_server.policy_type = "act"
 
-    def _fake_get_action_chunk(_self, _obs, _type="act"):
+    def _fake_get_action_chunk(_self, _obs, _type="test"):
         action_dim = 6
         batch_size = 1
         actions_per_chunk = policy_server.actions_per_chunk
@@ -86,18 +86,33 @@ def test_async_inference_e2e(policy_server, monkeypatch):  # noqa: F811
     # ------------------------------------------------------------------
     # 2. Create a RobotClient around a MockRobot
     # ------------------------------------------------------------------
+    from lerobot.configs.types import FeatureType, PolicyFeature
     from tests.mocks.mock_robot import MockRobotConfig
 
-    mock_robot = make_robot_from_config(MockRobotConfig())
+    test_config = MockRobotConfig()
+    mock_robot = make_robot_from_config(test_config)
 
     client_config = RobotClientConfig(
         server_address=server_address,
         robot=mock_robot,
         chunk_size_threshold=0.0,
+        policy_type="test",
+        pretrained_name_or_path="test",
+        policy_image_features={"test": PolicyFeature(type=FeatureType.STATE, shape=(test_config.n_motors,))},
     )
 
     client = RobotClient(client_config)
     assert client.start(), "Client failed initial handshake with the server"
+
+    # Track action chunks received without modifying RobotClient
+    action_chunks_received = {"count": 0}
+    original_aggregate = client._aggregate_action_queues
+
+    def counting_aggregate(*args, **kwargs):
+        action_chunks_received["count"] += 1
+        return original_aggregate(*args, **kwargs)
+
+    monkeypatch.setattr(client, "_aggregate_action_queues", counting_aggregate)
 
     # Observation producer – very simple state vector
     def _make_observation():
@@ -123,7 +138,7 @@ def test_async_inference_e2e(policy_server, monkeypatch):  # noqa: F811
     # Wait for 5 seconds
     server.wait_for_termination(timeout=5)
 
-    assert client.chunks_received > 0, "Client did not receive any action chunks"
+    assert action_chunks_received["count"] > 0, "Client did not receive any action chunks"
     assert len(policy_server._predicted_timesteps) > 0, "Server did not record any predicted timesteps"
 
     # ------------------------------------------------------------------
