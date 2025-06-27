@@ -225,8 +225,8 @@ class FeetechMotorsBus(MotorsBus):
             # the 'Return_Delay_Time' address). We ensure this is reduced to the minimum of 2µs (value of 0).
             self.write("Return_Delay_Time", motor, 0)
             # Set 'Maximum_Acceleration' to 254 to speedup acceleration and deceleration of the motors.
-            # Note: this address is not in the official STS3215 Memory Table
-            self.write("Maximum_Acceleration", motor, 254)
+            if self.protocol_version == 0:
+                self.write("Maximum_Acceleration", motor, 254)
             self.write("Acceleration", motor, 254)
 
     @property
@@ -270,14 +270,15 @@ class FeetechMotorsBus(MotorsBus):
 
         return calibration
 
-    def write_calibration(self, calibration_dict: dict[str, MotorCalibration]) -> None:
+    def write_calibration(self, calibration_dict: dict[str, MotorCalibration], cache: bool = True) -> None:
         for motor, calibration in calibration_dict.items():
             if self.protocol_version == 0:
                 self.write("Homing_Offset", motor, calibration.homing_offset)
             self.write("Min_Position_Limit", motor, calibration.range_min)
             self.write("Max_Position_Limit", motor, calibration.range_max)
 
-        self.calibration = calibration_dict
+        if cache:
+            self.calibration = calibration_dict
 
     def _get_half_turn_homings(self, positions: dict[NameOrID, Value]) -> dict[NameOrID, Value]:
         """
