@@ -68,7 +68,7 @@ class UDPTransportSender:
     they are simply dropped – the next action will arrive a few milliseconds later anyway.
     """
 
-    def __init__(self, server: str, log_file: str = "udp_sender.log", async_logging: bool = True, use_binary: bool = True):
+    def __init__(self, server: str, log_file: str = "udp_sender.log", async_logging: bool = True, use_binary: bool = True, enable_logging: bool = False):
         """Args
         ----
         server: str
@@ -79,10 +79,13 @@ class UDPTransportSender:
             Whether to use async logging to minimize latency impact.
         use_binary: bool
             Whether to use binary format instead of JSON for maximum performance.
+        enable_logging: bool
+            Whether to enable logging at all. Set to False for minimum latency.
         """
         ip, port_str = server.split(":")
         self._addr: Tuple[str, int] = (ip, int(port_str))
         self._use_binary = use_binary
+        self._enable_logging = enable_logging
 
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         # Non-blocking send – we never wait for ACKs.
@@ -91,21 +94,24 @@ class UDPTransportSender:
         # Packet sequence number for identification
         self._sequence_number = 0
 
-        # Setup logging
-        self._logger = logging.getLogger(f"UDPSender_{ip}_{port_str}")
-        self._logger.setLevel(logging.INFO)
-        
-        # Create file handler if not already exists
-        if not self._logger.handlers:
-            if async_logging:
-                handler = AsyncLogHandler(log_file)
-            else:
-                handler = logging.FileHandler(log_file)
-                formatter = logging.Formatter('%(asctime)s.%(msecs)03d - %(name)s - %(message)s', 
-                                            datefmt='%Y-%m-%d %H:%M:%S')
-                handler.setFormatter(formatter)
-            self._logger.addHandler(handler)
-            self._logger.propagate = False
+        # Setup logging only if enabled
+        if self._enable_logging:
+            self._logger = logging.getLogger(f"UDPSender_{ip}_{port_str}")
+            self._logger.setLevel(logging.INFO)
+            
+            # Create file handler if not already exists
+            if not self._logger.handlers:
+                if async_logging:
+                    handler = AsyncLogHandler(log_file)
+                else:
+                    handler = logging.FileHandler(log_file)
+                    formatter = logging.Formatter('%(asctime)s.%(msecs)03d - %(name)s - %(message)s', 
+                                                datefmt='%Y-%m-%d %H:%M:%S')
+                    handler.setFormatter(formatter)
+                self._logger.addHandler(handler)
+                self._logger.propagate = False
+        else:
+            self._logger = None
 
     # ---------------------------------------------------------------------
     # Public helpers
@@ -129,37 +135,56 @@ class UDPTransportSender:
         # Best-effort – if the socket is not ready we'll simply drop the frame.
         try:
             self._sock.sendto(payload, self._addr)
-            self._logger.info(f"SENT - packet_id: {self._sequence_number}, timestamp: {send_timestamp:.6f}, payload_size: {len(payload)} bytes, action: {action}")
+            if self._enable_logging and self._logger:
+                self._logger.info(f"SENT - packet_id: {self._sequence_number}, timestamp: {send_timestamp:.6f}, payload_size: {len(payload)} bytes, action: {action}")
         except (BlockingIOError, OSError) as e:
             # Dropped – nothing to do, next frame will go through.
-            self._logger.warning(f"DROPPED - packet_id: {self._sequence_number}, timestamp: {send_timestamp:.6f}, error: {e}, payload_size: {len(payload)} bytes, action: {action}")
+            if self._enable_logging and self._logger:
+                self._logger.warning(f"DROPPED - packet_id: {self._sequence_number}, timestamp: {send_timestamp:.6f}, error: {e}, payload_size: {len(payload)} bytes, action: {action}")
         
         # Increment sequence number for next packet
         self._sequence_number += 1
     
     def _serialize_binary(self, action: Dict[str, float], timestamp: float) -> bytes:
         """Serialize action to binary format for maximum performance."""
-        # Format: [magic:4][seq:4][timestamp:8][action_count:4][key1_len:4][key1:str][val1:8][key2_len:4][key2:str][val2:8]...
-        magic = b'UDPA'  # UDP Action
-        seq_bytes = struct.pack('<I', self._sequence_number)
-        timestamp_bytes = struct.pack('<d', timestamp)
-        action_count = len(action)
-        count_bytes = struct.pack('<I', action_count)
-        
-        payload = magic + seq_bytes + timestamp_bytes + count_bytes
-        
-        for key, value in action.items():
+        # Pre-calculate total size to avoid memory reallocations
+        total_size = 20  # header: magic(4) + seq(4) + timestamp(8) + count(4)
+        key_sizes = []
+        for key in action:
             key_bytes = key.encode('utf-8')
-            key_len = len(key_bytes)
-            payload += struct.pack('<I', key_len) + key_bytes + struct.pack('<d', value)
+            key_sizes.append((key, key_bytes))
+            total_size += 4 + len(key_bytes) + 8  # key_len(4) + key + value(8)
         
-        return payload
+        # Allocate buffer once
+        payload = bytearray(total_size)
+        offset = 0
+        
+        # Write header
+        payload[offset:offset+4] = b'UDPA'  # magic
+        offset += 4
+        struct.pack_into('<I', payload, offset, self._sequence_number)
+        offset += 4
+        struct.pack_into('<d', payload, offset, timestamp)
+        offset += 8
+        struct.pack_into('<I', payload, offset, len(action))
+        offset += 4
+        
+        # Write action data
+        for key, key_bytes in key_sizes:
+            struct.pack_into('<I', payload, offset, len(key_bytes))
+            offset += 4
+            payload[offset:offset+len(key_bytes)] = key_bytes
+            offset += len(key_bytes)
+            struct.pack_into('<d', payload, offset, action[key])
+            offset += 8
+        
+        return bytes(payload)
 
 
 class UDPTransportReceiver:
     """Blocking UDP receiver used by the teleoperation *follower* machine."""
 
-    def __init__(self, port: int, buffer_size: int = 65535, log_file: str = "udp_receiver.log", async_logging: bool = True, use_binary: bool = True):
+    def __init__(self, port: int, buffer_size: int = 65535, log_file: str = "udp_receiver.log", async_logging: bool = True, use_binary: bool = True, enable_logging: bool = False):
         """Listen on *port* for incoming action packets.
         
         Args
@@ -174,6 +199,8 @@ class UDPTransportReceiver:
             Whether to use async logging to minimize latency impact.
         use_binary: bool
             Whether to use binary format instead of JSON for maximum performance.
+        enable_logging: bool
+            Whether to enable logging at all. Set to False for minimum latency.
         """
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         # Allow immediate rebinding after a restart.
@@ -182,25 +209,29 @@ class UDPTransportReceiver:
         self._sock.bind(("", port))
         self._buffer_size = buffer_size
         self._use_binary = use_binary
+        self._enable_logging = enable_logging
 
         # Track last received packet ID to detect gaps
         self._last_packet_id = -1
 
-        # Setup logging
-        self._logger = logging.getLogger(f"UDPReceiver_{port}")
-        self._logger.setLevel(logging.INFO)
-        
-        # Create file handler if not already exists
-        if not self._logger.handlers:
-            if async_logging:
-                handler = AsyncLogHandler(log_file)
-            else:
-                handler = logging.FileHandler(log_file)
-                formatter = logging.Formatter('%(asctime)s.%(msecs)03d - %(name)s - %(message)s', 
-                                            datefmt='%Y-%m-%d %H:%M:%S')
-                handler.setFormatter(formatter)
-            self._logger.addHandler(handler)
-            self._logger.propagate = False
+        # Setup logging only if enabled
+        if self._enable_logging:
+            self._logger = logging.getLogger(f"UDPReceiver_{port}")
+            self._logger.setLevel(logging.INFO)
+            
+            # Create file handler if not already exists
+            if not self._logger.handlers:
+                if async_logging:
+                    handler = AsyncLogHandler(log_file)
+                else:
+                    handler = logging.FileHandler(log_file)
+                    formatter = logging.Formatter('%(asctime)s.%(msecs)03d - %(name)s - %(message)s', 
+                                                datefmt='%Y-%m-%d %H:%M:%S')
+                    handler.setFormatter(formatter)
+                self._logger.addHandler(handler)
+                self._logger.propagate = False
+        else:
+            self._logger = None
 
     # ------------------------------------------------------------------
     def recv(self) -> Dict[str, float]:  # noqa: D401
@@ -223,20 +254,25 @@ class UDPTransportReceiver:
                 if packet_id != expected_id:
                     if packet_id > expected_id:
                         missing_count = packet_id - expected_id
-                        self._logger.warning(f"PACKET_LOSS - missing {missing_count} packet(s), expected: {expected_id}, received: {packet_id}")
+                        if self._enable_logging and self._logger:
+                            self._logger.warning(f"PACKET_LOSS - missing {missing_count} packet(s), expected: {expected_id}, received: {packet_id}")
                     else:
-                        self._logger.warning(f"OUT_OF_ORDER - received: {packet_id}, expected: {expected_id}")
+                        if self._enable_logging and self._logger:
+                            self._logger.warning(f"OUT_OF_ORDER - received: {packet_id}, expected: {expected_id}")
             
             if packet_id is not None:
                 self._last_packet_id = packet_id
-                self._logger.info(f"RECEIVED - packet_id: {packet_id}, recv_timestamp: {recv_timestamp:.6f}, send_timestamp: {send_timestamp:.6f}, latency: {latency_ms:.2f}ms, from: {addr[0]}:{addr[1]}, payload_size: {len(payload)} bytes, action: {action}")
+                if self._enable_logging and self._logger:
+                    self._logger.info(f"RECEIVED - packet_id: {packet_id}, recv_timestamp: {recv_timestamp:.6f}, send_timestamp: {send_timestamp:.6f}, latency: {latency_ms:.2f}ms, from: {addr[0]}:{addr[1]}, payload_size: {len(payload)} bytes, action: {action}")
             else:
-                self._logger.info(f"RECEIVED - legacy_format, timestamp: {recv_timestamp:.6f}, from: {addr[0]}:{addr[1]}, payload_size: {len(payload)} bytes, action: {action}")
+                if self._enable_logging and self._logger:
+                    self._logger.info(f"RECEIVED - legacy_format, timestamp: {recv_timestamp:.6f}, from: {addr[0]}:{addr[1]}, payload_size: {len(payload)} bytes, action: {action}")
             
             return action
             
         except (json.JSONDecodeError, struct.error, UnicodeDecodeError) as e:
-            self._logger.error(f"DECODE_ERROR - timestamp: {recv_timestamp:.6f}, from: {addr[0]}:{addr[1]}, error: {e}, payload: {payload[:100]}...")
+            if self._enable_logging and self._logger:
+                self._logger.error(f"DECODE_ERROR - timestamp: {recv_timestamp:.6f}, from: {addr[0]}:{addr[1]}, error: {e}, payload: {payload[:100]}...")
             raise
     
     def _deserialize_json(self, payload: bytes) -> Tuple[Dict[str, float], Optional[int], float]:
