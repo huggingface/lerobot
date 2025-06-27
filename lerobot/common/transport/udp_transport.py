@@ -119,6 +119,14 @@ class UDPTransportSender:
         # Best-effort – if the socket is not ready we'll simply drop the frame.
         try:
             self._sock.sendto(payload, self._addr)
+            
+            # Sender diagnostics every 50th packet
+            if self._sequence_number % 50 == 0:
+                current_time = time.time()
+                time_since_last = current_time - getattr(self, '_last_send_time', current_time)
+                print(f"SENDER: packet={self._sequence_number}, send_time={send_timestamp:.6f}, time_since_last={time_since_last*1000:.1f}ms")
+                self._last_send_time = current_time
+                
             if self._enable_logging and self._logger:
                 self._logger.info(
                     f"SENT - packet_id: {self._sequence_number}, timestamp: {send_timestamp:.6f}, payload_size: {len(payload)} bytes, action: {action}"
