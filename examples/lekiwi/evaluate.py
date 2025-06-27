@@ -15,7 +15,7 @@ TASK_DESCRIPTION = "My task description"
 robot_config = LeKiwiClientConfig(remote_ip="172.18.134.136", id="lekiwi")
 robot = LeKiwiClient(robot_config)
 
-policy = ACTPolicy.from_pretrained("pepijn223/lekiwi_recent")
+policy = ACTPolicy.from_pretrained("<hf_username>/<policy_repo_id>")
 
 # Configure the dataset features
 action_features = hw_to_dataset_features(robot.action_features, "action")
@@ -24,7 +24,7 @@ dataset_features = {**action_features, **obs_features}
 
 # Create the dataset
 dataset = LeRobotDataset.create(
-    repo_id="pepijn223/eval_lekiwi_test_act5",
+    repo_id="<hf_username>/<eval_dataset_repo_id>",
     fps=FPS,
     features=dataset_features,
     robot_type=robot.name,

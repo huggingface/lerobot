@@ -32,7 +32,7 @@ dataset_features = {**action_features, **obs_features}
 
 # Create the dataset
 dataset = LeRobotDataset.create(
-    repo_id="pepijn223/lekiwi" + str(int(time.time())),
+    repo_id="<hf_username>/<dataset_repo_id>",
     fps=FPS,
     features=dataset_features,
     robot_type=robot.name,

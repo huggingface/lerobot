@@ -11,7 +11,7 @@ EPISODE_IDX = 0
 robot_config = LeKiwiClientConfig(remote_ip="172.18.134.136", id="lekiwi")
 robot = LeKiwiClient(robot_config)
 
-dataset = LeRobotDataset("pepijn223/lekiwi1750840522", episodes=[EPISODE_IDX])
+dataset = LeRobotDataset("<hf_username>/<dataset_repo_id>", episodes=[EPISODE_IDX])
 actions = dataset.hf_dataset.select_columns("action")
 
 robot.connect()
