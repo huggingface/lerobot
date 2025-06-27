@@ -34,10 +34,9 @@ import logging
 import time
 from dataclasses import asdict, dataclass
 from pprint import pformat
+from typing import Optional
 
 import draccus
-import numpy as np
-import rerun as rr
 
 from lerobot.common.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.common.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
@@ -56,7 +55,7 @@ from lerobot.common.teleoperators import (
 )
 from lerobot.common.utils.robot_utils import busy_wait
 from lerobot.common.utils.utils import init_logging, move_cursor_up
-from lerobot.common.utils.visualization_utils import _init_rerun
+from lerobot.common.utils.visualization_utils import RerunRobotLogger
 
 from .common.teleoperators import gamepad, koch_leader, so100_leader, so101_leader  # noqa: F401
 
@@ -70,31 +69,38 @@ class TeleoperateConfig:
     teleop_time_s: float | None = None
     # Display all cameras on screen
     display_data: bool = False
+    # Stream camera images as a video stream or as individual frames.
+    # Video streams can be played back, but have latency and memory impact.
+    # Only latest is saved for individual frames, but little latency or memory impact.
+    # Choices are
+    #   "video" (h264 encoded)
+    #   "jpeg" (compressed, preferred for static images)
+    #   "raw" (uncompressed)
+    #   "none" (not displayed)
+    image_stream_type: str = "video"
 
 
 def teleop_loop(
-    teleop: Teleoperator, robot: Robot, fps: int, display_data: bool = False, duration: float | None = None
+    teleop: Teleoperator,
+    robot: Robot,
+    fps: int,
+    rerun_logger: Optional[RerunRobotLogger] = None,
+    duration: float | None = None,
 ):
     display_len = max(len(key) for key in robot.action_features)
     start = time.perf_counter()
+
     while True:
         loop_start = time.perf_counter()
         action = teleop.get_action()
-        if display_data:
-            observation = robot.get_observation()
-            for obs, val in observation.items():
-                if isinstance(val, float):
-                    rr.log(f"observation_{obs}", rr.Scalar(val))
-                elif isinstance(val, np.ndarray):
-                    rr.log(f"observation_{obs}", rr.Image(val), static=True)
-            for act, val in action.items():
-                if isinstance(val, float):
-                    rr.log(f"action_{act}", rr.Scalar(val))
 
         robot.send_action(action)
+
+        if rerun_logger is not None:
+            rerun_logger.log_all(action=action, sync_time=True)
+
         dt_s = time.perf_counter() - loop_start
         busy_wait(1 / fps - dt_s)
-
         loop_s = time.perf_counter() - loop_start
 
         print("\n" + "-" * (display_len + 10))
@@ -113,8 +119,6 @@ def teleop_loop(
 def teleoperate(cfg: TeleoperateConfig):
     init_logging()
     logging.info(pformat(asdict(cfg)))
-    if cfg.display_data:
-        _init_rerun(session_name="teleoperation")
 
     teleop = make_teleoperator_from_config(cfg.teleop)
     robot = make_robot_from_config(cfg.robot)
@@ -122,13 +126,25 @@ def teleoperate(cfg: TeleoperateConfig):
     teleop.connect()
     robot.connect()
 
+    rerun_logger = None
+    if cfg.display_data:
+        if cfg.image_stream_type not in ["video", "jpeg", "raw", "none"]:
+            logging.warning(f"Invalid image_stream_type '{cfg.image_stream_type}'. Using 'video' as default.")
+            cfg.image_stream_type = "video"
+        rerun_logger = RerunRobotLogger(
+            teleop=teleop,
+            robot=robot,
+            fps=cfg.fps,  # image_stream_type=cfg.image_stream_type
+        )
+        rerun_logger.init(session_name="teleoperation")
+
     try:
-        teleop_loop(teleop, robot, cfg.fps, display_data=cfg.display_data, duration=cfg.teleop_time_s)
+        teleop_loop(teleop, robot, cfg.fps, rerun_logger=rerun_logger, duration=cfg.teleop_time_s)
     except KeyboardInterrupt:
         pass
     finally:
-        if cfg.display_data:
-            rr.rerun_shutdown()
+        if rerun_logger is not None:
+            rerun_logger.cleanup()
         teleop.disconnect()
         robot.disconnect()
 
