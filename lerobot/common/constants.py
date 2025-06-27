@@ -25,6 +25,7 @@ ACTION = "action"
 REWARD = "next.reward"
 
 ROBOTS = "robots"
+ROBOT_TYPE = "robot_type"
 TELEOPERATORS = "teleoperators"
 
 # files & directories

@@ -35,7 +35,7 @@ import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
 
-from lerobot.common.constants import OBS_ENV_STATE, OBS_STATE
+from lerobot.common.constants import ACTION, OBS_ENV_STATE, OBS_IMAGE, OBS_STATE, REWARD
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.policies.tdmpc.configuration_tdmpc import TDMPCConfig
@@ -110,52 +110,58 @@ class TDMPCPolicy(PreTrainedPolicy):
         # CEM for the next step.
         self._prev_mean: torch.Tensor | None = None
 
+    @torch.no_grad
+    def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
+        """Predict a chunk of actions given environment observations."""
+        batch = {key: torch.stack(list(self._queues[key]), dim=1) for key in batch if key in self._queues}
+
+        # Remove the time dimensions as it is not handled yet.
+        for key in batch:
+            assert batch[key].shape[1] == 1
+            batch[key] = batch[key][:, 0]
+
+        # NOTE: Order of observations matters here.
+        encode_keys = []
+        if self.config.image_features:
+            encode_keys.append(OBS_IMAGE)
+        if self.config.env_state_feature:
+            encode_keys.append(OBS_ENV_STATE)
+        encode_keys.append(OBS_STATE)
+        z = self.model.encode({k: batch[k] for k in encode_keys})
+        if self.config.use_mpc:  # noqa: SIM108
+            actions = self.plan(z)  # (horizon, batch, action_dim)
+        else:
+            # Plan with the policy (π) alone. This always returns one action so unsqueeze to get a
+            # sequence dimension like in the MPC branch.
+            actions = self.model.pi(z).unsqueeze(0)
+
+        actions = torch.clamp(actions, -1, +1)
+
+        actions = self.unnormalize_outputs({ACTION: actions})[ACTION]
+        return actions
+
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
         """Select a single action given environment observations."""
         batch = self.normalize_inputs(batch)
         if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
-            batch["observation.image"] = batch[next(iter(self.config.image_features))]
+            batch[OBS_IMAGE] = batch[next(iter(self.config.image_features))]
 
         self._queues = populate_queues(self._queues, batch)
 
         # When the action queue is depleted, populate it again by querying the policy.
-        if len(self._queues["action"]) == 0:
-            batch = {key: torch.stack(list(self._queues[key]), dim=1) for key in batch if key in self._queues}
-
-            # Remove the time dimensions as it is not handled yet.
-            for key in batch:
-                assert batch[key].shape[1] == 1
-                batch[key] = batch[key][:, 0]
-
-            # NOTE: Order of observations matters here.
-            encode_keys = []
-            if self.config.image_features:
-                encode_keys.append("observation.image")
-            if self.config.env_state_feature:
-                encode_keys.append("observation.environment_state")
-            encode_keys.append("observation.state")
-            z = self.model.encode({k: batch[k] for k in encode_keys})
-            if self.config.use_mpc:  # noqa: SIM108
-                actions = self.plan(z)  # (horizon, batch, action_dim)
-            else:
-                # Plan with the policy (π) alone. This always returns one action so unsqueeze to get a
-                # sequence dimension like in the MPC branch.
-                actions = self.model.pi(z).unsqueeze(0)
-
-            actions = torch.clamp(actions, -1, +1)
-
-            actions = self.unnormalize_outputs({"action": actions})["action"]
+        if len(self._queues[ACTION]) == 0:
+            actions = self.predict_action_chunk(batch)
 
             if self.config.n_action_repeats > 1:
                 for _ in range(self.config.n_action_repeats):
-                    self._queues["action"].append(actions[0])
+                    self._queues[ACTION].append(actions[0])
             else:
                 # Action queue is (n_action_steps, batch_size, action_dim), so we transpose the action.
-                self._queues["action"].extend(actions[: self.config.n_action_steps])
+                self._queues[ACTION].extend(actions[: self.config.n_action_steps])
 
-        action = self._queues["action"].popleft()
+        action = self._queues[ACTION].popleft()
         return action
 
     @torch.no_grad()
@@ -312,7 +318,7 @@ class TDMPCPolicy(PreTrainedPolicy):
         batch = self.normalize_inputs(batch)
         if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
-            batch["observation.image"] = batch[next(iter(self.config.image_features))]
+            batch[OBS_IMAGE] = batch[next(iter(self.config.image_features))]
         batch = self.normalize_targets(batch)
 
         info = {}
@@ -322,15 +328,15 @@ class TDMPCPolicy(PreTrainedPolicy):
             if isinstance(batch[key], torch.Tensor) and batch[key].ndim > 1:
                 batch[key] = batch[key].transpose(1, 0)
 
-        action = batch["action"]  # (t, b, action_dim)
-        reward = batch["next.reward"]  # (t, b)
+        action = batch[ACTION]  # (t, b, action_dim)
+        reward = batch[REWARD]  # (t, b)
         observations = {k: v for k, v in batch.items() if k.startswith("observation.")}
 
         # Apply random image augmentations.
         if self.config.image_features and self.config.max_random_shift_ratio > 0:
-            observations["observation.image"] = flatten_forward_unflatten(
+            observations[OBS_IMAGE] = flatten_forward_unflatten(
                 partial(random_shifts_aug, max_random_shift_ratio=self.config.max_random_shift_ratio),
-                observations["observation.image"],
+                observations[OBS_IMAGE],
             )
 
         # Get the current observation for predicting trajectories, and all future observations for use in
@@ -340,7 +346,7 @@ class TDMPCPolicy(PreTrainedPolicy):
             current_observation[k] = observations[k][0]
             next_observations[k] = observations[k][1:]
         horizon, batch_size = next_observations[
-            "observation.image" if self.config.image_features else "observation.environment_state"
+            OBS_IMAGE if self.config.image_features else OBS_ENV_STATE
         ].shape[:2]
 
         # Run latent rollout using the latent dynamics model and policy model.

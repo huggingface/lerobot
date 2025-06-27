@@ -27,6 +27,7 @@ import torch.nn.functional as F  # noqa: N812
 import torchvision
 from torch import Tensor, nn
 
+from lerobot.common.constants import ACTION, OBS_IMAGES, OBS_STATE
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.policies.utils import get_device_from_parameters, get_output_shape, populate_queues
@@ -118,10 +119,17 @@ class VQBeTPolicy(PreTrainedPolicy):
         queues are populated during rollout of the policy, they contain the n latest observations and actions
         """
         self._queues = {
-            "observation.images": deque(maxlen=self.config.n_obs_steps),
-            "observation.state": deque(maxlen=self.config.n_obs_steps),
-            "action": deque(maxlen=self.config.action_chunk_size),
+            OBS_IMAGES: deque(maxlen=self.config.n_obs_steps),
+            OBS_STATE: deque(maxlen=self.config.n_obs_steps),
+            ACTION: deque(maxlen=self.config.action_chunk_size),
         }
+
+    @torch.no_grad
+    def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
+        batch = {k: torch.stack(list(self._queues[k]), dim=1) for k in batch if k in self._queues}
+        actions = self.vqbet(batch, rollout=True)[:, : self.config.action_chunk_size]
+        actions = self.unnormalize_outputs({ACTION: actions})[ACTION]
+        return actions
 
     @torch.no_grad
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
@@ -144,23 +152,19 @@ class VQBeTPolicy(PreTrainedPolicy):
                 stacklevel=1,
             )
 
-        if len(self._queues["action"]) == 0:
-            batch = {k: torch.stack(list(self._queues[k]), dim=1) for k in batch if k in self._queues}
-            actions = self.vqbet(batch, rollout=True)[:, : self.config.action_chunk_size]
-
-            # the dimension of returned action is (batch_size, action_chunk_size, action_dim)
-            actions = self.unnormalize_outputs({"action": actions})["action"]
+        if len(self._queues[ACTION]) == 0:
+            actions = self.predict_action_chunk(batch)
             # since the data in the action queue's dimension is (action_chunk_size, batch_size, action_dim), we transpose the action and fill the queue
-            self._queues["action"].extend(actions.transpose(0, 1))
+            self._queues[ACTION].extend(actions.transpose(0, 1))
 
-        action = self._queues["action"].popleft()
+        action = self._queues[ACTION].popleft()
         return action
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
         """Run the batch through the model and compute the loss for training or validation."""
         batch = self.normalize_inputs(batch)
         batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
-        batch["observation.images"] = torch.stack([batch[key] for key in self.config.image_features], dim=-4)
+        batch[OBS_IMAGES] = torch.stack([batch[key] for key in self.config.image_features], dim=-4)
         batch = self.normalize_targets(batch)
         # VQ-BeT discretizes action using VQ-VAE before training BeT (please refer to section 3.2 in the VQ-BeT paper https://huggingface.co/papers/2403.03181)
         if not self.vqbet.action_head.vqvae_model.discretized.item():
@@ -168,7 +172,7 @@ class VQBeTPolicy(PreTrainedPolicy):
             # n_different_codes: how many of the total possible VQ codes are being used in single batch (how many of them have at least one encoder embedding as a nearest neighbor). This can be at most `vqvae_n_embed * number of layers of RVQ (=2)`.
             # n_different_combinations: how many different code combinations are being used out of all possible combinations in single batch. This can be at most `vqvae_n_embed ^ number of layers of RVQ (=2)` (hint consider the RVQ as a decision tree).
             loss, n_different_codes, n_different_combinations, recon_l1_error = (
-                self.vqbet.action_head.discretize(self.config.n_vqvae_training_steps, batch["action"])
+                self.vqbet.action_head.discretize(self.config.n_vqvae_training_steps, batch[ACTION])
             )
             return loss, {
                 "n_different_codes": n_different_codes,
@@ -404,7 +408,7 @@ class VQBeTModel(nn.Module):
             )
         # else, it calculate overall loss (bin prediction loss, and offset loss)
         else:
-            output = batch["action"][:, self.select_target_actions_indices]
+            output = batch[ACTION][:, self.select_target_actions_indices]
             loss = self.action_head.loss_fn(action_head_output, output, reduction="mean")
             return action_head_output, loss
 

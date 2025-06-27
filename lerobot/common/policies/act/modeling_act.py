@@ -33,6 +33,7 @@ from torch import Tensor, nn
 from torchvision.models._utils import IntermediateLayerGetter
 from torchvision.ops.misc import FrozenBatchNorm2d
 
+from lerobot.common.constants import ACTION, OBS_IMAGES
 from lerobot.common.policies.act.configuration_act import ACTConfig
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.pretrained import PreTrainedPolicy
@@ -114,46 +115,49 @@ class ACTPolicy(PreTrainedPolicy):
         environment. It works by managing the actions in a queue and only calling `select_actions` when the
         queue is empty.
         """
-        self.eval()
+        self.eval()  # keeping the policy in eval mode as it could be set to train mode while queue is consumed
 
-        batch = self.normalize_inputs(batch)
-        if self.config.image_features:
-            batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
-            batch["observation.images"] = [batch[key] for key in self.config.image_features]
-
-        # If we are doing temporal ensembling, do online updates where we keep track of the number of actions
-        # we are ensembling over.
         if self.config.temporal_ensemble_coeff is not None:
-            actions = self.model(batch)[0]  # (batch_size, chunk_size, action_dim)
-            actions = self.unnormalize_outputs({"action": actions})["action"]
+            actions = self.predict_action_chunk(batch)
             action = self.temporal_ensembler.update(actions)
             return action
 
         # Action queue logic for n_action_steps > 1. When the action_queue is depleted, populate it by
         # querying the policy.
         if len(self._action_queue) == 0:
-            actions = self.model(batch)[0][:, : self.config.n_action_steps]
-
-            # TODO(rcadene): make _forward return output dictionary?
-            actions = self.unnormalize_outputs({"action": actions})["action"]
+            actions = self.predict_action_chunk(batch)[:, : self.config.n_action_steps]
 
             # `self.model.forward` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
             # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
             self._action_queue.extend(actions.transpose(0, 1))
         return self._action_queue.popleft()
 
+    @torch.no_grad
+    def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
+        """Predict a chunk of actions given environment observations."""
+        self.eval()
+
+        batch = self.normalize_inputs(batch)
+        if self.config.image_features:
+            batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
+            batch[OBS_IMAGES] = [batch[key] for key in self.config.image_features]
+
+        actions = self.model(batch)[0]
+        actions = self.unnormalize_outputs({ACTION: actions})[ACTION]
+        return actions
+
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
         """Run the batch through the model and compute the loss for training or validation."""
         batch = self.normalize_inputs(batch)
         if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
-            batch["observation.images"] = [batch[key] for key in self.config.image_features]
+            batch[OBS_IMAGES] = [batch[key] for key in self.config.image_features]
 
         batch = self.normalize_targets(batch)
         actions_hat, (mu_hat, log_sigma_x2_hat) = self.model(batch)
 
         l1_loss = (
-            F.l1_loss(batch["action"], actions_hat, reduction="none") * ~batch["action_is_pad"].unsqueeze(-1)
+            F.l1_loss(batch[ACTION], actions_hat, reduction="none") * ~batch["action_is_pad"].unsqueeze(-1)
         ).mean()
 
         loss_dict = {"l1_loss": l1_loss.item()}
