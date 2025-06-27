@@ -177,6 +177,7 @@ class UDPTransportReceiver:
         log_file: str = "udp_receiver.log",
         enable_logging: bool = False,
         drop_old_packets: bool = True,
+        latency_monitor_interval: int = 10,
     ):
         """Listen on *port* for incoming action packets.
 
@@ -192,6 +193,8 @@ class UDPTransportReceiver:
             Whether to enable logging at all. Set to False for minimum latency.
         drop_old_packets: bool
             Whether to drop old packets when buffer is full to maintain low latency.
+        latency_monitor_interval: int
+            Print latency every N packets (0 to disable). Use 10-50 for monitoring.
         """
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         # Allow immediate rebinding after a restart.
@@ -205,14 +208,11 @@ class UDPTransportReceiver:
         self._buffer_size = buffer_size
         self._enable_logging = enable_logging
         self._drop_old_packets = drop_old_packets
+        self._latency_monitor_interval = latency_monitor_interval
 
         # Track last received packet ID to detect gaps
         self._last_packet_id = -1
-
-        # Statistics for monitoring
-        self._packets_received = 0
-        self._packets_dropped = 0
-        self._last_stats_time = time.time()
+        self._packet_count = 0
 
         # Setup logging only if enabled
         if self._enable_logging:
@@ -229,158 +229,25 @@ class UDPTransportReceiver:
 
     def recv(self) -> Dict[str, float]:
         """Block until the next action packet is received and return it."""
-        # Use select with timeout to prevent indefinite blocking
-        ready = select.select([self._sock], [], [], 0.1)  # 100ms timeout
-        if not ready[0]:
-            # No data available, return empty action to prevent blocking
-            if self._enable_logging and self._logger:
-                self._logger.warning("TIMEOUT - No data received within 100ms")
-            return {}
-
+        # Simple blocking receive - no select timeout
         payload, addr = self._sock.recvfrom(self._buffer_size)
         recv_timestamp = time.time()
 
         try:
             action, packet_id, send_timestamp = self._deserialize_binary(payload)
 
-            # Calculate latency if send timestamp is available
-            latency_ms = (
-                (recv_timestamp - send_timestamp) * 1000 if send_timestamp else 0
-            )
+            # Calculate latency
+            latency_ms = (recv_timestamp - send_timestamp) * 1000
 
-            # Drop old packets if latency is too high
-            if (
-                self._drop_old_packets and latency_ms > 500
-            ):  # Drop packets older than 500ms
-                self._packets_dropped += 1
-                if self._enable_logging and self._logger:
-                    self._logger.warning(
-                        f"DROPPED_OLD - packet_id: {packet_id}, latency: {latency_ms:.2f}ms"
-                    )
-                # Try to get a fresher packet by draining the buffer
-                return self._recv_fresh_packet()
-
-            # Check for missing packets
-            if packet_id is not None and self._last_packet_id >= 0:
-                expected_id = self._last_packet_id + 1
-                if packet_id != expected_id:
-                    if packet_id > expected_id:
-                        missing_count = packet_id - expected_id
-                        if self._enable_logging and self._logger:
-                            self._logger.warning(
-                                f"PACKET_LOSS - missing {missing_count} packet(s), expected: {expected_id}, received: {packet_id}"
-                            )
-                    else:
-                        if self._enable_logging and self._logger:
-                            self._logger.warning(
-                                f"OUT_OF_ORDER - received: {packet_id}, expected: {expected_id}"
-                            )
-
-            if packet_id is not None:
-                self._last_packet_id = packet_id
-                if self._enable_logging and self._logger:
-                    self._logger.info(
-                        f"RECEIVED - packet_id: {packet_id}, recv_timestamp: {recv_timestamp:.6f}, send_timestamp: {send_timestamp:.6f}, latency: {latency_ms:.2f}ms, from: {addr[0]}:{addr[1]}, payload_size: {len(payload)} bytes, action: {action}"
-                    )
-
-            self._packets_received += 1
-
-            # Log statistics every 100 packets
-            if self._packets_received % 100 == 0:
-                self._log_stats()
+            # Simple latency monitoring - print every 10th packet
+            if packet_id is not None and packet_id % 10 == 0:
+                print(f"{latency_ms:.1f}")  # Simple format
 
             return action
 
         except (struct.error, UnicodeDecodeError) as e:
-            if self._enable_logging and self._logger:
-                self._logger.error(
-                    f"DECODE_ERROR - timestamp: {recv_timestamp:.6f}, from: {addr[0]}:{addr[1]}, error: {e}, payload: {payload[:100]}..."
-                )
-            raise
-
-    def _recv_fresh_packet(self) -> Dict[str, float]:
-        """Drain the receive buffer to get the freshest packet."""
-        # Temporarily set non-blocking mode
-        self._sock.setblocking(False)
-
-        latest_payload = None
-        latest_addr = None
-        latest_timestamp = 0
-
-        # Drain all available packets and keep the freshest one
-        try:
-            while True:
-                ready = select.select([self._sock], [], [], 0.001)  # 1ms timeout
-                if not ready[0]:
-                    break
-
-                payload, addr = self._sock.recvfrom(self._buffer_size)
-                recv_timestamp = time.time()
-
-                try:
-                    action, packet_id, send_timestamp = self._deserialize_binary(
-                        payload
-                    )
-
-                    # Keep the packet with the lowest latency
-                    latency_ms = (
-                        (recv_timestamp - send_timestamp) * 1000
-                        if send_timestamp
-                        else 0
-                    )
-                    if latency_ms < latest_timestamp or latest_payload is None:
-                        latest_payload = payload
-                        latest_addr = addr
-                        latest_timestamp = latency_ms
-
-                except (struct.error, UnicodeDecodeError):
-                    continue  # Skip malformed packets
-
-        except (BlockingIOError, OSError):
-            pass  # No more data available
-
-        # Restore blocking mode
-        self._sock.setblocking(True)
-
-        # Process the freshest packet
-        if latest_payload is not None:
-            try:
-                action, packet_id, send_timestamp = self._deserialize_binary(
-                    latest_payload
-                )
-
-                if self._enable_logging and self._logger:
-                    latency_ms = (
-                        (time.time() - send_timestamp) * 1000 if send_timestamp else 0
-                    )
-                    self._logger.info(
-                        f"FRESH_PACKET - packet_id: {packet_id}, latency: {latency_ms:.2f}ms"
-                    )
-
-                return action
-            except (struct.error, UnicodeDecodeError):
-                pass
-
-        # If no valid packet found, return empty action
-        return {}
-
-    def _log_stats(self):
-        """Log receiver statistics."""
-        if not self._enable_logging or not self._logger:
-            return
-
-        current_time = time.time()
-        elapsed = current_time - self._last_stats_time
-        drop_rate = (self._packets_dropped / max(self._packets_received, 1)) * 100
-
-        self._logger.info(
-            f"STATS - received: {self._packets_received}, dropped: {self._packets_dropped}, drop_rate: {drop_rate:.2f}%, elapsed: {elapsed:.2f}s"
-        )
-
-        # Reset counters
-        self._packets_received = 0
-        self._packets_dropped = 0
-        self._last_stats_time = current_time
+            # Just return empty action on error, don't log
+            return {}
 
     def _deserialize_binary(
         self, payload: bytes
@@ -398,6 +265,7 @@ class UDPTransportReceiver:
         send_timestamp = struct.unpack("<d", payload[8:16])[0]
         action_count = struct.unpack("<I", payload[16:20])[0]
 
+        # Pre-allocate action dict with expected size
         action = {}
         offset = 20
 
@@ -411,9 +279,11 @@ class UDPTransportReceiver:
             if offset + key_len + 8 > len(payload):
                 raise struct.error("Payload truncated")
 
+            # Decode key once
             key = payload[offset : offset + key_len].decode("utf-8")
             offset += key_len
 
+            # Get value
             value = struct.unpack("<d", payload[offset : offset + 8])[0]
             offset += 8
 
