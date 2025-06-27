@@ -7,14 +7,53 @@ import queue
 import struct
 import select
 import os
-import psutil
+from collections import deque
 from typing import Dict, Tuple, Optional
 
 __all__ = [
     "UDPTransportSender",
     "UDPTransportReceiver",
+    "LatencyFilter",
 ]
 
+# Latency measurement utilities
+PING_MAGIC = b"LP"  # Latency Probe
+PING_FMT = "<2sIQ"  # magic, sequence (uint32), t_send (uint64 ns)
+
+class LatencyFilter:
+    """Moving-window statistics for latency samples."""
+    
+    def __init__(self, window: int = 10):
+        self._vals = deque(maxlen=window)
+    
+    def update(self, value_ms: float) -> None:
+        self._vals.append(value_ms)
+    
+    @property
+    def mean_ms(self) -> float:
+        return sum(self._vals) / len(self._vals) if self._vals else 0.0
+    
+    @property
+    def stdev_ms(self) -> float:
+        if len(self._vals) < 2:
+            return 0.0
+        μ = self.mean_ms
+        return (sum((v - μ) ** 2 for v in self._vals) / (len(self._vals) - 1)) ** 0.5
+
+def build_ping_packet() -> bytes:
+    """Build a latency-probe packet."""
+    global _ping_seq
+    _ping_seq += 1
+    return struct.pack(PING_FMT, PING_MAGIC, _ping_seq, time.monotonic_ns())
+
+def parse_ping_packet(data: bytes) -> Tuple[int, int]:
+    """Return (sequence, t_send_ns) or raise ValueError if not a probe."""
+    magic, seq, t_send = struct.unpack(PING_FMT, data)
+    if magic != PING_MAGIC:
+        raise ValueError("not a latency-probe packet")
+    return seq, t_send
+
+_ping_seq = 0
 
 class AsyncLogHandler(logging.Handler):
     """Asynchronous log handler to prevent file I/O from blocking the main thread."""
@@ -70,96 +109,115 @@ class UDPTransportSender:
     def __init__(
         self,
         server: str,
-        log_file: str = "udp_sender.log",
         enable_logging: bool = False,
+        enable_diagnostics: bool = False,
+        log_to_file: bool = True,
+        log_to_stdout: bool = False,
+        log_file: str = "udp_sender.log",
     ):
-        """Args
-        ----
-        server: str
-            Remote endpoint in the form "<ip>:<port>" (e.g. "10.10.10.10:5555").
-        log_file: str
-            Path to log file for tracking send timestamps.
-        enable_logging: bool
-            Whether to enable logging at all. Set to False for minimum latency.
+        """Initialize UDP sender.
+        
+        Args:
+            server: Remote endpoint "<ip>:<port>" (e.g. "10.10.10.10:5555")
+            enable_logging: Enable detailed packet logging
+            enable_diagnostics: Enable diagnostic output every N packets
+            log_to_file: Write logs to file
+            log_to_stdout: Write logs to stdout
+            log_file: Path to log file
         """
         ip, port_str = server.split(":")
         self._addr: Tuple[str, int] = (ip, int(port_str))
         self._enable_logging = enable_logging
+        self._enable_diagnostics = enable_diagnostics
+        self._log_to_file = log_to_file
+        self._log_to_stdout = log_to_stdout
 
+        # Setup socket
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        # Non-blocking send – we never wait for ACKs.
         self._sock.setblocking(False)
-
-        # Increase send buffer size to prevent blocking
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65536)
 
-        # Packet sequence number for identification
+        # Packet tracking
         self._sequence_number = 0
+        self._last_diag_time = time.time()
 
-        # Setup logging only if enabled
-        if self._enable_logging:
+        # Setup logging
+        self._logger = None
+        if self._enable_logging and self._log_to_file:
             self._logger = logging.getLogger(f"UDPSender_{ip}_{port_str}")
             self._logger.setLevel(logging.INFO)
-
-            # Create file handler if not already exists
             if not self._logger.handlers:
                 handler = AsyncLogHandler(log_file)
                 self._logger.addHandler(handler)
                 self._logger.propagate = False
-        else:
-            self._logger = None
 
     def send(self, action: Dict[str, float]) -> None:
-        """Serialise *action* to binary format and transmit it over UDP."""
-        # Track when the method is called (application-level timing)
-        method_call_time = time.time()
+        """Send action over UDP."""
         send_timestamp = time.time()
-
-        # Binary format for maximum performance
         payload = self._serialize_binary(action, send_timestamp)
 
-        # Best-effort – if the socket is not ready we'll simply drop the frame.
         try:
             self._sock.sendto(payload, self._addr)
             
-            # Sender diagnostics every 50th packet
-            if self._sequence_number % 50 == 0:
-                current_time = time.time()
-                time_since_last = current_time - getattr(self, '_last_send_time', current_time)
-                app_delay = (send_timestamp - method_call_time) * 1000  # Time from call to send
-                print(f"SENDER: packet={self._sequence_number}, send_time={send_timestamp:.6f}, time_since_last={time_since_last*1000:.1f}ms, app_delay={app_delay:.1f}ms")
-                self._last_send_time = current_time
+            # Diagnostics every 50th packet
+            if self._enable_diagnostics and self._sequence_number % 50 == 0:
+                self._log_diagnostics(send_timestamp, len(payload))
                 
-            if self._enable_logging and self._logger:
-                self._logger.info(
-                    f"SENT - packet_id: {self._sequence_number}, timestamp: {send_timestamp:.6f}, payload_size: {len(payload)} bytes, action: {action}"
-                )
+            # Detailed logging
+            if self._enable_logging:
+                self._log_packet("SENT", send_timestamp, len(payload), action)
+                
         except (BlockingIOError, OSError) as e:
-            # Dropped – nothing to do, next frame will go through.
-            if self._enable_logging and self._logger:
-                self._logger.warning(
-                    f"DROPPED - packet_id: {self._sequence_number}, timestamp: {send_timestamp:.6f}, error: {e}, payload_size: {len(payload)} bytes, action: {action}"
-                )
+            if self._enable_logging:
+                self._log_packet("DROPPED", send_timestamp, len(payload), action, error=str(e))
 
-        # Increment sequence number for next packet
         self._sequence_number += 1
 
+    def _log_diagnostics(self, send_timestamp: float, payload_size: int) -> None:
+        """Log diagnostic information."""
+        current_time = time.time()
+        time_since_last = (current_time - self._last_diag_time) * 1000
+        
+        msg = f"SENDER: packet={self._sequence_number}, time_since_last={time_since_last:.1f}ms, payload_size={payload_size}B"
+        
+        if self._log_to_stdout:
+            print(msg)
+        if self._logger:
+            self._logger.info(msg)
+            
+        self._last_diag_time = current_time
+
+    def _log_packet(self, status: str, timestamp: float, payload_size: int, action: Dict[str, float], error: str = None) -> None:
+        """Log individual packet information."""
+        if error:
+            msg = f"{status} - packet_id: {self._sequence_number}, timestamp: {timestamp:.6f}, error: {error}, payload_size: {payload_size} bytes"
+        else:
+            msg = f"{status} - packet_id: {self._sequence_number}, timestamp: {timestamp:.6f}, payload_size: {payload_size} bytes, action: {action}"
+        
+        if self._log_to_stdout:
+            print(msg)
+        if self._logger:
+            if error:
+                self._logger.warning(msg)
+            else:
+                self._logger.info(msg)
+
     def _serialize_binary(self, action: Dict[str, float], timestamp: float) -> bytes:
-        """Serialize action to binary format for maximum performance."""
-        # Pre-calculate total size to avoid memory reallocations
+        """Serialize action to binary format."""
+        # Calculate total size
         total_size = 20  # header: magic(4) + seq(4) + timestamp(8) + count(4)
-        key_sizes = []
+        key_data = []
         for key in action:
             key_bytes = key.encode("utf-8")
-            key_sizes.append((key, key_bytes))
+            key_data.append((key, key_bytes))
             total_size += 4 + len(key_bytes) + 8  # key_len(4) + key + value(8)
 
-        # Allocate buffer once
+        # Allocate buffer
         payload = bytearray(total_size)
         offset = 0
 
         # Write header
-        payload[offset : offset + 4] = b"UDPA"  # magic
+        payload[offset:offset + 4] = b"UDPA"
         offset += 4
         struct.pack_into("<I", payload, offset, self._sequence_number)
         offset += 4
@@ -169,10 +227,10 @@ class UDPTransportSender:
         offset += 4
 
         # Write action data
-        for key, key_bytes in key_sizes:
+        for key, key_bytes in key_data:
             struct.pack_into("<I", payload, offset, len(key_bytes))
             offset += 4
-            payload[offset : offset + len(key_bytes)] = key_bytes
+            payload[offset:offset + len(key_bytes)] = key_bytes
             offset += len(key_bytes)
             struct.pack_into("<d", payload, offset, action[key])
             offset += 8
@@ -181,83 +239,67 @@ class UDPTransportSender:
 
 
 class UDPTransportReceiver:
-    """Blocking UDP receiver used by the teleoperation *follower* machine."""
+    """UDP receiver used by the teleoperation *follower* machine."""
 
     def __init__(
         self,
         port: int,
         buffer_size: int = 65535,
-        log_file: str = "udp_receiver.log",
         enable_logging: bool = False,
+        enable_diagnostics: bool = False,
+        log_to_file: bool = True,
+        log_to_stdout: bool = False,
+        log_file: str = "udp_receiver.log",
         drop_old_packets: bool = True,
-        latency_monitor_interval: int = 100,
     ):
-        """Listen on *port* for incoming action packets.
-
-        Args
-        ----
-        port: int
-            Port to listen on for incoming packets.
-        buffer_size: int
-            Maximum size of UDP packets to receive.
-        log_file: str
-            Path to log file for tracking receive timestamps.
-        enable_logging: bool
-            Whether to enable logging at all. Set to False for minimum latency.
-        drop_old_packets: bool
-            Whether to drop old packets when buffer is full to maintain low latency.
-        latency_monitor_interval: int
-            Print latency every N packets (0 to disable). Use 10-50 for monitoring.
+        """Initialize UDP receiver.
+        
+        Args:
+            port: Port to listen on for incoming packets
+            buffer_size: Maximum size of UDP packets to receive
+            enable_logging: Enable detailed packet logging
+            enable_diagnostics: Enable diagnostic output every N packets
+            log_to_file: Write logs to file
+            log_to_stdout: Write logs to stdout
+            log_file: Path to log file
+            drop_old_packets: Whether to drop old packets to maintain low latency
         """
+        # Setup socket
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        # Allow immediate rebinding after a restart.
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-
-        # Increase receive buffer size significantly
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 262144)  # 256KB
-        
-        # Set socket to non-blocking mode for faster processing
         self._sock.setblocking(False)
-        
-        # Optimize for low latency
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_PRIORITY, 6)  # High priority
-        
-        # Bind on all interfaces – users can rely on firewall rules for protection.
         self._sock.bind(("", port))
+        
+        # Configuration
         self._buffer_size = buffer_size
         self._enable_logging = enable_logging
+        self._enable_diagnostics = enable_diagnostics
+        self._log_to_file = log_to_file
+        self._log_to_stdout = log_to_stdout
         self._drop_old_packets = drop_old_packets
-        self._latency_monitor_interval = latency_monitor_interval
 
-        # Track last received packet ID to detect gaps
+        # Packet tracking
         self._last_packet_id = -1
         self._packet_count = 0
         
         # Diagnostic counters
         self._last_diag_time = time.time()
         self._packets_since_diag = 0
-        
-        # System monitoring
-        self._process = psutil.Process(os.getpid())
-        self._last_cpu_time = self._process.cpu_times()
-        self._last_memory = self._process.memory_info()
-        
-        # Setup logging only if enabled
-        if self._enable_logging:
+
+        # Setup logging
+        self._logger = None
+        if self._enable_logging and self._log_to_file:
             self._logger = logging.getLogger(f"UDPReceiver_{port}")
             self._logger.setLevel(logging.INFO)
-
-            # Create file handler if not already exists
             if not self._logger.handlers:
                 handler = AsyncLogHandler(log_file)
                 self._logger.addHandler(handler)
                 self._logger.propagate = False
-        else:
-            self._logger = None
 
     def recv(self) -> Dict[str, float]:
-        """Block until the next action packet is received and return it."""
-        # Drain all available packets and keep the freshest one
+        """Receive and return the freshest action packet."""
         latest_action = None
         latest_packet_id = None
         latest_latency = float('inf')
@@ -265,23 +307,21 @@ class UDPTransportReceiver:
         
         # Process all available packets
         while True:
-            # Immediate non-blocking check - no timeout
-            select_start = time.time()
-            ready = select.select([self._sock], [], [], 0.0)  # No timeout
-            select_time = (time.time() - select_start) * 1000
+            ready = select.select([self._sock], [], [], 0.0)  # Non-blocking
             if not ready[0]:
-                break  # No more data available
+                break
 
-            recv_start = time.time()
             payload, addr = self._sock.recvfrom(self._buffer_size)
-            recv_time = (time.time() - recv_start) * 1000
             recv_timestamp = time.time()
             packets_processed += 1
 
+            # Fast-path: echo latency-probe packets
+            if payload.startswith(PING_MAGIC):
+                self._sock.sendto(payload, addr)
+                continue
+
             try:
-                deserialize_start = time.time()
                 action, packet_id, send_timestamp = self._deserialize_binary(payload)
-                deserialize_time = (time.time() - deserialize_start) * 1000
                 latency_ms = (recv_timestamp - send_timestamp) * 1000
 
                 # Keep the packet with lowest latency (freshest)
@@ -291,48 +331,66 @@ class UDPTransportReceiver:
                     latest_latency = latency_ms
 
             except (struct.error, UnicodeDecodeError):
-                continue  # Skip malformed packets
+                if self._enable_logging:
+                    self._log_error("DECODE_ERROR", recv_timestamp, addr, payload)
+                continue
 
-        # Return the freshest packet
+        # Process the freshest packet
         if latest_action is not None:
-            # Comprehensive diagnostic logging every 50th packet
-            if latest_packet_id is not None and latest_packet_id % 50 == 0:
-                current_time = time.time()
-                elapsed = current_time - self._last_diag_time
-                packet_rate = self._packets_since_diag / elapsed if elapsed > 0 else 0
+            # Diagnostics every 50th packet
+            if self._enable_diagnostics and latest_packet_id % 50 == 0:
+                self._log_diagnostics(latest_packet_id, latest_latency, packets_processed)
                 
-                # Calculate time since packet was sent
-                time_since_send = (current_time - send_timestamp) * 1000 if 'send_timestamp' in locals() else 0
-                
-                # System diagnostics
-                current_cpu_time = self._process.cpu_times()
-                current_memory = self._process.memory_info()
-                cpu_delta = current_cpu_time.user - self._last_cpu_time.user
-                memory_delta = current_memory.rss - self._last_memory.rss
-                
-                print(f"DIAG: packet={latest_packet_id}, latency={latest_latency:.1f}ms, rate={packet_rate:.1f}Hz, processed={packets_processed}")
-                print(f"  TIMING: select={select_time:.3f}ms, recv={recv_time:.3f}ms, deserialize={deserialize_time:.3f}ms")
-                print(f"  NETWORK: time_since_send={time_since_send:.1f}ms, network_latency={latest_latency:.1f}ms")
-                print(f"  OVERHEAD: total_processing={select_time+recv_time+deserialize_time:.3f}ms")
-                print(f"  SYSTEM: cpu_delta={cpu_delta:.3f}s, memory_delta={memory_delta/1024:.1f}KB, memory_rss={current_memory.rss/1024/1024:.1f}MB")
-                
-                self._last_diag_time = current_time
-                self._packets_since_diag += 1
-                self._last_cpu_time = current_cpu_time
-                self._last_memory = current_memory
+            # Detailed logging
+            if self._enable_logging:
+                self._log_packet("RECEIVED", latest_packet_id, recv_timestamp, send_timestamp, 
+                               latest_latency, len(payload), latest_action)
             
             self._packets_since_diag += 1
             return latest_action
         
-        # If no valid packet found, return empty action
         return {}
 
-    def _deserialize_binary(
-        self, payload: bytes
-    ) -> Tuple[Dict[str, float], int, float]:
-        """Deserialize binary payload for maximum performance."""
-        # Format: [magic:4][seq:4][timestamp:8][action_count:4][key1_len:4][key1:str][val1:8][key2_len:4][key2:str][val2:8]...
-        if len(payload) < 20:  # Minimum size for header
+    def _log_diagnostics(self, packet_id: int, latency: float, packets_processed: int) -> None:
+        """Log diagnostic information."""
+        current_time = time.time()
+        elapsed = current_time - self._last_diag_time
+        packet_rate = self._packets_since_diag / elapsed if elapsed > 0 else 0
+        
+        msg = f"RECEIVER: packet={packet_id}, latency={latency:.1f}ms, rate={packet_rate:.1f}Hz, processed={packets_processed}"
+        
+        if self._log_to_stdout:
+            print(msg)
+        if self._logger:
+            self._logger.info(msg)
+            
+        self._last_diag_time = current_time
+        self._packets_since_diag = 0
+
+    def _log_packet(self, status: str, packet_id: int, recv_time: float, send_time: float, 
+                   latency: float, payload_size: int, action: Dict[str, float]) -> None:
+        """Log individual packet information."""
+        msg = (f"{status} - packet_id: {packet_id}, recv_timestamp: {recv_time:.6f}, "
+               f"send_timestamp: {send_time:.6f}, latency: {latency:.2f}ms, "
+               f"payload_size: {payload_size} bytes, action: {action}")
+        
+        if self._log_to_stdout:
+            print(msg)
+        if self._logger:
+            self._logger.info(msg)
+
+    def _log_error(self, status: str, timestamp: float, addr: Tuple[str, int], payload: bytes) -> None:
+        """Log error information."""
+        msg = f"{status} - timestamp: {timestamp:.6f}, from: {addr[0]}:{addr[1]}, payload: {payload[:100]}..."
+        
+        if self._log_to_stdout:
+            print(msg)
+        if self._logger:
+            self._logger.error(msg)
+
+    def _deserialize_binary(self, payload: bytes) -> Tuple[Dict[str, float], int, float]:
+        """Deserialize binary payload."""
+        if len(payload) < 20:
             raise struct.error("Payload too short")
 
         magic = payload[:4]
@@ -343,7 +401,6 @@ class UDPTransportReceiver:
         send_timestamp = struct.unpack("<d", payload[8:16])[0]
         action_count = struct.unpack("<I", payload[16:20])[0]
 
-        # Pre-allocate action dict with expected size
         action = {}
         offset = 20
 
@@ -351,18 +408,16 @@ class UDPTransportReceiver:
             if offset + 4 > len(payload):
                 raise struct.error("Payload truncated")
 
-            key_len = struct.unpack("<I", payload[offset : offset + 4])[0]
+            key_len = struct.unpack("<I", payload[offset:offset + 4])[0]
             offset += 4
 
             if offset + key_len + 8 > len(payload):
                 raise struct.error("Payload truncated")
 
-            # Decode key once
-            key = payload[offset : offset + key_len].decode("utf-8")
+            key = payload[offset:offset + key_len].decode("utf-8")
             offset += key_len
 
-            # Get value
-            value = struct.unpack("<d", payload[offset : offset + 8])[0]
+            value = struct.unpack("<d", payload[offset:offset + 8])[0]
             offset += 8
 
             action[key] = value
