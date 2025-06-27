@@ -239,40 +239,58 @@ class UDPTransportReceiver:
 
     def recv(self) -> Dict[str, float]:
         """Block until the next action packet is received and return it."""
-        # Use select with very short timeout for non-blocking mode
-        select_start = time.time()
-        ready = select.select([self._sock], [], [], 0.001)  # 1ms timeout
-        select_time = (time.time() - select_start) * 1000
-        if not ready[0]:
-            return {}  # No data available
+        # Drain all available packets and keep the freshest one
+        latest_action = None
+        latest_packet_id = None
+        latest_latency = float('inf')
+        packets_processed = 0
+        
+        # Process all available packets
+        while True:
+            # Use select with very short timeout for non-blocking mode
+            select_start = time.time()
+            ready = select.select([self._sock], [], [], 0.001)  # 1ms timeout
+            select_time = (time.time() - select_start) * 1000
+            if not ready[0]:
+                break  # No more data available
 
-        recv_start = time.time()
-        payload, addr = self._sock.recvfrom(self._buffer_size)
-        recv_time = (time.time() - recv_start) * 1000
-        recv_timestamp = time.time()
+            recv_start = time.time()
+            payload, addr = self._sock.recvfrom(self._buffer_size)
+            recv_time = (time.time() - recv_start) * 1000
+            recv_timestamp = time.time()
+            packets_processed += 1
 
-        try:
-            deserialize_start = time.time()
-            action, packet_id, send_timestamp = self._deserialize_binary(payload)
-            deserialize_time = (time.time() - deserialize_start) * 1000
-            latency_ms = (recv_timestamp - send_timestamp) * 1000
+            try:
+                deserialize_start = time.time()
+                action, packet_id, send_timestamp = self._deserialize_binary(payload)
+                deserialize_time = (time.time() - deserialize_start) * 1000
+                latency_ms = (recv_timestamp - send_timestamp) * 1000
 
+                # Keep the packet with lowest latency (freshest)
+                if latency_ms < latest_latency:
+                    latest_action = action
+                    latest_packet_id = packet_id
+                    latest_latency = latency_ms
+
+            except (struct.error, UnicodeDecodeError):
+                continue  # Skip malformed packets
+
+        # Return the freshest packet
+        if latest_action is not None:
             # Comprehensive diagnostic logging every 50th packet
-            if packet_id is not None and packet_id % 50 == 0:
+            if latest_packet_id is not None and latest_packet_id % 50 == 0:
                 current_time = time.time()
                 elapsed = current_time - self._last_diag_time
                 packet_rate = self._packets_since_diag / elapsed if elapsed > 0 else 0
-                print(f"DIAG: packet={packet_id}, latency={latency_ms:.1f}ms, rate={packet_rate:.1f}Hz, select={select_time:.3f}ms, recv={recv_time:.3f}ms, deserialize={deserialize_time:.3f}ms")
+                print(f"DIAG: packet={latest_packet_id}, latency={latest_latency:.1f}ms, rate={packet_rate:.1f}Hz, processed={packets_processed}, select={select_time:.3f}ms, recv={recv_time:.3f}ms, deserialize={deserialize_time:.3f}ms")
                 self._last_diag_time = current_time
                 self._packets_since_diag = 0
             
             self._packets_since_diag += 1
-
-            return action
-
-        except (struct.error, UnicodeDecodeError):
-            # Just return empty action on error, don't log
-            return {}
+            return latest_action
+        
+        # If no valid packet found, return empty action
+        return {}
 
     def _deserialize_binary(
         self, payload: bytes
