@@ -7,6 +7,7 @@ import queue
 import struct
 import pickle
 import select
+import gc
 from typing import Dict, Tuple, Optional
 
 __all__ = [
@@ -18,9 +19,11 @@ __all__ = [
 class AsyncLogHandler(logging.Handler):
     """Asynchronous log handler to prevent file I/O from blocking the main thread."""
     
-    def __init__(self, log_file: str, max_queue_size: int = 1000):
+    def __init__(self, log_file: str, max_queue_size: int = 1000, max_file_size: int = 10*1024*1024):  # 10MB
         super().__init__()
         self._queue = queue.Queue(maxsize=max_queue_size)
+        self._log_file = log_file
+        self._max_file_size = max_file_size
         self._handler = logging.FileHandler(log_file)
         formatter = logging.Formatter('%(asctime)s.%(msecs)03d - %(name)s - %(message)s', 
                                     datefmt='%Y-%m-%d %H:%M:%S')
@@ -37,9 +40,35 @@ class AsyncLogHandler(logging.Handler):
                 record = self._queue.get()
                 if record is None:  # Shutdown signal
                     break
+                
+                # Check file size and rotate if needed
+                try:
+                    if self._handler.stream.tell() > self._max_file_size:
+                        self._rotate_log_file()
+                except (OSError, AttributeError):
+                    pass  # File might not be seekable
+                
                 self._handler.emit(record)
             except Exception:
                 pass  # Don't let logging errors crash the worker
+    
+    def _rotate_log_file(self):
+        """Rotate the log file to prevent it from growing too large."""
+        try:
+            self._handler.close()
+            import os
+            if os.path.exists(self._log_file):
+                backup_file = f"{self._log_file}.old"
+                if os.path.exists(backup_file):
+                    os.remove(backup_file)
+                os.rename(self._log_file, backup_file)
+            
+            self._handler = logging.FileHandler(self._log_file)
+            formatter = logging.Formatter('%(asctime)s.%(msecs)03d - %(name)s - %(message)s', 
+                                        datefmt='%Y-%m-%d %H:%M:%S')
+            self._handler.setFormatter(formatter)
+        except Exception:
+            pass  # Don't let rotation errors crash the worker
     
     def emit(self, record):
         """Queue a log record for async processing."""
@@ -125,21 +154,13 @@ class UDPTransportSender:
     # ---------------------------------------------------------------------
     def send(self, action: Dict[str, float]) -> None:  # noqa: D401 – present tense OK
         """Serialise *action* to JSON and transmit it over UDP."""
-        if self._ultra_fast:
-            # Ultra-fast path with minimal overhead
-            send_timestamp = time.time()
-            payload = self._serialize_ultra_fast(action, send_timestamp)
-            try:
-                self._sock.sendto(payload, self._addr)
-            except (BlockingIOError, OSError):
-                pass  # Drop silently in ultra-fast mode
-            self._sequence_number += 1
-            return
-        
         send_timestamp = time.time()
         
-        if self._use_binary:
-            # Binary format for maximum performance
+        if self._ultra_fast:
+            # Ultra-fast format for maximum performance
+            payload = self._serialize_ultra_fast(action, send_timestamp)
+        elif self._use_binary:
+            # Binary format for compatibility
             payload = self._serialize_binary(action, send_timestamp)
         else:
             # JSON format for compatibility
@@ -165,21 +186,19 @@ class UDPTransportSender:
     
     def _serialize_ultra_fast(self, action: Dict[str, float], timestamp: float) -> bytes:
         """Ultra-fast serialization with minimal overhead."""
-        # Simplified format: [timestamp:8][count:1][key1_len:1][key1:str][val1:4][key2_len:1][key2:str][val2:4]...
-        # Assumes keys are short (< 256 chars) and values fit in 32-bit float
-        total_size = 9  # timestamp(8) + count(1)
+        # Pre-calculate total size to avoid memory reallocations
+        total_size = 9  # header: timestamp(8) + count(1)
         key_sizes = []
         for key in action:
-            key_bytes = key.encode('ascii')  # Use ASCII for speed
-            if len(key_bytes) > 255:
-                key_bytes = key_bytes[:255]  # Truncate if too long
+            key_bytes = key.encode('ascii')
             key_sizes.append((key, key_bytes))
             total_size += 1 + len(key_bytes) + 4  # key_len(1) + key + value(4)
         
+        # Allocate buffer once
         payload = bytearray(total_size)
         offset = 0
         
-        # Write timestamp and count
+        # Write header
         struct.pack_into('<d', payload, offset, timestamp)
         offset += 8
         payload[offset] = len(action)
@@ -191,7 +210,7 @@ class UDPTransportSender:
             offset += 1
             payload[offset:offset+len(key_bytes)] = key_bytes
             offset += len(key_bytes)
-            struct.pack_into('<f', payload, offset, float(action[key]))  # Use float32 for speed
+            struct.pack_into('<f', payload, offset, action[key])
             offset += 4
         
         return bytes(payload)
@@ -235,7 +254,7 @@ class UDPTransportSender:
 class UDPTransportReceiver:
     """Blocking UDP receiver used by the teleoperation *follower* machine."""
 
-    def __init__(self, port: int, buffer_size: int = 65535, log_file: str = "udp_receiver.log", async_logging: bool = True, use_binary: bool = True, enable_logging: bool = False, drop_old_packets: bool = True, ultra_fast: bool = True):
+    def __init__(self, port: int, buffer_size: int = 65535, log_file: str = "udp_receiver.log", async_logging: bool = True, use_binary: bool = True, enable_logging: bool = True, drop_old_packets: bool = True, ultra_fast: bool = True):
         """Listen on *port* for incoming action packets.
         
         Args
@@ -279,6 +298,11 @@ class UDPTransportReceiver:
         self._packets_received = 0
         self._packets_dropped = 0
         self._last_stats_time = time.time()
+        
+        # Memory pool for action dictionaries to reduce allocations
+        self._action_pool = {}
+        self._pool_hits = 0
+        self._pool_misses = 0
 
         # Setup logging only if enabled
         if self._enable_logging:
@@ -291,7 +315,7 @@ class UDPTransportReceiver:
                     handler = AsyncLogHandler(log_file)
                 else:
                     handler = logging.FileHandler(log_file)
-                    formatter = logging.Formatter('%(asctime)s.%(msecs)03d - %(name)s - %(message)s', 
+                    formatter = logging.Formatter('%(asctime)s.%(msecs)03d - %(message)s', 
                                                 datefmt='%Y-%m-%d %H:%M:%S')
                     handler.setFormatter(formatter)
                 self._logger.addHandler(handler)
@@ -305,10 +329,20 @@ class UDPTransportReceiver:
         if self._ultra_fast:
             # Ultra-fast path with minimal overhead
             payload, addr = self._sock.recvfrom(self._buffer_size)
+            recv_timestamp = time.time()
+            
             try:
                 action, send_timestamp = self._deserialize_ultra_fast(payload)
+                
+                # Add basic logging if enabled
+                if self._enable_logging and self._logger:
+                    latency_ms = (recv_timestamp - send_timestamp) * 1000 if send_timestamp else 0
+                    self._logger.info(f"RECEIVED_ULTRA - latency: {latency_ms:.2f}ms, action: {action}")
+                
                 return action
-            except (struct.error, UnicodeDecodeError):
+            except (struct.error, UnicodeDecodeError) as e:
+                if self._enable_logging and self._logger:
+                    self._logger.error(f"ULTRA_DECODE_ERROR - error: {e}")
                 return {}
         
         # Use select with timeout to prevent indefinite blocking
@@ -370,7 +404,7 @@ class UDPTransportReceiver:
             raise
     
     def _deserialize_ultra_fast(self, payload: bytes) -> Tuple[Dict[str, float], float]:
-        """Ultra-fast deserialization with minimal overhead."""
+        """Ultra-fast deserialization with minimal overhead and memory pooling."""
         # Format: [timestamp:8][count:1][key1_len:1][key1:str][val1:4][key2_len:1][key2:str][val2:4]...
         if len(payload) < 9:
             raise struct.error("Payload too short")
@@ -378,9 +412,19 @@ class UDPTransportReceiver:
         send_timestamp = struct.unpack('<d', payload[:8])[0]
         action_count = payload[8]
         
-        action = {}
-        offset = 9
+        # Try to reuse an existing action dictionary from the pool
+        action_keys = tuple(sorted(self._get_action_keys(payload, action_count)))
+        if action_keys in self._action_pool:
+            action = self._action_pool[action_keys]
+            action.clear()  # Reuse the dictionary
+            self._pool_hits += 1
+        else:
+            action = {}
+            self._action_pool[action_keys] = action
+            self._pool_misses += 1
         
+        # Parse the action data
+        offset = 9
         for _ in range(action_count):
             if offset + 1 > len(payload):
                 raise struct.error("Payload truncated")
@@ -399,7 +443,27 @@ class UDPTransportReceiver:
             
             action[key] = value
         
+        # Periodic garbage collection to prevent memory buildup
+        if self._pool_misses % 1000 == 0:
+            gc.collect()
+        
         return action, send_timestamp
+    
+    def _get_action_keys(self, payload: bytes, action_count: int) -> list:
+        """Extract action keys from payload for pool lookup."""
+        keys = []
+        offset = 9
+        for _ in range(action_count):
+            if offset + 1 > len(payload):
+                break
+            key_len = payload[offset]
+            offset += 1
+            if offset + key_len + 4 > len(payload):
+                break
+            key = payload[offset:offset+key_len].decode('ascii')
+            keys.append(key)
+            offset += key_len + 4
+        return keys
     
     def _recv_fresh_packet(self) -> Dict[str, float]:
         """Drain the receive buffer to get the freshest packet."""
