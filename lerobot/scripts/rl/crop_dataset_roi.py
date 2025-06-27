@@ -214,9 +214,14 @@ def convert_lerobot_dataset_to_cropper_lerobot_dataset(
         for key, value in frame.items():
             if key in ("task_index", "timestamp", "episode_index", "frame_index", "index", "task"):
                 continue
-            if key in ("next.done", "next.reward"):
-                # if not isinstance(value, str) and len(value.shape) == 0:
-                value = value.unsqueeze(0)
+                
+            # Ensure scalar values are properly shaped as (1,)
+            if isinstance(value, (int, float)) or (hasattr(value, 'ndim') and value.ndim == 0):
+                value = value.unsqueeze(0) if hasattr(value, 'unsqueeze') else np.array([value])
+            # Handle special cases like next.done, next.reward, and complementary_info.*
+            elif key in ("next.done", "next.reward") or key.startswith("complementary_info"):
+                if hasattr(value, 'ndim') and value.ndim == 0:
+                    value = value.unsqueeze(0) if hasattr(value, 'unsqueeze') else np.array([value])
 
             if key in crop_params_dict:
                 top, left, height, width = crop_params_dict[key]
