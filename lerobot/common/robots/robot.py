@@ -20,6 +20,7 @@ import draccus
 
 from lerobot.common.constants import HF_LEROBOT_CALIBRATION, ROBOTS
 from lerobot.common.motors import MotorCalibration
+from shared.utils.validation import validate_calibration_directory
 
 from .config import RobotConfig
 
@@ -46,9 +47,13 @@ class Robot(abc.ABC):
         self.robot_type = self.name
         self.id = config.id
         self.calibration_dir = (
-            config.calibration_dir if config.calibration_dir else HF_LEROBOT_CALIBRATION / ROBOTS / self.name
+            config.calibration_dir
+            if config.calibration_dir
+            else HF_LEROBOT_CALIBRATION / ROBOTS / self.name
         )
         self.calibration_dir.mkdir(parents=True, exist_ok=True)
+        validate_calibration_directory()
+
         self.calibration_fpath = self.calibration_dir / f"{self.id}.json"
         self.calibration: dict[str, MotorCalibration] = {}
         if self.calibration_fpath.is_file():

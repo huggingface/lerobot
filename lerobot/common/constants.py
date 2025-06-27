@@ -48,6 +48,20 @@ if "LEROBOT_HOME" in os.environ:
 default_cache_path = Path(HF_HOME) / "lerobot"
 HF_LEROBOT_HOME = Path(os.getenv("HF_LEROBOT_HOME", default_cache_path)).expanduser()
 
+
 # calibration dir
-default_calibration_path = HF_LEROBOT_HOME / "calibration"
-HF_LEROBOT_CALIBRATION = Path(os.getenv("HF_LEROBOT_CALIBRATION", default_calibration_path)).expanduser()
+def _find_repo_root():
+    """Find repository root by looking for pyproject.toml"""
+    current = Path(__file__).parent
+    while current != current.parent:  # Stop at filesystem root
+        if (current / "pyproject.toml").exists():
+            return current
+        current = current.parent
+    # Fallback if pyproject.toml not found
+    return Path(__file__).parent.parent.parent
+
+
+default_calibration_path = _find_repo_root() / "shared" / "calibration"
+HF_LEROBOT_CALIBRATION = Path(
+    os.getenv("HF_LEROBOT_CALIBRATION", default_calibration_path)
+).expanduser()

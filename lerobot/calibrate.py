@@ -31,8 +31,12 @@ from pprint import pformat
 
 import draccus
 
-from lerobot.common.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
-from lerobot.common.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
+from lerobot.common.cameras.opencv.configuration_opencv import (
+    OpenCVCameraConfig,
+)  # noqa: F401
+from lerobot.common.cameras.realsense.configuration_realsense import (
+    RealSenseCameraConfig,
+)  # noqa: F401
 from lerobot.common.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -51,6 +55,7 @@ from lerobot.common.teleoperators import (  # noqa: F401
     so101_leader,
 )
 from lerobot.common.utils.utils import init_logging
+from lerobot.common.constants import HF_LEROBOT_CALIBRATION, default_calibration_path
 
 
 @dataclass

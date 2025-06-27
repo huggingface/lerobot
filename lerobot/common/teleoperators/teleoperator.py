@@ -20,7 +20,7 @@ import draccus
 
 from lerobot.common.constants import HF_LEROBOT_CALIBRATION, TELEOPERATORS
 from lerobot.common.motors.motors_bus import MotorCalibration
-
+from shared.utils.validation import validate_calibration_directory
 from .config import TeleoperatorConfig
 
 
@@ -48,6 +48,7 @@ class Teleoperator(abc.ABC):
             else HF_LEROBOT_CALIBRATION / TELEOPERATORS / self.name
         )
         self.calibration_dir.mkdir(parents=True, exist_ok=True)
+        validate_calibration_directory()
         self.calibration_fpath = self.calibration_dir / f"{self.id}.json"
         self.calibration: dict[str, MotorCalibration] = {}
         if self.calibration_fpath.is_file():
