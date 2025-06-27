@@ -54,6 +54,7 @@ from lerobot.common.teleoperators import (
     TeleoperatorConfig,
     make_teleoperator_from_config,
 )
+from lerobot.common.teleoperators.remote_teleoperator import RemoteTeleoperator
 from lerobot.common.utils.robot_utils import busy_wait
 from lerobot.common.utils.utils import init_logging, move_cursor_up
 from lerobot.common.utils.visualization_utils import _init_rerun
@@ -92,6 +93,12 @@ def teleop_loop(
                     rr.log(f"action_{act}", rr.Scalar(val))
 
         robot.send_action(action)
+
+        # if teleop is a RemoteTeleoperator, send the observations to the remote teleoperator
+        if isinstance(teleop, RemoteTeleoperator):
+            observation = robot.get_observation()
+            teleop.publish_observation(observation)
+
         dt_s = time.perf_counter() - loop_start
         busy_wait(1 / fps - dt_s)
 
