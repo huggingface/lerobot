@@ -68,7 +68,7 @@ class UDPTransportSender:
     they are simply dropped – the next action will arrive a few milliseconds later anyway.
     """
 
-    def __init__(self, server: str, log_file: str = "udp_sender.log", async_logging: bool = True, use_binary: bool = False):
+    def __init__(self, server: str, log_file: str = "udp_sender.log", async_logging: bool = True, use_binary: bool = True):
         """Args
         ----
         server: str
@@ -159,7 +159,7 @@ class UDPTransportSender:
 class UDPTransportReceiver:
     """Blocking UDP receiver used by the teleoperation *follower* machine."""
 
-    def __init__(self, port: int, buffer_size: int = 65535, log_file: str = "udp_receiver.log", async_logging: bool = True, use_binary: bool = False):
+    def __init__(self, port: int, buffer_size: int = 65535, log_file: str = "udp_receiver.log", async_logging: bool = True, use_binary: bool = True):
         """Listen on *port* for incoming action packets.
         
         Args
