@@ -4,7 +4,7 @@ import logging
 import logging.handlers
 import os
 import time
-from typing import Any
+from dataclasses import dataclass
 
 import matplotlib.pyplot as plt
 import torch
@@ -24,6 +24,9 @@ from lerobot.common.robots.so100_follower import SO100FollowerConfig
 from lerobot.common.robots.utils import make_robot_from_config
 from lerobot.configs.types import PolicyFeature
 from lerobot.scripts.server.constants import supported_robots
+
+Observation = dict[str, torch.Tensor]
+Action = torch.Tensor
 
 
 def visualize_action_queue_size(action_queue_size: list[int]) -> None:
@@ -172,21 +175,18 @@ def setup_logging(prefix: str, info_bracket: str):
     return logger
 
 
+@dataclass
 class TimedData:
-    def __init__(self, timestamp: float, data: Any, timestep: int):
-        """Initialize a TimedData object.
+    """A data object with timestamp and timestep information.
 
-        Args:
-            timestamp: Unix timestamp relative to data's creation.
-            data: The actual data to wrap a timestamp around.
-            timestep: The timestep of the data.
-        """
-        self.timestamp = timestamp
-        self.data = data
-        self.timestep = timestep
+    Args:
+        timestamp: Unix timestamp relative to data's creation.
+        data: The actual data to wrap a timestamp around.
+        timestep: The timestep of the data.
+    """
 
-    def get_data(self):
-        return self.data
+    timestamp: float
+    timestep: int
 
     def get_timestamp(self):
         return self.timestamp
@@ -195,41 +195,56 @@ class TimedData:
         return self.timestep
 
 
+@dataclass
 class TimedAction(TimedData):
-    def __init__(self, timestamp: float, action: torch.Tensor, timestep: int):
-        super().__init__(timestamp=timestamp, data=action, timestep=timestep)
+    action: Action
 
     def get_action(self):
-        return self.get_data()
+        return self.action
 
 
+@dataclass
 class TimedObservation(TimedData):
-    def __init__(
-        self,
-        timestamp: float,
-        observation: dict[str, torch.Tensor],
-        timestep: int,
-        transfer_state: int = 0,
-        must_go: bool = False,
-    ):
-        super().__init__(timestamp=timestamp, data=observation, timestep=timestep)
-        self.transfer_state = transfer_state
-        self.must_go = must_go
+    observation: Observation
+    must_go: bool = False
 
     def get_observation(self):
-        return self.get_data()
+        return self.observation
 
 
+@dataclass
+class FPSTracker:
+    """Utility class to track FPS metrics over time."""
+
+    target_fps: float
+    first_timestamp: float = None
+    total_obs_count: int = 0
+
+    def calculate_fps_metrics(self, current_timestamp: float) -> dict[str, float]:
+        """Calculate average FPS vs target"""
+        self.total_obs_count += 1
+
+        # Initialize first observation time
+        if self.first_timestamp is None:
+            self.first_timestamp = current_timestamp
+
+        # Calculate overall average FPS (since start)
+        total_duration = current_timestamp - self.first_timestamp
+        avg_fps = (self.total_obs_count - 1) / total_duration if total_duration > 1e-6 else 0.0
+
+        return {"avg_fps": avg_fps, "target_fps": self.target_fps}
+
+    def reset(self):
+        """Reset the FPS tracker state"""
+        self.first_timestamp = None
+        self.total_obs_count = 0
+
+
+@dataclass
 class TinyPolicyConfig:
-    def __init__(
-        self,
-        policy_type: str = "act",
-        pretrained_name_or_path: str = "fracapuano/act_so100_test",
-        device: str = "cpu",
-    ):
-        self.policy_type = policy_type
-        self.pretrained_name_or_path = pretrained_name_or_path
-        self.device = device
+    policy_type: str
+    pretrained_name_or_path: str
+    device: str = "cpu"
 
 
 def _compare_observation_states(obs1_state: torch.Tensor, obs2_state: torch.Tensor, atol: float) -> bool:
