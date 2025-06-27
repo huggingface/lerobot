@@ -2,11 +2,11 @@
 
 DEFAULT_IDLE_WAIT = 0.01
 
-"""Client side: The environment evolves with a time resolution equal to environment_dt"""
-DEFAULT_ENVIRONMENT_DT = 1 / 30
+"""Client side: The environment evolves with a time resolution equal to 1/fps"""
+DEFAULT_FPS = 30
 
-"""Server side: Running inference on (at most) environment_dt"""
-DEFAULT_INFERENCE_LATENCY = DEFAULT_ENVIRONMENT_DT
+"""Server side: Running inference on (at most) 1/fps"""
+DEFAULT_INFERENCE_LATENCY = 1 / DEFAULT_FPS
 
 """Server side: Timeout for observation queue in seconds"""
 DEFAULT_OBS_QUEUE_TIMEOUT = 2
