@@ -241,7 +241,7 @@ class UDPTransportReceiver:
         self._process = psutil.Process(os.getpid())
         self._last_cpu_time = self._process.cpu_times()
         self._last_memory = self._process.memory_info()
-
+        
         # Setup logging only if enabled
         if self._enable_logging:
             self._logger = logging.getLogger(f"UDPReceiver_{port}")
@@ -317,7 +317,7 @@ class UDPTransportReceiver:
                 print(f"  SYSTEM: cpu_delta={cpu_delta:.3f}s, memory_delta={memory_delta/1024:.1f}KB, memory_rss={current_memory.rss/1024/1024:.1f}MB")
                 
                 self._last_diag_time = current_time
-                self._packets_since_diag = 0
+                self._packets_since_diag += 1
                 self._last_cpu_time = current_cpu_time
                 self._last_memory = current_memory
             
@@ -368,3 +368,28 @@ class UDPTransportReceiver:
             action[key] = value
 
         return action, packet_id, send_timestamp
+
+    def ping(self, addr: Tuple[str, int], bufsize: int = 65535) -> float:
+        """Measure round-trip latency to a given address."""
+        t0 = time.monotonic_ns()
+        self._sock.sendto(b"PING", addr)
+        data, _ = self._sock.recvfrom(bufsize)          # echoed ping
+        rtt_ms = (time.monotonic_ns() - t0) / 1e6
+        one_way_ms = rtt_ms / 2
+        print(f"RTT={rtt_ms:.2f} ms  ⇒  one-way ≈ {one_way_ms:.2f} ms")
+        return one_way_ms
+
+def ping_task():
+    while running:
+        pkt = build_ping_packet()        # includes sequence + t_send (monotonic_ns)
+        sock.sendto(pkt, addr)
+        try:
+            echo, _ = sock.recvfrom(buf) # non-blocking / short timeout
+            rtt = (time.monotonic_ns() - parse_t_send(echo)) / 2e6  # ms one-way
+            latency_filter.update(rtt)
+        except BlockingIOError:
+            pass
+        time.sleep(0.2)                  # 5 Hz
+
+if latency_filter.mean_ms > 80 or probe_loss_rate > 0.05:
+    safe_mode.activate()
