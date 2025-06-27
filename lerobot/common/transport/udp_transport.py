@@ -177,7 +177,7 @@ class UDPTransportReceiver:
         log_file: str = "udp_receiver.log",
         enable_logging: bool = False,
         drop_old_packets: bool = True,
-        latency_monitor_interval: int = 10,
+        latency_monitor_interval: int = 100,
     ):
         """Listen on *port* for incoming action packets.
 
@@ -202,7 +202,13 @@ class UDPTransportReceiver:
 
         # Increase receive buffer size significantly
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 262144)  # 256KB
-
+        
+        # Set socket to non-blocking mode for faster processing
+        self._sock.setblocking(False)
+        
+        # Optimize for low latency
+        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_PRIORITY, 6)  # High priority
+        
         # Bind on all interfaces – users can rely on firewall rules for protection.
         self._sock.bind(("", port))
         self._buffer_size = buffer_size
@@ -229,23 +235,25 @@ class UDPTransportReceiver:
 
     def recv(self) -> Dict[str, float]:
         """Block until the next action packet is received and return it."""
-        # Simple blocking receive - no select timeout
+        # Use select with very short timeout for non-blocking mode
+        ready = select.select([self._sock], [], [], 0.001)  # 1ms timeout
+        if not ready[0]:
+            return {}  # No data available
+
         payload, addr = self._sock.recvfrom(self._buffer_size)
         recv_timestamp = time.time()
 
         try:
             action, packet_id, send_timestamp = self._deserialize_binary(payload)
-
-            # Calculate latency
             latency_ms = (recv_timestamp - send_timestamp) * 1000
 
-            # Simple latency monitoring - print every 10th packet
-            if packet_id is not None and packet_id % 10 == 0:
+            # Simple latency monitoring - print every 100th packet (less frequent)
+            if packet_id is not None and packet_id % 100 == 0:
                 print(f"{latency_ms:.1f}")  # Simple format
 
             return action
 
-        except (struct.error, UnicodeDecodeError) as e:
+        except (struct.error, UnicodeDecodeError):
             # Just return empty action on error, don't log
             return {}
 
