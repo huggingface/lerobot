@@ -193,6 +193,11 @@ class PI0FASTPolicy(PreTrainedPolicy):
         return actions
 
     @torch.no_grad
+    def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
+        """Predict a chunk of actions given environment observations."""
+        raise NotImplementedError("Currently not implemented for PI0FAST")
+
+    @torch.no_grad
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
         """Select a single action given environment observations.
 
