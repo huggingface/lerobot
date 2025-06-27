@@ -226,7 +226,8 @@ _init_rerun(session_name="recording")
 robot.connect()
 teleop.connect()
 
-for episode_idx in range(NUM_EPISODES):
+episode_idx = 0
+while episode_idx < NUM_EPISODES and not events["stop_recording"]:
     log_say(f"Recording episode {episode_idx + 1} of {NUM_EPISODES}")
 
     record_loop(
@@ -261,10 +262,7 @@ for episode_idx in range(NUM_EPISODES):
         continue
 
     dataset.save_episode()
-
-    if events["stop_recording"]:
-        log_say("Exiting session")
-        break
+    episode_idx += 1
 
 # Clean up
 log_say("Stop recording")
