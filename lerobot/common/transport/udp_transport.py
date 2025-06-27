@@ -13,7 +13,131 @@ from typing import Dict, Tuple, Optional
 __all__ = [
     "UDPTransportSender",
     "UDPTransportReceiver",
+    "PingTester",
 ]
+
+# Ping test utilities
+PING_MAGIC = b"PING"
+PING_RESPONSE_MAGIC = b"PONG"
+
+class PingStats:
+    """Statistics for ping measurements."""
+    
+    def __init__(self, window: int = 20):
+        self._rtts = deque(maxlen=window)
+        self._clock_drifts = deque(maxlen=window)
+    
+    def update(self, rtt_ms: float, clock_drift_ms: float) -> None:
+        self._rtts.append(rtt_ms)
+        self._clock_drifts.append(clock_drift_ms)
+    
+    @property
+    def rtt_mean_ms(self) -> float:
+        return sum(self._rtts) / len(self._rtts) if self._rtts else 0.0
+    
+    @property
+    def rtt_stdev_ms(self) -> float:
+        if len(self._rtts) < 2:
+            return 0.0
+        μ = self.rtt_mean_ms
+        return (sum((v - μ) ** 2 for v in self._rtts) / (len(self._rtts) - 1)) ** 0.5
+    
+    @property
+    def clock_drift_mean_ms(self) -> float:
+        return sum(self._clock_drifts) / len(self._clock_drifts) if self._clock_drifts else 0.0
+
+class PingTester:
+    """Background ping tester for measuring network latency and clock drift."""
+    
+    def __init__(self, target_addr: Tuple[str, int], ping_interval: float = 1.0, 
+                 log_to_stdout: bool = False, log_interval: int = 10):
+        self._target_addr = target_addr
+        self._ping_interval = ping_interval
+        self._log_to_stdout = log_to_stdout
+        self._log_interval = log_interval
+        self._running = False
+        self._thread = None
+        self._sock = None
+        self._stats = PingStats()
+        self._ping_count = 0
+        
+    def start(self) -> None:
+        """Start the background ping testing."""
+        if self._running:
+            return
+            
+        self._running = True
+        self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._sock.settimeout(0.5)  # 500ms timeout for ping responses
+        self._thread = threading.Thread(target=self._ping_loop, daemon=True)
+        self._thread.start()
+    
+    def stop(self) -> None:
+        """Stop the background ping testing."""
+        self._running = False
+        if self._thread:
+            self._thread.join(timeout=1.0)
+        if self._sock:
+            self._sock.close()
+    
+    def get_stats(self) -> Dict[str, float]:
+        """Get current ping statistics."""
+        return {
+            "rtt_mean_ms": self._stats.rtt_mean_ms,
+            "rtt_stdev_ms": self._stats.rtt_stdev_ms,
+            "clock_drift_ms": self._stats.clock_drift_mean_ms,
+            "ping_count": self._ping_count
+        }
+    
+    def _ping_loop(self) -> None:
+        """Background ping loop."""
+        while self._running:
+            try:
+                self._send_ping()
+                time.sleep(self._ping_interval)
+            except Exception:
+                # Don't let ping errors crash the thread
+                pass
+    
+    def _send_ping(self) -> None:
+        """Send a ping and measure response."""
+        # Create ping packet with sender timestamps
+        send_time_mono = time.monotonic_ns()
+        send_time_wall = time.time()
+        
+        ping_data = struct.pack("<4sQd", PING_MAGIC, send_time_mono, send_time_wall)
+        
+        try:
+            self._sock.sendto(ping_data, self._target_addr)
+            response, addr = self._sock.recvfrom(1024)
+            recv_time_mono = time.monotonic_ns()
+            recv_time_wall = time.time()
+            
+            # Parse response
+            if len(response) >= 20 and response[:4] == PING_RESPONSE_MAGIC:
+                _, orig_send_mono, orig_send_wall, remote_recv_wall, remote_send_wall = struct.unpack("<4sQddd", response)
+                
+                # Calculate RTT using monotonic time (accurate)
+                rtt_ms = (recv_time_mono - orig_send_mono) / 1e6
+                
+                # Calculate clock drift using wall time
+                # Expected: remote_recv_wall ≈ orig_send_wall + (rtt/2)
+                # Actual drift: difference between remote and local wall clocks
+                expected_remote_time = orig_send_wall + (rtt_ms / 2000)  # Convert to seconds
+                clock_drift_ms = (remote_recv_wall - expected_remote_time) * 1000
+                
+                self._stats.update(rtt_ms, clock_drift_ms)
+                self._ping_count += 1
+                
+                # Log results periodically
+                if self._log_to_stdout and self._ping_count % self._log_interval == 0:
+                    stats = self.get_stats()
+                    print(f"PING: RTT={stats['rtt_mean_ms']:.2f}±{stats['rtt_stdev_ms']:.2f}ms, "
+                          f"ClockDrift={stats['clock_drift_ms']:.2f}ms, Count={stats['ping_count']}")
+                
+        except socket.timeout:
+            # Ping timeout - don't update stats
+            pass
 
 class AsyncLogHandler(logging.Handler):
     """Asynchronous log handler to prevent file I/O from blocking the main thread."""
@@ -282,6 +406,11 @@ class UDPTransportReceiver:
             recv_timestamp = time.time()
             packets_processed += 1
 
+            # Handle ping packets (fast path)
+            if len(payload) >= 4 and payload[:4] == PING_MAGIC:
+                self._handle_ping(payload, addr, recv_timestamp)
+                continue
+
             try:
                 action, packet_id, send_timestamp = self._deserialize_binary(payload)
                 latency_ms = (recv_timestamp - send_timestamp) * 1000
@@ -386,3 +515,23 @@ class UDPTransportReceiver:
             action[key] = value
 
         return action, packet_id, send_timestamp
+
+    def _handle_ping(self, payload: bytes, addr: Tuple[str, int], recv_timestamp: float) -> None:
+        """Handle a received ping packet."""
+        # Parse the ping packet
+        if len(payload) < 16 or payload[:4] != PING_MAGIC:
+            if self._enable_logging:
+                self._log_error("INVALID_PING", recv_timestamp, addr, payload)
+            return
+
+        _, orig_send_mono, orig_send_wall = struct.unpack("<4sQd", payload)
+        
+        # Respond with a pong packet containing:
+        # - PONG magic
+        # - Original sender's monotonic time (for RTT calculation)
+        # - Original sender's wall time
+        # - Our receive wall time
+        # - Our send wall time
+        send_timestamp = time.time()
+        pong_data = struct.pack("<4sQddd", PING_RESPONSE_MAGIC, orig_send_mono, orig_send_wall, recv_timestamp, send_timestamp)
+        self._sock.sendto(pong_data, addr)
