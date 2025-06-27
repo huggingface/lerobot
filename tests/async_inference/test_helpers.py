@@ -19,10 +19,76 @@ import time
 import torch
 
 from lerobot.scripts.server.helpers import (
+    FPSTracker,
     TimedAction,
     TimedObservation,
     observations_similar,
 )
+
+# ---------------------------------------------------------------------
+# FPSTracker
+# ---------------------------------------------------------------------
+
+
+def test_fps_tracker_first_observation():
+    """First observation should initialize timestamp and return 0 FPS."""
+    tracker = FPSTracker(target_fps=30.0)
+    timestamp = 1000.0
+
+    metrics = tracker.calculate_fps_metrics(timestamp)
+
+    assert tracker.first_timestamp == timestamp
+    assert tracker.total_obs_count == 1
+    assert metrics["avg_fps"] == 0.0
+    assert metrics["target_fps"] == 30.0
+
+
+def test_fps_tracker_single_interval():
+    """Two observations 1 second apart should give 1 FPS."""
+    tracker = FPSTracker(target_fps=30.0)
+
+    # First observation at t=0
+    metrics1 = tracker.calculate_fps_metrics(0.0)
+    assert metrics1["avg_fps"] == 0.0
+
+    # Second observation at t=1 (1 second later)
+    metrics2 = tracker.calculate_fps_metrics(1.0)
+    expected_fps = 1.0  # (2-1) observations / 1.0 seconds = 1 FPS
+    assert math.isclose(metrics2["avg_fps"], expected_fps, rel_tol=1e-6)
+
+
+def test_fps_tracker_multiple_intervals():
+    """Multiple observations should calculate correct average FPS."""
+    tracker = FPSTracker(target_fps=30.0)
+
+    # Simulate 5 observations over 2 seconds (should be 2 FPS average)
+    timestamps = [0.0, 0.5, 1.0, 1.5, 2.0]
+
+    for i, ts in enumerate(timestamps):
+        metrics = tracker.calculate_fps_metrics(ts)
+
+        if i == 0:
+            assert metrics["avg_fps"] == 0.0
+        elif i == len(timestamps) - 1:
+            # After 5 observations over 2 seconds: (5-1)/2 = 2 FPS
+            expected_fps = 2.0
+            assert math.isclose(metrics["avg_fps"], expected_fps, rel_tol=1e-6)
+
+
+def test_fps_tracker_irregular_intervals():
+    """FPS calculation should work with irregular time intervals."""
+    tracker = FPSTracker(target_fps=30.0)
+
+    # Irregular timestamps: 0, 0.1, 0.5, 2.0, 3.0 seconds
+    timestamps = [0.0, 0.1, 0.5, 2.0, 3.0]
+
+    for ts in timestamps:
+        metrics = tracker.calculate_fps_metrics(ts)
+
+    # 5 observations over 3 seconds: (5-1)/3 = 1.333... FPS
+    expected_fps = 4.0 / 3.0
+    assert math.isclose(metrics["avg_fps"], expected_fps, rel_tol=1e-6)
+
 
 # ---------------------------------------------------------------------
 # TimedData helpers
@@ -80,14 +146,13 @@ def test_timed_data_deserialization_data_getters():
     # TimedObservation
     # ------------------------------------------------------------------
     obs_dict = {"observation.state": torch.arange(4).float()}
-    to_in = TimedObservation(timestamp=ts, observation=obs_dict, timestep=7, transfer_state=2, must_go=True)
+    to_in = TimedObservation(timestamp=ts, observation=obs_dict, timestep=7, must_go=True)
 
     to_bytes = pickle.dumps(to_in)  # nosec
     to_out: TimedObservation = pickle.loads(to_bytes)  # nosec B301
 
     assert math.isclose(to_out.get_timestamp(), ts, rel_tol=0, abs_tol=1e-6)
     assert to_out.get_timestep() == 7
-    assert to_out.transfer_state == 2
     assert to_out.must_go is True
     assert to_out.get_observation().keys() == obs_dict.keys()
     torch.testing.assert_close(to_out.get_observation()["observation.state"], obs_dict["observation.state"])
