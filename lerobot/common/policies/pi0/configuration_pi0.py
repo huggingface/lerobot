@@ -75,6 +75,10 @@ class PI0Config(PreTrainedConfig):
     train_expert_only: bool = False
     train_state_proj: bool = True
 
+    # Useful if you want to reproduce the training of pi0_base from
+    # the original initialization of PaliGemma (before training on robotics data).
+    paligemma_pretrained_path: str | None = "google/paligemma-3b-pt-224"
+
     # Training presets
     optimizer_lr: float = 2.5e-5
     optimizer_betas: tuple[float, float] = (0.9, 0.95)
