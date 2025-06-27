@@ -184,7 +184,7 @@ def capture_timestamp_utc():
     return datetime.now(timezone.utc)
 
 
-def say(text, blocking=False):
+def say(text: str, blocking: bool = False):
     system = platform.system()
 
     if system == "Darwin":
@@ -212,7 +212,7 @@ def say(text, blocking=False):
         subprocess.Popen(cmd, creationflags=subprocess.CREATE_NO_WINDOW if system == "Windows" else 0)
 
 
-def log_say(text, play_sounds, blocking=False):
+def log_say(text: str, play_sounds: bool = True, blocking: bool = False):
     logging.info(text)
 
     if play_sounds:
