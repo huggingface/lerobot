@@ -13,47 +13,7 @@ from typing import Dict, Tuple, Optional
 __all__ = [
     "UDPTransportSender",
     "UDPTransportReceiver",
-    "LatencyFilter",
 ]
-
-# Latency measurement utilities
-PING_MAGIC = b"LP"  # Latency Probe
-PING_FMT = "<2sIQ"  # magic, sequence (uint32), t_send (uint64 ns)
-
-class LatencyFilter:
-    """Moving-window statistics for latency samples."""
-    
-    def __init__(self, window: int = 10):
-        self._vals = deque(maxlen=window)
-    
-    def update(self, value_ms: float) -> None:
-        self._vals.append(value_ms)
-    
-    @property
-    def mean_ms(self) -> float:
-        return sum(self._vals) / len(self._vals) if self._vals else 0.0
-    
-    @property
-    def stdev_ms(self) -> float:
-        if len(self._vals) < 2:
-            return 0.0
-        μ = self.mean_ms
-        return (sum((v - μ) ** 2 for v in self._vals) / (len(self._vals) - 1)) ** 0.5
-
-def build_ping_packet() -> bytes:
-    """Build a latency-probe packet."""
-    global _ping_seq
-    _ping_seq += 1
-    return struct.pack(PING_FMT, PING_MAGIC, _ping_seq, time.monotonic_ns())
-
-def parse_ping_packet(data: bytes) -> Tuple[int, int]:
-    """Return (sequence, t_send_ns) or raise ValueError if not a probe."""
-    magic, seq, t_send = struct.unpack(PING_FMT, data)
-    if magic != PING_MAGIC:
-        raise ValueError("not a latency-probe packet")
-    return seq, t_send
-
-_ping_seq = 0
 
 class AsyncLogHandler(logging.Handler):
     """Asynchronous log handler to prevent file I/O from blocking the main thread."""
@@ -114,6 +74,7 @@ class UDPTransportSender:
         log_to_file: bool = True,
         log_to_stdout: bool = False,
         log_file: str = "udp_sender.log",
+        log_interval: int = 50,
     ):
         """Initialize UDP sender.
         
@@ -124,6 +85,7 @@ class UDPTransportSender:
             log_to_file: Write logs to file
             log_to_stdout: Write logs to stdout
             log_file: Path to log file
+            log_interval: Log every N packets (0 = log all packets)
         """
         ip, port_str = server.split(":")
         self._addr: Tuple[str, int] = (ip, int(port_str))
@@ -131,6 +93,7 @@ class UDPTransportSender:
         self._enable_diagnostics = enable_diagnostics
         self._log_to_file = log_to_file
         self._log_to_stdout = log_to_stdout
+        self._log_interval = log_interval
 
         # Setup socket
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -163,9 +126,10 @@ class UDPTransportSender:
             if self._enable_diagnostics and self._sequence_number % 50 == 0:
                 self._log_diagnostics(send_timestamp, len(payload))
                 
-            # Detailed logging
+            # Detailed logging (configurable interval)
             if self._enable_logging:
-                self._log_packet("SENT", send_timestamp, len(payload), action)
+                if self._log_interval == 0 or self._sequence_number % self._log_interval == 0:
+                    self._log_packet("SENT", send_timestamp, len(payload), action)
                 
         except (BlockingIOError, OSError) as e:
             if self._enable_logging:
@@ -245,12 +209,13 @@ class UDPTransportReceiver:
         self,
         port: int,
         buffer_size: int = 65535,
-        enable_logging: bool = False,
+        enable_logging: bool = True,
         enable_diagnostics: bool = False,
-        log_to_file: bool = True,
-        log_to_stdout: bool = False,
+        log_to_file: bool = False,
+        log_to_stdout: bool = True,
         log_file: str = "udp_receiver.log",
         drop_old_packets: bool = True,
+        log_interval: int = 50,
     ):
         """Initialize UDP receiver.
         
@@ -263,6 +228,7 @@ class UDPTransportReceiver:
             log_to_stdout: Write logs to stdout
             log_file: Path to log file
             drop_old_packets: Whether to drop old packets to maintain low latency
+            log_interval: Log every N packets (0 = log all packets)
         """
         # Setup socket
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -279,6 +245,7 @@ class UDPTransportReceiver:
         self._log_to_file = log_to_file
         self._log_to_stdout = log_to_stdout
         self._drop_old_packets = drop_old_packets
+        self._log_interval = log_interval
 
         # Packet tracking
         self._last_packet_id = -1
@@ -341,10 +308,11 @@ class UDPTransportReceiver:
             if self._enable_diagnostics and latest_packet_id % 50 == 0:
                 self._log_diagnostics(latest_packet_id, latest_latency, packets_processed)
                 
-            # Detailed logging
+            # Detailed logging (configurable interval)
             if self._enable_logging:
-                self._log_packet("RECEIVED", latest_packet_id, recv_timestamp, send_timestamp, 
-                               latest_latency, len(payload), latest_action)
+                if self._log_interval == 0 or latest_packet_id % self._log_interval == 0:
+                    self._log_packet("RECEIVED", latest_packet_id, recv_timestamp, send_timestamp, 
+                                   latest_latency, len(payload), latest_action)
             
             self._packets_since_diag += 1
             return latest_action
