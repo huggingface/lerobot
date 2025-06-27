@@ -42,6 +42,7 @@ from lerobot.common.robots import (  # noqa: F401
     koch_follower,
     make_robot_from_config,
     so100_follower,
+    dual_so100_follower,
     so101_follower,
 )
 from lerobot.common.utils.robot_utils import busy_wait
