@@ -22,6 +22,7 @@ import time
 import pytest
 import torch
 
+from lerobot.common.constants import OBS_STATE
 from lerobot.scripts.server.configs import PolicyServerConfig
 from lerobot.scripts.server.helpers import TimedObservation
 from lerobot.scripts.server.policy_server import PolicyServer
@@ -71,8 +72,8 @@ def policy_server() -> PolicyServer:
 def _make_obs(state: torch.Tensor, timestep: int = 0, must_go: bool = False) -> TimedObservation:
     """Create a TimedObservation with a given state vector."""
     return TimedObservation(
+        observation={OBS_STATE: state},
         timestamp=time.time(),
-        observation={"observation.state": state},
         timestep=timestep,
         must_go=must_go,
     )
@@ -116,7 +117,7 @@ def test_maybe_enqueue_observation_must_go(policy_server: PolicyServer):
 def test_maybe_enqueue_observation_dissimilar(policy_server: PolicyServer):
     """A dissimilar observation (not `must_go`) is enqueued."""
     # Set a last predicted observation.
-    policy_server.last_predicted_obs = _make_obs(torch.zeros(6))
+    policy_server.last_processed_obs = _make_obs(torch.zeros(6))
     # Create a new, dissimilar observation.
     new_obs = _make_obs(torch.ones(6) * 5)  # High norm difference
 
@@ -127,7 +128,7 @@ def test_maybe_enqueue_observation_dissimilar(policy_server: PolicyServer):
 def test_maybe_enqueue_observation_is_skipped(policy_server: PolicyServer):
     """A similar observation (not `must_go`) is skipped."""
     # Set a last predicted observation.
-    policy_server.last_predicted_obs = _make_obs(torch.zeros(6))
+    policy_server.last_processed_obs = _make_obs(torch.zeros(6))
     # Create a new, very similar observation.
     new_obs = _make_obs(torch.zeros(6) + 1e-4)
 
