@@ -6,6 +6,8 @@ import threading
 import queue
 import struct
 import select
+import os
+import psutil
 from typing import Dict, Tuple, Optional
 
 __all__ = [
@@ -223,6 +225,11 @@ class UDPTransportReceiver:
         # Diagnostic counters
         self._last_diag_time = time.time()
         self._packets_since_diag = 0
+        
+        # System monitoring
+        self._process = psutil.Process(os.getpid())
+        self._last_cpu_time = self._process.cpu_times()
+        self._last_memory = self._process.memory_info()
 
         # Setup logging only if enabled
         if self._enable_logging:
@@ -247,9 +254,9 @@ class UDPTransportReceiver:
         
         # Process all available packets
         while True:
-            # Use select with very short timeout for non-blocking mode
+            # Immediate non-blocking check - no timeout
             select_start = time.time()
-            ready = select.select([self._sock], [], [], 0.001)  # 1ms timeout
+            ready = select.select([self._sock], [], [], 0.0)  # No timeout
             select_time = (time.time() - select_start) * 1000
             if not ready[0]:
                 break  # No more data available
@@ -282,9 +289,26 @@ class UDPTransportReceiver:
                 current_time = time.time()
                 elapsed = current_time - self._last_diag_time
                 packet_rate = self._packets_since_diag / elapsed if elapsed > 0 else 0
-                print(f"DIAG: packet={latest_packet_id}, latency={latest_latency:.1f}ms, rate={packet_rate:.1f}Hz, processed={packets_processed}, select={select_time:.3f}ms, recv={recv_time:.3f}ms, deserialize={deserialize_time:.3f}ms")
+                
+                # Calculate time since packet was sent
+                time_since_send = (current_time - send_timestamp) * 1000 if 'send_timestamp' in locals() else 0
+                
+                # System diagnostics
+                current_cpu_time = self._process.cpu_times()
+                current_memory = self._process.memory_info()
+                cpu_delta = current_cpu_time.user - self._last_cpu_time.user
+                memory_delta = current_memory.rss - self._last_memory.rss
+                
+                print(f"DIAG: packet={latest_packet_id}, latency={latest_latency:.1f}ms, rate={packet_rate:.1f}Hz, processed={packets_processed}")
+                print(f"  TIMING: select={select_time:.3f}ms, recv={recv_time:.3f}ms, deserialize={deserialize_time:.3f}ms")
+                print(f"  NETWORK: time_since_send={time_since_send:.1f}ms, network_latency={latest_latency:.1f}ms")
+                print(f"  OVERHEAD: total_processing={select_time+recv_time+deserialize_time:.3f}ms")
+                print(f"  SYSTEM: cpu_delta={cpu_delta:.3f}s, memory_delta={memory_delta/1024:.1f}KB, memory_rss={current_memory.rss/1024/1024:.1f}MB")
+                
                 self._last_diag_time = current_time
                 self._packets_since_diag = 0
+                self._last_cpu_time = current_cpu_time
+                self._last_memory = current_memory
             
             self._packets_since_diag += 1
             return latest_action
