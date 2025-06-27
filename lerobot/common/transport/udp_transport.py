@@ -219,6 +219,10 @@ class UDPTransportReceiver:
         # Track last received packet ID to detect gaps
         self._last_packet_id = -1
         self._packet_count = 0
+        
+        # Diagnostic counters
+        self._last_diag_time = time.time()
+        self._packets_since_diag = 0
 
         # Setup logging only if enabled
         if self._enable_logging:
@@ -236,20 +240,33 @@ class UDPTransportReceiver:
     def recv(self) -> Dict[str, float]:
         """Block until the next action packet is received and return it."""
         # Use select with very short timeout for non-blocking mode
+        select_start = time.time()
         ready = select.select([self._sock], [], [], 0.001)  # 1ms timeout
+        select_time = (time.time() - select_start) * 1000
         if not ready[0]:
             return {}  # No data available
 
+        recv_start = time.time()
         payload, addr = self._sock.recvfrom(self._buffer_size)
+        recv_time = (time.time() - recv_start) * 1000
         recv_timestamp = time.time()
 
         try:
+            deserialize_start = time.time()
             action, packet_id, send_timestamp = self._deserialize_binary(payload)
+            deserialize_time = (time.time() - deserialize_start) * 1000
             latency_ms = (recv_timestamp - send_timestamp) * 1000
 
-            # Simple latency monitoring - print every 100th packet (less frequent)
-            if packet_id is not None and packet_id % 100 == 0:
-                print(f"{latency_ms:.1f}")  # Simple format
+            # Comprehensive diagnostic logging every 50th packet
+            if packet_id is not None and packet_id % 50 == 0:
+                current_time = time.time()
+                elapsed = current_time - self._last_diag_time
+                packet_rate = self._packets_since_diag / elapsed if elapsed > 0 else 0
+                print(f"DIAG: packet={packet_id}, latency={latency_ms:.1f}ms, rate={packet_rate:.1f}Hz, select={select_time:.3f}ms, recv={recv_time:.3f}ms, deserialize={deserialize_time:.3f}ms")
+                self._last_diag_time = current_time
+                self._packets_since_diag = 0
+            
+            self._packets_since_diag += 1
 
             return action
 
