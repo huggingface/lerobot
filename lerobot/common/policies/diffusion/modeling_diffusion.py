@@ -136,7 +136,13 @@ class DiffusionPolicy(PreTrainedPolicy):
         batch = self.normalize_inputs(batch)
         if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
-            batch[OBS_IMAGES] = torch.stack([batch[key].unsqueeze(1) if batch[key].ndim == 4 else batch[key] for key in self.config.image_features], dim=-4)
+            batch[OBS_IMAGES] = torch.stack(
+                [
+                    batch[key].unsqueeze(1) if batch[key].ndim == 4 else batch[key]
+                    for key in self.config.image_features
+                ],
+                dim=-4,
+            )
         # Note: It's important that this happens after stacking the images into a single key.
         self._queues = populate_queues(self._queues, batch)
 
@@ -152,7 +158,13 @@ class DiffusionPolicy(PreTrainedPolicy):
         batch = self.normalize_inputs(batch)
         if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
-            batch[OBS_IMAGES] = torch.stack([batch[key].unsqueeze(1) if batch[key].ndim == 4 else batch[key] for key in self.config.image_features], dim=-4)
+            batch[OBS_IMAGES] = torch.stack(
+                [
+                    batch[key].unsqueeze(1) if batch[key].ndim == 4 else batch[key]
+                    for key in self.config.image_features
+                ],
+                dim=-4,
+            )
         batch = self.normalize_targets(batch)
         loss = self.diffusion.compute_loss(batch)
         # no output_dict so returning None
