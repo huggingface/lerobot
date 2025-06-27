@@ -1,9 +1,11 @@
 from dataclasses import dataclass, field
+from typing import Callable, Optional
+
+import torch
 
 from lerobot.common.robots.robot import Robot
 from lerobot.configs.types import PolicyFeature
 from lerobot.scripts.server.constants import (
-    DEFAULT_ENVIRONMENT_DT,
     DEFAULT_IDLE_WAIT,
     DEFAULT_INFERENCE_LATENCY,
     DEFAULT_OBS_QUEUE_TIMEOUT,
@@ -26,17 +28,10 @@ class PolicyServerConfig:
     actions_per_chunk: int = field(default=20, metadata={"help": "Number of actions in each chunk"})
 
     # Timing configuration
-    environment_dt: float = field(
-        default=DEFAULT_ENVIRONMENT_DT, metadata={"help": "Environment time step in seconds"}
-    )
+    fps: int = field(default=30, metadata={"help": "Frames per second"})
     idle_wait: float = field(default=DEFAULT_IDLE_WAIT, metadata={"help": "Idle wait time in seconds"})
     inference_latency: float = field(
         default=DEFAULT_INFERENCE_LATENCY, metadata={"help": "Target inference latency in seconds"}
-    )
-
-    # Queue configuration
-    predicted_observations_queue_size: int = field(
-        default=1, metadata={"help": "Maximum size of predicted observations queue"}
     )
 
     obs_queue_timeout: float = field(
@@ -60,15 +55,15 @@ class PolicyServerConfig:
         if self.inference_latency < 0:
             raise ValueError(f"inference_latency must be non-negative, got {self.inference_latency}")
 
-        if self.predicted_observations_queue_size <= 0:
-            raise ValueError(
-                f"predicted_observations_queue_size must be positive, got {self.predicted_observations_queue_size}"
-            )
-
     @classmethod
     def from_dict(cls, config_dict: dict) -> "PolicyServerConfig":
         """Create a PolicyServerConfig from a dictionary."""
         return cls(**config_dict)
+
+    @property
+    def environment_dt(self) -> float:
+        """Environment time step, in seconds"""
+        return 1 / self.fps
 
     def to_dict(self) -> dict:
         """Convert the configuration to a dictionary."""
@@ -76,10 +71,10 @@ class PolicyServerConfig:
             "host": self.host,
             "port": self.port,
             "actions_per_chunk": self.actions_per_chunk,
+            "fps": self.fps,
             "environment_dt": self.environment_dt,
             "idle_wait": self.idle_wait,
             "inference_latency": self.inference_latency,
-            "predicted_observations_queue_size": self.predicted_observations_queue_size,
         }
 
 
@@ -106,18 +101,16 @@ class RobotClientConfig:
 
     # Control behavior configuration
     chunk_size_threshold: float = field(default=0.5, metadata={"help": "Threshold for chunk size control"})
-    environment_dt: float = field(
-        default=DEFAULT_ENVIRONMENT_DT, metadata={"help": "Environment time step, in seconds"}
-    )
+    fps: int = field(default=30, metadata={"help": "Frames per second"})
 
-    camera_activation_delay: float = field(
-        default=DEFAULT_IDLE_WAIT, metadata={"help": "Delay for camera activation in seconds"}
+    aggregate_fn: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = field(
+        default=None, metadata={"help": "Function to aggregate actions on overlapping sections"}
     )
 
     @property
-    def control_frequency(self) -> float:
-        """Control loop frequency (in Hz)"""
-        return 1 / self.environment_dt
+    def environment_dt(self) -> float:
+        """Environment time step, in seconds"""
+        return 1 / self.fps
 
     def __post_init__(self):
         """Validate configuration after initialization."""
@@ -136,16 +129,11 @@ class RobotClientConfig:
         if self.chunk_size_threshold < 0 or self.chunk_size_threshold > 1:
             raise ValueError(f"chunk_size_threshold must be between 0 and 1, got {self.chunk_size_threshold}")
 
-        if self.control_frequency <= 0:
-            raise ValueError(f"control_frequency must be positive, got {self.control_frequency}")
+        if self.fps <= 0:
+            raise ValueError(f"fps must be positive, got {self.fps}")
 
         if not self.robot:
             raise ValueError("robot cannot be empty")
-
-        if self.camera_activation_delay < 0:
-            raise ValueError(
-                f"camera_activation_delay must be non-negative, got {self.camera_activation_delay}"
-            )
 
     @classmethod
     def from_dict(cls, config_dict: dict) -> "RobotClientConfig":
