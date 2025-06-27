@@ -5,7 +5,6 @@ import time
 import threading
 import queue
 import struct
-import pickle
 import select
 from typing import Dict, Tuple, Optional
 
@@ -62,30 +61,20 @@ class AsyncLogHandler(logging.Handler):
 
 
 class UDPTransportSender:
-    """Lightweight, fire-and-forget UDP sender used by the teleoperation *leader* machine.
+    """Lightweight, fire-and-forget UDP sender used by the teleoperation *leader* machine."""
 
-    This class is intentionally minimal: it serialises action dictionaries to JSON and pushes them
-    over UDP to the *server* (robot/follower machine) with best-effort delivery. If packets are lost
-    they are simply dropped – the next action will arrive a few milliseconds later anyway.
-    """
-
-    def __init__(self, server: str, log_file: str = "udp_sender.log", async_logging: bool = True, use_binary: bool = True, enable_logging: bool = False):
+    def __init__(self, server: str, log_file: str = "udp_sender.log", enable_logging: bool = False):
         """Args
         ----
         server: str
             Remote endpoint in the form "<ip>:<port>" (e.g. "10.10.10.10:5555").
         log_file: str
             Path to log file for tracking send timestamps.
-        async_logging: bool
-            Whether to use async logging to minimize latency impact.
-        use_binary: bool
-            Whether to use binary format instead of JSON for maximum performance.
         enable_logging: bool
             Whether to enable logging at all. Set to False for minimum latency.
         """
         ip, port_str = server.split(":")
         self._addr: Tuple[str, int] = (ip, int(port_str))
-        self._use_binary = use_binary
         self._enable_logging = enable_logging
 
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -105,36 +94,18 @@ class UDPTransportSender:
             
             # Create file handler if not already exists
             if not self._logger.handlers:
-                if async_logging:
-                    handler = AsyncLogHandler(log_file)
-                else:
-                    handler = logging.FileHandler(log_file)
-                    formatter = logging.Formatter('%(asctime)s.%(msecs)03d - %(name)s - %(message)s', 
-                                                datefmt='%Y-%m-%d %H:%M:%S')
-                    handler.setFormatter(formatter)
+                handler = AsyncLogHandler(log_file)
                 self._logger.addHandler(handler)
                 self._logger.propagate = False
         else:
             self._logger = None
 
-    # ---------------------------------------------------------------------
-    # Public helpers
-    # ---------------------------------------------------------------------
-    def send(self, action: Dict[str, float]) -> None:  # noqa: D401 – present tense OK
-        """Serialise *action* to JSON and transmit it over UDP."""
+    def send(self, action: Dict[str, float]) -> None:
+        """Serialise *action* to binary format and transmit it over UDP."""
         send_timestamp = time.time()
         
-        if self._use_binary:
-            # Binary format for maximum performance
-            payload = self._serialize_binary(action, send_timestamp)
-        else:
-            # JSON format for compatibility
-            packet_data = {
-                "_packet_id": self._sequence_number,
-                "_send_timestamp": send_timestamp,
-                "action": action
-            }
-            payload = json.dumps(packet_data).encode("utf-8")
+        # Binary format for maximum performance
+        payload = self._serialize_binary(action, send_timestamp)
         
         # Best-effort – if the socket is not ready we'll simply drop the frame.
         try:
@@ -188,7 +159,7 @@ class UDPTransportSender:
 class UDPTransportReceiver:
     """Blocking UDP receiver used by the teleoperation *follower* machine."""
 
-    def __init__(self, port: int, buffer_size: int = 65535, log_file: str = "udp_receiver.log", async_logging: bool = True, use_binary: bool = True, enable_logging: bool = False, drop_old_packets: bool = True):
+    def __init__(self, port: int, buffer_size: int = 65535, log_file: str = "udp_receiver.log", enable_logging: bool = False, drop_old_packets: bool = True):
         """Listen on *port* for incoming action packets.
         
         Args
@@ -199,10 +170,6 @@ class UDPTransportReceiver:
             Maximum size of UDP packets to receive.
         log_file: str
             Path to log file for tracking receive timestamps.
-        async_logging: bool
-            Whether to use async logging to minimize latency impact.
-        use_binary: bool
-            Whether to use binary format instead of JSON for maximum performance.
         enable_logging: bool
             Whether to enable logging at all. Set to False for minimum latency.
         drop_old_packets: bool
@@ -218,7 +185,6 @@ class UDPTransportReceiver:
         # Bind on all interfaces – users can rely on firewall rules for protection.
         self._sock.bind(("", port))
         self._buffer_size = buffer_size
-        self._use_binary = use_binary
         self._enable_logging = enable_logging
         self._drop_old_packets = drop_old_packets
 
@@ -237,20 +203,13 @@ class UDPTransportReceiver:
             
             # Create file handler if not already exists
             if not self._logger.handlers:
-                if async_logging:
-                    handler = AsyncLogHandler(log_file)
-                else:
-                    handler = logging.FileHandler(log_file)
-                    formatter = logging.Formatter('%(asctime)s.%(msecs)03d - %(name)s - %(message)s', 
-                                                datefmt='%Y-%m-%d %H:%M:%S')
-                    handler.setFormatter(formatter)
+                handler = AsyncLogHandler(log_file)
                 self._logger.addHandler(handler)
                 self._logger.propagate = False
         else:
             self._logger = None
 
-    # ------------------------------------------------------------------
-    def recv(self) -> Dict[str, float]:  # noqa: D401
+    def recv(self) -> Dict[str, float]:
         """Block until the next action packet is received and return it."""
         # Use select with timeout to prevent indefinite blocking
         ready = select.select([self._sock], [], [], 0.1)  # 100ms timeout
@@ -264,10 +223,7 @@ class UDPTransportReceiver:
         recv_timestamp = time.time()
         
         try:
-            if self._use_binary:
-                action, packet_id, send_timestamp = self._deserialize_binary(payload)
-            else:
-                action, packet_id, send_timestamp = self._deserialize_json(payload)
+            action, packet_id, send_timestamp = self._deserialize_binary(payload)
             
             # Calculate latency if send timestamp is available
             latency_ms = (recv_timestamp - send_timestamp) * 1000 if send_timestamp else 0
@@ -305,7 +261,7 @@ class UDPTransportReceiver:
             
             return action
             
-        except (json.JSONDecodeError, struct.error, UnicodeDecodeError) as e:
+        except (struct.error, UnicodeDecodeError) as e:
             if self._enable_logging and self._logger:
                 self._logger.error(f"DECODE_ERROR - timestamp: {recv_timestamp:.6f}, from: {addr[0]}:{addr[1]}, error: {e}, payload: {payload[:100]}...")
             raise
@@ -330,10 +286,7 @@ class UDPTransportReceiver:
                 recv_timestamp = time.time()
                 
                 try:
-                    if self._use_binary:
-                        action, packet_id, send_timestamp = self._deserialize_binary(payload)
-                    else:
-                        action, packet_id, send_timestamp = self._deserialize_json(payload)
+                    action, packet_id, send_timestamp = self._deserialize_binary(payload)
                     
                     # Keep the packet with the lowest latency
                     latency_ms = (recv_timestamp - send_timestamp) * 1000 if send_timestamp else 0
@@ -342,7 +295,7 @@ class UDPTransportReceiver:
                         latest_addr = addr
                         latest_timestamp = latency_ms
                         
-                except (json.JSONDecodeError, struct.error, UnicodeDecodeError):
+                except (struct.error, UnicodeDecodeError):
                     continue  # Skip malformed packets
                     
         except (BlockingIOError, OSError):
@@ -354,17 +307,14 @@ class UDPTransportReceiver:
         # Process the freshest packet
         if latest_payload is not None:
             try:
-                if self._use_binary:
-                    action, packet_id, send_timestamp = self._deserialize_binary(latest_payload)
-                else:
-                    action, packet_id, send_timestamp = self._deserialize_json(latest_payload)
+                action, packet_id, send_timestamp = self._deserialize_binary(latest_payload)
                 
                 if self._enable_logging and self._logger:
                     latency_ms = (time.time() - send_timestamp) * 1000 if send_timestamp else 0
                     self._logger.info(f"FRESH_PACKET - packet_id: {packet_id}, latency: {latency_ms:.2f}ms")
                 
                 return action
-            except (json.JSONDecodeError, struct.error, UnicodeDecodeError):
+            except (struct.error, UnicodeDecodeError):
                 pass
         
         # If no valid packet found, return empty action
@@ -385,22 +335,6 @@ class UDPTransportReceiver:
         self._packets_received = 0
         self._packets_dropped = 0
         self._last_stats_time = current_time
-    
-    def _deserialize_json(self, payload: bytes) -> Tuple[Dict[str, float], Optional[int], float]:
-        """Deserialize JSON payload."""
-        packet_data = json.loads(payload.decode("utf-8"))
-        
-        # Handle both new format (with packet metadata) and legacy format (raw action)
-        if isinstance(packet_data, dict) and "_packet_id" in packet_data:
-            # New format with packet identification
-            packet_id = packet_data["_packet_id"]
-            send_timestamp = packet_data.get("_send_timestamp", 0)
-            action = packet_data["action"]
-            return action, packet_id, send_timestamp
-        else:
-            # Legacy format (raw action dictionary) - for backward compatibility
-            action = packet_data
-            return action, None, 0
     
     def _deserialize_binary(self, payload: bytes) -> Tuple[Dict[str, float], int, float]:
         """Deserialize binary payload for maximum performance."""
