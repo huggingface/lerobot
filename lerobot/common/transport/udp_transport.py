@@ -293,16 +293,6 @@ class UDPTransportReceiver:
 
         # Track last received packet ID to detect gaps
         self._last_packet_id = -1
-        
-        # Statistics for monitoring
-        self._packets_received = 0
-        self._packets_dropped = 0
-        self._last_stats_time = time.time()
-        
-        # Memory pool for action dictionaries to reduce allocations
-        self._action_pool = {}
-        self._pool_hits = 0
-        self._pool_misses = 0
 
         # Setup logging only if enabled
         if self._enable_logging:
@@ -315,7 +305,7 @@ class UDPTransportReceiver:
                     handler = AsyncLogHandler(log_file)
                 else:
                     handler = logging.FileHandler(log_file)
-                    formatter = logging.Formatter('%(asctime)s.%(msecs)03d - %(message)s', 
+                    formatter = logging.Formatter('%(asctime)s.%(msecs)03d - %(name)s - %(message)s', 
                                                 datefmt='%Y-%m-%d %H:%M:%S')
                     handler.setFormatter(formatter)
                 self._logger.addHandler(handler)
@@ -334,10 +324,10 @@ class UDPTransportReceiver:
             try:
                 action, send_timestamp = self._deserialize_ultra_fast(payload)
                 
-                # Add basic logging if enabled
+                # Add basic logging if enabled (minimal overhead)
                 if self._enable_logging and self._logger:
                     latency_ms = (recv_timestamp - send_timestamp) * 1000 if send_timestamp else 0
-                    self._logger.info(f"RECEIVED_ULTRA - latency: {latency_ms:.2f}ms, action: {action}")
+                    self._logger.info(f"RECEIVED_ULTRA - latency: {latency_ms:.2f}ms")
                 
                 return action
             except (struct.error, UnicodeDecodeError) as e:
@@ -367,7 +357,6 @@ class UDPTransportReceiver:
             
             # Drop old packets if latency is too high
             if self._drop_old_packets and latency_ms > 500:  # Drop packets older than 500ms
-                self._packets_dropped += 1
                 if self._enable_logging and self._logger:
                     self._logger.warning(f"DROPPED_OLD - packet_id: {packet_id}, latency: {latency_ms:.2f}ms")
                 # Try to get a fresher packet by draining the buffer
@@ -390,12 +379,6 @@ class UDPTransportReceiver:
                 if self._enable_logging and self._logger:
                     self._logger.info(f"RECEIVED - packet_id: {packet_id}, recv_timestamp: {recv_timestamp:.6f}, send_timestamp: {send_timestamp:.6f}, latency: {latency_ms:.2f}ms, from: {addr[0]}:{addr[1]}, payload_size: {len(payload)} bytes, action: {action}")
             
-            self._packets_received += 1
-            
-            # Log statistics every 100 packets
-            if self._packets_received % 100 == 0:
-                self._log_stats()
-            
             return action
             
         except (json.JSONDecodeError, struct.error, UnicodeDecodeError) as e:
@@ -404,7 +387,7 @@ class UDPTransportReceiver:
             raise
     
     def _deserialize_ultra_fast(self, payload: bytes) -> Tuple[Dict[str, float], float]:
-        """Ultra-fast deserialization with minimal overhead and memory pooling."""
+        """Ultra-fast deserialization with minimal overhead."""
         # Format: [timestamp:8][count:1][key1_len:1][key1:str][val1:4][key2_len:1][key2:str][val2:4]...
         if len(payload) < 9:
             raise struct.error("Payload too short")
@@ -412,19 +395,9 @@ class UDPTransportReceiver:
         send_timestamp = struct.unpack('<d', payload[:8])[0]
         action_count = payload[8]
         
-        # Try to reuse an existing action dictionary from the pool
-        action_keys = tuple(sorted(self._get_action_keys(payload, action_count)))
-        if action_keys in self._action_pool:
-            action = self._action_pool[action_keys]
-            action.clear()  # Reuse the dictionary
-            self._pool_hits += 1
-        else:
-            action = {}
-            self._action_pool[action_keys] = action
-            self._pool_misses += 1
-        
-        # Parse the action data
+        action = {}
         offset = 9
+        
         for _ in range(action_count):
             if offset + 1 > len(payload):
                 raise struct.error("Payload truncated")
@@ -443,27 +416,7 @@ class UDPTransportReceiver:
             
             action[key] = value
         
-        # Periodic garbage collection to prevent memory buildup
-        if self._pool_misses % 1000 == 0:
-            gc.collect()
-        
         return action, send_timestamp
-    
-    def _get_action_keys(self, payload: bytes, action_count: int) -> list:
-        """Extract action keys from payload for pool lookup."""
-        keys = []
-        offset = 9
-        for _ in range(action_count):
-            if offset + 1 > len(payload):
-                break
-            key_len = payload[offset]
-            offset += 1
-            if offset + key_len + 4 > len(payload):
-                break
-            key = payload[offset:offset+key_len].decode('ascii')
-            keys.append(key)
-            offset += key_len + 4
-        return keys
     
     def _recv_fresh_packet(self) -> Dict[str, float]:
         """Drain the receive buffer to get the freshest packet."""
@@ -524,22 +477,6 @@ class UDPTransportReceiver:
         
         # If no valid packet found, return empty action
         return {}
-    
-    def _log_stats(self):
-        """Log receiver statistics."""
-        if not self._enable_logging or not self._logger:
-            return
-        
-        current_time = time.time()
-        elapsed = current_time - self._last_stats_time
-        drop_rate = (self._packets_dropped / max(self._packets_received, 1)) * 100
-        
-        self._logger.info(f"STATS - received: {self._packets_received}, dropped: {self._packets_dropped}, drop_rate: {drop_rate:.2f}%, elapsed: {elapsed:.2f}s")
-        
-        # Reset counters
-        self._packets_received = 0
-        self._packets_dropped = 0
-        self._last_stats_time = current_time
     
     def _deserialize_json(self, payload: bytes) -> Tuple[Dict[str, float], Optional[int], float]:
         """Deserialize JSON payload."""
