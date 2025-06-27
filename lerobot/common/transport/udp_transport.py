@@ -69,7 +69,7 @@ class UDPTransportSender:
     they are simply dropped – the next action will arrive a few milliseconds later anyway.
     """
 
-    def __init__(self, server: str, log_file: str = "udp_sender.log", async_logging: bool = True, use_binary: bool = True, enable_logging: bool = False):
+    def __init__(self, server: str, log_file: str = "udp_sender.log", async_logging: bool = True, use_binary: bool = True, enable_logging: bool = False, ultra_fast: bool = True):
         """Args
         ----
         server: str
@@ -82,11 +82,14 @@ class UDPTransportSender:
             Whether to use binary format instead of JSON for maximum performance.
         enable_logging: bool
             Whether to enable logging at all. Set to False for minimum latency.
+        ultra_fast: bool
+            Whether to use ultra-fast mode with minimal overhead.
         """
         ip, port_str = server.split(":")
         self._addr: Tuple[str, int] = (ip, int(port_str))
         self._use_binary = use_binary
         self._enable_logging = enable_logging
+        self._ultra_fast = ultra_fast
 
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         # Non-blocking send – we never wait for ACKs.
@@ -122,6 +125,17 @@ class UDPTransportSender:
     # ---------------------------------------------------------------------
     def send(self, action: Dict[str, float]) -> None:  # noqa: D401 – present tense OK
         """Serialise *action* to JSON and transmit it over UDP."""
+        if self._ultra_fast:
+            # Ultra-fast path with minimal overhead
+            send_timestamp = time.time()
+            payload = self._serialize_ultra_fast(action, send_timestamp)
+            try:
+                self._sock.sendto(payload, self._addr)
+            except (BlockingIOError, OSError):
+                pass  # Drop silently in ultra-fast mode
+            self._sequence_number += 1
+            return
+        
         send_timestamp = time.time()
         
         if self._use_binary:
@@ -148,6 +162,39 @@ class UDPTransportSender:
         
         # Increment sequence number for next packet
         self._sequence_number += 1
+    
+    def _serialize_ultra_fast(self, action: Dict[str, float], timestamp: float) -> bytes:
+        """Ultra-fast serialization with minimal overhead."""
+        # Simplified format: [timestamp:8][count:1][key1_len:1][key1:str][val1:4][key2_len:1][key2:str][val2:4]...
+        # Assumes keys are short (< 256 chars) and values fit in 32-bit float
+        total_size = 9  # timestamp(8) + count(1)
+        key_sizes = []
+        for key in action:
+            key_bytes = key.encode('ascii')  # Use ASCII for speed
+            if len(key_bytes) > 255:
+                key_bytes = key_bytes[:255]  # Truncate if too long
+            key_sizes.append((key, key_bytes))
+            total_size += 1 + len(key_bytes) + 4  # key_len(1) + key + value(4)
+        
+        payload = bytearray(total_size)
+        offset = 0
+        
+        # Write timestamp and count
+        struct.pack_into('<d', payload, offset, timestamp)
+        offset += 8
+        payload[offset] = len(action)
+        offset += 1
+        
+        # Write action data
+        for key, key_bytes in key_sizes:
+            payload[offset] = len(key_bytes)
+            offset += 1
+            payload[offset:offset+len(key_bytes)] = key_bytes
+            offset += len(key_bytes)
+            struct.pack_into('<f', payload, offset, float(action[key]))  # Use float32 for speed
+            offset += 4
+        
+        return bytes(payload)
     
     def _serialize_binary(self, action: Dict[str, float], timestamp: float) -> bytes:
         """Serialize action to binary format for maximum performance."""
@@ -188,7 +235,7 @@ class UDPTransportSender:
 class UDPTransportReceiver:
     """Blocking UDP receiver used by the teleoperation *follower* machine."""
 
-    def __init__(self, port: int, buffer_size: int = 65535, log_file: str = "udp_receiver.log", async_logging: bool = True, use_binary: bool = True, enable_logging: bool = False, drop_old_packets: bool = True):
+    def __init__(self, port: int, buffer_size: int = 65535, log_file: str = "udp_receiver.log", async_logging: bool = True, use_binary: bool = True, enable_logging: bool = False, drop_old_packets: bool = True, ultra_fast: bool = True):
         """Listen on *port* for incoming action packets.
         
         Args
@@ -207,6 +254,8 @@ class UDPTransportReceiver:
             Whether to enable logging at all. Set to False for minimum latency.
         drop_old_packets: bool
             Whether to drop old packets when buffer is full to maintain low latency.
+        ultra_fast: bool
+            Whether to use ultra-fast mode with minimal overhead.
         """
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         # Allow immediate rebinding after a restart.
@@ -221,6 +270,7 @@ class UDPTransportReceiver:
         self._use_binary = use_binary
         self._enable_logging = enable_logging
         self._drop_old_packets = drop_old_packets
+        self._ultra_fast = ultra_fast
 
         # Track last received packet ID to detect gaps
         self._last_packet_id = -1
@@ -252,6 +302,15 @@ class UDPTransportReceiver:
     # ------------------------------------------------------------------
     def recv(self) -> Dict[str, float]:  # noqa: D401
         """Block until the next action packet is received and return it."""
+        if self._ultra_fast:
+            # Ultra-fast path with minimal overhead
+            payload, addr = self._sock.recvfrom(self._buffer_size)
+            try:
+                action, send_timestamp = self._deserialize_ultra_fast(payload)
+                return action
+            except (struct.error, UnicodeDecodeError):
+                return {}
+        
         # Use select with timeout to prevent indefinite blocking
         ready = select.select([self._sock], [], [], 0.1)  # 100ms timeout
         if not ready[0]:
@@ -309,6 +368,38 @@ class UDPTransportReceiver:
             if self._enable_logging and self._logger:
                 self._logger.error(f"DECODE_ERROR - timestamp: {recv_timestamp:.6f}, from: {addr[0]}:{addr[1]}, error: {e}, payload: {payload[:100]}...")
             raise
+    
+    def _deserialize_ultra_fast(self, payload: bytes) -> Tuple[Dict[str, float], float]:
+        """Ultra-fast deserialization with minimal overhead."""
+        # Format: [timestamp:8][count:1][key1_len:1][key1:str][val1:4][key2_len:1][key2:str][val2:4]...
+        if len(payload) < 9:
+            raise struct.error("Payload too short")
+        
+        send_timestamp = struct.unpack('<d', payload[:8])[0]
+        action_count = payload[8]
+        
+        action = {}
+        offset = 9
+        
+        for _ in range(action_count):
+            if offset + 1 > len(payload):
+                raise struct.error("Payload truncated")
+            
+            key_len = payload[offset]
+            offset += 1
+            
+            if offset + key_len + 4 > len(payload):
+                raise struct.error("Payload truncated")
+            
+            key = payload[offset:offset+key_len].decode('ascii')
+            offset += key_len
+            
+            value = struct.unpack('<f', payload[offset:offset+4])[0]
+            offset += 4
+            
+            action[key] = value
+        
+        return action, send_timestamp
     
     def _recv_fresh_packet(self) -> Dict[str, float]:
         """Drain the receive buffer to get the freshest packet."""
