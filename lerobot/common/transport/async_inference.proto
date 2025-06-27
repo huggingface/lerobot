@@ -29,32 +29,23 @@ service AsyncInference {
   rpc StreamActions(Empty) returns (stream Action);
   rpc SendPolicyInstructions(PolicySetup) returns (Empty);
   rpc Ready(Empty) returns (Empty);
-}
-
-enum TransferState {
-    TRANSFER_UNKNOWN = 0;
-    TRANSFER_BEGIN = 1;
-    TRANSFER_MIDDLE = 2;
-    TRANSFER_END = 3;
+  rpc Stop(Empty) returns (Empty);
 }
 
 // Messages
 message Observation {
   // sent by Robot, to remote Policy
-  TransferState transfer_state = 1;
-  bytes data = 2;
+  bytes data = 1;
 }
 
 message Action {
   // sent by remote Policy, to Robot
-  TransferState transfer_state = 1;
-  bytes data = 2;
+  bytes data = 1;
 }
 
 message PolicySetup {
   // sent by Robot to remote server, to init Policy
-  TransferState transfer_state = 1;
-  bytes data = 2;
+  bytes data = 1;
 }
 
 message Empty {}
