@@ -117,6 +117,16 @@ def get_default_peft_configuration(policy_type):
                 "unnormalize_outputs",
             ],
         }
+    elif policy_type == "act":
+        return {
+            "target_modules": r"(.*_proj|.*\.action_head)",
+            "modules_to_save": [
+                # These are inf on load otherwise
+                "normalize_inputs",
+                "normalize_targets",
+                "unnormalize_outputs",
+            ],
+        }
 
     return {'modules_to_save': None}
 
