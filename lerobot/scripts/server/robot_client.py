@@ -492,8 +492,6 @@ def async_client(args: argparse.Namespace):
                 robot_obs, lerobot_features, config.policy_image_features
             )
 
-            observation_content = {k: v.to(config.policy_device) for k, v in observation_content.items()}
-
             observation_content["task"] = args.task
 
             observation = TimedObservation(
