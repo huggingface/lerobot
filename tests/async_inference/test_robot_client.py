@@ -38,13 +38,21 @@ from lerobot.scripts.server.robot_client import RobotClient
 def robot_client() -> RobotClient:
     """Fresh `RobotClient` instance for each test case (no threads started).
     Uses DummyRobot."""
+    from lerobot.configs.types import FeatureType, PolicyFeature
     from tests.mocks.mock_robot import MockRobotConfig
 
     test_config = MockRobotConfig()
     robot = make_robot_from_config(test_config)
 
     # gRPC channel is not actually used in tests, so using a dummy address
-    test_config = RobotClientConfig(robot=robot, server_address="localhost:9999")
+    test_config = RobotClientConfig(
+        robot=robot,
+        server_address="localhost:9999",
+        policy_type="test",
+        pretrained_name_or_path="test",
+        policy_image_features={"test": PolicyFeature(type=FeatureType.STATE, shape=(test_config.n_motors,))},
+    )
+
     client = RobotClient(test_config)
 
     yield client
@@ -66,7 +74,7 @@ def _make_actions(start_ts: float, start_t: int, count: int) -> list[TimedAction
         timestep = start_t + i
         timestamp = start_ts + i * (1 / fps)
         action_tensor = torch.full((6,), timestep, dtype=torch.float32)
-        actions.append(TimedAction(timestamp, action_tensor, timestep))
+        actions.append(TimedAction(action=action_tensor, timestep=timestep, timestamp=timestamp))
     return actions
 
 
@@ -75,8 +83,8 @@ def _make_actions(start_ts: float, start_t: int, count: int) -> list[TimedAction
 # -----------------------------------------------------------------------------
 
 
-def test_update_action_queue_discards_stale(robot_client: RobotClient):
-    """`_update_action_queue` must drop actions with `timestep` <= `latest_action`."""
+def _test_aggregate_action_queues_discards_stale(robot_client: RobotClient):
+    """`_aggregate_action_queues` must drop actions with `timestep` <= `latest_action`."""
     robot_client.chunks_received = 0
 
     # Pretend we already executed up to action #4
@@ -85,12 +93,76 @@ def test_update_action_queue_discards_stale(robot_client: RobotClient):
     # Incoming chunk contains timesteps 3..7 -> expect 5,6,7 kept.
     incoming = _make_actions(start_ts=time.time(), start_t=3, count=5)  # 3,4,5,6,7
 
-    robot_client._update_action_queue(incoming)
+    robot_client._aggregate_action_queues(incoming)
 
     # Extract timesteps from queue
     resulting_timesteps = [a.get_timestep() for a in robot_client.action_queue.queue]
 
     assert resulting_timesteps == [5, 6, 7]
+
+
+@pytest.mark.parametrize(
+    "weight_old, weight_new",
+    [
+        (1.0, 0.0),
+        (0.0, 1.0),
+        (0.5, 0.5),
+        (0.2, 0.8),
+        (0.8, 0.2),
+        (0.1, 0.9),
+        (0.9, 0.1),
+    ],
+)
+def test_aggregate_action_queues_combines_actions_in_overlap(
+    robot_client: RobotClient, weight_old: float, weight_new: float
+):
+    """`_aggregate_action_queues` must combine actions on overlapping timesteps according
+    to the provided aggregate_fn, here tested with multiple coefficients."""
+    robot_client.chunks_received = 0
+
+    # Pretend we already executed up to action #4, and queue contains actions for timesteps 5..6
+    robot_client.latest_action = 4
+    current_actions = _make_actions(
+        start_ts=time.time(), start_t=5, count=2
+    )  # actions are [torch.ones(6), torch.ones(6), ...]
+    current_actions = [
+        TimedAction(action=10 * a.get_action(), timestep=a.get_timestep(), timestamp=a.get_timestamp())
+        for a in current_actions
+    ]
+
+    for a in current_actions:
+        robot_client.action_queue.put(a)
+
+    # Incoming chunk contains timesteps 3..7 -> expect 5,6,7 kept.
+    incoming = _make_actions(start_ts=time.time(), start_t=3, count=5)  # 3,4,5,6,7
+
+    overlap_timesteps = [5, 6]  # properly tested in test_aggregate_action_queues_discards_stale
+    nonoverlap_timesteps = [7]
+
+    robot_client._aggregate_action_queues(
+        incoming, aggregate_fn=lambda x1, x2: weight_old * x1 + weight_new * x2
+    )
+
+    queue_overlap_actions = []
+    queue_non_overlap_actions = []
+    for a in robot_client.action_queue.queue:
+        if a.get_timestep() in overlap_timesteps:
+            queue_overlap_actions.append(a)
+        elif a.get_timestep() in nonoverlap_timesteps:
+            queue_non_overlap_actions.append(a)
+
+    queue_overlap_actions = sorted(queue_overlap_actions, key=lambda x: x.get_timestep())
+    queue_non_overlap_actions = sorted(queue_non_overlap_actions, key=lambda x: x.get_timestep())
+
+    assert torch.allclose(
+        queue_overlap_actions[0].get_action(),
+        weight_old * current_actions[0].get_action() + weight_new * incoming[-3].get_action(),
+    )
+    assert torch.allclose(
+        queue_overlap_actions[1].get_action(),
+        weight_old * current_actions[1].get_action() + weight_new * incoming[-2].get_action(),
+    )
+    assert torch.allclose(queue_non_overlap_actions[0].get_action(), incoming[-1].get_action())
 
 
 @pytest.mark.parametrize(
