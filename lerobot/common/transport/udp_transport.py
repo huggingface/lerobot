@@ -282,11 +282,6 @@ class UDPTransportReceiver:
             recv_timestamp = time.time()
             packets_processed += 1
 
-            # Fast-path: echo latency-probe packets
-            if payload.startswith(PING_MAGIC):
-                self._sock.sendto(payload, addr)
-                continue
-
             try:
                 action, packet_id, send_timestamp = self._deserialize_binary(payload)
                 latency_ms = (recv_timestamp - send_timestamp) * 1000
