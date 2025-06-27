@@ -68,10 +68,10 @@ class UDPTransportSender:
         # Best-effort – if the socket is not ready we'll simply drop the frame.
         try:
             self._sock.sendto(payload, self._addr)
-            self._logger.info(f"SENT - packet_id: {self._sequence_number}, timestamp: {send_timestamp:.6f}, payload_size: {len(payload)} bytes, action_keys: {list(action.keys())}")
+            self._logger.info(f"SENT - packet_id: {self._sequence_number}, timestamp: {send_timestamp:.6f}, payload_size: {len(payload)} bytes, action: {action}")
         except (BlockingIOError, OSError) as e:
             # Dropped – nothing to do, next frame will go through.
-            self._logger.warning(f"DROPPED - packet_id: {self._sequence_number}, timestamp: {send_timestamp:.6f}, error: {e}, payload_size: {len(payload)} bytes")
+            self._logger.warning(f"DROPPED - packet_id: {self._sequence_number}, timestamp: {send_timestamp:.6f}, error: {e}, payload_size: {len(payload)} bytes, action: {action}")
         
         # Increment sequence number for next packet
         self._sequence_number += 1
@@ -146,11 +146,11 @@ class UDPTransportReceiver:
                 
                 self._last_packet_id = packet_id
                 
-                self._logger.info(f"RECEIVED - packet_id: {packet_id}, recv_timestamp: {recv_timestamp:.6f}, send_timestamp: {send_timestamp:.6f}, latency: {latency_ms:.2f}ms, from: {addr[0]}:{addr[1]}, payload_size: {len(payload)} bytes, action_keys: {list(action.keys())}")
+                self._logger.info(f"RECEIVED - packet_id: {packet_id}, recv_timestamp: {recv_timestamp:.6f}, send_timestamp: {send_timestamp:.6f}, latency: {latency_ms:.2f}ms, from: {addr[0]}:{addr[1]}, payload_size: {len(payload)} bytes, action_keys: {list(action.keys())}, action: {action}")
             else:
                 # Legacy format (raw action dictionary) - for backward compatibility
                 action = packet_data
-                self._logger.info(f"RECEIVED - legacy_format, timestamp: {recv_timestamp:.6f}, from: {addr[0]}:{addr[1]}, payload_size: {len(payload)} bytes, action_keys: {list(action.keys())}")
+                self._logger.info(f"RECEIVED - legacy_format, timestamp: {recv_timestamp:.6f}, from: {addr[0]}:{addr[1]}, payload_size: {len(payload)} bytes, action_keys: {list(action.keys())}, action: {action}")
             
             return action
             
