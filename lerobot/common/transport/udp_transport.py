@@ -111,6 +111,8 @@ class UDPTransportSender:
 
     def send(self, action: Dict[str, float]) -> None:
         """Serialise *action* to binary format and transmit it over UDP."""
+        # Track when the method is called (application-level timing)
+        method_call_time = time.time()
         send_timestamp = time.time()
 
         # Binary format for maximum performance
@@ -124,7 +126,8 @@ class UDPTransportSender:
             if self._sequence_number % 50 == 0:
                 current_time = time.time()
                 time_since_last = current_time - getattr(self, '_last_send_time', current_time)
-                print(f"SENDER: packet={self._sequence_number}, send_time={send_timestamp:.6f}, time_since_last={time_since_last*1000:.1f}ms")
+                app_delay = (send_timestamp - method_call_time) * 1000  # Time from call to send
+                print(f"SENDER: packet={self._sequence_number}, send_time={send_timestamp:.6f}, time_since_last={time_since_last*1000:.1f}ms, app_delay={app_delay:.1f}ms")
                 self._last_send_time = current_time
                 
             if self._enable_logging and self._logger:
