@@ -14,10 +14,11 @@ __all__ = [
 ]
 
 
-class AsyncLogHandler:
+class AsyncLogHandler(logging.Handler):
     """Asynchronous log handler to prevent file I/O from blocking the main thread."""
     
     def __init__(self, log_file: str, max_queue_size: int = 1000):
+        super().__init__()
         self._queue = queue.Queue(maxsize=max_queue_size)
         self._handler = logging.FileHandler(log_file)
         formatter = logging.Formatter('%(asctime)s.%(msecs)03d - %(name)s - %(message)s', 
@@ -56,6 +57,7 @@ class AsyncLogHandler:
         self._queue.put(None)
         self._thread.join(timeout=1.0)
         self._handler.close()
+        super().close()
 
 
 class UDPTransportSender:
