@@ -11,8 +11,8 @@ DEFAULT_INFERENCE_LATENCY = 1 / DEFAULT_FPS
 """Server side: Timeout for observation queue in seconds"""
 DEFAULT_OBS_QUEUE_TIMEOUT = 2
 
-# TODO:  Support DiffusionPolicy, VQBet and Pi0
-supported_policies = ["act", "smolvla"]
+# All action chunking policies
+supported_policies = ["act", "smolvla", "diffusion", "pi0", "tdmpc", "vqbet"]
 
 # TODO: Add all other robots
 supported_robots = ["so100"]

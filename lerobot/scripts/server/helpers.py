@@ -1,3 +1,5 @@
+from threading import Event
+
 import argparse
 import json
 import logging
@@ -5,6 +7,7 @@ import logging.handlers
 import os
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import torch
@@ -12,6 +15,7 @@ import torch
 from lerobot.common.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.common.constants import OBS_STATE
 from lerobot.common.datasets.utils import build_dataset_frame, hw_to_dataset_features
+from lerobot.common.utils.utils import init_logging
 
 # NOTE: Configs need to be loaded for the client to be able to instantiate the policy config
 from lerobot.common.policies.act.configuration_act import ACTConfig  # noqa: F401
@@ -163,52 +167,29 @@ def make_robot(args: argparse.Namespace) -> Robot:
     return make_robot_from_config(config)
 
 
-def setup_logging(prefix: str, info_bracket: str):
-    """Sets up logging"""
-    # Create logs directory if it doesn't exist
-    os.makedirs("logs", exist_ok=True)
-
-    # Delete any existing prefix_* log files
-    for old_log_file in os.listdir("logs"):
-        if old_log_file.startswith(prefix) and old_log_file.endswith(".log"):
-            try:
-                os.remove(os.path.join("logs", old_log_file))
-                print(f"Deleted old log file: {old_log_file}")
-            except Exception as e:
-                print(f"Failed to delete old log file {old_log_file}: {e}")
-
-    # Set up logging with both console and file output
-    logger = logging.getLogger(prefix)
-    # Prevent propagation to root logger to avoid duplicate messages
-    logger.propagate = False
-
-    logger.setLevel(logging.INFO)
-
-    # Console handler
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(
-        logging.Formatter(
-            f"%(asctime)s.%(msecs)03d [{info_bracket}] [%(levelname)s] %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
-        )
-    )
-    logger.addHandler(console_handler)
-
-    # File handler - creates a new log file for each run
-    file_handler = logging.handlers.RotatingFileHandler(
-        f"logs/policy_server_{int(time.time())}.log",
-        maxBytes=10 * 1024 * 1024,  # 10MB
-        backupCount=5,
-    )
-    file_handler.setFormatter(
-        logging.Formatter(
-            f"%(asctime)s.%(msecs)03d [{info_bracket}] [%(levelname)s] %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
-        )
-    )
-    logger.addHandler(file_handler)
-
-    return logger
+def get_logger(name: str, log_to_file: bool = True) -> logging.Logger:
+    """
+    Get a logger using the standardized logging setup from utils.py.
+    
+    Args:
+        name: Logger name (e.g., 'policy_server', 'robot_client')
+        log_to_file: Whether to also log to a file
+        
+    Returns:
+        Configured logger instance
+    """
+    # Create logs directory if logging to file
+    if log_to_file:
+        os.makedirs("logs", exist_ok=True)
+        log_file = Path(f"logs/{name}_{int(time.time())}.log")
+    else:
+        log_file = None
+    
+    # Initialize the standardized logging
+    init_logging(log_file=log_file, display_pid=False)
+    
+    # Return a named logger
+    return logging.getLogger(name)
 
 
 @dataclass

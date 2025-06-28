@@ -387,11 +387,13 @@ class RobotClient:
                 _performed_action = self.control_loop_action()
 
             """Control loop: (2) Streaming observations to the remote policy server"""
-            if self._ready_to_send_observation() or control_loops == 0:
+            if self._ready_to_send_observation() or True:
                 _captured_observation = self.control_loop_observation(get_observation_fn)
 
+            self.logger.warning(f"Control loop (ms): {(time.perf_counter() - control_loop_start) * 1000:.2f}")
             # Dynamically adjust sleep time to maintain the desired control frequency
             time.sleep(max(0, self.config.environment_dt - (time.perf_counter() - control_loop_start)))
+            
             control_loops += 1
 
         return _captured_observation, _performed_action
