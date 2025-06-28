@@ -50,6 +50,7 @@ from lerobot.common.teleoperators import (  # noqa: F401
     make_teleoperator_from_config,
     so100_leader,
 )
+from lerobot.common.utils.robot_utils import busy_wait
 
 
 @dataclass
@@ -76,12 +77,12 @@ def find_joint_and_ee_bounds(cfg: FindJointLimitsConfig):
         # Note to be compatible with the rest of the codebase,
         # we are using the new calibration method for so101 and so100
         robot_type = "so_new_calibration"
-    kinematics = RobotKinematics(robot_type=robot_type)
+    kinematics = RobotKinematics(cfg.robot.urdf_path, cfg.robot.target_frame_name)
 
     # Initialize min/max values
     observation = robot.get_observation()
     joint_positions = np.array([observation[f"{key}.pos"] for key in robot.bus.motors])
-    ee_pos = kinematics.forward_kinematics(joint_positions, frame="gripper_tip")[:3, 3]
+    ee_pos = kinematics.forward_kinematics(joint_positions)[:3, 3]
 
     max_pos = joint_positions.copy()
     min_pos = joint_positions.copy()
@@ -94,7 +95,7 @@ def find_joint_and_ee_bounds(cfg: FindJointLimitsConfig):
 
         observation = robot.get_observation()
         joint_positions = np.array([observation[f"{key}.pos"] for key in robot.bus.motors])
-        ee_pos = kinematics.forward_kinematics(joint_positions, frame="gripper_tip")[:3, 3]
+        ee_pos = kinematics.forward_kinematics(joint_positions)[:3, 3]
 
         # Skip initial warmup period
         if (time.perf_counter() - start_episode_t) < 5:
@@ -112,6 +113,8 @@ def find_joint_and_ee_bounds(cfg: FindJointLimitsConfig):
             print(f"Max joint pos position {np.round(max_pos, 4).tolist()}")
             print(f"Min joint pos position {np.round(min_pos, 4).tolist()}")
             break
+
+        busy_wait(0.01)
 
 
 if __name__ == "__main__":

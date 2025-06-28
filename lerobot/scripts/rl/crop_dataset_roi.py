@@ -23,6 +23,7 @@ from typing import Dict, Tuple
 import cv2
 
 # import torch.nn.functional as F  # noqa: N812
+import torch
 import torchvision.transforms.functional as F  # type: ignore  # noqa: N812
 from tqdm import tqdm  # type: ignore
 
@@ -224,7 +225,8 @@ def convert_lerobot_dataset_to_cropper_lerobot_dataset(
                 cropped = F.crop(value, top, left, height, width)
                 value = F.resize(cropped, resize_size)
                 value = value.clamp(0, 1)
-
+            if key.startswith("complementary_info") and isinstance(value, torch.Tensor) and value.dim() == 0:
+                value = value.unsqueeze(0)
             new_frame[key] = value
 
         new_dataset.add_frame(new_frame, task=task)
@@ -265,8 +267,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--push-to-hub",
-        type=bool,
-        default=False,
+        action="store_true",
         help="Whether to push the new dataset to the hub.",
     )
     parser.add_argument(

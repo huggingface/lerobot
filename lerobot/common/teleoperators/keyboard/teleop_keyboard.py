@@ -200,13 +200,13 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
         # Generate action based on current key states
         for key, val in self.current_pressed.items():
             if key == keyboard.Key.up:
-                delta_x = int(val)
-            elif key == keyboard.Key.down:
-                delta_x = -int(val)
-            elif key == keyboard.Key.left:
-                delta_y = int(val)
-            elif key == keyboard.Key.right:
                 delta_y = -int(val)
+            elif key == keyboard.Key.down:
+                delta_y = int(val)
+            elif key == keyboard.Key.left:
+                delta_x = int(val)
+            elif key == keyboard.Key.right:
+                delta_x = -int(val)
             elif key == keyboard.Key.shift:
                 delta_z = -int(val)
             elif key == keyboard.Key.shift_r:
