@@ -12,28 +12,30 @@ from lerobot.common.transport import (
     async_inference_pb2,  # type: ignore
     async_inference_pb2_grpc,  # type: ignore
 )
+from lerobot.common.transport.utils import send_bytes_in_chunks
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.scripts.server.configs import RobotClientConfig
 from lerobot.scripts.server.helpers import (
     Action,
     FPSTracker,
+    RawObservation,
     Observation,
     TimedAction,
     TimedObservation,
     TinyPolicyConfig,
     make_robot,
     map_robot_keys_to_lerobot_features,
-    prepare_observation_for_policy,
-    setup_logging,
+    get_logger,
     validate_robot_cameras_for_policy,
     visualize_action_queue_size,
 )
 
+import logging
 
 class RobotClient:
     prefix = "robot_client"
-    info_bracket = "CLIENT"
-    logger = setup_logging(prefix, info_bracket)
+    logger = get_logger(prefix)
+    logger.setLevel(logging.WARNING)
 
     def __init__(self, config: RobotClientConfig):
         # Store configuration
@@ -43,7 +45,7 @@ class RobotClient:
         self.server_address = config.server_address
 
         self.policy_config = TinyPolicyConfig(
-            config.policy_type, config.pretrained_name_or_path, config.policy_device
+            config.policy_type, config.pretrained_name_or_path, config.lerobot_features, config.policy_device
         )
         self.channel = grpc.insecure_channel(self.server_address)
         self.stub = async_inference_pb2_grpc.AsyncInferenceStub(self.channel)
@@ -136,10 +138,14 @@ class RobotClient:
         serialize_time = time.perf_counter() - start_time
         self.logger.debug(f"Observation serialization time: {serialize_time:.6f}s")
 
-        observation = async_inference_pb2.Observation(data=observation_bytes)
-
         try:
-            _ = self.stub.SendObservations(iter([observation]))
+            observation_iterator = send_bytes_in_chunks(
+                observation_bytes,
+                async_inference_pb2.Observation,
+                log_prefix="[CLIENT] Observation",
+                silent=True,
+            )
+            _ = self.stub.SendObservations(observation_iterator)
             obs_timestep = obs.get_timestep()
             self.logger.info(f"Sent observation #{obs_timestep} | ")
 
@@ -212,12 +218,12 @@ class RobotClient:
             try:
                 # Use StreamActions to get a stream of actions from the server
                 for actions_chunk in self.stub.StreamActions(async_inference_pb2.Empty()):
-                    receive_time = time.perf_counter()
+                    receive_time = time.time()
 
                     # Deserialize bytes back into list[TimedAction]
                     deserialize_start = time.perf_counter()
                     timed_actions = pickle.loads(actions_chunk.data)  # nosec
-                    deserialize_end = time.perf_counter()
+                    deserialize_time = time.perf_counter() - deserialize_start
 
                     self.action_chunk_size = max(self.action_chunk_size, len(timed_actions))
 
@@ -236,13 +242,13 @@ class RobotClient:
                     # Calculate network latency if we have matching observations
                     if len(timed_actions) > 0:
                         first_action_timestep = timed_actions[0].get_timestep()
-                        server_to_client_latency = receive_time - timed_actions[0].get_timestamp()
+                        server_to_client_latency = (receive_time - timed_actions[0].get_timestamp()) * 1000
 
                         self.logger.info(
                             f"Received action chunk for step #{first_action_timestep} | "
                             f"Latest action: #{self.latest_action} | "
-                            f"Network latency (server->client): {server_to_client_latency:.6f}s | "
-                            f"Deserialization time: {deserialize_end - deserialize_start:.6f}s"
+                            f"Network latency (server->client): {server_to_client_latency:.2f}ms | "
+                            f"Deserialization time: {deserialize_time * 1000:.2f}ms"
                         )
 
                     # Update action queue
@@ -472,10 +478,10 @@ def async_client(args: argparse.Namespace):
     # Create config from parsed arguments
     config = RobotClientConfig(
         robot=robot,
-        policy_image_features=policy_image_features,
-        server_address=args.server_address,
         policy_type=args.policy_type,
         pretrained_name_or_path=args.pretrained_name_or_path,
+        lerobot_features=lerobot_features,
+        server_address=args.server_address,
         policy_device=args.policy_device,
         chunk_size_threshold=args.chunk_size_threshold,
         aggregate_fn=lambda old, new: 0.3 * old + 0.7 * new,
@@ -485,18 +491,14 @@ def async_client(args: argparse.Namespace):
     client = RobotClient(config)
 
     if client.start():
-        # Function to make observations starting from the robot's get_observation() method
-        def make_observation():
-            robot_obs = client.robot.get_observation()
-            observation_content = prepare_observation_for_policy(
-                robot_obs, lerobot_features, config.policy_image_features
-            )
-
-            observation_content["task"] = args.task
+        def make_observation() -> TimedObservation:
+            # Function to make observations starting from the robot's get_observation() method
+            observation: RawObservation = client.robot.get_observation()
+            observation["task"] = args.task
 
             observation = TimedObservation(
                 timestamp=time.time(),  # need time.time() to compare timestamps across client and server
-                observation=observation_content,
+                observation=observation,
                 timestep=max(client.latest_action, 0),
             )
 

@@ -21,15 +21,18 @@ from lerobot.scripts.server.helpers import (
     TimedObservation,
     TinyPolicyConfig,
     observations_similar,
-    prepare_image,
-    setup_logging,
+    get_logger,
+    raw_observation_to_observation,
+    Observation,
+    RawObservation,
+    Action,
+    receive_bytes_in_chunks
 )
 
 
 class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
     prefix = "policy_server"
-    info_bracket = "SERVER"
-    logger = setup_logging(prefix, info_bracket)
+    logger = get_logger(prefix)
 
     def __init__(self, config: PolicyServerConfig):
         self.config = config
@@ -43,6 +46,10 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
     @property
     def running(self):
         return self._running_event.is_set()
+    
+    @property
+    def policy_image_features(self):
+        return self.policy.config.image_features
 
     def _setup_server(self) -> None:
         """Flushes server state when new client connects."""
@@ -84,6 +91,7 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
 
         self.device = policy_specs.device
         self.policy_type = policy_specs.policy_type  # act, pi0, etc.
+        self.lerobot_features = policy_specs.lerobot_features
 
         policy_class = get_policy_class(self.policy_type)
 
