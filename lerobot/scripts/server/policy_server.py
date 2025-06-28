@@ -137,8 +137,8 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
         )
 
         if not self._maybe_enqueue_observation(
-            timed_observation
-        ):  # TODO(fracapuano): check does not work on raw observsation need to transform it first
+            timed_observation  # wrapping a RawObservation
+        ):
             self.logger.info(f"Observation #{obs_timestep} has been filtered out")
 
         return async_inference_pb2.Empty()
@@ -155,7 +155,6 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
                 f"Running inference for observation #{obs.get_timestep()} (must_go: {obs.must_go})"
             )
 
-            self.last_processed_obs = obs
             self._predicted_timesteps.add(obs.get_timestep())
 
             start_time = time.perf_counter()
@@ -209,7 +208,7 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
             self.logger.debug(f"Skipping observation #{obs.get_timestep()} - Timestep predicted already!")
             return False
 
-        elif observations_similar(obs, previous_obs, atol=1):
+        elif observations_similar(obs, previous_obs, lerobot_features=self.lerobot_features, atol=1):
             self.logger.debug(
                 f"Skipping observation #{obs.get_timestep()} - Observation too similar to last obs predicted!"
             )
@@ -226,11 +225,10 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
             self.logger.info(f"[MUST GO] Enqueued observation #{obs.get_timestep()} for direct processing!")
             return self._enqueue_and_go(obs)
 
-        else:
-            if self._obs_sanity_checks(obs, self.last_processed_obs):
-                return self._enqueue_and_go(obs)
-            else:
-                return False
+        if self._obs_sanity_checks(obs, self.last_processed_obs):
+            return self._enqueue_and_go(obs)
+
+        return False
 
     def _time_action_chunk(self, t_0: float, action_chunk: list[torch.Tensor], i_0: int) -> list[TimedAction]:
         """Turn a chunk of actions into a list of TimedAction instances,
@@ -271,6 +269,8 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
         start_time = time.perf_counter()
         observation = self._prepare_observation(observation_t)
         preprocessing_time = time.perf_counter() - start_time
+
+        self.last_processed_obs: TimedObservation = observation_t
 
         """2. Get action chunk"""
         start_time = time.perf_counter()
