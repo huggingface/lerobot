@@ -49,6 +49,10 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from .viperx import ViperX
 
         return ViperX(config)
+    elif config.type == "fr5":
+        from .fr5 import FairinoV5
+
+        return FairinoV5(config)
     elif config.type == "mock_robot":
         from tests.mocks.mock_robot import MockRobot
 
