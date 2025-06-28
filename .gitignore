@@ -171,3 +171,9 @@ dmypy.json
 
 # Cython debug symbols
 cython_debug/
+
+# AI Hackathon - allow hand_tracking videos but ignore others
+*.mp4
+!hand_tracking/**/*.mp4
+training_vids/
+!hand_tracking/training_vids/
