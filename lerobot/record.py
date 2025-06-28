@@ -51,7 +51,7 @@ from lerobot.common.cameras.opencv.configuration_opencv import OpenCVCameraConfi
 from lerobot.common.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.common.datasets.image_writer import safe_stop_image_writer
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.datasets.utils import build_dataset_frame, hw_to_dataset_features
+from lerobot.common.datasets.utils import build_dataset_frame, hw_to_dataset_features, write_info
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.robots import (  # noqa: F401
@@ -126,6 +126,8 @@ class DatasetRecordConfig:
     # Too many threads might cause unstable teleoperation fps due to main thread being blocked.
     # Not enough threads might cause low camera fps.
     num_image_writer_threads_per_camera: int = 4
+    # When True, skip video encoding between episodes and encode everything once the recording ends.
+    encode_videos_after: bool = False
 
     def __post_init__(self):
         if self.single_task is None:
@@ -328,7 +330,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             dataset.clear_episode_buffer()
             continue
 
-        dataset.save_episode()
+        dataset.save_episode(encode_videos=not cfg.dataset.encode_videos_after)
 
         if events["stop_recording"]:
             break
@@ -340,6 +342,20 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     if not is_headless() and listener is not None:
         listener.stop()
+
+    # If video encoding was deferred, run it now before pushing to the Hub.
+    if cfg.dataset.video and cfg.dataset.encode_videos_after:
+        log_say("Encoding videos, this might take a while", cfg.play_sounds)
+        dataset.encode_videos()
+        # Populate video metadata now that files exist
+        dataset.meta.update_video_info()
+        write_info(dataset.meta.info, dataset.root)
+
+        # Now that videos are encoded, remove the temporary PNG images to save disk space.
+        import shutil, os
+        img_dir = dataset.root / "images"
+        if img_dir.is_dir():
+            shutil.rmtree(img_dir)
 
     if cfg.dataset.push_to_hub:
         dataset.push_to_hub(tags=cfg.dataset.tags, private=cfg.dataset.private)
