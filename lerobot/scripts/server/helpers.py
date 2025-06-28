@@ -32,11 +32,17 @@ from lerobot.common.utils.utils import init_logging
 from lerobot.configs.types import PolicyFeature
 from lerobot.scripts.server.constants import supported_robots
 
-Observation = dict[str, torch.Tensor]
 Action = torch.Tensor
+ActionChunk = torch.Tensor
 
-# Additional type to distinguish between the raw observation and the observations ready for inference
+# observation as received from the robot
 RawObservation = dict[str, torch.Tensor]
+
+# observation as those recorded in LeRobot dataset (keys are different)
+LeRobotObservation = dict[str, torch.Tensor]
+
+# observation, ready for policy inference (image keys resized)
+Observation = dict[str, torch.Tensor]
 
 
 def visualize_action_queue_size(action_queue_size: list[int]) -> None:
@@ -94,8 +100,8 @@ def raw_observation_to_observation(
 ) -> Observation:
     observation = {}
 
-    raw_observation = prepare_raw_observation(raw_observation, lerobot_features, policy_image_features)
-    for k, v in raw_observation.items():
+    observation = prepare_raw_observation(raw_observation, lerobot_features, policy_image_features)
+    for k, v in observation.items():
         if isinstance(v, torch.Tensor):  # VLAs present natural-language instructions in observations
             if "image" in k:
                 # Policy expects images in shape (B, C, H, W)
@@ -116,22 +122,52 @@ def prepare_image(image: torch.Tensor) -> torch.Tensor:
     return image
 
 
+def extract_state_from_raw_observation(
+    lerobot_obs: RawObservation,
+) -> torch.Tensor:
+    """Extract the state from a raw observation."""
+    state = torch.tensor(lerobot_obs[OBS_STATE])
+
+    if state.ndim == 1:
+        state = state.unsqueeze(0)
+
+    return state
+
+
+def extract_images_from_raw_observation(
+    lerobot_obs: RawObservation,
+    camera_key: str,
+) -> dict[str, torch.Tensor]:
+    """Extract the images from a raw observation."""
+    return torch.tensor(lerobot_obs[camera_key])
+
+
+def make_lerobot_observation(
+    robot_obs: RawObservation,
+    lerobot_features: dict[str, dict],
+) -> LeRobotObservation:
+    """Make a lerobot observation from a raw observation."""
+    return build_dataset_frame(lerobot_features, robot_obs, prefix="observation")
+
+
 def prepare_raw_observation(
     robot_obs: RawObservation,
     lerobot_features: dict[str, dict],
     policy_image_features: dict[str, PolicyFeature],
-) -> RawObservation:
+) -> Observation:
     """Matches keys from the raw robot_obs dict to the keys expected by a given policy (passed as
     policy_image_features)."""
     # 1. {motor.pos1:value1, motor.pos2:value2, ..., laptop:np.ndarray} ->
     # -> {observation.state:[value1,value2,...], observation.images.laptop:np.ndarray}
-    lerobot_obs = build_dataset_frame(lerobot_features, robot_obs, prefix="observation")
+    lerobot_obs = make_lerobot_observation(robot_obs, lerobot_features)
 
     # 2. Greps all observation.images.<> keys
     image_keys = list(filter(is_image_key, lerobot_obs))
     # state's shape is expected as (B, state_dim)
-    state_dict = {OBS_STATE: torch.tensor(lerobot_obs[OBS_STATE]).unsqueeze(0)}
-    image_dict = {image_k: torch.tensor(lerobot_obs[image_k]) for image_k in image_keys}
+    state_dict = {OBS_STATE: extract_state_from_raw_observation(lerobot_obs)}
+    image_dict = {
+        image_k: extract_images_from_raw_observation(lerobot_obs, image_k) for image_k in image_keys
+    }
 
     # Turns the image features to (C, H, W) with H, W matching the policy image features.
     # This reduces the resolution of the images
@@ -270,12 +306,24 @@ def _compare_observation_states(obs1_state: torch.Tensor, obs2_state: torch.Tens
     return torch.linalg.norm(obs1_state - obs2_state) < atol
 
 
-def observations_similar(obs1: TimedObservation, obs2: TimedObservation, atol: float = 1) -> bool:
-    """Check if two observations are similar, under a tolerance threshold"""
-    obs1_state = obs1.get_observation()["observation.state"]
-    obs2_state = obs2.get_observation()["observation.state"]
+def observations_similar(
+    obs1: TimedObservation, obs2: TimedObservation, lerobot_features: dict[str, dict], atol: float = 1
+) -> bool:
+    """Check if two observations are similar, under a tolerance threshold. Measures distance between
+    observations as the difference in joint-space between the two observations.
 
-    return _compare_observation_states(obs1_state, obs2_state, atol=atol)
+    NOTE(fracapuano): This is a very simple check, and it is enough for the current use case.
+    An immediate next step is to use (fast) perceptual difference metrics comparing some camera views,
+    to surpass this joint-space similarity check.
+    """
+    obs1_state = extract_state_from_raw_observation(
+        make_lerobot_observation(obs1.get_observation(), lerobot_features)
+    )
+    obs2_state = extract_state_from_raw_observation(
+        make_lerobot_observation(obs2.get_observation(), lerobot_features)
+    )
+
+    return bool(_compare_observation_states(obs1_state, obs2_state, atol=atol))
 
 
 def send_bytes_in_chunks(
