@@ -1,0 +1,36 @@
+robot:
+  type: dual_so100_follower
+  right_port: /dev/ttyACM3
+  left_port: /dev/ttyACM2
+  right_id: white_follower
+  left_id: black_follower
+  calibration_dir: "/home/daifengji/.cache/huggingface/lerobot/calibration/robots/so100_follower"
+  cameras:
+    left:
+      type: opencv
+      index_or_path: /dev/video4
+      width: 640
+      height: 480
+      fps: 30
+    right:
+      type: opencv
+      index_or_path: /dev/video2
+      width: 640
+      height: 480
+      fps: 30
+    top:
+      type: intelrealsense
+      serial_number_or_name: 346122071690
+      width: 640
+      height: 480
+      fps: 30
+
+teleop:
+  type: dual_so100_leader
+  right_port: /dev/ttyACM0
+  left_port: /dev/ttyACM1
+  right_id: white_leader
+  left_id: black_leader
+  calibration_dir: "/home/daifengji/.cache/huggingface/lerobot/calibration/teleoperators/so100_leader"
+
+display_data: true
