@@ -346,12 +346,12 @@ class RobotClient:
 
             # If there are no actions left in the queue, the observation must go through processing!
             observation.must_go = self.must_go and self.action_queue.empty()
+            self.send_observation(observation)
+
             self.logger.debug(f"QUEUE SIZE: {self.action_queue.qsize()} (Must go: {observation.must_go})")
             if observation.must_go:
                 # must-go flag will be set again after receiving actions
                 self.must_go = False
-
-            self.send_observation(observation)
 
             # Calculate comprehensive FPS metrics
             fps_metrics = self.fps_tracker.calculate_fps_metrics(observation.get_timestamp())
@@ -387,7 +387,7 @@ class RobotClient:
                 _performed_action = self.control_loop_action()
 
             """Control loop: (2) Streaming observations to the remote policy server"""
-            if self._ready_to_send_observation() or True:
+            if self._ready_to_send_observation():
                 _captured_observation = self.control_loop_observation(get_observation_fn)
 
             self.logger.warning(f"Control loop (ms): {(time.perf_counter() - control_loop_start) * 1000:.2f}")
@@ -454,7 +454,7 @@ def parse_args():
     parser.add_argument(
         "--robot-cameras",
         type=str,
-        default='{"laptop": {"index_or_path": 0, "width": 1920, "height": 1080, "fps": 30}, "phone": {"index_or_path": 1, "width": 1920, "height": 1080, "fps": 30}}',
+        default='{"laptop": {"index_or_path": 0, "width": 640, "height": 480, "fps": 30}, "phone": {"index_or_path": 1, "width": 640, "height": 480, "fps": 30}}',
         help="Cameras of the robot to connect to (default: {'laptop': {'index_or_path': 0, 'width': 1920, 'height': 1080, 'fps': 30}, 'phone': {'index_or_path': 1, 'width': 1920, 'height': 1080, 'fps': 30}})",
     )
 
