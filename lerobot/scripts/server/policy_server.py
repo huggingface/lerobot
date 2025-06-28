@@ -109,35 +109,35 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
         client_id = context.peer()
         self.logger.debug(f"Receiving observations from {client_id}")
 
-        for observation in request_iterator:
-            receive_time = time.time()  # comparing timestamps so need time.time()
-            start_deserialize = time.perf_counter()
-            timed_observation = pickle.loads(observation.data)  # nosec
-            deserialize_time = time.perf_counter() - start_deserialize
+        receive_time = time.time()  # comparing timestamps so need time.time()
+        start_deserialize = time.perf_counter()
+        received_bytes = receive_bytes_in_chunks(request_iterator, self._running_event)  # blocking call while looping over request_iterator
+        timed_observation = pickle.loads(received_bytes)  # nosec
+        deserialize_time = time.perf_counter() - start_deserialize
 
-            self.logger.debug(f"Received observation #{timed_observation.get_timestep()}")
+        self.logger.debug(f"Received observation #{timed_observation.get_timestep()}")
 
-            if not self._maybe_enqueue_observation(timed_observation):
-                continue
+        obs_timestep = timed_observation.get_timestep()
+        obs_timestamp = timed_observation.get_timestamp()
 
-            obs_timestep = timed_observation.get_timestep()
-            obs_timestamp = timed_observation.get_timestamp()
+        # Calculate FPS metrics
+        fps_metrics = self.fps_tracker.calculate_fps_metrics(obs_timestamp)
 
-            # Calculate FPS metrics
-            fps_metrics = self.fps_tracker.calculate_fps_metrics(obs_timestamp)
+        self.logger.info(
+            f"Received observation #{obs_timestep} | "
+            f"Avg FPS: {fps_metrics['avg_fps']:.2f} | "  # fps at which observations are received from client
+            f"Target: {fps_metrics['target_fps']:.2f} | "
+            f"One-way latency: {(receive_time - obs_timestamp) * 1000:.2f}ms"
+        )
 
-            self.logger.info(
-                f"Received observation #{obs_timestep} | "
-                f"Avg FPS: {fps_metrics['avg_fps']:.2f} | "  # fps at which observations are received from client
-                f"Server timestamp: {receive_time:.6f} | "
-                f"Client timestamp: {obs_timestamp:.6f} | "
-                f"Target: {fps_metrics['target_fps']:.2f}"
-            )
-
-            self.logger.debug(
-                f"Network latency: {receive_time - obs_timestamp:.6f}s | "
-                f"Deserialization time: {deserialize_time:.6f}s"
-            )
+        self.logger.debug(
+            f"Server timestamp: {receive_time:.6f} | "
+            f"Client timestamp: {obs_timestamp:.6f} | "
+            f"Deserialization time: {deserialize_time:.6f}s"
+        )
+        
+        if not self._maybe_enqueue_observation(timed_observation):  # TODO(fracapuano): check does not work on raw observsation need to transform it first
+            self.logger.info(f"Observation #{obs_timestep} has been filtered out")
 
         return async_inference_pb2.Empty()
 
@@ -168,7 +168,10 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
             action = async_inference_pb2.Action(data=action_bytes)
 
             self.logger.info(
-                f"Action chunk #{obs.get_timestep()} generated |Inference time: {inference_time:.2f}s |"
+                f"Action chunk #{obs.get_timestep()} generated | "
+                f"Inference time: {inference_time * 1000:.2f}ms | "
+                f"Serialize time: {serialize_time * 1000:.2f}ms | "
+                f"Total time: {(inference_time + serialize_time) * 1000:.2f}ms"
             )
 
             self.logger.debug(
@@ -237,112 +240,69 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
             for i, action in enumerate(action_chunk)
         ]
 
-    @torch.no_grad()
-    def _run_act_policy(self, observation: dict[str, torch.Tensor]) -> torch.Tensor:
-        """Run ACT-like policies"""
-        start_time = time.perf_counter()
-
-        # prepare observation for policy forward pass
-        batch = self.policy.normalize_inputs(observation)
-        normalize_time = time.perf_counter()
-        self.logger.debug(f"Observation normalization time: {normalize_time - start_time:.6f}s")
-
-        if self.policy.config.image_features:
-            batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
-            batch["observation.images"] = [batch[key] for key in self.policy.config.image_features]
-            prep_time = time.perf_counter()
-            self.logger.debug(f"Observation image preparation time: {prep_time - normalize_time:.6f}s")
-
-        # forward pass outputs up to policy.config.n_action_steps != actions_per_chunk
-        actions = self.policy.model(batch)[0][:, : self.config.actions_per_chunk]
-
-        actions = self.policy.unnormalize_outputs({"action": actions})["action"]
-
-        end_time = time.perf_counter()
-        self.logger.info(f"[ACT] Action chunk generation total time: {end_time - start_time:.6f}s")
-
-        return actions
-
-    @torch.no_grad()
-    def _run_pi0_policy(self, observation: dict[str, torch.Tensor]) -> torch.Tensor:
-        """Run PI0-like policies"""
-        raise NotImplementedError("PI0 policy not implemented yet")
-
-    @torch.no_grad()
-    def _run_smolvla_policy(
-        self, observation: dict[str, torch.Tensor], noise: Optional[torch.Tensor] = None
-    ) -> torch.Tensor:
-        """Run smolvla-like policies"""
-        observation = self.policy.normalize_inputs(observation)
-
-        images, img_masks = self.policy.prepare_images(observation)
-        state = self.policy.prepare_state(observation)
-        lang_tokens, lang_masks = self.policy.prepare_language(observation)
-
-        actions = self.policy.model.sample_actions(
-            images, img_masks, lang_tokens, lang_masks, state, noise=noise
+    def _prepare_observation(self, observation_t: TimedObservation) -> Observation:
+        """
+        Prepare observation, ready for policy inference.
+        E.g.: To keep observation sampling rate high (and network packet tiny) we send int8 [0,255] images from the
+        client and then convert them to float32 [0,1] images here, before running inference.
+        """
+        # RawObservation from robot.get_observation() - wrong keys, wrong dtype, wrong image shape
+        observation: Observation = raw_observation_to_observation(
+            observation_t.get_observation(),
+            self.lerobot_features,
+            self.policy.config.image_features,
+            self.device
         )
+        # processed Observation - right keys, right dtype, right image shape
 
-        # Unpad actions
-        original_action_dim = self.policy.config.action_feature.shape[0]
-        actions = actions[:, :, :original_action_dim]
+        return observation
 
-        actions = self.policy.unnormalize_outputs(
-            {"action": actions, "robot_type": observation["robot_type"]}
-        )["action"]
-
-        return actions
-
-    def _get_action_chunk(
-        self, observation: dict[str, torch.Tensor], policy_type: str = "act"
-    ) -> torch.Tensor:
+    def _get_action_chunk(self, observation: dict[str, torch.Tensor]) -> torch.Tensor:
         """Get an action chunk from the policy"""
-        if policy_type == "act":
-            return self._run_act_policy(observation)
-        elif policy_type == "smolvla":
-            return self._run_smolvla_policy(observation)
-        else:
-            raise ValueError(f"Policy class {policy_type} not supported")
+        return self.policy.predict_action_chunk(observation)
 
     def _predict_action_chunk(self, observation_t: TimedObservation) -> list[TimedAction]:
-        """Predict an action based on the observation"""
-        """1. Prepare observation.
-        To keep observation packet tiny we send int8 [0,255] images over the network and convert it
-        to float32 [0,1] images here, before running inference."""
+        """Predict an action chunk based on an observation"""
+        inference_starts = time.perf_counter()
+
+        """1. Prepare observation"""
         start_time = time.perf_counter()
-
-        observation = {}
-        for k, v in observation_t.get_observation().items():
-            if isinstance(v, torch.Tensor):  # VLAs present natural-language instructions in observations
-                if "image" in k:
-                    # Policy expects images in shape (B, C, H, W)
-                    observation[k] = prepare_image(v).unsqueeze(0).to(self.device, non_blocking=True)
-                else:
-                    observation[k] = v.to(self.device, non_blocking=True)
-            else:
-                observation[k] = v
-
-        prep_time = time.perf_counter()
-        self.logger.debug(f"Observation preparation time: {prep_time - start_time:.6f}s")
+        observation = self._prepare_observation(observation_t)
+        preprocessing_time = time.perf_counter() - start_time
 
         """2. Get action chunk"""
-        action_tensor = self._get_action_chunk(observation, self.policy_type)
+        start_time = time.perf_counter()
+        action_tensor = self._get_action_chunk(observation)
+        inference_time = time.perf_counter() - start_time
 
+        """3. Post-inference processing"""
+        start_time = time.perf_counter()
         # Move to CPU before serializing
         action_tensor = action_tensor.cpu().squeeze(0)
-
-        post_inference_time = time.perf_counter()
-        self.logger.debug(f"Post-inference processing start: {post_inference_time - prep_time:.6f}s")
 
         action_chunk = self._time_action_chunk(
             observation_t.get_timestamp(), list(action_tensor), observation_t.get_timestep()
         )
+        postprocessing_time = time.perf_counter() - start_time
+        inference_stops = time.perf_counter()
 
-        chunk_time = time.perf_counter()
+        self.logger.info(
+            f"Observation {observation_t.get_timestep()} |"
+            f"Inference time: {1000 * (inference_stops - inference_starts):.2f}ms"
+        )
+
+        # full-process latency breakdown for debugging purposes
+        self.logger.debug(
+            f"Observation {observation_t.get_timestep()} |"
+            f"Preprocessing time: {1000 * (preprocessing_time - inference_starts):.2f}ms |"
+            f"Inference time: {1000 * (inference_time - preprocessing_time):.2f}ms |"
+            f"Postprocessing time: {1000 * (postprocessing_time - inference_time):.2f}ms |"
+            f"Total time: {1000 * (postprocessing_time - inference_starts):.2f}ms"
+        )
 
         time.sleep(
-            max(0, self.config.inference_latency - max(0, chunk_time - start_time))
-        )  # sleep to control inference latency
+            max(0, self.config.inference_latency - max(0, time.perf_counter() - inference_starts))
+        )  # sleep controls inference latency
 
         return action_chunk
 
