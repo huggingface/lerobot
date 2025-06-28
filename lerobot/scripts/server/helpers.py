@@ -25,8 +25,16 @@ from lerobot.common.robots.utils import make_robot_from_config
 from lerobot.configs.types import PolicyFeature
 from lerobot.scripts.server.constants import supported_robots
 
+from lerobot.common.transport.utils import bytes_buffer_size
+from lerobot.common.transport import async_inference_pb2
+import io
+from typing import Any
+
 Observation = dict[str, torch.Tensor]
 Action = torch.Tensor
+
+# Additional type to distinguish between the raw observation and the observations ready for inference
+RawObservation = dict[str, torch.Tensor]
 
 
 def visualize_action_queue_size(action_queue_size: list[int]) -> None:
@@ -76,6 +84,28 @@ def resize_robot_observation_image(image: torch.tensor, resize_dims: tuple[int, 
     return resized.squeeze(0)
 
 
+def raw_observation_to_observation(
+    raw_observation: RawObservation, 
+    lerobot_features: dict[str, dict], 
+    policy_image_features: dict[str, PolicyFeature],
+    device: str
+) -> Observation:
+    observation = {}
+
+    raw_observation = prepare_raw_observation(raw_observation, lerobot_features, policy_image_features)
+    for k, v in raw_observation.items():
+        if isinstance(v, torch.Tensor):  # VLAs present natural-language instructions in observations
+            if "image" in k:
+                # Policy expects images in shape (B, C, H, W)
+                observation[k] = prepare_image(v).unsqueeze(0).to(device)
+            else:
+                observation[k] = v.to(device)
+        else:
+            observation[k] = v
+
+    return observation
+
+
 def prepare_image(image: torch.Tensor) -> torch.Tensor:
     """Minimal preprocessing to turn int8 images to float32 in [0, 1], and create a memory-contiguous tensor"""
     image = image.type(torch.float32) / 255
@@ -84,24 +114,30 @@ def prepare_image(image: torch.Tensor) -> torch.Tensor:
     return image
 
 
-def prepare_observation_for_policy(
-    robot_obs: dict, lerobot_features: dict[str, dict], policy_image_features: dict[str, PolicyFeature]
-) -> dict[str, torch.tensor]:
-    """First, turns the {motor.pos1:value1, motor.pos2:value2, ..., laptop:np.ndarray} into
-    {observation.state:[value1,value2,...], observation.images.laptop:np.ndarray}"""
+def prepare_raw_observation(
+    robot_obs: RawObservation, lerobot_features: dict[str, dict], policy_image_features: dict[str, PolicyFeature]
+) -> RawObservation:
+    """Matches keys from the raw robot_obs dict to the keys expected by a given policy (passed as
+    policy_image_features)."""
+    # 1. {motor.pos1:value1, motor.pos2:value2, ..., laptop:np.ndarray} -> 
+    # -> {observation.state:[value1,value2,...], observation.images.laptop:np.ndarray}
     lerobot_obs = build_dataset_frame(lerobot_features, robot_obs, prefix="observation")
 
-    """1. Greps all observation.images.<> keys"""
+    # 2. Greps all observation.images.<> keys
     image_keys = list(filter(is_image_key, lerobot_obs))
     # state's shape is expected as (B, state_dim)
     state_dict = {OBS_STATE: torch.tensor(lerobot_obs[OBS_STATE]).unsqueeze(0)}
     image_dict = {image_k: torch.tensor(lerobot_obs[image_k]) for image_k in image_keys}
 
-    # turning image features to (C, H, W) with H, W matching the policy image features
+    # Turns the image features to (C, H, W) with H, W matching the policy image features. 
+    # This reduces the resolution of the images
     image_dict = {
         key: resize_robot_observation_image(torch.tensor(lerobot_obs[key]), policy_image_features[key].shape)
         for key in image_keys
     }
+
+    if "task" in robot_obs:
+        state_dict["task"] = robot_obs["task"]
 
     return {**state_dict, **image_dict}
 
@@ -205,7 +241,7 @@ class TimedAction(TimedData):
 
 @dataclass
 class TimedObservation(TimedData):
-    observation: Observation
+    observation: RawObservation
     must_go: bool = False
 
     def get_observation(self):
@@ -244,6 +280,7 @@ class FPSTracker:
 class TinyPolicyConfig:
     policy_type: str
     pretrained_name_or_path: str
+    lerobot_features: dict[str, PolicyFeature]
     device: str = "cpu"
 
 
@@ -258,3 +295,79 @@ def observations_similar(obs1: TimedObservation, obs2: TimedObservation, atol: f
     obs2_state = obs2.get_observation()["observation.state"]
 
     return _compare_observation_states(obs1_state, obs2_state, atol=atol)
+
+
+def send_bytes_in_chunks(buffer: bytes, message_class: Any, log_prefix: str = "", silent: bool = True, chunk_size: int = 3*1024*1024):
+    # NOTE(fracapuano): Partially copied from lerobot.common.transport.utils.send_bytes_in_chunks. Duplication can't be avoided if we
+    # don't use a unique class for messages sent (due to the different transfer states sent). Also, I'd want more control over the
+    # chunk size as I am using it to send image observations.
+    buffer = io.BytesIO(buffer)
+    size_in_bytes = bytes_buffer_size(buffer)
+
+    sent_bytes = 0
+
+    logging_method = logging.info if not silent else logging.debug
+
+    logging_method(f"{log_prefix} Buffer size {size_in_bytes / 1024 / 1024} MB with")
+
+    while sent_bytes < size_in_bytes:
+        transfer_state = async_inference_pb2.TransferState.TRANSFER_MIDDLE
+
+        if sent_bytes + chunk_size >= size_in_bytes:
+            transfer_state = async_inference_pb2.TransferState.TRANSFER_END
+        elif sent_bytes == 0:
+            transfer_state = async_inference_pb2.TransferState.TRANSFER_BEGIN
+
+        size_to_read = min(chunk_size, size_in_bytes - sent_bytes)
+        chunk = buffer.read(size_to_read)
+
+        yield message_class(transfer_state=transfer_state, data=chunk)
+        sent_bytes += size_to_read
+        logging_method(f"{log_prefix} Sent {sent_bytes}/{size_in_bytes} bytes with state {transfer_state}")
+
+    logging_method(f"{log_prefix} Published {sent_bytes / 1024 / 1024} MB")
+
+
+def receive_bytes_in_chunks(iterator, continue_receiving: Event, log_prefix: str = ""):  # type: ignore
+    # NOTE(fracapuano): Partially copied from lerobot.common.transport.utils.receive_bytes_in_chunks. Duplication can't be avoided if we
+    # don't use a unique class for messages sent (due to the different transfer states sent). Also, on the server side the logic for receiving
+    # is opposite then the HIL-SERL design (my event showcases keeping on running instead of shutdown)
+    bytes_buffer = io.BytesIO()
+    step = 0
+
+    logging.info(f"{log_prefix} Starting receiver")
+    for item in iterator:
+        logging.debug(f"{log_prefix} Received item")
+        if not continue_receiving.is_set():
+            logging.info(f"{log_prefix} Shutting down receiver")
+            return
+
+        if item.transfer_state == async_inference_pb2.TransferState.TRANSFER_BEGIN:
+            bytes_buffer.seek(0)
+            bytes_buffer.truncate(0)
+            bytes_buffer.write(item.data)
+            logging.debug(f"{log_prefix} Received data at step 0")
+            step = 0
+
+        elif item.transfer_state == async_inference_pb2.TransferState.TRANSFER_MIDDLE:
+            bytes_buffer.write(item.data)
+            step += 1
+            logging.debug(f"{log_prefix} Received data at step {step}")
+
+        elif item.transfer_state == async_inference_pb2.TransferState.TRANSFER_END:
+            bytes_buffer.write(item.data)
+            logging.debug(f"{log_prefix} Received data at step end size {bytes_buffer_size(bytes_buffer)}")
+
+            complete_bytes = bytes_buffer.getvalue()
+
+            bytes_buffer.seek(0)
+            bytes_buffer.truncate(0)
+            step = 0
+            
+            logging.debug(f"{log_prefix} Queue updated")
+            return complete_bytes
+
+        else:
+            logging.warning(f"{log_prefix} Received unknown transfer state {item.transfer_state}")
+            raise ValueError(f"Received unknown transfer state {item.transfer_state}")
+

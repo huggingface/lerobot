@@ -38,11 +38,13 @@ from lerobot.scripts.server.robot_client import RobotClient
 def robot_client() -> RobotClient:
     """Fresh `RobotClient` instance for each test case (no threads started).
     Uses DummyRobot."""
-    from lerobot.configs.types import FeatureType, PolicyFeature
+    from lerobot.scripts.server.helpers import map_robot_keys_to_lerobot_features
     from tests.mocks.mock_robot import MockRobotConfig
 
     test_config = MockRobotConfig()
     robot = make_robot_from_config(test_config)
+
+    lerobot_features = map_robot_keys_to_lerobot_features(robot)
 
     # gRPC channel is not actually used in tests, so using a dummy address
     test_config = RobotClientConfig(
@@ -50,7 +52,7 @@ def robot_client() -> RobotClient:
         server_address="localhost:9999",
         policy_type="test",
         pretrained_name_or_path="test",
-        policy_image_features={"test": PolicyFeature(type=FeatureType.STATE, shape=(test_config.n_motors,))},
+        lerobot_features=lerobot_features
     )
 
     client = RobotClient(test_config)

@@ -32,10 +32,18 @@ service AsyncInference {
   rpc Stop(Empty) returns (Empty);
 }
 
+enum TransferState {
+    TRANSFER_UNKNOWN = 0;
+    TRANSFER_BEGIN = 1;
+    TRANSFER_MIDDLE = 2;
+    TRANSFER_END = 3;
+}
+
 // Messages
 message Observation {
   // sent by Robot, to remote Policy
-  bytes data = 1;
+  TransferState transfer_state = 1;  // Observations can be streamed exceeding 4MB of size
+  bytes data = 2;
 }
 
 message Action {
