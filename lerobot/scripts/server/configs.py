@@ -4,7 +4,6 @@ from typing import Callable, Optional
 import torch
 
 from lerobot.common.robots.robot import Robot
-from lerobot.configs.types import PolicyFeature
 from lerobot.scripts.server.constants import (
     DEFAULT_IDLE_WAIT,
     DEFAULT_INFERENCE_LATENCY,
@@ -93,7 +92,9 @@ class RobotClientConfig:
     pretrained_name_or_path: str = field(metadata={"help": "Pretrained model name or path"})
     # robot.get_observation() returns dict with keys different from the ones expected for recording a dataset/inference
     # The following field helps map these keys into the expected ones through the `build_dataset_frame` dataset's util
-    lerobot_features: dict[str, dict] = field(metadata={"help": "Features for dataset recording/inference, in the LeRobot format"})
+    lerobot_features: dict[str, dict] = field(
+        metadata={"help": "Features for dataset recording/inference, in the LeRobot format"}
+    )
 
     # Network configuration
     server_address: str = field(default="localhost:8080", metadata={"help": "Server address to connect to"})

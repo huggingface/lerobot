@@ -1,4 +1,5 @@
 import argparse
+import logging
 import pickle  # nosec
 import threading
 import time
@@ -18,19 +19,18 @@ from lerobot.scripts.server.configs import RobotClientConfig
 from lerobot.scripts.server.helpers import (
     Action,
     FPSTracker,
-    RawObservation,
     Observation,
+    RawObservation,
     TimedAction,
     TimedObservation,
     TinyPolicyConfig,
+    get_logger,
     make_robot,
     map_robot_keys_to_lerobot_features,
-    get_logger,
     validate_robot_cameras_for_policy,
     visualize_action_queue_size,
 )
 
-import logging
 
 class RobotClient:
     prefix = "robot_client"
@@ -393,7 +393,7 @@ class RobotClient:
             self.logger.warning(f"Control loop (ms): {(time.perf_counter() - control_loop_start) * 1000:.2f}")
             # Dynamically adjust sleep time to maintain the desired control frequency
             time.sleep(max(0, self.config.environment_dt - (time.perf_counter() - control_loop_start)))
-            
+
             control_loops += 1
 
         return _captured_observation, _performed_action
@@ -493,6 +493,7 @@ def async_client(args: argparse.Namespace):
     client = RobotClient(config)
 
     if client.start():
+
         def make_observation() -> TimedObservation:
             # Function to make observations starting from the robot's get_observation() method
             observation: RawObservation = client.robot.get_observation()
