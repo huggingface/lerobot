@@ -52,7 +52,7 @@ def robot_client() -> RobotClient:
         server_address="localhost:9999",
         policy_type="test",
         pretrained_name_or_path="test",
-        lerobot_features=lerobot_features
+        lerobot_features=lerobot_features,
     )
 
     client = RobotClient(test_config)

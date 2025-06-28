@@ -1,6 +1,5 @@
-from threading import Event
-
 import argparse
+import io
 import json
 import logging
 import logging.handlers
@@ -8,6 +7,8 @@ import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Event
+from typing import Any
 
 import matplotlib.pyplot as plt
 import torch
@@ -15,7 +16,6 @@ import torch
 from lerobot.common.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.common.constants import OBS_STATE
 from lerobot.common.datasets.utils import build_dataset_frame, hw_to_dataset_features
-from lerobot.common.utils.utils import init_logging
 
 # NOTE: Configs need to be loaded for the client to be able to instantiate the policy config
 from lerobot.common.policies.act.configuration_act import ACTConfig  # noqa: F401
@@ -26,13 +26,11 @@ from lerobot.common.policies.vqbet.configuration_vqbet import VQBeTConfig  # noq
 from lerobot.common.robots.robot import Robot
 from lerobot.common.robots.so100_follower import SO100FollowerConfig
 from lerobot.common.robots.utils import make_robot_from_config
+from lerobot.common.transport import async_inference_pb2
+from lerobot.common.transport.utils import bytes_buffer_size
+from lerobot.common.utils.utils import init_logging
 from lerobot.configs.types import PolicyFeature
 from lerobot.scripts.server.constants import supported_robots
-
-from lerobot.common.transport.utils import bytes_buffer_size
-from lerobot.common.transport import async_inference_pb2
-import io
-from typing import Any
 
 Observation = dict[str, torch.Tensor]
 Action = torch.Tensor
@@ -89,10 +87,10 @@ def resize_robot_observation_image(image: torch.tensor, resize_dims: tuple[int, 
 
 
 def raw_observation_to_observation(
-    raw_observation: RawObservation, 
-    lerobot_features: dict[str, dict], 
+    raw_observation: RawObservation,
+    lerobot_features: dict[str, dict],
     policy_image_features: dict[str, PolicyFeature],
-    device: str
+    device: str,
 ) -> Observation:
     observation = {}
 
@@ -119,11 +117,13 @@ def prepare_image(image: torch.Tensor) -> torch.Tensor:
 
 
 def prepare_raw_observation(
-    robot_obs: RawObservation, lerobot_features: dict[str, dict], policy_image_features: dict[str, PolicyFeature]
+    robot_obs: RawObservation,
+    lerobot_features: dict[str, dict],
+    policy_image_features: dict[str, PolicyFeature],
 ) -> RawObservation:
     """Matches keys from the raw robot_obs dict to the keys expected by a given policy (passed as
     policy_image_features)."""
-    # 1. {motor.pos1:value1, motor.pos2:value2, ..., laptop:np.ndarray} -> 
+    # 1. {motor.pos1:value1, motor.pos2:value2, ..., laptop:np.ndarray} ->
     # -> {observation.state:[value1,value2,...], observation.images.laptop:np.ndarray}
     lerobot_obs = build_dataset_frame(lerobot_features, robot_obs, prefix="observation")
 
@@ -133,7 +133,7 @@ def prepare_raw_observation(
     state_dict = {OBS_STATE: torch.tensor(lerobot_obs[OBS_STATE]).unsqueeze(0)}
     image_dict = {image_k: torch.tensor(lerobot_obs[image_k]) for image_k in image_keys}
 
-    # Turns the image features to (C, H, W) with H, W matching the policy image features. 
+    # Turns the image features to (C, H, W) with H, W matching the policy image features.
     # This reduces the resolution of the images
     image_dict = {
         key: resize_robot_observation_image(torch.tensor(lerobot_obs[key]), policy_image_features[key].shape)
@@ -170,11 +170,11 @@ def make_robot(args: argparse.Namespace) -> Robot:
 def get_logger(name: str, log_to_file: bool = True) -> logging.Logger:
     """
     Get a logger using the standardized logging setup from utils.py.
-    
+
     Args:
         name: Logger name (e.g., 'policy_server', 'robot_client')
         log_to_file: Whether to also log to a file
-        
+
     Returns:
         Configured logger instance
     """
@@ -184,10 +184,10 @@ def get_logger(name: str, log_to_file: bool = True) -> logging.Logger:
         log_file = Path(f"logs/{name}_{int(time.time())}.log")
     else:
         log_file = None
-    
+
     # Initialize the standardized logging
     init_logging(log_file=log_file, display_pid=False)
-    
+
     # Return a named logger
     return logging.getLogger(name)
 
@@ -278,7 +278,13 @@ def observations_similar(obs1: TimedObservation, obs2: TimedObservation, atol: f
     return _compare_observation_states(obs1_state, obs2_state, atol=atol)
 
 
-def send_bytes_in_chunks(buffer: bytes, message_class: Any, log_prefix: str = "", silent: bool = True, chunk_size: int = 3*1024*1024):
+def send_bytes_in_chunks(
+    buffer: bytes,
+    message_class: Any,
+    log_prefix: str = "",
+    silent: bool = True,
+    chunk_size: int = 3 * 1024 * 1024,
+):
     # NOTE(fracapuano): Partially copied from lerobot.common.transport.utils.send_bytes_in_chunks. Duplication can't be avoided if we
     # don't use a unique class for messages sent (due to the different transfer states sent). Also, I'd want more control over the
     # chunk size as I am using it to send image observations.
@@ -344,11 +350,10 @@ def receive_bytes_in_chunks(iterator, continue_receiving: Event, log_prefix: str
             bytes_buffer.seek(0)
             bytes_buffer.truncate(0)
             step = 0
-            
+
             logging.debug(f"{log_prefix} Queue updated")
             return complete_bytes
 
         else:
             logging.warning(f"{log_prefix} Received unknown transfer state {item.transfer_state}")
             raise ValueError(f"Received unknown transfer state {item.transfer_state}")
-

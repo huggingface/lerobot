@@ -17,16 +17,14 @@ from lerobot.scripts.server.configs import PolicyServerConfig
 from lerobot.scripts.server.constants import supported_policies
 from lerobot.scripts.server.helpers import (
     FPSTracker,
+    Observation,
     TimedAction,
     TimedObservation,
     TinyPolicyConfig,
-    observations_similar,
     get_logger,
+    observations_similar,
     raw_observation_to_observation,
-    Observation,
-    RawObservation,
-    Action,
-    receive_bytes_in_chunks
+    receive_bytes_in_chunks,
 )
 
 
@@ -46,7 +44,7 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
     @property
     def running(self):
         return self._running_event.is_set()
-    
+
     @property
     def policy_image_features(self):
         return self.policy.config.image_features
@@ -111,7 +109,9 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
 
         receive_time = time.time()  # comparing timestamps so need time.time()
         start_deserialize = time.perf_counter()
-        received_bytes = receive_bytes_in_chunks(request_iterator, self._running_event)  # blocking call while looping over request_iterator
+        received_bytes = receive_bytes_in_chunks(
+            request_iterator, self._running_event
+        )  # blocking call while looping over request_iterator
         timed_observation = pickle.loads(received_bytes)  # nosec
         deserialize_time = time.perf_counter() - start_deserialize
 
@@ -135,8 +135,10 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
             f"Client timestamp: {obs_timestamp:.6f} | "
             f"Deserialization time: {deserialize_time:.6f}s"
         )
-        
-        if not self._maybe_enqueue_observation(timed_observation):  # TODO(fracapuano): check does not work on raw observsation need to transform it first
+
+        if not self._maybe_enqueue_observation(
+            timed_observation
+        ):  # TODO(fracapuano): check does not work on raw observsation need to transform it first
             self.logger.info(f"Observation #{obs_timestep} has been filtered out")
 
         return async_inference_pb2.Empty()
@@ -251,7 +253,7 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
             observation_t.get_observation(),
             self.lerobot_features,
             self.policy.config.image_features,
-            self.device
+            self.device,
         )
         # processed Observation - right keys, right dtype, right image shape
 

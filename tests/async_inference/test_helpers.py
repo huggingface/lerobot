@@ -16,8 +16,8 @@ import math
 import pickle
 import time
 
-import torch
 import numpy as np
+import torch
 
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.scripts.server.helpers import (
@@ -25,9 +25,9 @@ from lerobot.scripts.server.helpers import (
     TimedAction,
     TimedObservation,
     observations_similar,
-    raw_observation_to_observation,
-    prepare_raw_observation,
     prepare_image,
+    prepare_raw_observation,
+    raw_observation_to_observation,
     resize_robot_observation_image,
 )
 
@@ -243,22 +243,22 @@ def test_prepare_image():
     """Test image preprocessing: int8 → float32, normalization to [0,1]."""
     # Create mock int8 image data
     image_int8 = torch.randint(0, 256, size=(3, 224, 224), dtype=torch.uint8)
-    
+
     processed = prepare_image(image_int8)
-    
+
     # Check dtype conversion
     assert processed.dtype == torch.float32
-    
+
     # Check normalization range
     assert processed.min() >= 0.0
     assert processed.max() <= 1.0
-    
+
     # Check that values are scaled correctly (255 → 1.0, 0 → 0.0)
     if image_int8.max() == 255:
         assert torch.isclose(processed.max(), torch.tensor(1.0), atol=1e-6)
     if image_int8.min() == 0:
         assert torch.isclose(processed.min(), torch.tensor(0.0), atol=1e-6)
-    
+
     # Check memory contiguity
     assert processed.is_contiguous()
 
@@ -268,15 +268,15 @@ def test_resize_robot_observation_image():
     # Create mock image: (H=480, W=640, C=3)
     original_image = torch.randint(0, 256, size=(480, 640, 3), dtype=torch.uint8)
     target_shape = (3, 224, 224)  # (C, H, W)
-    
+
     resized = resize_robot_observation_image(original_image, target_shape)
-    
+
     # Check output shape matches target
     assert resized.shape == target_shape
-    
+
     # Check that original image had different dimensions
     assert original_image.shape != resized.shape
-    
+
     # Check that resizing preserves value range
     assert resized.min() >= 0
     assert resized.max() <= 255
@@ -287,26 +287,26 @@ def test_prepare_raw_observation():
     robot_obs = _create_mock_robot_observation()
     lerobot_features = _create_mock_lerobot_features()
     policy_image_features = _create_mock_policy_image_features()
-    
+
     prepared = prepare_raw_observation(robot_obs, lerobot_features, policy_image_features)
-    
+
     # Check that state is properly extracted and batched
     assert "observation.state" in prepared
     state = prepared["observation.state"]
     assert isinstance(state, torch.Tensor)
     assert state.shape == (1, 4)  # Batched state
-    
+
     # Check that images are processed and resized
     assert "observation.images.laptop" in prepared
     assert "observation.images.phone" in prepared
-    
+
     laptop_img = prepared["observation.images.laptop"]
     phone_img = prepared["observation.images.phone"]
-    
+
     # Check image shapes match policy requirements
     assert laptop_img.shape == policy_image_features["observation.images.laptop"].shape
     assert phone_img.shape == policy_image_features["observation.images.phone"].shape
-    
+
     # Check that images are tensors
     assert isinstance(laptop_img, torch.Tensor)
     assert isinstance(phone_img, torch.Tensor)
@@ -318,34 +318,32 @@ def test_raw_observation_to_observation_basic():
     lerobot_features = _create_mock_lerobot_features()
     policy_image_features = _create_mock_policy_image_features()
     device = "cpu"
-    
-    observation = raw_observation_to_observation(
-        robot_obs, lerobot_features, policy_image_features, device
-    )
-    
+
+    observation = raw_observation_to_observation(robot_obs, lerobot_features, policy_image_features, device)
+
     # Check that all expected keys are present
     assert "observation.state" in observation
     assert "observation.images.laptop" in observation
     assert "observation.images.phone" in observation
-    
+
     # Check state processing
     state = observation["observation.state"]
     assert isinstance(state, torch.Tensor)
     assert state.device.type == device
     assert state.shape == (1, 4)  # Batched
-    
+
     # Check image processing
     laptop_img = observation["observation.images.laptop"]
     phone_img = observation["observation.images.phone"]
-    
+
     # Images should have batch dimension: (B, C, H, W)
     assert laptop_img.shape == (1, 3, 224, 224)
     assert phone_img.shape == (1, 3, 160, 160)
-    
+
     # Check device placement
     assert laptop_img.device.type == device
     assert phone_img.device.type == device
-    
+
     # Check image dtype and range (should be float32 in [0, 1])
     assert laptop_img.dtype == torch.float32
     assert phone_img.dtype == torch.float32
@@ -361,11 +359,9 @@ def test_raw_observation_to_observation_with_non_tensor_data():
     lerobot_features = _create_mock_lerobot_features()
     policy_image_features = _create_mock_policy_image_features()
     device = "cpu"
-    
-    observation = raw_observation_to_observation(
-        robot_obs, lerobot_features, policy_image_features, device
-    )
-    
+
+    observation = raw_observation_to_observation(robot_obs, lerobot_features, policy_image_features, device)
+
     # Check that task string is preserved
     assert "task" in observation
     assert observation["task"] == "pick up the red cube"
@@ -374,17 +370,15 @@ def test_raw_observation_to_observation_with_non_tensor_data():
 
 @torch.no_grad()
 def test_raw_observation_to_observation_device_handling():
-    """Test that tensors are properly moved to the specified device."""    
+    """Test that tensors are properly moved to the specified device."""
     device = "mps" if torch.backends.mps.is_available() else "cpu"
-    
+
     robot_obs = _create_mock_robot_observation()
     lerobot_features = _create_mock_lerobot_features()
     policy_image_features = _create_mock_policy_image_features()
-    
-    observation = raw_observation_to_observation(
-        robot_obs, lerobot_features, policy_image_features, device
-    )
-    
+
+    observation = raw_observation_to_observation(robot_obs, lerobot_features, policy_image_features, device)
+
     # Check that all tensors are on the correct device
     for key, value in observation.items():
         if isinstance(value, torch.Tensor):
@@ -401,10 +395,10 @@ def test_raw_observation_to_observation_deterministic():
     # Run twice with same input
     obs1 = raw_observation_to_observation(robot_obs, lerobot_features, policy_image_features, device)
     obs2 = raw_observation_to_observation(robot_obs, lerobot_features, policy_image_features, device)
-    
+
     # Results should be identical
     assert set(obs1.keys()) == set(obs2.keys())
-    
+
     for key in obs1:
         if isinstance(obs1[key], torch.Tensor):
             torch.testing.assert_close(obs1[key], obs2[key])
@@ -417,8 +411,8 @@ def test_image_processing_pipeline_preserves_content():
     # Create an image with a specific pattern
     original_img = np.zeros((100, 100, 3), dtype=np.uint8)
     original_img[25:75, 25:75, :] = 255  # White square in center
-    
-    robot_obs = {"shoulder": 1., "elbow": 1., "wrist": 1., "gripper": 1., "laptop": original_img}
+
+    robot_obs = {"shoulder": 1.0, "elbow": 1.0, "wrist": 1.0, "gripper": 1.0, "laptop": original_img}
     lerobot_features = {
         "observation.state": {
             "dtype": "float32",
@@ -429,7 +423,7 @@ def test_image_processing_pipeline_preserves_content():
             "dtype": "image",
             "shape": [100, 100, 3],
             "names": ["height", "width", "channels"],
-        }
+        },
     }
     policy_image_features = {
         "observation.images.laptop": PolicyFeature(
@@ -441,10 +435,10 @@ def test_image_processing_pipeline_preserves_content():
     observation = raw_observation_to_observation(robot_obs, lerobot_features, policy_image_features, "cpu")
 
     processed_img = observation["observation.images.laptop"].squeeze(0)  # Remove batch dim
-    
+
     # Check that the center region has higher values than corners
     # Due to bilinear interpolation, exact values will change but pattern should remain
     center_val = processed_img[:, 25, 25].mean()  # Center of 50x50 image
-    corner_val = processed_img[:, 5, 5].mean()   # Corner
-    
+    corner_val = processed_img[:, 5, 5].mean()  # Corner
+
     assert center_val > corner_val, "Image processing should preserve recognizable patterns"
