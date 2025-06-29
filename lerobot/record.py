@@ -223,6 +223,18 @@ def record_loop(
         # so action actually sent is saved in the dataset.
         sent_action = robot.send_action(action)
 
+        # ------------------------------------------------------------------
+        # Haptic feedback
+        # ------------------------------------------------------------------
+        if teleop is not None and hasattr(robot, "get_feedback"):
+            try:
+                feedback = robot.get_feedback()
+                if feedback:
+                    teleop.send_feedback(feedback)
+            except Exception as e:
+                # Log but don't crash the recording if feedback fails
+                logging.warning(f"Failed to send feedback: {e}")
+
         if dataset is not None:
             action_frame = build_dataset_frame(dataset.features, sent_action, prefix="action")
             frame = {**observation_frame, **action_frame}

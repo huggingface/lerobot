@@ -75,7 +75,11 @@ class KochScrewdriverLeader(Teleoperator):
 
     @property
     def feedback_features(self) -> dict[str, type]:
-        return {}
+        # A single scalar in the range [0.0, 1.0]. A value of 0 disables feedback,
+        # while 1.0 applies the maximum offset defined by `self.config.haptic_range`.
+        # Downstream code (e.g. the follower) can populate this field when it wants
+        # the operator to feel a brief haptic bump.
+        return {"haptic": float}
 
     @property
     def is_connected(self) -> bool:
@@ -211,13 +215,13 @@ class KochScrewdriverLeader(Teleoperator):
                 #   • GAIN maps the 0-100 gripper position range to an appropriate velocity range.
                 #   • With GAIN = 10 and neutral = 50, the resulting velocity is within ±500.
                 #   • XL330-M077 goal-velocity limit is ±2047 (≈ ±468 RPM at 0.229 RPM/unit).
-                GAIN = 10.0
+                GAIN = 4.0
 
                 # Invert the sign so sequeezing the gripper will move the screwdriver clockwise
                 vel_cmd = -delta * GAIN
 
                 # Step 3: Clamp for safety (in case GAIN/neutral is changed)
-                MAX_VEL = 700
+                MAX_VEL = 250
                 vel_cmd = max(min(vel_cmd, MAX_VEL), -MAX_VEL)
 
                 # Step 4: Dead-band — stop very small residual motions around neutral
@@ -234,8 +238,40 @@ class KochScrewdriverLeader(Teleoperator):
         return action
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
-        # TODO(rcadene, aliberts): Implement force feedback
-        raise NotImplementedError
+        """Apply simple haptic feedback using the leader gripper motor.
+
+        The gripper is in CURRENT_POSITION mode.  By nudging its goal position a
+        few counts away from the neutral `gripper_open_pos` we create a small
+        reactive force that the operator can feel between their fingers.
+
+        Expect a single key ``"haptic"`` in *feedback* whose value should be a
+        float in the range :math:`[0.0, 1.0]`.  A value of ``0.0`` cancels the
+        bump (returns to neutral), whereas ``1.0`` commands the maximum delta
+        defined by ``self.config.haptic_range``.
+        """
+
+        if not self.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+
+        if not feedback:
+            return  # nothing to do
+
+        # Extract the desired intensity (default = 0 → neutral)
+        intensity = float(feedback.get("haptic", 0.0))
+
+        # Clamp to safe bounds
+        intensity = max(0.0, min(1.0, intensity))
+
+        # Compute the goal position offset
+        delta = intensity * float(self.config.haptic_range)
+
+        goal_pos = float(self.config.gripper_open_pos + delta)
+
+        # Constrain to the valid 0–100 range expected by RANGE_0_100 normal mode
+        goal_pos = max(0.0, min(100.0, goal_pos))
+
+        # Write the goal position.  Using a single write keeps traffic low.
+        self.bus.write("Goal_Position", "gripper", int(goal_pos))
 
     def disconnect(self) -> None:
         if not self.is_connected:

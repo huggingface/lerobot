@@ -99,6 +99,16 @@ def teleop_loop(
                     rr.log(f"action_{act}", rr.Scalar(val))
 
         robot.send_action(action)
+
+        # Haptic feedback if available
+        if hasattr(robot, "get_feedback"):
+            try:
+                feedback = robot.get_feedback()
+                if feedback:
+                    teleop.send_feedback(feedback)
+            except Exception as e:
+                logging.warning(f"Failed to send feedback: {e}")
+
         dt_s = time.perf_counter() - loop_start
         busy_wait(1 / fps - dt_s)
 

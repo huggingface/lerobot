@@ -28,3 +28,11 @@ class KochScrewdriverLeaderConfig(TeleoperatorConfig):
     # Sets the arm in torque mode with the gripper motor set to this value. This makes it possible to squeeze
     # the gripper and have it spring back to an open position on its own.
     gripper_open_pos: float = 50.0
+
+    # Maximum offset applied to the gripper position when sending haptic feedback.
+    # A value in encoder units (0-100) that will be added or subtracted from
+    # `gripper_open_pos` in proportion to the received feedback strength.
+    # For example with `haptic_range=4`, a feedback value of 1.0 will command the
+    # gripper to move 4 encoder counts from its neutral position, creating a small
+    # force the user can feel.  Defaults to 4 which is perceivable yet safe.
+    haptic_range: float = 4.0

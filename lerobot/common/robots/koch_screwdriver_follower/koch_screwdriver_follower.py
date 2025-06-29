@@ -164,11 +164,23 @@ class KochScrewdriverFollower(Robot):
             # Screwdriver needs to be in velocity mode. Using lekiwi's base_motors wheel servos config as a reference lerobot/common/robots/lekiwi/lekiwi.py
             self.bus.write("Operating_Mode", "screwdriver", OperatingMode.VELOCITY.value)
 
+            # Apply current & velocity limits for the screwdriver motor to avoid
+            # over-current shutdowns.  Current_Limit expects raw units.
+            self._screw_limit = int(self.config.screwdriver_current_limit)
+            self.bus.write("Current_Limit", "screwdriver", self._screw_limit)
+
+            # Optional: limit maximum velocity (raw units) for safety.
+            self.bus.write("Velocity_Limit", "screwdriver", 400)
+
             # Set better PID values to close the gap between recorded states and actions
             # TODO(rcadene): Implement an automatic procedure to set optimal PID values for each motor
             self.bus.write("Position_P_Gain", "elbow_flex", 1500)
             self.bus.write("Position_I_Gain", "elbow_flex", 0)
             self.bus.write("Position_D_Gain", "elbow_flex", 600)
+
+        # State variable used by the software clutch / haptic feedback
+        self._clutch_engaged: bool = False
+        self._clutch_release_time: float = 0.0
 
     def setup_motors(self) -> None:
         for motor in reversed(self.bus.motors):
@@ -246,6 +258,10 @@ class KochScrewdriverFollower(Robot):
         if goal_pos:
             self.bus.sync_write("Goal_Position", goal_pos)
         if goal_vel:
+            # Apply software clutch for the screwdriver motor
+            if "screwdriver" in goal_vel:
+                goal_vel["screwdriver"] = self._apply_clutch(goal_vel["screwdriver"])
+
             self.bus.sync_write("Goal_Velocity", goal_vel)
 
         # Merge and return the actually sent commands
@@ -262,3 +278,61 @@ class KochScrewdriverFollower(Robot):
             cam.disconnect()
 
         logger.info(f"{self} disconnected.")
+
+    # ------------------------------------------------------------------
+    # Software-clutch helpers
+    # ------------------------------------------------------------------
+
+    def _read_screwdriver_current(self) -> int:
+        """Return present current (raw units) for the screwdriver motor."""
+
+        return self.bus.sync_read("Present_Current", ["screwdriver"], num_retry=1)["screwdriver"]
+
+    def _apply_clutch(self, vel_cmd: int) -> int:
+        """Cut velocity to 0 if current close to limit and update clutch flag."""
+
+        present = abs(self._read_screwdriver_current())
+        threshold_on  = self._screw_limit * self.config.clutch_ratio          # engage clutch
+        threshold_off = self._screw_limit * (self.config.clutch_ratio * 0.6)  # release clutch (hysteresis)
+
+        now = time.perf_counter()
+
+        # If still in cooldown window → force velocity to 0
+        if self._clutch_engaged and now < self._clutch_release_time:
+            return 0
+
+        if self._clutch_engaged and now >= self._clutch_release_time:
+            # Cool-down ended, try re-enable torque and resume normal control
+            try:
+                self.bus.enable_torque("screwdriver")
+            except Exception as e:
+                logger.debug(f"Could not re-enable torque: {e}")
+            self._clutch_engaged = False
+
+        if not self._clutch_engaged and present >= threshold_on:
+            # Engage clutch: cut velocity and (best-effort) disable torque to drop current fast
+            try:
+                self.bus.disable_torque("screwdriver")
+            except Exception as e:
+                logger.debug(f"Torque disable failed: {e}")
+            self._clutch_engaged = True
+            # Start cool-down timer
+            self._clutch_release_time = now + self.config.clutch_cooldown_s
+            print(f"Clutch engaged: {present} >= {threshold_on}")
+            return 0
+
+        return vel_cmd
+
+    def get_feedback(self) -> dict[str, float]:
+        """Return haptic feedback intensity for the leader.
+
+        * 1.0 when clutch engaged
+        * 0.0 otherwise
+        """
+
+        # Emit haptic only while in cool-down (first half of the window to
+        # avoid spamming).
+        if self._clutch_engaged:
+            if time.perf_counter() < self._clutch_release_time - self.config.clutch_cooldown_s * 0.5:
+                return {"haptic": 1.0}
+        return {"haptic": 0.0}
