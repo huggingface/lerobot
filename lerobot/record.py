@@ -294,7 +294,8 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     episodes_since_last_encoding = 0
     last_encoded_episode = dataset.num_episodes - 1  # Start from current episode count
 
-    for recorded_episodes in range(cfg.dataset.num_episodes):
+    recorded_episodes = 0
+    while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
         log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
         record_loop(
             robot=robot,
@@ -353,6 +354,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         else:
             # Original behavior: encode videos immediately
             dataset.save_episode(encode_videos=True)
+        recorded_episodes += 1
 
         if events["stop_recording"]:
             break
