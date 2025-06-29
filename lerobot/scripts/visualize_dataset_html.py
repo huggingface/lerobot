@@ -1,3 +1,64 @@
+import argparse
+import csv
+import ipaddress
+import json
+import logging
+import re
+import shutil
+import socket
+import tempfile
+import urllib.parse
+from io import StringIO
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import requests
+from flask import Flask, redirect, render_template, request, url_for
+
+from lerobot import available_datasets
+from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.common.datasets.utils import IterableNamespace
+from lerobot.common.utils.utils import init_logging
+
+
+def validate_url(url):
+    """
+    Validate URL to prevent SSRF attacks.
+    Returns True if URL is safe, False otherwise.
+    """
+    try:
+        parsed = urllib.parse.urlparse(url)
+
+        # Only allow http and https schemes
+        if parsed.scheme not in ["http", "https"]:
+            return False
+
+        # Allowlist of permitted hosts (add your allowed domains here)
+        allowed_hosts = ["huggingface.co", "cdn.huggingface.co", "raw.githubusercontent.com", "github.com"]
+
+        # Check if host is in allowlist
+        if parsed.hostname not in allowed_hosts:
+            return False
+
+        # Additional check: resolve hostname and ensure it's not a private IP
+        try:
+            ip = socket.gethostbyname(parsed.hostname)
+            ip_obj = ipaddress.ip_address(ip)
+
+            # Reject private, loopback, and multicast addresses
+            if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_multicast:
+                return False
+
+        except (socket.gaierror, ValueError):
+            return False
+
+        return True
+
+    except Exception:
+        return False
+
+
 #!/usr/bin/env python
 
 # Copyright 2024 The HuggingFace Inc. team. All rights reserved.
@@ -51,26 +112,6 @@ python lerobot/scripts/visualize_dataset_html.py \
     --episodes 7 3 5 1 4
 ```
 """
-
-import argparse
-import csv
-import json
-import logging
-import re
-import shutil
-import tempfile
-from io import StringIO
-from pathlib import Path
-
-import numpy as np
-import pandas as pd
-import requests
-from flask import Flask, redirect, render_template, request, url_for
-
-from lerobot import available_datasets
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.datasets.utils import IterableNamespace
-from lerobot.common.utils.utils import init_logging
 
 
 def run_server(
@@ -195,6 +236,9 @@ def run_server(
                 }
                 for video_key in video_keys
             ]
+
+            if not validate_url(url):
+                raise ValueError("Invalid or unsafe URL provided")
 
             response = requests.get(
                 f"https://huggingface.co/datasets/{repo_id}/resolve/main/meta/episodes.jsonl", timeout=5
@@ -330,6 +374,9 @@ def get_episode_language_instruction(dataset: LeRobotDataset, ep_index: int) -> 
 
 
 def get_dataset_info(repo_id: str) -> IterableNamespace:
+    if not validate_url(url):
+        raise ValueError("Invalid or unsafe URL provided")
+
     response = requests.get(
         f"https://huggingface.co/datasets/{repo_id}/resolve/main/meta/info.json", timeout=5
     )
