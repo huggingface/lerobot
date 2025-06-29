@@ -1022,6 +1022,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         tolerances_s: dict | None = None,
         download_videos: bool = True,
         video_backend: str | None = None,
+        revision: str | None = None,
     ):
         super().__init__()
         self.repo_ids = repo_ids
@@ -1039,6 +1040,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
                 tolerance_s=self.tolerances_s[repo_id],
                 download_videos=download_videos,
                 video_backend=video_backend,
+                revision=revision,
             )
             for repo_id in repo_ids
         ]
@@ -1149,6 +1151,60 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         """
         # 1e-4 to account for possible numerical error
         return 1 / self.fps - 1e-4
+
+    @property
+    def episode_data_index(self):
+        """Episode data index that combines all datasets."""
+        # Create a combined episode data index by concatenating from all datasets
+        combined_from = []
+        combined_to = []
+        offset = 0
+
+        for dataset in self._datasets:
+            from_values = dataset.episode_data_index["from"] + offset
+            to_values = dataset.episode_data_index["to"] + offset
+            combined_from.extend(from_values.tolist())
+            combined_to.extend(to_values.tolist())
+            offset = to_values.max().item()
+
+        return {
+            "from": torch.LongTensor(combined_from),
+            "to": torch.LongTensor(combined_to),
+        }
+
+    @property
+    def meta(self):
+        """Provide a meta-like interface for compatibility with LeRobotDataset."""
+
+        # Create a simple object to hold the metadata properties
+        class MultiDatasetMeta:
+            def __init__(self, dataset):
+                self.dataset = dataset
+                self.stats = dataset.stats
+
+            @property
+            def fps(self):
+                return self.dataset.fps
+
+            @property
+            def info(self):
+                # Return info dict that mimics the first dataset's info
+                return self.dataset._datasets[0].meta.info
+
+            @property
+            def features(self):
+                # Return the features from the first dataset to ensure compatibility
+                return self.dataset._datasets[0].meta.features
+
+            @property
+            def camera_keys(self):
+                return self.dataset.camera_keys
+
+            @property
+            def video_frame_keys(self):
+                return self.dataset.video_frame_keys
+
+        return MultiDatasetMeta(self)
 
     def __len__(self):
         return self.num_frames
