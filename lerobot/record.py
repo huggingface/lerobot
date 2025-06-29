@@ -224,12 +224,12 @@ def record_loop(
         if display_data:
             for obs, val in observation.items():
                 if isinstance(val, float):
-                    rr.log(f"observation.{obs}", rr.Scalar(val))
+                    rr.log(f"observation.{obs}", rr.Scalars(val))
                 elif isinstance(val, np.ndarray):
                     rr.log(f"observation.{obs}", rr.Image(val), static=True)
             for act, val in action.items():
                 if isinstance(val, float):
-                    rr.log(f"action.{act}", rr.Scalar(val))
+                    rr.log(f"action.{act}", rr.Scalars(val))
 
         dt_s = time.perf_counter() - start_loop_t
         busy_wait(1 / fps - dt_s)
