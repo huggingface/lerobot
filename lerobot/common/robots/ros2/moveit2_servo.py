@@ -106,10 +106,10 @@ class MoveIt2Servo:
 
         self._twist_msg.header.frame_id = self._frame_id
         self._twist_msg.header.stamp = self._node.get_clock().now().to_msg()
-        self._twist_msg.twist.linear.x = linear[0]
-        self._twist_msg.twist.linear.y = linear[1]
-        self._twist_msg.twist.linear.z = linear[2]
-        self._twist_msg.twist.angular.x = angular[0]
-        self._twist_msg.twist.angular.y = angular[1]
-        self._twist_msg.twist.angular.z = angular[2]
+        self._twist_msg.twist.linear.x = float(linear[0])
+        self._twist_msg.twist.linear.y = float(linear[1])
+        self._twist_msg.twist.linear.z = float(linear[2])
+        self._twist_msg.twist.angular.x = float(angular[0])
+        self._twist_msg.twist.angular.y = float(angular[1])
+        self._twist_msg.twist.angular.z = float(angular[2])
         self._twist_pub.publish(self._twist_msg)

@@ -85,7 +85,7 @@ class AnninAR4Config(ROS2Config):
     AR4-specific settings
     """
 
-    action_type: ActionType = ActionType.JOINT_VELOCITY
+    action_type: ActionType = ActionType.CARTESIAN_VELOCITY
 
     ros2_interface: ROS2InterfaceConfig = field(
         default_factory=lambda: ROS2InterfaceConfig(
