@@ -23,7 +23,6 @@ class RobotKinematics:
         urdf_path: str,
         target_frame_name: str = "gripperframe",
         joint_names: list[str] = None,
-        orientation_weight: float = 0.01,
     ):
         """
         Initialize placo-based kinematics solver.
@@ -32,7 +31,6 @@ class RobotKinematics:
             urdf_path: Path to the robot URDF file
             target_frame_name: Name of the end-effector frame in the URDF
             joint_names: List of joint names to use for the kinematics solver
-            orientation_weight: Weight for orientation constraint in IK, set to 0.0 to only constrain position
         """
         try:
             import placo
@@ -53,9 +51,6 @@ class RobotKinematics:
 
         # Initialize frame task for IK
         self.tip_frame = self.solver.add_frame_task(self.target_frame_name, np.eye(4))
-
-        # Set orientation weight
-        self.orientation_weight = orientation_weight
 
     def forward_kinematics(self, robot_pos_deg):
         """
@@ -81,13 +76,15 @@ class RobotKinematics:
         # Get the transformation matrix
         return self.robot.get_T_world_frame(self.target_frame_name)
 
-    def inverse_kinematics(self, current_joint_pos, desired_ee_pose):
+    def inverse_kinematics(self, current_joint_pos, desired_ee_pose, position_weight=1.0, orientation_weight=0.01):
         """
         Compute inverse kinematics using placo solver.
 
         Args:
             current_joint_pos: Current joint positions in degrees (used as initial guess)
             desired_ee_pose: Target end-effector pose as a 4x4 transformation matrix
+            position_weight: Weight for position constraint in IK
+            orientation_weight: Weight for orientation constraint in IK, set to 0.0 to only constrain position
 
         Returns:
             Joint positions in degrees that achieve the desired end-effector pose
@@ -104,7 +101,7 @@ class RobotKinematics:
         self.tip_frame.T_world_frame = desired_ee_pose
 
         # Configure the task based on position_only flag
-        self.tip_frame.configure(self.target_frame_name, "soft", 1.0, self.orientation_weight)
+        self.tip_frame.configure(self.target_frame_name, "soft", position_weight, orientation_weight)
 
         # Solve IK
         self.solver.solve(True)
