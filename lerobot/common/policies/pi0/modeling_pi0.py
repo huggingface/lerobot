@@ -257,6 +257,54 @@ class PI0Policy(PreTrainedPolicy):
         """This should be called whenever the environment is reset."""
         self._action_queue = deque([], maxlen=self.config.n_action_steps)
 
+    def _transform_state_dict_keys(self, state_dict: dict) -> dict:
+        """Transform state dict keys to match expected model structure."""
+        import re
+
+        transformed_dict = {}
+
+        for key, value in state_dict.items():
+            new_key = key
+
+            # Apply transformations for PaliGemma components
+            # model.paligemma_with_expert.paligemma.language_model.lm_head -> model.paligemma_with_expert.paligemma.lm_head
+            new_key = re.sub(r"\.paligemma\.language_model\.lm_head", ".paligemma.lm_head", new_key)
+
+            # model.paligemma_with_expert.paligemma.language_model.model -> model.paligemma_with_expert.paligemma.model.language_model
+            new_key = re.sub(
+                r"\.paligemma\.language_model\.model", ".paligemma.model.language_model", new_key
+            )
+
+            # model.paligemma_with_expert.paligemma.vision_tower -> model.paligemma_with_expert.paligemma.model.vision_tower
+            new_key = re.sub(r"\.paligemma\.vision_tower", ".paligemma.model.vision_tower", new_key)
+
+            # model.paligemma_with_expert.paligemma.multi_modal_projector -> model.paligemma_with_expert.paligemma.model.multi_modal_projector
+            new_key = re.sub(
+                r"\.paligemma\.multi_modal_projector", ".paligemma.model.multi_modal_projector", new_key
+            )
+
+            transformed_dict[new_key] = value
+
+        return transformed_dict
+
+    @classmethod
+    def _load_as_safetensor(
+        cls, model: "PI0Policy", model_file: str, map_location: str, strict: bool
+    ) -> "PI0Policy":
+        """Override to apply key transformations before loading."""
+        from safetensors.torch import load_file
+
+        # Load the state dict from file
+        state_dict = load_file(model_file, device=map_location)
+
+        # Apply key transformations
+        transformed_state_dict = model._transform_state_dict_keys(state_dict)
+
+        # Load the transformed state dict
+        model.load_state_dict(transformed_state_dict, strict=strict)
+
+        return model
+
     def get_optim_params(self) -> dict:
         return self.parameters()
 
