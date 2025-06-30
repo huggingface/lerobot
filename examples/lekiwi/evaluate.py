@@ -49,6 +49,7 @@ while recorded_episodes < NUM_EPISODES and not events["stop_recording"]:
     # Run the policy inference loop
     record_loop(
         robot=robot,
+        events=events,
         fps=FPS,
         policy=policy,
         dataset=dataset,
