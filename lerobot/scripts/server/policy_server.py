@@ -143,8 +143,9 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
 
         return async_inference_pb2.Empty()
 
-    def StreamActions(self, request, context):  # noqa: N802
-        """Stream actions to the robot client"""
+    def GetActions(self, request, context):  # noqa: N802
+        """Returns actions to the robot client. Actions are sent as a single
+        chunk, containing multiple actions."""
         client_id = context.peer()
         self.logger.debug(f"Client {client_id} connected for action streaming")
 
@@ -162,11 +163,11 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
             inference_time = time.perf_counter() - start_time
 
             start_time = time.perf_counter()
-            action_bytes = pickle.dumps(action_chunk)  # nosec
+            actions_bytes = pickle.dumps(action_chunk)  # nosec
             serialize_time = time.perf_counter() - start_time
 
-            # Create and return the Action
-            action = async_inference_pb2.Action(data=action_bytes)
+            # Create and return the action chunk
+            actions = async_inference_pb2.Actions(data=actions_bytes)
 
             self.logger.info(
                 f"Action chunk #{obs.get_timestep()} generated | "
@@ -180,7 +181,7 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
                 f"Total time: {inference_time + serialize_time:.2f}s"
             )
 
-            yield action
+            return actions
 
         except Empty:  # no observation added to queue in obs_queue_timeout
             return async_inference_pb2.Empty()

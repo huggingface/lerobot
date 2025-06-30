@@ -215,63 +215,61 @@ class RobotClient:
         while self.running:
             try:
                 # Use StreamActions to get a stream of actions from the server
-                for actions_chunk in self.stub.StreamActions(async_inference_pb2.Empty()):
-                    receive_time = time.time()
+                actions_chunk = self.stub.GetActions(async_inference_pb2.Empty())
+                receive_time = time.time()
 
-                    # Deserialize bytes back into list[TimedAction]
-                    deserialize_start = time.perf_counter()
-                    timed_actions = pickle.loads(actions_chunk.data)  # nosec
-                    deserialize_time = time.perf_counter() - deserialize_start
+                # Deserialize bytes back into list[TimedAction]
+                deserialize_start = time.perf_counter()
+                timed_actions = pickle.loads(actions_chunk.data)  # nosec
+                deserialize_time = time.perf_counter() - deserialize_start
 
-                    self.action_chunk_size = max(self.action_chunk_size, len(timed_actions))
+                self.action_chunk_size = max(self.action_chunk_size, len(timed_actions))
 
-                    start_time = time.perf_counter()
+                start_time = time.perf_counter()
 
-                    self.logger.info(f"Current latest action: {self.latest_action}")
+                self.logger.info(f"Current latest action: {self.latest_action}")
 
-                    # Get queue state before changes
-                    old_size, old_timesteps = self._inspect_action_queue()
-                    if not old_timesteps:
-                        old_timesteps = [self.latest_action]  # queue was empty
+                # Get queue state before changes
+                old_size, old_timesteps = self._inspect_action_queue()
+                if not old_timesteps:
+                    old_timesteps = [self.latest_action]  # queue was empty
 
-                    # Log incoming actions
-                    incoming_timesteps = [a.get_timestep() for a in timed_actions]
+                # Log incoming actions
+                incoming_timesteps = [a.get_timestep() for a in timed_actions]
 
-                    # Calculate network latency if we have matching observations
-                    if len(timed_actions) > 0:
-                        first_action_timestep = timed_actions[0].get_timestep()
-                        server_to_client_latency = (receive_time - timed_actions[0].get_timestamp()) * 1000
-
-                        self.logger.info(
-                            f"Received action chunk for step #{first_action_timestep} | "
-                            f"Latest action: #{self.latest_action} | "
-                            f"Network latency (server->client): {server_to_client_latency:.2f}ms | "
-                            f"Deserialization time: {deserialize_time * 1000:.2f}ms"
-                        )
-
-                    # Update action queue
-                    start_time = time.perf_counter()
-                    self._aggregate_action_queues(timed_actions, self.config.aggregate_fn)
-                    queue_update_time = time.perf_counter() - start_time
-
-                    self.must_go = (
-                        True  # after receiving actions, next empty queue triggers must-go processing!
-                    )
-
-                    # Get queue state after changes
-                    new_size, new_timesteps = self._inspect_action_queue()
+                # Calculate network latency if we have matching observations
+                if len(timed_actions) > 0:
+                    first_action_timestep = timed_actions[0].get_timestep()
+                    server_to_client_latency = (receive_time - timed_actions[0].get_timestamp()) * 1000
 
                     self.logger.info(
-                        f"Queue update complete ({queue_update_time:.6f}s) | "
-                        f"Before: {old_size} items | "
-                        f"After: {new_size} items | "
+                        f"Received action chunk for step #{first_action_timestep} | "
+                        f"Latest action: #{self.latest_action} | "
+                        f"Network latency (server->client): {server_to_client_latency:.2f}ms | "
+                        f"Deserialization time: {deserialize_time * 1000:.2f}ms"
                     )
-                    self.logger.info(
-                        f"Latest action: {self.latest_action} | "
-                        f"Old action steps: {old_timesteps[0]}:{old_timesteps[-1]} | "
-                        f"Incoming action steps: {incoming_timesteps[0]}:{incoming_timesteps[-1]} | "
-                        f"Updated action steps: {new_timesteps[0]}:{new_timesteps[-1]}"
-                    )
+
+                # Update action queue
+                start_time = time.perf_counter()
+                self._aggregate_action_queues(timed_actions, self.config.aggregate_fn)
+                queue_update_time = time.perf_counter() - start_time
+
+                self.must_go = True  # after receiving actions, next empty queue triggers must-go processing!
+
+                # Get queue state after changes
+                new_size, new_timesteps = self._inspect_action_queue()
+
+                self.logger.info(
+                    f"Queue update complete ({queue_update_time:.6f}s) | "
+                    f"Before: {old_size} items | "
+                    f"After: {new_size} items | "
+                )
+                self.logger.info(
+                    f"Latest action: {self.latest_action} | "
+                    f"Old action steps: {old_timesteps[0]}:{old_timesteps[-1]} | "
+                    f"Incoming action steps: {incoming_timesteps[0]}:{incoming_timesteps[-1]} | "
+                    f"Updated action steps: {new_timesteps[0]}:{new_timesteps[-1]}"
+                )
 
             except grpc.RpcError as e:
                 self.logger.error(f"Error receiving actions: {e}")
@@ -461,7 +459,7 @@ def parse_args():
 
     parser.add_argument(
         "--debug-visualize-queue-size",
-        action="store_true",
+        action="store_false",
         help="Trigger visualization of action queue size upon stopping the client, to tweak client hyperparameters (default: False)",
     )
 

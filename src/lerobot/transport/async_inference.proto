@@ -26,7 +26,7 @@ service AsyncInference {
   // Robot -> Policy to share observations with a remote inference server
   // Policy -> Robot to share actions predicted for given observations
   rpc SendObservations(stream Observation) returns (Empty);
-  rpc StreamActions(Empty) returns (stream Action);
+  rpc GetActions(Empty) returns (Actions);
   rpc SendPolicyInstructions(PolicySetup) returns (Empty);
   rpc Ready(Empty) returns (Empty);
   rpc Stop(Empty) returns (Empty);
@@ -46,7 +46,7 @@ message Observation {
   bytes data = 2;
 }
 
-message Action {
+message Actions {
   // sent by remote Policy, to Robot
   bytes data = 1;
 }

@@ -5,7 +5,7 @@ import warnings
 
 from lerobot.common.transport import async_inference_pb2 as async__inference__pb2
 
-GRPC_GENERATED_VERSION = '1.73.0'
+GRPC_GENERATED_VERSION = '1.73.1'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -41,10 +41,10 @@ class AsyncInferenceStub:
                 request_serializer=async__inference__pb2.Observation.SerializeToString,
                 response_deserializer=async__inference__pb2.Empty.FromString,
                 _registered_method=True)
-        self.StreamActions = channel.unary_stream(
-                '/async_inference.AsyncInference/StreamActions',
+        self.GetActions = channel.unary_unary(
+                '/async_inference.AsyncInference/GetActions',
                 request_serializer=async__inference__pb2.Empty.SerializeToString,
-                response_deserializer=async__inference__pb2.Action.FromString,
+                response_deserializer=async__inference__pb2.Actions.FromString,
                 _registered_method=True)
         self.SendPolicyInstructions = channel.unary_unary(
                 '/async_inference.AsyncInference/SendPolicyInstructions',
@@ -76,7 +76,7 @@ class AsyncInferenceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def StreamActions(self, request, context):
+    def GetActions(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -108,10 +108,10 @@ def add_AsyncInferenceServicer_to_server(servicer, server):
                     request_deserializer=async__inference__pb2.Observation.FromString,
                     response_serializer=async__inference__pb2.Empty.SerializeToString,
             ),
-            'StreamActions': grpc.unary_stream_rpc_method_handler(
-                    servicer.StreamActions,
+            'GetActions': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetActions,
                     request_deserializer=async__inference__pb2.Empty.FromString,
-                    response_serializer=async__inference__pb2.Action.SerializeToString,
+                    response_serializer=async__inference__pb2.Actions.SerializeToString,
             ),
             'SendPolicyInstructions': grpc.unary_unary_rpc_method_handler(
                     servicer.SendPolicyInstructions,
@@ -169,7 +169,7 @@ class AsyncInference:
             _registered_method=True)
 
     @staticmethod
-    def StreamActions(request,
+    def GetActions(request,
             target,
             options=(),
             channel_credentials=None,
@@ -179,12 +179,12 @@ class AsyncInference:
             wait_for_ready=None,
             timeout=None,
             metadata=None):
-        return grpc.experimental.unary_stream(
+        return grpc.experimental.unary_unary(
             request,
             target,
-            '/async_inference.AsyncInference/StreamActions',
+            '/async_inference.AsyncInference/GetActions',
             async__inference__pb2.Empty.SerializeToString,
-            async__inference__pb2.Action.FromString,
+            async__inference__pb2.Actions.FromString,
             options,
             channel_credentials,
             insecure,
