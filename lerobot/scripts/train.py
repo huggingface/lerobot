@@ -132,7 +132,7 @@ def get_default_peft_configuration(policy_type):
 
 
 def wrap_policy_in_peft_model(cfg, policy):
-    from peft import get_peft_model, PEFT_TYPE_TO_CONFIG_MAPPING, PeftType
+    from peft import PEFT_TYPE_TO_CONFIG_MAPPING, PeftType, get_peft_model
 
     # Disable all gradients because we'll only train the parameters selected by the PEFT method.
     # Layers that should receive gradients anyway need to be listed in `modules_to_save`.
