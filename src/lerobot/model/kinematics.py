@@ -52,23 +52,23 @@ class RobotKinematics:
         # Initialize frame task for IK
         self.tip_frame = self.solver.add_frame_task(self.target_frame_name, np.eye(4))
 
-    def forward_kinematics(self, robot_pos_deg):
+    def forward_kinematics(self, joint_pos_deg):
         """
         Compute forward kinematics for given joint configuration given the target frame name in the constructor.
 
         Args:
-            robot_pos_deg: Joint positions in degrees (numpy array)
+            joint_pos_deg: Joint positions in degrees (numpy array)
 
         Returns:
             4x4 transformation matrix of the end-effector pose
         """
 
         # Convert degrees to radians
-        robot_pos_rad = np.deg2rad(robot_pos_deg[: len(self.joint_names)])
+        joint_pos_rad = np.deg2rad(joint_pos_deg[: len(self.joint_names)])
 
         # Update joint positions in placo robot
         for i, joint_name in enumerate(self.joint_names):
-            self.robot.set_joint(joint_name, robot_pos_rad[i])
+            self.robot.set_joint(joint_name, joint_pos_rad[i])
 
         # Update kinematics
         self.robot.update_kinematics()
@@ -110,19 +110,19 @@ class RobotKinematics:
         self.robot.update_kinematics()
 
         # Extract joint positions
-        joint_positions_rad = []
+        joint_pos_rad = []
         for joint_name in self.joint_names:
             joint = self.robot.get_joint(joint_name)
-            joint_positions_rad.append(joint)
+            joint_pos_rad.append(joint)
 
         # Convert back to degrees
-        joint_positions_deg = np.rad2deg(joint_positions_rad)
+        joint_pos_deg = np.rad2deg(joint_pos_rad)
 
         # Preserve gripper position if present in current_joint_pos
         if len(current_joint_pos) > len(self.joint_names):
             result = np.zeros_like(current_joint_pos)
-            result[: len(self.joint_names)] = joint_positions_deg
+            result[: len(self.joint_names)] = joint_pos_deg
             result[len(self.joint_names) :] = current_joint_pos[len(self.joint_names) :]
             return result
         else:
-            return joint_positions_deg
+            return joint_pos_deg
