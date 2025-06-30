@@ -23,22 +23,36 @@
 </div>
 
 <h2 align="center">
-    <p><a href="https://github.com/huggingface/lerobot/blob/main/examples/10_use_so100.md">
-        Build Your Own SO-100 Robot!</a></p>
+    <p><a href="https://huggingface.co/docs/lerobot/so101">
+        Build Your Own SO-101 Robot!</a></p>
 </h2>
 
 <div align="center">
-  <img src="media/so100/leader_follower.webp?raw=true" alt="SO-100 leader and follower arms" title="SO-100 leader and follower arms" width="50%">
+  <div style="display: flex; gap: 1rem; justify-content: center; align-items: center;" >
+    <img
+      src="media/so101/so101.webp?raw=true"
+      alt="SO-101 follower arm"
+      title="SO-101 follower arm"
+      style="width: 40%;"
+    />
+    <img
+      src="media/so101/so101-leader.webp?raw=true"
+      alt="SO-101 leader arm"
+      title="SO-101 leader arm"
+      style="width: 40%;"
+    />
+  </div>
 
-  <p><strong>Meet the SO-100 – Just $110 per arm!</strong></p>
+
+  <p><strong>Meet the updated SO100, the SO-101 – Just €114 per arm!</strong></p>
   <p>Train it in minutes with a few simple moves on your laptop.</p>
   <p>Then sit back and watch your creation act autonomously! 🤯</p>
 
-  <p><a href="https://github.com/huggingface/lerobot/blob/main/examples/10_use_so100.md">
-      Get the full SO-100 tutorial here.</a></p>
+  <p><a href="https://huggingface.co/docs/lerobot/so101">
+      See the full SO-101 tutorial here.</a></p>
 
-  <p>Want to take it to the next level? Make your SO-100 mobile by building LeKiwi!</p>
-  <p>Check out the <a href="https://github.com/huggingface/lerobot/blob/main/examples/11_use_lekiwi.md">LeKiwi tutorial</a> and bring your robot to life on wheels.</p>
+  <p>Want to take it to the next level? Make your SO-101 mobile by building LeKiwi!</p>
+  <p>Check out the <a href="https://huggingface.co/docs/lerobot/lekiwi">LeKiwi tutorial</a> and bring your robot to life on wheels.</p>
 
   <img src="media/lekiwi/kiwi.webp?raw=true" alt="LeKiwi mobile robot" title="LeKiwi mobile robot" width="50%">
 </div>
@@ -50,7 +64,6 @@
 </h3>
 
 ---
-
 
 🤗 LeRobot aims to provide models, datasets, and tools for real-world robotics in PyTorch. The goal is to lower the barrier to entry to robotics so that everyone can contribute and benefit from sharing datasets and pretrained models.
 
@@ -77,6 +90,7 @@
 
 ### Acknowledgment
 
+- The LeRobot team 🤗 for building SmolVLA [Paper](https://arxiv.org/abs/2506.01844), [Blog](https://huggingface.co/blog/smolvla).
 - Thanks to Tony Zhao, Zipeng Fu and colleagues for open sourcing ACT policy, ALOHA environments and datasets. Ours are adapted from [ALOHA](https://tonyzhaozh.github.io/aloha) and [Mobile ALOHA](https://mobile-aloha.github.io).
 - Thanks to Cheng Chi, Zhenjia Xu and colleagues for open sourcing Diffusion policy, Pusht environment and datasets, as well as UMI datasets. Ours are adapted from [Diffusion Policy](https://diffusion-policy.cs.columbia.edu) and [UMI Gripper](https://umi-gripper.github.io).
 - Thanks to Nicklas Hansen, Yunhai Feng and colleagues for open sourcing TDMPC policy, Simxarm environments and datasets. Ours are adapted from [TDMPC](https://github.com/nicklashansen/tdmpc) and [FOWM](https://www.yunhaifeng.com/FOWM).
@@ -116,7 +130,7 @@ pip install -e .
 ```
 
 > **NOTE:** If you encounter build errors, you may need to install additional dependencies (`cmake`, `build-essential`, and `ffmpeg libs`). On Linux, run:
-`sudo apt-get install cmake build-essential python3-dev pkg-config libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev libswscale-dev libswresample-dev libavfilter-dev pkg-config`. For other systems, see: [Compiling PyAV](https://pyav.org/docs/develop/overview/installation.html#bring-your-own-ffmpeg)
+`sudo apt-get install cmake build-essential python3-dev pkg-config libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev libswscale-dev libswresample-dev libavfilter-dev`. For other systems, see: [Compiling PyAV](https://pyav.org/docs/develop/overview/installation.html#bring-your-own-ffmpeg)
 
 For simulations, 🤗 LeRobot comes with gymnasium environments that can be installed as extras:
 - [aloha](https://github.com/huggingface/gym-aloha)
@@ -174,7 +188,6 @@ Under the hood, the `LeRobotDataset` format makes use of several ways to seriali
 Here are the important details and internal structure organization of a typical `LeRobotDataset` instantiated with `dataset = LeRobotDataset("lerobot/aloha_static_coffee")`. The exact features will change from dataset to dataset but not the main aspects:
 
 ```
-TODO: IMPROVE
 dataset attributes:
   ├ hf_dataset: a Hugging Face dataset (backed by Arrow/parquet). Typical features example:
   │  ├ observation.images.cam_high (VideoFrame):
@@ -185,9 +198,9 @@ dataset attributes:
   │  ├ episode_index (int64): index of the episode for this sample
   │  ├ frame_index (int64): index of the frame for this sample in the episode ; starts at 0 for each episode
   │  ├ timestamp (float32): timestamp in the episode
-  │  ├ next.done (bool): indicates the end of en episode ; True for the last frame in each episode
+  │  ├ next.done (bool): indicates the end of an episode ; True for the last frame in each episode
   │  └ index (int64): general index in the whole dataset
-  ├ meta: contains 2 tensors with the start and end indices of each episode
+  ├ episode_data_index: contains 2 tensors with the start and end indices of each episode
   │  ├ from (1D int64 tensor): first frame index for each episode — shape (num episodes,) starts with 0
   │  └ to: (1D int64 tensor): last frame index for each episode — shape (num episodes,)
   ├ stats: a dictionary of statistics (max, mean, min, std) for each feature in the dataset, for instance
@@ -234,7 +247,7 @@ See `python -m lerobot.scripts.eval --help` for more instructions.
 
 ### Train your own policy
 
-Check out [example 3](./examples/3_train_policy.py) that illustrate how to train a model using our core library in python, and [example 4](./examples/4_train_policy_with_script.md) that shows how to use our training script from command line.
+Check out [example 3](./examples/3_train_policy.py) that illustrates how to train a model using our core library in python, and [example 4](./examples/4_train_policy_with_script.md) that shows how to use our training script from command line.
 
 To use wandb for logging training and evaluation curves, make sure you've run `wandb login` as a one-time setup step. Then, when running the training command above, enable WandB in the configuration by adding `--wandb.enable=true`.
 
@@ -285,7 +298,7 @@ Once you have trained a policy you may upload it to the Hugging Face hub using a
 You first need to find the checkpoint folder located inside your experiment directory (e.g. `outputs/train/2024-05-05/20-21-12_aloha_act_default/checkpoints/002500`). Within that there is a `pretrained_model` directory which should contain:
 - `config.json`: A serialized version of the policy configuration (following the policy's dataclass config).
 - `model.safetensors`: A set of `torch.nn.Module` parameters, saved in [Hugging Face Safetensors](https://huggingface.co/docs/safetensors/index) format.
-- `train_config.json`: A consolidated configuration containing all parameter userd for training. The policy configuration should match `config.json` exactly. Thisis useful for anyone who wants to evaluate your policy or for reproducibility.
+- `train_config.json`: A consolidated configuration containing all parameters used for training. The policy configuration should match `config.json` exactly. This is useful for anyone who wants to evaluate your policy or for reproducibility.
 
 To upload these to the hub, run the following:
 ```bash
@@ -324,7 +337,7 @@ with profile(
 If you want, you can cite this work with:
 ```bibtex
 @misc{cadene2024lerobot,
-    author = {Cadene, Remi and Alibert, Simon and Soare, Alexander and Gallouedec, Quentin and Zouitine, Adil and Wolf, Thomas},
+    author = {Cadene, Remi and Alibert, Simon and Soare, Alexander and Gallouedec, Quentin and Zouitine, Adil and Palma, Steven and Kooijmans, Pepijn and Aractingi, Michel and Shukor, Mustafa and Aubakirova, Dana and Russi, Martino and Capuano, Francesco and Pascale, Caroline and Choghari, Jade and Moss, Jess and Wolf, Thomas},
     title = {LeRobot: State-of-the-art Machine Learning for Real-World Robotics in Pytorch},
     howpublished = "\url{https://github.com/huggingface/lerobot}",
     year = {2024}
@@ -332,6 +345,15 @@ If you want, you can cite this work with:
 ```
 
 Additionally, if you are using any of the particular policy architecture, pretrained models, or datasets, it is recommended to cite the original authors of the work as they appear below:
+- [SmolVLA](https://arxiv.org/abs/2506.01844)
+```bibtex
+@article{shukor2025smolvla,
+  title={SmolVLA: A Vision-Language-Action Model for Affordable and Efficient Robotics},
+  author={Shukor, Mustafa and Aubakirova, Dana and Capuano, Francesco and Kooijmans, Pepijn and Palma, Steven and Zouitine, Adil and Aractingi, Michel and Pascal, Caroline and Russi, Martino and Marafioti, Andres and Alibert, Simon and Cord, Matthieu and Wolf, Thomas and Cadene, Remi},
+  journal={arXiv preprint arXiv:2506.01844},
+  year={2025}
+}
+```
 
 - [Diffusion Policy](https://diffusion-policy.cs.columbia.edu)
 ```bibtex
@@ -370,6 +392,19 @@ Additionally, if you are using any of the particular policy architecture, pretra
   author={Lee, Seungjae and Wang, Yibin and Etukuru, Haritheja and Kim, H Jin and Shafiullah, Nur Muhammad Mahi and Pinto, Lerrel},
   journal={arXiv preprint arXiv:2403.03181},
   year={2024}
+}
+```
+
+
+- [HIL-SERL](https://hil-serl.github.io/)
+```bibtex
+@Article{luo2024hilserl,
+title={Precise and Dexterous Robotic Manipulation via Human-in-the-Loop Reinforcement Learning},
+author={Jianlan Luo and Charles Xu and Jeffrey Wu and Sergey Levine},
+year={2024},
+eprint={2410.21845},
+archivePrefix={arXiv},
+primaryClass={cs.RO}
 }
 ```
 ## Star History
