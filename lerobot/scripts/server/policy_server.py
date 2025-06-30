@@ -110,7 +110,7 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
         receive_time = time.time()  # comparing timestamps so need time.time()
         start_deserialize = time.perf_counter()
         received_bytes = receive_bytes_in_chunks(
-            request_iterator, self._running_event
+            request_iterator, self._running_event, self.logger
         )  # blocking call while looping over request_iterator
         timed_observation = pickle.loads(received_bytes)  # nosec
         deserialize_time = time.perf_counter() - start_deserialize
@@ -170,8 +170,6 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
 
             self.logger.info(
                 f"Action chunk #{obs.get_timestep()} generated | "
-                f"Inference time: {inference_time * 1000:.2f}ms | "
-                f"Serialize time: {serialize_time * 1000:.2f}ms | "
                 f"Total time: {(inference_time + serialize_time) * 1000:.2f}ms"
             )
 
@@ -250,7 +248,7 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
         observation: Observation = raw_observation_to_observation(
             observation_t.get_observation(),
             self.lerobot_features,
-            self.policy.config.image_features,
+            self.policy_image_features,
             self.device,
         )
         # processed Observation - right keys, right dtype, right image shape
@@ -295,10 +293,10 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
 
         # full-process latency breakdown for debugging purposes
         self.logger.debug(
-            f"Observation {observation_t.get_timestep()} |"
-            f"Preprocessing time: {1000 * (preprocessing_time - inference_starts):.2f}ms |"
-            f"Inference time: {1000 * (inference_time - preprocessing_time):.2f}ms |"
-            f"Postprocessing time: {1000 * (postprocessing_time - inference_time):.2f}ms |"
+            f"Observation {observation_t.get_timestep()} | "
+            f"Preprocessing time: {1000 * (preprocessing_time - inference_starts):.2f}ms | "
+            f"Inference time: {1000 * (inference_time - preprocessing_time):.2f}ms | "
+            f"Postprocessing time: {1000 * (postprocessing_time - inference_time):.2f}ms | "
             f"Total time: {1000 * (postprocessing_time - inference_starts):.2f}ms"
         )
 
