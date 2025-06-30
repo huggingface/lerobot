@@ -32,8 +32,8 @@ class PortDroidShards(PipelineStep):
         try:
             validate_dataset(shard_repo_id)
             return
-        except:
-            pass
+        except Exception:
+            pass  # nosec B110 - Dataset doesn't exist yet, continue with porting
 
         port_droid(
             self.raw_dir,

@@ -1,17 +1,26 @@
-
 import json
 import logging
-from pathlib import Path
 import shutil
 import time
-import numpy as np
+from pathlib import Path
+
 import h5py
+import numpy as np
 import pandas as pd
 
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.datasets.utils import DEFAULT_CHUNK_SIZE, DEFAULT_VIDEO_FILE_SIZE_IN_MB, DEFAULT_VIDEO_PATH, EPISODES_DIR, concat_video_files, get_video_duration_in_s, get_video_size_in_mb, update_chunk_file_indices, write_info
+from lerobot.common.datasets.utils import (
+    DEFAULT_CHUNK_SIZE,
+    DEFAULT_VIDEO_FILE_SIZE_IN_MB,
+    DEFAULT_VIDEO_PATH,
+    EPISODES_DIR,
+    concat_video_files,
+    get_video_duration_in_s,
+    get_video_size_in_mb,
+    update_chunk_file_indices,
+    write_info,
+)
 from lerobot.common.utils.utils import get_elapsed_time_in_days_hours_minutes_seconds
-
 
 AGIBOT_FPS = 30
 AGIBOT_ROBOT_TYPE = "AgiBot_A2D"
@@ -77,12 +86,12 @@ AGIBOT_FEATURES = {
         "dtype": "float32",
         "shape": (20,),
         "names": {
-            "axes": ["head_yaw", "head_pitch"] + \
-                [f"left_joint_{i}" for i in range(7)] + \
-                ["left_gripper"] + \
-                [f"right_joint_{i}" for i in range(7)] + \
-                ["right_gripper"] + \
-                ["waist_pitch", "waist_lift"],
+            "axes": ["head_yaw", "head_pitch"]
+            + [f"left_joint_{i}" for i in range(7)]
+            + ["left_gripper"]
+            + [f"right_joint_{i}" for i in range(7)]
+            + ["right_gripper"]
+            + ["waist_pitch", "waist_lift"],
         },
     },
     # gripper open range in mm (0 for pull open, 1 for full close)
@@ -145,13 +154,13 @@ AGIBOT_FEATURES = {
         "dtype": "float32",
         "shape": (22,),
         "names": {
-            "axes": ["head_yaw", "head_pitch"] + \
-                [f"left_joint_{i}" for i in range(7)] + \
-                ["left_gripper"] + \
-                [f"right_joint_{i}" for i in range(7)] + \
-                ["right_gripper"] + \
-                ["waist_pitch", "waist_lift"] + \
-                ["velocity_x", "yaw_rate"],
+            "axes": ["head_yaw", "head_pitch"]
+            + [f"left_joint_{i}" for i in range(7)]
+            + ["left_gripper"]
+            + [f"right_joint_{i}" for i in range(7)]
+            + ["right_gripper"]
+            + ["waist_pitch", "waist_lift"]
+            + ["velocity_x", "yaw_rate"],
         },
     },
     # episode level annotation
@@ -217,11 +226,12 @@ AGIBOT_IMAGES_FEATURES = {
     },
 }
 
+
 def load_info_per_task(raw_dir):
     info_per_task = {}
     task_info_dir = raw_dir / "task_info"
     for path in task_info_dir.glob("task_*.json"):
-        task_index = int(path.name.replace("task_","").replace(".json",""))
+        task_index = int(path.name.replace("task_", "").replace(".json", ""))
         with open(path) as f:
             task_info = json.load(f)
 
@@ -230,6 +240,7 @@ def load_info_per_task(raw_dir):
 
     return info_per_task
 
+
 def create_frame_idx_to_frames_label_idx(ep_info):
     frame_idx_to_frames_label_idx = {}
     for label_idx, frames_label in enumerate(ep_info["label_info"]["action_config"]):
@@ -237,9 +248,9 @@ def create_frame_idx_to_frames_label_idx(ep_info):
             frame_idx_to_frames_label_idx[frame_idx] = label_idx
     return frame_idx_to_frames_label_idx
 
+
 def generate_lerobot_frames(raw_dir: Path, task_index: int, episode_index: int):
-    """ /!\ The frames dont contain observation.cameras.*
-    """
+    r"""/!\ The frames dont contain observation.cameras.*"""
     info_per_task = load_info_per_task(raw_dir)
     ep_info = info_per_task[task_index][episode_index]
     frame_idx_to_frames_label_idx = create_frame_idx_to_frames_label_idx(ep_info)
@@ -297,7 +308,9 @@ def generate_lerobot_frames(raw_dir: Path, task_index: int, episode_index: int):
         for h5_key in keys_mapping.values():
             col_num_frames = h5[h5_key].shape[0]
             if col_num_frames != num_frames:
-                raise ValueError(f"HDF5 column '{h5_key}' is expected to have {num_frames} but has {col_num_frames}' frames instead.")
+                raise ValueError(
+                    f"HDF5 column '{h5_key}' is expected to have {num_frames} but has {col_num_frames}' frames instead."
+                )
 
         for i in range(num_frames):
             # Create frame
@@ -308,26 +321,30 @@ def generate_lerobot_frames(raw_dir: Path, task_index: int, episode_index: int):
 
             f["observation.state.end.position"] = f["observation.state.end.position"].reshape(6)
             f["observation.state.end.orientation"] = f["observation.state.end.orientation"].reshape(8)
-            f["observation.state"] = np.concatenate([
-                f["observation.state.head.position"],
-                f["observation.state.joint.position"][:7],  # left
-                f["observation.state.effector.position"][[0]],  # left
-                f["observation.state.joint.position"][7:],  # right
-                f["observation.state.effector.position"][[1]],  # right
-                f["observation.state.waist.position"],
-            ])
+            f["observation.state"] = np.concatenate(
+                [
+                    f["observation.state.head.position"],
+                    f["observation.state.joint.position"][:7],  # left
+                    f["observation.state.effector.position"][[0]],  # left
+                    f["observation.state.joint.position"][7:],  # right
+                    f["observation.state.effector.position"][[1]],  # right
+                    f["observation.state.waist.position"],
+                ]
+            )
 
             f["action.end.position"] = f["action.end.position"].reshape(6)
             f["action.end.orientation"] = f["action.end.orientation"].reshape(8)
-            f["action"] = np.concatenate([
-                f["action.head.position"],
-                f["action.joint.position"][:7],  # left
-                f["action.effector.position"][[0]],  # left
-                f["action.joint.position"][7:],  # right
-                f["action.effector.position"][[1]],  # right
-                f["action.waist.position"],
-                f["action.robot.velocity"],
-            ])
+            f["action"] = np.concatenate(
+                [
+                    f["action.head.position"],
+                    f["action.joint.position"][:7],  # left
+                    f["action.effector.position"][[0]],  # left
+                    f["action.joint.position"][7:],  # right
+                    f["action.effector.position"][[1]],  # right
+                    f["action.waist.position"],
+                    f["action.robot.velocity"],
+                ]
+            )
 
             # episode level annotation
             f["task"] = ep_info["task_name"]
@@ -361,6 +378,7 @@ def update_meta_data(
 
     return df.apply(_update, axis=1)
 
+
 def move_videos_to_lerobot_directory(lerobot_dataset, raw_dir, task_index, episode_names):
     keys_mapping = {
         "observation.images.top_head": "head_color",
@@ -377,7 +395,6 @@ def move_videos_to_lerobot_directory(lerobot_dataset, raw_dir, task_index, episo
     for key in keys_mapping:
         if key not in lerobot_dataset.meta.info["features"]:
             raise ValueError(f"Key '{key}' not found in features.")
-
 
     video_keys = keys_mapping.keys()
     chunk_idx = dict.fromkeys(video_keys, 0)
@@ -438,12 +455,15 @@ def move_videos_to_lerobot_directory(lerobot_dataset, raw_dir, task_index, episo
             latest_duration_in_s[key] += ep_duration_in_s
 
     # Update episodes meta data
-    for meta_path in (lerobot_dataset.root / EPISODES_DIR).glob("chunk-*/file-*.parquet"):    
+    for meta_path in (lerobot_dataset.root / EPISODES_DIR).glob("chunk-*/file-*.parquet"):
         df = pd.read_parquet(meta_path)
         df = update_meta_data(df, ep_to_meta)
         df.to_parquet(meta_path)
 
-def port_agibot(raw_dir: Path, repo_id: str, task_index: int, episode_indices: list[int], push_to_hub: bool = False):
+
+def port_agibot(
+    raw_dir: Path, repo_id: str, task_index: int, episode_indices: list[int], push_to_hub: bool = False
+):
     lerobot_dataset = LeRobotDataset.create(
         repo_id=repo_id,
         robot_type=AGIBOT_ROBOT_TYPE,
@@ -459,7 +479,9 @@ def port_agibot(raw_dir: Path, repo_id: str, task_index: int, episode_indices: l
         elapsed_time = time.time() - start_time
         d, h, m, s = get_elapsed_time_in_days_hours_minutes_seconds(elapsed_time)
 
-        logging.info(f"{i} / {num_episodes} episodes processed (after {d} days, {h} hours, {m} minutes, {s:.3f} seconds)")
+        logging.info(
+            f"{i} / {num_episodes} episodes processed (after {d} days, {h} hours, {m} minutes, {s:.3f} seconds)"
+        )
 
         for frame in generate_lerobot_frames(raw_dir, task_index, episode_index):
             lerobot_dataset.add_frame(frame)
