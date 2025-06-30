@@ -128,7 +128,7 @@ def get_default_peft_configuration(policy_type):
             ],
         }
 
-    return {'modules_to_save': None}
+    return {"modules_to_save": None}
 
 
 def wrap_policy_in_peft_model(cfg, policy):
@@ -149,7 +149,7 @@ def wrap_policy_in_peft_model(cfg, policy):
         if peft_config_cli[key] is not None:
             peft_config_policy[key] = peft_config_cli[key]
 
-    if 'target_modules' not in peft_config_policy:
+    if "target_modules" not in peft_config_policy:
         raise ValueError(
             f"There is no default `target_modules` value for policy {cfg.policy.type}. Please pass it manually."
         )

@@ -155,7 +155,7 @@ class RecordConfig:
             self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
             self.policy.pretrained_path = policy_path
 
-            if (Path(policy_path) / 'adapter_config.json').exists():
+            if (Path(policy_path) / "adapter_config.json").exists():
                 self.policy.use_peft = True
 
         if self.teleop is None and self.policy is None:
