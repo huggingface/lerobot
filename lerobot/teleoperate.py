@@ -80,8 +80,8 @@ def teleop_loop(
     while True:
         loop_start = time.perf_counter()
         action = teleop.get_action()
+        observation = robot.get_observation()
         if display_data:
-            observation = robot.get_observation()
             for obs, val in observation.items():
                 if isinstance(val, float):
                     rr.log(f"observation_{obs}", rr.Scalar(val))
@@ -92,6 +92,14 @@ def teleop_loop(
                     rr.log(f"action_{act}", rr.Scalar(val))
 
         robot.send_action(action)
+        if hasattr(teleop, "send_feedback"):
+            try:
+                force_feedback = {key: val for key, val in observation.items() if key.endswith('.force')}
+                if force_feedback:
+                    teleop.send_feedback(force_feedback)
+            except Exception as e:
+                logging.debug(f"Force feedback failed: {e}")
+
         dt_s = time.perf_counter() - loop_start
         busy_wait(1 / fps - dt_s)
 
