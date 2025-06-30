@@ -84,12 +84,12 @@ def teleop_loop(
             observation = robot.get_observation()
             for obs, val in observation.items():
                 if isinstance(val, float):
-                    rr.log(f"observation_{obs}", rr.Scalar(val))
+                    rr.log(f"observation_{obs}", rr.Scalars(val))
                 elif isinstance(val, np.ndarray):
                     rr.log(f"observation_{obs}", rr.Image(val), static=True)
             for act, val in action.items():
                 if isinstance(val, float):
-                    rr.log(f"action_{act}", rr.Scalar(val))
+                    rr.log(f"action_{act}", rr.Scalars(val))
 
         robot.send_action(action)
         dt_s = time.perf_counter() - loop_start
