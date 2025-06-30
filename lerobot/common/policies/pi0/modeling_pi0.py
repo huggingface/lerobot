@@ -272,25 +272,25 @@ class PI0Policy(PreTrainedPolicy):
             # model.paligemma_with_expert.paligemma.multi_modal_projector -> model.paligemma_with_expert.paligemma.model.multi_modal_projector
             transformations = [
                 (
-                    r"\.paligemma_with_expert\.paligemma\.language_model\.lm_head",
+                    re.compile(r"\.paligemma_with_expert\.paligemma\.language_model\.lm_head"),
                     ".paligemma_with_expert.paligemma.lm_head",
                 ),
                 (
-                    r"\.paligemma_with_expert\.paligemma\.language_model\.model",
+                    re.compile(r"\.paligemma_with_expert\.paligemma\.language_model\.model"),
                     ".paligemma_with_expert.paligemma.model.language_model",
                 ),
                 (
-                    r"\.paligemma_with_expert\.paligemma\.vision_tower",
+                    re.compile(r"\.paligemma_with_expert\.paligemma\.vision_tower"),
                     ".paligemma_with_expert.paligemma.model.vision_tower",
                 ),
                 (
-                    r"\.paligemma_with_expert\.paligemma\.multi_modal_projector",
+                    re.compile(r"\.paligemma_with_expert\.paligemma\.multi_modal_projector"),
                     ".paligemma_with_expert.paligemma.model.multi_modal_projector",
                 ),
             ]
 
             for pattern, replacement in transformations:
-                new_key = re.sub(pattern, replacement, new_key)
+                new_key = pattern.sub(replacement, new_key)
 
             transformed_dict[new_key] = value
 
