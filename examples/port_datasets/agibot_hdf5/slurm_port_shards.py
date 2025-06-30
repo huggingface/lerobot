@@ -1,14 +1,17 @@
 import argparse
 import logging
-from pathlib import Path
 import tarfile
+from pathlib import Path
 
 from datatrove.executor import LocalPipelineExecutor
 from datatrove.executor.slurm import SlurmPipelineExecutor
 from datatrove.pipeline.base import PipelineStep
 
-from examples.port_datasets.agibot_hdf5.download import RAW_REPO_ID, download_meta_data, get_observations_files
-
+from examples.port_datasets.agibot_hdf5.download import (
+    RAW_REPO_ID,
+    download_meta_data,
+    get_observations_files,
+)
 
 
 class PortAgiBotShards(PipelineStep):
@@ -23,14 +26,18 @@ class PortAgiBotShards(PipelineStep):
 
     def run(self, data=None, rank: int = 0, world_size: int = 1):
         import shutil
-        import logging
-        import tarfile
+
         from datasets.utils.tqdm import disable_progress_bars
 
-        from lerobot.common.constants import HF_LEROBOT_HOME
+        from examples.port_datasets.agibot_hdf5.download import (
+            RAW_REPO_ID,
+            download,
+            get_observations_files,
+            no_depth,
+        )
         from examples.port_datasets.agibot_hdf5.port_agibot import port_agibot
-        from examples.port_datasets.agibot_hdf5.download import get_observations_files, download, no_depth, RAW_REPO_ID
         from examples.port_datasets.droid_rlds.port_droid import validate_dataset
+        from lerobot.common.constants import HF_LEROBOT_HOME
         from lerobot.common.utils.utils import init_logging
 
         init_logging()
@@ -49,17 +56,17 @@ class PortAgiBotShards(PipelineStep):
         download(self.raw_dir, allow_patterns=obs_file)
 
         tar_path = self.raw_dir / obs_file
-        with tarfile.open(tar_path, 'r') as tar:
+        with tarfile.open(tar_path, "r") as tar:
             extracted_files = tar.getnames()
 
         task_index = int(tar_path.parent.name)
-        episode_names = [int(p) for p in extracted_files if '/' not in p]
+        episode_names = [int(p) for p in extracted_files if "/" not in p]
 
         # Untar if needed
-        if not all([(tar_path.parent / f"{ep_name}").exists() for ep_name in episode_names]):
+        if not all((tar_path.parent / f"{ep_name}").exists() for ep_name in episode_names):
             logging.info(f"Untar-ing {tar_path}...")
-            with tarfile.open(tar_path, 'r') as tar:
-                tar.extractall(path=tar_path.parent, filter=no_depth)
+            with tarfile.open(tar_path, "r") as tar:
+                tar.extractall(path=tar_path.parent, filter=no_depth)  # nosec B202
 
         port_agibot(self.raw_dir, shard_repo_id, task_index, episode_names, push_to_hub=False)
 

@@ -1,30 +1,31 @@
 import argparse
-from pathlib import Path
 import json
+from pathlib import Path
 
-def find_missings(completions_dir, world_size):
-    """ Find workers that are not completed and returns their indices.
-    """
+
+def find_missing_workers(completions_dir, world_size):
+    """Find workers that are not completed and returns their indices."""
     full = list(range(world_size))
 
     completed = []
     for path in completions_dir.glob("*"):
-        if path.name in ['.', '..']:
+        if path.name in [".", ".."]:
             continue
-        index = path.name.lstrip('0')
+        index = path.name.lstrip("0")
         index = 0 if index == "" else int(index)
         completed.append(index)
 
-    missings = set(full) - set(completed)
-    return missings
+    missing_workers = set(full) - set(completed)
+    return missing_workers
+
 
 def find_output_files(slurm_dir, worker_indices):
-    """ Find output files associated to worker indices, and return tuples
+    """Find output files associated to worker indices, and return tuples
     of (worker index, output file path)
     """
     out_files = []
     for path in slurm_dir.glob("*.out"):
-        _, worker_id = path.name.replace(".out", "").split('_')
+        _, worker_id = path.name.replace(".out", "").split("_")
         worker_id = int(worker_id)
         if worker_id in worker_indices:
             out_files.append((worker_id, path))
@@ -34,21 +35,14 @@ def find_output_files(slurm_dir, worker_indices):
 def display_error_files(logs_dir, job_name):
     executor_path = Path(logs_dir) / job_name / "executor.json"
     completions_dir = Path(logs_dir) / job_name / "completions"
-    slurm_dir = Path(logs_dir) / job_name / "slurm_logs"
 
     with open(executor_path) as f:
         executor = json.load(f)
 
-    missings = find_missings(completions_dir, executor["world_size"])
+    missing_workers = find_missing_workers(completions_dir, executor["world_size"])
 
-    for missing in sorted(list(missings))[::-1]:
+    for missing in sorted(missing_workers)[::-1]:
         print(missing)
-
-    # error_files = find_output_files(slurm_dir, missings)
-    # error_files = sorted(error_files, key=lambda x: x[0])
-
-    # for _, path in error_files[::-1]:
-    #     print(path)
 
 
 def main():
@@ -69,6 +63,7 @@ def main():
     args = parser.parse_args()
 
     display_error_files(**vars(args))
+
 
 if __name__ == "__main__":
     main()
