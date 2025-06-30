@@ -347,7 +347,7 @@ class MotorsBus(abc.ABC):
         else:
             raise TypeError(motors)
 
-    def _get_ids_values_dict(self, values: Value | dict[str, Value] | None) -> list[str]:
+    def _get_ids_values_dict(self, values: Value | dict[str, Value] | str | None) -> list[str]:
         if isinstance(values, (int, float)):
             return dict.fromkeys(self.ids, values)
         elif isinstance(values, dict):
