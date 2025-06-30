@@ -79,7 +79,7 @@ class PeftConfig:
     # `target_modules` can be set by the user but default to specific values depending on the used policy. See
     # `get_peft_configuration` in `scripts/train.py`.
     #
-    target_modules: list[str] | None = None
+    target_modules: list[str] | str | None = None
 
     # Similarly to `target_modules` this will have policy-dependent defaults which the user can override.
     modules_to_save: list[str] | None = None
