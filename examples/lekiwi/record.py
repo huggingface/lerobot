@@ -1,14 +1,13 @@
-import time
-
-from examples.lekiwi.utils import lekiwi_record_loop
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.datasets.utils import hw_to_dataset_features
 from lerobot.common.robots.lekiwi.config_lekiwi import LeKiwiClientConfig
 from lerobot.common.robots.lekiwi.lekiwi_client import LeKiwiClient
 from lerobot.common.teleoperators.keyboard import KeyboardTeleop, KeyboardTeleopConfig
 from lerobot.common.teleoperators.so100_leader import SO100Leader, SO100LeaderConfig
+from lerobot.common.utils.control_utils import init_keyboard_listener
 from lerobot.common.utils.utils import log_say
 from lerobot.common.utils.visualization_utils import _init_rerun
+from lerobot.record import record_loop
 
 NUM_EPISODES = 1
 FPS = 30
@@ -46,31 +45,56 @@ robot.connect()
 
 _init_rerun(session_name="lekiwi_record")
 
+listener, events = init_keyboard_listener()
+
 if not robot.is_connected or not leader_arm.is_connected or not keyboard.is_connected:
     exit()
 
-for episode_idx in range(NUM_EPISODES):
-    log_say(f"Recording episode {episode_idx + 1} of {NUM_EPISODES}")
+recorded_episodes = 0
+while recorded_episodes < NUM_EPISODES and not events["stop_recording"]:
+    log_say(f"Recording episode {recorded_episodes}")
 
     # Run the record loop
-    lekiwi_record_loop(
+    record_loop(
         robot=robot,
+        events=events,
         fps=FPS,
-        teleop_arm=leader_arm,
-        teleop_keyboard=keyboard,
         dataset=dataset,
+        teleop=[leader_arm, keyboard],
         control_time_s=EPISODE_TIME_SEC,
         single_task=TASK_DESCRIPTION,
         log_data=True,
     )
 
-    log_say("Reset environment")
-    time.sleep(int(RESET_TIME_SEC))
+    # Logic for reset env
+    if not events["stop_recording"] and (
+        (recorded_episodes < NUM_EPISODES - 1) or events["rerecord_episode"]
+    ):
+        log_say("Reset the environment")
+        record_loop(
+            robot=robot,
+            events=events,
+            fps=FPS,
+            teleop=[leader_arm, keyboard],
+            control_time_s=RESET_TIME_SEC,
+            single_task=TASK_DESCRIPTION,
+            display_data=True,
+        )
 
-# Clean up and upload to hub
-dataset.save_episode()
+    if events["rerecord_episode"]:
+        log_say("Re-record episode")
+        events["rerecord_episode"] = False
+        events["exit_early"] = False
+        dataset.clear_episode_buffer()
+        continue
+
+    dataset.save_episode()
+    recorded_episodes += 1
+
+# Upload to hub and clean up
 dataset.push_to_hub()
 
 robot.disconnect()
 leader_arm.disconnect()
 keyboard.disconnect()
+listener.stop()

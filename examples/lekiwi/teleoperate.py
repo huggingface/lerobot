@@ -1,11 +1,10 @@
 import time
 
-from examples.lekiwi.utils import display_data
 from lerobot.common.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
 from lerobot.common.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop, KeyboardTeleopConfig
 from lerobot.common.teleoperators.so100_leader import SO100Leader, SO100LeaderConfig
 from lerobot.common.utils.robot_utils import busy_wait
-from lerobot.common.utils.visualization_utils import _init_rerun
+from lerobot.common.utils.visualization_utils import _init_rerun, log_rerun_data
 
 FPS = 30
 
@@ -36,7 +35,7 @@ while True:
     keyboard_keys = telep_keyboard.get_action()
     base_action = robot._from_keyboard_to_base_action(keyboard_keys)
 
-    display_data(observation, arm_action, base_action)
+    log_rerun_data(observation, {**arm_action, **base_action})
 
     action = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
 

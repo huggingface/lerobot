@@ -1,10 +1,11 @@
-from examples.lekiwi.utils import lekiwi_record_loop
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.datasets.utils import hw_to_dataset_features
 from lerobot.common.policies.act.modeling_act import ACTPolicy
 from lerobot.common.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
+from lerobot.common.utils.control_utils import init_keyboard_listener
 from lerobot.common.utils.utils import log_say
 from lerobot.common.utils.visualization_utils import _init_rerun
+from lerobot.record import record_loop
 
 NUM_EPISODES = 5
 FPS = 30
@@ -36,14 +37,17 @@ robot.connect()
 
 _init_rerun(session_name="recording")
 
+listener, events = init_keyboard_listener()
+
 if not robot.is_connected:
     exit()
 
-for episode_idx in range(NUM_EPISODES):
-    log_say(f"Running inference, recording eval episode {episode_idx + 1} of {NUM_EPISODES}")
+recorded_episodes = 0
+while recorded_episodes < NUM_EPISODES and not events["stop_recording"]:
+    log_say(f"Running inference, recording eval episode {recorded_episodes} of {NUM_EPISODES}")
 
     # Run the policy inference loop
-    lekiwi_record_loop(
+    record_loop(
         robot=robot,
         fps=FPS,
         policy=policy,
@@ -53,8 +57,31 @@ for episode_idx in range(NUM_EPISODES):
         log_data=True,
     )
 
-    dataset.save_episode()
+    # Logic for reset env
+    if not events["stop_recording"] and (
+        (recorded_episodes < NUM_EPISODES - 1) or events["rerecord_episode"]
+    ):
+        log_say("Reset the environment")
+        record_loop(
+            robot=robot,
+            fps=FPS,
+            control_time_s=EPISODE_TIME_SEC,
+            single_task=TASK_DESCRIPTION,
+            log_data=True,
+        )
 
-# Clean up and upload to hub
-robot.disconnect()
+    if events["rerecord_episode"]:
+        log_say("Re-record episode")
+        events["rerecord_episode"] = False
+        events["exit_early"] = False
+        dataset.clear_episode_buffer()
+        continue
+
+    dataset.save_episode()
+    recorded_episodes += 1
+
+# Upload to hub and clean up
 dataset.push_to_hub()
+
+robot.disconnect()
+listener.stop()
