@@ -28,7 +28,7 @@ from lerobot.datasets.transforms import (
 from lerobot.utils.random_utils import seeded_context
 
 ARTIFACT_DIR = Path("tests/artifacts/image_transforms")
-DATASET_REPO_ID = "lerobot/aloha_mobile_shrimp"
+DATASET_REPO_ID = "lerobot/aloha_static_cups_open"
 
 
 def save_default_config_transform(original_frame: torch.Tensor, output_dir: Path):
