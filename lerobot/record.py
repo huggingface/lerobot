@@ -175,6 +175,7 @@ def record_loop(
     if dataset is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
 
+    # If there are multiple teleoperators we assume for now a LeKiwi is used
     teleop_arm = teleop_keyboard = None
     if isinstance(teleop, Sequence):
         for t in teleop:
@@ -215,7 +216,9 @@ def record_loop(
             action = {key: action_values[i].item() for i, key in enumerate(robot.action_features)}
         elif policy is None and teleop_arm is not None and teleop_keyboard is None:
             action = teleop.get_action()
-        elif policy is None and teleop_arm and teleop_keyboard is not None:
+        elif (
+            policy is None and teleop_arm and teleop_keyboard is not None
+        ):  # TODO(pepijn, steven): clean the record loop for use of multiple robots (possibly with pipeline)
             arm_action = teleop_arm.get_action()
             arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
 

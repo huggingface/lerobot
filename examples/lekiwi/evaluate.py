@@ -54,7 +54,7 @@ while recorded_episodes < NUM_EPISODES and not events["stop_recording"]:
         dataset=dataset,
         control_time_s=EPISODE_TIME_SEC,
         single_task=TASK_DESCRIPTION,
-        log_data=True,
+        display_data=True,
     )
 
     # Logic for reset env
@@ -67,7 +67,7 @@ while recorded_episodes < NUM_EPISODES and not events["stop_recording"]:
             fps=FPS,
             control_time_s=EPISODE_TIME_SEC,
             single_task=TASK_DESCRIPTION,
-            log_data=True,
+            display_data=True,
         )
 
     if events["rerecord_episode"]:
