@@ -55,7 +55,7 @@ def display_and_save_video_stream(output_dir: Path, fps: int, width: int, height
         if not ret:
             print("Error: Could not read frame.")
             break
-        rr.log("video/stream", rr.Image(frame.numpy()), static=True)
+        rr.log("video/stream", rr.Image(frame), static=True)
         cv2.imwrite(str(capture_dir / f"frame_{frame_index:06d}.png"), frame)
         frame_index += 1
 
