@@ -1,5 +1,4 @@
 import argparse
-import logging
 import pickle  # nosec
 import threading
 import time
@@ -35,7 +34,6 @@ from lerobot.scripts.server.helpers import (
 class RobotClient:
     prefix = "robot_client"
     logger = get_logger(prefix)
-    logger.setLevel(logging.WARNING)
 
     def __init__(self, config: RobotClientConfig):
         # Store configuration
@@ -380,6 +378,9 @@ class RobotClient:
         self.logger.info("Control loop thread starting")
 
         control_loops = 0
+        _performed_action = None
+        _captured_observation = None
+
         while self.running:
             control_loop_start = time.perf_counter()
             """Control loop: (1) Performing actions, when available"""
@@ -469,6 +470,8 @@ def parse_args():
 
 def async_client(args: argparse.Namespace):
     robot = make_robot(args)
+
+    # Load policy config for validation
     policy_config = PreTrainedConfig.from_pretrained(args.pretrained_name_or_path)
     policy_image_features = policy_config.image_features
 
@@ -507,26 +510,21 @@ def async_client(args: argparse.Namespace):
 
             return observation
 
-        client.logger.info("Starting all threads...")
+        client.logger.info("Starting action receiver thread...")
 
         # Create and start action receiver thread
         action_receiver_thread = threading.Thread(target=client.receive_actions, daemon=True)
-        control_loop_thread = threading.Thread(
-            target=client.control_loop, args=(make_observation,), daemon=True
-        )
 
-        # Start all threads
+        # Start action receiver thread
         action_receiver_thread.start()
-        control_loop_thread.start()
 
         try:
-            while client.running:
-                time.sleep(0.1)  # tiny sleep to avoid tight loop in main thread
+            # The main thread runs the control loop
+            client.control_loop(make_observation)
 
         except KeyboardInterrupt:
             client.stop()
             action_receiver_thread.join()
-            control_loop_thread.join()
 
         finally:
             if args.debug_visualize_queue_size:
