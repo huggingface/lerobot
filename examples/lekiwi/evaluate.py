@@ -7,7 +7,7 @@ from lerobot.common.utils.utils import log_say
 from lerobot.common.utils.visualization_utils import _init_rerun
 from lerobot.record import record_loop
 
-NUM_EPISODES = 5
+NUM_EPISODES = 2
 FPS = 30
 EPISODE_TIME_SEC = 60
 TASK_DESCRIPTION = "My task description"
@@ -64,6 +64,7 @@ while recorded_episodes < NUM_EPISODES and not events["stop_recording"]:
         log_say("Reset the environment")
         record_loop(
             robot=robot,
+            events=events,
             fps=FPS,
             control_time_s=EPISODE_TIME_SEC,
             single_task=TASK_DESCRIPTION,
