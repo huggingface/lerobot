@@ -130,7 +130,7 @@ pip install -e .
 ```
 
 > **NOTE:** If you encounter build errors, you may need to install additional dependencies (`cmake`, `build-essential`, and `ffmpeg libs`). On Linux, run:
-`sudo apt-get install cmake build-essential python3-dev pkg-config libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev libswscale-dev libswresample-dev libavfilter-dev pkg-config`. For other systems, see: [Compiling PyAV](https://pyav.org/docs/develop/overview/installation.html#bring-your-own-ffmpeg)
+`sudo apt-get install cmake build-essential python3-dev pkg-config libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev libswscale-dev libswresample-dev libavfilter-dev`. For other systems, see: [Compiling PyAV](https://pyav.org/docs/develop/overview/installation.html#bring-your-own-ffmpeg)
 
 For simulations, 🤗 LeRobot comes with gymnasium environments that can be installed as extras:
 - [aloha](https://github.com/huggingface/gym-aloha)
@@ -416,6 +416,19 @@ Additionally, if you are using any of the particular policy architecture, pretra
   author={Lee, Seungjae and Wang, Yibin and Etukuru, Haritheja and Kim, H Jin and Shafiullah, Nur Muhammad Mahi and Pinto, Lerrel},
   journal={arXiv preprint arXiv:2403.03181},
   year={2024}
+}
+```
+
+
+- [HIL-SERL](https://hil-serl.github.io/)
+```bibtex
+@Article{luo2024hilserl,
+title={Precise and Dexterous Robotic Manipulation via Human-in-the-Loop Reinforcement Learning},
+author={Jianlan Luo and Charles Xu and Jeffrey Wu and Sergey Levine},
+year={2024},
+eprint={2410.21845},
+archivePrefix={arXiv},
+primaryClass={cs.RO}
 }
 ```
 ## Star History
