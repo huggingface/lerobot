@@ -92,7 +92,9 @@ class SwanLabLogger:
         # Handle custom step key for rl asynchronous training.
         self._swanlab_custom_step_key: set[str] | None = None
         print(colored("Logs will be synced with swanlab.", "blue", attrs=["bold"]))
-        logging.info(f"Track this run --> {colored(self._run.public.cloud.experiment_url, 'yellow', attrs=['bold'])}")
+        logging.info(
+            f"Track this run --> {colored(self._run.public.cloud.experiment_url, 'yellow', attrs=['bold'])}"
+        )
         self._swanlab = swanlab
 
     def log_policy(self, checkpoint_dir: Path):
