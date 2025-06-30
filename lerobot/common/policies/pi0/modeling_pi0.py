@@ -265,23 +265,32 @@ class PI0Policy(PreTrainedPolicy):
 
         for key, value in state_dict.items():
             new_key = key
-
             # Apply transformations for PaliGemma components
             # model.paligemma_with_expert.paligemma.language_model.lm_head -> model.paligemma_with_expert.paligemma.lm_head
-            new_key = re.sub(r"\.paligemma\.language_model\.lm_head", ".paligemma.lm_head", new_key)
-
             # model.paligemma_with_expert.paligemma.language_model.model -> model.paligemma_with_expert.paligemma.model.language_model
-            new_key = re.sub(
-                r"\.paligemma\.language_model\.model", ".paligemma.model.language_model", new_key
-            )
-
             # model.paligemma_with_expert.paligemma.vision_tower -> model.paligemma_with_expert.paligemma.model.vision_tower
-            new_key = re.sub(r"\.paligemma\.vision_tower", ".paligemma.model.vision_tower", new_key)
-
             # model.paligemma_with_expert.paligemma.multi_modal_projector -> model.paligemma_with_expert.paligemma.model.multi_modal_projector
-            new_key = re.sub(
-                r"\.paligemma\.multi_modal_projector", ".paligemma.model.multi_modal_projector", new_key
-            )
+            transformations = [
+                (
+                    r"\.paligemma_with_expert\.paligemma\.language_model\.lm_head",
+                    ".paligemma_with_expert.paligemma.lm_head",
+                ),
+                (
+                    r"\.paligemma_with_expert\.paligemma\.language_model\.model",
+                    ".paligemma_with_expert.paligemma.model.language_model",
+                ),
+                (
+                    r"\.paligemma_with_expert\.paligemma\.vision_tower",
+                    ".paligemma_with_expert.paligemma.model.vision_tower",
+                ),
+                (
+                    r"\.paligemma_with_expert\.paligemma\.multi_modal_projector",
+                    ".paligemma_with_expert.paligemma.model.multi_modal_projector",
+                ),
+            ]
+
+            for pattern, replacement in transformations:
+                new_key = re.sub(pattern, replacement, new_key)
 
             transformed_dict[new_key] = value
 
