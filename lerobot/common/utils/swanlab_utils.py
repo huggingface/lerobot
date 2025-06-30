@@ -75,9 +75,8 @@ class SwanLabLogger:
             else None
         )
         self._run = swanlab.init(
-            run_id=swanlab_run_id,
             project=self.cfg.project,
-            experiment_name=self.job_name,
+            experiment_name=swanlab_run_id,
             description=self.cfg.notes,
             tags=cfg_to_group(cfg, return_list=True),
             logdir=str(self.log_dir),
@@ -86,14 +85,14 @@ class SwanLabLogger:
             resume=cfg.resume,
             mode=self.cfg.mode if self.cfg.mode in ["online", "offline", "disabled"] else "online",
         )
-        run_id = self._run.run_id
+        run_id = self._run.public.run_id
         # NOTE: We will override the cfg.swanlab.run_id with the swanlab run id.
         # This is because we want to be able to resume the run from the swanlab run id.
         cfg.swanlab.run_id = run_id
         # Handle custom step key for rl asynchronous training.
         self._swanlab_custom_step_key: set[str] | None = None
         print(colored("Logs will be synced with swanlab.", "blue", attrs=["bold"]))
-        logging.info(f"Track this run --> {colored(self._run.url, 'yellow', attrs=['bold'])}")
+        logging.info(f"Track this run --> {colored(self._run.public.cloud.experiment_url, 'yellow', attrs=['bold'])}")
         self._swanlab = swanlab
 
     def log_policy(self, checkpoint_dir: Path):
