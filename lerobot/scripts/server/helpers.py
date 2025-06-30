@@ -363,35 +363,37 @@ def send_bytes_in_chunks(
     logging_method(f"{log_prefix} Published {sent_bytes / 1024 / 1024} MB")
 
 
-def receive_bytes_in_chunks(iterator, continue_receiving: Event, log_prefix: str = ""):  # type: ignore
+def receive_bytes_in_chunks(
+    iterator, continue_receiving: Event, logger: logging.Logger, log_prefix: str = ""
+):  # type: ignore
     # NOTE(fracapuano): Partially copied from lerobot.common.transport.utils.receive_bytes_in_chunks. Duplication can't be avoided if we
     # don't use a unique class for messages sent (due to the different transfer states sent). Also, on the server side the logic for receiving
     # is opposite then the HIL-SERL design (my event showcases keeping on running instead of shutdown)
     bytes_buffer = io.BytesIO()
     step = 0
 
-    logging.info(f"{log_prefix} Starting receiver")
+    logger.info(f"{log_prefix} Starting receiver")
     for item in iterator:
-        logging.debug(f"{log_prefix} Received item")
+        logger.debug(f"{log_prefix} Received item")
         if not continue_receiving.is_set():
-            logging.info(f"{log_prefix} Shutting down receiver")
+            logger.info(f"{log_prefix} Shutting down receiver")
             return
 
         if item.transfer_state == async_inference_pb2.TransferState.TRANSFER_BEGIN:
             bytes_buffer.seek(0)
             bytes_buffer.truncate(0)
             bytes_buffer.write(item.data)
-            logging.debug(f"{log_prefix} Received data at step 0")
+            logger.debug(f"{log_prefix} Received data at step 0")
             step = 0
 
         elif item.transfer_state == async_inference_pb2.TransferState.TRANSFER_MIDDLE:
             bytes_buffer.write(item.data)
             step += 1
-            logging.debug(f"{log_prefix} Received data at step {step}")
+            logger.debug(f"{log_prefix} Received data at step {step}")
 
         elif item.transfer_state == async_inference_pb2.TransferState.TRANSFER_END:
             bytes_buffer.write(item.data)
-            logging.debug(f"{log_prefix} Received data at step end size {bytes_buffer_size(bytes_buffer)}")
+            logger.debug(f"{log_prefix} Received data at step end size {bytes_buffer_size(bytes_buffer)}")
 
             complete_bytes = bytes_buffer.getvalue()
 
@@ -399,9 +401,9 @@ def receive_bytes_in_chunks(iterator, continue_receiving: Event, log_prefix: str
             bytes_buffer.truncate(0)
             step = 0
 
-            logging.debug(f"{log_prefix} Queue updated")
+            logger.debug(f"{log_prefix} Queue updated")
             return complete_bytes
 
         else:
-            logging.warning(f"{log_prefix} Received unknown transfer state {item.transfer_state}")
+            logger.warning(f"{log_prefix} Received unknown transfer state {item.transfer_state}")
             raise ValueError(f"Received unknown transfer state {item.transfer_state}")
