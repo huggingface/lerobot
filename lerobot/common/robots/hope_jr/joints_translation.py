@@ -16,7 +16,7 @@ def get_radial_flexion(flexion: float, abduction: float, splay: float):
     return radial_component * splay + flexion * (1 - splay)
 
 
-def homonculus_glove_to_hope_jr_hand(glove_action: dict[str, float]) -> dict[str, float]:
+def homunculus_glove_to_hope_jr_hand(glove_action: dict[str, float]) -> dict[str, float]:
     return {
         "thumb_cmc.pos": glove_action["thumb_cmc.pos"],
         "thumb_mcp.pos": glove_action["thumb_mcp.pos"],

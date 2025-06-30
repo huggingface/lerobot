@@ -2,17 +2,16 @@ import time
 import traceback
 
 from lerobot.common.robots.hope_jr import HopeJrArm, HopeJrArmConfig
-from lerobot.common.teleoperators.homonculus import HomonculusArm, HomonculusArmConfig
+from lerobot.common.teleoperators.homunculus import HomunculusArm, HomunculusArmConfig
 from lerobot.common.utils.utils import move_cursor_up
 
 
-def make_left_arm() -> tuple[HomonculusArm, HopeJrArm]:
-    left_exo_arm_cfg = HomonculusArmConfig("/dev/tty.usbmodem2101", id="left")
-    left_exo_arm = HomonculusArm(left_exo_arm_cfg)
+def make_left_arm() -> tuple[HomunculusArm, HopeJrArm]:
+    left_exo_arm_cfg = HomunculusArmConfig("/dev/tty.usbmodem2101", id="left")
+    left_exo_arm = HomunculusArm(left_exo_arm_cfg)
     left_arm_cfg = HopeJrArmConfig("/dev/tty.usbserial-140", id="left")
     left_arm = HopeJrArm(left_arm_cfg)
     return left_exo_arm, left_arm
-
 
 def main():
     left_exo_arm, left_arm = make_left_arm()
@@ -47,7 +46,6 @@ def main():
     finally:
         left_exo_arm.disconnect()
         left_arm.disconnect()
-
 
 if __name__ == "__main__":
     main()

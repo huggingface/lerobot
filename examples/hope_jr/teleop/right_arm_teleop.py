@@ -2,13 +2,13 @@ import time
 import traceback
 
 from lerobot.common.robots.hope_jr import HopeJrArm, HopeJrArmConfig
-from lerobot.common.teleoperators.homonculus import HomonculusArm, HomonculusArmConfig
+from lerobot.common.teleoperators.homunculus import HomunculusArm, HomunculusArmConfig
 from lerobot.common.utils.utils import move_cursor_up
 
 
-def make_right_arm() -> tuple[HomonculusArm, HopeJrArm]:
-    right_exo_arm_cfg = HomonculusArmConfig("/dev/tty.usbmodem2101", id="right")
-    right_exo_arm = HomonculusArm(right_exo_arm_cfg)
+def make_right_arm() -> tuple[HomunculusArm, HopeJrArm]:
+    right_exo_arm_cfg = HomunculusArmConfig("/dev/tty.usbmodem2101", id="right")
+    right_exo_arm = HomunculusArm(right_exo_arm_cfg)
     right_arm_cfg = HopeJrArmConfig("/dev/tty.usbserial-140", id="right")
     right_arm = HopeJrArm(right_arm_cfg)
     return right_exo_arm, right_arm

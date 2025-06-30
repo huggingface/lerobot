@@ -21,37 +21,70 @@ from pprint import pformat
 import serial
 
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from lerobot.common.motors.motors_bus import MotorCalibration, MotorNormMode
+from lerobot.common.motors import MotorCalibration
+from lerobot.common.motors.motors_bus import MotorNormMode
 from lerobot.common.utils.utils import enter_pressed, move_cursor_up
 
 from ..teleoperator import Teleoperator
-from .config_homonculus import HomonculusArmConfig
+from .config_homunculus import HomunculusGloveConfig
 
 logger = logging.getLogger(__name__)
 
+LEFT_HAND_INVERSIONS = [
+    "thumb_cmc",
+    "index_dip",
+    "middle_mcp_abduction",
+    "middle_dip",
+    "pinky_mcp_abduction",
+    "pinky_dip",
+]
 
-class HomonculusArm(Teleoperator):
+RIGHT_HAND_INVERSIONS = [
+    "thumb_mcp",
+    "thumb_cmc",
+    "index_mcp_abduction",
+    "index_dip",
+    "middle_mcp_abduction",
+    "middle_dip",
+    "ring_mcp_abduction",
+    "ring_mcp_flexion",
+    "ring_dip",
+    "pinky_mcp_abduction",
+]
+
+
+class HomunculusGlove(Teleoperator):
     """
-    Homonculus Arm designed by Hugging Face.
+    Homunculus Glove designed by Hugging Face.
     """
 
-    config_class = HomonculusArmConfig
-    name = "homonculus_arm"
+    config_class = HomunculusGloveConfig
+    name = "homunculus_glove"
 
-    def __init__(self, config: HomonculusArmConfig):
+    def __init__(self, config: HomunculusGloveConfig):
         super().__init__(config)
         self.config = config
         self.serial = serial.Serial(config.port, config.baud_rate, timeout=1)
 
         self.joints = {
-            "shoulder_pitch": MotorNormMode.RANGE_M100_100,
-            "shoulder_yaw": MotorNormMode.RANGE_M100_100,
-            "shoulder_roll": MotorNormMode.RANGE_M100_100,
-            "elbow_flex": MotorNormMode.RANGE_M100_100,
-            "wrist_roll": MotorNormMode.RANGE_M100_100,
-            "wrist_yaw": MotorNormMode.RANGE_M100_100,
-            "wrist_pitch": MotorNormMode.RANGE_M100_100,
+            "thumb_cmc": MotorNormMode.RANGE_0_100,
+            "thumb_mcp": MotorNormMode.RANGE_0_100,
+            "thumb_pip": MotorNormMode.RANGE_0_100,
+            "thumb_dip": MotorNormMode.RANGE_0_100,
+            "index_mcp_abduction": MotorNormMode.RANGE_M100_100,
+            "index_mcp_flexion": MotorNormMode.RANGE_0_100,
+            "index_dip": MotorNormMode.RANGE_0_100,
+            "middle_mcp_abduction": MotorNormMode.RANGE_M100_100,
+            "middle_mcp_flexion": MotorNormMode.RANGE_0_100,
+            "middle_dip": MotorNormMode.RANGE_0_100,
+            "ring_mcp_abduction": MotorNormMode.RANGE_M100_100,
+            "ring_mcp_flexion": MotorNormMode.RANGE_0_100,
+            "ring_dip": MotorNormMode.RANGE_0_100,
+            "pinky_mcp_abduction": MotorNormMode.RANGE_M100_100,
+            "pinky_mcp_flexion": MotorNormMode.RANGE_0_100,
+            "pinky_dip": MotorNormMode.RANGE_0_100,
         }
+        self.inverted_joints = RIGHT_HAND_INVERSIONS if config.side == "right" else LEFT_HAND_INVERSIONS
 
         self._state: dict[str, float] | None = None
         self.new_state_event = threading.Event()
@@ -92,17 +125,22 @@ class HomonculusArm(Teleoperator):
         return self.calibration_fpath.is_file()
 
     def calibrate(self) -> None:
-        print(
-            "\nMove all joints through their entire range of motion."
-            "\nRecording positions. Press ENTER to stop..."
-        )
-        range_mins, range_maxes = self._record_ranges_of_motion()
+        range_mins, range_maxes = {}, {}
+        for finger in ["thumb", "index", "middle", "ring", "pinky"]:
+            print(
+                f"\nMove {finger} through its entire range of motion."
+                "\nRecording positions. Press ENTER to stop..."
+            )
+            finger_joints = [joint for joint in self.joints if joint.startswith(finger)]
+            finger_mins, finger_maxes = self._record_ranges_of_motion(finger_joints)
+            range_mins.update(finger_mins)
+            range_maxes.update(finger_maxes)
 
         self.calibration = {}
         for id_, joint in enumerate(self.joints):
             self.calibration[joint] = MotorCalibration(
                 id=id_,
-                drive_mode=0,
+                drive_mode=1 if joint in self.inverted_joints else 0,
                 homing_offset=0,
                 range_min=range_mins[joint],
                 range_max=range_maxes[joint],
@@ -116,7 +154,7 @@ class HomonculusArm(Teleoperator):
     ) -> tuple[dict[str, int], dict[str, int]]:
         """Interactively record the min/max encoder values of each joint.
 
-        Move the joints while the method streams live positions. Press :kbd:`Enter` to finish.
+        Move the fingers while the method streams live positions. Press :kbd:`Enter` to finish.
 
         Args:
             joints (list[str] | None, optional):  Joints to record. Defaults to every joint (`None`).
@@ -135,6 +173,8 @@ class HomonculusArm(Teleoperator):
         elif not isinstance(joints, list):
             raise TypeError(joints)
 
+        display_len = max(len(key) for key in joints)
+
         start_positions = self._read(joints, normalize=False)
         mins = start_positions.copy()
         maxes = start_positions.copy()
@@ -145,9 +185,11 @@ class HomonculusArm(Teleoperator):
 
             if display_values:
                 print("\n-------------------------------------------")
-                print(f"{'NAME':<15} | {'MIN':>6} | {'POS':>6} | {'MAX':>6}")
+                print(f"{'NAME':<{display_len}} | {'MIN':>6} | {'POS':>6} | {'MAX':>6}")
                 for joint in joints:
-                    print(f"{joint:<15} | {mins[joint]:>6} | {positions[joint]:>6} | {maxes[joint]:>6}")
+                    print(
+                        f"{joint:<{display_len}} | {mins[joint]:>6} | {positions[joint]:>6} | {maxes[joint]:>6}"
+                    )
 
             if enter_pressed():
                 break
@@ -220,22 +262,16 @@ class HomonculusArm(Teleoperator):
             try:
                 if self.serial.in_waiting > 0:
                     self.serial.flush()
-                    raw_values = self.serial.readline().decode("utf-8").strip().split(" ")
-                    if len(raw_values) != 21:  # 16 raw + 5 angle values
+                    positions = self.serial.readline().decode("utf-8").strip().split(" ")
+                    if len(positions) != len(self.joints):
                         continue
 
-                    joint_angles = {
-                        "shoulder_pitch": int(raw_values[19]),
-                        "shoulder_yaw": int(raw_values[18]),
-                        "shoulder_roll": int(raw_values[20]),
-                        "elbow_flex": int(raw_values[17]),
-                        "wrist_roll": int(raw_values[16]),
-                        "wrist_yaw": int(raw_values[1]),
-                        "wrist_pitch": int(raw_values[0]),
+                    joint_positions = {
+                        joint: int(pos) for joint, pos in zip(self.joints, positions, strict=True)
                     }
 
                     with self.lock:
-                        self._state = joint_angles
+                        self._state = joint_positions
                     self.new_state_event.set()
 
             except Exception as e:

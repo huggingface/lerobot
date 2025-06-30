@@ -41,7 +41,7 @@ class HopeJrHandConfig(RobotConfig):
 @dataclass
 class HopeJrArmConfig(RobotConfig):
     port: str  # Port to connect to the hand
-
+    side: str  # "left" / "right"
     disable_torque_on_disconnect: bool = True
 
     # `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.

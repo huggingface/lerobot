@@ -1,16 +1,16 @@
 import time
 import traceback
 
-from lerobot.common.teleoperators.homonculus import HomonculusArm, HomonculusArmConfig
+from lerobot.common.teleoperators.homunculus import HomunculusArm, HomunculusArmConfig
 from lerobot.common.utils.utils import move_cursor_up
 
 # cfg = HomonculusArmConfig("/dev/tty.usbmodem2101", id="left")
-cfg = HomonculusArmConfig("/dev/tty.usbmodem2101", id="right")
-arm = HomonculusArm(cfg)
+cfg = HomunculusArmConfig("/dev/tty.usbmodem11301", id="left")
+arm = HomunculusArm(cfg)
 display_len = max(len(key) for key in arm.action_features)
 
 arm.connect()
-# arm.calibrate()
+arm.calibrate()
 try:
     while True:
         start = time.perf_counter()

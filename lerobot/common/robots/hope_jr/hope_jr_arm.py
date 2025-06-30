@@ -22,6 +22,7 @@ from typing import Any
 from lerobot.common.cameras.utils import make_cameras_from_configs
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.common.motors import Motor, MotorCalibration, MotorNormMode
+from lerobot.common.motors.calibration_gui import RangeFinderGUI
 from lerobot.common.motors.feetech import (
     FeetechMotorsBus,
     OperatingMode,
@@ -115,41 +116,15 @@ class HopeJrArm(Robot):
     def is_calibrated(self) -> bool:
         return self.bus.is_calibrated
 
-    def calibrate(self) -> None:
-        logger.info(f"\nRunning calibration of {self}")
-        self.bus.disable_torque()
-        for motor in self.bus.motors:
-            self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
-
-        unknown_range_motors = self.other_motors
-
-        input("Move arm to the middle of its range of motion and press ENTER....")
-        homing_offsets_full_turn = self.bus.set_half_turn_homings("shoulder_pitch")
-        homing_offsets_unknown_range = self.bus.set_half_turn_homings(unknown_range_motors)
-        homing_offsets = {**homing_offsets_full_turn, **homing_offsets_unknown_range}
-
-        logger.info(
-            "Move all joints except 'shoulder_pitch' sequentially through their "
-            "entire ranges of motion.\nRecording positions. Press ENTER to stop..."
-        )
-        range_mins, range_maxes = self.bus.record_ranges_of_motion(unknown_range_motors)
-        range_mins["shoulder_pitch"] = 1024
-        range_maxes["shoulder_pitch"] = 3071
-
-        range_mins["wrist_roll"] = 1500
-        range_maxes["wrist_roll"] = 2500
-
-        self.calibration = {}
-        for motor, m in self.bus.motors.items():
-            self.calibration[motor] = MotorCalibration(
-                id=m.id,
-                drive_mode=0,
-                homing_offset=homing_offsets[motor],
-                range_min=range_mins[motor],
-                range_max=range_maxes[motor],
-            )
-
-        self.bus.write_calibration(self.calibration)
+    def calibrate(self, limb_name: str = None) -> None:
+        groups = {
+            "all": list(self.bus.motors.keys()),
+            "shoulder": ["shoulder_pitch", "shoulder_yaw", "shoulder_roll"],
+            "elbow": ["elbow_flex"],
+            "wrist": ["wrist_roll", "wrist_yaw", "wrist_pitch"],
+        }
+        
+        self.calibration = RangeFinderGUI(self.bus, groups).run()
         self._save_calibration()
         print("Calibration saved to", self.calibration_fpath)
 
@@ -157,8 +132,8 @@ class HopeJrArm(Robot):
         with self.bus.torque_disabled():
             for motor in self.bus.motors:
                 self.bus.write("Return_Delay_Time", motor, 0)
-                self.bus.write("Maximum_Acceleration", motor, 50)
-                self.bus.write("Acceleration", motor, 50)
+                self.bus.write("Maximum_Acceleration", motor, 30)
+                self.bus.write("Acceleration", motor, 30)
 
     def setup_motors(self) -> None:
         for motor in reversed(self.bus.motors):

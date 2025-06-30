@@ -2,13 +2,13 @@ import time
 import traceback
 
 from lerobot.common.robots.hope_jr import HopeJrHand, HopeJrHandConfig, homonculus_glove_to_hope_jr_hand
-from lerobot.common.teleoperators.homonculus import HomonculusGlove, HomonculusGloveConfig
+from lerobot.common.teleoperators.homunculus import HomunculusGlove, HomunculusGloveConfig
 from lerobot.common.utils.utils import move_cursor_up
 
 
-def make_left_hand() -> tuple[HomonculusGlove, HopeJrHand]:
-    left_glove_cfg = HomonculusGloveConfig("/dev/tty.usbmodem1101", id="left", side="left")
-    left_glove = HomonculusGlove(left_glove_cfg)
+def make_left_hand() -> tuple[HomunculusGlove, HopeJrHand]:
+    left_glove_cfg = HomunculusGloveConfig("/dev/tty.usbmodem1101", id="left", side="left")
+    left_glove = HomunculusGlove(left_glove_cfg)
     left_hand_cfg = HopeJrHandConfig("/dev/tty.usbmodem58760433641", id="left", side="left")
     left_hand = HopeJrHand(left_hand_cfg)
     return left_glove, left_hand
