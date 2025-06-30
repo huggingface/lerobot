@@ -63,7 +63,7 @@ while recorded_episodes < NUM_EPISODES and not events["stop_recording"]:
         teleop=[leader_arm, keyboard],
         control_time_s=EPISODE_TIME_SEC,
         single_task=TASK_DESCRIPTION,
-        log_data=True,
+        display_data=True,
     )
 
     # Logic for reset env
