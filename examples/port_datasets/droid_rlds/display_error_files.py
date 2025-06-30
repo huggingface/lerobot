@@ -1,0 +1,74 @@
+import argparse
+from pathlib import Path
+import json
+
+def find_missings(completions_dir, world_size):
+    """ Find workers that are not completed and returns their indices.
+    """
+    full = list(range(world_size))
+
+    completed = []
+    for path in completions_dir.glob("*"):
+        if path.name in ['.', '..']:
+            continue
+        index = path.name.lstrip('0')
+        index = 0 if index == "" else int(index)
+        completed.append(index)
+
+    missings = set(full) - set(completed)
+    return missings
+
+def find_output_files(slurm_dir, worker_indices):
+    """ Find output files associated to worker indices, and return tuples
+    of (worker index, output file path)
+    """
+    out_files = []
+    for path in slurm_dir.glob("*.out"):
+        _, worker_id = path.name.replace(".out", "").split('_')
+        worker_id = int(worker_id)
+        if worker_id in worker_indices:
+            out_files.append((worker_id, path))
+    return out_files
+
+
+def display_error_files(logs_dir, job_name):
+    executor_path = Path(logs_dir) / job_name / "executor.json"
+    completions_dir = Path(logs_dir) / job_name / "completions"
+    slurm_dir = Path(logs_dir) / job_name / "slurm_logs"
+
+    with open(executor_path) as f:
+        executor = json.load(f)
+
+    missings = find_missings(completions_dir, executor["world_size"])
+
+    for missing in sorted(list(missings))[::-1]:
+        print(missing)
+
+    # error_files = find_output_files(slurm_dir, missings)
+    # error_files = sorted(error_files, key=lambda x: x[0])
+
+    # for _, path in error_files[::-1]:
+    #     print(path)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument(
+        "--logs-dir",
+        type=str,
+        help="Path to logs directory for `datatrove`.",
+    )
+    parser.add_argument(
+        "--job-name",
+        type=str,
+        default="port_droid",
+        help="Job name used in slurm, and name of the directory created inside the provided logs directory.",
+    )
+
+    args = parser.parse_args()
+
+    display_error_files(**vars(args))
+
+if __name__ == "__main__":
+    main()
