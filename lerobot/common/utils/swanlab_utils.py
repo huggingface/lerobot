@@ -142,7 +142,10 @@ class SwanLabLogger:
                 continue
 
             if custom_step_key is not None:
-                value_custom_step = d[custom_step_key]
+                value_custom_step = d.get(custom_step_key)
+                if value_custom_step is None:
+                    logging.warning(f'Custom step key "{custom_step_key}" not found in the dictionary. Skipping logging for this key.')
+                    continue
                 data = {f"{mode}/{k}": v, f"{mode}/{custom_step_key}": value_custom_step}
                 self._swanlab.log(data)
                 continue
