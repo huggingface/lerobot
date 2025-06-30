@@ -170,21 +170,36 @@ def test_timed_data_deserialization_data_getters():
 
 
 def _make_obs(state: torch.Tensor) -> TimedObservation:
+    """Create a TimedObservation with raw robot observation format."""
     return TimedObservation(
         timestamp=time.time(),
-        observation={"observation.state": state},
+        observation={
+            "shoulder": state[0].item() if len(state) > 0 else 0.0,
+            "elbow": state[1].item() if len(state) > 1 else 0.0,
+            "wrist": state[2].item() if len(state) > 2 else 0.0,
+            "gripper": state[3].item() if len(state) > 3 else 0.0,
+        },
         timestep=0,
     )
 
 
 def test_observations_similar_true():
     """Distance below atol → observations considered similar."""
-    obs1 = _make_obs(torch.zeros(6))
-    obs2 = _make_obs(0.5 * torch.ones(6))
-    assert observations_similar(obs1, obs2, atol=2.0)
+    # Create mock lerobot features for the similarity check
+    lerobot_features = {
+        "observation.state": {
+            "dtype": "float32",
+            "shape": [4],
+            "names": ["shoulder", "elbow", "wrist", "gripper"],
+        }
+    }
 
-    obs3 = _make_obs(2.0 * torch.ones(6))
-    assert not observations_similar(obs1, obs3, atol=2.0)
+    obs1 = _make_obs(torch.zeros(4))
+    obs2 = _make_obs(0.5 * torch.ones(4))
+    assert observations_similar(obs1, obs2, lerobot_features, atol=2.0)
+
+    obs3 = _make_obs(2.0 * torch.ones(4))
+    assert not observations_similar(obs1, obs3, lerobot_features, atol=2.0)
 
 
 # ---------------------------------------------------------------------

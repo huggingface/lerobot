@@ -55,6 +55,14 @@ def test_async_inference_e2e(policy_server, monkeypatch):  # noqa: F811
     # 1. Spawn a PolicyServer returning dummy action chunks
     # ------------------------------------------------------------------
     from lerobot.common.transport import async_inference_pb2  # type: ignore
+    from lerobot.scripts.server.helpers import map_robot_keys_to_lerobot_features
+    from tests.mocks.mock_robot import MockRobotConfig
+
+    test_config = MockRobotConfig()
+    mock_robot = make_robot_from_config(test_config)
+
+    lerobot_features = map_robot_keys_to_lerobot_features(mock_robot)
+    policy_server.lerobot_features = lerobot_features
 
     # Force server to produce deterministic action chunks in test mode
     policy_server.policy_type = "act"
@@ -84,21 +92,15 @@ def test_async_inference_e2e(policy_server, monkeypatch):  # noqa: F811
     server.start()
 
     # ------------------------------------------------------------------
-    # 2. Create a RobotClient around a MockRobot
+    # 2. Create a RobotClient around the MockRobot
     # ------------------------------------------------------------------
-    from lerobot.configs.types import FeatureType, PolicyFeature
-    from tests.mocks.mock_robot import MockRobotConfig
-
-    test_config = MockRobotConfig()
-    mock_robot = make_robot_from_config(test_config)
-
     client_config = RobotClientConfig(
         server_address=server_address,
         robot=mock_robot,
         chunk_size_threshold=0.0,
         policy_type="test",
         pretrained_name_or_path="test",
-        policy_image_features={"test": PolicyFeature(type=FeatureType.STATE, shape=(test_config.n_motors,))},
+        lerobot_features=lerobot_features,
     )
 
     client = RobotClient(client_config)
@@ -118,15 +120,13 @@ def test_async_inference_e2e(policy_server, monkeypatch):  # noqa: F811
     def _make_observation():
         obs_dict = mock_robot.get_observation()
 
-        obs_dict = {"observation.state": torch.tensor(list(obs_dict.values()))}
-
         return TimedObservation(
             timestamp=time.time(),
             observation=obs_dict,
             timestep=max(client.latest_action, 0),
         )
 
-    # Start client threads (daemon so they exit when main thread ends)
+    # Start client threads
     action_thread = threading.Thread(target=client.receive_actions, daemon=True)
     control_thread = threading.Thread(target=client.control_loop, args=(_make_observation,), daemon=True)
     action_thread.start()

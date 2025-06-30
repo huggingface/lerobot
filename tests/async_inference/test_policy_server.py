@@ -22,7 +22,7 @@ import time
 import pytest
 import torch
 
-from lerobot.common.constants import OBS_STATE
+from lerobot.configs.types import PolicyFeature
 from lerobot.scripts.server.configs import PolicyServerConfig
 from lerobot.scripts.server.helpers import TimedObservation
 from lerobot.scripts.server.policy_server import PolicyServer
@@ -38,6 +38,16 @@ class _StubPolicy:
 
     class _Config:
         robot_type = "dummy_robot"
+
+        @property
+        def image_features(self) -> dict[str, PolicyFeature]:
+            """Empty image features since this test doesn't use images."""
+            return {}
+
+    def predict_action_chunk(self, observation: dict[str, torch.Tensor]) -> torch.Tensor:
+        """Return a chunk of 20 dummy actions."""
+        batch_size = len(observation["observation.state"])
+        return torch.zeros(batch_size, 20, 6)
 
     def __init__(self):
         self.config = self._Config()
@@ -61,6 +71,16 @@ def policy_server() -> PolicyServer:
     server.policy = _StubPolicy()
     server.actions_per_chunk = 20
     server.device = "cpu"
+
+    # Add mock lerobot_features that the observation similarity functions need
+    server.lerobot_features = {
+        "observation.state": {
+            "dtype": "float32",
+            "shape": [6],
+            "names": ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"],
+        }
+    }
+
     return server
 
 
@@ -70,9 +90,16 @@ def policy_server() -> PolicyServer:
 
 
 def _make_obs(state: torch.Tensor, timestep: int = 0, must_go: bool = False) -> TimedObservation:
-    """Create a TimedObservation with a given state vector."""
+    """Create a TimedObservation with raw robot observation format."""
     return TimedObservation(
-        observation={OBS_STATE: state},
+        observation={
+            "joint1": state[0].item() if len(state) > 0 else 0.0,
+            "joint2": state[1].item() if len(state) > 1 else 0.0,
+            "joint3": state[2].item() if len(state) > 2 else 0.0,
+            "joint4": state[3].item() if len(state) > 3 else 0.0,
+            "joint5": state[4].item() if len(state) > 4 else 0.0,
+            "joint6": state[5].item() if len(state) > 5 else 0.0,
+        },
         timestamp=time.time(),
         timestep=timestep,
         must_go=must_go,
