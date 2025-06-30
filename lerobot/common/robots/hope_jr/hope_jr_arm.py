@@ -21,11 +21,10 @@ from typing import Any
 
 from lerobot.common.cameras.utils import make_cameras_from_configs
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from lerobot.common.motors import Motor, MotorCalibration, MotorNormMode
+from lerobot.common.motors import Motor, MotorNormMode
 from lerobot.common.motors.calibration_gui import RangeFinderGUI
 from lerobot.common.motors.feetech import (
     FeetechMotorsBus,
-    OperatingMode,
 )
 
 from ..robot import Robot
@@ -123,7 +122,7 @@ class HopeJrArm(Robot):
             "elbow": ["elbow_flex"],
             "wrist": ["wrist_roll", "wrist_yaw", "wrist_pitch"],
         }
-        
+
         self.calibration = RangeFinderGUI(self.bus, groups).run()
         self._save_calibration()
         print("Calibration saved to", self.calibration_fpath)

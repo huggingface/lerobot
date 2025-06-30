@@ -5,7 +5,7 @@ from lerobot.common.robots.hope_jr import HopeJrArm, HopeJrArmConfig
 from lerobot.common.utils.utils import move_cursor_up
 
 # cfg = HopeJrArmConfig("/dev/tty.usbserial-140", id="right")
-cfg = HopeJrArmConfig("/dev/tty.usbserial-1120", id="left",side="left")
+cfg = HopeJrArmConfig("/dev/tty.usbserial-1120", id="left", side="left")
 arm = HopeJrArm(cfg)
 display_len = max(len(key) for key in arm.action_features)
 

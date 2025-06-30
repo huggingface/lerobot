@@ -1,4 +1,4 @@
-# HopeJR 
+# HopeJR
 
 ## Prerequisites
 
@@ -39,9 +39,9 @@ Once again a calibration GUI will pop up. Finger joints are named as follows:
 **Index, Middle, Ring, and Pinky fingers**:
 - **Radial flexor**: Moves base of finger towards the thumb
 - **Ulnar flexor**: Moves base of finger towards the pinky
-- **PIP/DIP**: Flexes the distal and proximal phalanx of the finger 
+- **PIP/DIP**: Flexes the distal and proximal phalanx of the finger
 
-Each one of these will need to calibrated individually via the GUI. 
+Each one of these will need to calibrated individually via the GUI.
  Note that ulnar and radial flexors should have ranges of the same size (but with different offsets) in order to get symmetric movement.
 
 ![Setting boundaries in the hand calibration GUI](pics/1.png)
@@ -162,7 +162,7 @@ wrist_yaw          |    2171 |   33.33
 wrist_pitch        |    1993 |  -63.64
 
 time: 2.93ms (341 Hz)
-``` 
+```
 
 ## Step 2: Teleoperation
 
@@ -172,7 +172,7 @@ Due to global variable conflicts in the feetech middleware, teleoperation for ar
 # Terminal 1: Left Arm
 python examples/hope_jr/teleop/left_arm_teleop.py
 
-# Terminal 2: Right Arm  
+# Terminal 2: Right Arm
 python examples/hope_jr/teleop/right_arm_teleop.py
 
 # Terminal 3: Left Hand

@@ -13,6 +13,7 @@ def make_left_arm() -> tuple[HomunculusArm, HopeJrArm]:
     left_arm = HopeJrArm(left_arm_cfg)
     return left_exo_arm, left_arm
 
+
 def main():
     left_exo_arm, left_arm = make_left_arm()
     display_len = max(len(key) for key in left_exo_arm.action_features)
@@ -46,6 +47,7 @@ def main():
     finally:
         left_exo_arm.disconnect()
         left_arm.disconnect()
+
 
 if __name__ == "__main__":
     main()

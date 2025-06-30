@@ -18,6 +18,7 @@ import logging
 import threading
 from pprint import pformat
 from typing import Dict
+
 import serial
 
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
@@ -185,7 +186,6 @@ class HomunculusArm(Teleoperator):
 
         return normalized_values
 
-
     def _apply_ema(self, raw: Dict[str, int]) -> Dict[str, float]:
         """Update buffers & running EMA values; return smoothed dict."""
         smoothed: Dict[str, float] = {}
@@ -201,7 +201,6 @@ class HomunculusArm(Teleoperator):
 
             smoothed[joint] = self._ema[joint]
         return smoothed
-
 
     def _read(
         self, joints: list[str] | None = None, normalize: bool = True, timeout: float = 1
