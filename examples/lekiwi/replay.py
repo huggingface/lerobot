@@ -16,6 +16,9 @@ actions = dataset.hf_dataset.select_columns("action")
 
 robot.connect()
 
+if not robot.is_connected:
+    raise ValueError("Robot is not connected!")
+
 log_say(f"Replaying episode {EPISODE_IDX}")
 for idx in range(dataset.num_frames):
     t0 = time.perf_counter()

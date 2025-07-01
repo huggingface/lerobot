@@ -9,7 +9,7 @@ from lerobot.common.utils.utils import log_say
 from lerobot.common.utils.visualization_utils import _init_rerun
 from lerobot.record import record_loop
 
-NUM_EPISODES = 1
+NUM_EPISODES = 3
 FPS = 30
 EPISODE_TIME_SEC = 30
 RESET_TIME_SEC = 10
@@ -39,6 +39,8 @@ dataset = LeRobotDataset.create(
     image_writer_threads=4,
 )
 
+# To connect you already should have this script running on LeKiwi: `python -m lerobot.common.robots.lekiwi.lekiwi_host --robot.id=my_awesome_kiwi`
+robot.connect()
 leader_arm.connect()
 keyboard.connect()
 robot.connect()
@@ -48,7 +50,7 @@ _init_rerun(session_name="lekiwi_record")
 listener, events = init_keyboard_listener()
 
 if not robot.is_connected or not leader_arm.is_connected or not keyboard.is_connected:
-    exit()
+    raise ValueError("Robot, leader arm of keyboard is not connected!")
 
 recorded_episodes = 0
 while recorded_episodes < NUM_EPISODES and not events["stop_recording"]:
