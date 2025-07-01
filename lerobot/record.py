@@ -400,7 +400,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 continue
 
         # Pass force_encode=True when exiting early to ensure pending episodes are encoded
-        video_encoding_manager.save_episode_and_maybe_encode(force_encode=events["exit_early"])
+        video_encoding_manager.save_episode_and_maybe_encode(force_encode=(events["exit_early"] or events["stop_recording"]))
 
         recorded_episodes += 1
 
