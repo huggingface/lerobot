@@ -43,7 +43,6 @@ dataset = LeRobotDataset.create(
 robot.connect()
 leader_arm.connect()
 keyboard.connect()
-robot.connect()
 
 _init_rerun(session_name="lekiwi_record")
 
