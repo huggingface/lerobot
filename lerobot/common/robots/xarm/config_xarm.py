@@ -24,6 +24,7 @@ from ..config import RobotConfig
 class XarmEndEffectorConfig(RobotConfig):
     # Port to connect to the arm
     ip: str = "192.168.1.184"
+    save_effort: bool = False
 
     # cameras
     cameras: dict[str, CameraConfig] = field(default_factory=dict)

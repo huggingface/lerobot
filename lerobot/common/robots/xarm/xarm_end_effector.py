@@ -153,6 +153,10 @@ class XarmEndEffector(Robot):
         """Return mapping of motor feature names to their Python types (float)."""
         motors = {f"joint{i}.pos": float for i in range(1, 7)}
         motors["gripper.pos"] = float
+
+        if self.config.save_effort:
+            for i in range(1, 7):
+                motors[f"joint{i}.effort"] = float
         return motors
 
     @property
@@ -276,13 +280,14 @@ class XarmEndEffector(Robot):
         start = time.perf_counter()
 
         # Read joint positions from xarm
-        code, (joint_angles, joint_velocities, joint_currents) = (
+        code, (joint_angles, joint_velocities, joint_efforts) = (
             self._arm.get_joint_states()
         )
 
         obs_dict = {}
         for i, angle in enumerate(joint_angles[:6]):  # First 6 angles are joints
             obs_dict[f"joint{i+1}.pos"] = angle
+            obs_dict[f"joint{i+1}.effort"] = joint_efforts[i]
         obs_dict["gripper.pos"] = self._gripper.get_gripper_state()
 
         # Capture images from cameras
