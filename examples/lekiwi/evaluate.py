@@ -1,8 +1,8 @@
-from lerobot.common.datasets.utils import build_dataset_frame, hw_to_dataset_features
-from lerobot.common.policies.act.modeling_act import ACTPolicy
-from lerobot.common.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
-from lerobot.common.utils.control_utils import predict_action
-from lerobot.common.utils.utils import get_safe_torch_device
+from lerobot.datasets.utils import build_dataset_frame, hw_to_dataset_features
+from lerobot.policies.act.modeling_act import ACTPolicy
+from lerobot.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
+from lerobot.utils.control_utils import predict_action
+from lerobot.utils.utils import get_safe_torch_device
 
 NB_CYCLES_CLIENT_CONNECTION = 1000
 

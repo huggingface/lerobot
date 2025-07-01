@@ -21,8 +21,8 @@ import torch
 from gymnasium.utils.env_checker import check_env
 
 import lerobot
-from lerobot.common.envs.factory import make_env, make_env_config
-from lerobot.common.envs.utils import preprocess_observation
+from lerobot.envs.factory import make_env, make_env_config
+from lerobot.envs.utils import preprocess_observation
 from tests.utils import require_env
 
 OBS_TYPES = ["state", "pixels", "pixels_agent_pos"]

@@ -4,7 +4,7 @@ This tutorial will explain the training script, how to use it, and particularly 
 
 ## The training script
 
-LeRobot offers a training script at [`lerobot/scripts/train.py`](../lerobot/scripts/train.py). At a high level it does the following:
+LeRobot offers a training script at [`lerobot/scripts/train.py`](../src/lerobot/scripts/train.py). At a high level it does the following:
 
 - Initialize/load a configuration for the following steps using.
 - Instantiates a dataset.
@@ -21,7 +21,7 @@ In the training script, the main function `train` expects a `TrainPipelineConfig
 def train(cfg: TrainPipelineConfig):
 ```
 
-You can inspect the `TrainPipelineConfig` defined in [`lerobot/configs/train.py`](../lerobot/configs/train.py) (which is heavily commented and meant to be a reference to understand any option)
+You can inspect the `TrainPipelineConfig` defined in [`lerobot/configs/train.py`](../src/lerobot/configs/train.py) (which is heavily commented and meant to be a reference to understand any option)
 
 When running the script, inputs for the command line are parsed thanks to the `@parser.wrap()` decorator and an instance of this class is automatically generated. Under the hood, this is done with [Draccus](https://github.com/dlwh/draccus) which is a tool dedicated to this purpose. If you're familiar with Hydra, Draccus can similarly load configurations from config files (.json, .yaml) and also override their values through command line inputs. Unlike Hydra, these configurations are pre-defined in the code through dataclasses rather than being defined entirely in config files. This allows for more rigorous serialization/deserialization, typing, and to manipulate configuration as objects directly in the code and not as dictionaries or namespaces (which enables nice features in an IDE such as autocomplete, jump-to-def, etc.)
 
@@ -50,9 +50,9 @@ By default, every field takes its default value specified in the dataclass. If a
 
 ## Specifying values from the CLI
 
-Let's say that we want to train [Diffusion Policy](../lerobot/common/policies/diffusion) on the [pusht](https://huggingface.co/datasets/lerobot/pusht) dataset, using the [gym_pusht](https://github.com/huggingface/gym-pusht) environment for evaluation. The command to do so would look like this:
+Let's say that we want to train [Diffusion Policy](../src/lerobot/policies/diffusion) on the [pusht](https://huggingface.co/datasets/lerobot/pusht) dataset, using the [gym_pusht](https://github.com/huggingface/gym-pusht) environment for evaluation. The command to do so would look like this:
 ```bash
-python lerobot/scripts/train.py \
+python -m lerobot.scripts.train \
     --dataset.repo_id=lerobot/pusht \
     --policy.type=diffusion \
     --env.type=pusht
@@ -60,12 +60,12 @@ python lerobot/scripts/train.py \
 
 Let's break this down:
 - To specify the dataset, we just need to specify its `repo_id` on the hub which is the only required argument in the `DatasetConfig`. The rest of the fields have default values and in this case we are fine with those so we can just add the option `--dataset.repo_id=lerobot/pusht`.
-- To specify the policy, we can just select diffusion policy using `--policy` appended with `.type`. Here, `.type` is a special argument which allows us to select config classes inheriting from `draccus.ChoiceRegistry` and that have been decorated with the `register_subclass()` method. To have a better explanation of this feature, have a look at this [Draccus demo](https://github.com/dlwh/draccus?tab=readme-ov-file#more-flexible-configuration-with-choice-types). In our code, we use this mechanism mainly to select policies, environments, robots, and some other components like optimizers. The policies available to select are located in [lerobot/common/policies](../lerobot/common/policies)
-- Similarly, we select the environment with `--env.type=pusht`. The different environment configs are available in [`lerobot/common/envs/configs.py`](../lerobot/common/envs/configs.py)
+- To specify the policy, we can just select diffusion policy using `--policy` appended with `.type`. Here, `.type` is a special argument which allows us to select config classes inheriting from `draccus.ChoiceRegistry` and that have been decorated with the `register_subclass()` method. To have a better explanation of this feature, have a look at this [Draccus demo](https://github.com/dlwh/draccus?tab=readme-ov-file#more-flexible-configuration-with-choice-types). In our code, we use this mechanism mainly to select policies, environments, robots, and some other components like optimizers. The policies available to select are located in [lerobot/policies](../src/lerobot/policies)
+- Similarly, we select the environment with `--env.type=pusht`. The different environment configs are available in [`lerobot/envs/configs.py`](../src/lerobot/envs/configs.py)
 
-Let's see another example. Let's say you've been training [ACT](../lerobot/common/policies/act) on [lerobot/aloha_sim_insertion_human](https://huggingface.co/datasets/lerobot/aloha_sim_insertion_human) using the [gym-aloha](https://github.com/huggingface/gym-aloha) environment for evaluation with:
+Let's see another example. Let's say you've been training [ACT](../src/lerobot/policies/act) on [lerobot/aloha_sim_insertion_human](https://huggingface.co/datasets/lerobot/aloha_sim_insertion_human) using the [gym-aloha](https://github.com/huggingface/gym-aloha) environment for evaluation with:
 ```bash
-python lerobot/scripts/train.py \
+python -m lerobot.scripts.train \
     --policy.type=act \
     --dataset.repo_id=lerobot/aloha_sim_insertion_human \
     --env.type=aloha \
@@ -74,9 +74,9 @@ python lerobot/scripts/train.py \
 > Notice we added `--output_dir` to explicitly tell where to write outputs from this run (checkpoints, training state, configs etc.). This is not mandatory and if you don't specify it, a default directory will be created from the current date and time, env.type and policy.type. This will typically look like `outputs/train/2025-01-24/16-10-05_aloha_act`.
 
 We now want to train a different policy for aloha on another task. We'll change the dataset and use [lerobot/aloha_sim_transfer_cube_human](https://huggingface.co/datasets/lerobot/aloha_sim_transfer_cube_human) instead. Of course, we also need to change the task of the environment as well to match this other task.
-Looking at the [`AlohaEnv`](../lerobot/common/envs/configs.py) config, the task is `"AlohaInsertion-v0"` by default, which corresponds to the task we trained on in the command above. The [gym-aloha](https://github.com/huggingface/gym-aloha?tab=readme-ov-file#description) environment also has the `AlohaTransferCube-v0` task which corresponds to this other task we want to train on. Putting this together, we can train this new policy on this different task using:
+Looking at the [`AlohaEnv`](../src/lerobot/envs/configs.py) config, the task is `"AlohaInsertion-v0"` by default, which corresponds to the task we trained on in the command above. The [gym-aloha](https://github.com/huggingface/gym-aloha?tab=readme-ov-file#description) environment also has the `AlohaTransferCube-v0` task which corresponds to this other task we want to train on. Putting this together, we can train this new policy on this different task using:
 ```bash
-python lerobot/scripts/train.py \
+python -m lerobot.scripts.train \
     --policy.type=act \
     --dataset.repo_id=lerobot/aloha_sim_transfer_cube_human \
     --env.type=aloha \
@@ -111,7 +111,7 @@ Now, let's assume that we want to reproduce the run just above. That run has pro
 
 We can then simply load the config values from this file using:
 ```bash
-python lerobot/scripts/train.py \
+python -m lerobot.scripts.train \
     --config_path=outputs/train/act_aloha_transfer/checkpoints/last/pretrained_model/ \
     --output_dir=outputs/train/act_aloha_transfer_2
 ```
@@ -119,7 +119,7 @@ python lerobot/scripts/train.py \
 
 Similarly to Hydra, we can still override some parameters in the CLI if we want to, e.g.:
 ```bash
-python lerobot/scripts/train.py \
+python -m lerobot.scripts.train \
     --config_path=outputs/train/act_aloha_transfer/checkpoints/last/pretrained_model/ \
     --output_dir=outputs/train/act_aloha_transfer_2
     --policy.n_action_steps=80
@@ -128,7 +128,7 @@ python lerobot/scripts/train.py \
 
 `--config_path` can also accept the repo_id of a repo on the hub that contains a `train_config.json` file, e.g. running:
 ```bash
-python lerobot/scripts/train.py --config_path=lerobot/diffusion_pusht
+python -m lerobot.scripts.train --config_path=lerobot/diffusion_pusht
 ```
 will start a training run with the same configuration used for training [lerobot/diffusion_pusht](https://huggingface.co/lerobot/diffusion_pusht)
 
@@ -139,7 +139,7 @@ Being able to resume a training run is important in case it crashed or aborted f
 
 Let's reuse the command from the previous run and add a few more options:
 ```bash
-python lerobot/scripts/train.py \
+python -m lerobot.scripts.train \
     --policy.type=act \
     --dataset.repo_id=lerobot/aloha_sim_transfer_cube_human \
     --env.type=aloha \
@@ -155,7 +155,7 @@ INFO 2025-01-24 16:10:56 ts/train.py:263 Checkpoint policy after step 100
 ```
 Now let's simulate a crash by killing the process (hit `ctrl`+`c`). We can then simply resume this run from the last checkpoint available with:
 ```bash
-python lerobot/scripts/train.py \
+python -m lerobot.scripts.train \
     --config_path=outputs/train/run_resumption/checkpoints/last/pretrained_model/ \
     --resume=true
 ```
@@ -164,7 +164,7 @@ You should see from the logging that your training picks up from where it left o
 Another reason for which you might want to resume a run is simply to extend training and add more training steps. The number of training steps is set by the option `--steps`, which is 100 000 by default.
 You could double the number of steps of the previous run with:
 ```bash
-python lerobot/scripts/train.py \
+python -m lerobot.scripts.train \
     --config_path=outputs/train/run_resumption/checkpoints/last/pretrained_model/ \
     --resume=true \
     --steps=200000
@@ -195,7 +195,7 @@ In addition to the features currently in Draccus, we've added a special `.path` 
 
 For example, we could fine-tune a [policy pre-trained on the aloha transfer task](https://huggingface.co/lerobot/act_aloha_sim_transfer_cube_human) on the aloha insertion task. We can achieve this with:
 ```bash
-python lerobot/scripts/train.py \
+python -m lerobot.scripts.train \
     --policy.path=lerobot/act_aloha_sim_transfer_cube_human \
     --dataset.repo_id=lerobot/aloha_sim_insertion_human \
     --env.type=aloha \
@@ -236,7 +236,7 @@ We'll summarize here the main use cases to remember from this tutorial.
 
 #### Train a policy from scratch – CLI
 ```bash
-python lerobot/scripts/train.py \
+python -m lerobot.scripts.train \
     --policy.type=act \  # <- select 'act' policy
     --env.type=pusht \  # <- select 'pusht' environment
     --dataset.repo_id=lerobot/pusht  # <- train on this dataset
@@ -244,14 +244,14 @@ python lerobot/scripts/train.py \
 
 #### Train a policy from scratch - config file + CLI
 ```bash
-python lerobot/scripts/train.py \
+python -m lerobot.scripts.train \
     --config_path=path/to/pretrained_model \  # <- can also be a repo_id
     --policy.n_action_steps=80  # <- you may still override values
 ```
 
 #### Resume/continue a training run
 ```bash
-python lerobot/scripts/train.py \
+python -m lerobot.scripts.train \
     --config_path=checkpoint/pretrained_model/ \
     --resume=true \
     --steps=200000  # <- you can change some training parameters
@@ -259,7 +259,7 @@ python lerobot/scripts/train.py \
 
 #### Fine-tuning
 ```bash
-python lerobot/scripts/train.py \
+python -m lerobot.scripts.train \
     --policy.path=lerobot/act_aloha_sim_transfer_cube_human \  # <- can also be a local path to a checkpoint
     --dataset.repo_id=lerobot/aloha_sim_insertion_human \
     --env.type=aloha \

@@ -35,14 +35,14 @@ Then we can run this command to start:
 <hfoption id="Linux">
 
 ```bash
-python lerobot/scripts/rl/gym_manipulator.py --config_path path/to/env_config_gym_hil_il.json
+python -m lerobot.scripts.rl.gym_manipulator --config_path path/to/env_config_gym_hil_il.json
 ```
 
 </hfoption>
 <hfoption id="MacOS">
 
 ```bash
-mjpython lerobot/scripts/rl/gym_manipulator.py --config_path path/to/env_config_gym_hil_il.json
+mjpython -m lerobot.scripts.rl.gym_manipulator --config_path path/to/env_config_gym_hil_il.json
 ```
 
 </hfoption>
@@ -81,9 +81,9 @@ If you uploaded your dataset to the hub you can [visualize your dataset online](
 
 ## Train a policy
 
-To train a policy to control your robot, use the [`python lerobot/scripts/train.py`](../lerobot/scripts/train.py) script. A few arguments are required. Here is an example command:
+To train a policy to control your robot, use the [`python -m lerobot.scripts.train`](../src/lerobot/scripts/train.py) script. A few arguments are required. Here is an example command:
 ```bash
-python lerobot/scripts/train.py \
+python -m lerobot.scripts.train \
   --dataset.repo_id=${HF_USER}/il_gym \
   --policy.type=act \
   --output_dir=outputs/train/il_sim_test \
@@ -94,7 +94,7 @@ python lerobot/scripts/train.py \
 
 Let's explain the command:
 1. We provided the dataset as argument with `--dataset.repo_id=${HF_USER}/il_gym`.
-2. We provided the policy with `policy.type=act`. This loads configurations from [`configuration_act.py`](../lerobot/common/policies/act/configuration_act.py). Importantly, this policy will automatically adapt to the number of motor states, motor actions and cameras of your robot (e.g. `laptop` and `phone`) which have been saved in your dataset.
+2. We provided the policy with `policy.type=act`. This loads configurations from [`configuration_act.py`](../src/lerobot/policies/act/configuration_act.py). Importantly, this policy will automatically adapt to the number of motor states, motor actions and cameras of your robot (e.g. `laptop` and `phone`) which have been saved in your dataset.
 4. We provided `policy.device=cuda` since we are training on a Nvidia GPU, but you could use `policy.device=mps` to train on Apple silicon.
 5. We provided `wandb.enable=true` to use [Weights and Biases](https://docs.wandb.ai/quickstart) for visualizing training plots. This is optional but if you use it, make sure you are logged in by running `wandb login`.
 
@@ -130,14 +130,14 @@ Then you can run this command to visualize your trained policy
 <hfoption id="Linux">
 
 ```bash
-python lerobot/scripts/rl/eval_policy.py --config_path=path/to/eval_config_gym_hil.json
+python -m lerobot.scripts.rl.eval_policy --config_path=path/to/eval_config_gym_hil.json
 ```
 
 </hfoption>
 <hfoption id="MacOS">
 
 ```bash
-mjpython lerobot/scripts/rl/eval_policy.py --config_path=path/to/eval_config_gym_hil.json
+mjpython -m lerobot.scripts.rl.eval_policy --config_path=path/to/eval_config_gym_hil.json
 ```
 
 </hfoption>
