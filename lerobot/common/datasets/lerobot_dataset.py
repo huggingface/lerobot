@@ -856,7 +856,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # Only encode videos if requested
         if encode_videos and len(self.meta.video_keys) > 0:
             video_paths = self.encode_episode_videos(
-                episode_index, 
+                episode_index,
                 update_video_info=True,  # Update immediately for each episode
                 cleanup_images=False,  # wait until post-encoding validations
             )
@@ -953,7 +953,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         for ep_idx in range(self.meta.total_episodes):
             self.encode_episode_videos(ep_idx)
 
-    def encode_episode_videos(self, episode_index: int, update_video_info: bool = True, cleanup_images: bool = True) -> dict:
+    def encode_episode_videos(
+        self, episode_index: int, update_video_info: bool = True, cleanup_images: bool = True
+    ) -> dict:
         """
         Use ffmpeg to convert frames stored as png into mp4 videos.
         Note: `encode_video_frames` is a blocking call. Making it asynchronous shouldn't speedup encoding,
@@ -963,17 +965,17 @@ class LeRobotDataset(torch.utils.data.Dataset):
         - Video encoding via ffmpeg
         - Video info updating in metadata
         - Raw image cleanup
-        
+
         Args:
             episode_index: Episode to encode
             update_video_info: Whether to update video info in metadata
             cleanup_images: Whether to cleanup raw images for this episode
-            
+
         Returns:
             dict: Dictionary mapping video keys to their encoded video file paths
         """
         video_paths = {}
-        
+
         # Encode videos
         for key in self.meta.video_keys:
             video_path = self.root / self.meta.get_video_file_path(episode_index, key)
@@ -1012,13 +1014,13 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if end_episode is None:
             end_episode = self.meta.total_episodes
 
-        logging.info(f"Starting batch video encoding for episodes {start_episode} to {end_episode-1}")
+        logging.info(f"Starting batch video encoding for episodes {start_episode} to {end_episode - 1}")
 
         # Encode all episodes but don't update video info or cleanup until the end
         for ep_idx in range(start_episode, end_episode):
             logging.info(f"Encoding videos for episode {ep_idx}")
             self.encode_episode_videos(
-                ep_idx, 
+                ep_idx,
                 update_video_info=False,
                 cleanup_images=False,
             )
