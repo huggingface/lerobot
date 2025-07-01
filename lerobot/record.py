@@ -264,10 +264,7 @@ class VideoEncodingManager:
 
     def should_encode_batch(self, force=False):
         """Check if we should encode the current batch."""
-        return (
-            self.use_batched_encoding 
-            and (self.episodes_since_last_encoding >= self.batch_size or force)
-        )
+        return self.use_batched_encoding and (self.episodes_since_last_encoding >= self.batch_size or force)
 
     def save_episode_and_maybe_encode(self, force_encode=False):
         """Save episode and potentially encode batch."""
@@ -286,8 +283,11 @@ class VideoEncodingManager:
         if self.episodes_since_last_encoding > 0:
             start_ep = self.last_encoded_episode + 1
             end_ep = self.dataset.num_episodes
-            log_say(f"Batch encoding videos for {self.episodes_since_last_encoding} episodes, "
-                  f"from episode {start_ep} to episode {end_ep - 1}", self.play_sounds)
+            log_say(
+                f"Batch encoding videos for {self.episodes_since_last_encoding} episodes, "
+                f"from episode {start_ep} to episode {end_ep - 1}",
+                self.play_sounds,
+            )
             self.dataset.batch_encode_videos(start_ep, end_ep)
             self.last_encoded_episode = end_ep - 1
             self.episodes_since_last_encoding = 0
@@ -358,8 +358,9 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     listener, events = init_keyboard_listener()
 
-
-    with VideoEncodingManager(dataset, cfg.dataset.video_encoding_batch_size, cfg.play_sounds) as video_encoding_manager:
+    with VideoEncodingManager(
+        dataset, cfg.dataset.video_encoding_batch_size, cfg.play_sounds
+    ) as video_encoding_manager:
         recorded_episodes = 0
         while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
             log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
