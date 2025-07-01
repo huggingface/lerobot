@@ -49,7 +49,6 @@ from lerobot.common.datasets.utils import (
     embed_images,
     flatten_dict,
     get_delta_indices,
-    get_features_from_robot,
     get_hf_dataset_size_in_mb,
     get_hf_features_from_features,
     get_parquet_file_size_in_mb,
@@ -80,7 +79,6 @@ from lerobot.common.datasets.video_utils import (
     get_safe_default_codec,
     get_video_info,
 )
-from lerobot.common.robots.utils import Robot
 
 CODEBASE_VERSION = "v3.0"
 

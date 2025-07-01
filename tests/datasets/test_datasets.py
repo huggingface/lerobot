@@ -34,15 +34,15 @@ from lerobot.common.datasets.lerobot_dataset import (
 )
 from lerobot.common.datasets.utils import (
     create_branch,
+    hw_to_dataset_features,
 )
 from lerobot.common.envs.factory import make_env_config
 from lerobot.common.policies.factory import make_policy_config
 from lerobot.common.robots import make_robot_from_config
-from lerobot.common.datasets.utils import hw_to_dataset_features
-from tests.mocks.mock_robot import MockRobotConfig
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
 from tests.fixtures.constants import DUMMY_CHW, DUMMY_HWC, DUMMY_REPO_ID
+from tests.mocks.mock_robot import MockRobotConfig
 from tests.utils import require_x86_64_kernel
 
 
@@ -73,7 +73,9 @@ def test_same_attributes_defined(tmp_path, lerobot_dataset_factory):
     obs_features = hw_to_dataset_features(robot.observation_features, "observation", True)
     dataset_features = {**action_features, **obs_features}
     root_create = tmp_path / "create"
-    dataset_create = LeRobotDataset.create(repo_id=DUMMY_REPO_ID, fps=30, features=dataset_features, root=root_create)
+    dataset_create = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID, fps=30, features=dataset_features, root=root_create
+    )
 
     root_init = tmp_path / "init"
     dataset_init = lerobot_dataset_factory(root=root_init, total_episodes=1, total_frames=1)

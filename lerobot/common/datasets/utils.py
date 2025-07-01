@@ -840,7 +840,7 @@ def validate_frame(frame: dict, features: dict):
 
     # Remove task from actual_features for regular feature validation
     actual_features_for_validation = actual_features - {"task"}
-    
+
     error_message = validate_features_presence(actual_features_for_validation, expected_features)
 
     common_features = actual_features_for_validation & expected_features
