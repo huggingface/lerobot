@@ -175,7 +175,7 @@ def record_loop(
 
     # If there are multiple teleoperators we assume for now a LeKiwi is used
     teleop_arm = teleop_keyboard = None
-    if isinstance(teleop, List) and List.count == 2:
+    if isinstance(teleop, List) and len(teleop) == 2:
         for t in teleop:
             if isinstance(t, KeyboardTeleop):
                 teleop_keyboard = t

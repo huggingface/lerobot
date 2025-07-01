@@ -62,6 +62,7 @@ from .common.teleoperators import gamepad, koch_leader, so100_leader, so101_lead
 
 @dataclass
 class TeleoperateConfig:
+    # TODO: pepijn, steven: if more robots require multiple teleoperators (like lekiwi) its good to make this possibele in teleop.py and record.py with List[Teleoperator]
     teleop: TeleoperatorConfig
     robot: RobotConfig
     # Limit the maximum frames per second.
