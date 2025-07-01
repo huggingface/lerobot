@@ -48,6 +48,7 @@ from lerobot.common.robots import (  # noqa: F401
     make_robot_from_config,
     so100_follower,
     so101_follower,
+    xarm,
 )
 from lerobot.common.teleoperators import (
     Teleoperator,
@@ -57,8 +58,9 @@ from lerobot.common.teleoperators import (
 from lerobot.common.utils.robot_utils import busy_wait
 from lerobot.common.utils.utils import init_logging, move_cursor_up
 from lerobot.common.utils.visualization_utils import _init_rerun
+from tests.mocks.mock_robot import MockRobot
 
-from .common.teleoperators import gamepad, koch_leader, so100_leader, so101_leader  # noqa: F401
+from .common.teleoperators import gamepad, koch_leader, so100_leader, so101_leader, telephone, spacemouse  # noqa: F401
 
 
 @dataclass
@@ -99,8 +101,6 @@ def teleop_loop(
 
         print("\n" + "-" * (display_len + 10))
         print(f"{'NAME':<{display_len}} | {'NORM':>7}")
-        for motor, value in action.items():
-            print(f"{motor:<{display_len}} | {value:>7.2f}")
         print(f"\ntime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
 
         if duration is not None and time.perf_counter() - start >= duration:
