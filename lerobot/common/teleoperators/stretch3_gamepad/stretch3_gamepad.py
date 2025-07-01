@@ -58,6 +58,7 @@ class Stretch3GamePad(Teleoperator):
     name = "stretch3"
 
     def __init__(self, config: Stretch3GamePadConfig):
+        raise NotImplementedError
         super().__init__(config)
 
         self.config = config

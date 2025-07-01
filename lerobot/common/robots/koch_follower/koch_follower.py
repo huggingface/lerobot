@@ -20,7 +20,6 @@ from functools import cached_property
 from typing import Any
 
 from lerobot.common.cameras.utils import make_cameras_from_configs
-from lerobot.common.constants import OBS_STATE
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.common.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.common.motors.dynamixel import (
@@ -48,14 +47,15 @@ class KochFollower(Robot):
     def __init__(self, config: KochFollowerConfig):
         super().__init__(config)
         self.config = config
+        norm_mode_body = MotorNormMode.DEGREES if config.use_degrees else MotorNormMode.RANGE_M100_100
         self.bus = DynamixelMotorsBus(
             port=self.config.port,
             motors={
-                "shoulder_pan": Motor(1, "xl430-w250", MotorNormMode.RANGE_M100_100),
-                "shoulder_lift": Motor(2, "xl430-w250", MotorNormMode.RANGE_M100_100),
-                "elbow_flex": Motor(3, "xl330-m288", MotorNormMode.RANGE_M100_100),
-                "wrist_flex": Motor(4, "xl330-m288", MotorNormMode.RANGE_M100_100),
-                "wrist_roll": Motor(5, "xl330-m288", MotorNormMode.RANGE_M100_100),
+                "shoulder_pan": Motor(1, "xl430-w250", norm_mode_body),
+                "shoulder_lift": Motor(2, "xl430-w250", norm_mode_body),
+                "elbow_flex": Motor(3, "xl330-m288", norm_mode_body),
+                "wrist_flex": Motor(4, "xl330-m288", norm_mode_body),
+                "wrist_roll": Motor(5, "xl330-m288", norm_mode_body),
                 "gripper": Motor(6, "xl330-m288", MotorNormMode.RANGE_0_100),
             },
             calibration=self.calibration,
@@ -174,11 +174,9 @@ class KochFollower(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        obs_dict = {}
-
         # Read arm position
         start = time.perf_counter()
-        obs_dict[OBS_STATE] = self.bus.sync_read("Present_Position")
+        obs_dict = self.bus.sync_read("Present_Position")
         obs_dict = {f"{motor}.pos": val for motor, val in obs_dict.items()}
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")

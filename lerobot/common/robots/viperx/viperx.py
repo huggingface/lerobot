@@ -45,6 +45,7 @@ class ViperX(Robot):
         self,
         config: ViperXConfig,
     ):
+        raise NotImplementedError
         super().__init__(config)
         self.config = config
         self.bus = DynamixelMotorsBus(

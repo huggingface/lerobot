@@ -22,6 +22,11 @@ OBS_STATE = "observation.state"
 OBS_IMAGE = "observation.image"
 OBS_IMAGES = "observation.images"
 ACTION = "action"
+REWARD = "next.reward"
+
+ROBOTS = "robots"
+ROBOT_TYPE = "robot_type"
+TELEOPERATORS = "teleoperators"
 
 ROBOTS = "robots"
 TELEOPERATORS = "teleoperators"

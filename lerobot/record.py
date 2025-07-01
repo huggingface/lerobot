@@ -23,12 +23,15 @@ python -m lerobot.record \
     --robot.port=/dev/tty.usbmodem58760431541 \
     --robot.cameras="{laptop: {type: opencv, camera_index: 0, width: 640, height: 480}}" \
     --robot.id=black \
-    --teleop.type=so100_leader \
-    --teleop.port=/dev/tty.usbmodem58760431551 \
-    --teleop.id=blue \
     --dataset.repo_id=aliberts/record-test \
     --dataset.num_episodes=2 \
-    --dataset.single_task="Grab the cube"
+    --dataset.single_task="Grab the cube" \
+    # <- Teleop optional if you want to teleoperate to record or in between episodes with a policy \
+    # --teleop.type=so100_leader \
+    # --teleop.port=/dev/tty.usbmodem58760431551 \
+    # --teleop.id=blue \
+    # <- Policy optional if you want to record with a policy \
+    # --policy.path=${HF_USER}/my_policy \
 ```
 """
 
@@ -62,7 +65,10 @@ from lerobot.common.robots import (  # noqa: F401
 from lerobot.common.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
+    koch_leader,
     make_teleoperator_from_config,
+    so100_leader,
+    so101_leader,
 )
 from lerobot.common.utils.control_utils import (
     init_keyboard_listener,
@@ -80,8 +86,6 @@ from lerobot.common.utils.utils import (
 from lerobot.common.utils.visualization_utils import _init_rerun
 from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
-
-from .common.teleoperators import koch_leader, so100_leader, so101_leader  # noqa: F401
 
 
 @dataclass
@@ -139,15 +143,15 @@ class RecordConfig:
     resume: bool = False
 
     def __post_init__(self):
-        if bool(self.teleop) == bool(self.policy):
-            raise ValueError("Choose either a policy or a teleoperator to control the robot")
-
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
         policy_path = parser.get_path_arg("policy")
         if policy_path:
             cli_overrides = parser.get_cli_overrides("policy")
             self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
             self.policy.pretrained_path = policy_path
+
+        if self.teleop is None and self.policy is None:
+            raise ValueError("Choose a policy, a teleoperator or both to control the robot")
 
     @classmethod
     def __get_path_fields__(cls) -> list[str]:
@@ -179,6 +183,10 @@ def record_loop(
     while timestamp < control_time_s:
         start_loop_t = time.perf_counter()
 
+        if events["exit_early"]:
+            events["exit_early"] = False
+            break
+
         observation = robot.get_observation()
 
         if policy is not None or dataset is not None:
@@ -193,9 +201,16 @@ def record_loop(
                 task=single_task,
                 robot_type=robot.robot_type,
             )
-            action = {key: action_values[i] for i, key in enumerate(robot.action_features)}
-        else:
+            action = {key: action_values[i].item() for i, key in enumerate(robot.action_features)}
+        elif policy is None and teleop is not None:
             action = teleop.get_action()
+        else:
+            logging.info(
+                "No policy or teleoperator provided, skipping action generation."
+                "This is likely to happen when resetting the environment without a teleop device."
+                "The robot won't be at its rest position at the start of the next episode."
+            )
+            continue
 
         # Action can eventually be clipped using `max_relative_target`,
         # so action actually sent is saved in the dataset.
@@ -220,9 +235,6 @@ def record_loop(
         busy_wait(1 / fps - dt_s)
 
         timestamp = time.perf_counter() - start_episode_t
-        if events["exit_early"]:
-            events["exit_early"] = False
-            break
 
 
 @parser.wrap()
@@ -274,7 +286,8 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     listener, events = init_keyboard_listener()
 
-    for recorded_episodes in range(cfg.dataset.num_episodes):
+    recorded_episodes = 0
+    while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
         log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
         record_loop(
             robot=robot,
@@ -312,14 +325,13 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             continue
 
         dataset.save_episode()
-
-        if events["stop_recording"]:
-            break
+        recorded_episodes += 1
 
     log_say("Stop recording", cfg.play_sounds, blocking=True)
 
     robot.disconnect()
-    teleop.disconnect()
+    if teleop is not None:
+        teleop.disconnect()
 
     if not is_headless() and listener is not None:
         listener.stop()

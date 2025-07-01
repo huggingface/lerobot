@@ -77,11 +77,10 @@ def assert_same_address(model_ctrl_table: dict[str, dict], motor_models: list[st
         )
 
 
-class MotorNormMode(Enum):
-    DEGREE = 0
-    RANGE_0_100 = 1
-    RANGE_M100_100 = 2
-    VELOCITY = 3
+class MotorNormMode(str, Enum):
+    RANGE_0_100 = "range_0_100"
+    RANGE_M100_100 = "range_m100_100"
+    DEGREES = "degrees"
 
 
 @dataclass
@@ -793,8 +792,11 @@ class MotorsBus(abc.ABC):
             elif self.motors[motor].norm_mode is MotorNormMode.RANGE_0_100:
                 norm = ((bounded_val - min_) / (max_ - min_)) * 100
                 normalized_values[id_] = 100 - norm if drive_mode else norm
+            elif self.motors[motor].norm_mode is MotorNormMode.DEGREES:
+                mid = (min_ + max_) / 2
+                max_res = self.model_resolution_table[self._id_to_model(id_)] - 1
+                normalized_values[id_] = (val - mid) * 360 / max_res
             else:
-                # TODO(alibers): degree mode
                 raise NotImplementedError
 
         return normalized_values
@@ -820,8 +822,11 @@ class MotorsBus(abc.ABC):
                 val = 100 - val if drive_mode else val
                 bounded_val = min(100.0, max(0.0, val))
                 unnormalized_values[id_] = int((bounded_val / 100) * (max_ - min_) + min_)
+            elif self.motors[motor].norm_mode is MotorNormMode.DEGREES:
+                mid = (min_ + max_) / 2
+                max_res = self.model_resolution_table[self._id_to_model(id_)] - 1
+                unnormalized_values[id_] = int((val * max_res / 360) + mid)
             else:
-                # TODO(aliberts): degree mode
                 raise NotImplementedError
 
         return unnormalized_values
