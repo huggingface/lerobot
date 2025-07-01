@@ -28,7 +28,12 @@ OBS_IMAGE_4 = "observation.image4"
 REWARD = "next.reward"
 
 ROBOTS = "robots"
+<<<<<<< HEAD:src/lerobot/constants.py
 ROBOT_TYPE = "robot_type"
+=======
+TASK = "task"
+ROBOT = "robot_type"
+>>>>>>> 2b27084d (Refactor embed prefix in modeling_smolvla2.py):lerobot/common/constants.py
 TELEOPERATORS = "teleoperators"
 
 # files & directories

@@ -55,6 +55,7 @@ policy = SmolVLAPolicy.from_pretrained("lerobot/smolvla_base")
 import math
 import os
 import re
+import random
 from collections import deque
 
 import safetensors
@@ -69,12 +70,13 @@ from lerobot.common.policies.normalize import (
     Unnormalize,
 )
 from lerobot.common.policies.pretrained import PreTrainedPolicy
-from lerobot.common.policies.smolvla.configuration_smolvla import SmolVLAConfig
+from lerobot.common.policies.smolvla2.configuration_smolvla2 import SmolVLA2Config
 from lerobot.common.policies.smolvla.smolvlm_with_expert import SmolVLMWithExpertModel
 from lerobot.common.policies.utils import (
     populate_queues,
 )
 from lerobot.common.utils.utils import get_safe_dtype
+from lerobot.datasets import IMAGES_ORDER
 
 # Matches ".soNNN", optionally followed by "-something", up to the "_buffer_" marker
 _VARIANT_RE = re.compile(r"\.so\d+(?:-[\w]+)?_buffer_")
@@ -323,15 +325,15 @@ def aloha_gripper_from_angular_inv(value):
     return normalize(value, min_val=0.4, max_val=1.5)
 
 
-class SmolVLAPolicy(PreTrainedPolicy):
+class SmolVLA2Policy(PreTrainedPolicy):
     """Wrapper class around VLAFlowMatching model to train and run inference within LeRobot."""
 
-    config_class = SmolVLAConfig
-    name = "smolvla"
+    config_class = SmolVLA2Config
+    name = "smolvla2"
 
     def __init__(
         self,
-        config: SmolVLAConfig,
+        config: SmolVLA2Config,
         dataset_stats: dict[str, dict[str, Tensor]] | None = None,
     ):
         """
@@ -372,7 +374,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
     @classmethod
     def _load_as_safetensor(
         cls,
-        model: "SmolVLAPolicy",
+        model: "SmolVLA2Policy",
         model_file: str,
         map_location: str,
         strict: bool,
@@ -403,7 +405,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
         self.eval()
 
         if self.config.adapt_to_pi_aloha:
-            batch[OBS_ROBOT] = self._pi_aloha_decode_state(batch[OBS_ROBOT])
+            batch[OBS_STATE] = self._pi_aloha_decode_state(batch[OBS_STATE])
 
         batch = self.normalize_inputs(batch)
 
@@ -620,7 +622,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
             if self.config.relative_actions_mode == "first":
                 actions = torch.cat((actions[:, :1], actions[:, 1:] - actions[:, :1]), dim=1)
             elif self.config.relative_actions_mode == "state":
-                assert batch[ACTION].shape[-1] == batch[OBS_ROBOT].shape[-1], "Relative action mode 'state' requires the action and state to have the same dimension."
+                assert batch[ACTION].shape[-1] == batch[OBS_STATE].shape[-1], "Relative action mode 'state' requires the action and state to have the same dimension."
                 if state.ndim == 2:
                     state = state.unsqueeze(1)
                 actions = actions - state
@@ -713,33 +715,19 @@ class VLAFlowMatching(nn.Module):
 
         self.set_requires_grad()
                # SmolVLM2 has: [fake_tok + crop_tok + crop + fake_tok + crop_tok ... + fake_tok + global_tok + global + fake_tok] + [second image] + ...
-        if  any([k in self.config.vlm_model_name for k in ["SmolVLM-", "SmolVLA-"]]):
-            if "SmolVLM-Instruct" in self.config.vlm_model_name:
-                self.fake_image_token =  49152
-                self.global_image_token =  [44, 13906, 29, 6266, 46]
-                self.global_image_start_token = torch.tensor([self.fake_image_token] + self.global_image_token, dtype=torch.long)
-            else:
-                self.fake_image_token =  49189
-                self.global_image_token =  49152
-                self.global_image_start_token = torch.tensor([self.fake_image_token, self.global_image_token], dtype=torch.long)
-        else:
-            self.fake_image_token = self.vlm_with_expert.processor.tokenizer.fake_image_token_id
-            self.global_image_token = self.vlm_with_expert.processor.tokenizer.global_image_token_id
-            self.global_image_start_token = torch.tensor(
-                [self.fake_image_token, self.global_image_token], dtype=torch.long
-            )
+        self.fake_image_token = self.vlm_with_expert.processor.tokenizer.fake_image_token_id
+        self.global_image_token = self.vlm_with_expert.processor.tokenizer.global_image_token_id
+        self.global_image_start_token = torch.tensor(
+            [self.fake_image_token, self.global_image_token], dtype=torch.long
+        )
 
         self.add_image_special_tokens = self.config.add_image_special_tokens
-        self.add_local_special_image_tokens = self.config.add_local_special_image_tokens
-        self.local_image_tokens = [torch.tensor([self.fake_image_token, tok], dtype=torch.long) for tok in [49153, 49154, 49155, 49159, 49160, 49161, 49165, 49166, 49167]] # assume 3 x 3 grid
-        
-        self.local_image_start_token = self.global_image_start_token
         self.image_end_token = torch.tensor([self.fake_image_token], dtype=torch.long)
         self.prefix_length = self.config.prefix_length
         self.include_past_images = self.config.n_obs_steps > 1 and "image" in self.config.past_obs_keys.split(",")
         self.num_past_images = self.config.n_obs_steps if self.include_past_images else 1
         self.causal_attention_on_history = self.config.causal_attention_on_history
-        
+
 
     def set_requires_grad(self):
         for params in self.state_proj.parameters():
@@ -761,99 +749,135 @@ class VLAFlowMatching(nn.Module):
         return time.to(dtype=torch.float32, device=device)
 
     def embed_prefix(
-        self, images, img_masks, lang_tokens, lang_masks, state: torch.Tensor = None
+        self, images, img_masks, lang_tokens, lang_masks, state: torch.Tensor = None, 
+        pointtrackers=None, pt_masks=None, **kwargs
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Embed images with SigLIP and language tokens with embedding layer to prepare
-        for SmolVLM transformer processing.
+        """Embed multiple modalities for vlm processing.
+        
+        Simple, extensible approach using list + torch.cat.
+        Easy to add new information/modalities like point trackers, audio, etc.
+        
+        Args:
+            images: List of image tensors
+            img_masks: List of image masks
+            lang_tokens: Language token tensor
+            lang_masks: Language mask tensor
+            state: Optional state tensor
+            pointtrackers: Optional point tracker tensors (future extension)
+            pt_masks: Optional point tracker masks (future extension)
+            **kwargs: Additional modalities for future extensions
         """
         embs = []
         pad_masks = []
         att_masks = []
-        for _img_idx, (
-            img,
-            img_mask,
-        ) in enumerate(zip(images, img_masks, strict=False)):
-            if self.add_image_special_tokens:
-                image_start_token = (
-                    self.vlm_with_expert.embed_language_tokens(
-                        self.global_image_start_token.to(device=self.vlm_with_expert.vlm.device)
-                    )
-                    .unsqueeze(0)
-                    .expand(img.shape[0], -1, -1)
-                )
-                image_start_mask = torch.ones_like(
-                    image_start_token[:, :, 0], dtype=torch.bool, device=image_start_token.device
-                )
-                att_masks += [0] * (image_start_mask.shape[-1])
-                embs.append(image_start_token)
-                pad_masks.append(image_start_mask)
-
-            img_emb = self.vlm_with_expert.embed_image(img)
-            img_emb = img_emb
-
-            # Normalize image embeddings
-            img_emb_dim = img_emb.shape[-1]
-            img_emb = img_emb * torch.tensor(img_emb_dim**0.5, dtype=img_emb.dtype, device=img_emb.device)
-
-            bsize, num_img_embs = img_emb.shape[:2]
-            img_mask = img_mask[:, None].expand(bsize, num_img_embs)
-
-            embs.append(img_emb)
-            pad_masks.append(img_mask)
-
-            att_masks += [0] * (num_img_embs)
-            if self.add_image_special_tokens:
-                image_end_token = (
-                    self.vlm_with_expert.embed_language_tokens(
-                        self.image_end_token.to(device=self.vlm_with_expert.vlm.device)
-                    )
-                    .unsqueeze(0)
-                    .expand(img.shape[0], -1, -1)
-                )
-                image_end_mask = torch.ones_like(
-                    image_end_token[:, :, 0], dtype=torch.bool, device=image_end_token.device
-                )
-                embs.append(image_end_token)
-                pad_masks.append(image_end_mask)
-                att_masks += [0] * (image_end_mask.shape[1])
-        lang_emb = self.vlm_with_expert.embed_language_tokens(lang_tokens)
-        # Normalize language embeddings
-        lang_emb_dim = lang_emb.shape[-1]
-        lang_emb = lang_emb * math.sqrt(lang_emb_dim)
-
-        embs.append(lang_emb)
-        pad_masks.append(lang_masks)
-
-        num_lang_embs = lang_emb.shape[1]
-        att_masks += [0] * num_lang_embs
+        
+        # Process each modality type
+        self._add_image_embeddings(images, img_masks, embs, pad_masks, att_masks)
+        self._add_language_embeddings(lang_tokens, lang_masks, embs, pad_masks, att_masks)
+        
         if state is not None and self.state_to_prefix:
-            state_emb = self.state_proj(state)
-            state_emb = state_emb[:, None, :] if state_emb.ndim == 2 else state_emb
-            embs.append(state_emb)
-
-            bsize = state_emb.shape[0]
-            device = state_emb.device
-
-            states_seq_len = state_emb.shape[1]
-            state_mask = torch.ones(bsize, states_seq_len, dtype=torch.bool, device=device)
-            pad_masks.append(state_mask)
-
-            # Set attention masks so that image and language inputs do not attend to state or actions
-            att_masks += [1] * (states_seq_len)
+            self._add_state_embeddings(state, embs, pad_masks, att_masks)
+            
+        # Future extensions - easy to add new modalities
+        if pointtrackers is not None:
+            self._add_pointtracker_embeddings(pointtrackers, pt_masks, embs, pad_masks, att_masks)
+            
+        # Add more modalities here as needed:
+        # if audio is not None:
+        #     self._add_audio_embeddings(audio, audio_masks, embs, pad_masks, att_masks)
+        
+        # Concatenate all embeddings
         embs = torch.cat(embs, dim=1)
         pad_masks = torch.cat(pad_masks, dim=1)
         att_masks = torch.tensor(att_masks, dtype=torch.bool, device=pad_masks.device)
-        att_masks = att_masks[None, :]
-
+        
+        # Handle prefix length padding
         seq_len = pad_masks.shape[1]
         if seq_len < self.prefix_length:
             embs = pad_tensor(embs, self.prefix_length, pad_value=0)
             pad_masks = pad_tensor(pad_masks, self.prefix_length, pad_value=0)
             att_masks = pad_tensor(att_masks, self.prefix_length, pad_value=0)
-
-        att_masks = att_masks.expand(bsize, -1)
-
+        
+        # Expand attention masks to batch size
+        bsize = pad_masks.shape[0]
+        att_masks = att_masks[None, :].expand(bsize, -1)
+        
         return embs, pad_masks, att_masks
+    
+    def _add_image_embeddings(self, images, img_masks, embs, pad_masks, att_masks):
+        """Add image embeddings with special tokens to the lists."""
+        for img, img_mask in zip(images, img_masks):
+            # Add image start tokens if enabled
+            if self.add_image_special_tokens:
+                start_emb = self.vlm_with_expert.embed_language_tokens(
+                    self.global_image_start_token.to(device=img.device)
+                ).unsqueeze(0).expand(img.shape[0], -1, -1)
+                
+                start_mask = torch.ones_like(start_emb[:, :, 0], dtype=torch.bool)
+                embs.append(start_emb)
+                pad_masks.append(start_mask)
+                att_masks += [0] * start_emb.shape[1]
+            
+            # Process image embedding
+            img_emb = self.vlm_with_expert.embed_image(img)
+            
+            # Normalize image embeddings
+            img_emb_dim = img_emb.shape[-1]
+            img_emb = img_emb * torch.tensor(img_emb_dim**0.5, dtype=img_emb.dtype, device=img_emb.device)
+            
+            # Expand mask to match image embedding sequence length
+            bsize, num_img_embs = img_emb.shape[:2]
+            expanded_mask = img_mask[:, None].expand(bsize, num_img_embs)
+            
+            embs.append(img_emb)
+            pad_masks.append(expanded_mask)
+            att_masks += [0] * num_img_embs
+            
+            # Add image end tokens if enabled
+            if self.add_image_special_tokens:
+                end_emb = self.vlm_with_expert.embed_language_tokens(
+                    self.image_end_token.to(device=img.device)
+                ).unsqueeze(0).expand(img.shape[0], -1, -1)
+                
+                end_mask = torch.ones_like(end_emb[:, :, 0], dtype=torch.bool)
+                embs.append(end_emb)
+                pad_masks.append(end_mask)
+                att_masks += [0] * end_emb.shape[1]
+    
+    def _add_language_embeddings(self, lang_tokens, lang_masks, embs, pad_masks, att_masks):
+        """Add language embeddings to the lists."""
+        lang_emb = self.vlm_with_expert.embed_language_tokens(lang_tokens)
+        
+        # Normalize language embeddings
+        lang_emb_dim = lang_emb.shape[-1]
+        lang_emb = lang_emb * math.sqrt(lang_emb_dim)
+        
+        embs.append(lang_emb)
+        pad_masks.append(lang_masks)
+        att_masks += [0] * lang_emb.shape[1]
+    
+    def _add_state_embeddings(self, state, embs, pad_masks, att_masks):
+        """Add state embeddings to the lists."""
+        state_emb = self.state_proj(state)
+        state_emb = state_emb[:, None, :] if state_emb.ndim == 2 else state_emb
+        
+        bsize, states_seq_len = state_emb.shape[:2]
+        state_mask = torch.ones(bsize, states_seq_len, dtype=torch.bool, device=state_emb.device)
+        
+        embs.append(state_emb)
+        pad_masks.append(state_mask)
+        att_masks += [1] * states_seq_len  # State tokens get causal attention
+    
+    def _add_pointtracker_embeddings(self, pointtrackers, pt_masks, embs, pad_masks, att_masks):
+        """Add point tracker embeddings to the lists (future extension)."""
+        # TODO: Implement point tracker processing
+        # Example implementation:
+        # for pt, pt_mask in zip(pointtrackers, pt_masks):
+        #     pt_emb = self.pointtracker_encoder(pt)  # Need to add this
+        #     embs.append(pt_emb)
+        #     pad_masks.append(pt_mask)
+        #     att_masks += [0] * pt_emb.shape[1]
+        pass
 
     def embed_suffix(self, state, noisy_actions, timestep):
         """Embed state, noisy_actions, timestep to prepare for Expert Gemma processing."""

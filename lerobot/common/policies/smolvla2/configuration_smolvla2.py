@@ -28,9 +28,9 @@ class PEFTConfig:
     lora_dropout: float = 0.1
     target_modules: str = "q_proj,v_proj"
 
-@PreTrainedConfig.register_subclass("smolvla")
+@PreTrainedConfig.register_subclass("smolvla2")
 @dataclass
-class SmolVLAConfig(PreTrainedConfig):
+class SmolVLA2Config(PreTrainedConfig):
     # Input / output structure.
     n_obs_steps: int = 1
     chunk_size: int = 50
@@ -93,7 +93,7 @@ class SmolVLAConfig(PreTrainedConfig):
     load_vlm_weights: bool = False  # Set to True in case of training the expert from scratch. True when init from pretrained SmolVLA weights
     checkpoint_path: str = None
     peft_method: str = ""
-    peft_config: PEFTConfig = PEFTConfig()
+    peft_config: PEFTConfig = field(default_factory=PEFTConfig)
     peft_target_model: str = ""
     add_image_special_tokens: bool = False  # Whether to use special image tokens around image features.
 
