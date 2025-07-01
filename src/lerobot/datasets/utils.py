@@ -664,7 +664,7 @@ def create_lerobot_dataset_card(
     **kwargs,
 ) -> DatasetCard:
     """
-    Keyword arguments will be used to replace values in ./lerobot/datasets/card_template.md.
+    Keyword arguments will be used to replace values in src/lerobot/datasets/card_template.md.
     Note: If specified, license must be one of https://huggingface.co/docs/hub/repositories-licenses.
     """
     card_tags = ["LeRobot"]
