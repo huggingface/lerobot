@@ -38,7 +38,7 @@ If your dataset contains a single task, you can simply provide it directly via t
 Examples:
 
 ```bash
-python lerobot/datasets/v2/convert_dataset_v1_to_v2.py \
+python -m lerobot.datasets.v2.convert_dataset_v1_to_v2 \
     --repo-id lerobot/aloha_sim_insertion_human_image \
     --single-task "Insert the peg into the socket." \
     --robot-config lerobot/configs/robot/aloha.yaml \
@@ -46,7 +46,7 @@ python lerobot/datasets/v2/convert_dataset_v1_to_v2.py \
 ```
 
 ```bash
-python lerobot/datasets/v2/convert_dataset_v1_to_v2.py \
+python -m lerobot.datasets.v2.convert_dataset_v1_to_v2 \
     --repo-id aliberts/koch_tutorial \
     --single-task "Pick the Lego block and drop it in the box on the right." \
     --robot-config lerobot/configs/robot/koch.yaml \
@@ -63,7 +63,7 @@ If your dataset is a multi-task dataset, you have two options to provide the tas
     Example:
 
     ```bash
-    python lerobot/datasets/v2/convert_dataset_v1_to_v2.py \
+    python -m lerobot.datasets.v2.convert_dataset_v1_to_v2 \
         --repo-id lerobot/stanford_kuka_multimodal_dataset \
         --tasks-col "language_instruction" \
         --local-dir data
@@ -92,7 +92,7 @@ parquet file, and you must provide this column's name with the '--tasks-col' arg
 Example:
 
 ```bash
-python lerobot/datasets/v2/convert_dataset_v1_to_v2.py \
+python -m lerobot.datasets.v2.convert_dataset_v1_to_v2 \
     --repo-id lerobot/stanford_kuka_multimodal_dataset \
     --tasks-col "language_instruction" \
     --local-dir data

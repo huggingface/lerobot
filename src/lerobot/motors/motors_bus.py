@@ -446,7 +446,7 @@ class MotorsBus(abc.ABC):
         except (FileNotFoundError, OSError, serial.SerialException) as e:
             raise ConnectionError(
                 f"\nCould not connect on port '{self.port}'. Make sure you are using the correct port."
-                "\nTry running `python lerobot/find_port.py`\n"
+                "\nTry running `python -m lerobot.find_port`\n"
             ) from e
 
     @abc.abstractmethod

@@ -33,13 +33,13 @@ python
 
 Converting pi0_base:
 ```python
-python lerobot/policies/pi0/conversion_scripts/convert_pi0_to_hf_lerobot.py \
+python -m lerobot.policies.pi0.conversion_scripts.convert_pi0_to_hf_lerobot \
     --checkpoint_dir /home/remi_cadene/.cache/openpi/openpi-assets/checkpoints/pi0_base/params \
     --output_path /home/remi_cadene/.cache/openpi/openpi-assets/checkpoints/pi0_base_pytorch
 ```
 
 ```python
-python lerobot/policies/pi0/conversion_scripts/convert_pi0_to_hf_lerobot.py \
+python -m lerobot.policies.pi0.conversion_scripts.convert_pi0_to_hf_lerobot \
     --checkpoint_dir /home/remi_cadene/.cache/openpi/openpi-assets/checkpoints/pi0_aloha_sim/params \
     --output_path /home/remi_cadene/.cache/openpi/openpi-assets/checkpoints/pi0_aloha_sim_pytorch
 ```
