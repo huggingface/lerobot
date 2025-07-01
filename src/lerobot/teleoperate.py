@@ -58,7 +58,7 @@ from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import init_logging, move_cursor_up
 from lerobot.utils.visualization_utils import _init_rerun
 
-from .common.teleoperators import gamepad, koch_leader, so100_leader, so101_leader  # noqa: F401
+from .lerobot.teleoperators import gamepad, koch_leader, so100_leader, so101_leader  # noqa: F401
 
 
 @dataclass
