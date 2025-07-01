@@ -28,7 +28,7 @@ from dataclasses import dataclass
 
 import draccus
 
-from .lerobot.robots import (  # noqa: F401
+from lerobot.robots import (  # noqa: F401
     RobotConfig,
     koch_follower,
     lekiwi,
@@ -36,7 +36,7 @@ from .lerobot.robots import (  # noqa: F401
     so100_follower,
     so101_follower,
 )
-from .lerobot.teleoperators import (  # noqa: F401
+from lerobot.teleoperators import (  # noqa: F401
     TeleoperatorConfig,
     koch_leader,
     make_teleoperator_from_config,
