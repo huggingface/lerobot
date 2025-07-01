@@ -22,9 +22,9 @@ import numpy as np
 import torch
 from torch import Tensor
 
-from lerobot.common.envs.configs import EnvConfig
-from lerobot.common.utils.utils import get_channel_first_image_shape
 from lerobot.configs.types import FeatureType, PolicyFeature
+from lerobot.envs.configs import EnvConfig
+from lerobot.utils.utils import get_channel_first_image_shape
 
 
 def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Tensor]:

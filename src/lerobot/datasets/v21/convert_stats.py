@@ -17,9 +17,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import numpy as np
 from tqdm import tqdm
 
-from lerobot.common.datasets.compute_stats import aggregate_stats, get_feature_stats, sample_indices
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.datasets.utils import write_episode_stats
+from lerobot.datasets.compute_stats import aggregate_stats, get_feature_stats, sample_indices
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.utils import write_episode_stats
 
 
 def sample_episode_video_frames(dataset: LeRobotDataset, episode_index: int, ft_key: str) -> np.ndarray:

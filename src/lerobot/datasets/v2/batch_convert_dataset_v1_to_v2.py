@@ -26,8 +26,8 @@ from pathlib import Path
 from textwrap import dedent
 
 from lerobot import available_datasets
-from lerobot.common.datasets.v2.convert_dataset_v1_to_v2 import convert_dataset
-from lerobot.common.robots.aloha.configuration_aloha import AlohaRobotConfig
+from lerobot.datasets.v2.convert_dataset_v1_to_v2 import convert_dataset
+from lerobot.robots.aloha.configuration_aloha import AlohaRobotConfig
 
 LOCAL_DIR = Path("data/")
 

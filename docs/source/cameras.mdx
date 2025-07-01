@@ -44,9 +44,9 @@ Below are two examples, demonstrating how to work with the API.
 <hfoption id="Open CV Camera">
 
 ```python
-from lerobot.common.cameras.opencv.configuration_opencv import OpenCVCameraConfig
-from lerobot.common.cameras.opencv.camera_opencv import OpenCVCamera
-from lerobot.common.cameras.configs import ColorMode, Cv2Rotation
+from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
+from lerobot.cameras.opencv.camera_opencv import OpenCVCamera
+from lerobot.cameras.configs import ColorMode, Cv2Rotation
 
 # Construct an `OpenCVCameraConfig` with your desired FPS, resolution, color mode, and rotation.
 config = OpenCVCameraConfig(
@@ -75,9 +75,9 @@ finally:
 <hfoption id="Intel Realsense Camera">
 
 ```python
-from lerobot.common.cameras.realsense.configuration_realsense import RealSenseCameraConfig
-from lerobot.common.cameras.realsense.camera_realsense import RealSenseCamera
-from lerobot.common.cameras.configs import ColorMode, Cv2Rotation
+from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig
+from lerobot.cameras.realsense.camera_realsense import RealSenseCamera
+from lerobot.cameras.configs import ColorMode, Cv2Rotation
 
 # Create a `RealSenseCameraConfig` specifying your camera’s serial number and enabling depth.
 config = RealSenseCameraConfig(

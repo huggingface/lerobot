@@ -19,10 +19,10 @@ import logging
 import torch
 from torch import Tensor, nn
 
-from lerobot.common.constants import OBS_IMAGE, REWARD
-from lerobot.common.policies.normalize import Normalize, Unnormalize
-from lerobot.common.policies.pretrained import PreTrainedPolicy
-from lerobot.common.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
+from lerobot.constants import OBS_IMAGE, REWARD
+from lerobot.policies.normalize import Normalize, Unnormalize
+from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
 
 
 class ClassifierOutput:

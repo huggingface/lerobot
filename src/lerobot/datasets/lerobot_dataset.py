@@ -30,10 +30,10 @@ from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.constants import REPOCARD_NAME
 from huggingface_hub.errors import RevisionNotFoundError
 
-from lerobot.common.constants import HF_LEROBOT_HOME
-from lerobot.common.datasets.compute_stats import aggregate_stats, compute_episode_stats
-from lerobot.common.datasets.image_writer import AsyncImageWriter, write_image
-from lerobot.common.datasets.utils import (
+from lerobot.constants import HF_LEROBOT_HOME
+from lerobot.datasets.compute_stats import aggregate_stats, compute_episode_stats
+from lerobot.datasets.image_writer import AsyncImageWriter, write_image
+from lerobot.datasets.utils import (
     DEFAULT_FEATURES,
     DEFAULT_IMAGE_PATH,
     INFO_PATH,
@@ -65,7 +65,7 @@ from lerobot.common.datasets.utils import (
     write_info,
     write_json,
 )
-from lerobot.common.datasets.video_utils import (
+from lerobot.datasets.video_utils import (
     VideoFrame,
     decode_video_frames,
     encode_video_frames,
@@ -357,7 +357,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
               the dataset from that address and load it, pending your dataset is compliant with
               codebase_version v2.0. If your dataset has been created before this new format, you will be
               prompted to convert it using our conversion script from v1.6 to v2.0, which you can find at
-              lerobot/common/datasets/v2/convert_dataset_v1_to_v2.py.
+              lerobot/datasets/v2/convert_dataset_v1_to_v2.py.
 
 
         2. Your dataset doesn't already exists (either on local disk or on the Hub): you can create an empty

@@ -19,9 +19,9 @@ import logging
 import time
 from multiprocessing import Event, Queue
 
-from lerobot.common.transport import services_pb2, services_pb2_grpc
-from lerobot.common.transport.utils import receive_bytes_in_chunks, send_bytes_in_chunks
-from lerobot.common.utils.queue import get_last_item_from_queue
+from lerobot.transport import services_pb2, services_pb2_grpc
+from lerobot.transport.utils import receive_bytes_in_chunks, send_bytes_in_chunks
+from lerobot.utils.queue import get_last_item_from_queue
 
 MAX_MESSAGE_SIZE = 4 * 1024 * 1024  # 4 MB
 MAX_WORKERS = 3  # Stream parameters, send transitions and interactions

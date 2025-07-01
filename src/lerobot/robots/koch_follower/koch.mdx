@@ -103,7 +103,7 @@ python -m lerobot.setup_motors \
 <hfoption id="API example">
 
 ```python
-from lerobot.common.robots.koch_follower import KochFollower, KochFollowerConfig
+from lerobot.robots.koch_follower import KochFollower, KochFollowerConfig
 
 config = KochFollowerConfig(
     port="/dev/tty.usbmodem575E0031751",
@@ -169,7 +169,7 @@ python -m lerobot.setup_motors \
 <hfoption id="API example">
 
 ```python
-from lerobot.common.teleoperators.koch_leader import KochLeader, KochLeaderConfig
+from lerobot.teleoperators.koch_leader import KochLeader, KochLeaderConfig
 
 config = KochLeaderConfig(
     port="/dev/tty.usbmodem575E0031751",
@@ -203,7 +203,7 @@ python -m lerobot.calibrate \
 <hfoption id="API example">
 
 ```python
-from lerobot.common.robots.koch_follower import KochFollowerConfig, KochFollower
+from lerobot.robots.koch_follower import KochFollowerConfig, KochFollower
 
 config = KochFollowerConfig(
     port="/dev/tty.usbmodem585A0076891",
@@ -237,7 +237,7 @@ python -m lerobot.calibrate \
 <hfoption id="API example">
 
 ```python
-from lerobot.common.teleoperators.koch_leader import KochLeaderConfig, KochLeader
+from lerobot.teleoperators.koch_leader import KochLeaderConfig, KochLeader
 
 config = KochLeaderConfig(
     port="/dev/tty.usbmodem575E0031751",

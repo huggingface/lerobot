@@ -28,9 +28,9 @@ from safetensors.torch import load_model as load_model_as_safetensor
 from safetensors.torch import save_model as save_model_as_safetensor
 from torch import Tensor, nn
 
-from lerobot.common.utils.hub import HubMixin
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.train import TrainPipelineConfig
+from lerobot.utils.hub import HubMixin
 
 T = TypeVar("T", bound="PreTrainedPolicy")
 

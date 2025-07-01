@@ -18,8 +18,8 @@ from typing import Any, Type
 
 import draccus
 
-from lerobot.common.constants import HF_LEROBOT_CALIBRATION, TELEOPERATORS
-from lerobot.common.motors.motors_bus import MotorCalibration
+from lerobot.constants import HF_LEROBOT_CALIBRATION, TELEOPERATORS
+from lerobot.motors.motors_bus import MotorCalibration
 
 from .config import TeleoperatorConfig
 

@@ -18,60 +18,60 @@ import logging
 
 from torch import nn
 
-from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
-from lerobot.common.datasets.utils import dataset_to_policy_features
-from lerobot.common.envs.configs import EnvConfig
-from lerobot.common.envs.utils import env_to_policy_features
-from lerobot.common.policies.act.configuration_act import ACTConfig
-from lerobot.common.policies.diffusion.configuration_diffusion import DiffusionConfig
-from lerobot.common.policies.pi0.configuration_pi0 import PI0Config
-from lerobot.common.policies.pi0fast.configuration_pi0fast import PI0FASTConfig
-from lerobot.common.policies.pretrained import PreTrainedPolicy
-from lerobot.common.policies.sac.configuration_sac import SACConfig
-from lerobot.common.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
-from lerobot.common.policies.smolvla.configuration_smolvla import SmolVLAConfig
-from lerobot.common.policies.tdmpc.configuration_tdmpc import TDMPCConfig
-from lerobot.common.policies.vqbet.configuration_vqbet import VQBeTConfig
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType
+from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
+from lerobot.datasets.utils import dataset_to_policy_features
+from lerobot.envs.configs import EnvConfig
+from lerobot.envs.utils import env_to_policy_features
+from lerobot.policies.act.configuration_act import ACTConfig
+from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
+from lerobot.policies.pi0.configuration_pi0 import PI0Config
+from lerobot.policies.pi0fast.configuration_pi0fast import PI0FASTConfig
+from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies.sac.configuration_sac import SACConfig
+from lerobot.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
+from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
+from lerobot.policies.tdmpc.configuration_tdmpc import TDMPCConfig
+from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
 
 
 def get_policy_class(name: str) -> PreTrainedPolicy:
     """Get the policy's class and config class given a name (matching the policy class' `name` attribute)."""
     if name == "tdmpc":
-        from lerobot.common.policies.tdmpc.modeling_tdmpc import TDMPCPolicy
+        from lerobot.policies.tdmpc.modeling_tdmpc import TDMPCPolicy
 
         return TDMPCPolicy
     elif name == "diffusion":
-        from lerobot.common.policies.diffusion.modeling_diffusion import DiffusionPolicy
+        from lerobot.policies.diffusion.modeling_diffusion import DiffusionPolicy
 
         return DiffusionPolicy
     elif name == "act":
-        from lerobot.common.policies.act.modeling_act import ACTPolicy
+        from lerobot.policies.act.modeling_act import ACTPolicy
 
         return ACTPolicy
     elif name == "vqbet":
-        from lerobot.common.policies.vqbet.modeling_vqbet import VQBeTPolicy
+        from lerobot.policies.vqbet.modeling_vqbet import VQBeTPolicy
 
         return VQBeTPolicy
     elif name == "pi0":
-        from lerobot.common.policies.pi0.modeling_pi0 import PI0Policy
+        from lerobot.policies.pi0.modeling_pi0 import PI0Policy
 
         return PI0Policy
     elif name == "pi0fast":
-        from lerobot.common.policies.pi0fast.modeling_pi0fast import PI0FASTPolicy
+        from lerobot.policies.pi0fast.modeling_pi0fast import PI0FASTPolicy
 
         return PI0FASTPolicy
     elif name == "sac":
-        from lerobot.common.policies.sac.modeling_sac import SACPolicy
+        from lerobot.policies.sac.modeling_sac import SACPolicy
 
         return SACPolicy
     elif name == "reward_classifier":
-        from lerobot.common.policies.sac.reward_model.modeling_classifier import Classifier
+        from lerobot.policies.sac.reward_model.modeling_classifier import Classifier
 
         return Classifier
     elif name == "smolvla":
-        from lerobot.common.policies.smolvla.modeling_smolvla import SmolVLAPolicy
+        from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 
         return SmolVLAPolicy
     else:

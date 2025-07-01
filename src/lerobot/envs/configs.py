@@ -18,10 +18,10 @@ from typing import Any, Optional
 
 import draccus
 
-from lerobot.common.constants import ACTION, OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
-from lerobot.common.robots import RobotConfig
-from lerobot.common.teleoperators.config import TeleoperatorConfig
 from lerobot.configs.types import FeatureType, PolicyFeature
+from lerobot.constants import ACTION, OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
+from lerobot.robots import RobotConfig
+from lerobot.teleoperators.config import TeleoperatorConfig
 
 
 @dataclass

@@ -23,8 +23,8 @@ from typing import Any
 
 import torch
 
-from lerobot.common.transport import services_pb2
-from lerobot.common.utils.transition import Transition
+from lerobot.transport import services_pb2
+from lerobot.utils.transition import Transition
 
 CHUNK_SIZE = 2 * 1024 * 1024  # 2 MB
 

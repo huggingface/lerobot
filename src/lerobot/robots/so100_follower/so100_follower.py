@@ -19,10 +19,10 @@ import time
 from functools import cached_property
 from typing import Any
 
-from lerobot.common.cameras.utils import make_cameras_from_configs
-from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from lerobot.common.motors import Motor, MotorCalibration, MotorNormMode
-from lerobot.common.motors.feetech import (
+from lerobot.cameras.utils import make_cameras_from_configs
+from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.motors import Motor, MotorCalibration, MotorNormMode
+from lerobot.motors.feetech import (
     FeetechMotorsBus,
     OperatingMode,
 )

@@ -33,13 +33,13 @@ python
 
 Converting pi0_base:
 ```python
-python lerobot/common/policies/pi0/conversion_scripts/convert_pi0_to_hf_lerobot.py \
+python lerobot/policies/pi0/conversion_scripts/convert_pi0_to_hf_lerobot.py \
     --checkpoint_dir /home/remi_cadene/.cache/openpi/openpi-assets/checkpoints/pi0_base/params \
     --output_path /home/remi_cadene/.cache/openpi/openpi-assets/checkpoints/pi0_base_pytorch
 ```
 
 ```python
-python lerobot/common/policies/pi0/conversion_scripts/convert_pi0_to_hf_lerobot.py \
+python lerobot/policies/pi0/conversion_scripts/convert_pi0_to_hf_lerobot.py \
     --checkpoint_dir /home/remi_cadene/.cache/openpi/openpi-assets/checkpoints/pi0_aloha_sim/params \
     --output_path /home/remi_cadene/.cache/openpi/openpi-assets/checkpoints/pi0_aloha_sim_pytorch
 ```
@@ -54,12 +54,12 @@ import orbax.checkpoint as ocp
 import torch
 from jax.sharding import SingleDeviceSharding
 
-from lerobot.common.policies.pi0.configuration_pi0 import PI0Config
-from lerobot.common.policies.pi0.conversion_scripts.conversion_utils import (
+from lerobot.policies.pi0.configuration_pi0 import PI0Config
+from lerobot.policies.pi0.conversion_scripts.conversion_utils import (
     get_gemma_config,
     get_paligemma_config,
 )
-from lerobot.common.policies.pi0.modeling_pi0 import PI0Policy
+from lerobot.policies.pi0.modeling_pi0 import PI0Policy
 
 PRECISIONS = {"bfloat16": torch.bfloat16, "float32": torch.float32, "float16": torch.float16}
 

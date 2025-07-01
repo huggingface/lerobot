@@ -35,11 +35,11 @@ import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
 
-from lerobot.common.constants import ACTION, OBS_ENV_STATE, OBS_IMAGE, OBS_STATE, REWARD
-from lerobot.common.policies.normalize import Normalize, Unnormalize
-from lerobot.common.policies.pretrained import PreTrainedPolicy
-from lerobot.common.policies.tdmpc.configuration_tdmpc import TDMPCConfig
-from lerobot.common.policies.utils import get_device_from_parameters, get_output_shape, populate_queues
+from lerobot.constants import ACTION, OBS_ENV_STATE, OBS_IMAGE, OBS_STATE, REWARD
+from lerobot.policies.normalize import Normalize, Unnormalize
+from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies.tdmpc.configuration_tdmpc import TDMPCConfig
+from lerobot.policies.utils import get_device_from_parameters, get_output_shape, populate_queues
 
 
 class TDMPCPolicy(PreTrainedPolicy):

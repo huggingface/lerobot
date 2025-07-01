@@ -47,26 +47,26 @@ import numpy as np
 import torch
 import torchvision.transforms.functional as F  # noqa: N812
 
-from lerobot.common.cameras import opencv  # noqa: F401
-from lerobot.common.envs.configs import EnvConfig
-from lerobot.common.envs.utils import preprocess_observation
-from lerobot.common.model.kinematics import RobotKinematics
-from lerobot.common.robots import (  # noqa: F401
+from lerobot.cameras import opencv  # noqa: F401
+from lerobot.configs import parser
+from lerobot.envs.configs import EnvConfig
+from lerobot.envs.utils import preprocess_observation
+from lerobot.model.kinematics import RobotKinematics
+from lerobot.robots import (  # noqa: F401
     RobotConfig,
     make_robot_from_config,
     so100_follower,
 )
-from lerobot.common.teleoperators import (
+from lerobot.teleoperators import (
     gamepad,  # noqa: F401
     keyboard,  # noqa: F401
     make_teleoperator_from_config,
     so101_leader,  # noqa: F401
 )
-from lerobot.common.teleoperators.gamepad.teleop_gamepad import GamepadTeleop
-from lerobot.common.teleoperators.keyboard.teleop_keyboard import KeyboardEndEffectorTeleop
-from lerobot.common.utils.robot_utils import busy_wait
-from lerobot.common.utils.utils import log_say
-from lerobot.configs import parser
+from lerobot.teleoperators.gamepad.teleop_gamepad import GamepadTeleop
+from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardEndEffectorTeleop
+from lerobot.utils.robot_utils import busy_wait
+from lerobot.utils.utils import log_say
 
 logging.basicConfig(level=logging.INFO)
 
@@ -1980,7 +1980,7 @@ def init_reward_classifier(cfg):
     if cfg.reward_classifier_pretrained_path is None:
         return None
 
-    from lerobot.common.policies.sac.reward_model.modeling_classifier import Classifier
+    from lerobot.policies.sac.reward_model.modeling_classifier import Classifier
 
     # Get device from config or default to CUDA
     device = getattr(cfg, "device", "cpu")
@@ -2023,7 +2023,7 @@ def record_dataset(env, policy, cfg):
                                   a success (reward=1) is detected. This helps collect
                                   more positive examples for reward classifier training.
     """
-    from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
     # Setup initial action (zero action if using teleop)
     action = env.action_space.sample() * 0.0
@@ -2177,7 +2177,7 @@ def replay_episode(env, cfg):
             - dataset_root: Local root directory for dataset
             - episode: Episode ID to replay
     """
-    from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
     dataset = LeRobotDataset(cfg.repo_id, root=cfg.dataset_root, episodes=[cfg.episode])
     env.reset()
@@ -2210,7 +2210,7 @@ def main(cfg: EnvConfig):
     if cfg.mode == "record":
         policy = None
         if cfg.pretrained_policy_name_or_path is not None:
-            from lerobot.common.policies.sac.modeling_sac import SACPolicy
+            from lerobot.policies.sac.modeling_sac import SACPolicy
 
             policy = SACPolicy.from_pretrained(cfg.pretrained_policy_name_or_path)
             policy.to(cfg.device)

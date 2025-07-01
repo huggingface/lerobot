@@ -175,7 +175,7 @@ python -m lerobot.calibrate \
 <hfoption id="API example">
 
 ```python
-from lerobot.common.teleoperators.so100_leader import SO100LeaderConfig, SO100Leader
+from lerobot.teleoperators.so100_leader import SO100LeaderConfig, SO100Leader
 
 config = SO100LeaderConfig(
     port="/dev/tty.usbmodem58760431551",
@@ -197,7 +197,7 @@ leader.disconnect()
 
 To teleoperate, SSH into your Raspberry Pi, and run `conda activate lerobot` and this command:
 ```bash
-python -m lerobot.common.robots.lekiwi.lekiwi_host --robot.id=my_awesome_kiwi
+python -m lerobot.robots.lekiwi.lekiwi_host --robot.id=my_awesome_kiwi
 ```
 
 Then on your laptop, also run `conda activate lerobot` and run the API example, make sure you set the correct `remote_ip` and `port` in `examples/lekiwi/teleoperate.py`.
@@ -227,7 +227,7 @@ You should see on your laptop something like this: ```[INFO] Connected to remote
 | F   | Decrease speed |
 
 > [!TIP]
->  If you use a different keyboard, you can change the keys for each command in the [`LeKiwiConfig`](../lerobot/common/robot_devices/robots/configs.py).
+>  If you use a different keyboard, you can change the keys for each command in the [`LeKiwiConfig`](../lerobot/robot_devices/robots/configs.py).
 
 ### Wired version
 If you have the **wired** LeKiwi version, please run all commands on your laptop.

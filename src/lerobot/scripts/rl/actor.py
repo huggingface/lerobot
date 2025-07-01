@@ -57,37 +57,37 @@ import torch
 from torch import nn
 from torch.multiprocessing import Event, Queue
 
-from lerobot.common.cameras import opencv  # noqa: F401
-from lerobot.common.policies.factory import make_policy
-from lerobot.common.policies.sac.modeling_sac import SACPolicy
-from lerobot.common.robots import so100_follower  # noqa: F401
-from lerobot.common.teleoperators import gamepad, so101_leader  # noqa: F401
-from lerobot.common.transport import services_pb2, services_pb2_grpc
-from lerobot.common.transport.utils import (
+from lerobot.cameras import opencv  # noqa: F401
+from lerobot.configs import parser
+from lerobot.configs.train import TrainRLServerPipelineConfig
+from lerobot.policies.factory import make_policy
+from lerobot.policies.sac.modeling_sac import SACPolicy
+from lerobot.robots import so100_follower  # noqa: F401
+from lerobot.scripts.rl import learner_service
+from lerobot.scripts.rl.gym_manipulator import make_robot_env
+from lerobot.teleoperators import gamepad, so101_leader  # noqa: F401
+from lerobot.transport import services_pb2, services_pb2_grpc
+from lerobot.transport.utils import (
     bytes_to_state_dict,
     python_object_to_bytes,
     receive_bytes_in_chunks,
     send_bytes_in_chunks,
     transitions_to_bytes,
 )
-from lerobot.common.utils.process import ProcessSignalHandler
-from lerobot.common.utils.queue import get_last_item_from_queue
-from lerobot.common.utils.random_utils import set_seed
-from lerobot.common.utils.robot_utils import busy_wait
-from lerobot.common.utils.transition import (
+from lerobot.utils.process import ProcessSignalHandler
+from lerobot.utils.queue import get_last_item_from_queue
+from lerobot.utils.random_utils import set_seed
+from lerobot.utils.robot_utils import busy_wait
+from lerobot.utils.transition import (
     Transition,
     move_state_dict_to_device,
     move_transition_to_device,
 )
-from lerobot.common.utils.utils import (
+from lerobot.utils.utils import (
     TimerManager,
     get_safe_torch_device,
     init_logging,
 )
-from lerobot.configs import parser
-from lerobot.configs.train import TrainRLServerPipelineConfig
-from lerobot.scripts.rl import learner_service
-from lerobot.scripts.rl.gym_manipulator import make_robot_env
 
 ACTOR_SHUTDOWN_TIMEOUT = 30
 

@@ -20,7 +20,7 @@ The dataset you requested ({repo_id}) is in {version} format.
 We introduced a new format since v2.0 which is not backward compatible with v1.x.
 Please, use our conversion script. Modify the following command with your own task description:
 ```
-python lerobot/common/datasets/v2/convert_dataset_v1_to_v2.py \\
+python lerobot/datasets/v2/convert_dataset_v1_to_v2.py \\
     --repo-id {repo_id} \\
     --single-task "TASK DESCRIPTION."  # <---- /!\\ Replace TASK DESCRIPTION /!\\
 ```
@@ -40,7 +40,7 @@ The dataset you requested ({repo_id}) is in {version} format.
 While current version of LeRobot is backward-compatible with it, the version of your dataset still uses global
 stats instead of per-episode stats. Update your dataset stats to the new format using this command:
 ```
-python lerobot/common/datasets/v21/convert_dataset_v20_to_v21.py --repo-id={repo_id}
+python lerobot/datasets/v21/convert_dataset_v20_to_v21.py --repo-id={repo_id}
 ```
 
 If you encounter a problem, contact LeRobot maintainers on [Discord](https://discord.com/invite/s3KuuzsPFb)

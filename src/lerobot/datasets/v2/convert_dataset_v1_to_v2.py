@@ -38,7 +38,7 @@ If your dataset contains a single task, you can simply provide it directly via t
 Examples:
 
 ```bash
-python lerobot/common/datasets/v2/convert_dataset_v1_to_v2.py \
+python lerobot/datasets/v2/convert_dataset_v1_to_v2.py \
     --repo-id lerobot/aloha_sim_insertion_human_image \
     --single-task "Insert the peg into the socket." \
     --robot-config lerobot/configs/robot/aloha.yaml \
@@ -46,7 +46,7 @@ python lerobot/common/datasets/v2/convert_dataset_v1_to_v2.py \
 ```
 
 ```bash
-python lerobot/common/datasets/v2/convert_dataset_v1_to_v2.py \
+python lerobot/datasets/v2/convert_dataset_v1_to_v2.py \
     --repo-id aliberts/koch_tutorial \
     --single-task "Pick the Lego block and drop it in the box on the right." \
     --robot-config lerobot/configs/robot/koch.yaml \
@@ -63,7 +63,7 @@ If your dataset is a multi-task dataset, you have two options to provide the tas
     Example:
 
     ```bash
-    python lerobot/common/datasets/v2/convert_dataset_v1_to_v2.py \
+    python lerobot/datasets/v2/convert_dataset_v1_to_v2.py \
         --repo-id lerobot/stanford_kuka_multimodal_dataset \
         --tasks-col "language_instruction" \
         --local-dir data
@@ -92,7 +92,7 @@ parquet file, and you must provide this column's name with the '--tasks-col' arg
 Example:
 
 ```bash
-python lerobot/common/datasets/v2/convert_dataset_v1_to_v2.py \
+python lerobot/datasets/v2/convert_dataset_v1_to_v2.py \
     --repo-id lerobot/stanford_kuka_multimodal_dataset \
     --tasks-col "language_instruction" \
     --local-dir data
@@ -119,7 +119,7 @@ from huggingface_hub import HfApi
 from huggingface_hub.errors import EntryNotFoundError, HfHubHTTPError
 from safetensors.torch import load_file
 
-from lerobot.common.datasets.utils import (
+from lerobot.datasets.utils import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_PARQUET_PATH,
     DEFAULT_VIDEO_PATH,
@@ -136,12 +136,12 @@ from lerobot.common.datasets.utils import (
     write_json,
     write_jsonlines,
 )
-from lerobot.common.datasets.video_utils import (
+from lerobot.datasets.video_utils import (
     VideoFrame,  # noqa: F401
     get_image_pixel_channels,
     get_video_info,
 )
-from lerobot.common.robots import RobotConfig
+from lerobot.robots import RobotConfig
 
 V16 = "v1.6"
 V20 = "v2.0"
@@ -602,19 +602,19 @@ def make_robot_config(robot_type: str, **kwargs) -> RobotConfig:
         raise NotImplementedError  # TODO
 
     elif robot_type == "koch_follower":
-        from lerobot.common.robots.koch_follower import KochFollowerConfig
+        from lerobot.robots.koch_follower import KochFollowerConfig
 
         return KochFollowerConfig(**kwargs)
     elif robot_type == "so100_follower":
-        from lerobot.common.robots.so100_follower import SO100FollowerConfig
+        from lerobot.robots.so100_follower import SO100FollowerConfig
 
         return SO100FollowerConfig(**kwargs)
     elif robot_type == "stretch":
-        from lerobot.common.robots.stretch3 import Stretch3RobotConfig
+        from lerobot.robots.stretch3 import Stretch3RobotConfig
 
         return Stretch3RobotConfig(**kwargs)
     elif robot_type == "lekiwi":
-        from lerobot.common.robots.lekiwi import LeKiwiConfig
+        from lerobot.robots.lekiwi import LeKiwiConfig
 
         return LeKiwiConfig(**kwargs)
     else:

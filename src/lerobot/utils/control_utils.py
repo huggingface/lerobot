@@ -28,10 +28,10 @@ import torch
 from deepdiff import DeepDiff
 from termcolor import colored
 
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.datasets.utils import DEFAULT_FEATURES
-from lerobot.common.policies.pretrained import PreTrainedPolicy
-from lerobot.common.robots import Robot
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.utils import DEFAULT_FEATURES
+from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.robots import Robot
 
 
 def log_control_info(robot: Robot, dt_s, episode_index=None, frame_index=None, fps=None):

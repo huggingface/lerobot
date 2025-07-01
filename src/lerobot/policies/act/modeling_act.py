@@ -33,10 +33,10 @@ from torch import Tensor, nn
 from torchvision.models._utils import IntermediateLayerGetter
 from torchvision.ops.misc import FrozenBatchNorm2d
 
-from lerobot.common.constants import ACTION, OBS_IMAGES
-from lerobot.common.policies.act.configuration_act import ACTConfig
-from lerobot.common.policies.normalize import Normalize, Unnormalize
-from lerobot.common.policies.pretrained import PreTrainedPolicy
+from lerobot.constants import ACTION, OBS_IMAGES
+from lerobot.policies.act.configuration_act import ACTConfig
+from lerobot.policies.normalize import Normalize, Unnormalize
+from lerobot.policies.pretrained import PreTrainedPolicy
 
 
 class ACTPolicy(PreTrainedPolicy):

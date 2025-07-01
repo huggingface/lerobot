@@ -25,7 +25,7 @@ This script will help you convert any LeRobot dataset already pushed to the hub 
 Usage:
 
 ```bash
-python lerobot/common/datasets/v21/convert_dataset_v20_to_v21.py \
+python lerobot/datasets/v21/convert_dataset_v20_to_v21.py \
     --repo-id=aliberts/koch_tutorial
 ```
 
@@ -36,9 +36,9 @@ import logging
 
 from huggingface_hub import HfApi
 
-from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset
-from lerobot.common.datasets.utils import EPISODES_STATS_PATH, STATS_PATH, load_stats, write_info
-from lerobot.common.datasets.v21.convert_stats import check_aggregate_stats, convert_stats
+from lerobot.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset
+from lerobot.datasets.utils import EPISODES_STATS_PATH, STATS_PATH, load_stats, write_info
+from lerobot.datasets.v21.convert_stats import check_aggregate_stats, convert_stats
 
 V20 = "v2.0"
 V21 = "v2.1"

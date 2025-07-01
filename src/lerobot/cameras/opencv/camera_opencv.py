@@ -27,7 +27,7 @@ from typing import Any, Dict, List
 import cv2
 import numpy as np
 
-from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..camera import Camera
 from ..utils import get_cv2_backend, get_cv2_rotation
@@ -64,8 +64,8 @@ class OpenCVCamera(Camera):
 
     Example:
         ```python
-        from lerobot.common.cameras.opencv import OpenCVCamera
-        from lerobot.common.cameras.configuration_opencv import OpenCVCameraConfig, ColorMode, Cv2Rotation
+        from lerobot.cameras.opencv import OpenCVCamera
+        from lerobot.cameras.configuration_opencv import OpenCVCameraConfig, ColorMode, Cv2Rotation
 
         # Basic usage with camera index 0
         config = OpenCVCameraConfig(index_or_path=0)

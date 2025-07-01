@@ -167,10 +167,10 @@ available_datasets = sorted(
     set(itertools.chain(*available_datasets_per_env.values(), available_real_world_datasets))
 )
 
-# lists all available policies from `lerobot/common/policies`
+# lists all available policies from `lerobot/policies`
 available_policies = ["act", "diffusion", "tdmpc", "vqbet"]
 
-# lists all available robots from `lerobot/common/robot_devices/robots`
+# lists all available robots from `lerobot/robot_devices/robots`
 available_robots = [
     "koch",
     "koch_bimanual",
@@ -179,13 +179,13 @@ available_robots = [
     "so101",
 ]
 
-# lists all available cameras from `lerobot/common/robot_devices/cameras`
+# lists all available cameras from `lerobot/robot_devices/cameras`
 available_cameras = [
     "opencv",
     "intelrealsense",
 ]
 
-# lists all available motors from `lerobot/common/robot_devices/motors`
+# lists all available motors from `lerobot/robot_devices/motors`
 available_motors = [
     "dynamixel",
     "feetech",

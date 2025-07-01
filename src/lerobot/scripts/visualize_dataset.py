@@ -74,7 +74,7 @@ import torch
 import torch.utils.data
 import tqdm
 
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 
 class EpisodeSampler(torch.utils.data.Sampler):

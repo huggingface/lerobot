@@ -20,11 +20,11 @@ from typing import Any
 
 import numpy as np
 
-from lerobot.common.cameras import make_cameras_from_configs
-from lerobot.common.errors import DeviceNotConnectedError
-from lerobot.common.model.kinematics import RobotKinematics
-from lerobot.common.motors import Motor, MotorNormMode
-from lerobot.common.motors.feetech import FeetechMotorsBus
+from lerobot.cameras import make_cameras_from_configs
+from lerobot.errors import DeviceNotConnectedError
+from lerobot.model.kinematics import RobotKinematics
+from lerobot.motors import Motor, MotorNormMode
+from lerobot.motors.feetech import FeetechMotorsBus
 
 from . import SO100Follower
 from .config_so100_follower import SO100FollowerEndEffectorConfig

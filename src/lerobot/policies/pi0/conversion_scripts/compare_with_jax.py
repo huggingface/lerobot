@@ -18,9 +18,9 @@ from pathlib import Path
 
 import torch
 
-from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
-from lerobot.common.policies.factory import make_policy
 from lerobot.configs.policies import PreTrainedConfig
+from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
+from lerobot.policies.factory import make_policy
 
 
 def display(tensor: torch.Tensor):
@@ -97,7 +97,7 @@ def main():
 
     noise = torch.from_numpy(noise).to(device=device, dtype=torch.float32)
 
-    from lerobot.common import policies  # noqa
+    from lerobot import policies  # noqa
 
     cfg = PreTrainedConfig.from_pretrained(ckpt_torch_dir)
     cfg.pretrained_path = ckpt_torch_dir

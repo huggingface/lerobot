@@ -68,9 +68,9 @@ import requests
 from flask import Flask, redirect, render_template, request, url_for
 
 from lerobot import available_datasets
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.datasets.utils import IterableNamespace
-from lerobot.common.utils.utils import init_logging
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.utils import IterableNamespace
+from lerobot.utils.utils import init_logging
 
 
 def run_server(

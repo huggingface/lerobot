@@ -17,10 +17,10 @@
 
 from dataclasses import dataclass, field
 
-from lerobot.common.constants import ACTION, OBS_IMAGE, OBS_STATE
-from lerobot.common.optim.optimizers import MultiAdamConfig
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import NormalizationMode
+from lerobot.constants import ACTION, OBS_IMAGE, OBS_STATE
+from lerobot.optim.optimizers import MultiAdamConfig
 
 
 def is_image_feature(key: str) -> bool:

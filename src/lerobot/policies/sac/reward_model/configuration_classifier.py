@@ -15,10 +15,10 @@
 # limitations under the License.
 from dataclasses import dataclass, field
 
-from lerobot.common.optim.optimizers import AdamWConfig, OptimizerConfig
-from lerobot.common.optim.schedulers import LRSchedulerConfig
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import NormalizationMode
+from lerobot.optim.optimizers import AdamWConfig, OptimizerConfig
+from lerobot.optim.schedulers import LRSchedulerConfig
 
 
 @PreTrainedConfig.register_subclass(name="reward_classifier")

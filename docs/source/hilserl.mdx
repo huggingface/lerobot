@@ -50,12 +50,12 @@ pip install -e ".[hilserl]"
 
 ### Understanding Configuration
 
-The training process begins with proper configuration for the HILSerl environment. The configuration class of interest is `HILSerlRobotEnvConfig` in `lerobot/common/envs/configs.py`. Which is defined as:
+The training process begins with proper configuration for the HILSerl environment. The configuration class of interest is `HILSerlRobotEnvConfig` in `lerobot/envs/configs.py`. Which is defined as:
 
 ```python
 class HILSerlRobotEnvConfig(EnvConfig):
-    robot: RobotConfig | None = None    # Main robot agent (defined in `lerobot/common/robots`)
-    teleop: TeleoperatorConfig | None = None    # Teleoperator agent, e.g., gamepad or leader arm, (defined in `lerobot/common/teleoperators`)
+    robot: RobotConfig | None = None    # Main robot agent (defined in `lerobot/robots`)
+    teleop: TeleoperatorConfig | None = None    # Teleoperator agent, e.g., gamepad or leader arm, (defined in `lerobot/teleoperators`)
     wrapper: EnvTransformConfig | None = None    # Environment wrapper settings; check `lerobot/scripts/server/gym_manipulator.py`
     fps: int = 10    # Control frequency
     name: str = "real_robot"    # Environment name
@@ -172,7 +172,7 @@ class SO100FollowerEndEffectorConfig(SO100FollowerConfig):
     )
 ```
 
-The `Teleoperator` defines the teleoperation device. You can check the list of available teleoperators in `lerobot/common/teleoperators`.
+The `Teleoperator` defines the teleoperation device. You can check the list of available teleoperators in `lerobot/teleoperators`.
 
 **Setting up the Gamepad**
 
@@ -446,7 +446,7 @@ Create a training configuration file (example available [here](https://huggingfa
 1. Configure the policy settings (`type="sac"`, `device`, etc.)
 2. Set `dataset` to your cropped dataset
 3. Configure environment settings with crop parameters
-4. Check the other parameters related to SAC in [configuration_sac.py](https://github.com/huggingface/lerobot/blob/19bb621a7d0a31c20cd3cc08b1dbab68d3031454/lerobot/common/policies/sac/configuration_sac.py#L79).
+4. Check the other parameters related to SAC in [configuration_sac.py](https://github.com/huggingface/lerobot/blob/19bb621a7d0a31c20cd3cc08b1dbab68d3031454/lerobot/policies/sac/configuration_sac.py#L79).
 5. Verify that the `policy` config is correct with the right `input_features` and `output_features` for your task.
 
 **Starting the Learner**

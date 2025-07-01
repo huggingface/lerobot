@@ -35,14 +35,14 @@ from huggingface_hub.errors import RevisionNotFoundError
 from PIL import Image as PILImage
 from torchvision import transforms
 
-from lerobot.common.datasets.backward_compatibility import (
+from lerobot.configs.types import DictLike, FeatureType, PolicyFeature
+from lerobot.datasets.backward_compatibility import (
     V21_MESSAGE,
     BackwardCompatibilityError,
     ForwardCompatibilityError,
 )
-from lerobot.common.robots import Robot
-from lerobot.common.utils.utils import is_valid_numpy_dtype_string
-from lerobot.configs.types import DictLike, FeatureType, PolicyFeature
+from lerobot.robots import Robot
+from lerobot.utils.utils import is_valid_numpy_dtype_string
 
 DEFAULT_CHUNK_SIZE = 1000  # Max number of episodes per chunk
 
@@ -664,7 +664,7 @@ def create_lerobot_dataset_card(
     **kwargs,
 ) -> DatasetCard:
     """
-    Keyword arguments will be used to replace values in ./lerobot/common/datasets/card_template.md.
+    Keyword arguments will be used to replace values in ./lerobot/datasets/card_template.md.
     Note: If specified, license must be one of https://huggingface.co/docs/hub/repositories-licenses.
     """
     card_tags = ["LeRobot"]
@@ -687,7 +687,7 @@ def create_lerobot_dataset_card(
         ],
     )
 
-    card_template = (importlib.resources.files("lerobot.common.datasets") / "card_template.md").read_text()
+    card_template = (importlib.resources.files("lerobot.datasets") / "card_template.md").read_text()
 
     return DatasetCard.from_template(
         card_data=card_data,

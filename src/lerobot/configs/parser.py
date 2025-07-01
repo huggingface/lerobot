@@ -22,7 +22,7 @@ from typing import Sequence
 
 import draccus
 
-from lerobot.common.utils.utils import has_method
+from lerobot.utils.utils import has_method
 
 PATH_KEY = "path"
 PLUGIN_DISCOVERY_SUFFIX = "discover_packages_path"

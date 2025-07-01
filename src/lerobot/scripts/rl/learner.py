@@ -59,46 +59,46 @@ from torch import nn
 from torch.multiprocessing import Queue
 from torch.optim.optimizer import Optimizer
 
-from lerobot.common.cameras import opencv  # noqa: F401
-from lerobot.common.constants import (
+from lerobot.cameras import opencv  # noqa: F401
+from lerobot.configs import parser
+from lerobot.configs.train import TrainRLServerPipelineConfig
+from lerobot.constants import (
     CHECKPOINTS_DIR,
     LAST_CHECKPOINT_LINK,
     PRETRAINED_MODEL_DIR,
     TRAINING_STATE_DIR,
 )
-from lerobot.common.datasets.factory import make_dataset
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.policies.factory import make_policy
-from lerobot.common.policies.sac.modeling_sac import SACPolicy
-from lerobot.common.robots import so100_follower  # noqa: F401
-from lerobot.common.teleoperators import gamepad, so101_leader  # noqa: F401
-from lerobot.common.transport import services_pb2_grpc
-from lerobot.common.transport.utils import (
+from lerobot.datasets.factory import make_dataset
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.policies.factory import make_policy
+from lerobot.policies.sac.modeling_sac import SACPolicy
+from lerobot.robots import so100_follower  # noqa: F401
+from lerobot.scripts.rl import learner_service
+from lerobot.teleoperators import gamepad, so101_leader  # noqa: F401
+from lerobot.transport import services_pb2_grpc
+from lerobot.transport.utils import (
     bytes_to_python_object,
     bytes_to_transitions,
     state_to_bytes,
 )
-from lerobot.common.utils.buffer import ReplayBuffer, concatenate_batch_transitions
-from lerobot.common.utils.process import ProcessSignalHandler
-from lerobot.common.utils.random_utils import set_seed
-from lerobot.common.utils.train_utils import (
+from lerobot.utils.buffer import ReplayBuffer, concatenate_batch_transitions
+from lerobot.utils.process import ProcessSignalHandler
+from lerobot.utils.random_utils import set_seed
+from lerobot.utils.train_utils import (
     get_step_checkpoint_dir,
     save_checkpoint,
     update_last_checkpoint,
 )
-from lerobot.common.utils.train_utils import (
+from lerobot.utils.train_utils import (
     load_training_state as utils_load_training_state,
 )
-from lerobot.common.utils.transition import move_state_dict_to_device, move_transition_to_device
-from lerobot.common.utils.utils import (
+from lerobot.utils.transition import move_state_dict_to_device, move_transition_to_device
+from lerobot.utils.utils import (
     format_big_number,
     get_safe_torch_device,
     init_logging,
 )
-from lerobot.common.utils.wandb_utils import WandBLogger
-from lerobot.configs import parser
-from lerobot.configs.train import TrainRLServerPipelineConfig
-from lerobot.scripts.rl import learner_service
+from lerobot.utils.wandb_utils import WandBLogger
 
 LOG_PREFIX = "[LEARNER]"
 
@@ -157,7 +157,7 @@ def train(cfg: TrainRLServerPipelineConfig, job_name: str | None = None):
 
     # Setup WandB logging if enabled
     if cfg.wandb.enable and cfg.wandb.project:
-        from lerobot.common.utils.wandb_utils import WandBLogger
+        from lerobot.utils.wandb_utils import WandBLogger
 
         wandb_logger = WandBLogger(cfg)
     else:
