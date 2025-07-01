@@ -16,6 +16,7 @@
 import contextlib
 import logging
 import shutil
+import os
 from pathlib import Path
 from typing import Callable
 
@@ -31,7 +32,7 @@ from huggingface_hub.constants import REPOCARD_NAME
 from huggingface_hub.errors import RevisionNotFoundError
 
 from lerobot.common.constants import HF_LEROBOT_HOME
-from lerobot.common.datasets.compute_stats import aggregate_stats, aggregate_stats_per_robot_type, compute_episode_stats
+from lerobot.common.datasets.compute_stats import aggregate_stats, compute_episode_stats #aggregate_stats_per_robot_type,
 from lerobot.common.datasets.image_writer import AsyncImageWriter, write_image
 from lerobot.common.datasets.utils import (
     DEFAULT_FEATURES,
@@ -66,10 +67,10 @@ from lerobot.common.datasets.utils import (
     write_episode_stats,
     write_info,
     write_json,
-    keep_datasets_with_the_same_features_per_robot_type,
-    map_dict_pad_keys,
-    keep_datasets_with_valid_fps,
-    find_start_of_motion,
+    #keep_datasets_with_the_same_features_per_robot_type,
+    #map_dict_pad_keys,
+    #keep_datasets_with_valid_fps,
+    #find_start_of_motion,
 )
 from lerobot.common.datasets.video_utils import (
     VideoFrame,
@@ -79,8 +80,9 @@ from lerobot.common.datasets.video_utils import (
     get_video_info,
 )
 
-from lerobot.common.robot_devices.robots.utils import Robot
+#from lerobot.common.robot_devices.robots.utils import Robot
 from lerobot.configs.datasets import ROBOT_TYPE_KEYS_MAPPING, TASKS_KEYS_MAPPING
+#FIXME: remove this import
 from lerobot.common.datasets.collators import pad_tensor
 
 CODEBASE_VERSION = "v2.1"

@@ -858,3 +858,19 @@ def validate_episode_buffer(episode_buffer: dict, total_episodes: int, features:
             f"In episode_buffer not in features: {buffer_keys - set(features)}"
             f"In features not in episode_buffer: {set(features) - buffer_keys}"
         )
+
+
+def map_dict_keys(item: dict, feature_keys_mapping: dict, training_features: list = None, pad_key: str = "is_pad") -> dict:
+    """Maps feature keys from the dataset to the keys used in the model."""
+    if feature_keys_mapping is None:
+        return item
+    features = {}
+    for key in item:
+        if key in feature_keys_mapping:
+            if feature_keys_mapping[key] is not None:
+                if training_features is None or feature_keys_mapping[key] in training_features:
+                    features[feature_keys_mapping[key]] = item[key]
+        else:
+            if training_features is None or key in training_features or pad_key in key:
+                features[key] = item[key]
+    return features

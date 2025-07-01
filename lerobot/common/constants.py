@@ -28,6 +28,8 @@ OBS_IMAGE_4 = "observation.image4"
 REWARD = "next.reward"
 
 ROBOTS = "robots"
+TASK = "task"
+ROBOT = "robot_type"
 TELEOPERATORS = "teleoperators"
 
 # files & directories

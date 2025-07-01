@@ -30,6 +30,7 @@ from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.policies.sac.configuration_sac import SACConfig
 from lerobot.common.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
 from lerobot.common.policies.smolvla.configuration_smolvla import SmolVLAConfig
+from lerobot.common.policies.smolvla2.configuration_smolvla2 import SmolVLA2Config
 from lerobot.common.policies.tdmpc.configuration_tdmpc import TDMPCConfig
 from lerobot.common.policies.vqbet.configuration_vqbet import VQBeTConfig
 from lerobot.configs.policies import PreTrainedConfig
@@ -74,6 +75,10 @@ def get_policy_class(name: str) -> PreTrainedPolicy:
         from lerobot.common.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 
         return SmolVLAPolicy
+    elif name == "smolvla2":
+        from lerobot.common.policies.smolvla2.modeling_smolvla2 import SmolVLA2Policy
+
+        return SmolVLA2Policy
     else:
         raise NotImplementedError(f"Policy with name {name} is not implemented.")
 
@@ -95,6 +100,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return SACConfig(**kwargs)
     elif policy_type == "smolvla":
         return SmolVLAConfig(**kwargs)
+    elif policy_type == "smolvla2":
+        return SmolVLA2Config(**kwargs)
     elif policy_type == "reward_classifier":
         return RewardClassifierConfig(**kwargs)
     else:
