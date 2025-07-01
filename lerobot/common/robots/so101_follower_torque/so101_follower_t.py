@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import logging
+import math
 import time
 from functools import cached_property
 from typing import Any
@@ -40,6 +41,45 @@ class SO101FollowerT(Robot):
 
     config_class = SO101FollowerTConfig
     name = "so101_follower"
+
+    _CURRENT_STEP_A: float = 6.5e-3  # 6.5 mA per register LSB #http://doc.feetech.cn/#/prodinfodownload?srcType=FT-SMS-STS-emanual-229f4476422d4059abfb1cb0
+    _KT_NM_PER_AMP: float = 0.814  # Torque constant Kt [N·m/A] #https://www.feetechrc.com/811177.html
+    _MAX_CURRENT_A: float = 3.0  # Safe driver limit for this model
+
+    _COUNT_TO_RAD: float = math.radians(0.087)  # 1 pos count to rad
+
+    def _current_to_torque_nm(self, raw: dict[str, int]) -> dict[str, float]:
+        """Convert "Present_Current" register counts (±2047) → torque [Nm].
+        Values are clamped to ±3A before conversion for protection.
+        """
+        max_cnt = int(round(self._MAX_CURRENT_A / self._CURRENT_STEP_A))  # ≈ 462
+        coef = self._CURRENT_STEP_A * self._KT_NM_PER_AMP
+        return {k: max(min(v, max_cnt), -max_cnt) * coef for k, v in raw.items()}
+
+    def _torque_nm_to_current(self, torque: dict[str, float]) -> dict[str, int]:
+        """Convert torque [Nm] to register counts, clamped to ±3A (2.44 Nm)."""
+        inv_coef = 1.0 / (self._CURRENT_STEP_A * self._KT_NM_PER_AMP)
+        max_cnt = int(round(self._MAX_CURRENT_A / self._CURRENT_STEP_A))
+        max_torque = self._MAX_CURRENT_A * self._KT_NM_PER_AMP
+        return {
+            k: max(-max_cnt, min(max_cnt, int(round(max(-max_torque, min(max_torque, float(t))) * inv_coef))))
+            for k, t in torque.items()
+        }
+
+    def _counts_to_rad(self, raw: dict[str, int]) -> dict[str, float]:
+        """Convert "Present_Position" counts to rad."""
+        out: dict[str, float] = {}
+        for motor, cnt in raw.items():
+            out[motor] = cnt * self._COUNT_TO_RAD
+        return out
+
+    def _rad_to_counts(self, pos: dict[str, float]) -> dict[str, int]:
+        """Convert radians to position counts."""
+        out: dict[str, int] = {}
+        for motor, rad in pos.items():
+            cnt = int(round(rad / self._COUNT_TO_RAD))
+            out[motor] = cnt
+        return out
 
     def __init__(self, config: SO101FollowerTConfig):
         super().__init__(config)
@@ -146,7 +186,7 @@ class SO101FollowerT(Robot):
 
                 self.bus.write("Operating_Mode", motor, 2)  # Set to current mode
                 self.bus.write("Target_Torque", motor, 0)
-                self.bus.write("Torque_Limit", motor, 1000)
+                self.bus.write("Torque_Limit", motor, 1000)  # 100%
 
     def setup_motors(self) -> None:
         for motor in reversed(self.bus.motors):
@@ -158,14 +198,17 @@ class SO101FollowerT(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        # Read arm position
         start = time.perf_counter()
 
-        pos = self.bus.sync_read("Present_Position", normalize=False, num_retry=5)
-        curr = self.bus.sync_read("Present_Current", normalize=False, num_retry=5)
-        pos_dict = {f"{motor}.pos": val for motor, val in pos.items()}
-        curr_dict = {f"{motor}.effort": val for motor, val in curr.items()}
-        obs_dict = {**pos_dict, **curr_dict}
+        # Positions
+        pos_counts = self.bus.sync_read("Present_Position", normalize=False, num_retry=10)
+        pos_rad = self._counts_to_rad(pos_counts)
+        obs_dict = {f"{m}.pos": r for m, r in pos_rad.items()}
+
+        # Currents (counts) → torque (N·m)
+        curr_raw = self.bus.sync_read("Present_Current", normalize=False, num_retry=10)
+        torque_nm = self._current_to_torque_nm({f"{m}.effort": v for m, v in curr_raw.items()})
+        obs_dict.update(torque_nm)
 
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
@@ -180,26 +223,26 @@ class SO101FollowerT(Robot):
         return obs_dict
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
-        """Command arm to move to a target joint configuration.
-
-        The relative action magnitude may be clipped depending on the configuration parameter
-        `max_relative_target`. In this case, the action sent differs from original action.
-        Thus, this function always returns the action actually sent.
+        """Command arm to move to a target torque for a joint.
 
         Raises:
             RobotDeviceNotConnectedError: if robot is not connected.
 
         Returns:
-            the action sent to the motors, potentially clipped.
+            the action sent to the motors.
         """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        # Send goal position to the arm
-        effort = {k.removesuffix(".effort"): int(v) for k, v in action.items() if k.endswith(".effort")}
-        if effort:
-            # current (torque) mode write
-            self.bus.sync_write("Target_Torque", effort, normalize=False, num_retry=2)
+        # Extract torque commands
+        torque_cmd = {k: v for k, v in action.items() if k.endswith(".effort")}
+        if torque_cmd:
+            counts = self._torque_nm_to_current(torque_cmd)
+            # remove the .effort suffix
+            counts = {k.removesuffix(".effort"): v for k, v in counts.items()}
+            self.bus.sync_write("Target_Torque", counts, normalize=False, num_retry=2)
+
+        # pass back the other keys (.pos) untouched
         return action
 
     def disconnect(self):
