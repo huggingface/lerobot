@@ -20,7 +20,7 @@ Additionally, each individual transform can be visualized separately as well as 
 
 Example:
 ```bash
-python lerobot/scripts/visualize_image_transforms.py \
+python -m lerobot.scripts.visualize_image_transforms \
     --repo_id=lerobot/pusht \
     --episodes='[0]' \
     --image_transforms.enable=True

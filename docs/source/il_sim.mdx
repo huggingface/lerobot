@@ -35,7 +35,7 @@ Then we can run this command to start:
 <hfoption id="Linux">
 
 ```bash
-python lerobot/scripts/rl/gym_manipulator.py --config_path path/to/env_config_gym_hil_il.json
+python -m lerobot.scripts.rl.gym_manipulator --config_path path/to/env_config_gym_hil_il.json
 ```
 
 </hfoption>
@@ -81,9 +81,9 @@ If you uploaded your dataset to the hub you can [visualize your dataset online](
 
 ## Train a policy
 
-To train a policy to control your robot, use the [`python lerobot/scripts/train.py`](../lerobot/scripts/train.py) script. A few arguments are required. Here is an example command:
+To train a policy to control your robot, use the [`python -m lerobot.scripts.train`](../lerobot/scripts/train.py) script. A few arguments are required. Here is an example command:
 ```bash
-python lerobot/scripts/train.py \
+python -m lerobot.scripts.train \
   --dataset.repo_id=${HF_USER}/il_gym \
   --policy.type=act \
   --output_dir=outputs/train/il_sim_test \
@@ -130,7 +130,7 @@ Then you can run this command to visualize your trained policy
 <hfoption id="Linux">
 
 ```bash
-python lerobot/scripts/rl/eval_policy.py --config_path=path/to/eval_config_gym_hil.json
+python -m lerobot.scripts.rl.eval_policy --config_path=path/to/eval_config_gym_hil.json
 ```
 
 </hfoption>

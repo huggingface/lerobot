@@ -389,9 +389,9 @@ Your robot should replicate movements similar to those you recorded. For example
 
 ## Train a policy
 
-To train a policy to control your robot, use the [`python lerobot/scripts/train.py`](../lerobot/scripts/train.py) script. A few arguments are required. Here is an example command:
+To train a policy to control your robot, use the [`python -m lerobot.scripts.train`](../lerobot/scripts/train.py) script. A few arguments are required. Here is an example command:
 ```bash
-python lerobot/scripts/train.py \
+python -m lerobot.scripts.train \
   --dataset.repo_id=${HF_USER}/so101_test \
   --policy.type=act \
   --output_dir=outputs/train/act_so101_test \
@@ -411,7 +411,7 @@ Training should take several hours. You will find checkpoints in `outputs/train/
 
 To resume training from a checkpoint, below is an example command to resume from `last` checkpoint of the `act_so101_test` policy:
 ```bash
-python lerobot/scripts/train.py \
+python -m lerobot.scripts.train \
   --config_path=outputs/train/act_so101_test/checkpoints/last/pretrained_model/train_config.json \
   --resume=true
 ```

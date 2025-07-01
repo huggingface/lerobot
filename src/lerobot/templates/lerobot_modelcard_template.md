@@ -43,7 +43,7 @@ Below is the short version on how to train and run inference/eval:
 ### Train from scratch
 
 ```bash
-python lerobot/scripts/train.py \
+python -m lerobot.scripts.train \
   --dataset.repo_id=${HF_USER}/<dataset> \
   --policy.type=act \
   --output_dir=outputs/train/<desired_policy_repo_id> \

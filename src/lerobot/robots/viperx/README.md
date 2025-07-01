@@ -107,7 +107,7 @@ echo ${HF_USER}/aloha_test
 
 If you didn't upload with `--control.push_to_hub=false`, you can also visualize it locally with:
 ```bash
-python lerobot/scripts/visualize_dataset_html.py \
+python -m lerobot.scripts.visualize_dataset_html \
   --repo-id ${HF_USER}/aloha_test
 ```
 
@@ -129,9 +129,9 @@ python lerobot/scripts/control_robot.py \
 
 ## Train a policy
 
-To train a policy to control your robot, use the [`python lerobot/scripts/train.py`](../lerobot/scripts/train.py) script. A few arguments are required. Here is an example command:
+To train a policy to control your robot, use the [`python -m lerobot.scripts.train`](../lerobot/scripts/train.py) script. A few arguments are required. Here is an example command:
 ```bash
-python lerobot/scripts/train.py \
+python -m lerobot.scripts.train \
   --dataset.repo_id=${HF_USER}/aloha_test \
   --policy.type=act \
   --output_dir=outputs/train/act_aloha_test \

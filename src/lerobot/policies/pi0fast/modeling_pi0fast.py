@@ -24,14 +24,14 @@ Designed by Physical Intelligence. Ported from Jax by Hugging Face.
 
 Example of finetuning the pi0+FAST pretrained model (`pi0_fast_base` in `openpi`):
 ```bash
-python lerobot/scripts/train.py \
+python -m lerobot.scripts.train \
 --policy.path=lerobot/pi0fast_base \
 --dataset.repo_id=danaaubakirova/koch_test
 ```
 
 Example of training the pi0+FAST neural network with from scratch:
 ```bash
-python lerobot/scripts/train.py \
+python -m lerobot.scripts.train \
 --policy.type=pi0fast \
 --dataset.repo_id=danaaubakirova/koch_test
 ```

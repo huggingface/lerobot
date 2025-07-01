@@ -29,7 +29,7 @@ pip install -e ".[pi0]"
 
 Example of finetuning the pi0 pretrained model (`pi0_base` in `openpi`):
 ```bash
-python lerobot/scripts/train.py \
+python -m lerobot.scripts.train \
 --policy.path=lerobot/pi0 \
 --dataset.repo_id=danaaubakirova/koch_test
 ```
@@ -37,7 +37,7 @@ python lerobot/scripts/train.py \
 Example of finetuning the pi0 neural network with PaliGemma and expert Gemma
 pretrained with VLM default parameters before pi0 finetuning:
 ```bash
-python lerobot/scripts/train.py \
+python -m lerobot.scripts.train \
 --policy.type=pi0 \
 --dataset.repo_id=danaaubakirova/koch_test
 ```

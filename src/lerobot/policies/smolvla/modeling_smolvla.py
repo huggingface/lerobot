@@ -28,7 +28,7 @@ pip install -e ".[smolvla]"
 
 Example of finetuning the smolvla pretrained model (`smolvla_base`):
 ```bash
-python lerobot/scripts/train.py \
+python -m lerobot.scripts.train \
 --policy.path=lerobot/smolvla_base \
 --dataset.repo_id=danaaubakirova/svla_so100_task1_v3 \
 --batch_size=64 \
@@ -38,7 +38,7 @@ python lerobot/scripts/train.py \
 Example of finetuning a smolVLA. SmolVLA is composed of a pretrained VLM,
 and an action expert.
 ```bash
-python lerobot/scripts/train.py \
+python -m lerobot.scripts.train \
 --policy.type=smolvla \
 --dataset.repo_id=danaaubakirova/svla_so100_task1_v3 \
 --batch_size=64 \

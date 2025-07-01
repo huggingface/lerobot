@@ -24,7 +24,7 @@ Examples of usage:
 
 - Start an actor server for real robot training with human-in-the-loop intervention:
 ```bash
-python lerobot/scripts/rl/actor.py --config_path lerobot/configs/train_config_hilserl_so100.json
+python -m lerobot.scripts.rl.actor --config_path lerobot/configs/train_config_hilserl_so100.json
 ```
 
 **NOTE**: The actor server requires a running learner server to connect to. Ensure the learner
