@@ -240,6 +240,75 @@ def record_loop(
         timestamp = time.perf_counter() - start_episode_t
 
 
+class VideoEncodingManager:
+    """
+    Manages video encoding for dataset recording, supporting both immediate and batch encoding modes.
+
+    This context manager ensures that video encoding is completed properly even if exceptions occur
+    during the recording process or if recording is stopped early. It supports two modes:
+    - Immediate encoding: Videos are encoded after each episode (batch_size=1)
+    - Batch encoding: Videos are encoded in batches after multiple episodes (batch_size>1)
+
+    Args:
+        dataset: The LeRobotDataset instance
+        batch_size: Number of episodes to accumulate before encoding videos
+    """
+
+    def __init__(self, dataset, batch_size, play_sounds=True):
+        self.dataset = dataset
+        self.batch_size = batch_size
+        self.use_batched_encoding = batch_size > 1
+        self.episodes_since_last_encoding = 0
+        self.last_encoded_episode = dataset.num_episodes - 1
+        self.play_sounds = play_sounds
+
+    def should_encode_batch(self, force=False):
+        """Check if we should encode the current batch."""
+        return (
+            self.use_batched_encoding 
+            and (self.episodes_since_last_encoding >= self.batch_size or force)
+        )
+
+    def save_episode_and_maybe_encode(self, force_encode=False):
+        """Save episode and potentially encode batch."""
+        if self.use_batched_encoding:
+            self.dataset.save_episode(encode_videos=False)
+            self.episodes_since_last_encoding += 1
+
+            if self.should_encode_batch(force=force_encode):
+                self._encode_current_batch()
+        else:
+            # default behavior: encode videos immediately
+            self.dataset.save_episode(encode_videos=True)
+
+    def _encode_current_batch(self):
+        """Encode the current batch of episodes."""
+        if self.episodes_since_last_encoding > 0:
+            start_ep = self.last_encoded_episode + 1
+            end_ep = self.dataset.num_episodes
+            log_say(f"Batch encoding videos for {self.episodes_since_last_encoding} episodes, "
+                  f"from episode {start_ep} to episode {end_ep - 1}", self.play_sounds)
+            self.dataset.batch_encode_videos(start_ep, end_ep)
+            self.last_encoded_episode = end_ep - 1
+            self.episodes_since_last_encoding = 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Ensure any pending batch encoding is completed on exit (both normal and exception cases)."""
+        if self.episodes_since_last_encoding > 0:
+            if exc_type is not None:
+                print("Exception occurred. Encoding pending episodes before exit...")
+            else:
+                print("Recording stopped. Encoding remaining episodes...")
+            try:
+                self._encode_current_batch()
+            except Exception as e:
+                print(f"Something went wrong while encoding videos on exit: {e}")
+        return False  # Don't suppress the original exception
+
+
 @parser.wrap()
 def record(cfg: RecordConfig) -> LeRobotDataset:
     init_logging()
@@ -289,75 +358,50 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     listener, events = init_keyboard_listener()
 
-    # Batched encoding variables
-    use_batched_encoding = cfg.dataset.video_encoding_batch_size > 1
-    episodes_since_last_encoding = 0
-    last_encoded_episode = dataset.num_episodes - 1  # Start from current episode count
 
-    recorded_episodes = 0
-    while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
-        log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
-        record_loop(
-            robot=robot,
-            events=events,
-            fps=cfg.dataset.fps,
-            teleop=teleop,
-            policy=policy,
-            dataset=dataset,
-            control_time_s=cfg.dataset.episode_time_s,
-            single_task=cfg.dataset.single_task,
-            display_data=cfg.display_data,
-        )
-
-        # Execute a few seconds without recording to give time to manually reset the environment
-        # Skip reset for the last episode to be recorded
-        if not events["stop_recording"] and (
-            (recorded_episodes < cfg.dataset.num_episodes - 1) or events["rerecord_episode"]
-        ):
-            log_say("Reset the environment", cfg.play_sounds)
+    with VideoEncodingManager(dataset, cfg.dataset.video_encoding_batch_size, cfg.play_sounds) as video_encoding_manager:
+        recorded_episodes = 0
+        while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
+            log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
             record_loop(
                 robot=robot,
                 events=events,
                 fps=cfg.dataset.fps,
                 teleop=teleop,
-                control_time_s=cfg.dataset.reset_time_s,
+                policy=policy,
+                dataset=dataset,
+                control_time_s=cfg.dataset.episode_time_s,
                 single_task=cfg.dataset.single_task,
                 display_data=cfg.display_data,
             )
 
-        if events["rerecord_episode"]:
-            log_say("Re-record episode", cfg.play_sounds)
-            events["rerecord_episode"] = False
-            events["exit_early"] = False
-            dataset.clear_episode_buffer()
-            continue
-
-        # Save episode with or without video encoding based on batch size
-        if use_batched_encoding:
-            dataset.save_episode(encode_videos=False)
-            episodes_since_last_encoding += 1
-
-            # Batch encode videos when we reach the batch size or when stopping
-            if (
-                episodes_since_last_encoding >= cfg.dataset.video_encoding_batch_size
-                or events["stop_recording"]
+            # Execute a few seconds without recording to give time to manually reset the environment
+            # Skip reset for the last episode to be recorded
+            if not events["stop_recording"] and (
+                (recorded_episodes < cfg.dataset.num_episodes - 1) or events["rerecord_episode"]
             ):
-                log_say(
-                    f"Batch encoding videos for {episodes_since_last_encoding} episodes, from episode {last_encoded_episode + 1} to episode {dataset.num_episodes - 1}",
-                    cfg.play_sounds,
+                log_say("Reset the environment", cfg.play_sounds)
+                record_loop(
+                    robot=robot,
+                    events=events,
+                    fps=cfg.dataset.fps,
+                    teleop=teleop,
+                    control_time_s=cfg.dataset.reset_time_s,
+                    single_task=cfg.dataset.single_task,
+                    display_data=cfg.display_data,
                 )
-                start_ep = last_encoded_episode + 1
-                end_ep = dataset.num_episodes
-                dataset.batch_encode_videos(start_ep, end_ep)
-                last_encoded_episode = end_ep - 1
-                episodes_since_last_encoding = 0
-        else:
-            # Original behavior: encode videos immediately
-            dataset.save_episode(encode_videos=True)
-        recorded_episodes += 1
 
-        if events["stop_recording"]:
-            break
+            if events["rerecord_episode"]:
+                log_say("Re-record episode", cfg.play_sounds)
+                events["rerecord_episode"] = False
+                events["exit_early"] = False
+                dataset.clear_episode_buffer()
+                continue
+
+        # Pass force_encode=True when exiting early to ensure pending episodes are encoded
+        video_encoding_manager.save_episode_and_maybe_encode(force_encode=events["exit_early"])
+
+        recorded_episodes += 1
 
     log_say("Stop recording", cfg.play_sounds, blocking=True)
 
