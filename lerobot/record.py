@@ -215,7 +215,7 @@ def record_loop(
         elif policy is None and isinstance(teleop, Teleoperator):
             action = teleop.get_action()
         elif (
-            policy is None and isinstance(teleop, List[Teleoperator]) and robot.name == "lekiwi_client"
+            policy is None and isinstance(teleop, list) and robot.name == "lekiwi_client"
         ):  # TODO(pepijn, steven): clean the record loop for use of multiple robots (possibly with pipeline)
             arm_action = teleop_arm.get_action()
             arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
