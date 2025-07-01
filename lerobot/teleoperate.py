@@ -94,7 +94,7 @@ def teleop_loop(
         robot.send_action(action)
         if hasattr(teleop, "send_feedback"):
             try:
-                force_feedback = {key: val for key, val in observation.items() if key.endswith('.force')}
+                force_feedback = {key: val for key, val in observation.items() if key.endswith(".force")}
                 if force_feedback:
                     teleop.send_feedback(force_feedback)
             except Exception as e:
