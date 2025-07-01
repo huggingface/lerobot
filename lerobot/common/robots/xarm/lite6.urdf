@@ -56,4 +56,10 @@
   </joint>
   <link name="link6">
   </link>
+  <joint name="joint_tool" type="fixed">
+    <parent link="link6" />
+    <child link="link_tool" />
+    <origin xyz="0 0 0.14" rpy="0 0 0" />
+  </joint>
+  <link name="link_tool" />
 </robot>

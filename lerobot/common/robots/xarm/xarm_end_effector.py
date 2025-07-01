@@ -108,10 +108,12 @@ class XarmEndEffector(Robot):
         self._arm = None
         self._gripper = None
         self._jacobi = JacobiRobot(
-            os.path.join(this_dir, "lite6.urdf"), ee_link="link6"
+            os.path.join(this_dir, "lite6.urdf"), ee_link="link_tool"
         )
         self._initial_pose = None
         self._previous_action = None
+        self._homing = False
+        self._homing_pose_from_intial_compensation = np.eye(4)
 
     def connect(self, calibrate: bool = True) -> None:
         """
@@ -200,13 +202,22 @@ class XarmEndEffector(Robot):
             action["pose"][:3, 3] = pose[:3, 3] + delta_pose[:3, 3]
 
         if "pose_from_initial" in action:
-            delta_pose = action["pose_from_initial"]
+            if self._homing:
+                self._homing = False
+                self._homing_pose_from_intial_compensation = action["pose_from_initial"]
+                print(
+                    "Homming pose compensation set to:",
+                    self._homing_pose_from_intial_compensation,
+                )
+
+            delta_pose = action["pose_from_initial"] @ np.linalg.inv(
+                self._homing_pose_from_intial_compensation
+            )
             action["pose"] = np.eye(4)
             action["pose"][:3, :3] = delta_pose[:3, :3] @ self._initial_pose[:3, :3]
             action["pose"][:3, 3] = self._initial_pose[:3, 3] + delta_pose[:3, 3]
 
         if "pose" in action:
-            # Convert pose to joint positions using Jacobi
             pose = action["pose"]
             self._jacobi.servo_to_pose(pose)
             # Get joint positions from Jacobi
@@ -215,6 +226,9 @@ class XarmEndEffector(Robot):
                 action[f"joint{i}.pos"] = joint_pos
 
         if "home" in action:
+            if not self._homing:
+                self._homing = True
+
             joint_targets = [
                 0,
                 math.radians(10),
@@ -231,18 +245,22 @@ class XarmEndEffector(Robot):
                 target_pos = joint_pos + error * 0.07
                 self._jacobi.set_joint_position(joint_name, target_pos)
                 action[f"joint{i}.pos"] = target_pos
+            self._initial_pose = self._jacobi.get_ee_pose()
 
         # Execute joint positions
-        joint_positions = []
-        for i in range(1, 7):
-            joint_pos = action[f"joint{i}.pos"]
-            joint_positions.append(joint_pos)
-        self._arm.set_servo_angle_j(joint_positions)
+        if "joint1.pos" in action:
+            joint_positions = []
+            for i in range(1, 7):
+                joint_pos = action[f"joint{i}.pos"]
+                joint_positions.append(joint_pos)
+            self._arm.set_servo_angle_j(joint_positions)
+        else:
+            for i in range(1, 7):
+                action[f"joint{i}.pos"] = self._jacobi.get_joint_position(f"joint{i}")
 
         # Send gripper command
         if "gripper.pos" in action or "gripper" in action:
             gripper_pos = action.get("gripper.pos", action.get("gripper", 0.0))
-            print(f"Setting gripper state to {gripper_pos}")
             self._gripper.set_gripper_state(gripper_pos)
             action["gripper.pos"] = self._gripper.get_gripper_state()
 
