@@ -44,7 +44,7 @@ test-end-to-end:
 	${MAKE} DEVICE=$(DEVICE) test-smolvla-ete-eval
 
 test-act-ete-train:
-	python lerobot/scripts/train.py \
+	python -m lerobot.scripts.train \
 		--policy.type=act \
 		--policy.dim_model=64 \
 		--policy.n_action_steps=20 \
@@ -68,12 +68,12 @@ test-act-ete-train:
 		--output_dir=tests/outputs/act/
 
 test-act-ete-train-resume:
-	python lerobot/scripts/train.py \
+	python -m lerobot.scripts.train \
 		--config_path=tests/outputs/act/checkpoints/000002/pretrained_model/train_config.json \
 		--resume=true
 
 test-act-ete-eval:
-	python lerobot/scripts/eval.py \
+	python -m lerobot.scripts.eval \
 		--policy.path=tests/outputs/act/checkpoints/000004/pretrained_model \
 		--policy.device=$(DEVICE) \
 		--env.type=aloha \
@@ -82,7 +82,7 @@ test-act-ete-eval:
 		--eval.batch_size=1
 
 test-diffusion-ete-train:
-	python lerobot/scripts/train.py \
+	python -m lerobot.scripts.train \
 		--policy.type=diffusion \
 		--policy.down_dims='[64,128,256]' \
 		--policy.diffusion_step_embed_dim=32 \
@@ -106,7 +106,7 @@ test-diffusion-ete-train:
 		--output_dir=tests/outputs/diffusion/
 
 test-diffusion-ete-eval:
-	python lerobot/scripts/eval.py \
+	python -m lerobot.scripts.eval \
 		--policy.path=tests/outputs/diffusion/checkpoints/000002/pretrained_model \
 		--policy.device=$(DEVICE) \
 		--env.type=pusht \
@@ -115,7 +115,7 @@ test-diffusion-ete-eval:
 		--eval.batch_size=1
 
 test-tdmpc-ete-train:
-	python lerobot/scripts/train.py \
+	python -m lerobot.scripts.train \
 		--policy.type=tdmpc \
 		--policy.device=$(DEVICE) \
 		--policy.push_to_hub=false \
@@ -137,7 +137,7 @@ test-tdmpc-ete-train:
 		--output_dir=tests/outputs/tdmpc/
 
 test-tdmpc-ete-eval:
-	python lerobot/scripts/eval.py \
+	python -m lerobot.scripts.eval \
 		--policy.path=tests/outputs/tdmpc/checkpoints/000002/pretrained_model \
 		--policy.device=$(DEVICE) \
 		--env.type=xarm \
@@ -148,7 +148,7 @@ test-tdmpc-ete-eval:
 
 
 test-smolvla-ete-train:
-	python lerobot/scripts/train.py \
+	python -m lerobot.scripts.train \
 		--policy.type=smolvla \
 		--policy.n_action_steps=20 \
 		--policy.chunk_size=20 \
@@ -171,7 +171,7 @@ test-smolvla-ete-train:
 		--output_dir=tests/outputs/smolvla/
 
 test-smolvla-ete-eval:
-	python lerobot/scripts/eval.py \
+	python -m lerobot.scripts.eval \
 		--policy.path=tests/outputs/smolvla/checkpoints/000004/pretrained_model \
 		--policy.device=$(DEVICE) \
 		--env.type=aloha \

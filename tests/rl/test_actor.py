@@ -21,14 +21,14 @@ import pytest
 import torch
 from torch.multiprocessing import Event, Queue
 
-from lerobot.common.utils.transition import Transition
+from lerobot.utils.transition import Transition
 from tests.utils import require_package
 
 
 def create_learner_service_stub():
     import grpc
 
-    from lerobot.common.transport import services_pb2, services_pb2_grpc
+    from lerobot.transport import services_pb2, services_pb2_grpc
 
     class MockLearnerService(services_pb2_grpc.LearnerServiceServicer):
         def __init__(self):
@@ -101,8 +101,8 @@ def test_establish_learner_connection_failure():
 
 @require_package("grpc")
 def test_push_transitions_to_transport_queue():
-    from lerobot.common.transport.utils import bytes_to_transitions
     from lerobot.scripts.rl.actor import push_transitions_to_transport_queue
+    from lerobot.transport.utils import bytes_to_transitions
     from tests.transport.test_transport_utils import assert_transitions_equal
 
     """Test pushing transitions to transport queue."""
@@ -169,8 +169,8 @@ def test_transitions_stream():
 @require_package("grpc")
 @pytest.mark.timeout(3)  # force cross-platform watchdog
 def test_interactions_stream():
-    from lerobot.common.transport.utils import bytes_to_python_object, python_object_to_bytes
     from lerobot.scripts.rl.actor import interactions_stream
+    from lerobot.transport.utils import bytes_to_python_object, python_object_to_bytes
 
     """Test interactions stream functionality."""
     shutdown_event = Event()

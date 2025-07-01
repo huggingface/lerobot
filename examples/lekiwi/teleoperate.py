@@ -1,6 +1,6 @@
-from lerobot.common.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
-from lerobot.common.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop, KeyboardTeleopConfig
-from lerobot.common.teleoperators.so100_leader import SO100Leader, SO100LeaderConfig
+from lerobot.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
+from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop, KeyboardTeleopConfig
+from lerobot.teleoperators.so100_leader import SO100Leader, SO100LeaderConfig
 
 robot_config = LeKiwiClientConfig(remote_ip="172.18.134.136", id="my_lekiwi")
 
