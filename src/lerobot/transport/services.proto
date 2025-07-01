@@ -15,7 +15,7 @@
 
 // To generate a classes for transport part (services_pb2.py and services_pb2_grpc.py) use the following command:
 //
-// python -m grpc_tools.protoc -I . --python_out=. --grpc_python_out=. lerobot/transport/services.proto
+// python -m grpc_tools.protoc -I . --python_out=. --grpc_python_out=. src/lerobot/transport/services.proto
 //
 // The command should be launched from the root of the project.
 
