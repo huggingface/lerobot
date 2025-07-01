@@ -149,30 +149,6 @@ wandb login
 
 (note: you will also need to enable WandB in the configuration. See below.)
 
-## Walkthrough
-
-```
-.
-├── examples             # contains demonstration examples, start here to learn about LeRobot
-|   └── advanced         # contains even more examples for those who have mastered the basics
-├── lerobot
-|   ├── configs          # contains config classes with all options that you can override in the command line
-|   ├── common           # contains classes and utilities
-|   |   ├── datasets       # various datasets of human demonstrations: aloha, pusht, xarm
-|   |   ├── envs           # various sim environments: aloha, pusht, xarm
-|   |   ├── policies       # various policies: act, diffusion, tdmpc
-|   |   ├── robot_devices  # various real devices: dynamixel motors, opencv cameras, koch robots
-|   |   └── utils          # various utilities
-|   └── scripts          # contains functions to execute via command line
-|       ├── eval.py                 # load policy and evaluate it on an environment
-|       ├── train.py                # train a policy via imitation learning and/or reinforcement learning
-|       ├── control_robot.py        # teleoperate a real robot, record data, run a policy
-|       ├── push_dataset_to_hub.py  # convert your dataset into LeRobot dataset format and upload it to the Hugging Face hub
-|       └── visualize_dataset.py    # load a dataset and render its demonstrations
-├── outputs               # contains results of scripts execution: logs, videos, model checkpoints
-└── tests                 # contains pytest utilities for continuous integration
-```
-
 ### Visualize datasets
 
 Check out [example 1](./examples/1_load_lerobot_dataset.py) that illustrates how to use our dataset class which automatically downloads data from the Hugging Face hub.
