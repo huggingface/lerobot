@@ -83,6 +83,9 @@ class MotorNormMode(str, Enum):
     DEGREES = "degrees"
 
 
+COUNT_TO_DEG = 0.087  # 1 encoder count = 0.087 °
+
+
 @dataclass
 class MotorCalibration:
     id: int
@@ -793,9 +796,8 @@ class MotorsBus(abc.ABC):
                 norm = ((bounded_val - min_) / (max_ - min_)) * 100
                 normalized_values[id_] = 100 - norm if drive_mode else norm
             elif self.motors[motor].norm_mode is MotorNormMode.DEGREES:
-                mid = (min_ + max_) / 2
-                max_res = self.model_resolution_table[self._id_to_model(id_)] - 1
-                normalized_values[id_] = (val - mid) * 360 / max_res
+                deg = bounded_val * COUNT_TO_DEG
+                normalized_values[id_] = -deg if drive_mode else deg
             else:
                 raise NotImplementedError
 
@@ -823,9 +825,9 @@ class MotorsBus(abc.ABC):
                 bounded_val = min(100.0, max(0.0, val))
                 unnormalized_values[id_] = int((bounded_val / 100) * (max_ - min_) + min_)
             elif self.motors[motor].norm_mode is MotorNormMode.DEGREES:
-                mid = (min_ + max_) / 2
-                max_res = self.model_resolution_table[self._id_to_model(id_)] - 1
-                unnormalized_values[id_] = int((val * max_res / 360) + mid)
+                val = -val if drive_mode else val
+                raw_counts = int(round(val / COUNT_TO_DEG))
+                unnormalized_values[id_] = raw_counts
             else:
                 raise NotImplementedError
 

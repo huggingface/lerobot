@@ -66,20 +66,9 @@ class SO101FollowerT(Robot):
             for k, t in torque.items()
         }
 
-    def _counts_to_rad(self, raw: dict[str, int]) -> dict[str, float]:
-        """Convert "Present_Position" counts to rad."""
-        out: dict[str, float] = {}
-        for motor, cnt in raw.items():
-            out[motor] = cnt * self._COUNT_TO_RAD
-        return out
-
-    def _rad_to_counts(self, pos: dict[str, float]) -> dict[str, int]:
-        """Convert radians to position counts."""
-        out: dict[str, int] = {}
-        for motor, rad in pos.items():
-            cnt = int(round(rad / self._COUNT_TO_RAD))
-            out[motor] = cnt
-        return out
+    def _deg_to_rad(self, deg: dict[str, float | int]) -> dict[str, float]:
+        """GDegrees to radians."""
+        return {m: math.radians(float(v)) for m, v in deg.items()}
 
     def __init__(self, config: SO101FollowerTConfig):
         super().__init__(config)
@@ -87,12 +76,12 @@ class SO101FollowerT(Robot):
         self.bus = FeetechMotorsBus(
             port=self.config.port,
             motors={
-                "shoulder_pan": Motor(1, "hls3625", MotorNormMode.RANGE_M100_100),
-                "shoulder_lift": Motor(2, "hls3625", MotorNormMode.RANGE_M100_100),
-                "elbow_flex": Motor(3, "hls3625", MotorNormMode.RANGE_M100_100),
-                "wrist_flex": Motor(4, "hls3625", MotorNormMode.RANGE_M100_100),
-                "wrist_roll": Motor(5, "hls3625", MotorNormMode.RANGE_M100_100),
-                "gripper": Motor(6, "hls3625", MotorNormMode.RANGE_0_100),
+                "shoulder_pan": Motor(1, "hls3625", MotorNormMode.DEGREES),
+                "shoulder_lift": Motor(2, "hls3625", MotorNormMode.DEGREES),
+                "elbow_flex": Motor(3, "hls3625", MotorNormMode.DEGREES),
+                "wrist_flex": Motor(4, "hls3625", MotorNormMode.DEGREES),
+                "wrist_roll": Motor(5, "hls3625", MotorNormMode.DEGREES),
+                "gripper": Motor(6, "hls3625", MotorNormMode.DEGREES),
             },
             calibration=self.calibration,
         )
@@ -201,11 +190,11 @@ class SO101FollowerT(Robot):
         start = time.perf_counter()
 
         # Positions
-        pos_counts = self.bus.sync_read("Present_Position", normalize=False, num_retry=10)
-        pos_rad = self._counts_to_rad(pos_counts)
+        pos_deg = self.bus.sync_read("Present_Position", num_retry=10)
+        pos_rad = self._deg_to_rad(pos_deg)
         obs_dict = {f"{m}.pos": r for m, r in pos_rad.items()}
 
-        # Currents (counts) → torque (N·m)
+        # Currents to torque (Nm)
         curr_raw = self.bus.sync_read("Present_Current", normalize=False, num_retry=10)
         torque_nm = self._current_to_torque_nm({f"{m}.effort": v for m, v in curr_raw.items()})
         obs_dict.update(torque_nm)

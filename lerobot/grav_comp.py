@@ -40,7 +40,7 @@ pin_robot.initViewer(open=True)
 pin_robot.loadViewerModel()
 pin_robot.display(pin_robot.q0)
 
-cfg = SO101FollowerTConfig(port="/dev/tty.usbmodem58760431551", id="my_awesome_follower_arm_t")
+cfg = SO101FollowerTConfig(port="/dev/tty.usbmodem58760431551", id="follower_t")
 real = SO101FollowerT(cfg)
 real.connect()
 
