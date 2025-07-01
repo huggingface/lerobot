@@ -834,10 +834,17 @@ def validate_frame(frame: dict, features: dict):
     expected_features = set(features) - set(DEFAULT_FEATURES)
     actual_features = set(frame)
 
-    error_message = validate_features_presence(actual_features, expected_features)
+    # task is a special required field that's not part of regular features
+    if "task" not in actual_features:
+        raise ValueError("Feature mismatch in `frame` dictionary:\nMissing features: {'task'}\n")
 
-    common_features = actual_features & expected_features
-    for name in common_features - {"task"}:
+    # Remove task from actual_features for regular feature validation
+    actual_features_for_validation = actual_features - {"task"}
+    
+    error_message = validate_features_presence(actual_features_for_validation, expected_features)
+
+    common_features = actual_features_for_validation & expected_features
+    for name in common_features:
         error_message += validate_feature_dtype_and_shape(name, features[name], frame[name])
 
     if error_message:
