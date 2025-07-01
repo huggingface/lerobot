@@ -66,34 +66,45 @@ class TorqueMode(Enum):
     DISABLED = 0
 
 
-def _split_into_byte_chunks(value: int, length: int) -> list[int]:
+def scs_lobyte(w):
     import scservo_sdk as scs
 
+    if scs.SCS_END == 0:
+        return w & 0xFF
+    else:
+        return (w >> 8) & 0xFF
+
+
+def scs_hibyte(w):
+    import scservo_sdk as scs
+
+    if scs.SCS_END == 0:
+        return (w >> 8) & 0xFF
+    else:
+        return w & 0xFF
+
+
+def scs_loword(val):
+    return val & 0xFFFF
+
+
+def scs_hiword(val):
+    return (val >> 16) & 0xFFFF
+
+
+def _split_into_byte_chunks(value: int, length: int) -> list[int]:
     if length == 1:
         data = [value]
     elif length == 2:
-        data = [scs.SCS_LOBYTE(value), scs.SCS_HIBYTE(value)]
+        data = [scs_lobyte(value), scs_hibyte(value)]
     elif length == 4:
         data = [
-            scs.SCS_LOBYTE(scs.SCS_LOWORD(value)),
-            scs.SCS_HIBYTE(scs.SCS_LOWORD(value)),
-            scs.SCS_LOBYTE(scs.SCS_HIWORD(value)),
-            scs.SCS_HIBYTE(scs.SCS_HIWORD(value)),
+            scs_lobyte(scs_loword(value)),
+            scs_hibyte(scs_loword(value)),
+            scs_lobyte(scs_hiword(value)),
+            scs_hibyte(scs_hiword(value)),
         ]
     return data
-
-
-def patch_setPacketTimeout(self, packet_length):  # noqa: N802
-    """
-    HACK: This patches the PortHandler behavior to set the correct packet timeouts.
-
-    It fixes https://gitee.com/ftservo/SCServoSDK/issues/IBY2S6
-    The bug is fixed on the official Feetech SDK repo (https://gitee.com/ftservo/FTServo_Python)
-    but because that version is not published on PyPI, we rely on the (unofficial) on that is, which needs
-    patching.
-    """
-    self.packet_start_time = self.getCurrentTime()
-    self.packet_timeout = (self.tx_time_per_byte * packet_length) + (self.tx_time_per_byte * 3.0) + 50
 
 
 class FeetechMotorsBus(MotorsBus):
@@ -126,13 +137,9 @@ class FeetechMotorsBus(MotorsBus):
         import scservo_sdk as scs
 
         self.port_handler = scs.PortHandler(self.port)
-        # HACK: monkeypatch
-        self.port_handler.setPacketTimeout = patch_setPacketTimeout.__get__(
-            self.port_handler, scs.PortHandler
-        )
-        self.packet_handler = scs.PacketHandler(protocol_version)
-        self.sync_reader = scs.GroupSyncRead(self.port_handler, self.packet_handler, 0, 0)
-        self.sync_writer = scs.GroupSyncWrite(self.port_handler, self.packet_handler, 0, 0)
+        self.packet_handler = scs.protocol_packet_handler(self.port_handler, protocol_version)
+        self.sync_reader = scs.GroupSyncRead(self.packet_handler, 0, 0)
+        self.sync_writer = scs.GroupSyncWrite(self.packet_handler, 0, 0)
         self._comm_success = scs.COMM_SUCCESS
         self._no_error = 0x00
 
