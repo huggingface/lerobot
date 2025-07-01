@@ -797,7 +797,8 @@ class MotorsBus(abc.ABC):
                 normalized_values[id_] = 100 - norm if drive_mode else norm
             elif self.motors[motor].norm_mode is MotorNormMode.DEGREES:
                 deg = bounded_val * COUNT_TO_DEG
-                normalized_values[id_] = -deg if drive_mode else deg
+                deg_zero = deg - 180  # Subtract 180 degrees because 2047 (raw count) should be 0 degrees
+                normalized_values[id_] = -deg_zero if drive_mode else deg_zero
             else:
                 raise NotImplementedError
 
@@ -826,7 +827,8 @@ class MotorsBus(abc.ABC):
                 unnormalized_values[id_] = int((bounded_val / 100) * (max_ - min_) + min_)
             elif self.motors[motor].norm_mode is MotorNormMode.DEGREES:
                 val = -val if drive_mode else val
-                raw_counts = int(round(val / COUNT_TO_DEG))
+                deg = val + 180  # Add 180 degrees because 0 degrees should be 2047 (raw count)
+                raw_counts = int(round(deg / COUNT_TO_DEG))
                 unnormalized_values[id_] = raw_counts
             else:
                 raise NotImplementedError

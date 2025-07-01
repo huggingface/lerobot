@@ -197,6 +197,7 @@ HLS_SERIES_CONTROL_TABLE = {
     "Present_Load": (60, 2),
     "Present_Voltage": (62, 1),
     "Present_Current": (69, 2),
+    "Present_Bias": (73, 2),
     # Factory
     "Maximum_Velocity_Limit": (84, 1),
     "Maximum_Acceleration": (85, 1),
