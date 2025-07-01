@@ -25,7 +25,7 @@ Examples of usage:
 
 - Start a learner server for training:
 ```bash
-python -m lerobot.scripts.rl.learner --config_path lerobot/configs/train_config_hilserl_so100.json
+python -m lerobot.scripts.rl.learner --config_path src/lerobot/configs/train_config_hilserl_so100.json
 ```
 
 **NOTE**: Start the learner server before launching the actor server. The learner opens a gRPC server
