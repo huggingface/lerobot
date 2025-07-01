@@ -36,7 +36,6 @@ from dataclasses import asdict, dataclass
 from pprint import pformat
 
 import draccus
-import numpy as np
 import rerun as rr
 
 from lerobot.common.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
@@ -56,7 +55,7 @@ from lerobot.common.teleoperators import (
 )
 from lerobot.common.utils.robot_utils import busy_wait
 from lerobot.common.utils.utils import init_logging, move_cursor_up
-from lerobot.common.utils.visualization_utils import _init_rerun
+from lerobot.common.utils.visualization_utils import _init_rerun, log_rerun_data
 
 from .common.teleoperators import gamepad, koch_leader, so100_leader, so101_leader  # noqa: F401
 
@@ -82,14 +81,7 @@ def teleop_loop(
         action = teleop.get_action()
         if display_data:
             observation = robot.get_observation()
-            for obs, val in observation.items():
-                if isinstance(val, float):
-                    rr.log(f"observation_{obs}", rr.Scalar(val))
-                elif isinstance(val, np.ndarray):
-                    rr.log(f"observation_{obs}", rr.Image(val), static=True)
-            for act, val in action.items():
-                if isinstance(val, float):
-                    rr.log(f"action_{act}", rr.Scalar(val))
+            log_rerun_data(observation, action)
 
         robot.send_action(action)
         dt_s = time.perf_counter() - loop_start

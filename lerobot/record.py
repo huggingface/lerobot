@@ -40,7 +40,7 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from pprint import pformat
-from typing import Sequence
+from typing import List
 
 from lerobot.common.cameras import (  # noqa: F401
     CameraConfig,  # noqa: F401
@@ -69,8 +69,6 @@ from lerobot.common.teleoperators import (  # noqa: F401
     so101_leader,
 )
 from lerobot.common.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop
-from lerobot.common.teleoperators.so100_leader.so100_leader import SO100Leader
-from lerobot.common.teleoperators.so101_leader.so101_leader import SO101Leader
 from lerobot.common.utils.control_utils import (
     init_keyboard_listener,
     is_headless,
@@ -166,7 +164,7 @@ def record_loop(
     events: dict,
     fps: int,
     dataset: LeRobotDataset | None = None,
-    teleop: Teleoperator | Sequence[Teleoperator] | None = None,
+    teleop: Teleoperator | List[Teleoperator] | None = None,
     policy: PreTrainedPolicy | None = None,
     control_time_s: int | None = None,
     single_task: str | None = None,
@@ -177,11 +175,11 @@ def record_loop(
 
     # If there are multiple teleoperators we assume for now a LeKiwi is used
     teleop_arm = teleop_keyboard = None
-    if isinstance(teleop, Sequence):
+    if isinstance(teleop, List) and List.count == 2:
         for t in teleop:
             if isinstance(t, KeyboardTeleop):
                 teleop_keyboard = t
-            elif isinstance(t, (SO100Leader, SO101Leader)):
+            else:
                 teleop_arm = t
     else:
         teleop_arm = teleop
@@ -214,10 +212,10 @@ def record_loop(
                 robot_type=robot.robot_type,
             )
             action = {key: action_values[i].item() for i, key in enumerate(robot.action_features)}
-        elif policy is None and teleop_arm is not None and teleop_keyboard is None:
+        elif policy is None and isinstance(teleop, Teleoperator):
             action = teleop.get_action()
-        elif (
-            policy is None and teleop_arm and teleop_keyboard is not None
+        elif policy is None and isinstance(
+            teleop, List[Teleoperator]
         ):  # TODO(pepijn, steven): clean the record loop for use of multiple robots (possibly with pipeline)
             arm_action = teleop_arm.get_action()
             arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
