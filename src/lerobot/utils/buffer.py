@@ -596,7 +596,8 @@ class ReplayBuffer:
                         frame_dict[f"complementary_info.{key}"] = val
 
             # Add to the dataset's buffer
-            lerobot_dataset.add_frame(frame_dict, task=task_name)
+            frame_dict["task"] = task_name
+            lerobot_dataset.add_frame(frame_dict)
 
             # Move to next frame
             frame_idx_in_episode += 1

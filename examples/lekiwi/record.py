@@ -51,10 +51,10 @@ while i < NB_CYCLES_CLIENT_CONNECTION:
     action_sent = robot.send_action(action)
     observation = robot.get_observation()
 
-    frame = {**action_sent, **observation}
     task = "Dummy Example Task Dataset"
+    frame = {**action_sent, **observation, "task": task}
 
-    dataset.add_frame(frame, task)
+    dataset.add_frame(frame)
     i += 1
 
 print("Disconnecting Teleop Devices and LeKiwi Client")
