@@ -91,8 +91,13 @@ intelrealsense = [
     "pyrealsense2>=2.55.1.6486 ; sys_platform != 'darwin'",
     "pyrealsense2-macosx>=2.54 ; sys_platform == 'darwin'",
 ]
+
+dexvla = ["transformers>=4.45.2", "qwen_vl_utils==0.0.10", "timm==0.9.10"]
+
 pi0 = ["transformers>=4.50.3"]
+
 smolvla = ["transformers>=4.50.3", "num2words>=0.5.14", "accelerate>=1.7.0", "safetensors>=0.4.3"]
+
 pusht = ["gym-pusht>=0.1.5 ; python_version < '4.0'"]
 stretch = [
     "hello-robot-stretch-body>=0.7.27 ; python_version < '4.0' and sys_platform == 'linux'",
