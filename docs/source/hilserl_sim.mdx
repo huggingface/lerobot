@@ -77,7 +77,7 @@ Important parameters:
 To run the environment, set mode to null:
 
 ```python
-python lerobot/scripts/rl/gym_manipulator.py --config_path path/to/gym_hil_env.json
+python -m lerobot.scripts.rl.gym_manipulator --config_path path/to/gym_hil_env.json
 ```
 
 ### Recording a Dataset
@@ -85,7 +85,7 @@ python lerobot/scripts/rl/gym_manipulator.py --config_path path/to/gym_hil_env.j
 To collect a dataset, set the mode to `record` whilst defining the repo_id and number of episodes to record:
 
 ```python
-python lerobot/scripts/rl/gym_manipulator.py --config_path path/to/gym_hil_env.json
+python -m lerobot.scripts.rl.gym_manipulator --config_path path/to/gym_hil_env.json
 ```
 
 ### Training a Policy
@@ -93,13 +93,13 @@ python lerobot/scripts/rl/gym_manipulator.py --config_path path/to/gym_hil_env.j
 To train a policy, checkout the configuration example available [here](https://huggingface.co/datasets/aractingi/lerobot-example-config-files/blob/main/train_gym_hil_env.json) and run the actor and learner servers:
 
 ```python
-python lerobot/scripts/rl/actor.py --config_path path/to/train_gym_hil_env.json
+python -m lerobot.scripts.rl.actor --config_path path/to/train_gym_hil_env.json
 ```
 
 In a different terminal, run the learner server:
 
 ```python
-python lerobot/scripts/rl/learner.py --config_path path/to/train_gym_hil_env.json
+python -m lerobot.scripts.rl.learner --config_path path/to/train_gym_hil_env.json
 ```
 
 The simulation environment provides a safe and repeatable way to develop and test your Human-In-the-Loop reinforcement learning components before deploying to real robots.

@@ -21,7 +21,7 @@ import pytest
 import torch
 
 from lerobot import available_cameras, available_motors, available_robots
-from lerobot.common.utils.import_utils import is_package_available
+from lerobot.utils.import_utils import is_package_available
 
 DEVICE = os.environ.get("LEROBOT_TEST_DEVICE", "cuda") if torch.cuda.is_available() else "cpu"
 

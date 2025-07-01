@@ -21,13 +21,13 @@ from pickle import UnpicklingError
 import pytest
 import torch
 
-from lerobot.common.utils.transition import Transition
+from lerobot.utils.transition import Transition
 from tests.utils import require_cuda, require_package
 
 
 @require_package("grpc")
 def test_bytes_buffer_size_empty_buffer():
-    from lerobot.common.transport.utils import bytes_buffer_size
+    from lerobot.transport.utils import bytes_buffer_size
 
     """Test with an empty buffer."""
     buffer = io.BytesIO()
@@ -38,7 +38,7 @@ def test_bytes_buffer_size_empty_buffer():
 
 @require_package("grpc")
 def test_bytes_buffer_size_small_buffer():
-    from lerobot.common.transport.utils import bytes_buffer_size
+    from lerobot.transport.utils import bytes_buffer_size
 
     """Test with a small buffer."""
     buffer = io.BytesIO(b"Hello, World!")
@@ -48,7 +48,7 @@ def test_bytes_buffer_size_small_buffer():
 
 @require_package("grpc")
 def test_bytes_buffer_size_large_buffer():
-    from lerobot.common.transport.utils import CHUNK_SIZE, bytes_buffer_size
+    from lerobot.transport.utils import CHUNK_SIZE, bytes_buffer_size
 
     """Test with a large buffer."""
     data = b"x" * (CHUNK_SIZE * 2 + 1000)
@@ -59,7 +59,7 @@ def test_bytes_buffer_size_large_buffer():
 
 @require_package("grpc")
 def test_send_bytes_in_chunks_empty_data():
-    from lerobot.common.transport.utils import send_bytes_in_chunks, services_pb2
+    from lerobot.transport.utils import send_bytes_in_chunks, services_pb2
 
     """Test sending empty data."""
     message_class = services_pb2.InteractionMessage
@@ -69,7 +69,7 @@ def test_send_bytes_in_chunks_empty_data():
 
 @require_package("grpc")
 def test_single_chunk_small_data():
-    from lerobot.common.transport.utils import send_bytes_in_chunks, services_pb2
+    from lerobot.transport.utils import send_bytes_in_chunks, services_pb2
 
     """Test data that fits in a single chunk."""
     data = b"Some data"
@@ -83,7 +83,7 @@ def test_single_chunk_small_data():
 
 @require_package("grpc")
 def test_not_silent_mode():
-    from lerobot.common.transport.utils import send_bytes_in_chunks, services_pb2
+    from lerobot.transport.utils import send_bytes_in_chunks, services_pb2
 
     """Test not silent mode."""
     data = b"Some data"
@@ -95,7 +95,7 @@ def test_not_silent_mode():
 
 @require_package("grpc")
 def test_send_bytes_in_chunks_large_data():
-    from lerobot.common.transport.utils import CHUNK_SIZE, send_bytes_in_chunks, services_pb2
+    from lerobot.transport.utils import CHUNK_SIZE, send_bytes_in_chunks, services_pb2
 
     """Test sending large data."""
     data = b"x" * (CHUNK_SIZE * 2 + 1000)
@@ -112,7 +112,7 @@ def test_send_bytes_in_chunks_large_data():
 
 @require_package("grpc")
 def test_send_bytes_in_chunks_large_data_with_exact_chunk_size():
-    from lerobot.common.transport.utils import CHUNK_SIZE, send_bytes_in_chunks, services_pb2
+    from lerobot.transport.utils import CHUNK_SIZE, send_bytes_in_chunks, services_pb2
 
     """Test sending large data with exact chunk size."""
     data = b"x" * CHUNK_SIZE
@@ -125,7 +125,7 @@ def test_send_bytes_in_chunks_large_data_with_exact_chunk_size():
 
 @require_package("grpc")
 def test_receive_bytes_in_chunks_empty_data():
-    from lerobot.common.transport.utils import receive_bytes_in_chunks
+    from lerobot.transport.utils import receive_bytes_in_chunks
 
     """Test receiving empty data."""
     queue = Queue()
@@ -139,7 +139,7 @@ def test_receive_bytes_in_chunks_empty_data():
 
 @require_package("grpc")
 def test_receive_bytes_in_chunks_single_chunk():
-    from lerobot.common.transport.utils import receive_bytes_in_chunks, services_pb2
+    from lerobot.transport.utils import receive_bytes_in_chunks, services_pb2
 
     """Test receiving a single chunk message."""
     queue = Queue()
@@ -158,7 +158,7 @@ def test_receive_bytes_in_chunks_single_chunk():
 
 @require_package("grpc")
 def test_receive_bytes_in_chunks_single_not_end_chunk():
-    from lerobot.common.transport.utils import receive_bytes_in_chunks, services_pb2
+    from lerobot.transport.utils import receive_bytes_in_chunks, services_pb2
 
     """Test receiving a single chunk message."""
     queue = Queue()
@@ -176,7 +176,7 @@ def test_receive_bytes_in_chunks_single_not_end_chunk():
 
 @require_package("grpc")
 def test_receive_bytes_in_chunks_multiple_chunks():
-    from lerobot.common.transport.utils import receive_bytes_in_chunks, services_pb2
+    from lerobot.transport.utils import receive_bytes_in_chunks, services_pb2
 
     """Test receiving a multi-chunk message."""
     queue = Queue()
@@ -200,7 +200,7 @@ def test_receive_bytes_in_chunks_multiple_chunks():
 
 @require_package("grpc")
 def test_receive_bytes_in_chunks_multiple_messages():
-    from lerobot.common.transport.utils import receive_bytes_in_chunks, services_pb2
+    from lerobot.transport.utils import receive_bytes_in_chunks, services_pb2
 
     """Test receiving multiple complete messages in sequence."""
     queue = Queue()
@@ -236,7 +236,7 @@ def test_receive_bytes_in_chunks_multiple_messages():
 
 @require_package("grpc")
 def test_receive_bytes_in_chunks_shutdown_during_receive():
-    from lerobot.common.transport.utils import receive_bytes_in_chunks, services_pb2
+    from lerobot.transport.utils import receive_bytes_in_chunks, services_pb2
 
     """Test that shutdown event stops receiving mid-stream."""
     queue = Queue()
@@ -260,7 +260,7 @@ def test_receive_bytes_in_chunks_shutdown_during_receive():
 
 @require_package("grpc")
 def test_receive_bytes_in_chunks_only_begin_chunk():
-    from lerobot.common.transport.utils import receive_bytes_in_chunks, services_pb2
+    from lerobot.transport.utils import receive_bytes_in_chunks, services_pb2
 
     """Test receiving only a BEGIN chunk without END."""
     queue = Queue()
@@ -280,7 +280,7 @@ def test_receive_bytes_in_chunks_only_begin_chunk():
 
 @require_package("grpc")
 def test_receive_bytes_in_chunks_missing_begin():
-    from lerobot.common.transport.utils import receive_bytes_in_chunks, services_pb2
+    from lerobot.transport.utils import receive_bytes_in_chunks, services_pb2
 
     """Test receiving chunks starting with MIDDLE instead of BEGIN."""
     queue = Queue()
@@ -304,7 +304,7 @@ def test_receive_bytes_in_chunks_missing_begin():
 # Tests for state_to_bytes and bytes_to_state_dict
 @require_package("grpc")
 def test_state_to_bytes_empty_dict():
-    from lerobot.common.transport.utils import bytes_to_state_dict, state_to_bytes
+    from lerobot.transport.utils import bytes_to_state_dict, state_to_bytes
 
     """Test converting empty state dict to bytes."""
     state_dict = {}
@@ -315,7 +315,7 @@ def test_state_to_bytes_empty_dict():
 
 @require_package("grpc")
 def test_bytes_to_state_dict_empty_data():
-    from lerobot.common.transport.utils import bytes_to_state_dict
+    from lerobot.transport.utils import bytes_to_state_dict
 
     """Test converting empty data to state dict."""
     with pytest.raises(EOFError):
@@ -324,7 +324,7 @@ def test_bytes_to_state_dict_empty_data():
 
 @require_package("grpc")
 def test_state_to_bytes_simple_dict():
-    from lerobot.common.transport.utils import bytes_to_state_dict, state_to_bytes
+    from lerobot.transport.utils import bytes_to_state_dict, state_to_bytes
 
     """Test converting simple state dict to bytes."""
     state_dict = {
@@ -348,7 +348,7 @@ def test_state_to_bytes_simple_dict():
 
 @require_package("grpc")
 def test_state_to_bytes_various_dtypes():
-    from lerobot.common.transport.utils import bytes_to_state_dict, state_to_bytes
+    from lerobot.transport.utils import bytes_to_state_dict, state_to_bytes
 
     """Test converting state dict with various tensor dtypes."""
     state_dict = {
@@ -373,7 +373,7 @@ def test_state_to_bytes_various_dtypes():
 
 @require_package("grpc")
 def test_bytes_to_state_dict_invalid_data():
-    from lerobot.common.transport.utils import bytes_to_state_dict
+    from lerobot.transport.utils import bytes_to_state_dict
 
     """Test bytes_to_state_dict with invalid data."""
     with pytest.raises(UnpicklingError):
@@ -383,7 +383,7 @@ def test_bytes_to_state_dict_invalid_data():
 @require_cuda
 @require_package("grpc")
 def test_state_to_bytes_various_dtypes_cuda():
-    from lerobot.common.transport.utils import bytes_to_state_dict, state_to_bytes
+    from lerobot.transport.utils import bytes_to_state_dict, state_to_bytes
 
     """Test converting state dict with various tensor dtypes."""
     state_dict = {
@@ -408,7 +408,7 @@ def test_state_to_bytes_various_dtypes_cuda():
 
 @require_package("grpc")
 def test_python_object_to_bytes_none():
-    from lerobot.common.transport.utils import bytes_to_python_object, python_object_to_bytes
+    from lerobot.transport.utils import bytes_to_python_object, python_object_to_bytes
 
     """Test converting None to bytes."""
     obj = None
@@ -440,7 +440,7 @@ def test_python_object_to_bytes_none():
 )
 @require_package("grpc")
 def test_python_object_to_bytes_simple_types(obj):
-    from lerobot.common.transport.utils import bytes_to_python_object, python_object_to_bytes
+    from lerobot.transport.utils import bytes_to_python_object, python_object_to_bytes
 
     """Test converting simple Python types."""
     data = python_object_to_bytes(obj)
@@ -451,7 +451,7 @@ def test_python_object_to_bytes_simple_types(obj):
 
 @require_package("grpc")
 def test_python_object_to_bytes_with_tensors():
-    from lerobot.common.transport.utils import bytes_to_python_object, python_object_to_bytes
+    from lerobot.transport.utils import bytes_to_python_object, python_object_to_bytes
 
     """Test converting objects containing PyTorch tensors."""
     obj = {
@@ -476,7 +476,7 @@ def test_python_object_to_bytes_with_tensors():
 
 @require_package("grpc")
 def test_transitions_to_bytes_empty_list():
-    from lerobot.common.transport.utils import bytes_to_transitions, transitions_to_bytes
+    from lerobot.transport.utils import bytes_to_transitions, transitions_to_bytes
 
     """Test converting empty transitions list."""
     transitions = []
@@ -488,7 +488,7 @@ def test_transitions_to_bytes_empty_list():
 
 @require_package("grpc")
 def test_transitions_to_bytes_single_transition():
-    from lerobot.common.transport.utils import bytes_to_transitions, transitions_to_bytes
+    from lerobot.transport.utils import bytes_to_transitions, transitions_to_bytes
 
     """Test converting a single transition."""
     transition = Transition(
@@ -528,7 +528,7 @@ def assert_observation_equal(o1: dict, o2: dict):
 
 @require_package("grpc")
 def test_transitions_to_bytes_multiple_transitions():
-    from lerobot.common.transport.utils import bytes_to_transitions, transitions_to_bytes
+    from lerobot.transport.utils import bytes_to_transitions, transitions_to_bytes
 
     """Test converting multiple transitions."""
     transitions = []
@@ -552,7 +552,7 @@ def test_transitions_to_bytes_multiple_transitions():
 
 @require_package("grpc")
 def test_receive_bytes_in_chunks_unknown_state():
-    from lerobot.common.transport.utils import receive_bytes_in_chunks
+    from lerobot.transport.utils import receive_bytes_in_chunks
 
     """Test receive_bytes_in_chunks with an unknown transfer state."""
 

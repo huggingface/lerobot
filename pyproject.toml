@@ -123,10 +123,10 @@ select = ["E4", "E7", "E9", "F", "I", "N", "B", "C4", "SIM"]
 exclude_dirs = [
     "tests",
     "benchmarks",
-    "lerobot/common/datasets/push_dataset_to_hub",
-    "lerobot/common/datasets/v2/convert_dataset_v1_to_v2",
-    "lerobot/common/policies/pi0/conversion_scripts",
-    "lerobot/scripts/push_dataset_to_hub.py",
+    "src/lerobot/datasets/push_dataset_to_hub",
+    "src/lerobot/datasets/v2/convert_dataset_v1_to_v2",
+    "src/lerobot/policies/pi0/conversion_scripts",
+    "src/lerobot/scripts/push_dataset_to_hub.py",
 ]
 skips = ["B101", "B311", "B404", "B603"]
 

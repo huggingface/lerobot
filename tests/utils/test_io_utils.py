@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest
 
-from lerobot.common.utils.io_utils import deserialize_json_into_object
+from lerobot.utils.io_utils import deserialize_json_into_object
 
 
 @pytest.fixture
