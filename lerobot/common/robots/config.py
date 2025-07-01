@@ -38,3 +38,9 @@ class RobotConfig(draccus.ChoiceRegistry, abc.ABC):
     @property
     def type(self) -> str:
         return self.get_choice_name(self.__class__)
+
+
+@dataclass(kw_only=True)
+class RemoteRobotConfig(RobotConfig):
+    livekit_url: str
+    livekit_token: str
