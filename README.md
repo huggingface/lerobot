@@ -149,44 +149,20 @@ wandb login
 
 (note: you will also need to enable WandB in the configuration. See below.)
 
-## Walkthrough
-
-```
-.
-├── examples             # contains demonstration examples, start here to learn about LeRobot
-|   └── advanced         # contains even more examples for those who have mastered the basics
-├── lerobot
-|   ├── configs          # contains config classes with all options that you can override in the command line
-|   ├── common           # contains classes and utilities
-|   |   ├── datasets       # various datasets of human demonstrations: aloha, pusht, xarm
-|   |   ├── envs           # various sim environments: aloha, pusht, xarm
-|   |   ├── policies       # various policies: act, diffusion, tdmpc
-|   |   ├── robot_devices  # various real devices: dynamixel motors, opencv cameras, koch robots
-|   |   └── utils          # various utilities
-|   └── scripts          # contains functions to execute via command line
-|       ├── eval.py                 # load policy and evaluate it on an environment
-|       ├── train.py                # train a policy via imitation learning and/or reinforcement learning
-|       ├── control_robot.py        # teleoperate a real robot, record data, run a policy
-|       ├── push_dataset_to_hub.py  # convert your dataset into LeRobot dataset format and upload it to the Hugging Face hub
-|       └── visualize_dataset.py    # load a dataset and render its demonstrations
-├── outputs               # contains results of scripts execution: logs, videos, model checkpoints
-└── tests                 # contains pytest utilities for continuous integration
-```
-
 ### Visualize datasets
 
 Check out [example 1](./examples/1_load_lerobot_dataset.py) that illustrates how to use our dataset class which automatically downloads data from the Hugging Face hub.
 
 You can also locally visualize episodes from a dataset on the hub by executing our script from the command line:
 ```bash
-python lerobot/scripts/visualize_dataset.py \
+python -m lerobot.scripts.visualize_dataset \
     --repo-id lerobot/pusht \
     --episode-index 0
 ```
 
 or from a dataset in a local folder with the `root` option and the `--local-files-only` (in the following case the dataset will be searched for in `./my_local_data_dir/lerobot/pusht`)
 ```bash
-python lerobot/scripts/visualize_dataset.py \
+python -m lerobot.scripts.visualize_dataset \
     --repo-id lerobot/pusht \
     --root ./my_local_data_dir \
     --local-files-only 1 \
@@ -199,7 +175,7 @@ It will open `rerun.io` and display the camera streams, robot states and actions
 https://github-production-user-asset-6210df.s3.amazonaws.com/4681518/328035972-fd46b787-b532-47e2-bb6f-fd536a55a7ed.mov?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAVCODYLSA53PQK4ZA%2F20240505%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20240505T172924Z&X-Amz-Expires=300&X-Amz-Signature=d680b26c532eeaf80740f08af3320d22ad0b8a4e4da1bcc4f33142c15b509eda&X-Amz-SignedHeaders=host&actor_id=24889239&key_id=0&repo_id=748713144
 
 
-Our script can also visualize datasets stored on a distant server. See `python lerobot/scripts/visualize_dataset.py --help` for more instructions.
+Our script can also visualize datasets stored on a distant server. See `python -m lerobot.scripts.visualize_dataset --help` for more instructions.
 
 ### The `LeRobotDataset` format
 
@@ -252,7 +228,7 @@ Check out [example 2](./examples/2_evaluate_pretrained_policy.py) that illustrat
 
 We also provide a more capable script to parallelize the evaluation over multiple environments during the same rollout. Here is an example with a pretrained model hosted on [lerobot/diffusion_pusht](https://huggingface.co/lerobot/diffusion_pusht):
 ```bash
-python lerobot/scripts/eval.py \
+python -m lerobot.scripts.eval \
     --policy.path=lerobot/diffusion_pusht \
     --env.type=pusht \
     --eval.batch_size=10 \
@@ -264,10 +240,10 @@ python lerobot/scripts/eval.py \
 Note: After training your own policy, you can re-evaluate the checkpoints with:
 
 ```bash
-python lerobot/scripts/eval.py --policy.path={OUTPUT_DIR}/checkpoints/last/pretrained_model
+python -m lerobot.scripts.eval --policy.path={OUTPUT_DIR}/checkpoints/last/pretrained_model
 ```
 
-See `python lerobot/scripts/eval.py --help` for more instructions.
+See `python -m lerobot.scripts.eval --help` for more instructions.
 
 ### Train your own policy
 
@@ -279,14 +255,14 @@ A link to the wandb logs for the run will also show up in yellow in your termina
 
 ![](media/wandb.png)
 
-Note: For efficiency, during training every checkpoint is evaluated on a low number of episodes. You may use `--eval.n_episodes=500` to evaluate on more episodes than the default. Or, after training, you may want to re-evaluate your best checkpoints on more episodes or change the evaluation settings. See `python lerobot/scripts/eval.py --help` for more instructions.
+Note: For efficiency, during training every checkpoint is evaluated on a low number of episodes. You may use `--eval.n_episodes=500` to evaluate on more episodes than the default. Or, after training, you may want to re-evaluate your best checkpoints on more episodes or change the evaluation settings. See `python -m lerobot.scripts.eval --help` for more instructions.
 
 #### Reproduce state-of-the-art (SOTA)
 
 We provide some pretrained policies on our [hub page](https://huggingface.co/lerobot) that can achieve state-of-the-art performances.
 You can reproduce their training by loading the config from their run. Simply running:
 ```bash
-python lerobot/scripts/train.py --config_path=lerobot/diffusion_pusht
+python -m lerobot.scripts.train --config_path=lerobot/diffusion_pusht
 ```
 reproduces SOTA results for Diffusion Policy on the PushT task.
 
@@ -312,7 +288,7 @@ python lerobot/scripts/push_dataset_to_hub.py \
 
 See `python lerobot/scripts/push_dataset_to_hub.py --help` for more instructions.
 
-If your dataset format is not supported, implement your own in `lerobot/common/datasets/push_dataset_to_hub/${raw_format}_format.py` by copying examples like [pusht_zarr](https://github.com/huggingface/lerobot/blob/main/lerobot/common/datasets/push_dataset_to_hub/pusht_zarr_format.py), [umi_zarr](https://github.com/huggingface/lerobot/blob/main/lerobot/common/datasets/push_dataset_to_hub/umi_zarr_format.py), [aloha_hdf5](https://github.com/huggingface/lerobot/blob/main/lerobot/common/datasets/push_dataset_to_hub/aloha_hdf5_format.py), or [xarm_pkl](https://github.com/huggingface/lerobot/blob/main/lerobot/common/datasets/push_dataset_to_hub/xarm_pkl_format.py). -->
+If your dataset format is not supported, implement your own in `lerobot/datasets/push_dataset_to_hub/${raw_format}_format.py` by copying examples like [pusht_zarr](https://github.com/huggingface/lerobot/blob/main/lerobot/datasets/push_dataset_to_hub/pusht_zarr_format.py), [umi_zarr](https://github.com/huggingface/lerobot/blob/main/lerobot/datasets/push_dataset_to_hub/umi_zarr_format.py), [aloha_hdf5](https://github.com/huggingface/lerobot/blob/main/lerobot/datasets/push_dataset_to_hub/aloha_hdf5_format.py), or [xarm_pkl](https://github.com/huggingface/lerobot/blob/main/lerobot/datasets/push_dataset_to_hub/xarm_pkl_format.py). -->
 
 
 ### Add a pretrained policy

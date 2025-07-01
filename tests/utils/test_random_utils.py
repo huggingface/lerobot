@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 import torch
 
-from lerobot.common.utils.random_utils import (
+from lerobot.utils.random_utils import (
     deserialize_numpy_rng_state,
     deserialize_python_rng_state,
     deserialize_rng_state,

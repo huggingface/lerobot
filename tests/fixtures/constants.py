@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from lerobot.common.constants import HF_LEROBOT_HOME
+from lerobot.constants import HF_LEROBOT_HOME
 
 LEROBOT_TEST_DIR = HF_LEROBOT_HOME / "_testing"
 DUMMY_REPO_ID = "dummy/repo"

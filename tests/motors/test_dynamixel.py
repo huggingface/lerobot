@@ -5,10 +5,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from lerobot.common.motors import Motor, MotorCalibration, MotorNormMode
-from lerobot.common.motors.dynamixel import MODEL_NUMBER_TABLE, DynamixelMotorsBus
-from lerobot.common.motors.dynamixel.tables import X_SERIES_CONTROL_TABLE
-from lerobot.common.utils.encoding_utils import encode_twos_complement
+from lerobot.motors import Motor, MotorCalibration, MotorNormMode
+from lerobot.motors.dynamixel import MODEL_NUMBER_TABLE, DynamixelMotorsBus
+from lerobot.motors.dynamixel.tables import X_SERIES_CONTROL_TABLE
+from lerobot.utils.encoding_utils import encode_twos_complement
 
 try:
     import dynamixel_sdk as dxl
@@ -389,7 +389,7 @@ def test_record_ranges_of_motion(mock_motors, dummy_motors):
     read_pos_stub = mock_motors.build_sequential_sync_read_stub(
         *X_SERIES_CONTROL_TABLE["Present_Position"], positions
     )
-    with patch("lerobot.common.motors.motors_bus.enter_pressed", side_effect=[False, True]):
+    with patch("lerobot.motors.motors_bus.enter_pressed", side_effect=[False, True]):
         bus = DynamixelMotorsBus(port=mock_motors.port, motors=dummy_motors)
         bus.connect(handshake=False)
 

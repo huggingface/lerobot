@@ -52,8 +52,8 @@ python -m lerobot.teleoperate \
 </hfoption>
 <hfoption id="API example">
 ```python
-from lerobot.common.teleoperators.so101_leader import SO101LeaderConfig, SO101Leader
-from lerobot.common.robots.so101_follower import SO101FollowerConfig, SO101Follower
+from lerobot.teleoperators.so101_leader import SO101LeaderConfig, SO101Leader
+from lerobot.robots.so101_follower import SO101FollowerConfig, SO101Follower
 
 robot_config = SO101FollowerConfig(
     port="/dev/tty.usbmodem58760431541",
@@ -105,9 +105,9 @@ python -m lerobot.teleoperate \
 </hfoption>
 <hfoption id="API example">
 ```python
-from lerobot.common.cameras.opencv.configuration_opencv import OpenCVCameraConfig
-from lerobot.common.teleoperators.koch_leader import KochLeaderConfig, KochLeader
-from lerobot.common.robots.koch_follower import KochFollowerConfig, KochFollower
+from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
+from lerobot.teleoperators.koch_leader import KochLeaderConfig, KochLeader
+from lerobot.robots.koch_follower import KochFollowerConfig, KochFollower
 
 camera_config = {
     "front": OpenCVCameraConfig(index_or_path=0, width=1920, height=1080, fps=30)
@@ -175,15 +175,15 @@ python -m lerobot.record \
 </hfoption>
 <hfoption id="API example">
 ```python
-from lerobot.common.cameras.opencv.configuration_opencv import OpenCVCameraConfig
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.datasets.utils import hw_to_dataset_features
-from lerobot.common.robots.so100_follower import SO100Follower, SO100FollowerConfig
-from lerobot.common.teleoperators.so100_leader.config_so100_leader import SO100LeaderConfig
-from lerobot.common.teleoperators.so100_leader.so100_leader import SO100Leader
-from lerobot.common.utils.control_utils import init_keyboard_listener
-from lerobot.common.utils.utils import log_say
-from lerobot.common.utils.visualization_utils import _init_rerun
+from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.utils import hw_to_dataset_features
+from lerobot.robots.so100_follower import SO100Follower, SO100FollowerConfig
+from lerobot.teleoperators.so100_leader.config_so100_leader import SO100LeaderConfig
+from lerobot.teleoperators.so100_leader.so100_leader import SO100Leader
+from lerobot.utils.control_utils import init_keyboard_listener
+from lerobot.utils.utils import log_say
+from lerobot.utils.visualization_utils import _init_rerun
 from lerobot.record import record_loop
 
 NUM_EPISODES = 5
@@ -353,11 +353,11 @@ python -m lerobot.replay \
 ```python
 import time
 
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.robots.so100_follower.config_so100_follower import SO100FollowerConfig
-from lerobot.common.robots.so100_follower.so100_follower import SO100Follower
-from lerobot.common.utils.robot_utils import busy_wait
-from lerobot.common.utils.utils import log_say
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
+from lerobot.robots.so100_follower.so100_follower import SO100Follower
+from lerobot.utils.robot_utils import busy_wait
+from lerobot.utils.utils import log_say
 
 episode_idx = 0
 
@@ -389,9 +389,9 @@ Your robot should replicate movements similar to those you recorded. For example
 
 ## Train a policy
 
-To train a policy to control your robot, use the [`python lerobot/scripts/train.py`](../lerobot/scripts/train.py) script. A few arguments are required. Here is an example command:
+To train a policy to control your robot, use the [`python -m lerobot.scripts.train`](../src/lerobot/scripts/train.py) script. A few arguments are required. Here is an example command:
 ```bash
-python lerobot/scripts/train.py \
+python -m lerobot.scripts.train \
   --dataset.repo_id=${HF_USER}/so101_test \
   --policy.type=act \
   --output_dir=outputs/train/act_so101_test \
@@ -403,7 +403,7 @@ python lerobot/scripts/train.py \
 
 Let's explain the command:
 1. We provided the dataset as argument with `--dataset.repo_id=${HF_USER}/so101_test`.
-2. We provided the policy with `policy.type=act`. This loads configurations from [`configuration_act.py`](../lerobot/common/policies/act/configuration_act.py). Importantly, this policy will automatically adapt to the number of motor states, motor actions and cameras of your robot (e.g. `laptop` and `phone`) which have been saved in your dataset.
+2. We provided the policy with `policy.type=act`. This loads configurations from [`configuration_act.py`](../src/lerobot/policies/act/configuration_act.py). Importantly, this policy will automatically adapt to the number of motor states, motor actions and cameras of your robot (e.g. `laptop` and `phone`) which have been saved in your dataset.
 4. We provided `policy.device=cuda` since we are training on a Nvidia GPU, but you could use `policy.device=mps` to train on Apple silicon.
 5. We provided `wandb.enable=true` to use [Weights and Biases](https://docs.wandb.ai/quickstart) for visualizing training plots. This is optional but if you use it, make sure you are logged in by running `wandb login`.
 
@@ -411,7 +411,7 @@ Training should take several hours. You will find checkpoints in `outputs/train/
 
 To resume training from a checkpoint, below is an example command to resume from `last` checkpoint of the `act_so101_test` policy:
 ```bash
-python lerobot/scripts/train.py \
+python -m lerobot.scripts.train \
   --config_path=outputs/train/act_so101_test/checkpoints/last/pretrained_model/train_config.json \
   --resume=true
 ```
@@ -462,15 +462,15 @@ python -m lerobot.record  \
 </hfoption>
 <hfoption id="API example">
 ```python
-from lerobot.common.cameras.opencv.configuration_opencv import OpenCVCameraConfig
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.datasets.utils import hw_to_dataset_features
-from lerobot.common.policies.act.modeling_act import ACTPolicy
-from lerobot.common.robots.so100_follower.config_so100_follower import SO100FollowerConfig
-from lerobot.common.robots.so100_follower.so100_follower import SO100Follower
-from lerobot.common.utils.control_utils import init_keyboard_listener
-from lerobot.common.utils.utils import log_say
-from lerobot.common.utils.visualization_utils import _init_rerun
+from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.utils import hw_to_dataset_features
+from lerobot.policies.act.modeling_act import ACTPolicy
+from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
+from lerobot.robots.so100_follower.so100_follower import SO100Follower
+from lerobot.utils.control_utils import init_keyboard_listener
+from lerobot.utils.utils import log_say
+from lerobot.utils.visualization_utils import _init_rerun
 from lerobot.record import record_loop
 
 NUM_EPISODES = 5
