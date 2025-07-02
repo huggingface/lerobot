@@ -28,62 +28,36 @@ from lerobot.utils.utils import get_channel_first_image_shape
 
 
 def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Tensor]:
-    # TODO(aliberts, rcadene): refactor this to use features from the environment (no hardcoding)
     """Convert environment observation to LeRobot format observation.
+    
+    This function uses the new pipeline system internally but maintains
+    backward compatibility with the original interface.
+    
     Args:
         observation: Dictionary of observation batches from a Gym vector environment.
     Returns:
         Dictionary of observation batches with keys renamed to LeRobot format and values as tensors.
     """
-    # map to expected inputs for the policy
-    return_observations = {}
-    if "pixels" in observations:
-        if isinstance(observations["pixels"], dict):
-            imgs = {f"observation.images.{key}": img for key, img in observations["pixels"].items()}
-        else:
-            imgs = {"observation.image": observations["pixels"]}
+    from lerobot.processor.pipeline import RobotPipeline, TransitionIndex
+    from lerobot.processor.observation_processor import ObservationProcessor
+    
+    # Create pipeline with observation processor
+    pipeline = RobotPipeline([ObservationProcessor()])
+    
+    # Create transition tuple and process
+    transition = (observations, None, None, None, None, None, None)
+    processed_transition = pipeline(transition)
+    
+    # Return processed observations
+    return processed_transition[TransitionIndex.OBSERVATION]
 
-        for imgkey, img in imgs.items():
-            # TODO(aliberts, rcadene): use transforms.ToTensor()?
-            img = torch.from_numpy(img)
 
-            # When preprocessing observations in a non-vectorized environment, we need to add a batch dimension.
-            # This is the case for human-in-the-loop RL where there is only one environment.
-            if img.ndim == 3:
-                img = img.unsqueeze(0)
-            # sanity check that images are channel last
-            _, h, w, c = img.shape
-            assert c < h and c < w, f"expect channel last images, but instead got {img.shape=}"
 
-            # sanity check that images are uint8
-            assert img.dtype == torch.uint8, f"expect torch.uint8, but instead {img.dtype=}"
-
-            # convert to channel first of type float32 in range [0,1]
-            img = einops.rearrange(img, "b h w c -> b c h w").contiguous()
-            img = img.type(torch.float32)
-            img /= 255
-
-            return_observations[imgkey] = img
-
-    if "environment_state" in observations:
-        env_state = torch.from_numpy(observations["environment_state"]).float()
-        if env_state.dim() == 1:
-            env_state = env_state.unsqueeze(0)
-
-        return_observations["observation.environment_state"] = env_state
-
-    # TODO(rcadene): enable pixels only baseline with `obs_type="pixels"` in environment by removing
-    agent_pos = torch.from_numpy(observations["agent_pos"]).float()
-    if agent_pos.dim() == 1:
-        agent_pos = agent_pos.unsqueeze(0)
-    return_observations["observation.state"] = agent_pos
-
-    return return_observations
 
 
 def env_to_policy_features(env_cfg: EnvConfig) -> dict[str, PolicyFeature]:
     # TODO(aliberts, rcadene): remove this hardcoding of keys and just use the nested keys as is
-    # (need to also refactor preprocess_observation and externalize normalization from policies)
+    # (need to externalize normalization from policies)
     policy_features = {}
     for key, ft in env_cfg.features.items():
         if ft.type is FeatureType.VISUAL:
