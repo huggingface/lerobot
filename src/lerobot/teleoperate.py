@@ -36,7 +36,6 @@ from dataclasses import asdict, dataclass
 from pprint import pformat
 
 import draccus
-import numpy as np
 import rerun as rr
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
@@ -60,11 +59,12 @@ from lerobot.teleoperators import (  # noqa: F401
 )
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import init_logging, move_cursor_up
-from lerobot.utils.visualization_utils import _init_rerun
+from lerobot.utils.visualization_utils import _init_rerun, log_rerun_data
 
 
 @dataclass
 class TeleoperateConfig:
+    # TODO: pepijn, steven: if more robots require multiple teleoperators (like lekiwi) its good to make this possibele in teleop.py and record.py with List[Teleoperator]
     teleop: TeleoperatorConfig
     robot: RobotConfig
     # Limit the maximum frames per second.
@@ -84,14 +84,7 @@ def teleop_loop(
         action = teleop.get_action()
         if display_data:
             observation = robot.get_observation()
-            for obs, val in observation.items():
-                if isinstance(val, float):
-                    rr.log(f"observation_{obs}", rr.Scalar(val))
-                elif isinstance(val, np.ndarray):
-                    rr.log(f"observation_{obs}", rr.Image(val), static=True)
-            for act, val in action.items():
-                if isinstance(val, float):
-                    rr.log(f"action_{act}", rr.Scalar(val))
+            log_rerun_data(observation, action)
 
         robot.send_action(action)
         dt_s = time.perf_counter() - loop_start
