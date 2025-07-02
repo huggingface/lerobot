@@ -25,7 +25,7 @@ This script will help you convert any LeRobot dataset already pushed to the hub 
 Usage:
 
 ```bash
-python lerobot/common/datasets/v21/convert_dataset_v20_to_v21.py \
+python -m lerobot.datasets.v21.convert_dataset_v20_to_v21 \
     --repo-id=aliberts/koch_tutorial
 ```
 

@@ -51,8 +51,7 @@ while i < NB_CYCLES_CLIENT_CONNECTION:
     action_sent = robot.send_action(action)
     observation = robot.get_observation()
 
-    task = "Dummy Example Task Dataset"
-    frame = {**action_sent, **observation, "task": task}
+    frame = {**action_sent, **observation, "task": "Dummy Example Task Dataset"}
 
     dataset.add_frame(frame)
     i += 1
