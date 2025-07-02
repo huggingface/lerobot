@@ -1,11 +1,11 @@
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.datasets.utils import hw_to_dataset_features
-from lerobot.common.policies.act.modeling_act import ACTPolicy
-from lerobot.common.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
-from lerobot.common.utils.control_utils import init_keyboard_listener
-from lerobot.common.utils.utils import log_say
-from lerobot.common.utils.visualization_utils import _init_rerun
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.utils import hw_to_dataset_features
+from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.record import record_loop
+from lerobot.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
+from lerobot.utils.control_utils import init_keyboard_listener
+from lerobot.utils.utils import log_say
+from lerobot.utils.visualization_utils import _init_rerun
 
 NUM_EPISODES = 2
 FPS = 30

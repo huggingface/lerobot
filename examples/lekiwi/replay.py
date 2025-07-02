@@ -1,10 +1,10 @@
 import time
 
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.robots.lekiwi.config_lekiwi import LeKiwiClientConfig
-from lerobot.common.robots.lekiwi.lekiwi_client import LeKiwiClient
-from lerobot.common.utils.robot_utils import busy_wait
-from lerobot.common.utils.utils import log_say
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.robots.lekiwi.config_lekiwi import LeKiwiClientConfig
+from lerobot.robots.lekiwi.lekiwi_client import LeKiwiClient
+from lerobot.utils.robot_utils import busy_wait
+from lerobot.utils.utils import log_say
 
 EPISODE_IDX = 0
 
