@@ -173,16 +173,22 @@ def record_loop(
     if dataset is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
 
-    # If there are multiple teleoperators we assume for now a LeKiwi is used
     teleop_arm = teleop_keyboard = None
-    if isinstance(teleop, list) and len(teleop) == 2:
-        for t in teleop:
-            if isinstance(t, KeyboardTeleop):
-                teleop_keyboard = t
-            else:
-                teleop_arm = t
-    else:
-        teleop_arm = teleop
+    if isinstance(teleop, list):
+        teleop_keyboard = next((t for t in teleop if isinstance(t, KeyboardTeleop)), None)
+        teleop_arm = next(
+            (
+                t
+                for t in teleop
+                if isinstance(t, (so100_leader.SO100Leader, so101_leader.SO101Leader, koch_leader.KochLeader))
+            ),
+            None,
+        )
+
+        if not (teleop_arm and teleop_keyboard and len(teleop) == 2 and robot.name == "lekiwi_client"):
+            raise ValueError(
+                "For multi-teleop, the list must contain exactly one KeyboardTeleop and one arm teleoperator. Currently only supported for LeKiwi robot."
+            )
 
     # if policy is given it needs cleaning up
     if policy is not None:
@@ -214,9 +220,8 @@ def record_loop(
             action = {key: action_values[i].item() for i, key in enumerate(robot.action_features)}
         elif policy is None and isinstance(teleop, Teleoperator):
             action = teleop.get_action()
-        elif (
-            policy is None and isinstance(teleop, list) and robot.name == "lekiwi_client"
-        ):  # TODO(pepijn, steven): clean the record loop for use of multiple robots (possibly with pipeline)
+        elif policy is None and isinstance(teleop, list):
+            # TODO(pepijn, steven): clean the record loop for use of multiple robots (possibly with pipeline)
             arm_action = teleop_arm.get_action()
             arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
 
