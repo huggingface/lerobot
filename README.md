@@ -29,7 +29,7 @@
 
 <div align="center">
   <img
-    src="examples/hope_jr/pics/hopejr.png?raw=true"
+    src="media/hope_jr/hopejr.png?raw=true"
     alt="HopeJR robot"
     title="HopeJR robot"
     style="width: 60%;"
