@@ -295,8 +295,8 @@ class GamepadController(InputController):
         try:
             # Read joystick axes
             # Left stick X and Y (typically axes 0 and 1)
-            x_input = self.joystick.get_axis(0)  # Left/Right
-            y_input = self.joystick.get_axis(1)  # Up/Down (often inverted)
+            y_input = self.joystick.get_axis(0)  # Left/Right
+            x_input = self.joystick.get_axis(1)  # Up/Down (often inverted)
 
             # Right stick Y (typically axis 3 or 4)
             z_input = self.joystick.get_axis(3)  # Up/Down for Z
@@ -307,8 +307,8 @@ class GamepadController(InputController):
             z_input = 0 if abs(z_input) < self.deadzone else z_input
 
             # Calculate deltas (note: may need to invert axes depending on controller)
-            delta_x = -y_input * self.y_step_size  # Forward/backward
-            delta_y = -x_input * self.x_step_size  # Left/right
+            delta_x = -x_input * self.x_step_size  # Forward/backward
+            delta_y = -y_input * self.y_step_size  # Left/right
             delta_z = -z_input * self.z_step_size  # Up/down
 
             return delta_x, delta_y, delta_z
@@ -424,14 +424,14 @@ class GamepadControllerHID(InputController):
             # These offsets are for the Logitech RumblePad 2
             if data and len(data) >= 8:
                 # Normalize joystick values from 0-255 to -1.0-1.0
-                self.left_x = (data[1] - 128) / 128.0
-                self.left_y = (data[2] - 128) / 128.0
+                self.left_y = (data[1] - 128) / 128.0
+                self.left_x = (data[2] - 128) / 128.0
                 self.right_x = (data[3] - 128) / 128.0
                 self.right_y = (data[4] - 128) / 128.0
 
                 # Apply deadzone
-                self.left_x = 0 if abs(self.left_x) < self.deadzone else self.left_x
                 self.left_y = 0 if abs(self.left_y) < self.deadzone else self.left_y
+                self.left_x = 0 if abs(self.left_x) < self.deadzone else self.left_x
                 self.right_x = 0 if abs(self.right_x) < self.deadzone else self.right_x
                 self.right_y = 0 if abs(self.right_y) < self.deadzone else self.right_y
 
@@ -465,8 +465,8 @@ class GamepadControllerHID(InputController):
     def get_deltas(self):
         """Get the current movement deltas from gamepad state."""
         # Calculate deltas - invert as needed based on controller orientation
-        delta_x = -self.left_y * self.x_step_size  # Forward/backward
-        delta_y = -self.left_x * self.y_step_size  # Left/right
+        delta_x = -self.left_x * self.x_step_size  # Forward/backward
+        delta_y = -self.left_y * self.y_step_size  # Left/right
         delta_z = -self.right_y * self.z_step_size  # Up/down
 
         return delta_x, delta_y, delta_z
