@@ -23,15 +23,20 @@ After setting up your Pi, you should enable and set up [SSH](https://www.raspber
 
 On your Raspberry Pi install LeRobot using our [Installation Guide](./installation)
 
-In addition to these instructions, you need to install the Feetech sdk on your Pi:
+In addition to these instructions, you need to install the Feetech SDK & ZeroMQ on your Pi:
 ```bash
-pip install -e ".[feetech]"
+pip install -e ".[lekiwi]"
 ```
 
 ## Install LeRobot locally
 If you already have installed LeRobot on your laptop/pc you can skip this step; otherwise, please follow along as we do the same steps we did on the Pi.
 
 Follow our [Installation Guide](./installation)
+
+In addition to these instructions, you need to install the Feetech SDK & ZeroMQ on your laptop/pc:
+```bash
+pip install -e ".[lekiwi]"
+```
 
 Great :hugs:! You are now done installing LeRobot, and we can begin assembling the SO100/SO101 arms and the mobile base :robot:.
 Every time you now want to use LeRobot, you can go to the `~/lerobot` folder where we installed LeRobot and run one of the commands.
