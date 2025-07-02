@@ -26,6 +26,7 @@ import pytest
 import torch
 from datasets import Dataset
 
+from lerobot.common.datasets.video_utils import encode_video_frames
 from lerobot.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset, LeRobotDatasetMetadata
 from lerobot.datasets.utils import (
     DEFAULT_CHUNK_SIZE,
@@ -38,7 +39,6 @@ from lerobot.datasets.utils import (
     get_hf_features_from_features,
     hf_transform_to_torch,
 )
-from lerobot.common.datasets.video_utils import encode_video_frames
 from tests.fixtures.constants import (
     DEFAULT_FPS,
     DUMMY_CAMERA_FEATURES,

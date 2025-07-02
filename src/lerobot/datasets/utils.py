@@ -40,6 +40,7 @@ from huggingface_hub.errors import RevisionNotFoundError
 from PIL import Image as PILImage
 from torchvision import transforms
 
+from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.datasets.backward_compatibility import (
     V21_MESSAGE,
     BackwardCompatibilityError,
@@ -47,7 +48,6 @@ from lerobot.datasets.backward_compatibility import (
 )
 from lerobot.robots import Robot
 from lerobot.utils.utils import is_valid_numpy_dtype_string
-from lerobot.configs.types import FeatureType, PolicyFeature
 
 DEFAULT_CHUNK_SIZE = 1000  # Max number of files per chunk
 DEFAULT_DATA_FILE_SIZE_IN_MB = 100  # Max size per file
