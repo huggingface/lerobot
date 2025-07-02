@@ -108,7 +108,7 @@ python examples/port_datasets/droid_rlds/slurm_port_shards.py --slurm 1 ...
 
 Once all jobs are completed, you will have one dataset per shard (e.g. `droid_1.0.1_world_2048_rank_1594`) saved on disk in your `/lerobot/home/dir/your_id` directory. You can find your `/lerobot/home/dir` by running:
 ```bash
-python -c "from lerobot.common.constants import HF_LEROBOT_HOME;print(HF_LEROBOT_HOME)"
+python -c "from lerobot.constants import HF_LEROBOT_HOME;print(HF_LEROBOT_HOME)"
 ```
 
 

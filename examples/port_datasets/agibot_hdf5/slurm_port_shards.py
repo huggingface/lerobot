@@ -37,8 +37,8 @@ class PortAgiBotShards(PipelineStep):
         )
         from examples.port_datasets.agibot_hdf5.port_agibot import port_agibot
         from examples.port_datasets.droid_rlds.port_droid import validate_dataset
-        from lerobot.common.constants import HF_LEROBOT_HOME
-        from lerobot.common.utils.utils import init_logging
+        from lerobot.constants import HF_LEROBOT_HOME
+        from lerobot.utils.utils import init_logging
 
         init_logging()
         disable_progress_bars()

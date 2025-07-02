@@ -8,8 +8,8 @@ import h5py
 import numpy as np
 import pandas as pd
 
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.datasets.utils import (
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.utils import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_VIDEO_FILE_SIZE_IN_MB,
     DEFAULT_VIDEO_PATH,
@@ -20,7 +20,7 @@ from lerobot.common.datasets.utils import (
     update_chunk_file_indices,
     write_info,
 )
-from lerobot.common.utils.utils import get_elapsed_time_in_days_hours_minutes_seconds
+from lerobot.utils.utils import get_elapsed_time_in_days_hours_minutes_seconds
 
 AGIBOT_FPS = 30
 AGIBOT_ROBOT_TYPE = "AgiBot_A2D"

@@ -22,7 +22,7 @@ class PortDroidShards(PipelineStep):
         from datasets.utils.tqdm import disable_progress_bars
 
         from examples.port_datasets.droid_rlds.port_droid import port_droid, validate_dataset
-        from lerobot.common.utils.utils import init_logging
+        from lerobot.utils.utils import init_logging
 
         init_logging()
         disable_progress_bars()

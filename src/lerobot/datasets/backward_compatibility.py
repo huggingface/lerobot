@@ -52,7 +52,7 @@ The dataset you requested ({repo_id}) is in {version} format.
 While current version of LeRobot is backward-compatible with it, the version of your dataset still uses global
 stats instead of per-episode stats. Update your dataset stats to the new format using this command:
 ```
-python lerobot/common/datasets/v30/convert_dataset_v21_to_v30.py --repo-id={repo_id}
+python -m lerobot.datasets.v30.convert_dataset_v21_to_v30 --repo-id={repo_id}
 ```
 
 If you encounter a problem, contact LeRobot maintainers on [Discord](https://discord.com/invite/s3KuuzsPFb)

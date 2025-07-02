@@ -10,9 +10,9 @@ from huggingface_hub import HfApi
 from huggingface_hub.constants import REPOCARD_NAME
 
 from examples.port_datasets.droid_rlds.port_droid import DROID_SHARDS
-from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDatasetMetadata
-from lerobot.common.datasets.utils import create_lerobot_dataset_card
-from lerobot.common.utils.utils import init_logging
+from lerobot.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDatasetMetadata
+from lerobot.datasets.utils import create_lerobot_dataset_card
+from lerobot.utils.utils import init_logging
 
 
 class UploadDataset(PipelineStep):
@@ -137,8 +137,8 @@ class UploadDataset(PipelineStep):
         from datasets.utils.tqdm import disable_progress_bars
         from huggingface_hub import CommitOperationAdd, preupload_lfs_files
 
-        from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
-        from lerobot.common.utils.utils import init_logging
+        from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
+        from lerobot.utils.utils import init_logging
 
         init_logging()
         disable_progress_bars()

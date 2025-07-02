@@ -24,15 +24,15 @@ from datatrove.executor.slurm import SlurmPipelineExecutor
 from datatrove.pipeline.base import PipelineStep
 
 from examples.port_datasets.droid_rlds.port_droid import DROID_SHARDS
-from lerobot.common.datasets.aggregate import validate_all_metadata
-from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
-from lerobot.common.datasets.utils import (
+from lerobot.datasets.aggregate import validate_all_metadata
+from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
+from lerobot.datasets.utils import (
     legacy_write_episode_stats,
     legacy_write_task,
     write_episode,
     write_info,
 )
-from lerobot.common.utils.utils import init_logging
+from lerobot.utils.utils import init_logging
 
 
 class AggregateDatasets(PipelineStep):
@@ -149,9 +149,9 @@ class AggregateDatasets(PipelineStep):
 
         import pandas as pd
 
-        from lerobot.common.datasets.aggregate import get_update_episode_and_task_func
-        from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
-        from lerobot.common.utils.utils import init_logging
+        from lerobot.datasets.aggregate import get_update_episode_and_task_func
+        from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
+        from lerobot.utils.utils import init_logging
 
         init_logging()
 
