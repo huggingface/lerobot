@@ -113,7 +113,7 @@ def is_amp_available(device: str):
 
 def init_logging(log_file: Path | None = None, display_pid: bool = False):
     def custom_format(record):
-        dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        dt = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
         fnameline = f"{record.pathname}:{record.lineno}"
 
         # NOTE: Display PID is useful for multi-process logging.
