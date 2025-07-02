@@ -45,10 +45,7 @@ class MockStep:
         """Add a counter to the complementary_data."""
         obs, action, reward, done, truncated, info, comp_data = transition
 
-        if comp_data is None:
-            comp_data = {}
-        else:
-            comp_data = dict(comp_data)  # Make a copy
+        comp_data = {} if comp_data is None else dict(comp_data)  # Make a copy
 
         comp_data[f"{self.name}_counter"] = self.counter
         self.counter += 1
