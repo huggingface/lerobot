@@ -23,7 +23,7 @@
 </div>
 
 <h2 align="center">
-    <p><a href="https://moon-ci-docs.huggingface.co/docs/lerobot/pr_935/en/hope_jr">
+    <p><a href="https://huggingface.co/docs/lerobot/hope_jr">
         Build Your Own HopeJR Robot!</a></p>
 </h2>
 
@@ -39,7 +39,7 @@
   <p>Control it with exoskeletons and gloves for precise hand movements.</p>
   <p>Perfect for advanced manipulation tasks! 🤖</p>
 
-  <p><a href="https://moon-ci-docs.huggingface.co/docs/lerobot/pr_935/en/hope_jr">
+  <p><a href="https://huggingface.co/docs/lerobot/hope_jr">
       See the full HopeJR tutorial here.</a></p>
 </div>
 
