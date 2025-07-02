@@ -13,16 +13,16 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .pipeline import RobotPipeline, PipelineStep, EnvTransition
 from .observation_processor import (
     ImageProcessor,
-    StateProcessor, 
     ObservationProcessor,
+    StateProcessor,
 )
+from .pipeline import EnvTransition, PipelineStep, RobotPipeline
 
 __all__ = [
     "RobotPipeline",
-    "PipelineStep", 
+    "PipelineStep",
     "EnvTransition",
     "ImageProcessor",
     "StateProcessor",
