@@ -16,10 +16,8 @@
 import warnings
 from typing import Any
 
-import einops
 import gymnasium as gym
 import numpy as np
-import torch
 from torch import Tensor
 
 from lerobot.configs.types import FeatureType, PolicyFeature
@@ -29,30 +27,27 @@ from lerobot.utils.utils import get_channel_first_image_shape
 
 def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Tensor]:
     """Convert environment observation to LeRobot format observation.
-    
+
     This function uses the new pipeline system internally but maintains
     backward compatibility with the original interface.
-    
+
     Args:
         observation: Dictionary of observation batches from a Gym vector environment.
     Returns:
         Dictionary of observation batches with keys renamed to LeRobot format and values as tensors.
     """
-    from lerobot.processor.pipeline import RobotPipeline, TransitionIndex
     from lerobot.processor.observation_processor import ObservationProcessor
-    
+    from lerobot.processor.pipeline import RobotPipeline, TransitionIndex
+
     # Create pipeline with observation processor
     pipeline = RobotPipeline([ObservationProcessor()])
-    
+
     # Create transition tuple and process
     transition = (observations, None, None, None, None, None, None)
     processed_transition = pipeline(transition)
-    
+
     # Return processed observations
     return processed_transition[TransitionIndex.OBSERVATION]
-
-
-
 
 
 def env_to_policy_features(env_cfg: EnvConfig) -> dict[str, PolicyFeature]:

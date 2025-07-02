@@ -69,12 +69,11 @@ from lerobot.configs import parser
 from lerobot.configs.eval import EvalPipelineConfig
 from lerobot.envs.factory import make_env
 from lerobot.envs.utils import add_envs_task, check_env_attributes_and_types
-
-from lerobot.processor.pipeline import RobotPipeline, TransitionIndex
-from lerobot.processor.observation_processor import ObservationProcessor
 from lerobot.policies.factory import make_policy
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import get_device_from_parameters
+from lerobot.processor.observation_processor import ObservationProcessor
+from lerobot.processor.pipeline import RobotPipeline, TransitionIndex
 from lerobot.utils.io_utils import write_video
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import (
@@ -130,7 +129,7 @@ def rollout(
     observation, info = env.reset(seed=seeds)
     if render_callback is not None:
         render_callback(env)
-    
+
     # Create observation processing pipeline
     obs_pipeline = RobotPipeline([ObservationProcessor()])
 
