@@ -23,6 +23,29 @@
 </div>
 
 <h2 align="center">
+    <p><a href="https://moon-ci-docs.huggingface.co/docs/lerobot/pr_935/en/hope_jr">
+        Build Your Own HopeJR Robot!</a></p>
+</h2>
+
+<div align="center">
+  <img
+    src="examples/hope_jr/pics/hopejr.png?raw=true"
+    alt="HopeJR robot"
+    title="HopeJR robot"
+    style="width: 60%;"
+  />
+
+  <p><strong>Meet HopeJR – A humanoid robot for dexterous manipulation!</strong></p>
+  <p>Control it with exoskeletons and gloves for precise hand movements.</p>
+  <p>Perfect for advanced manipulation tasks! 🤖</p>
+
+  <p><a href="https://moon-ci-docs.huggingface.co/docs/lerobot/pr_935/en/hope_jr">
+      See the full HopeJR tutorial here.</a></p>
+</div>
+
+<br/>
+
+<h2 align="center">
     <p><a href="https://huggingface.co/docs/lerobot/so101">
         Build Your Own SO-101 Robot!</a></p>
 </h2>
