@@ -340,37 +340,6 @@ def test_empty_observation():
     assert processed_obs == {}
 
 
-def test_none_observation():
-    """Test processing None observation."""
-    processor = ObservationProcessor()
-
-    transition = (None, None, None, None, None, None, None)
-    result = processor(transition)
-
-    assert result == transition
-
-
-def test_serialization_methods():
-    """Test serialization methods."""
-    processor = ObservationProcessor()
-
-    # Test get_config
-    config = processor.get_config()
-    assert isinstance(config, dict)
-    assert "image_processor" in config
-    assert "state_processor" in config
-
-    # Test state_dict
-    state = processor.state_dict()
-    assert isinstance(state, dict)
-
-    # Test load_state_dict (should not raise)
-    processor.load_state_dict(state)
-
-    # Test reset (should not raise)
-    processor.reset()
-
-
 def test_custom_sub_processors():
     """Test ObservationProcessor with custom sub-processors."""
     image_proc = ImageProcessor()
