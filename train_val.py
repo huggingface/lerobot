@@ -65,9 +65,11 @@ class ValidationConfig:
     """Configuration for validation during training."""
     enable: bool = True
     val_ratio: float = 0.2  # Fraction of episodes to use for validation
-    val_freq: int = 200     # How often to run validation (in training steps)
+    val_freq: int = 500     # How often to run validation (in training steps)
     val_batch_size: int = 8 # Batch size for validation
     save_split: bool = True # Whether to save the train/val split to disk
+    log_train_eval_loss: bool = False  # Whether to also log training loss in eval mode
+    train_eval_freq: int = 1000  # How often to compute training loss in eval mode (in steps)
 
 
 @dataclass
@@ -478,6 +480,9 @@ def train(cfg: TrainValPipelineConfig):
         is_env_eval_step = cfg.env and cfg.eval_freq > 0 and step % cfg.eval_freq == 0
         is_val_step = (cfg.validation.enable and val_dataset and 
                       cfg.validation.val_freq > 0 and step % cfg.validation.val_freq == 0)
+        is_train_eval_step = (cfg.validation.log_train_eval_loss and 
+                             cfg.validation.train_eval_freq > 0 and 
+                             step % cfg.validation.train_eval_freq == 0)
 
         if is_log_step:
             logging.info(train_tracker)
@@ -489,25 +494,55 @@ def train(cfg: TrainValPipelineConfig):
             train_tracker.reset_averages()
 
         # Run validation
-        if is_val_step:
-            logging.info(f"Running validation at step {step}")
-            start_val_time = time.perf_counter()
+        if is_val_step or is_train_eval_step:
+            metrics_to_log = {}
             
-            val_metrics = run_validation(
-                policy=policy,
-                val_dataset=val_dataset,
-                device=device,
-                batch_size=cfg.validation.val_batch_size,
-                num_workers=cfg.num_workers
-            )
+            # Run validation if scheduled
+            if is_val_step:
+                logging.info(f"Running validation at step {step}")
+                start_val_time = time.perf_counter()
+                
+                val_metrics = run_validation(
+                    policy=policy,
+                    val_dataset=val_dataset,
+                    device=device,
+                    batch_size=cfg.validation.val_batch_size,
+                    num_workers=cfg.num_workers
+                )
+                
+                val_time = time.perf_counter() - start_val_time
+                val_metrics["val_time_s"] = val_time
+                metrics_to_log.update(val_metrics)
+                logging.info(f"Validation metrics: {val_metrics}")
             
-            val_time = time.perf_counter() - start_val_time
-            val_metrics["val_time_s"] = val_time
+            # Compute training loss in eval mode if scheduled
+            if is_train_eval_step:
+                logging.info(f"Computing training loss in eval mode at step {step}")
+                start_train_eval_time = time.perf_counter()
+                
+                train_eval_metrics = run_validation(
+                    policy=policy,
+                    val_dataset=dataset,  # Use training dataset
+                    device=device,
+                    batch_size=cfg.validation.val_batch_size,
+                    num_workers=cfg.num_workers
+                )
+                
+                train_eval_time = time.perf_counter() - start_train_eval_time
+                
+                # Rename metrics to distinguish from validation
+                train_eval_metrics = {k.replace("val_", "train_eval_"): v for k, v in train_eval_metrics.items()}
+                train_eval_metrics["train_eval_time_s"] = train_eval_time
+                metrics_to_log.update(train_eval_metrics)
+                logging.info(f"Training eval metrics: {train_eval_metrics}")
+                
+                # Log the ratio to show dropout effect if both are available
+                if "val_loss" in metrics_to_log and "train_eval_loss" in metrics_to_log:
+                    metrics_to_log["dropout_effect_ratio"] = metrics_to_log["val_loss"] / metrics_to_log["train_eval_loss"]
             
-            logging.info(f"Validation metrics: {val_metrics}")
-            
-            if wandb_logger:
-                wandb_logger.log_dict(val_metrics, step, mode="eval")
+            # Log all metrics to wandb
+            if wandb_logger and metrics_to_log:
+                wandb_logger.log_dict(metrics_to_log, step, mode="eval")
 
         if cfg.save_checkpoint and is_saving_step:
             logging.info(f"Checkpoint policy after step {step}")
@@ -570,11 +605,14 @@ if __name__ == "__main__":
 #     --validation.val_freq=200 \
 #     --validation.enable=true \
 #     --validation.val_ratio=0.2 \
+#     --validation.log_train_eval_loss=true \
+#     --validation.train_eval_freq=1000 \
 #     --batch_size=8 \
 #     --wandb.enable=true \
 #     --wandb.project=lerobot_training
 #
-# Key improvements for ACT:
+# Key features:
 # - Uses EpisodeAwareSampler to preserve temporal structure in action chunks
 # - Proper train/validation split with no data leakage
-# - Validation loss should now be >= training loss (as expected) 
+# - Optional train_eval_loss computation to see dropout effect
+# - Separate frequencies for validation (val_freq) and train eval loss (train_eval_freq) 
