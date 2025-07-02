@@ -26,19 +26,19 @@ from PIL import Image
 from safetensors.torch import load_file
 
 import lerobot
-from lerobot.common.datasets.factory import make_dataset
-from lerobot.common.datasets.image_writer import image_array_to_pil_image
-from lerobot.common.datasets.lerobot_dataset import (
+from lerobot.datasets.factory import make_dataset
+from lerobot.datasets.image_writer import image_array_to_pil_image
+from lerobot.datasets.lerobot_dataset import (
     LeRobotDataset,
     MultiLeRobotDataset,
 )
-from lerobot.common.datasets.utils import (
+from lerobot.datasets.utils import (
     create_branch,
     hw_to_dataset_features,
 )
-from lerobot.common.envs.factory import make_env_config
-from lerobot.common.policies.factory import make_policy_config
-from lerobot.common.robots import make_robot_from_config
+from lerobot.envs.factory import make_env_config
+from lerobot.policies.factory import make_policy_config
+from lerobot.robots import make_robot_from_config
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
 from tests.fixtures.constants import DUMMY_CHW, DUMMY_HWC, DUMMY_REPO_ID
@@ -107,7 +107,7 @@ def test_dataset_initialization(tmp_path, lerobot_dataset_factory):
 # and test the small resulting function that validates the features
 def test_dataset_feature_with_forward_slash_raises_error():
     # make sure dir does not exist
-    from lerobot.common.constants import HF_LEROBOT_HOME
+    from lerobot.constants import HF_LEROBOT_HOME
 
     dataset_dir = HF_LEROBOT_HOME / "lerobot/test/with/slash"
     # make sure does not exist

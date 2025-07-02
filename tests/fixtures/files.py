@@ -19,7 +19,7 @@ import pyarrow.compute as pc
 import pyarrow.parquet as pq
 import pytest
 
-from lerobot.common.datasets.utils import (
+from lerobot.datasets.utils import (
     write_episodes,
     write_hf_dataset,
     write_info,

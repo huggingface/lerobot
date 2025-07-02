@@ -21,8 +21,8 @@ import torch
 from datasets import Dataset
 from huggingface_hub import DatasetCard
 
-from lerobot.common.datasets.push_dataset_to_hub.utils import calculate_episode_data_index
-from lerobot.common.datasets.utils import (
+from lerobot.datasets.push_dataset_to_hub.utils import calculate_episode_data_index
+from lerobot.datasets.utils import (
     create_lerobot_dataset_card,
     flatten_dict,
     hf_transform_to_torch,

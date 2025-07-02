@@ -5,9 +5,9 @@ from pathlib import Path
 import pandas as pd
 import tqdm
 
-from lerobot.common.datasets.compute_stats import aggregate_stats
-from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
-from lerobot.common.datasets.utils import (
+from lerobot.datasets.compute_stats import aggregate_stats
+from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
+from lerobot.datasets.utils import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_DATA_FILE_SIZE_IN_MB,
     DEFAULT_DATA_PATH,
@@ -17,6 +17,7 @@ from lerobot.common.datasets.utils import (
     concat_video_files,
     get_parquet_file_size_in_mb,
     get_video_size_in_mb,
+    to_parquet_with_hf_images,
     update_chunk_file_indices,
     write_info,
     write_stats,
@@ -98,11 +99,7 @@ def aggregate_datasets(repo_ids: list[str], aggr_repo_id: str, roots: list[Path]
         ]
     )
     fps, robot_type, features = validate_all_metadata(all_metadata)
-<<<<<<< HEAD:src/lerobot/datasets/aggregate.py
-    video_keys = [k for k, v in features.items() if v["dtype"] == "video"]
-=======
     video_keys = [key for key in features if features[key]["dtype"] == "video"]
->>>>>>> aa07b858 (fix: debug aggregation code):lerobot/common/datasets/aggregate.py
 
     # Initialize output dataset metadata
     dst_meta = LeRobotDatasetMetadata.create(
@@ -125,16 +122,14 @@ def aggregate_datasets(repo_ids: list[str], aggr_repo_id: str, roots: list[Path]
         key: {"chunk": 0, "file": 0, "latest_duration": 0, "episode_duration": 0} for key in video_keys
     }
 
+    dst_meta.episodes = {}
+
     # Process each dataset
     for src_meta in tqdm.tqdm(all_metadata, desc="Copy data and videos"):
         videos_idx = aggregate_videos(src_meta, dst_meta, videos_idx)
         data_idx = aggregate_data(src_meta, dst_meta, data_idx)
-<<<<<<< HEAD:src/lerobot/datasets/aggregate.py
-        meta_idx = aggregate_metadata(src_meta, dst_meta, meta_idx, data_idx, videos_idx, video_keys)
-=======
 
         meta_idx = aggregate_metadata(src_meta, dst_meta, meta_idx, data_idx, videos_idx)
->>>>>>> aa07b858 (fix: debug aggregation code):lerobot/common/datasets/aggregate.py
 
         dst_meta.info["total_episodes"] += src_meta.total_episodes
         dst_meta.info["total_frames"] += src_meta.total_frames
@@ -210,15 +205,9 @@ def aggregate_videos(src_meta, dst_meta, videos_idx):
                     file_idx,
                 )
 
-<<<<<<< HEAD:src/lerobot/datasets/aggregate.py
-        # Update the video index tracking
-        video_idx["chunk_idx"] = chunk_idx
-        video_idx["file_idx"] = file_idx
-=======
         # Update the videos_idx with the final chunk and file indices for this key
         videos_idx[key]["chunk"] = chunk_idx
         videos_idx[key]["file"] = file_idx
->>>>>>> aa07b858 (fix: debug aggregation code):lerobot/common/datasets/aggregate.py
 
     return videos_idx
 
@@ -237,22 +226,15 @@ def aggregate_data(src_meta, dst_meta, data_idx):
         df = pd.read_parquet(src_path)
         df = update_data_df(df, src_meta, dst_meta)
 
-        dst_path = aggr_root / DEFAULT_DATA_PATH.format(
-            chunk_index=data_idx["chunk"], file_index=data_idx["file"]
-        )
-        data_idx = write_parquet_safely(
+        data_idx = append_or_create_parquet_file(
             df,
             src_path,
-            dst_path,
             data_idx,
             DEFAULT_DATA_FILE_SIZE_IN_MB,
             DEFAULT_CHUNK_SIZE,
             DEFAULT_DATA_PATH,
-<<<<<<< HEAD:src/lerobot/datasets/aggregate.py
-=======
             contains_images=len(dst_meta.image_keys) > 0,
             aggr_root=dst_meta.root,
->>>>>>> aa07b858 (fix: debug aggregation code):lerobot/common/datasets/aggregate.py
         )
 
     return data_idx
@@ -282,17 +264,9 @@ def aggregate_metadata(src_meta, dst_meta, meta_idx, data_idx, videos_idx):
         for k in videos_idx:
             videos_idx[k]["latest_duration"] += videos_idx[k]["episode_duration"]
 
-<<<<<<< HEAD:src/lerobot/datasets/aggregate.py
-        dst_path = dst_meta.root / DEFAULT_EPISODES_PATH.format(
-            chunk_index=meta_idx["chunk"], file_index=meta_idx["file"]
-        )
-        write_parquet_safely(
-=======
         meta_idx = append_or_create_parquet_file(
->>>>>>> aa07b858 (fix: debug aggregation code):lerobot/common/datasets/aggregate.py
             df,
             src_path,
-            dst_path,
             meta_idx,
             DEFAULT_DATA_FILE_SIZE_IN_MB,
             DEFAULT_CHUNK_SIZE,
@@ -304,19 +278,15 @@ def aggregate_metadata(src_meta, dst_meta, meta_idx, data_idx, videos_idx):
     return meta_idx
 
 
-def write_parquet_safely(
+def append_or_create_parquet_file(
     df: pd.DataFrame,
     src_path: Path,
-    dst_path: Path,
     idx: dict[str, int],
     max_mb: float,
     chunk_size: int,
     default_path: str,
-<<<<<<< HEAD:src/lerobot/datasets/aggregate.py
-=======
     contains_images: bool = False,
     aggr_root: Path = None,
->>>>>>> aa07b858 (fix: debug aggregation code):lerobot/common/datasets/aggregate.py
 ):
     """
     Safely appends or creates a Parquet file at dst_path based on size constraints.
@@ -324,7 +294,6 @@ def write_parquet_safely(
     Parameters:
         df (pd.DataFrame): Data to write.
         src_path (Path): Path to source file (used to get size).
-        dst_path (Path): Target path for writing.
         idx (dict): Dictionary containing 'chunk' and 'file' indices.
         max_mb (float): Maximum allowed file size in MB.
         chunk_size (int): Maximum number of files per chunk.
@@ -333,11 +302,8 @@ def write_parquet_safely(
     Returns:
         dict: Updated index dictionary.
     """
-<<<<<<< HEAD:src/lerobot/datasets/aggregate.py
-=======
     # Initial destination path - use the correct default_path parameter
     dst_path = aggr_root / default_path.format(chunk_index=idx["chunk"], file_index=idx["file"])
->>>>>>> aa07b858 (fix: debug aggregation code):lerobot/common/datasets/aggregate.py
 
     # If destination file doesn't exist, just write the new one
     if not dst_path.exists():
@@ -357,14 +323,6 @@ def write_parquet_safely(
         idx["chunk"], idx["file"] = update_chunk_file_indices(idx["chunk"], idx["file"], chunk_size)
         new_path = aggr_root / default_path.format(chunk_index=idx["chunk"], file_index=idx["file"])
         new_path.parent.mkdir(parents=True, exist_ok=True)
-<<<<<<< HEAD:src/lerobot/datasets/aggregate.py
-        df.to_parquet(new_path)
-    else:
-        # Append to existing file
-        existing_df = pd.read_parquet(dst_path)
-        combined_df = pd.concat([existing_df, df], ignore_index=True)
-        combined_df.to_parquet(dst_path)
-=======
         final_df = df
         target_path = new_path
     else:
@@ -377,7 +335,6 @@ def write_parquet_safely(
         to_parquet_with_hf_images(final_df, target_path)
     else:
         final_df.to_parquet(target_path)
->>>>>>> aa07b858 (fix: debug aggregation code):lerobot/common/datasets/aggregate.py
 
     return idx
 

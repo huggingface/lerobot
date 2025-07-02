@@ -1,7 +1,7 @@
 import torch
 
-from lerobot.common.datasets.aggregate import aggregate_datasets
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.aggregate import aggregate_datasets
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from tests.fixtures.constants import DUMMY_REPO_ID
 
 

@@ -18,7 +18,7 @@ import pandas as pd
 import pytest
 from huggingface_hub.utils import filter_repo_objects
 
-from lerobot.common.datasets.utils import (
+from lerobot.datasets.utils import (
     DEFAULT_DATA_PATH,
     DEFAULT_EPISODES_PATH,
     DEFAULT_TASKS_PATH,
