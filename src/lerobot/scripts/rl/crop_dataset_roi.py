@@ -21,8 +21,6 @@ from pathlib import Path
 from typing import Dict, Tuple
 
 import cv2
-
-# import torch.nn.functional as F  # noqa: N812
 import torch
 import torchvision.transforms.functional as F  # type: ignore  # noqa: N812
 from tqdm import tqdm  # type: ignore
