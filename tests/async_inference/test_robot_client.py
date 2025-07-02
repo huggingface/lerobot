@@ -24,7 +24,7 @@ import time
 import pytest
 import torch
 
-from lerobot.common.robots.utils import make_robot_from_config
+from lerobot.robots.utils import make_robot_from_config
 from lerobot.scripts.server.configs import RobotClientConfig
 from lerobot.scripts.server.helpers import TimedAction
 from lerobot.scripts.server.robot_client import RobotClient

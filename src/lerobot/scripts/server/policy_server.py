@@ -8,11 +8,7 @@ from typing import Optional
 import grpc
 import torch
 
-from lerobot.common.policies.factory import get_policy_class
-from lerobot.common.transport import (
-    async_inference_pb2,  # type: ignore
-    async_inference_pb2_grpc,  # type: ignore
-)
+from lerobot.policies.factory import get_policy_class
 from lerobot.scripts.server.configs import PolicyServerConfig
 from lerobot.scripts.server.constants import supported_policies
 from lerobot.scripts.server.helpers import (
@@ -25,6 +21,10 @@ from lerobot.scripts.server.helpers import (
     observations_similar,
     raw_observation_to_observation,
     receive_bytes_in_chunks,
+)
+from lerobot.transport import (
+    async_inference_pb2,  # type: ignore
+    async_inference_pb2_grpc,  # type: ignore
 )
 
 

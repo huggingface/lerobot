@@ -8,11 +8,6 @@ from typing import Callable, Optional
 import grpc
 import torch
 
-from lerobot.common.transport import (
-    async_inference_pb2,  # type: ignore
-    async_inference_pb2_grpc,  # type: ignore
-)
-from lerobot.common.transport.utils import send_bytes_in_chunks
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.scripts.server.configs import RobotClientConfig
 from lerobot.scripts.server.helpers import (
@@ -29,6 +24,11 @@ from lerobot.scripts.server.helpers import (
     validate_robot_cameras_for_policy,
     visualize_action_queue_size,
 )
+from lerobot.transport import (
+    async_inference_pb2,  # type: ignore
+    async_inference_pb2_grpc,  # type: ignore
+)
+from lerobot.transport.utils import send_bytes_in_chunks
 
 
 class RobotClient:

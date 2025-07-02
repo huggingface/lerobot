@@ -3,7 +3,7 @@ from typing import Callable, Optional
 
 import torch
 
-from lerobot.common.robots.robot import Robot
+from lerobot.robots.robot import Robot
 from lerobot.scripts.server.constants import (
     DEFAULT_IDLE_WAIT,
     DEFAULT_INFERENCE_LATENCY,

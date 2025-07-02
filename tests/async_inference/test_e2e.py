@@ -36,12 +36,12 @@ from concurrent import futures
 import grpc
 import torch
 
-from lerobot.common.robots.utils import make_robot_from_config
-from lerobot.common.transport import async_inference_pb2_grpc  # type: ignore
+from lerobot.robots.utils import make_robot_from_config
 from lerobot.scripts.server.configs import RobotClientConfig
 from lerobot.scripts.server.helpers import TimedObservation
 from lerobot.scripts.server.policy_server import PolicyServer
 from lerobot.scripts.server.robot_client import RobotClient
+from lerobot.transport import async_inference_pb2_grpc  # type: ignore
 from tests.async_inference.test_policy_server import policy_server  # noqa: F401
 
 # -----------------------------------------------------------------------------
@@ -54,8 +54,8 @@ def test_async_inference_e2e(policy_server, monkeypatch):  # noqa: F811
     # ------------------------------------------------------------------
     # 1. Spawn a PolicyServer returning dummy action chunks
     # ------------------------------------------------------------------
-    from lerobot.common.transport import async_inference_pb2  # type: ignore
     from lerobot.scripts.server.helpers import map_robot_keys_to_lerobot_features
+    from lerobot.transport import async_inference_pb2  # type: ignore
     from tests.mocks.mock_robot import MockRobotConfig
 
     test_config = MockRobotConfig()

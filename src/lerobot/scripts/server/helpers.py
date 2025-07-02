@@ -13,24 +13,24 @@ from typing import Any
 import matplotlib.pyplot as plt
 import torch
 
-from lerobot.common.cameras.opencv.configuration_opencv import OpenCVCameraConfig
-from lerobot.common.constants import OBS_STATE
-from lerobot.common.datasets.utils import build_dataset_frame, hw_to_dataset_features
+from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
+from lerobot.configs.types import PolicyFeature
+from lerobot.constants import OBS_STATE
+from lerobot.datasets.utils import build_dataset_frame, hw_to_dataset_features
 
 # NOTE: Configs need to be loaded for the client to be able to instantiate the policy config
-from lerobot.common.policies.act.configuration_act import ACTConfig  # noqa: F401
-from lerobot.common.policies.diffusion.configuration_diffusion import DiffusionConfig  # noqa: F401
-from lerobot.common.policies.pi0.configuration_pi0 import PI0Config  # noqa: F401
-from lerobot.common.policies.smolvla.configuration_smolvla import SmolVLAConfig  # noqa: F401
-from lerobot.common.policies.vqbet.configuration_vqbet import VQBeTConfig  # noqa: F401
-from lerobot.common.robots.robot import Robot
-from lerobot.common.robots.so100_follower import SO100FollowerConfig
-from lerobot.common.robots.utils import make_robot_from_config
-from lerobot.common.transport import async_inference_pb2
-from lerobot.common.transport.utils import bytes_buffer_size
-from lerobot.common.utils.utils import init_logging
-from lerobot.configs.types import PolicyFeature
+from lerobot.policies.act.configuration_act import ACTConfig  # noqa: F401
+from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig  # noqa: F401
+from lerobot.policies.pi0.configuration_pi0 import PI0Config  # noqa: F401
+from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig  # noqa: F401
+from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig  # noqa: F401
+from lerobot.robots.robot import Robot
+from lerobot.robots.so100_follower import SO100FollowerConfig
+from lerobot.robots.utils import make_robot_from_config
 from lerobot.scripts.server.constants import supported_robots
+from lerobot.transport import async_inference_pb2
+from lerobot.transport.utils import bytes_buffer_size
+from lerobot.utils.utils import init_logging
 
 Action = torch.Tensor
 ActionChunk = torch.Tensor
