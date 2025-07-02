@@ -36,7 +36,6 @@ from dataclasses import dataclass
 import draccus
 import numpy as np
 
-from lerobot.common.utils.robot_utils import busy_wait
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.robots import (  # noqa: F401
     RobotConfig,
@@ -51,6 +50,7 @@ from lerobot.teleoperators import (  # noqa: F401
     make_teleoperator_from_config,
     so100_leader,
 )
+from lerobot.utils.robot_utils import busy_wait
 
 
 @dataclass
