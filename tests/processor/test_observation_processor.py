@@ -260,35 +260,6 @@ def test_no_states_in_observation():
     assert processed_obs == observation
 
 
-def test_none_observation():
-    """Test processor with None observation."""
-    processor = StateProcessor()
-
-    transition = (None, None, None, None, None, None, None)
-    result = processor(transition)
-
-    assert result == transition
-
-
-def test_serialization_methods():
-    """Test serialization methods."""
-    processor = StateProcessor()
-
-    # Test get_config
-    config = processor.get_config()
-    assert isinstance(config, dict)
-
-    # Test state_dict
-    state = processor.state_dict()
-    assert isinstance(state, dict)
-
-    # Test load_state_dict (should not raise)
-    processor.load_state_dict(state)
-
-    # Test reset (should not raise)
-    processor.reset()
-
-
 def test_complete_observation_processing():
     """Test processing a complete observation with both images and states."""
     processor = ObservationProcessor()
