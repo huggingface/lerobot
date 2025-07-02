@@ -1,4 +1,4 @@
-from lerobot.common.robots.hope_jr import HopeJrHand, HopeJrHandConfig
+from lerobot.robots.hope_jr import HopeJrHand, HopeJrHandConfig
 
 cfg = HopeJrHandConfig("/dev/tty.usbmodem58760432281", id="left", side="left")
 hand = HopeJrHand(cfg)

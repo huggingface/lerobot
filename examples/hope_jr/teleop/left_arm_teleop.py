@@ -1,9 +1,9 @@
 import time
 import traceback
 
-from lerobot.common.robots.hope_jr import HopeJrArm, HopeJrArmConfig
-from lerobot.common.teleoperators.homunculus import HomunculusArm, HomunculusArmConfig
-from lerobot.common.utils.utils import move_cursor_up
+from lerobot.robots.hope_jr import HopeJrArm, HopeJrArmConfig
+from lerobot.teleoperators.homunculus import HomunculusArm, HomunculusArmConfig
+from lerobot.utils.utils import move_cursor_up
 
 
 def make_left_arm() -> tuple[HomunculusArm, HopeJrArm]:

@@ -19,10 +19,10 @@ import gymnasium as gym
 import pytest
 
 import lerobot
-from lerobot.common.policies.act.modeling_act import ACTPolicy
-from lerobot.common.policies.diffusion.modeling_diffusion import DiffusionPolicy
-from lerobot.common.policies.tdmpc.modeling_tdmpc import TDMPCPolicy
-from lerobot.common.policies.vqbet.modeling_vqbet import VQBeTPolicy
+from lerobot.policies.act.modeling_act import ACTPolicy
+from lerobot.policies.diffusion.modeling_diffusion import DiffusionPolicy
+from lerobot.policies.tdmpc.modeling_tdmpc import TDMPCPolicy
+from lerobot.policies.vqbet.modeling_vqbet import VQBeTPolicy
 from tests.utils import require_env
 
 

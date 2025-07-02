@@ -1,8 +1,8 @@
 import time
 import traceback
 
-from lerobot.common.teleoperators.homunculus import HomunculusGlove, HomunculusGloveConfig
-from lerobot.common.utils.utils import move_cursor_up
+from lerobot.teleoperators.homunculus import HomunculusGlove, HomunculusGloveConfig
+from lerobot.utils.utils import move_cursor_up
 
 config = HomunculusGloveConfig("/dev/tty.usbmodem11301", side="left", id="left")
 glove = HomunculusGlove(config)

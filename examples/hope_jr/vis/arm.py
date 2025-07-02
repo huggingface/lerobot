@@ -1,8 +1,8 @@
 import time
 import traceback
 
-from lerobot.common.robots.hope_jr import HopeJrArm, HopeJrArmConfig
-from lerobot.common.utils.utils import move_cursor_up
+from lerobot.robots.hope_jr import HopeJrArm, HopeJrArmConfig
+from lerobot.utils.utils import move_cursor_up
 
 # cfg = HopeJrArmConfig("/dev/tty.usbserial-140", id="right")
 cfg = HopeJrArmConfig("/dev/tty.usbserial-1120", id="left", side="left")
