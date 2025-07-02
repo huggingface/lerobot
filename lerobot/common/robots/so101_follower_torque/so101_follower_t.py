@@ -40,7 +40,7 @@ class SO101FollowerT(Robot):
     """
 
     config_class = SO101FollowerTConfig
-    name = "so101_follower"
+    name = "so101_follower_t"
 
     _CURRENT_STEP_A: float = 6.5e-3  # 6.5 mA per register LSB #http://doc.feetech.cn/#/prodinfodownload?srcType=FT-SMS-STS-emanual-229f4476422d4059abfb1cb0
     _KT_NM_PER_AMP: float = 0.814  # Torque constant Kt [N·m/A] #https://www.feetechrc.com/811177.html

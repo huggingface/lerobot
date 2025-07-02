@@ -1,3 +1,4 @@
+import sys
 import time
 
 import numpy as np
@@ -15,6 +16,20 @@ MOTORS = [
     "gripper",
 ]
 
+FLIP_TORQUE = np.array(
+    [
+        True,  # shoulder_pan
+        True,  # shoulder_lift   t
+        True,  # elbow_flex  t
+        True,  # wrist_flex  t
+        True,  # wrist_roll
+        False,  # gripper
+    ],
+    dtype=bool,
+)
+
+SIGN = np.where(FLIP_TORQUE, -1.0, 1.0)
+
 IDX = {name: i for i, name in enumerate(MOTORS)}
 
 
@@ -28,6 +43,7 @@ def obs_to_q(obs):
 
 def tau_to_action(tau):
     """Convert τ array (Nm) to action dict understood by send_action()."""
+    tau = SIGN * tau
     return {f"{m}.effort": float(tau[IDX[m]]) for m in MOTORS}
 
 
@@ -40,9 +56,11 @@ pin_robot.initViewer(open=True)
 pin_robot.loadViewerModel()
 pin_robot.display(pin_robot.q0)
 
-cfg = SO101FollowerTConfig(port="/dev/tty.usbmodem58760431551", id="follower_t")
+cfg = SO101FollowerTConfig(port="/dev/tty.usbmodem58760431551", id="follower_torque6")
 real = SO101FollowerT(cfg)
 real.connect()
+
+ESC_CLR_EOL = "\x1b[K"
 
 print("Running gravity compensation")
 try:
@@ -52,10 +70,20 @@ try:
 
         tau = pin.computeGeneralizedGravity(pin_robot.model, pin_robot.data, q)  # τ in [Nm]
 
-        # real.send_action(tau_to_action(tau)) # apply τ
+        # build compact single-line status
+        status = " | ".join(
+            f"{m}: {np.degrees(q[i]):+5.1f}° Δτ {(abs(obs[f'{m}.effort']) - abs(tau[i])):+5.1f}"
+            for i, m in enumerate(MOTORS)
+        )
+
+        # overwrite previous status
+        sys.stdout.write("\r" + ESC_CLR_EOL + status)
+        sys.stdout.flush()
+
+        real.send_action(tau_to_action(tau))  # apply τ
 
         pin_robot.display(q)
-        time.sleep(0.02)  # Run at 50 Hz
+        time.sleep(0.002)  # Run at 500 Hz
 except KeyboardInterrupt:
     print("Stopping")
 finally:

@@ -275,7 +275,7 @@ MODEL_ENCODING_TABLE = {
     "sm8512bl": STS_SMS_SERIES_ENCODINGS_TABLE,
     "scs0009": {},
     "hls3625": {
-        "Homing_Offset": 11,
+        "Homing_Offset": 15,
         "Goal_Velocity": 15,
         "Present_Velocity": 15,
         "Target_Torque": 10,
