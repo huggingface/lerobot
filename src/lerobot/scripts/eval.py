@@ -68,7 +68,10 @@ from tqdm import trange
 from lerobot.configs import parser
 from lerobot.configs.eval import EvalPipelineConfig
 from lerobot.envs.factory import make_env
-from lerobot.envs.utils import add_envs_task, check_env_attributes_and_types, preprocess_observation
+from lerobot.envs.utils import add_envs_task, check_env_attributes_and_types
+
+from lerobot.processor.pipeline import RobotPipeline, TransitionIndex
+from lerobot.processor.observation_processor import ObservationProcessor
 from lerobot.policies.factory import make_policy
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import get_device_from_parameters
@@ -127,6 +130,9 @@ def rollout(
     observation, info = env.reset(seed=seeds)
     if render_callback is not None:
         render_callback(env)
+    
+    # Create observation processing pipeline
+    obs_pipeline = RobotPipeline([ObservationProcessor()])
 
     all_observations = []
     all_actions = []
@@ -147,7 +153,9 @@ def rollout(
     check_env_attributes_and_types(env)
     while not np.all(done):
         # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
-        observation = preprocess_observation(observation)
+        transition = (observation, None, None, None, None, None, None)
+        processed_transition = obs_pipeline(transition)
+        observation = processed_transition[TransitionIndex.OBSERVATION]
         if return_observations:
             all_observations.append(deepcopy(observation))
 
@@ -195,7 +203,9 @@ def rollout(
 
     # Track the final observation.
     if return_observations:
-        observation = preprocess_observation(observation)
+        transition = (observation, None, None, None, None, None, None)
+        processed_transition = obs_pipeline(transition)
+        observation = processed_transition[TransitionIndex.OBSERVATION]
         all_observations.append(deepcopy(observation))
 
     # Stack the sequence along the first dimension so that we have (batch, sequence, *) tensors.
