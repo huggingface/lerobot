@@ -196,6 +196,7 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
         delta_x = 0.0
         delta_y = 0.0
         delta_z = 0.0
+        gripper_action = 1.0
 
         # Generate action based on current key states
         for key, val in self.current_pressed.items():
@@ -230,7 +231,6 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
             "delta_z": delta_z,
         }
 
-        gripper_action = 1  # default gripper action is to stay
         if self.config.use_gripper:
             action_dict["gripper"] = gripper_action
 
