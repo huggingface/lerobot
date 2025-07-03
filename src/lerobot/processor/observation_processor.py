@@ -23,7 +23,7 @@ import numpy as np
 import torch
 from torch import Tensor
 
-from lerobot.processor.pipeline import EnvTransition, TransitionIndex
+from lerobot.processor.pipeline import EnvTransition, ProcessorStepRegistry, TransitionIndex
 
 
 @dataclass
@@ -180,6 +180,7 @@ class StateProcessor:
 
 
 @dataclass
+@ProcessorStepRegistry.register(name="observation_processor")
 class ObservationProcessor:
     """Complete observation processor that combines image and state processing.
 
