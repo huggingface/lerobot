@@ -18,11 +18,11 @@ from .observation_processor import (
     ObservationProcessor,
     StateProcessor,
 )
-from .pipeline import EnvTransition, PipelineStep, RobotPipeline
+from .pipeline import EnvTransition, ProcessorStep, RobotProcessor
 
 __all__ = [
-    "RobotPipeline",
-    "PipelineStep",
+    "RobotProcessor",
+    "ProcessorStep",
     "EnvTransition",
     "ImageProcessor",
     "StateProcessor",

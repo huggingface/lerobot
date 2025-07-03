@@ -23,7 +23,7 @@ from gymnasium.utils.env_checker import check_env
 import lerobot
 from lerobot.envs.factory import make_env, make_env_config
 from lerobot.processor.observation_processor import ObservationProcessor
-from lerobot.processor.pipeline import RobotPipeline, TransitionIndex
+from lerobot.processor.pipeline import RobotProcessor, TransitionIndex
 from tests.utils import require_env
 
 OBS_TYPES = ["state", "pixels", "pixels_agent_pos"]
@@ -50,10 +50,10 @@ def test_factory(env_name):
     env = make_env(cfg, n_envs=1)
     obs, _ = env.reset()
 
-    # Process observation using pipeline
-    obs_pipeline = RobotPipeline([ObservationProcessor()])
+    # Process observation using processor
+    obs_processor = RobotProcessor([ObservationProcessor()])
     transition = (obs, None, None, None, None, None, None)
-    processed_transition = obs_pipeline(transition)
+    processed_transition = obs_processor(transition)
     obs = processed_transition[TransitionIndex.OBSERVATION]
 
     # test image keys are float32 in range [0,1]
