@@ -18,6 +18,8 @@ from pprint import pformat
 
 import torch
 
+from transformers import AutoImageProcessor
+
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets.lerobot_dataset import (
@@ -115,4 +117,8 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             for stats_type, stats in IMAGENET_STATS.items():
                 dataset.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
 
+    image_proc = AutoImageProcessor.from_pretrained(
+        cfg.dataset.repo_id,
+        use_fast=cfg.use_fast_image_processor   # ← NEW
+    )
     return dataset
