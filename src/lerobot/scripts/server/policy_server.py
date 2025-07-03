@@ -84,12 +84,14 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
         self.logger.info(
             f"Policy type: {policy_specs.policy_type} | "
             f"Pretrained name or path: {policy_specs.pretrained_name_or_path} | "
+            f"Actions per chunk: {policy_specs.actions_per_chunk} | "
             f"Device: {policy_specs.device}"
         )
 
         self.device = policy_specs.device
         self.policy_type = policy_specs.policy_type  # act, pi0, etc.
         self.lerobot_features = policy_specs.lerobot_features
+        self.actions_per_chunk = policy_specs.actions_per_chunk
 
         policy_class = get_policy_class(self.policy_type)
 
@@ -257,8 +259,12 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
         return observation
 
     def _get_action_chunk(self, observation: dict[str, torch.Tensor]) -> torch.Tensor:
-        """Get an action chunk from the policy"""
-        return self.policy.predict_action_chunk(observation)
+        """Get an action chunk from the policy. The chunk contains only"""
+        chunk = self.policy.predict_action_chunk(observation)
+        if chunk.ndim != 3:
+            chunk = chunk.unsqueeze(0)  # adding batch dimension, now shape is (B, chunk_size, action_dim)
+
+        return chunk[:, self.actions_per_chunk, :]
 
     def _predict_action_chunk(self, observation_t: TimedObservation) -> list[TimedAction]:
         """Predict an action chunk based on an observation"""

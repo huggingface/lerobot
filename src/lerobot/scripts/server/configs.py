@@ -23,9 +23,6 @@ class PolicyServerConfig:
     host: str = field(default="localhost", metadata={"help": "Host address to bind the server to"})
     port: int = field(default=8080, metadata={"help": "Port number to bind the server to"})
 
-    # Action chunking configuration
-    actions_per_chunk: int = field(default=20, metadata={"help": "Number of actions in each chunk"})
-
     # Timing configuration
     fps: int = field(default=30, metadata={"help": "Frames per second"})
     idle_wait: float = field(default=DEFAULT_IDLE_WAIT, metadata={"help": "Idle wait time in seconds"})
