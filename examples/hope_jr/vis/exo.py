@@ -9,8 +9,7 @@ cfg = HomunculusArmConfig("/dev/tty.usbmodem11301", id="left")
 arm = HomunculusArm(cfg)
 display_len = max(len(key) for key in arm.action_features)
 
-arm.connect()
-arm.calibrate()
+arm.connect(calibrate=True)
 try:
     while True:
         start = time.perf_counter()

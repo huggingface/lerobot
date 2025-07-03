@@ -13,7 +13,7 @@ Install LeRobot with HopeJR dependencies:
 pip install -e ".[hopejr]"
 ```
 
-## Device Configuration
+## Device Configuration 
 
 Before starting calibration and operation, you need to identify the USB ports for each HopeJR component. Run this script to find the USB ports for the arm, hand, glove, and exoskeleton:
 
@@ -205,57 +205,6 @@ python examples/hope_jr/teleop/left_hand_teleop.py
 python examples/hope_jr/teleop/right_hand_teleop.py
 ```
 
-## Step 3: Recording Data
+## Step 3: Record, Replay, Train
 
-You can now record a LeRobot dataset using the following command. For reference, you can see an example of a recorded HopeJR dataset at [nepyope/hopejr_test](https://huggingface.co/datasets/nepyope/hopejr_test):
-
-```bash
-python -m lerobot.record \
-    --robot.type=hope_jr_hand \
-    --robot.side="right" \
-    --robot.port=/dev/tty.usbmodem58760433331 \
-    --robot.cameras="{ front: {type: opencv, index_or_path: 1, width: 1920, height: 1080, fps: 30}}" \
-    --teleop.type=homonculus_glove \
-    --teleop.port=/dev/tty.usbmodem11301 \
-    --teleop.side="right" \
-    --teleop.id=my_awesome_glove \
-    --display_data=true \
-    --dataset.repo_id=your_username/hope_jr_dataset \
-    --dataset.root=data/hope_jr_recordings \
-    --dataset.push_to_hub=False \
-    --dataset.num_episodes=50 \
-    --dataset.single_task="test" \
-    --dataset.episode_time_s=10
-```
-
-**Recording Parameters:**
-- `--robot.side`: Which side of the robot to use ("left" or "right")
-- `--teleop.side`: Which side of the teleoperator to use ("left" or "right")
-- `--dataset.num_episodes`: Number of episodes to record
-- `--dataset.single_task`: Description of the task being performed
-- `--dataset.episode_time_s`: Duration of each episode in seconds
-- `--dataset.root`: Local directory to save the dataset
-- `--dataset.push_to_hub`: Whether to push to Hugging Face Hub
-- `--display_data`: Show real-time data visualization
-- `--robot.cameras`: Camera configuration for visual observations
-
-## Step 4: Replay Recorded Data
-
-To replay an episode:
-
-```bash
-python -m lerobot.replay \
-    --robot.type=hope_jr_hand \
-    --robot.side="right" \
-    --robot.port=/dev/tty.usbmodem58760433331 \
-    --robot.cameras="{}" \
-    --dataset.repo_id=your_username/hope_jr_dataset \
-    --dataset.episode=0 \
-    --dataset.root=data/hope_jr_recordings
-```
-
-**Replay Parameters:**
-- `--robot.side`: Which side of the robot to use ("left" or "right")
-- `--dataset.episode`: Specific episode number to replay
-- `--dataset.root`: Local directory where the dataset is stored
-- `--robot.cameras`: Camera configuration (empty for replay)
+**Work in progress**

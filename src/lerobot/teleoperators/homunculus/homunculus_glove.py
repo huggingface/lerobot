@@ -88,6 +88,7 @@ class HomunculusGlove(Teleoperator):
 
         self._state: dict[str, float] | None = None
         self.new_state_event = threading.Event()
+        self.stop_event = threading.Event()
         self.thread = threading.Thread(target=self._read_loop, daemon=True, name=f"{self} _read_loop")
         self.lock = threading.Lock()
 
@@ -103,7 +104,7 @@ class HomunculusGlove(Teleoperator):
     def is_connected(self) -> bool:
         return self.thread.is_alive() and self.serial.is_open
 
-    def connect(self) -> None:
+    def connect(self, calibrate: bool = True) -> None:
         if self.is_connected:
             raise DeviceAlreadyConnectedError(f"{self} already connected")
 
@@ -115,7 +116,7 @@ class HomunculusGlove(Teleoperator):
         if not self.new_state_event.wait(timeout=2):
             raise TimeoutError(f"{self}: Timed out waiting for state after 2s.")
 
-        if not self.is_calibrated:
+        if not self.is_calibrated and calibrate:
             self.calibrate()
 
         logger.info(f"{self} connected.")
@@ -178,7 +179,9 @@ class HomunculusGlove(Teleoperator):
         start_positions = self._read(joints, normalize=False)
         mins = start_positions.copy()
         maxes = start_positions.copy()
-        while True:
+        
+        user_pressed_enter = False
+        while not user_pressed_enter:
             positions = self._read(joints, normalize=False)
             mins = {joint: min(positions[joint], min_) for joint, min_ in mins.items()}
             maxes = {joint: max(positions[joint], max_) for joint, max_ in maxes.items()}
@@ -192,9 +195,9 @@ class HomunculusGlove(Teleoperator):
                     )
 
             if enter_pressed():
-                break
+                user_pressed_enter = True
 
-            if display_values:
+            if display_values and not user_pressed_enter:
                 # Move cursor up to overwrite the previous output
                 move_cursor_up(len(joints) + 3)
 
@@ -207,7 +210,7 @@ class HomunculusGlove(Teleoperator):
     def configure(self) -> None:
         pass
 
-    def _normalize(self, values: dict[str, int], joints: list[str] | None = None):
+    def _normalize(self, values: dict[str, int]) -> dict[str, float]:
         if not self.calibration:
             raise RuntimeError(f"{self} has no calibration registered.")
 
@@ -249,7 +252,7 @@ class HomunculusGlove(Teleoperator):
             state = {k: v for k, v in state.items() if k in joints}
 
         if normalize:
-            state = self._normalize(state, joints)
+            state = self._normalize(state)
 
         return state
 
@@ -258,7 +261,7 @@ class HomunculusGlove(Teleoperator):
         Continuously read from the serial buffer in its own thread and sends values to the main thread through
         a queue.
         """
-        while True:
+        while not self.stop_event.is_set():
             try:
                 if self.serial.in_waiting > 0:
                     self.serial.flush()
@@ -288,6 +291,7 @@ class HomunculusGlove(Teleoperator):
         if not self.is_connected:
             DeviceNotConnectedError(f"{self} is not connected.")
 
+        self.stop_event.set()
         self.thread.join(timeout=0.5)
         self.serial.close()
         logger.info(f"{self} disconnected.")

@@ -4,12 +4,11 @@ import traceback
 from lerobot.teleoperators.homunculus import HomunculusGlove, HomunculusGloveConfig
 from lerobot.utils.utils import move_cursor_up
 
-config = HomunculusGloveConfig("/dev/tty.usbmodem11301", side="left", id="left")
+config = HomunculusGloveConfig("/dev/tty.usbmodem11101", side="left", id="left")
 glove = HomunculusGlove(config)
-glove.connect()
+glove.connect(calibrate=True)
 
 display_len = max(len(key) for key in glove.action_features)
-glove.calibrate()
 try:
     while True:
         start = time.perf_counter()
