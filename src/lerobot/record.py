@@ -40,9 +40,7 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from pprint import pformat
-
-import numpy as np
-import rerun as rr
+from typing import List
 
 from lerobot.cameras import (  # noqa: F401
     CameraConfig,  # noqa: F401
@@ -72,6 +70,7 @@ from lerobot.teleoperators import (  # noqa: F401
     so100_leader,
     so101_leader,
 )
+from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop
 from lerobot.utils.control_utils import (
     init_keyboard_listener,
     is_headless,
@@ -85,7 +84,7 @@ from lerobot.utils.utils import (
     init_logging,
     log_say,
 )
-from lerobot.utils.visualization_utils import _init_rerun
+from lerobot.utils.visualization_utils import _init_rerun, log_rerun_data
 
 
 @dataclass
@@ -165,7 +164,7 @@ def record_loop(
     events: dict,
     fps: int,
     dataset: LeRobotDataset | None = None,
-    teleop: Teleoperator | None = None,
+    teleop: Teleoperator | List[Teleoperator] | None = None,
     policy: PreTrainedPolicy | None = None,
     control_time_s: int | None = None,
     single_task: str | None = None,
@@ -173,6 +172,23 @@ def record_loop(
 ):
     if dataset is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
+
+    teleop_arm = teleop_keyboard = None
+    if isinstance(teleop, list):
+        teleop_keyboard = next((t for t in teleop if isinstance(t, KeyboardTeleop)), None)
+        teleop_arm = next(
+            (
+                t
+                for t in teleop
+                if isinstance(t, (so100_leader.SO100Leader, so101_leader.SO101Leader, koch_leader.KochLeader))
+            ),
+            None,
+        )
+
+        if not (teleop_arm and teleop_keyboard and len(teleop) == 2 and robot.name == "lekiwi_client"):
+            raise ValueError(
+                "For multi-teleop, the list must contain exactly one KeyboardTeleop and one arm teleoperator. Currently only supported for LeKiwi robot."
+            )
 
     # if policy is given it needs cleaning up
     if policy is not None:
@@ -202,8 +218,17 @@ def record_loop(
                 robot_type=robot.robot_type,
             )
             action = {key: action_values[i].item() for i, key in enumerate(robot.action_features)}
-        elif policy is None and teleop is not None:
+        elif policy is None and isinstance(teleop, Teleoperator):
             action = teleop.get_action()
+        elif policy is None and isinstance(teleop, list):
+            # TODO(pepijn, steven): clean the record loop for use of multiple robots (possibly with pipeline)
+            arm_action = teleop_arm.get_action()
+            arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
+
+            keyboard_action = teleop_keyboard.get_action()
+            base_action = robot._from_keyboard_to_base_action(keyboard_action)
+
+            action = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
         else:
             logging.info(
                 "No policy or teleoperator provided, skipping action generation."
@@ -222,14 +247,7 @@ def record_loop(
             dataset.add_frame(frame, task=single_task)
 
         if display_data:
-            for obs, val in observation.items():
-                if isinstance(val, float):
-                    rr.log(f"observation.{obs}", rr.Scalar(val))
-                elif isinstance(val, np.ndarray):
-                    rr.log(f"observation.{obs}", rr.Image(val), static=True)
-            for act, val in action.items():
-                if isinstance(val, float):
-                    rr.log(f"action.{act}", rr.Scalar(val))
+            log_rerun_data(observation, action)
 
         dt_s = time.perf_counter() - start_loop_t
         busy_wait(1 / fps - dt_s)

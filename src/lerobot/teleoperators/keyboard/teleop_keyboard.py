@@ -196,17 +196,18 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
         delta_x = 0.0
         delta_y = 0.0
         delta_z = 0.0
+        gripper_action = 1.0
 
         # Generate action based on current key states
         for key, val in self.current_pressed.items():
             if key == keyboard.Key.up:
-                delta_x = int(val)
-            elif key == keyboard.Key.down:
-                delta_x = -int(val)
-            elif key == keyboard.Key.left:
-                delta_y = int(val)
-            elif key == keyboard.Key.right:
                 delta_y = -int(val)
+            elif key == keyboard.Key.down:
+                delta_y = int(val)
+            elif key == keyboard.Key.left:
+                delta_x = int(val)
+            elif key == keyboard.Key.right:
+                delta_x = -int(val)
             elif key == keyboard.Key.shift:
                 delta_z = -int(val)
             elif key == keyboard.Key.shift_r:
@@ -230,7 +231,6 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
             "delta_z": delta_z,
         }
 
-        gripper_action = 1  # default gripper action is to stay
         if self.config.use_gripper:
             action_dict["gripper"] = gripper_action
 

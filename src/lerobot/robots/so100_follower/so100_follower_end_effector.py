@@ -30,7 +30,6 @@ from . import SO100Follower
 from .config_so100_follower import SO100FollowerEndEffectorConfig
 
 logger = logging.getLogger(__name__)
-EE_FRAME = "gripper_tip"
 
 
 class SO100FollowerEndEffector(SO100Follower):
@@ -64,7 +63,16 @@ class SO100FollowerEndEffector(SO100Follower):
         self.config = config
 
         # Initialize the kinematics module for the so100 robot
-        self.kinematics = RobotKinematics(robot_type="so_new_calibration")
+        if self.config.urdf_path is None:
+            raise ValueError(
+                "urdf_path must be provided in the configuration for end-effector control. "
+                "Please set urdf_path in your SO100FollowerEndEffectorConfig."
+            )
+
+        self.kinematics = RobotKinematics(
+            urdf_path=self.config.urdf_path,
+            target_frame_name=self.config.target_frame_name,
+        )
 
         # Store the bounds for end-effector position
         self.end_effector_bounds = self.config.end_effector_bounds
@@ -126,7 +134,7 @@ class SO100FollowerEndEffector(SO100Follower):
 
         # Calculate current end-effector position using forward kinematics
         if self.current_ee_pos is None:
-            self.current_ee_pos = self.kinematics.forward_kinematics(self.current_joint_pos, frame=EE_FRAME)
+            self.current_ee_pos = self.kinematics.forward_kinematics(self.current_joint_pos)
 
         # Set desired end-effector position by adding delta
         desired_ee_pos = np.eye(4)
@@ -142,11 +150,10 @@ class SO100FollowerEndEffector(SO100Follower):
             )
 
         # Compute inverse kinematics to get joint positions
-        target_joint_values_in_degrees = self.kinematics.ik(
-            self.current_joint_pos, desired_ee_pos, position_only=True, frame=EE_FRAME
+        target_joint_values_in_degrees = self.kinematics.inverse_kinematics(
+            self.current_joint_pos, desired_ee_pos
         )
 
-        target_joint_values_in_degrees = np.clip(target_joint_values_in_degrees, -180.0, 180.0)
         # Create joint space action dictionary
         joint_action = {
             f"{key}.pos": target_joint_values_in_degrees[i] for i, key in enumerate(self.bus.motors.keys())
