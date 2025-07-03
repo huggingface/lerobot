@@ -16,10 +16,9 @@
 
 import logging
 import threading
-from pprint import pformat
-from typing import Dict
 from collections import deque
-from typing import Optional, Deque
+from pprint import pformat
+from typing import Deque, Dict, Optional
 
 import serial
 
@@ -56,12 +55,13 @@ class HomunculusArm(Teleoperator):
             "wrist_pitch": MotorNormMode.RANGE_M100_100,
         }
         n = 50
-                # EMA parameters ---------------------------------------------------
+        # EMA parameters ---------------------------------------------------
         self.n: int = n
         self.alpha: float = 2 / (n + 1)
         # one deque *per joint* so we can inspect raw history if needed
         self._buffers: Dict[str, Deque[int]] = {
-            joint: deque(maxlen=n) for joint in (
+            joint: deque(maxlen=n)
+            for joint in (
                 "shoulder_pitch",
                 "shoulder_yaw",
                 "shoulder_roll",
@@ -72,7 +72,7 @@ class HomunculusArm(Teleoperator):
             )
         }
         # running EMA value per joint – lazily initialised on first read
-        self._ema: Dict[str, Optional[float]] = {j: None for j in self._buffers}
+        self._ema: Dict[str, Optional[float]] = dict.fromkeys(self._buffers)
 
         self._state: dict[str, float] | None = None
         self.new_state_event = threading.Event()
@@ -160,7 +160,7 @@ class HomunculusArm(Teleoperator):
         start_positions = self._read(joints, normalize=False)
         mins = start_positions.copy()
         maxes = start_positions.copy()
-        
+
         user_pressed_enter = False
         while not user_pressed_enter:
             positions = self._read(joints, normalize=False)

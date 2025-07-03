@@ -179,7 +179,7 @@ class HomunculusGlove(Teleoperator):
         start_positions = self._read(joints, normalize=False)
         mins = start_positions.copy()
         maxes = start_positions.copy()
-        
+
         user_pressed_enter = False
         while not user_pressed_enter:
             positions = self._read(joints, normalize=False)
