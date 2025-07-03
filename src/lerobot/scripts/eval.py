@@ -73,7 +73,7 @@ from lerobot.policies.factory import make_policy
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import get_device_from_parameters
 from lerobot.processor.observation_processor import ObservationProcessor
-from lerobot.processor.pipeline import RobotPipeline, TransitionIndex
+from lerobot.processor.pipeline import RobotProcessor, TransitionIndex
 from lerobot.utils.io_utils import write_video
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import (
@@ -130,8 +130,8 @@ def rollout(
     if render_callback is not None:
         render_callback(env)
 
-    # Create observation processing pipeline
-    obs_pipeline = RobotPipeline([ObservationProcessor()])
+    # Create observation processing processor
+    obs_processor = RobotProcessor([ObservationProcessor()])
 
     all_observations = []
     all_actions = []
@@ -153,7 +153,7 @@ def rollout(
     while not np.all(done):
         # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
         transition = (observation, None, None, None, None, None, None)
-        processed_transition = obs_pipeline(transition)
+        processed_transition = obs_processor(transition)
         observation = processed_transition[TransitionIndex.OBSERVATION]
         if return_observations:
             all_observations.append(deepcopy(observation))
@@ -203,7 +203,7 @@ def rollout(
     # Track the final observation.
     if return_observations:
         transition = (observation, None, None, None, None, None, None)
-        processed_transition = obs_pipeline(transition)
+        processed_transition = obs_processor(transition)
         observation = processed_transition[TransitionIndex.OBSERVATION]
         all_observations.append(deepcopy(observation))
 
