@@ -7,9 +7,9 @@ from lerobot.utils.utils import move_cursor_up
 
 
 def make_left_arm() -> tuple[HomunculusArm, HopeJrArm]:
-    left_exo_arm_cfg = HomunculusArmConfig("/dev/tty.usbmodem2101", id="left")
+    left_exo_arm_cfg = HomunculusArmConfig("/dev/tty.usbmodem11301", id="left")
     left_exo_arm = HomunculusArm(left_exo_arm_cfg)
-    left_arm_cfg = HopeJrArmConfig("/dev/tty.usbserial-140", id="left")
+    left_arm_cfg = HopeJrArmConfig("/dev/tty.usbserial-1120", id="left")
     left_arm = HopeJrArm(left_arm_cfg)
     return left_exo_arm, left_arm
 

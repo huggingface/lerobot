@@ -1,15 +1,15 @@
 import time
 import traceback
 
-from lerobot.robots.hope_jr import HopeJrHand, HopeJrHandConfig, homonculus_glove_to_hope_jr_hand
+from lerobot.robots.hope_jr import HopeJrHand, HopeJrHandConfig, homunculus_glove_to_hope_jr_hand
 from lerobot.teleoperators.homunculus import HomunculusGlove, HomunculusGloveConfig
 from lerobot.utils.utils import move_cursor_up
 
 
 def make_left_hand() -> tuple[HomunculusGlove, HopeJrHand]:
-    left_glove_cfg = HomunculusGloveConfig("/dev/tty.usbmodem1101", id="left", side="left")
+    left_glove_cfg = HomunculusGloveConfig("/dev/tty.usbmodem11101", id="left", side="left")
     left_glove = HomunculusGlove(left_glove_cfg)
-    left_hand_cfg = HopeJrHandConfig("/dev/tty.usbmodem58760433641", id="left", side="left")
+    left_hand_cfg = HopeJrHandConfig("/dev/tty.usbmodem58760432281", id="left", side="left")
     left_hand = HopeJrHand(left_hand_cfg)
     return left_glove, left_hand
 
@@ -25,7 +25,7 @@ def main():
             start = time.perf_counter()
 
             left_glove_action = left_glove.get_action()
-            left_hand_action = homonculus_glove_to_hope_jr_hand(left_glove_action)
+            left_hand_action = homunculus_glove_to_hope_jr_hand(left_glove_action)
             left_hand.send_action(left_hand_action)
 
             time.sleep(0.01)
