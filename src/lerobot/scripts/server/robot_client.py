@@ -25,8 +25,8 @@ from lerobot.scripts.server.helpers import (
     visualize_action_queue_size,
 )
 from lerobot.transport import (
-    async_inference_pb2,  # type: ignore
-    async_inference_pb2_grpc,  # type: ignore
+    services_pb2,  # type: ignore
+    services_pb2_grpc,  # type: ignore
 )
 from lerobot.transport.utils import send_bytes_in_chunks
 
@@ -46,7 +46,7 @@ class RobotClient:
             config.policy_type, config.pretrained_name_or_path, config.lerobot_features, config.policy_device
         )
         self.channel = grpc.insecure_channel(self.server_address)
-        self.stub = async_inference_pb2_grpc.AsyncInferenceStub(self.channel)
+        self.stub = services_pb2_grpc.AsyncInferenceStub(self.channel)
         self.logger.info(f"Initializing client to connect to server at {self.server_address}")
 
         self._running_event = threading.Event()
@@ -83,13 +83,13 @@ class RobotClient:
         try:
             # client-server handshake
             start_time = time.perf_counter()
-            self.stub.Ready(async_inference_pb2.Empty())
+            self.stub.Ready(services_pb2.Empty())
             end_time = time.perf_counter()
             self.logger.info(f"Connected to policy server in {end_time - start_time:.4f}s")
 
             # send policy instructions
             policy_config_bytes = pickle.dumps(self.policy_config)
-            policy_setup = async_inference_pb2.PolicySetup(data=policy_config_bytes)
+            policy_setup = services_pb2.PolicySetup(data=policy_config_bytes)
 
             self.logger.info("Sending policy instructions to policy server")
             self.logger.info(
@@ -139,7 +139,7 @@ class RobotClient:
         try:
             observation_iterator = send_bytes_in_chunks(
                 observation_bytes,
-                async_inference_pb2.Observation,
+                services_pb2.Observation,
                 log_prefix="[CLIENT] Observation",
                 silent=True,
             )
@@ -215,7 +215,7 @@ class RobotClient:
         while self.running:
             try:
                 # Use StreamActions to get a stream of actions from the server
-                actions_chunk = self.stub.GetActions(async_inference_pb2.Empty())
+                actions_chunk = self.stub.GetActions(services_pb2.Empty())
                 receive_time = time.time()
 
                 # Deserialize bytes back into list[TimedAction]
