@@ -459,7 +459,7 @@ def parse_args():
 
     parser.add_argument(
         "--debug-visualize-queue-size",
-        action="store_false",
+        action="store_true",
         help="Trigger visualization of action queue size upon stopping the client, to tweak client hyperparameters (default: False)",
     )
 
