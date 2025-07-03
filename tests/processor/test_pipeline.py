@@ -20,10 +20,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
 import torch
+import torch.nn as nn
 
-from lerobot.processor.pipeline import EnvTransition, RobotPipeline
+from lerobot.processor.pipeline import EnvTransition, RobotProcessor
 
 
 @dataclass
@@ -139,7 +141,7 @@ class MockStepWithTensorState:
 
 def test_empty_pipeline():
     """Test pipeline with no steps."""
-    pipeline = RobotPipeline()
+    pipeline = RobotProcessor()
 
     transition = (None, None, 0.0, False, False, {}, {})
     result = pipeline(transition)
@@ -151,7 +153,7 @@ def test_empty_pipeline():
 def test_single_step_pipeline():
     """Test pipeline with a single step."""
     step = MockStep("test_step")
-    pipeline = RobotPipeline([step])
+    pipeline = RobotProcessor([step])
 
     transition = (None, None, 0.0, False, False, {}, {})
     result = pipeline(transition)
@@ -168,7 +170,7 @@ def test_multiple_steps_pipeline():
     """Test pipeline with multiple steps."""
     step1 = MockStep("step1")
     step2 = MockStep("step2")
-    pipeline = RobotPipeline([step1, step2])
+    pipeline = RobotProcessor([step1, step2])
 
     transition = (None, None, 0.0, False, False, {}, {})
     result = pipeline(transition)
@@ -180,7 +182,7 @@ def test_multiple_steps_pipeline():
 
 def test_invalid_transition_format():
     """Test pipeline with invalid transition format."""
-    pipeline = RobotPipeline([MockStep()])
+    pipeline = RobotProcessor([MockStep()])
 
     # Test with wrong number of elements
     with pytest.raises(ValueError, match="EnvTransition must be a 7-tuple"):
@@ -195,7 +197,7 @@ def test_step_through():
     """Test step_through method."""
     step1 = MockStep("step1")
     step2 = MockStep("step2")
-    pipeline = RobotPipeline([step1, step2])
+    pipeline = RobotProcessor([step1, step2])
 
     transition = (None, None, 0.0, False, False, {}, {})
 
@@ -211,7 +213,7 @@ def test_indexing():
     """Test pipeline indexing."""
     step1 = MockStep("step1")
     step2 = MockStep("step2")
-    pipeline = RobotPipeline([step1, step2])
+    pipeline = RobotProcessor([step1, step2])
 
     # Test integer indexing
     assert pipeline[0] is step1
@@ -219,7 +221,7 @@ def test_indexing():
 
     # Test slice indexing
     sub_pipeline = pipeline[0:1]
-    assert isinstance(sub_pipeline, RobotPipeline)
+    assert isinstance(sub_pipeline, RobotProcessor)
     assert len(sub_pipeline) == 1
     assert sub_pipeline[0] is step1
 
@@ -227,7 +229,7 @@ def test_indexing():
 def test_hooks():
     """Test before/after step hooks."""
     step = MockStep("test_step")
-    pipeline = RobotPipeline([step])
+    pipeline = RobotProcessor([step])
 
     before_calls = []
     after_calls = []
@@ -253,7 +255,7 @@ def test_hooks():
 def test_hook_modification():
     """Test that hooks can modify transitions."""
     step = MockStep("test_step")
-    pipeline = RobotPipeline([step])
+    pipeline = RobotProcessor([step])
 
     def modify_reward_hook(idx: int, transition: EnvTransition):
         obs, action, reward, done, truncated, info, comp_data = transition
@@ -270,7 +272,7 @@ def test_hook_modification():
 def test_reset():
     """Test pipeline reset functionality."""
     step = MockStep("test_step")
-    pipeline = RobotPipeline([step])
+    pipeline = RobotProcessor([step])
 
     reset_called = []
 
@@ -297,7 +299,7 @@ def test_profile_steps():
     """Test step profiling functionality."""
     step1 = MockStep("step1")
     step2 = MockStep("step2")
-    pipeline = RobotPipeline([step1, step2])
+    pipeline = RobotProcessor([step1, step2])
 
     transition = (None, None, 0.0, False, False, {}, {})
 
@@ -322,14 +324,14 @@ def test_save_and_load_pretrained():
     step1.counter = 5
     step2.counter = 10
 
-    pipeline = RobotPipeline([step1, step2], name="TestPipeline", seed=42)
+    pipeline = RobotProcessor([step1, step2], name="TestPipeline", seed=42)
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         # Save pipeline
         pipeline.save_pretrained(tmp_dir)
 
         # Check files were created
-        config_path = Path(tmp_dir) / "pipeline.json"
+        config_path = Path(tmp_dir) / "processor.json"
         assert config_path.exists()
 
         # Check config content
@@ -345,7 +347,7 @@ def test_save_and_load_pretrained():
         assert config["steps"][1]["config"]["counter"] == 10
 
         # Load pipeline
-        loaded_pipeline = RobotPipeline.from_pretrained(tmp_dir)
+        loaded_pipeline = RobotProcessor.from_pretrained(tmp_dir)
 
         assert loaded_pipeline.name == "TestPipeline"
         assert loaded_pipeline.seed == 42
@@ -359,7 +361,7 @@ def test_save_and_load_pretrained():
 def test_step_without_optional_methods():
     """Test pipeline with steps that don't implement optional methods."""
     step = MockStepWithoutOptionalMethods(multiplier=3.0)
-    pipeline = RobotPipeline([step])
+    pipeline = RobotProcessor([step])
 
     transition = (None, None, 2.0, False, False, {}, {})
     result = pipeline(transition)
@@ -372,14 +374,14 @@ def test_step_without_optional_methods():
     # Save/load should work even without optional methods
     with tempfile.TemporaryDirectory() as tmp_dir:
         pipeline.save_pretrained(tmp_dir)
-        loaded_pipeline = RobotPipeline.from_pretrained(tmp_dir)
+        loaded_pipeline = RobotProcessor.from_pretrained(tmp_dir)
         assert len(loaded_pipeline) == 1
 
 
 def test_mixed_json_and_tensor_state():
     """Test step with both JSON attributes and tensor state."""
     step = MockStepWithTensorState(name="stats", learning_rate=0.05, window_size=5)
-    pipeline = RobotPipeline([step])
+    pipeline = RobotProcessor([step])
 
     # Process some transitions with rewards
     for i in range(10):
@@ -395,13 +397,13 @@ def test_mixed_json_and_tensor_state():
         pipeline.save_pretrained(tmp_dir)
 
         # Check that both config and state files were created
-        config_path = Path(tmp_dir) / "pipeline.json"
+        config_path = Path(tmp_dir) / "processor.json"
         state_path = Path(tmp_dir) / "step_0.safetensors"
         assert config_path.exists()
         assert state_path.exists()
 
         # Load and verify
-        loaded_pipeline = RobotPipeline.from_pretrained(tmp_dir)
+        loaded_pipeline = RobotProcessor.from_pretrained(tmp_dir)
         loaded_step = loaded_pipeline.steps[0]
 
         # Check JSON attributes were restored
@@ -412,3 +414,512 @@ def test_mixed_json_and_tensor_state():
         # Check tensor state was restored
         assert loaded_step.running_count.item() == 10
         assert torch.allclose(loaded_step.running_mean, step.running_mean)
+
+
+class MockModuleStep(nn.Module):
+    """Mock step that inherits from nn.Module to test state_dict handling of module parameters."""
+
+    def __init__(self, input_dim: int = 10, hidden_dim: int = 5):
+        super().__init__()
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        self.linear = nn.Linear(input_dim, hidden_dim)
+        self.running_mean = nn.Parameter(torch.zeros(hidden_dim), requires_grad=False)
+        self.counter = 0  # Non-tensor state
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.linear(x)
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Process transition and update running mean."""
+        obs, action, reward, done, truncated, info, comp_data = transition
+
+        if obs is not None and isinstance(obs, torch.Tensor):
+            # Process observation through linear layer
+            processed = self.forward(obs[:, : self.input_dim])
+
+            # Update running mean in-place (don't reassign the parameter)
+            with torch.no_grad():
+                self.running_mean.mul_(0.9).add_(processed.mean(dim=0), alpha=0.1)
+
+            self.counter += 1
+
+        return transition
+
+    def get_config(self) -> dict[str, Any]:
+        return {
+            "input_dim": self.input_dim,
+            "hidden_dim": self.hidden_dim,
+            "counter": self.counter,
+        }
+
+    def state_dict(self) -> dict[str, torch.Tensor]:
+        """Override to return all module parameters and buffers."""
+        # Get the module's state dict (includes all parameters and buffers)
+        return super().state_dict()
+
+    def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
+        """Override to load all module parameters and buffers."""
+        # Use the module's load_state_dict
+        super().load_state_dict(state)
+
+    def reset(self) -> None:
+        self.running_mean.zero_()
+        self.counter = 0
+
+
+def test_to_device_with_state_dict():
+    """Test moving pipeline to device for steps with state_dict."""
+    step = MockStepWithTensorState(name="device_test", window_size=5)
+    pipeline = RobotProcessor([step])
+
+    # Process some transitions to populate state
+    for i in range(10):
+        transition = (None, None, float(i), False, False, {}, {})
+        pipeline(transition)
+
+    # Check initial device (should be CPU)
+    assert step.running_mean.device.type == "cpu"
+    assert step.running_count.device.type == "cpu"
+
+    # Move to same device (CPU)
+    result = pipeline.to("cpu")
+    assert result is pipeline  # Check it returns self
+    assert step.running_mean.device.type == "cpu"
+    assert step.running_count.device.type == "cpu"
+
+    # Test with torch.device object
+    result = pipeline.to(torch.device("cpu"))
+    assert result is pipeline
+    assert step.running_mean.device.type == "cpu"
+
+    # If CUDA is available, test GPU transfer
+    if torch.cuda.is_available():
+        result = pipeline.to("cuda")
+        assert result is pipeline
+        assert step.running_mean.device.type == "cuda"
+        assert step.running_count.device.type == "cuda"
+
+        # Move back to CPU
+        pipeline.to("cpu")
+        assert step.running_mean.device.type == "cpu"
+        assert step.running_count.device.type == "cpu"
+
+
+def test_to_device_with_module():
+    """Test moving pipeline to device for steps that inherit from nn.Module.
+
+    Even though the step inherits from nn.Module, the pipeline will use the
+    state_dict/load_state_dict approach to move tensors to the device.
+    """
+    module_step = MockModuleStep(input_dim=5, hidden_dim=3)
+    pipeline = RobotProcessor([module_step])
+
+    # Process some data
+    obs = torch.randn(2, 5)
+    transition = (obs, None, 1.0, False, False, {}, {})
+    pipeline(transition)
+
+    # Check initial device
+    assert module_step.linear.weight.device.type == "cpu"
+    assert module_step.running_mean.device.type == "cpu"
+
+    # Move to same device
+    result = pipeline.to("cpu")
+    assert result is pipeline
+    assert module_step.linear.weight.device.type == "cpu"
+    assert module_step.running_mean.device.type == "cpu"
+
+    # If CUDA is available, test GPU transfer
+    if torch.cuda.is_available():
+        result = pipeline.to("cuda:0")
+        assert result is pipeline
+        assert module_step.linear.weight.device.type == "cuda"
+        assert module_step.linear.weight.device.index == 0
+        assert module_step.running_mean.device.type == "cuda"
+        assert module_step.running_mean.device.index == 0
+
+        # Verify the module still works after transfer
+        obs_cuda = torch.randn(2, 5, device="cuda:0")
+        transition = (obs_cuda, None, 1.0, False, False, {}, {})
+        pipeline(transition)  # Should not raise an error
+
+
+def test_to_device_mixed_steps():
+    """Test moving pipeline with various types of steps, all using state_dict approach."""
+    module_step = MockModuleStep()
+    state_dict_step = MockStepWithTensorState()
+    simple_step = MockStepWithoutOptionalMethods()  # No tensor state
+
+    pipeline = RobotProcessor([module_step, state_dict_step, simple_step])
+
+    # Process some data
+    for i in range(5):
+        transition = (torch.randn(2, 10), None, float(i), False, False, {}, {})
+        pipeline(transition)
+
+    # Check initial state
+    assert module_step.linear.weight.device.type == "cpu"
+    assert state_dict_step.running_mean.device.type == "cpu"
+
+    # Move to device
+    result = pipeline.to("cpu")
+    assert result is pipeline
+
+    if torch.cuda.is_available():
+        pipeline.to("cuda")
+        assert module_step.linear.weight.device.type == "cuda"
+        assert module_step.running_mean.device.type == "cuda"
+        assert state_dict_step.running_mean.device.type == "cuda"
+        assert state_dict_step.running_count.device.type == "cuda"
+
+
+def test_to_device_empty_state():
+    """Test moving pipeline with steps that have empty state_dict."""
+    step = MockStep("empty_state")  # This step has empty state_dict
+    pipeline = RobotProcessor([step])
+
+    # Should not raise an error even with empty state
+    result = pipeline.to("cpu")
+    assert result is pipeline
+
+    if torch.cuda.is_available():
+        result = pipeline.to("cuda")
+        assert result is pipeline
+
+
+def test_to_device_preserves_functionality():
+    """Test that pipeline functionality is preserved after device transfer."""
+    step = MockStepWithTensorState(window_size=3)
+    pipeline = RobotProcessor([step])
+
+    # Process initial data
+    rewards = [1.0, 2.0, 3.0]
+    for r in rewards:
+        transition = (None, None, r, False, False, {}, {})
+        pipeline(transition)
+
+    # Check state before transfer
+    initial_mean = step.running_mean.clone()
+    initial_count = step.running_count.clone()
+
+    # Move to device (CPU to CPU in this case, but tests the mechanism)
+    pipeline.to("cpu")
+
+    # Verify state is preserved
+    assert torch.allclose(step.running_mean, initial_mean)
+    assert step.running_count == initial_count
+
+    # Process more data to ensure functionality
+    transition = (None, None, 4.0, False, False, {}, {})
+    _ = pipeline(transition)
+
+    assert step.running_count == 4
+    assert step.running_mean[0] == 4.0  # First slot should have been overwritten with 4.0
+
+
+def test_to_device_invalid_device():
+    """Test error handling for invalid devices."""
+    pipeline = RobotProcessor([MockStep()])
+
+    # Invalid device names should raise an error from PyTorch
+    with pytest.raises(RuntimeError):
+        pipeline.to("invalid_device")
+
+
+def test_to_device_chaining():
+    """Test that to() returns self for method chaining."""
+    step1 = MockStepWithTensorState()
+    step2 = MockModuleStep()
+    pipeline = RobotProcessor([step1, step2])
+
+    # Test chaining
+    result = pipeline.to("cpu").reset()
+    assert result is None  # reset() returns None
+
+    # Can chain multiple to() calls
+    result1 = pipeline.to("cpu")
+    result2 = result1.to("cpu")
+    assert result1 is pipeline
+    assert result2 is pipeline
+
+
+class MockNonModuleStepWithState:
+    """Mock step that explicitly does NOT inherit from nn.Module but has tensor state.
+
+    This tests the state_dict/load_state_dict path for regular classes.
+    """
+
+    def __init__(self, name: str = "non_module_step", feature_dim: int = 10):
+        self.name = name
+        self.feature_dim = feature_dim
+
+        # Initialize tensor state - these are regular tensors, not nn.Parameters
+        self.weights = torch.randn(feature_dim, feature_dim)
+        self.bias = torch.zeros(feature_dim)
+        self.running_stats = torch.zeros(feature_dim)
+        self.step_count = torch.tensor(0)
+
+        # Non-tensor state
+        self.config_value = 42
+        self.history = []
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Process transition using tensor operations."""
+        obs, action, reward, done, truncated, info, comp_data = transition
+
+        if obs is not None and isinstance(obs, torch.Tensor) and obs.numel() >= self.feature_dim:
+            # Perform some tensor operations
+            flat_obs = obs.flatten()[: self.feature_dim]
+
+            # Simple linear transformation (ensure dimensions match for matmul)
+            output = torch.matmul(self.weights.T, flat_obs) + self.bias
+
+            # Update running stats
+            self.running_stats = 0.9 * self.running_stats + 0.1 * output
+            self.step_count += 1
+
+            # Add to complementary data
+            comp_data = {} if comp_data is None else dict(comp_data)
+            comp_data[f"{self.name}_mean_output"] = output.mean().item()
+            comp_data[f"{self.name}_steps"] = self.step_count.item()
+
+        return (obs, action, reward, done, truncated, info, comp_data)
+
+    def get_config(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "feature_dim": self.feature_dim,
+            "config_value": self.config_value,
+        }
+
+    def state_dict(self) -> dict[str, torch.Tensor]:
+        """Return only tensor state."""
+        return {
+            "weights": self.weights,
+            "bias": self.bias,
+            "running_stats": self.running_stats,
+            "step_count": self.step_count,
+        }
+
+    def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
+        """Load tensor state."""
+        self.weights = state["weights"]
+        self.bias = state["bias"]
+        self.running_stats = state["running_stats"]
+        self.step_count = state["step_count"]
+
+    def reset(self) -> None:
+        """Reset statistics but keep learned parameters."""
+        self.running_stats.zero_()
+        self.step_count.zero_()
+        self.history.clear()
+
+
+def test_to_device_non_module_class():
+    """Test moving pipeline to device for regular classes (non nn.Module) with tensor state.
+
+    This ensures the state_dict/load_state_dict approach works for classes that
+    don't inherit from nn.Module but still have tensor state to manage.
+    """
+    # Create a non-module step with tensor state
+    non_module_step = MockNonModuleStepWithState(name="device_test", feature_dim=5)
+    pipeline = RobotProcessor([non_module_step])
+
+    # Process some data to populate state
+    for i in range(3):
+        obs = torch.randn(2, 5)
+        transition = (obs, None, float(i), False, False, {}, {})
+        result = pipeline(transition)
+        comp_data = result[6]
+        assert f"{non_module_step.name}_steps" in comp_data
+
+    # Verify all tensors are on CPU initially
+    assert non_module_step.weights.device.type == "cpu"
+    assert non_module_step.bias.device.type == "cpu"
+    assert non_module_step.running_stats.device.type == "cpu"
+    assert non_module_step.step_count.device.type == "cpu"
+
+    # Verify step count
+    assert non_module_step.step_count.item() == 3
+
+    # Store initial values for comparison
+    initial_weights = non_module_step.weights.clone()
+    initial_bias = non_module_step.bias.clone()
+    initial_stats = non_module_step.running_stats.clone()
+
+    # Move to same device (CPU)
+    result = pipeline.to("cpu")
+    assert result is pipeline
+
+    # Verify tensors are still on CPU and values unchanged
+    assert non_module_step.weights.device.type == "cpu"
+    assert torch.allclose(non_module_step.weights, initial_weights)
+    assert torch.allclose(non_module_step.bias, initial_bias)
+    assert torch.allclose(non_module_step.running_stats, initial_stats)
+
+    # If CUDA is available, test GPU transfer
+    if torch.cuda.is_available():
+        # Move to GPU
+        pipeline.to("cuda")
+
+        # Verify all tensors moved to GPU
+        assert non_module_step.weights.device.type == "cuda"
+        assert non_module_step.bias.device.type == "cuda"
+        assert non_module_step.running_stats.device.type == "cuda"
+        assert non_module_step.step_count.device.type == "cuda"
+
+        # Verify values are preserved
+        assert torch.allclose(non_module_step.weights.cpu(), initial_weights)
+        assert torch.allclose(non_module_step.bias.cpu(), initial_bias)
+        assert torch.allclose(non_module_step.running_stats.cpu(), initial_stats)
+        assert non_module_step.step_count.item() == 3
+
+        # Test that step still works on GPU
+        obs_gpu = torch.randn(2, 5, device="cuda")
+        transition = (obs_gpu, None, 1.0, False, False, {}, {})
+        result = pipeline(transition)
+        comp_data = result[6]
+
+        # Verify processing worked
+        assert comp_data[f"{non_module_step.name}_steps"] == 4
+
+        # Move back to CPU
+        pipeline.to("cpu")
+        assert non_module_step.weights.device.type == "cpu"
+        assert non_module_step.step_count.item() == 4
+
+
+def test_to_device_module_vs_non_module():
+    """Test that both nn.Module and non-Module steps work with the same state_dict approach."""
+    # Create both types of steps
+    module_step = MockModuleStep(input_dim=5, hidden_dim=3)
+    non_module_step = MockNonModuleStepWithState(name="non_module", feature_dim=5)
+
+    # Create pipeline with both
+    pipeline = RobotProcessor([module_step, non_module_step])
+
+    # Process some data
+    obs = torch.randn(2, 5)
+    transition = (obs, None, 1.0, False, False, {}, {})
+    _ = pipeline(transition)
+
+    # Check initial devices
+    assert module_step.linear.weight.device.type == "cpu"
+    assert module_step.running_mean.device.type == "cpu"
+    assert non_module_step.weights.device.type == "cpu"
+    assert non_module_step.running_stats.device.type == "cpu"
+
+    # Both should have been called
+    assert module_step.counter == 1
+    assert non_module_step.step_count.item() == 1
+
+    if torch.cuda.is_available():
+        # Move to GPU
+        pipeline.to("cuda")
+
+        # Verify both types of steps moved correctly
+        assert module_step.linear.weight.device.type == "cuda"
+        assert module_step.running_mean.device.type == "cuda"
+        assert non_module_step.weights.device.type == "cuda"
+        assert non_module_step.running_stats.device.type == "cuda"
+
+        # Process data on GPU
+        obs_gpu = torch.randn(2, 5, device="cuda")
+        transition = (obs_gpu, None, 2.0, False, False, {}, {})
+        _ = pipeline(transition)
+
+        # Verify both steps processed the data
+        assert module_step.counter == 2
+        assert non_module_step.step_count.item() == 2
+
+        # Move back to CPU and verify
+        pipeline.to("cpu")
+        assert module_step.linear.weight.device.type == "cpu"
+        assert non_module_step.weights.device.type == "cpu"
+
+
+class MockStepWithMixedState:
+    """Mock step demonstrating proper separation of tensor and non-tensor state.
+
+    Non-tensor state should go in get_config(), only tensors in state_dict().
+    """
+
+    def __init__(self, name: str = "mixed_state"):
+        self.name = name
+        self.tensor_data = torch.randn(5)
+        self.numpy_data = np.array([1, 2, 3, 4, 5])  # Goes in config
+        self.scalar_value = 42  # Goes in config
+        self.list_value = [1, 2, 3]  # Goes in config
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        # Simple pass-through
+        return transition
+
+    def state_dict(self) -> dict[str, torch.Tensor]:
+        """Return ONLY tensor state as per the type contract."""
+        return {
+            "tensor_data": self.tensor_data,
+        }
+
+    def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
+        """Load tensor state only."""
+        self.tensor_data = state["tensor_data"]
+
+    def get_config(self) -> dict[str, Any]:
+        """Non-tensor state goes here."""
+        return {
+            "name": self.name,
+            "numpy_data": self.numpy_data.tolist(),  # Convert to list for JSON serialization
+            "scalar_value": self.scalar_value,
+            "list_value": self.list_value,
+        }
+
+
+def test_to_device_with_mixed_state_types():
+    """Test that to() only moves tensor state, while non-tensor state remains in config."""
+    step = MockStepWithMixedState()
+    pipeline = RobotProcessor([step])
+
+    # Store initial values
+    initial_numpy = step.numpy_data.copy()
+    initial_scalar = step.scalar_value
+    initial_list = step.list_value.copy()
+
+    # Check initial state
+    assert step.tensor_data.device.type == "cpu"
+    assert isinstance(step.numpy_data, np.ndarray)
+    assert isinstance(step.scalar_value, int)
+    assert isinstance(step.list_value, list)
+
+    # Verify state_dict only contains tensors
+    state = step.state_dict()
+    assert all(isinstance(v, torch.Tensor) for v in state.values())
+    assert "tensor_data" in state
+    assert "numpy_data" not in state
+
+    # Move to same device
+    pipeline.to("cpu")
+
+    # Verify tensor moved and non-tensor attributes unchanged
+    assert step.tensor_data.device.type == "cpu"
+    assert np.array_equal(step.numpy_data, initial_numpy)
+    assert step.scalar_value == initial_scalar
+    assert step.list_value == initial_list
+
+    if torch.cuda.is_available():
+        # Move to GPU
+        pipeline.to("cuda")
+
+        # Only tensor should move to GPU
+        assert step.tensor_data.device.type == "cuda"
+
+        # Non-tensor values should remain unchanged
+        assert isinstance(step.numpy_data, np.ndarray)
+        assert np.array_equal(step.numpy_data, initial_numpy)
+        assert step.scalar_value == initial_scalar
+        assert step.list_value == initial_list
+
+        # Move back to CPU
+        pipeline.to("cpu")
+        assert step.tensor_data.device.type == "cpu"
