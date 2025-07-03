@@ -35,7 +35,7 @@
     style="width: 60%;"
   />
 
-  <p><strong>Meet HopeJR – A humanoid robot for dexterous manipulation!</strong></p>
+  <p><strong>Meet HopeJR – A humanoid robot arm and hand for dexterous manipulation!</strong></p>
   <p>Control it with exoskeletons and gloves for precise hand movements.</p>
   <p>Perfect for advanced manipulation tasks! 🤖</p>
 

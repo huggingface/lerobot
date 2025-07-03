@@ -3,20 +3,25 @@
 ## Prerequisites
 
 - [Hardware Setup](https://github.com/TheRobotStudio/HOPEJr)
-- Python environment with LeRobot installed
 
+## Install LeRobot
+
+Follow the [installation instructions](https://github.com/huggingface/lerobot#installation) to install LeRobot.
+
+Install LeRobot with HopeJR dependencies:
 ```bash
-pip install -e .
-pip install pygame
+pip install -e ".[hopejr]"
 ```
 
 ## Device Configuration
 
-Take note of ports for arm, hand, glove and exoskeleton by running:
+Before starting calibration and operation, you need to identify the USB ports for each HopeJR component. Run this script to find the USB ports for the arm, hand, glove, and exoskeleton:
 
 ```bash
 python -m lerobot.find_port
 ```
+
+This will display the available USB ports and their associated devices. Make note of the port paths (e.g., `/dev/tty.usbmodem58760433331`, `/dev/tty.usbmodem11301`) as you'll need to specify them in the `--robot.port` and `--teleop.port` parameters when recording data, replaying episodes, or running teleoperation scripts.
 
 ## Step 1: Calibration
 
@@ -28,7 +33,7 @@ Before performing teleoperation, HopeJR's limbs need to be calibrated. Calibrati
 python examples/hope_jr/vis/hand.py
 ```
 
-Once again a calibration GUI will pop up. Finger joints are named as follows:
+When running the calibration script, a calibration GUI will pop up. Finger joints are named as follows:
 
 **Thumb**:
 - **CMC**: base joint connecting thumb to hand
@@ -41,7 +46,7 @@ Once again a calibration GUI will pop up. Finger joints are named as follows:
 - **Ulnar flexor**: Moves base of finger towards the pinky
 - **PIP/DIP**: Flexes the distal and proximal phalanx of the finger
 
-Each one of these will need to calibrated individually via the GUI.
+Each one of these will need to be calibrated individually via the GUI.
  Note that ulnar and radial flexors should have ranges of the same size (but with different offsets) in order to get symmetric movement.
 
 <p align="center">
@@ -70,7 +75,7 @@ Once you have set the appropriate boundaries for all joints, click "Save" to sav
 python examples/hope_jr/vis/glove.py
 ```
 
-Move each finger through their full range of motion, starting from the thumb.
+Move each finger through its full range of motion, starting from the thumb.
 
 ```
 Move thumb through its entire range of motion.
@@ -184,7 +189,7 @@ time: 2.93ms (341 Hz)
 
 ## Step 2: Teleoperation
 
-Due to global variable conflicts in the feetech middleware, teleoperation for arm and hand must run in separate shell sessions:
+Due to global variable conflicts in the Feetech middleware, teleoperation for arm and hand must run in separate shell sessions:
 
 ```bash
 # Terminal 1: Left Arm
@@ -202,7 +207,7 @@ python examples/hope_jr/teleop/right_hand_teleop.py
 
 ## Step 3: Recording Data
 
-You can now record a LeRobot dataset using:
+You can now record a LeRobot dataset using the following command. For reference, you can see an example of a recorded HopeJR dataset at [nepyope/hopejr_test](https://huggingface.co/datasets/nepyope/hopejr_test):
 
 ```bash
 python -m lerobot.record \
@@ -254,15 +259,3 @@ python -m lerobot.replay \
 - `--dataset.episode`: Specific episode number to replay
 - `--dataset.root`: Local directory where the dataset is stored
 - `--robot.cameras`: Camera configuration (empty for replay)
-
-## Step 5: Training
-
-```bash
-python lerobot/scripts/train.py \
-    --policy.type=act \
-    --dataset.repo_id=your_username/hope_jr_dataset \
-    --training.offline_steps=100000 \
-    --training.batch_size=32 \
-    --training.lr=1e-4 \
-    --output_dir=outputs/hope_jr_policy
-```
