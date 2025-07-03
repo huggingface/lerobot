@@ -41,7 +41,7 @@ from lerobot.scripts.server.configs import RobotClientConfig
 from lerobot.scripts.server.helpers import TimedObservation
 from lerobot.scripts.server.policy_server import PolicyServer
 from lerobot.scripts.server.robot_client import RobotClient
-from lerobot.transport import async_inference_pb2_grpc  # type: ignore
+from lerobot.transport import services_pb2_grpc  # type: ignore
 from tests.async_inference.test_policy_server import policy_server  # noqa: F401
 
 # -----------------------------------------------------------------------------
@@ -55,7 +55,7 @@ def test_async_inference_e2e(policy_server, monkeypatch):  # noqa: F811
     # 1. Spawn a PolicyServer returning dummy action chunks
     # ------------------------------------------------------------------
     from lerobot.scripts.server.helpers import map_robot_keys_to_lerobot_features
-    from lerobot.transport import async_inference_pb2  # type: ignore
+    from lerobot.transport import services_pb2  # type: ignore
     from tests.mocks.mock_robot import MockRobotConfig
 
     test_config = MockRobotConfig()
@@ -78,13 +78,13 @@ def test_async_inference_e2e(policy_server, monkeypatch):  # noqa: F811
 
     # Bypass potentially heavy model loading inside SendPolicyInstructions
     def _fake_send_policy_instructions(self, request, context):  # noqa: N802
-        return async_inference_pb2.Empty()
+        return services_pb2.Empty()
 
     monkeypatch.setattr(PolicyServer, "SendPolicyInstructions", _fake_send_policy_instructions, raising=True)
 
     # Build gRPC server running a PolicyServer
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="policy_server"))
-    async_inference_pb2_grpc.add_AsyncInferenceServicer_to_server(policy_server, server)
+    services_pb2_grpc.add_AsyncInferenceServicer_to_server(policy_server, server)
 
     # Use the host/port specified in the fixture's config
     server_address = f"{policy_server.config.host}:{policy_server.config.port}"

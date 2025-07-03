@@ -23,12 +23,12 @@ from lerobot.scripts.server.helpers import (
     receive_bytes_in_chunks,
 )
 from lerobot.transport import (
-    async_inference_pb2,  # type: ignore
-    async_inference_pb2_grpc,  # type: ignore
+    services_pb2,  # type: ignore
+    services_pb2_grpc,  # type: ignore
 )
 
 
-class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
+class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
     prefix = "policy_server"
     logger = get_logger(prefix)
 
@@ -63,7 +63,7 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
 
         self._running_event.set()
 
-        return async_inference_pb2.Empty()
+        return services_pb2.Empty()
 
     def _validate_policy_specs(self, policy_specs: TinyPolicyConfig) -> None:
         assert isinstance(policy_specs, TinyPolicyConfig), (
@@ -102,7 +102,7 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
 
         self.logger.info(f"Time taken to put policy on {self.device}: {end - start:.4f} seconds")
 
-        return async_inference_pb2.Empty()
+        return services_pb2.Empty()
 
     def SendObservations(self, request_iterator, context):  # noqa: N802
         """Receive observations from the robot client"""
@@ -143,7 +143,7 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
         ):
             self.logger.info(f"Observation #{obs_timestep} has been filtered out")
 
-        return async_inference_pb2.Empty()
+        return services_pb2.Empty()
 
     def GetActions(self, request, context):  # noqa: N802
         """Returns actions to the robot client. Actions are sent as a single
@@ -169,7 +169,7 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
             serialize_time = time.perf_counter() - start_time
 
             # Create and return the action chunk
-            actions = async_inference_pb2.Actions(data=actions_bytes)
+            actions = services_pb2.Actions(data=actions_bytes)
 
             self.logger.info(
                 f"Action chunk #{obs.get_timestep()} generated | "
@@ -186,12 +186,12 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
             return actions
 
         except Empty:  # no observation added to queue in obs_queue_timeout
-            return async_inference_pb2.Empty()
+            return services_pb2.Empty()
 
         except Exception as e:
             self.logger.error(f"Error in StreamActions: {e}")
 
-            return async_inference_pb2.Empty()
+            return services_pb2.Empty()
 
     def _enqueue_and_go(self, obs: TimedObservation):
         # If queue is full, get the old observation to make room
@@ -333,7 +333,7 @@ def serve(config: Optional[PolicyServerConfig] = None, host: str = "localhost", 
 
     # Setup and start gRPC server
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
-    async_inference_pb2_grpc.add_AsyncInferenceServicer_to_server(policy_server, server)
+    services_pb2_grpc.add_AsyncInferenceServicer_to_server(policy_server, server)
     server.add_insecure_port(f"{config.host}:{config.port}")
 
     policy_server.logger.info(f"PolicyServer started on {config.host}:{config.port}")

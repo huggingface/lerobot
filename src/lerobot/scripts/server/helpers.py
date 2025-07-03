@@ -27,7 +27,7 @@ from lerobot.robots.robot import Robot
 from lerobot.robots.so100_follower import SO100FollowerConfig
 from lerobot.robots.utils import make_robot_from_config
 from lerobot.scripts.server.constants import SUPPORTED_ROBOTS
-from lerobot.transport import async_inference_pb2
+from lerobot.transport import services_pb2
 from lerobot.transport.utils import bytes_buffer_size
 from lerobot.utils.utils import init_logging
 
@@ -348,12 +348,12 @@ def send_bytes_in_chunks(
     logging_method(f"{log_prefix} Buffer size {size_in_bytes / 1024 / 1024} MB with")
 
     while sent_bytes < size_in_bytes:
-        transfer_state = async_inference_pb2.TransferState.TRANSFER_MIDDLE
+        transfer_state = services_pb2.TransferState.TRANSFER_MIDDLE
 
         if sent_bytes + chunk_size >= size_in_bytes:
-            transfer_state = async_inference_pb2.TransferState.TRANSFER_END
+            transfer_state = services_pb2.TransferState.TRANSFER_END
         elif sent_bytes == 0:
-            transfer_state = async_inference_pb2.TransferState.TRANSFER_BEGIN
+            transfer_state = services_pb2.TransferState.TRANSFER_BEGIN
 
         size_to_read = min(chunk_size, size_in_bytes - sent_bytes)
         chunk = buffer.read(size_to_read)
@@ -381,19 +381,19 @@ def receive_bytes_in_chunks(
             logger.info(f"{log_prefix} Shutting down receiver")
             return
 
-        if item.transfer_state == async_inference_pb2.TransferState.TRANSFER_BEGIN:
+        if item.transfer_state == services_pb2.TransferState.TRANSFER_BEGIN:
             bytes_buffer.seek(0)
             bytes_buffer.truncate(0)
             bytes_buffer.write(item.data)
             logger.debug(f"{log_prefix} Received data at step 0")
             step = 0
 
-        elif item.transfer_state == async_inference_pb2.TransferState.TRANSFER_MIDDLE:
+        elif item.transfer_state == services_pb2.TransferState.TRANSFER_MIDDLE:
             bytes_buffer.write(item.data)
             step += 1
             logger.debug(f"{log_prefix} Received data at step {step}")
 
-        elif item.transfer_state == async_inference_pb2.TransferState.TRANSFER_END:
+        elif item.transfer_state == services_pb2.TransferState.TRANSFER_END:
             bytes_buffer.write(item.data)
             logger.debug(f"{log_prefix} Received data at step end size {bytes_buffer_size(bytes_buffer)}")
 
