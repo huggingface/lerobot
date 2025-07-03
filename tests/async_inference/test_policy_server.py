@@ -25,7 +25,7 @@ import torch
 from lerobot.configs.types import PolicyFeature
 from lerobot.scripts.server.configs import PolicyServerConfig
 from lerobot.scripts.server.helpers import TimedObservation
-from tests.utils import require_package  # gRPC servicer class
+from lerobot.scripts.server.policy_server import PolicyServer
 
 # -----------------------------------------------------------------------------
 # Test fixtures
@@ -62,12 +62,9 @@ class _StubPolicy:
         return torch.zeros(batch_size, 20, 6)
 
 
-@require_package("grpc")
 @pytest.fixture
-def policy_server():
+def policy_server() -> PolicyServer:
     """Fresh `PolicyServer` instance with a stubbed-out policy model."""
-    from lerobot.scripts.server.policy_server import PolicyServer
-
     test_config = PolicyServerConfig(host="localhost", port=9999)
     server = PolicyServer(test_config)
     # Replace the real policy with our fast, deterministic stub.
@@ -114,8 +111,7 @@ def _make_obs(state: torch.Tensor, timestep: int = 0, must_go: bool = False) -> 
 # -----------------------------------------------------------------------------
 
 
-@require_package("grpc")
-def test_time_action_chunk(policy_server):
+def test_time_action_chunk(policy_server: PolicyServer):
     """Verify that `_time_action_chunk` assigns correct timestamps and timesteps."""
     start_ts = time.time()
     start_t = 10
@@ -137,8 +133,7 @@ def test_time_action_chunk(policy_server):
         assert abs(ta.get_timestamp() - expected_ts) < 1e-6
 
 
-@require_package("grpc")
-def test_maybe_enqueue_observation_must_go(policy_server):
+def test_maybe_enqueue_observation_must_go(policy_server: PolicyServer):
     """An observation with `must_go=True` is always enqueued."""
     obs = _make_obs(torch.zeros(6), must_go=True)
     assert policy_server._maybe_enqueue_observation(obs) is True
@@ -146,8 +141,7 @@ def test_maybe_enqueue_observation_must_go(policy_server):
     assert policy_server.observation_queue.get_nowait() is obs
 
 
-@require_package("grpc")
-def test_maybe_enqueue_observation_dissimilar(policy_server):
+def test_maybe_enqueue_observation_dissimilar(policy_server: PolicyServer):
     """A dissimilar observation (not `must_go`) is enqueued."""
     # Set a last predicted observation.
     policy_server.last_processed_obs = _make_obs(torch.zeros(6))
@@ -158,8 +152,7 @@ def test_maybe_enqueue_observation_dissimilar(policy_server):
     assert policy_server.observation_queue.qsize() == 1
 
 
-@require_package("grpc")
-def test_maybe_enqueue_observation_is_skipped(policy_server):
+def test_maybe_enqueue_observation_is_skipped(policy_server: PolicyServer):
     """A similar observation (not `must_go`) is skipped."""
     # Set a last predicted observation.
     policy_server.last_processed_obs = _make_obs(torch.zeros(6))
@@ -170,8 +163,7 @@ def test_maybe_enqueue_observation_is_skipped(policy_server):
     assert policy_server.observation_queue.empty() is True
 
 
-@require_package("grpc")
-def test_obs_sanity_checks(policy_server):
+def test_obs_sanity_checks(policy_server: PolicyServer):
     """Unit-test the private `_obs_sanity_checks` helper."""
     prev = _make_obs(torch.zeros(6), timestep=0)
 
@@ -190,8 +182,7 @@ def test_obs_sanity_checks(policy_server):
     assert policy_server._obs_sanity_checks(obs_ok, prev) is True
 
 
-@require_package("grpc")
-def test_enqueue_and_go_overwrites_when_full(policy_server):
+def test_enqueue_and_go_overwrites_when_full(policy_server: PolicyServer):
     """`_enqueue_and_go` should drop the old item when queue is full."""
     old_obs = _make_obs(torch.zeros(6), timestep=0)
     policy_server.observation_queue.put(old_obs)
@@ -205,10 +196,8 @@ def test_enqueue_and_go_overwrites_when_full(policy_server):
     assert policy_server.observation_queue.get_nowait() is new_obs
 
 
-@require_package("grpc")
-def test_predict_action_chunk(monkeypatch, policy_server):
+def test_predict_action_chunk(monkeypatch, policy_server: PolicyServer):
     """End-to-end test of `_predict_action_chunk` with a stubbed _get_action_chunk."""
-    from lerobot.scripts.server.policy_server import PolicyServer
 
     # Force server to act-style policy; patch method to return deterministic tensor
     policy_server.policy_type = "act"

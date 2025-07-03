@@ -33,31 +33,29 @@ import threading
 import time
 from concurrent import futures
 
+import grpc
 import torch
 
 from lerobot.robots.utils import make_robot_from_config
 from lerobot.scripts.server.configs import RobotClientConfig
 from lerobot.scripts.server.helpers import TimedObservation
+from lerobot.scripts.server.policy_server import PolicyServer
+from lerobot.scripts.server.robot_client import RobotClient
+from lerobot.transport import async_inference_pb2_grpc  # type: ignore
 from tests.async_inference.test_policy_server import policy_server  # noqa: F401
-from tests.utils import require_package
 
 # -----------------------------------------------------------------------------
 # End-to-end test
 # -----------------------------------------------------------------------------
 
 
-@require_package("grpc")
 def test_async_inference_e2e(policy_server, monkeypatch):  # noqa: F811
     """Tests the full asynchronous inference pipeline."""
     # ------------------------------------------------------------------
     # 1. Spawn a PolicyServer returning dummy action chunks
     # ------------------------------------------------------------------
-    import grpc
-
     from lerobot.scripts.server.helpers import map_robot_keys_to_lerobot_features
-    from lerobot.scripts.server.policy_server import PolicyServer
-    from lerobot.scripts.server.robot_client import RobotClient
-    from lerobot.transport import async_inference_pb2, async_inference_pb2_grpc  # type: ignore
+    from lerobot.transport import async_inference_pb2  # type: ignore
     from tests.mocks.mock_robot import MockRobotConfig
 
     test_config = MockRobotConfig()
