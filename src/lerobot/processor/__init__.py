@@ -19,6 +19,7 @@ from .observation_processor import (
     StateProcessor,
 )
 from .pipeline import EnvTransition, ProcessorStep, RobotProcessor
+from .normalize_processor import NormalizationProcessor
 
 __all__ = [
     "RobotProcessor",
@@ -27,4 +28,5 @@ __all__ = [
     "ImageProcessor",
     "StateProcessor",
     "ObservationProcessor",
+    "NormalizationProcessor",
 ]
