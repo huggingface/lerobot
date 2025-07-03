@@ -27,18 +27,20 @@ import torch
 from lerobot.robots.utils import make_robot_from_config
 from lerobot.scripts.server.configs import RobotClientConfig
 from lerobot.scripts.server.helpers import TimedAction
-from lerobot.scripts.server.robot_client import RobotClient
+from tests.utils import require_package
 
 # -----------------------------------------------------------------------------
 # Test fixtures
 # -----------------------------------------------------------------------------
 
 
+@require_package("grpc")
 @pytest.fixture()
-def robot_client() -> RobotClient:
+def robot_client():
     """Fresh `RobotClient` instance for each test case (no threads started).
     Uses DummyRobot."""
     from lerobot.scripts.server.helpers import map_robot_keys_to_lerobot_features
+    from lerobot.scripts.server.robot_client import RobotClient
     from tests.mocks.mock_robot import MockRobotConfig
 
     test_config = MockRobotConfig()
@@ -85,7 +87,7 @@ def _make_actions(start_ts: float, start_t: int, count: int) -> list[TimedAction
 # -----------------------------------------------------------------------------
 
 
-def _test_aggregate_action_queues_discards_stale(robot_client: RobotClient):
+def test_aggregate_action_queues_discards_stale(robot_client):
     """`_aggregate_action_queues` must drop actions with `timestep` <= `latest_action`."""
     robot_client.chunks_received = 0
 
@@ -103,6 +105,7 @@ def _test_aggregate_action_queues_discards_stale(robot_client: RobotClient):
     assert resulting_timesteps == [5, 6, 7]
 
 
+@require_package("grpc")
 @pytest.mark.parametrize(
     "weight_old, weight_new",
     [
@@ -116,7 +119,7 @@ def _test_aggregate_action_queues_discards_stale(robot_client: RobotClient):
     ],
 )
 def test_aggregate_action_queues_combines_actions_in_overlap(
-    robot_client: RobotClient, weight_old: float, weight_new: float
+    robot_client, weight_old: float, weight_new: float
 ):
     """`_aggregate_action_queues` must combine actions on overlapping timesteps according
     to the provided aggregate_fn, here tested with multiple coefficients."""
@@ -167,6 +170,7 @@ def test_aggregate_action_queues_combines_actions_in_overlap(
     assert torch.allclose(queue_non_overlap_actions[0].get_action(), incoming[-1].get_action())
 
 
+@require_package("grpc")
 @pytest.mark.parametrize(
     "chunk_size, queue_len, expected",
     [
@@ -176,9 +180,7 @@ def test_aggregate_action_queues_combines_actions_in_overlap(
         (10, 6, False),
     ],
 )
-def test_ready_to_send_observation(
-    robot_client: RobotClient, chunk_size: int, queue_len: int, expected: bool
-):
+def test_ready_to_send_observation(robot_client, chunk_size: int, queue_len: int, expected: bool):
     """Validate `_ready_to_send_observation` ratio logic for various sizes."""
 
     robot_client.action_chunk_size = chunk_size
@@ -193,6 +195,7 @@ def test_ready_to_send_observation(
     assert robot_client._ready_to_send_observation() is expected
 
 
+@require_package("grpc")
 @pytest.mark.parametrize(
     "g_threshold, expected",
     [
@@ -211,9 +214,7 @@ def test_ready_to_send_observation(
         (1.0, True),
     ],
 )
-def test_ready_to_send_observation_with_varying_threshold(
-    robot_client: RobotClient, g_threshold: float, expected: bool
-):
+def test_ready_to_send_observation_with_varying_threshold(robot_client, g_threshold: float, expected: bool):
     """Validate `_ready_to_send_observation` with fixed sizes and varying `g`."""
     # Fixed sizes for this test: ratio = 6 / 10 = 0.6
     chunk_size = 10
