@@ -17,7 +17,6 @@ import logging
 from pprint import pformat
 
 import torch
-
 from transformers import AutoImageProcessor
 
 from lerobot.configs.policies import PreTrainedConfig
@@ -119,6 +118,6 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
 
     image_proc = AutoImageProcessor.from_pretrained(
         cfg.dataset.repo_id,
-        use_fast=cfg.use_fast_image_processor   # ← NEW
+        use_fast=cfg.use_fast_image_processor,  # ← NEW
     )
     return dataset
