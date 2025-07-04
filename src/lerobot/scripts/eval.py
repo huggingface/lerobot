@@ -72,7 +72,7 @@ from lerobot.envs.utils import add_envs_task, check_env_attributes_and_types
 from lerobot.policies.factory import make_policy
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import get_device_from_parameters
-from lerobot.processor.observation_processor import ObservationProcessor
+from lerobot.processor.observation_processor import VanillaObservationProcessor
 from lerobot.processor.pipeline import RobotProcessor, TransitionIndex
 from lerobot.utils.io_utils import write_video
 from lerobot.utils.random_utils import set_seed
@@ -131,7 +131,7 @@ def rollout(
         render_callback(env)
 
     # Create observation processing processor
-    obs_processor = RobotProcessor([ObservationProcessor()])
+    obs_processor = RobotProcessor([VanillaObservationProcessor()])
 
     all_observations = []
     all_actions = []
