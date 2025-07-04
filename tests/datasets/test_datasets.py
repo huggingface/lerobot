@@ -511,23 +511,19 @@ def test_backward_compatibility(repo_id):
             )
 
     # test2 first frames of first episode
-    i = dataset.meta.episodes["dataset_from_index"][0].item()
+    i = dataset.meta.episodes[0]["dataset_from_index"]
     load_and_compare(i)
     load_and_compare(i + 1)
 
     # test 2 frames at the middle of first episode
     i = int(
-        (
-            dataset.meta.episodes["dataset_to_index"][0].item()
-            - dataset.meta.episodes["dataset_from_index"][0].item()
-        )
-        / 2
+        (dataset.meta.episodes[0]["dataset_to_index"] - dataset.meta.episodes[0]["dataset_from_index"]) / 2
     )
     load_and_compare(i)
     load_and_compare(i + 1)
 
     # test 2 last frames of first episode
-    i = dataset.meta.episodes["dataset_to_index"][0].item()
+    i = dataset.meta.episodes[0]["dataset_to_index"]
     load_and_compare(i - 2)
     load_and_compare(i - 1)
 
