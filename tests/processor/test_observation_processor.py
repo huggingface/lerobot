@@ -257,7 +257,7 @@ def test_no_states_in_observation():
     processed_obs = result[0]
 
     # Should preserve data unchanged
-    assert processed_obs == observation
+    np.testing.assert_array_equal(processed_obs, observation)
 
 
 def test_complete_observation_processing():
