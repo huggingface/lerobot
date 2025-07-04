@@ -278,9 +278,10 @@ MODEL_ENCODING_TABLE = {
         "Homing_Offset": 15,
         "Goal_Velocity": 15,
         "Present_Velocity": 15,
-        "Target_Torque": 10,
+        "Target_Torque": 15,
         "Present_Position": 15,
         "Goal_Position": 15,
+        "Present_Current": 15,
     },
 }
 

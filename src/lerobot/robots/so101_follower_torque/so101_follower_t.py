@@ -20,10 +20,13 @@ import time
 from functools import cached_property
 from typing import Any
 
-from lerobot.common.cameras.utils import make_cameras_from_configs
-from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from lerobot.common.motors import Motor, MotorCalibration, MotorNormMode
-from lerobot.common.motors.feetech import (
+import numpy as np
+import pinocchio as pin
+
+from lerobot.cameras.utils import make_cameras_from_configs
+from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.motors import Motor, MotorCalibration, MotorNormMode
+from lerobot.motors.feetech import (
     FeetechMotorsBus,
     OperatingMode,
 )
@@ -42,33 +45,10 @@ class SO101FollowerT(Robot):
     config_class = SO101FollowerTConfig
     name = "so101_follower_t"
 
-    _CURRENT_STEP_A: float = 6.5e-3  # 6.5 mA per register LSB #http://doc.feetech.cn/#/prodinfodownload?srcType=FT-SMS-STS-emanual-229f4476422d4059abfb1cb0
+    _CURRENT_STEP_A: float = 6.5e-3  # 6.5 mA per register LSB #http://doc.feetech.cn/#/prodinfodownload?srcType=FT-SMS-STS-emanual-229f4476422d4059abfb1cb0
     _KT_NM_PER_AMP: float = 0.814  # Torque constant Kt [N·m/A] #https://www.feetechrc.com/811177.html
     _MAX_CURRENT_A: float = 3.0  # Safe driver limit for this model
-
     _COUNT_TO_RAD: float = math.radians(0.087)  # 1 pos count to rad
-
-    def _current_to_torque_nm(self, raw: dict[str, int]) -> dict[str, float]:
-        """Convert "Present_Current" register counts (±2047) → torque [Nm].
-        Values are clamped to ±3A before conversion for protection.
-        """
-        max_cnt = int(round(self._MAX_CURRENT_A / self._CURRENT_STEP_A))  # ≈ 462
-        coef = self._CURRENT_STEP_A * self._KT_NM_PER_AMP
-        return {k: max(min(v, max_cnt), -max_cnt) * coef for k, v in raw.items()}
-
-    def _torque_nm_to_current(self, torque: dict[str, float]) -> dict[str, int]:
-        """Convert torque [Nm] to register counts, clamped to ±3A (2.44 Nm)."""
-        inv_coef = 1.0 / (self._CURRENT_STEP_A * self._KT_NM_PER_AMP)
-        max_cnt = int(round(self._MAX_CURRENT_A / self._CURRENT_STEP_A))
-        max_torque = self._MAX_CURRENT_A * self._KT_NM_PER_AMP
-        return {
-            k: max(-max_cnt, min(max_cnt, int(round(max(-max_torque, min(max_torque, float(t))) * inv_coef))))
-            for k, t in torque.items()
-        }
-
-    def _deg_to_rad(self, deg: dict[str, float | int]) -> dict[str, float]:
-        """GDegrees to radians."""
-        return {m: math.radians(float(v)) for m, v in deg.items()}
 
     def __init__(self, config: SO101FollowerTConfig):
         super().__init__(config)
@@ -87,9 +67,33 @@ class SO101FollowerT(Robot):
         )
         self.cameras = make_cameras_from_configs(config.cameras)
 
+        self.pin_robot = pin.RobotWrapper.BuildFromURDF(
+            "src/lerobot/SO101/so101_new_calib.urdf", "src/lerobot/SO101"
+        )
+
+        flip = {
+            "shoulder_pan": True,
+            "shoulder_lift": True,
+            "elbow_flex": True,
+            "wrist_flex": True,
+            "wrist_roll": True,
+            "gripper": True,
+        }
+        self.torque_sign = {n: (-1.0 if flip[n] else 1.0) for n in self.bus.motors}
+
+        self._prev_pos_rad: dict[str, float] | None = None
+        self._prev_vel_rad: dict[str, float] | None = None
+        self._prev_t: float | None = None
+
     @property
     def _motors_ft(self) -> dict[str, type]:
-        return {f"{motor}.pos": float for motor in self.bus.motors}
+        d: dict[str, type] = {}
+        for m in self.bus.motors:
+            d[f"{m}.pos"] = float
+            d[f"{m}.vel"] = float
+            d[f"{m}.acc"] = float  # Add acceleration
+            d[f"{m}.tau_meas"] = float  # Changed from tau_res to tau_meas
+        return d
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
@@ -103,14 +107,98 @@ class SO101FollowerT(Robot):
 
     @cached_property
     def action_features(self) -> dict[str, type]:
-        return {
-            **{f"{m}.pos": float for m in self.bus.motors},
-            **{f"{m}.effort": int for m in self.bus.motors},
-        }
+        return {f"{m}.effort": int for m in self.bus.motors}
 
     @property
     def is_connected(self) -> bool:
         return self.bus.is_connected and all(cam.is_connected for cam in self.cameras.values())
+
+    def _current_to_torque_nm(self, raw: dict[str, Any]) -> dict[str, float]:
+        """Convert "Present_Current" register counts (±2047) → torque [Nm].
+        Values are clamped to ±3A before conversion for protection.
+        """
+        max_cnt = int(round(self._MAX_CURRENT_A / self._CURRENT_STEP_A))  # ≈ 462
+        coef = self._CURRENT_STEP_A * self._KT_NM_PER_AMP
+        return {k: self.torque_sign[k] * max(-max_cnt, min(max_cnt, v)) * coef for k, v in raw.items()}
+
+    def _torque_nm_to_current(self, torque: dict[str, float]) -> dict[str, int]:
+        """Convert torque [Nm] to register counts, clamped to ±3A (2.44 Nm)."""
+        inv_coef = 1.0 / (self._CURRENT_STEP_A * self._KT_NM_PER_AMP)
+        max_cnt = int(round(self._MAX_CURRENT_A / self._CURRENT_STEP_A))
+        counts = {}
+        for k, τ in torque.items():
+            cnt = τ * self.torque_sign[k] * inv_coef
+            cnt = max(-max_cnt, min(max_cnt, cnt))
+            counts[k] = int(round(cnt))
+        return counts
+
+    def _deg_to_rad(self, deg: dict[str, float | int]) -> dict[str, float]:
+        """GDegrees to radians."""
+        return {m: math.radians(float(v)) for m, v in deg.items()}
+
+    def _gravity_from_q(self, q_rad: dict[str, float]) -> dict[str, float]:
+        """
+        Compute g(q) [N m] for all joints in the robot.
+        The order of joints in the URDF matches self.bus.motors.
+        """
+        q = np.zeros(self.pin_robot.model.nq)
+        for i, motor_name in enumerate(self.bus.motors):
+            q[i] = q_rad[motor_name]
+
+        g = pin.computeGeneralizedGravity(self.pin_robot.model, self.pin_robot.data, q)
+
+        return {motor_name: float(g[i]) for i, motor_name in enumerate(self.bus.motors)}
+
+    def _inertia_from_q_dq(
+        self, q_rad: dict[str, float], dq_rad: dict[str, float], ddq_rad: dict[str, float]
+    ) -> dict[str, float]:
+        """
+        Compute inertia torques τ_inertia = M(q) * ddq directly from URDF model.
+        """
+        # Convert joint dictionaries to numpy arrays in correct order
+        q = np.zeros(self.pin_robot.model.nq)
+        dq = np.zeros(self.pin_robot.model.nv)
+        ddq = np.zeros(self.pin_robot.model.nv)
+
+        for i, motor_name in enumerate(self.bus.motors):
+            q[i] = q_rad[motor_name]
+            dq[i] = dq_rad[motor_name]
+            ddq[i] = ddq_rad[motor_name]
+
+        # Compute mass matrix M(q)
+        mass_matrix = pin.crba(self.pin_robot.model, self.pin_robot.data, q)
+
+        # Compute inertia torques: τ_inertia = M(q) * ddq
+        tau_inertia = mass_matrix @ ddq
+
+        return {motor_name: float(tau_inertia[i]) for i, motor_name in enumerate(self.bus.motors)}
+
+    def _compute_model_based_disturbance(
+        self,
+        q_rad: dict[str, float],
+        dq_rad: dict[str, float],
+        ddq_rad: dict[str, float],
+        tau_measured: dict[str, float],
+    ) -> dict[str, float]:
+        """
+        Compute disturbance torques using direct model-based approach:
+        τ_disturbance = τ_measured - τ_gravity - τ_inertia
+
+        This replaces the DOB and gives cleaner, delay-free disturbance estimation.
+        """
+        # Get gravity compensation
+        tau_gravity = self._gravity_from_q(q_rad)
+
+        # Get inertia compensation
+        tau_inertia = self._inertia_from_q_dq(q_rad, dq_rad, ddq_rad)
+
+        # Compute disturbance: what's left after removing known dynamics
+        tau_disturbance = {}
+        for motor_name in self.bus.motors:
+            tau_dist = tau_measured[motor_name] - tau_gravity[motor_name] - tau_inertia[motor_name]
+            tau_disturbance[motor_name] = tau_dist
+
+        return tau_disturbance
 
     def connect(self, calibrate: bool = True) -> None:
         """
@@ -167,15 +255,16 @@ class SO101FollowerT(Robot):
         with self.bus.torque_disabled():
             self.bus.configure_motors()
             for motor in self.bus.motors:
-                phase = self.bus.read("Phase", motor, normalize=False)
+                phase = int(self.bus.read("Phase", motor, normalize=False))
                 if phase & 0x10:  # bit-4 set = multi-turn
                     new_phase = phase & ~0x10
                     print(f"Switching {motor} to single-turn: 0x{phase:02X} → 0x{new_phase:02X}")
                     self.bus.write("Phase", motor, new_phase, normalize=False)
 
-                self.bus.write("Operating_Mode", motor, 2)  # Set to current mode
-                self.bus.write("Target_Torque", motor, 0)
-                self.bus.write("Torque_Limit", motor, 1000)  # 100%
+                self.bus.write("Operating_Mode", motor, 2, num_retry=2)  # Set to current mode
+                self.bus.write("Target_Torque", motor, 0, num_retry=2)
+                self.bus.write("Torque_Limit", motor, 1000, num_retry=2)  # 100%
+                self.bus.write("Return_Delay_Time", motor, 0, num_retry=2)
 
     def setup_motors(self) -> None:
         for motor in reversed(self.bus.motors):
@@ -187,20 +276,44 @@ class SO101FollowerT(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        start = time.perf_counter()
+        t_now = time.perf_counter()
 
-        # Positions
-        pos_deg = self.bus.sync_read("Present_Position", num_retry=10)
+        # position
+        pos_deg = self.bus.sync_read("Present_Position", num_retry=5)
         pos_rad = self._deg_to_rad(pos_deg)
-        obs_dict = {f"{m}.pos": r for m, r in pos_rad.items()}
 
-        # Currents to torque (Nm)
-        curr_raw = self.bus.sync_read("Present_Current", normalize=False, num_retry=10)
-        torque_nm = self._current_to_torque_nm({f"{m}.effort": v for m, v in curr_raw.items()})
-        obs_dict.update(torque_nm)
+        # velocity and acceleration
+        if self._prev_pos_rad is None:  # first call
+            vel_rad = dict.fromkeys(pos_rad, 0.0)
+            acc_rad = dict.fromkeys(pos_rad, 0.0)
+            dt = 1e-3
+        else:
+            dt = t_now - (self._prev_t or 0.0)
+            dt = max(dt, 1e-4)  # Avoid division by zero
 
-        dt_ms = (time.perf_counter() - start) * 1e3
-        logger.debug(f"{self} read state: {dt_ms:.1f}ms")
+            # Compute velocity
+            vel_rad = {m: (pos_rad[m] - self._prev_pos_rad[m]) / dt for m in pos_rad}
+
+            # Compute acceleration
+            if self._prev_vel_rad is None:
+                acc_rad = dict.fromkeys(pos_rad, 0.0)
+            else:
+                acc_rad = {m: (vel_rad[m] - self._prev_vel_rad[m]) / dt for m in vel_rad}
+
+        # Update previous values
+        self._prev_pos_rad = pos_rad.copy()
+        self._prev_vel_rad = vel_rad.copy()
+        self._prev_t = t_now
+
+        # measured torque (Nm)
+        cur_raw = self.bus.sync_read("Present_Current", normalize=False, num_retry=5)
+        tau_meas = self._current_to_torque_nm(cur_raw)
+
+        obs_dict = {}
+        obs_dict |= {f"{m}.pos": pos_rad[m] for m in self.bus.motors}
+        obs_dict |= {f"{m}.vel": vel_rad[m] for m in self.bus.motors}
+        obs_dict |= {f"{m}.acc": acc_rad[m] for m in self.bus.motors}
+        obs_dict |= {f"{m}.tau_meas": tau_meas[m] for m in self.bus.motors}
 
         # Capture images from cameras
         for cam_key, cam in self.cameras.items():
@@ -224,14 +337,20 @@ class SO101FollowerT(Robot):
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
         # Extract torque commands
-        torque_cmd = {k: v for k, v in action.items() if k.endswith(".effort")}
-        if torque_cmd:
-            counts = self._torque_nm_to_current(torque_cmd)
-            # remove the .effort suffix
-            counts = {k.removesuffix(".effort"): v for k, v in counts.items()}
-            self.bus.sync_write("Target_Torque", counts, normalize=False, num_retry=2)
+        tau_cmd_nm = {k.removesuffix(".effort"): float(v) for k, v in action.items() if k.endswith(".effort")}
+        if not tau_cmd_nm:
+            return action
 
-        # pass back the other keys (.pos) untouched
+        inv_coef = 1.0 / (self._CURRENT_STEP_A * self._KT_NM_PER_AMP)
+        max_cnt = int(round(self._MAX_CURRENT_A / self._CURRENT_STEP_A))
+        counts = {}
+        for joint, τ in tau_cmd_nm.items():
+            cnt = τ * self.torque_sign[joint] * inv_coef  # flip SIGN
+            cnt = max(-max_cnt, min(max_cnt, cnt))
+            counts[joint] = int(round(cnt))
+
+        self.bus.sync_write("Target_Torque", counts, normalize=False, num_retry=2)
+        self._last_cmd_nm = tau_cmd_nm
         return action
 
     def disconnect(self):

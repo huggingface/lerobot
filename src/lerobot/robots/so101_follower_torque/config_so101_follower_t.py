@@ -16,7 +16,7 @@
 
 from dataclasses import dataclass, field
 
-from lerobot.common.cameras import CameraConfig
+from lerobot.cameras import CameraConfig
 
 from ..config import RobotConfig
 
