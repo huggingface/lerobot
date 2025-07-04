@@ -207,6 +207,8 @@ python examples/hope_jr/teleop/right_hand_teleop.py
 
 ## Step 3: Record, Replay, Train
 
+### Teleoperate
+
 ```bash
 python -m lerobot.teleoperate \
     --robot.type=hope_jr_hand \
@@ -217,5 +219,73 @@ python -m lerobot.teleoperate \
     --teleop.port=/dev/tty.usbmodem1201 \
     --teleop.id=right \
     --teleop.side=right \
-    --display_data=true --fps=30
+    --display_data=true \
+    --fps=30
+```
+
+### Record
+
+This step records the dataset, which can be seen as an example [here](https://huggingface.co/datasets/nepyope/hand_record_test_with_video_data/settings).
+
+```bash
+python -m lerobot.record \
+    --robot.type=hope_jr_hand \
+    --robot.port=/dev/tty.usbmodem58760432281 \
+    --robot.id=right \
+    --robot.side=right \
+    --robot.cameras='{"main": {"type": "opencv", "index_or_path": 0, "width": 640, "height": 480, "fps": 30}}' \
+    --teleop.type=homunculus_glove \
+    --teleop.port=/dev/tty.usbmodem1201 \
+    --teleop.id=right \
+    --teleop.side=right \
+    --dataset.repo_id=nepyope/hand_record_test_with_video_data \
+    --dataset.single_task="Hand recording test with video data" \
+    --dataset.num_episodes=1 \
+    --dataset.episode_time_s=5 \
+    --dataset.push_to_hub=true \
+    --dataset.private=true \
+    --display_data=true
+```
+
+### Replay
+
+```bash
+python -m lerobot.replay \
+    --robot.type=hope_jr_hand \
+    --robot.port=/dev/tty.usbmodem58760432281 \
+    --robot.id=right \
+    --robot.side=right \
+    --dataset.repo_id=nepyope/hand_record_test_with_camera \
+    --dataset.episode=0
+```
+
+### Train
+
+```bash
+python -m lerobot.scripts.train \
+  --dataset.repo_id=nepyope/hand_record_test_with_video_data \
+  --policy.type=act \
+  --output_dir=outputs/train/hopejr_hand \
+  --job_name=hopejr \
+  --policy.device=mps \
+  --wandb.enable=true \
+  --policy.repo_id=nepyope/hand_test_policy
+```
+
+### Evaluate
+
+This training run can be viewed as an example [here](https://wandb.ai/tino/lerobot/runs/rp0k8zvw?nw=nwusertino).
+
+```bash
+python -m lerobot.record \
+  --robot.type=hope_jr_hand \
+  --robot.port=/dev/tty.usbmodem58760432281 \
+  --robot.id=right \
+  --robot.side=right \
+  --robot.cameras='{"main": {"type": "opencv", "index_or_path": 0, "width": 640, "height": 480, "fps": 30}}' \
+  --display_data=false \
+  --dataset.repo_id=nepyope/eval_hopejr \
+  --dataset.single_task="Evaluate hopejr hand policy" \
+  --dataset.num_episodes=10 \
+  --policy.path=outputs/train/hopejr_hand/checkpoints/last/pretrained_model
 ```
