@@ -467,7 +467,35 @@ class RobotProcessor(ModelHubMixin):
 
 
 class ObservationProcessor:
+    """Base class for processors that modify only the observation component of a transition.
+
+    Subclasses should override the `observation` method to implement custom observation processing.
+    This class handles the boilerplate of extracting and reinserting the processed observation
+    into the transition tuple, eliminating the need to implement the `__call__` method in subclasses.
+
+    Example:
+        ```python
+        class MyObservationScaler(ObservationProcessor):
+            def __init__(self, scale_factor):
+                self.scale_factor = scale_factor
+
+            def observation(self, observation):
+                return observation * self.scale_factor
+        ```
+
+    By inheriting from this class, you avoid writing repetitive code to handle transition tuple
+    manipulation, focusing only on the specific observation processing logic.
+    """
+
     def observation(self, observation):
+        """Process the observation component.
+
+        Args:
+            observation: The observation to process
+
+        Returns:
+            The processed observation
+        """
         return observation
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
@@ -478,7 +506,36 @@ class ObservationProcessor:
 
 
 class ActionProcessor:
+    """Base class for processors that modify only the action component of a transition.
+
+    Subclasses should override the `action` method to implement custom action processing.
+    This class handles the boilerplate of extracting and reinserting the processed action
+    into the transition tuple, eliminating the need to implement the `__call__` method in subclasses.
+
+    Example:
+        ```python
+        class ActionClipping(ActionProcessor):
+            def __init__(self, min_val, max_val):
+                self.min_val = min_val
+                self.max_val = max_val
+
+            def action(self, action):
+                return np.clip(action, self.min_val, self.max_val)
+        ```
+
+    By inheriting from this class, you avoid writing repetitive code to handle transition tuple
+    manipulation, focusing only on the specific action processing logic.
+    """
+
     def action(self, action):
+        """Process the action component.
+
+        Args:
+            action: The action to process
+
+        Returns:
+            The processed action
+        """
         return action
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
@@ -489,7 +546,35 @@ class ActionProcessor:
 
 
 class RewardProcessor:
+    """Base class for processors that modify only the reward component of a transition.
+
+    Subclasses should override the `reward` method to implement custom reward processing.
+    This class handles the boilerplate of extracting and reinserting the processed reward
+    into the transition tuple, eliminating the need to implement the `__call__` method in subclasses.
+
+    Example:
+        ```python
+        class RewardScaler(RewardProcessor):
+            def __init__(self, scale_factor):
+                self.scale_factor = scale_factor
+
+            def reward(self, reward):
+                return reward * self.scale_factor
+        ```
+
+    By inheriting from this class, you avoid writing repetitive code to handle transition tuple
+    manipulation, focusing only on the specific reward processing logic.
+    """
+
     def reward(self, reward):
+        """Process the reward component.
+
+        Args:
+            reward: The reward to process
+
+        Returns:
+            The processed reward
+        """
         return reward
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
@@ -505,7 +590,40 @@ class RewardProcessor:
 
 
 class DoneProcessor:
+    """Base class for processors that modify only the done flag of a transition.
+
+    Subclasses should override the `done` method to implement custom done flag processing.
+    This class handles the boilerplate of extracting and reinserting the processed done flag
+    into the transition tuple, eliminating the need to implement the `__call__` method in subclasses.
+
+    Example:
+        ```python
+        class TimeoutDone(DoneProcessor):
+            def __init__(self, max_steps):
+                self.steps = 0
+                self.max_steps = max_steps
+
+            def done(self, done):
+                self.steps += 1
+                return done or self.steps >= self.max_steps
+
+            def reset(self):
+                self.steps = 0
+        ```
+
+    By inheriting from this class, you avoid writing repetitive code to handle transition tuple
+    manipulation, focusing only on the specific done flag processing logic.
+    """
+
     def done(self, done):
+        """Process the done flag.
+
+        Args:
+            done: The done flag to process
+
+        Returns:
+            The processed done flag
+        """
         return done
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
@@ -522,7 +640,36 @@ class DoneProcessor:
 
 
 class TruncatedProcessor:
+    """Base class for processors that modify only the truncated flag of a transition.
+
+    Subclasses should override the `truncated` method to implement custom truncated flag processing.
+    This class handles the boilerplate of extracting and reinserting the processed truncated flag
+    into the transition tuple, eliminating the need to implement the `__call__` method in subclasses.
+
+    Example:
+        ```python
+        class EarlyTruncation(TruncatedProcessor):
+            def __init__(self, threshold):
+                self.threshold = threshold
+
+            def truncated(self, truncated):
+                # Additional truncation condition
+                return truncated or some_condition > self.threshold
+        ```
+
+    By inheriting from this class, you avoid writing repetitive code to handle transition tuple
+    manipulation, focusing only on the specific truncated flag processing logic.
+    """
+
     def truncated(self, truncated):
+        """Process the truncated flag.
+
+        Args:
+            truncated: The truncated flag to process
+
+        Returns:
+            The processed truncated flag
+        """
         return truncated
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
@@ -540,7 +687,41 @@ class TruncatedProcessor:
 
 
 class InfoProcessor:
+    """Base class for processors that modify only the info dictionary of a transition.
+
+    Subclasses should override the `info` method to implement custom info processing.
+    This class handles the boilerplate of extracting and reinserting the processed info
+    into the transition tuple, eliminating the need to implement the `__call__` method in subclasses.
+
+    Example:
+        ```python
+        class InfoAugmenter(InfoProcessor):
+            def __init__(self):
+                self.step_count = 0
+
+            def info(self, info):
+                info = info.copy()  # Create a copy to avoid modifying the original
+                info['steps'] = self.step_count
+                self.step_count += 1
+                return info
+
+            def reset(self):
+                self.step_count = 0
+        ```
+
+    By inheriting from this class, you avoid writing repetitive code to handle transition tuple
+    manipulation, focusing only on the specific info dictionary processing logic.
+    """
+
     def info(self, info):
+        """Process the info dictionary.
+
+        Args:
+            info: The info dictionary to process
+
+        Returns:
+            The processed info dictionary
+        """
         return info
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
