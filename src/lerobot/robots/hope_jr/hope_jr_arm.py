@@ -44,23 +44,14 @@ class HopeJrArm(Robot):
         self.bus = FeetechMotorsBus(
             port=self.config.port,
             motors={
-                "shoulder_pitch": Motor(2, "sm8512bl", MotorNormMode.RANGE_M100_100),
-                "shoulder_yaw": Motor(3, "sts3250", MotorNormMode.RANGE_M100_100),
-                "shoulder_roll": Motor(4, "sts3250", MotorNormMode.RANGE_M100_100),
-                "elbow_flex": Motor(5, "sts3250", MotorNormMode.RANGE_M100_100),
-                "wrist_roll": Motor(6, "sts3250", MotorNormMode.RANGE_M100_100),
-                "wrist_yaw": Motor(7, "sts3250", MotorNormMode.RANGE_M100_100),
-                "wrist_pitch": Motor(8, "sts3250", MotorNormMode.RANGE_M100_100),
+                "shoulder_pitch": Motor(1, "sm8512bl", MotorNormMode.RANGE_M100_100),
+                "shoulder_yaw": Motor(2, "sts3250", MotorNormMode.RANGE_M100_100),
+                "shoulder_roll": Motor(3, "sts3250", MotorNormMode.RANGE_M100_100),
+                "elbow_flex": Motor(4, "sts3250", MotorNormMode.RANGE_M100_100),
+                "wrist_roll": Motor(5, "sts3250", MotorNormMode.RANGE_M100_100),
+                "wrist_yaw": Motor(6, "sts3250", MotorNormMode.RANGE_M100_100),
+                "wrist_pitch": Motor(7, "sts3250", MotorNormMode.RANGE_M100_100),
             },
-            # motors={
-            #     "shoulder_pitch": Motor(1, "sm8512bl", MotorNormMode.RANGE_M100_100),
-            #     "shoulder_yaw": Motor(2, "sts3250", MotorNormMode.RANGE_M100_100),
-            #     "shoulder_roll": Motor(3, "sts3250", MotorNormMode.RANGE_M100_100),
-            #     "elbow_flex": Motor(4, "sts3250", MotorNormMode.RANGE_M100_100),
-            #     "wrist_roll": Motor(5, "sts3250", MotorNormMode.RANGE_M100_100),
-            #     "wrist_yaw": Motor(6, "sts3250", MotorNormMode.RANGE_M100_100),
-            #     "wrist_pitch": Motor(7, "sts3250", MotorNormMode.RANGE_M100_100),
-            # },
             calibration=self.calibration,
         )
         self.cameras = make_cameras_from_configs(config.cameras)
@@ -89,10 +80,9 @@ class HopeJrArm(Robot):
 
     @property
     def is_connected(self) -> bool:
-        # TODO(aliberts): add cam.is_connected for cam in self.cameras
-        return self.bus.is_connected
+        return self.bus.is_connected and all(cam.is_connected for cam in self.cameras.values())
 
-    def connect(self) -> None:
+    def connect(self, calibrate: bool = True) -> None:
         """
         We assume that at connection time, arm is in a rest position,
         and torque can be safely disabled to run calibration.
@@ -101,7 +91,7 @@ class HopeJrArm(Robot):
             raise DeviceAlreadyConnectedError(f"{self} already connected")
 
         self.bus.connect(handshake=False)
-        if not self.is_calibrated:
+        if not self.is_calibrated and calibrate:
             self.calibrate()
 
         # Connect the cameras
@@ -135,6 +125,7 @@ class HopeJrArm(Robot):
                 self.bus.write("Acceleration", motor, 30)
 
     def setup_motors(self) -> None:
+        # TODO: add docstring
         for motor in reversed(self.bus.motors):
             input(f"Connect the controller board to the '{motor}' motor only and press enter.")
             self.bus.setup_motor(motor)

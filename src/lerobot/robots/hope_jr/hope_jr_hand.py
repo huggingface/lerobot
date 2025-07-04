@@ -116,15 +116,14 @@ class HopeJrHand(Robot):
 
     @property
     def is_connected(self) -> bool:
-        # TODO(aliberts): add cam.is_connected for cam in self.cameras
-        return self.bus.is_connected
+        return self.bus.is_connected and all(cam.is_connected for cam in self.cameras.values())
 
-    def connect(self) -> None:
+    def connect(self, calibrate: bool = True) -> None:
         if self.is_connected:
             raise DeviceAlreadyConnectedError(f"{self} already connected")
 
         self.bus.connect()
-        if not self.is_calibrated:
+        if not self.is_calibrated and calibrate:
             self.calibrate()
 
         # Connect the cameras
@@ -152,12 +151,9 @@ class HopeJrHand(Robot):
     def configure(self) -> None:
         with self.bus.torque_disabled():
             self.bus.configure_motors()
-            # for motor in self.bus.motors:
-            #     self.bus.write("Return_Delay_Time", motor, 0)
-            #     self.bus.write("Acceleration_2", motor, 50)
-            #     self.bus.write("Acceleration", motor, 50)
 
     def setup_motors(self) -> None:
+        # TODO: add docstring
         for motor in self.bus.motors:
             input(f"Connect the controller board to the '{motor}' motor only and press enter.")
             self.bus.setup_motor(motor)
@@ -172,7 +168,7 @@ class HopeJrHand(Robot):
         # Read hand position
         start = time.perf_counter()
         for motor in self.bus.motors:
-            obs_dict[f"{motor}.pos"] = self.bus.read("Present_Position", motor, normalize=False)
+            obs_dict[f"{motor}.pos"] = self.bus.read("Present_Position", motor)
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
 
