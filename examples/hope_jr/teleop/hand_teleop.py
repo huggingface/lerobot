@@ -2,7 +2,11 @@ import time
 import traceback
 
 from lerobot.robots.hope_jr import HopeJrHand, HopeJrHandConfig, homunculus_glove_to_hope_jr_hand
-from lerobot.teleoperators.homunculus import HomunculusGlove, HomunculusGloveConfig, homunculus_glove_to_hope_jr_hand
+from lerobot.teleoperators.homunculus import (
+    HomunculusGlove,
+    HomunculusGloveConfig,
+    homunculus_glove_to_hope_jr_hand,
+)
 from lerobot.utils.utils import move_cursor_up
 
 
