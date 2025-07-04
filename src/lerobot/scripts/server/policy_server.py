@@ -10,7 +10,7 @@ import torch
 
 from lerobot.policies.factory import get_policy_class
 from lerobot.scripts.server.configs import PolicyServerConfig
-from lerobot.scripts.server.constants import supported_policies
+from lerobot.scripts.server.constants import SUPPORTED_POLICIES
 from lerobot.scripts.server.helpers import (
     FPSTracker,
     Observation,
@@ -69,8 +69,8 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
         assert isinstance(policy_specs, TinyPolicyConfig), (
             f"Policy specs must be a TinyPolicyConfig. Got {type(policy_specs)}"
         )
-        assert policy_specs.policy_type in supported_policies, (
-            f"Policy type {policy_specs.policy_type} not supported. Supported policies: {supported_policies}"
+        assert policy_specs.policy_type in SUPPORTED_POLICIES, (
+            f"Policy type {policy_specs.policy_type} not supported. Supported policies: {SUPPORTED_POLICIES}"
         )
 
     def SendPolicyInstructions(self, request, context):  # noqa: N802

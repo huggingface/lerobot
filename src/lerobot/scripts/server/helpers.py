@@ -26,7 +26,7 @@ from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig  # noqa: F401
 from lerobot.robots.robot import Robot
 from lerobot.robots.so100_follower import SO100FollowerConfig
 from lerobot.robots.utils import make_robot_from_config
-from lerobot.scripts.server.constants import supported_robots
+from lerobot.scripts.server.constants import SUPPORTED_ROBOTS
 from lerobot.transport import async_inference_pb2
 from lerobot.transport.utils import bytes_buffer_size
 from lerobot.utils.utils import init_logging
@@ -191,7 +191,7 @@ def make_default_camera_config(
 
 
 def make_robot(args: argparse.Namespace) -> Robot:
-    if args.robot not in supported_robots:
+    if args.robot not in SUPPORTED_ROBOTS:
         raise ValueError(f"Robot {args.robot} not yet supported!")
 
     if args.robot == "so100":
