@@ -13,6 +13,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+from .device_processor import DeviceProcessor
 from .normalize_processor import NormalizerProcessor, UnnormalizerProcessor
 from .observation_processor import (
     ImageProcessor,
@@ -34,6 +36,7 @@ from .rename_processor import RenameProcessor
 
 __all__ = [
     "ActionProcessor",
+    "DeviceProcessor",
     "DoneProcessor",
     "EnvTransition",
     "ImageProcessor",
