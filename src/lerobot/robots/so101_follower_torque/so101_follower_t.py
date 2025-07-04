@@ -282,23 +282,21 @@ class SO101FollowerT(Robot):
         pos_deg = self.bus.sync_read("Present_Position", num_retry=5)
         pos_rad = self._deg_to_rad(pos_deg)
 
-        # velocity and acceleration
-        if self._prev_pos_rad is None:  # first call
-            vel_rad = dict.fromkeys(pos_rad, 0.0)
+        # velocity (read directly from motor - more accurate than numerical differentiation)
+        # Present_Velocity is in units of 0.732 RPM (revolutions per minute)
+        vel_rpm_units = self.bus.sync_read("Present_Velocity", num_retry=5)
+        # Convert: raw_units → RPM → rad/s
+        # rpm = raw_value * 0.732
+        # rad/s = rpm * (2π / 60)
+        vel_rad = {m: v * 0.732 * (2 * math.pi / 60) for m, v in vel_rpm_units.items()}
+
+        # acceleration - calculate from motor velocity (motor's Acceleration register is settings only)
+        if self._prev_vel_rad is None or self._prev_t is None:
             acc_rad = dict.fromkeys(pos_rad, 0.0)
-            dt = 1e-3
         else:
-            dt = t_now - (self._prev_t or 0.0)
+            dt = t_now - self._prev_t
             dt = max(dt, 1e-4)  # Avoid division by zero
-
-            # Compute velocity
-            vel_rad = {m: (pos_rad[m] - self._prev_pos_rad[m]) / dt for m in pos_rad}
-
-            # Compute acceleration
-            if self._prev_vel_rad is None:
-                acc_rad = dict.fromkeys(pos_rad, 0.0)
-            else:
-                acc_rad = {m: (vel_rad[m] - self._prev_vel_rad[m]) / dt for m in vel_rad}
+            acc_rad = {m: (vel_rad[m] - self._prev_vel_rad[m]) / dt for m in vel_rad}
 
         # Update previous values
         self._prev_pos_rad = pos_rad.copy()

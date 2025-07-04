@@ -99,17 +99,17 @@ while True:
         tau_cmd_f_ref = -tau_reaction_l[j]  # Reflect leader reaction torque
         tau_cmd_l_ref = -tau_reaction_f[j]  # Reflect follower reaction torque
 
-        # Follower control
+        # Follower control with inertia compensation
         tau_pos_f = Kp * (theta_cmd_f - pos_f[j])
         tau_vel_f = Kd * (omega_cmd_f - vel_f[j])
         tau_force_f = Kf * (tau_cmd_f_ref - tau_reaction_f[j])
-        tau_ref_f = tau_pos_f + tau_vel_f + tau_force_f + grav_f[j]
+        tau_ref_f = tau_pos_f + tau_vel_f + tau_force_f + grav_f[j] + inertia_f[j]
 
-        # Leader control
+        # Leader control with inertia compensation
         tau_pos_l = Kp * (theta_cmd_l - pos_l[j])
         tau_vel_l = Kd * (omega_cmd_l - vel_l[j])
         tau_force_l = Kf * (tau_cmd_l_ref - tau_reaction_l[j])
-        tau_ref_l = tau_pos_l + tau_vel_l + tau_force_l + grav_l[j]
+        tau_ref_l = tau_pos_l + tau_vel_l + tau_force_l + grav_l[j] + inertia_l[j]
 
         tau_cmd_f.append(tau_ref_f)
         tau_cmd_l.append(tau_ref_l)
@@ -181,10 +181,21 @@ while True:
             )
 
         lines.append("-" * 100)
+        lines.append("TORQUE COMPONENT EXPLANATIONS:")
+        lines.append("• Grav  (gravity)   = Feed-forward gravity compensation")
+        lines.append("• Inert (inertia)   = Feed-forward inertia compensation")
+        lines.append("• Pos   (position)  = Position tracking control (Kp error)")
+        lines.append("• Vel   (velocity)  = Velocity damping control (Kd error)")
+        lines.append("• Force (bilateral) = Force reflection between robots (telepresence)")
+        lines.append("• React (reaction)  = External forces (human interaction, contact)")
+        lines.append("• Meas  (measured)  = Raw torque from motor current sensor")
+        lines.append("• Cmd   (command)   = Final torque sent to motor")
+        lines.append("-" * 100)
         lines.append("Model-Based Analysis:")
         lines.append(
             f"{'Joint':<13} {'Gravity':<8} {'Inertia':<8} {'Reaction':<8} {'Errors':<12} {'Balance':<8}"
         )
+        lines.append("             (feed-fwd) (feed-fwd) (external) (pos/vel)   (τ_ref)")
         for j in follower.bus.motors:
             debug_f = debug_info_f[j]
             g_dir = "↑" if debug_f["τ_gravity"] > 0 else "↓" if debug_f["τ_gravity"] < 0 else "≈0"
@@ -195,7 +206,13 @@ while True:
             vel_err_sign = "+" if debug_f["ω_err"] > 0 else "-" if debug_f["ω_err"] < 0 else "0"
 
             # Check balance: τ_ref should equal sum of components
-            expected_sum = debug_f["τ_pos"] + debug_f["τ_vel"] + debug_f["τ_force"] + debug_f["τ_gravity"]
+            expected_sum = (
+                debug_f["τ_pos"]
+                + debug_f["τ_vel"]
+                + debug_f["τ_force"]
+                + debug_f["τ_gravity"]
+                + debug_f["τ_inertia"]
+            )
             balance_check = "✓" if abs(expected_sum - debug_f["τ_ref"]) < 0.01 else "✗"
 
             lines.append(
@@ -208,9 +225,10 @@ while True:
             )
 
         lines.append("-" * 100)
-        lines.append(
-            f"Model-Based Control: React = τ_meas - τ_grav - τ_inert | Gains: Kp={Kp} Kd={Kd} Kf={Kf}"
-        )
+        lines.append("Cmd = Pos + Vel + Force + Grav + Inert")
+        lines.append("React = Meas - Grav - Inert  (external forces)")
+        lines.append("Force = Kf × (reflect_other_robot - React)  (telepresence)")
+        lines.append(f"Control Gains: Kp={Kp} (position) | Kd={Kd} (velocity) | Kf={Kf} (force reflection)")
 
         block = "\n".join(lines)
         if first_print:
