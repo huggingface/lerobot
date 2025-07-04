@@ -20,8 +20,8 @@ import torch
 
 from lerobot.processor.observation_processor import (
     ImageProcessor,
-    ObservationProcessor,
     StateProcessor,
+    VanillaObservationProcessor,
 )
 
 
@@ -262,7 +262,7 @@ def test_no_states_in_observation():
 
 def test_complete_observation_processing():
     """Test processing a complete observation with both images and states."""
-    processor = ObservationProcessor()
+    processor = VanillaObservationProcessor()
 
     # Create mock data
     image = np.random.randint(0, 256, size=(32, 32, 3), dtype=np.uint8)
@@ -299,7 +299,7 @@ def test_complete_observation_processing():
 
 def test_image_only_processing():
     """Test processing observation with only images."""
-    processor = ObservationProcessor()
+    processor = VanillaObservationProcessor()
 
     image = np.random.randint(0, 256, size=(64, 64, 3), dtype=np.uint8)
     observation = {"pixels": image}
@@ -314,7 +314,7 @@ def test_image_only_processing():
 
 def test_state_only_processing():
     """Test processing observation with only states."""
-    processor = ObservationProcessor()
+    processor = VanillaObservationProcessor()
 
     agent_pos = np.array([1.0, 2.0], dtype=np.float32)
     observation = {"agent_pos": agent_pos}
@@ -329,7 +329,7 @@ def test_state_only_processing():
 
 def test_empty_observation():
     """Test processing empty observation."""
-    processor = ObservationProcessor()
+    processor = VanillaObservationProcessor()
 
     observation = {}
     transition = (observation, None, None, None, None, None, None)
@@ -344,7 +344,7 @@ def test_custom_sub_processors():
     """Test ObservationProcessor with custom sub-processors."""
     image_proc = ImageProcessor()
     state_proc = StateProcessor()
-    processor = ObservationProcessor(image_processor=image_proc, state_processor=state_proc)
+    processor = VanillaObservationProcessor(image_processor=image_proc, state_processor=state_proc)
 
     # Should use the provided processors
     assert processor.image_processor is image_proc
@@ -356,7 +356,7 @@ def test_equivalent_to_original_function():
     # Import the original function for comparison
     from lerobot.envs.utils import preprocess_observation
 
-    processor = ObservationProcessor()
+    processor = VanillaObservationProcessor()
 
     # Create test data similar to what the original function expects
     image = np.random.randint(0, 256, size=(64, 64, 3), dtype=np.uint8)
@@ -383,7 +383,7 @@ def test_equivalent_with_image_dict():
     """Test equivalence with dictionary of images."""
     from lerobot.envs.utils import preprocess_observation
 
-    processor = ObservationProcessor()
+    processor = VanillaObservationProcessor()
 
     # Create test data with multiple cameras
     image1 = np.random.randint(0, 256, size=(32, 32, 3), dtype=np.uint8)
