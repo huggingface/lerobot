@@ -47,12 +47,12 @@ RIGHT_HAND_INVERSIONS = [
     "thumb_pip",
     "thumb_dip",
     "index_mcp_abduction",
-    #"index_dip",
+    # "index_dip",
     "middle_mcp_abduction",
-    #"middle_dip",
+    # "middle_dip",
     "ring_mcp_abduction",
     "ring_mcp_flexion",
-    #"ring_dip",
+    # "ring_dip",
     "pinky_mcp_abduction",
 ]
 
@@ -95,9 +95,7 @@ class HomunculusGlove(Teleoperator):
         self.n: int = n
         self.alpha: float = 2 / (n + 1)
         # one deque *per joint* so we can inspect raw history if needed
-        self._buffers: Dict[str, Deque[int]] = {
-            joint: deque(maxlen=n) for joint in self.joints
-        }
+        self._buffers: Dict[str, Deque[int]] = {joint: deque(maxlen=n) for joint in self.joints}
         # running EMA value per joint – lazily initialised on first read
         self._ema: Dict[str, Optional[float]] = dict.fromkeys(self._buffers)
 
@@ -285,11 +283,11 @@ class HomunculusGlove(Teleoperator):
 
         # Apply EMA smoothing to raw values first
         state = self._apply_ema(state)
-        
+
         # Then normalize if requested
         if normalize:
             state = self._normalize(state)
-        
+
         return state
 
     def _read_loop(self):
