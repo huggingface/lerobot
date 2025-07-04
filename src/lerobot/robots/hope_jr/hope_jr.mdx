@@ -207,4 +207,16 @@ python examples/hope_jr/teleop/right_hand_teleop.py
 
 ## Step 3: Record, Replay, Train
 
-**Work in progress**
+```bash
+python -m lerobot.teleoperate \
+    --robot.type=hope_jr_hand \
+    --robot.port=/dev/tty.usbmodem58760432281 \
+    --robot.id=right \
+    --robot.side=right \
+    --teleop.type=homunculus_glove \
+    --teleop.port=/dev/tty.usbmodem1201 \
+    --teleop.id=right \
+    --teleop.side=right \
+    --display_data=true --fps=30
+```
+
