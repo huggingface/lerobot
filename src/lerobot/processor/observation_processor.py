@@ -181,7 +181,7 @@ class StateProcessor:
 
 @dataclass
 @ProcessorStepRegistry.register(name="observation_processor")
-class ObservationProcessor:
+class VanillaObservationProcessor:
     """Complete observation processor that combines image and state processing.
 
     This processor replicates the functionality of the original preprocess_observation

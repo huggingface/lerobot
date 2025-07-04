@@ -16,19 +16,35 @@
 from .normalize_processor import NormalizationProcessor
 from .observation_processor import (
     ImageProcessor,
-    ObservationProcessor,
     StateProcessor,
+    VanillaObservationProcessor,
 )
-from .pipeline import EnvTransition, ProcessorStep, RobotProcessor
+from .pipeline import (
+    ActionProcessor,
+    DoneProcessor,
+    EnvTransition,
+    InfoProcessor,
+    ObservationProcessor,
+    ProcessorStep,
+    RewardProcessor,
+    RobotProcessor,
+    TruncatedProcessor,
+)
 from .rename_processor import RenameProcessor
 
 __all__ = [
-    "RobotProcessor",
-    "ProcessorStep",
+    "ActionProcessor",
+    "DoneProcessor",
     "EnvTransition",
     "ImageProcessor",
-    "StateProcessor",
-    "ObservationProcessor",
+    "InfoProcessor",
     "NormalizationProcessor",
+    "ObservationProcessor",
+    "ProcessorStep",
     "RenameProcessor",
+    "RewardProcessor",
+    "RobotProcessor",
+    "StateProcessor",
+    "TruncatedProcessor",
+    "VanillaObservationProcessor",
 ]
