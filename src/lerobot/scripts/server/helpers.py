@@ -14,7 +14,7 @@ import torch
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.configs.types import PolicyFeature
-from lerobot.constants import OBS_STATE
+from lerobot.constants import OBS_IMAGE, OBS_IMAGES, OBS_STATE
 from lerobot.datasets.utils import build_dataset_frame, hw_to_dataset_features
 
 # NOTE: Configs need to be loaded for the client to be able to instantiate the policy config
@@ -70,14 +70,14 @@ def map_robot_keys_to_lerobot_features(robot: Robot) -> dict[str, dict]:
 
 
 def is_image_key(k: str) -> bool:
-    return k.startswith("observation.images")
+    return k.startswith(OBS_IMAGES)
 
 
 def map_image_key_to_smolvla_base_key(idx: int) -> str:
     """Dataset contain image features keys named as observation.images.<camera_name>, but SmolVLA adapts this
     to observation.image, observation.image2, ..."""
     idx_text = str(idx + 1) if idx != 0 else ""
-    return f"observation.image{idx_text}"
+    return f"{OBS_IMAGE}{idx_text}"
 
 
 def resize_robot_observation_image(image: torch.tensor, resize_dims: tuple[int, int, int]) -> torch.tensor:
