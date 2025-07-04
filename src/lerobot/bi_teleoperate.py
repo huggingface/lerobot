@@ -8,9 +8,11 @@ import numpy as np
 from lerobot.robots.so101_follower_torque.config_so101_follower_t import SO101FollowerTConfig
 from lerobot.robots.so101_follower_torque.so101_follower_t import SO101FollowerT
 from lerobot.utils.robot_utils import busy_wait
+from lerobot.utils.visualization_utils import _init_rerun, log_rerun_data
 
 FRQ = 300
 PRINT_HZ = 10
+RERUN_HZ = 100
 ESC_CLR_EOL = "\x1b[K"
 CURSOR_UP = "\x1b[F"
 
@@ -27,12 +29,12 @@ def to_cmd(tau_vec, joints):
 
 follower_cfg = SO101FollowerTConfig(
     port="/dev/tty.usbmodem58760431551",
-    id="my_awesome_follower_arm",
+    id="follower_arm_t",
 )
 
 leader_cfg = SO101FollowerTConfig(
     port="/dev/tty.usbmodem58760428721",
-    id="my_awesome_leader_arm",
+    id="leader_arm_t",
 )
 
 follower = SO101FollowerT(follower_cfg)
@@ -43,10 +45,17 @@ leader.connect()
 exec_f = ThreadPoolExecutor(max_workers=1)
 exec_l = ThreadPoolExecutor(max_workers=1)
 
+# Initialize Rerun for visualization
+_init_rerun("bilateral_teleoperation")
+
 print("Starting 4-channel bilateral teleoperation")
 first_print = True
 loop_count = 0
 tic_prev = time.perf_counter()
+
+# Initialize previous positions for velocity calculation
+pos_f_prev = None
+pos_l_prev = None
 
 while True:
     tic = time.perf_counter()
@@ -64,16 +73,31 @@ while True:
     tau_cmd_f, tau_cmd_l = [], []
     debug_info_f, debug_info_l = {}, {}
 
+    # Collect torques with deterministic components removed for model
+    tau_interaction_l = {}
+    tau_interaction_f = {}
+
     # Collect data for all motors
     pos_f = {j: obs_f[f"{j}.pos"] for j in follower.bus.motors}
-    vel_f = {j: obs_f[f"{j}.vel"] for j in follower.bus.motors}
     acc_f = {j: obs_f[f"{j}.acc"] for j in follower.bus.motors}
     tau_meas_f = {j: obs_f[f"{j}.tau_meas"] for j in follower.bus.motors}
 
     pos_l = {j: obs_l[f"{j}.pos"] for j in leader.bus.motors}
-    vel_l = {j: obs_l[f"{j}.vel"] for j in leader.bus.motors}
     acc_l = {j: obs_l[f"{j}.acc"] for j in leader.bus.motors}
     tau_meas_l = {j: obs_l[f"{j}.tau_meas"] for j in leader.bus.motors}
+
+    # Calculate velocities from position differences
+    if pos_f_prev is not None and pos_l_prev is not None:
+        vel_f = {j: (pos_f[j] - pos_f_prev[j]) / dt for j in follower.bus.motors}
+        vel_l = {j: (pos_l[j] - pos_l_prev[j]) / dt for j in leader.bus.motors}
+    else:
+        # First iteration: initialize with zeros
+        vel_f = dict.fromkeys(follower.bus.motors, 0.0)
+        vel_l = dict.fromkeys(leader.bus.motors, 0.0)
+
+    # Update previous positions for next iteration
+    pos_f_prev = pos_f.copy()
+    pos_l_prev = pos_l.copy()
 
     # Compute reaction torques using model-based approach
     tau_reaction_f = follower._compute_model_based_disturbance(pos_f, vel_f, acc_f, tau_meas_f)
@@ -87,8 +111,8 @@ while True:
     inertia_f = follower._inertia_from_q_dq(pos_f, vel_f, acc_f)
     inertia_l = leader._inertia_from_q_dq(pos_l, vel_l, acc_l)
 
-    Kp = 5.0  # Position gain
-    Kd = 0.1  # Velocity gain
+    Kp = 8.0  # Position gain
+    Kd = 0.5  # Velocity gain
     Kf = 0.05  # Force reflection gain
 
     # Friction compensation parameters (feedforward)
@@ -151,6 +175,12 @@ while True:
         tau_cmd_f.append(tau_ref_f)
         tau_cmd_l.append(tau_ref_l)
 
+        # Store interaction torques (cmd minus deterministic components) for model
+        tau_interaction_l[j] = tau_ref_l - grav_l[j] - inertia_l[j] - tau_friction_l
+        tau_interaction_f[j] = -(
+            tau_meas_f[j] - grav_f[j] - inertia_f[j] - tau_friction_f
+        )  # Invert to match leader
+
         # Store debug info
         debug_info_f[j] = {
             "τ_measured": tau_meas_f[j],
@@ -182,8 +212,30 @@ while True:
         }
 
     # Send torques to both arms
-    follower.send_action(to_cmd(np.array(tau_cmd_f), list(follower.bus.motors.keys())))
-    leader.send_action(to_cmd(np.array(tau_cmd_l), list(leader.bus.motors.keys())))
+    follower_action = to_cmd(np.array(tau_cmd_f), list(follower.bus.motors.keys()))
+    leader_action = to_cmd(np.array(tau_cmd_l), list(leader.bus.motors.keys()))
+
+    follower.send_action(follower_action)
+    leader.send_action(leader_action)
+
+    # Create structured observation and action for rerun
+    # Observation: follower side only (θ_f, ω_f, τ_ext)
+    observation = {
+        "follower_joint_angles": pos_f,  # θ_f: current angles
+        "follower_angular_velocities": vel_f,  # ω_f: current velocities
+        "follower_external_torques": tau_interaction_f,  # τ_ext: measured minus deterministic components
+    }
+
+    # Action: leader targets (θ_leader[τ], ω_leader[τ], τ_leader[τ])
+    action = {
+        "leader_target_angles": pos_l,  # θ_leader[τ]: absolute target angles
+        "leader_target_velocities": vel_l,  # ω_leader[τ]: absolute target velocities
+        "leader_interaction_torques": tau_interaction_l,  # τ_leader[τ]: cmd minus deterministic components
+    }
+
+    # Log data for visualization (100 Hz)
+    if loop_count % (FRQ // RERUN_HZ) == 0:
+        log_rerun_data(observation, action)
 
     # Console diagnostics (10 Hz)
     loop_count += 1
