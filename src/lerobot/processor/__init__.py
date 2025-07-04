@@ -13,7 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .normalize_processor import NormalizationProcessor
+from .normalize_processor import NormalizerProcessor, UnnormalizerProcessor
 from .observation_processor import (
     ImageProcessor,
     StateProcessor,
@@ -38,7 +38,8 @@ __all__ = [
     "EnvTransition",
     "ImageProcessor",
     "InfoProcessor",
-    "NormalizationProcessor",
+    "NormalizerProcessor",
+    "UnnormalizerProcessor",
     "ObservationProcessor",
     "ProcessorStep",
     "RenameProcessor",
