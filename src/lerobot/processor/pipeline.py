@@ -464,3 +464,95 @@ class RobotProcessor(ModelHubMixin):
             profile_results[step_name] = avg_time
 
         return profile_results
+
+
+class ObservationProcessor:
+    def observation(self, observation):
+        return observation
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        observation = transition[TransitionIndex.OBSERVATION]
+        observation = self.observation(observation)
+        transition = (observation, *transition[TransitionIndex.ACTION :])
+        return transition
+
+
+class ActionProcessor:
+    def action(self, action):
+        return action
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        action = transition[TransitionIndex.ACTION]
+        action = self.action(action)
+        transition = (transition[TransitionIndex.OBSERVATION], action, *transition[TransitionIndex.REWARD :])
+        return transition
+
+
+class RewardProcessor:
+    def reward(self, reward):
+        return reward
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        reward = transition[TransitionIndex.REWARD]
+        reward = self.reward(reward)
+        transition = (
+            transition[TransitionIndex.OBSERVATION],
+            transition[TransitionIndex.ACTION],
+            reward,
+            *transition[TransitionIndex.DONE :],
+        )
+        return transition
+
+
+class DoneProcessor:
+    def done(self, done):
+        return done
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        done = transition[TransitionIndex.DONE]
+        done = self.done(done)
+        transition = (
+            transition[TransitionIndex.OBSERVATION],
+            transition[TransitionIndex.ACTION],
+            transition[TransitionIndex.REWARD],
+            done,
+            *transition[TransitionIndex.TRUNCATED :],
+        )
+        return transition
+
+
+class TruncatedProcessor:
+    def truncated(self, truncated):
+        return truncated
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        truncated = transition[TransitionIndex.TRUNCATED]
+        truncated = self.truncated(truncated)
+        transition = (
+            transition[TransitionIndex.OBSERVATION],
+            transition[TransitionIndex.ACTION],
+            transition[TransitionIndex.REWARD],
+            transition[TransitionIndex.DONE],
+            truncated,
+            *transition[TransitionIndex.INFO :],
+        )
+        return transition
+
+
+class InfoProcessor:
+    def info(self, info):
+        return info
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        info = transition[TransitionIndex.INFO]
+        info = self.info(info)
+        transition = (
+            transition[TransitionIndex.OBSERVATION],
+            transition[TransitionIndex.ACTION],
+            transition[TransitionIndex.REWARD],
+            transition[TransitionIndex.DONE],
+            transition[TransitionIndex.TRUNCATED],
+            info,
+            *transition[TransitionIndex.COMPLEMENTARY_DATA :],
+        )
+        return transition
