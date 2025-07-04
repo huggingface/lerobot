@@ -16,7 +16,8 @@
 
 import pytest
 
-from lerobot.common.policies.sac.configuration_sac import (
+from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
+from lerobot.policies.sac.configuration_sac import (
     ActorLearnerConfig,
     ActorNetworkConfig,
     ConcurrencyConfig,
@@ -24,7 +25,6 @@ from lerobot.common.policies.sac.configuration_sac import (
     PolicyConfig,
     SACConfig,
 )
-from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 
 
 def test_sac_config_default_initialization():

@@ -2,7 +2,7 @@
 
 This tutorial will explain how to integrate your own robot design into the LeRobot ecosystem and have it access all of our tools (data collection, control pipelines, policy training and inference).
 
-To that end, we provide the [`Robot`](https://github.com/huggingface/lerobot/blob/main/lerobot/common/robots/robot.py) base class in the LeRobot which specifies a standard interface for physical robot integration. Let's see how to implement it.
+To that end, we provide the [`Robot`](https://github.com/huggingface/lerobot/blob/main/lerobot/robots/robot.py) base class in the LeRobot which specifies a standard interface for physical robot integration. Let's see how to implement it.
 
 ## Prerequisites
 
@@ -14,11 +14,11 @@ To that end, we provide the [`Robot`](https://github.com/huggingface/lerobot/blo
 
 If you're using Feetech or Dynamixel motors, LeRobot provides built-in bus interfaces:
 
-- [`FeetechMotorsBus`](https://github.com/huggingface/lerobot/blob/main/lerobot/common/motors/feetech/feetech.py) – for controlling Feetech servos
-- [`DynamixelMotorsBus`](https://github.com/huggingface/lerobot/blob/main/lerobot/common/motors/dynamixel/dynamixel.py) – for controlling Dynamixel servos
+- [`FeetechMotorsBus`](https://github.com/huggingface/lerobot/blob/main/lerobot/motors/feetech/feetech.py) – for controlling Feetech servos
+- [`DynamixelMotorsBus`](https://github.com/huggingface/lerobot/blob/main/lerobot/motors/dynamixel/dynamixel.py) – for controlling Dynamixel servos
 
-Please refer to the [`MotorsBus`](https://github.com/huggingface/lerobot/blob/main/lerobot/common/motors/motors_bus.py) abstract class to learn about its API.
-For a good example of how it can be used, you can have a look at our own [SO101 follower implementation](https://github.com/huggingface/lerobot/blob/main/lerobot/common/robots/so101_follower/so101_follower.py)
+Please refer to the [`MotorsBus`](https://github.com/huggingface/lerobot/blob/main/lerobot/motors/motors_bus.py) abstract class to learn about its API.
+For a good example of how it can be used, you can have a look at our own [SO101 follower implementation](https://github.com/huggingface/lerobot/blob/main/lerobot/robots/so101_follower/so101_follower.py)
 
 Use these if compatible. Otherwise, you'll need to find or write a Python interface (not covered in this tutorial):
 - Find an existing SDK in Python (or use bindings to C/C++)
@@ -32,7 +32,7 @@ For Feetech and Dynamixel, we currently support these servos:
         - SCS series (protocol 1): `scs0009`
     - Dynamixel (protocol 2.0 only): `xl330-m077`, `xl330-m288`, `xl430-w250`, `xm430-w350`, `xm540-w270`, `xc430-w150`
 
-If you are using Feetech or Dynamixel servos that are not in this list, you can add those in the [Feetech table](https://github.com/huggingface/lerobot/blob/main/lerobot/common/motors/feetech/tables.py) or [Dynamixel table](https://github.com/huggingface/lerobot/blob/main/lerobot/common/motors/dynamixel/tables.py). Depending on the model, this will require you to add model-specific information. In most cases though, there shouldn't be a lot of additions to do.
+If you are using Feetech or Dynamixel servos that are not in this list, you can add those in the [Feetech table](https://github.com/huggingface/lerobot/blob/main/lerobot/motors/feetech/tables.py) or [Dynamixel table](https://github.com/huggingface/lerobot/blob/main/lerobot/motors/dynamixel/tables.py). Depending on the model, this will require you to add model-specific information. In most cases though, there shouldn't be a lot of additions to do.
 
 In the next sections, we'll use a `FeetechMotorsBus` as the motors interface for the examples. Replace it and adapt to your motors if necessary.
 
@@ -44,9 +44,9 @@ Here, we'll add the port name and one camera by default for our robot:
 ```python
 from dataclasses import dataclass, field
 
-from lerobot.common.cameras import CameraConfig
-from lerobot.common.cameras.opencv import OpenCVCameraConfig
-from lerobot.common.robots import RobotConfig
+from lerobot.cameras import CameraConfig
+from lerobot.cameras.opencv import OpenCVCameraConfig
+from lerobot.robots import RobotConfig
 
 
 @RobotConfig.register_subclass("my_cool_robot")
@@ -72,10 +72,10 @@ Next, we'll create our actual robot class which inherits from `Robot`. This abst
 Here we'll create a simple 5-DoF robot with one camera. It could be a simple arm but notice that the `Robot` abstract class does not assume anything on your robot's form factor. You can let you imagination run wild when designing new robots!
 
 ```python
-from lerobot.common.cameras import make_cameras_from_configs
-from lerobot.common.motors import Motor, MotorNormMode
-from lerobot.common.motors.feetech import FeetechMotorsBus
-from lerobot.common.robots import Robot
+from lerobot.cameras import make_cameras_from_configs
+from lerobot.motors import Motor, MotorNormMode
+from lerobot.motors.feetech import FeetechMotorsBus
+from lerobot.robots import Robot
 
 class MyCoolRobot(Robot):
     config_class = MyCoolRobotConfig
@@ -303,7 +303,7 @@ def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
 
 ## Adding a Teleoperator
 
-For implementing teleoperation devices, we also provide a [`Teleoperator`](https://github.com/huggingface/lerobot/blob/main/lerobot/common/teleoperators/teleoperator.py) base class. This class is very similar to the `Robot` base class and also doesn't assume anything on form factor.
+For implementing teleoperation devices, we also provide a [`Teleoperator`](https://github.com/huggingface/lerobot/blob/main/lerobot/teleoperators/teleoperator.py) base class. This class is very similar to the `Robot` base class and also doesn't assume anything on form factor.
 
 The main differences are in the I/O functions: a teleoperator allows you to produce action via `get_action` and can receive feedback actions via `send_feedback`. Feedback could be anything controllable on the teleoperation device that could help the person controlling it understand the consequences of the actions sent. Think motion/force feedback on a leader arm, vibrations on a gamepad controller for example. To implement a teleoperator, you can follow this same tutorial and adapt it for these two methods.
 
