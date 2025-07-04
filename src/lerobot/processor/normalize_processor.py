@@ -32,14 +32,17 @@ def _convert_stats_to_tensors(stats: dict[str, dict[str, Any]]) -> dict[str, dic
 @dataclass
 @ProcessorStepRegistry.register(name="normalizer_processor")
 class NormalizerProcessor:
-    """Normalize observations *and* actions in one go.
+    """Normalizes observations and actions in a single processor step.
 
-    This is a thin convenience wrapper equivalent to::
+    This processor handles normalization of both observation and action tensors
+    using either mean/std normalization or min/max scaling to a [-1, 1] range.
 
-        proc = RobotProcessor([ObservationNormalizer(stats, ...), ActionNormalizer(action_stats, ...)])
+    For each tensor key in the stats dictionary, the processor will:
+    - Use mean/std normalization if those statistics are provided: (x - mean) / std
+    - Use min/max scaling if those statistics are provided: 2 * (x - min) / (max - min) - 1
 
-    Keeping it as a single step is handy for profiling and simplifies
-    configuration files.
+    The processor can be configured to normalize only specific keys by setting
+    the normalize_keys parameter.
     """
 
     stats: dict[str, dict[str, Any]]
