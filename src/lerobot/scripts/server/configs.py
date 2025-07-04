@@ -148,7 +148,6 @@ class RobotClientConfig:
             "pretrained_name_or_path": self.pretrained_name_or_path,
             "policy_device": self.policy_device,
             "chunk_size_threshold": self.chunk_size_threshold,
-            "control_frequency": self.control_frequency,
+            "fps": self.fps,
             "robot": self.robot,
-            "camera_activation_delay": self.camera_activation_delay,
         }
