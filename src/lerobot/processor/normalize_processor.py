@@ -151,7 +151,7 @@ class ObservationNormalizer:
     def load_state_dict(self, state: Mapping[str, Tensor]) -> None:
         self._tensor_stats.clear()
         for flat_key, tensor in state.items():
-            key, stat_name = flat_key.split(".", 1)
+            key, stat_name = flat_key.rsplit(".", 1)
             if key not in self._tensor_stats:
                 self._tensor_stats[key] = {}
             self._tensor_stats[key][stat_name] = tensor
@@ -382,7 +382,7 @@ class NormalizationProcessor:
     def load_state_dict(self, state: Mapping[str, Tensor]) -> None:
         self._tensor_stats.clear()
         for flat_key, tensor in state.items():
-            key, stat_name = flat_key.split(".", 1)
+            key, stat_name = flat_key.rsplit(".", 1)
             if key not in self._tensor_stats:
                 self._tensor_stats[key] = {}
             self._tensor_stats[key][stat_name] = tensor
