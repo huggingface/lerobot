@@ -74,10 +74,6 @@ class RobotClient:
     def running(self):
         return self._running_event.is_set()
 
-    def timestamps(self):
-        """Get the timestamps of the actions in the queue"""
-        return sorted([action.get_timestep() for action in self.action_queue.queue])
-
     def start(self):
         """Start the robot client and connect to the policy server"""
         try:
