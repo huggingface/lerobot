@@ -20,6 +20,7 @@ from .observation_processor import (
     StateProcessor,
 )
 from .pipeline import EnvTransition, ProcessorStep, RobotProcessor
+from .rename_processor import RenameProcessor
 
 __all__ = [
     "RobotProcessor",
@@ -29,4 +30,5 @@ __all__ = [
     "StateProcessor",
     "ObservationProcessor",
     "NormalizationProcessor",
+    "RenameProcessor",
 ]
