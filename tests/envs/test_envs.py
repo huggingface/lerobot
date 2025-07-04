@@ -22,7 +22,7 @@ from gymnasium.utils.env_checker import check_env
 
 import lerobot
 from lerobot.envs.factory import make_env, make_env_config
-from lerobot.processor.observation_processor import ObservationProcessor
+from lerobot.processor.observation_processor import VanillaObservationProcessor
 from lerobot.processor.pipeline import RobotProcessor, TransitionIndex
 from tests.utils import require_env
 
@@ -51,7 +51,7 @@ def test_factory(env_name):
     obs, _ = env.reset()
 
     # Process observation using processor
-    obs_processor = RobotProcessor([ObservationProcessor()])
+    obs_processor = RobotProcessor([VanillaObservationProcessor()])
     transition = (obs, None, None, None, None, None, None)
     processed_transition = obs_processor(transition)
     obs = processed_transition[TransitionIndex.OBSERVATION]
