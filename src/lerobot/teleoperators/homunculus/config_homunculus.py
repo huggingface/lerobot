@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from ..config import TeleoperatorConfig
 
 
-@TeleoperatorConfig.register_subclass("homonculus_glove")
+@TeleoperatorConfig.register_subclass("homunculus_glove")
 @dataclass
 class HomunculusGloveConfig(TeleoperatorConfig):
     port: str  # Port to connect to the glove
@@ -31,7 +31,7 @@ class HomunculusGloveConfig(TeleoperatorConfig):
             raise ValueError(self.side)
 
 
-@TeleoperatorConfig.register_subclass("homonculus_arm")
+@TeleoperatorConfig.register_subclass("homunculus_arm")
 @dataclass
 class HomunculusArmConfig(TeleoperatorConfig):
     port: str  # Port to connect to the arm
