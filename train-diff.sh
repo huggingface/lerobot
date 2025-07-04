@@ -1,0 +1,1 @@
+python -m lerobot.scripts.train --config_path=data/G1_pick_part_2506/config/config.json --policy.type=diffusion --dataset.repo_id="pp" --dataset.root=./data/G1_pick_part_2506 --policy.repo_id="pp" --seed=100000 --batch_size=64 --steps=200000 --eval_freq=25000 --save_freq=25000 --wandb.enable=true --wandb.project=lerobot

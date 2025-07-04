@@ -35,6 +35,7 @@ from torch import Tensor, nn
 
 from lerobot.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
 from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
+from lerobot.policies.diffusion.configuration_diffusion_controlnet import DiffusionControlnetConfig
 from lerobot.policies.normalize import Normalize, Unnormalize
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import (
@@ -169,12 +170,12 @@ class DiffusionControlnetPolicy(PreTrainedPolicy):
     (paper: https://huggingface.co/papers/2303.04137, code: https://github.com/real-stanford/diffusion_policy).
     """
 
-    config_class = DiffusionConfig
+    config_class = DiffusionControlnetConfig
     name = "diffusion-controlnet"
 
     def __init__(
         self,
-        config: DiffusionConfig,
+        config: DiffusionControlnetConfig,
         dataset_stats: dict[str, dict[str, Tensor]] | None = None,
     ):
         """
@@ -489,7 +490,7 @@ class DiffusionModel(nn.Module):
 
 class DiffusionControlnetModel(nn.Module):
     """Diff-Control for conditioning the diffusion model on additional inputs."""
-    def __init__(self, config: DiffusionConfig):
+    def __init__(self, config: DiffusionControlnetConfig):
         super().__init__()
         self.config = config
 
@@ -526,6 +527,53 @@ class DiffusionControlnetModel(nn.Module):
         else:
             self.num_inference_steps = config.num_inference_steps
 
+        assert self.config.pretrained_unet_weights, "Pretrained UNet weights must be provided for DiffusionControlnetModel."
+        self.copy_param_to_controlnet()
+
+    def copy_param_to_controlnet(self):
+        """
+        Copy parameters from the main model to the controlnet model.
+        This is useful for initializing the controlnet model with the same parameters as the main model.
+        """
+           
+        """
+        make the copy of the base model and lock it
+        """
+        # self.control_net.local_cond_encoder.load_state_dict(
+        #     self.unet.local_cond_encoder.state_dict()
+        # )
+        #check if state_dicts are the same
+        """
+        Load pretrained UNet weights.
+        """
+        _pretrained_policy = PreTrainedPolicy.from_pretrained(self.config.pretrained_unet_weights)
+        if not isinstance(_pretrained_policy, DiffusionModel):
+            raise ValueError(
+                f"Expected pretrained UNet weights to be from DiffusionModel, got {_pretrained_policy.name}."
+            )
+        
+        """
+        Copy UNet weights.
+        """
+        self.unet.load_state_dict(_pretrained_policy.unet.state_dict(), strict=True)
+
+        self.control_net.diffusion_step_encoder.load_state_dict(self.unet.diffusion_step_encoder.state_dict())
+        self.control_net.down_modules.load_state_dict(self.unet.down_modules.state_dict())
+        self.control_net.up_modules.load_state_dict(self.unet.up_modules.state_dict())
+        self.control_net.final_conv.load_state_dict(
+            self.unet.final_conv.state_dict()
+        )
+
+        """
+        make the trainable copy of the base model
+        """
+        self.control_net.copy_down_modules.load_state_dict(self.unet.down_modules.state_dict())
+        self.control_net.copy_mid_modules.load_state_dict(
+            self.unet.mid_modules.state_dict()
+        )
+
+        self.unet.eval()
+
     # ========= inference  ============
     def conditional_sample(
         self, batch_size: int, global_cond: Tensor | None = None, generator: torch.Generator | None = None
@@ -545,10 +593,11 @@ class DiffusionControlnetModel(nn.Module):
 
         for t in self.noise_scheduler.timesteps:
             # Predict model output.
-            model_output = self.unet(
+            model_output = self.control_net(
                 sample,
                 torch.full(sample.shape[:1], t, dtype=torch.long, device=sample.device),
                 global_cond=global_cond,
+                control_input=sample,  # initial control input is the sample itself
             )
             # Compute previous image: x_t -> x_t-1
             sample = self.noise_scheduler.step(model_output, t, sample, generator=generator).prev_sample
@@ -611,7 +660,8 @@ class DiffusionControlnetModel(nn.Module):
         global_cond = self._prepare_global_conditioning(batch)  # (B, global_cond_dim)
 
         # run sampling
-        actions = self.conditional_sample(batch_size, global_cond=global_cond)
+        past_action = batch.get("past_action", None)  # INIT: past_action is None
+        actions = self.conditional_sample(batch_size, global_cond=global_cond, control_input=past_action)
 
         # Extract `n_action_steps` steps worth of actions (from the current observation).
         start = n_obs_steps - 1
@@ -645,8 +695,12 @@ class DiffusionControlnetModel(nn.Module):
         # Encode image features and concatenate them all together along with the state vector.
         global_cond = self._prepare_global_conditioning(batch)  # (B, global_cond_dim)
 
+        if "past_action" in batch:
+            print("BATCH PAST_ACTION", batch["past_action"].shape)
+
         # Forward diffusion.
         trajectory = batch["action"]
+        control_input = batch.get("past_action", None)  # INIT: past_action is None
         # Sample noise to add to the trajectory.
         eps = torch.randn(trajectory.shape, device=trajectory.device)
         # Sample a random noising timestep for each item in the batch.
@@ -660,7 +714,7 @@ class DiffusionControlnetModel(nn.Module):
         noisy_trajectory = self.noise_scheduler.add_noise(trajectory, eps, timesteps)
 
         # Run the denoising network (that might denoise the trajectory, or attempt to predict the noise).
-        pred = self.control_net(noisy_trajectory, timesteps, global_cond=global_cond, control_input)
+        pred = self.control_net(noisy_trajectory, timesteps, global_cond=global_cond, control_input=control_input)
 
         # Compute the loss.
         # The target is either the original trajectory, or the noise.
@@ -1032,7 +1086,7 @@ class ControlNet(nn.Module):
     Note: this removes local conditioning as compared to the original diffusion policy code.
     """
 
-    def __init__(self, config: DiffusionConfig, global_cond_dim: int):
+    def __init__(self, config: DiffusionControlnetConfig, global_cond_dim: int):
         super().__init__()
 
         self.config = config
