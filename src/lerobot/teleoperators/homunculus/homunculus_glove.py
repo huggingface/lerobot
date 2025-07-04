@@ -21,7 +21,7 @@ from pprint import pformat
 from typing import Deque, Dict, Optional
 
 import serial
-
+from lerobot.teleoperators.homunculus.joints_translation import homunculus_glove_to_hope_jr_hand
 from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.motors import MotorCalibration
 from lerobot.motors.motors_bus import MotorNormMode
@@ -318,7 +318,7 @@ class HomunculusGlove(Teleoperator):
 
     def get_action(self) -> dict[str, float]:
         joint_positions = self._read()
-        return {f"{joint}.pos": pos for joint, pos in joint_positions.items()}
+        return homunculus_glove_to_hope_jr_hand({f"{joint}.pos": pos for joint, pos in joint_positions.items()})
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
         raise NotImplementedError

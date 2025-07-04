@@ -53,6 +53,14 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from tests.mocks.mock_robot import MockRobot
 
         return MockRobot(config)
+    elif config.type == "hope_jr_hand":
+        from .hope_jr import HopeJrHand
+
+        return HopeJrHand(config)
+    elif config.type == "hope_jr_arm":
+        from .hope_jr import HopeJrArm
+
+        return HopeJrArm(config)
     else:
         raise ValueError(config.type)
 
