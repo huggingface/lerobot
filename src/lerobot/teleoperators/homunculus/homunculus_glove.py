@@ -16,7 +16,9 @@
 
 import logging
 import threading
+from collections import deque
 from pprint import pformat
+from typing import Deque, Dict, Optional
 
 import serial
 
@@ -42,20 +44,22 @@ LEFT_HAND_INVERSIONS = [
 RIGHT_HAND_INVERSIONS = [
     "thumb_mcp",
     "thumb_cmc",
+    "thumb_pip",
+    "thumb_dip",
     "index_mcp_abduction",
-    "index_dip",
+    #"index_dip",
     "middle_mcp_abduction",
-    "middle_dip",
+    #"middle_dip",
     "ring_mcp_abduction",
     "ring_mcp_flexion",
-    "ring_dip",
+    #"ring_dip",
     "pinky_mcp_abduction",
 ]
 
 
 class HomunculusGlove(Teleoperator):
     """
-    Homunculus Glove designed by Hugging Face.
+    Homunculus Glove designed by NepYope & Hugging Face.
     """
 
     config_class = HomunculusGloveConfig
@@ -85,6 +89,17 @@ class HomunculusGlove(Teleoperator):
             "pinky_dip": MotorNormMode.RANGE_0_100,
         }
         self.inverted_joints = RIGHT_HAND_INVERSIONS if config.side == "right" else LEFT_HAND_INVERSIONS
+
+        n = 10
+        # EMA parameters ---------------------------------------------------
+        self.n: int = n
+        self.alpha: float = 2 / (n + 1)
+        # one deque *per joint* so we can inspect raw history if needed
+        self._buffers: Dict[str, Deque[int]] = {
+            joint: deque(maxlen=n) for joint in self.joints
+        }
+        # running EMA value per joint – lazily initialised on first read
+        self._ema: Dict[str, Optional[float]] = dict.fromkeys(self._buffers)
 
         self._state: dict[str, float] | None = None
         self.new_state_event = threading.Event()
@@ -230,6 +245,23 @@ class HomunculusGlove(Teleoperator):
 
         return normalized_values
 
+    def _apply_ema(self, raw: Dict[str, int]) -> Dict[str, int]:
+        """Update buffers & running EMA values; return smoothed dict as integers."""
+        smoothed: Dict[str, int] = {}
+        for joint, value in raw.items():
+            # maintain raw history
+            self._buffers[joint].append(value)
+
+            # initialise on first run
+            if self._ema[joint] is None:
+                self._ema[joint] = float(value)
+            else:
+                self._ema[joint] = self.alpha * value + (1 - self.alpha) * self._ema[joint]
+
+            # Convert back to int for compatibility with normalization
+            smoothed[joint] = int(round(self._ema[joint]))
+        return smoothed
+
     def _read(
         self, joints: list[str] | None = None, normalize: bool = True, timeout: float = 1
     ) -> dict[str, int | float]:
@@ -251,9 +283,13 @@ class HomunculusGlove(Teleoperator):
         if joints is not None:
             state = {k: v for k, v in state.items() if k in joints}
 
+        # Apply EMA smoothing to raw values first
+        state = self._apply_ema(state)
+        
+        # Then normalize if requested
         if normalize:
             state = self._normalize(state)
-
+        
         return state
 
     def _read_loop(self):
