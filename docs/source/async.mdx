@@ -19,7 +19,7 @@ If you get stuck, hop into our [Discord community](https://discord.gg/s3KuuzsPFb
 Synchronous inference relies on interleaving action chunk prediction and action execution. This inherently results in *idle frames*, frames where the robot awaits idle the policy's output: a new action chunk. This results in evident real-time lags, where the robot simply stops acting due to the lack of available actions.
 
 <p align="center">
-  <img src="https://huggingface.co/datasets/huggingface/documentation-images/blob/main/async-inference/sync.png" width="80%"></img>
+  <img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/async-inference/sync.png" width="80%"></img>
 </p>
 <p align="center"><i>Synchronous inference</i> makes the robot idle while the policy is computing the next chunk of actions.</p>
 
@@ -27,7 +27,7 @@ On the contrary, async inference overlaps action planning and execution, resulti
 Crucially, with async inference, the next action chunk is computed *before* the current one is exhausted, resulting in no idleness. Adaptability is ensured by aggregating the different action chunks on overlapping portions, obtaining an up-to-date plan.
 
 <p align="center">
-  <img src="https://huggingface.co/datasets/huggingface/documentation-images/blob/main/async-inference/async.png" width="80%"></img>
+  <img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/async-inference/async.png" width="80%"></img>
 </p>
 <p align="center"><i>Asynchronous inference</i> results in no idleness because the next chunk is computed before the current chunk is exhausted.</p>
 
