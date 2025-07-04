@@ -87,9 +87,9 @@ while True:
     inertia_f = follower._inertia_from_q_dq(pos_f, vel_f, acc_f)
     inertia_l = leader._inertia_from_q_dq(pos_l, vel_l, acc_l)
 
-    Kp = 8.0  # Position gain
+    Kp = 5.0  # Position gain
     Kd = 0.1  # Velocity gain
-    Kf = 0.1  # Force reflection gain
+    Kf = 0.05  # Force reflection gain
 
     for j in follower.bus.motors:
         # Bilateral control references (eqs. 5-7)
