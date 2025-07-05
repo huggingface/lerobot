@@ -394,7 +394,7 @@ def test_factory(env_name, repo_id, policy_name):
 
 
 # TODO(alexander-soare): If you're hunting for savings on testing time, this takes about 5 seconds.
-@pytest.mark.skip("TODO after fix multidataset")
+# @pytest.mark.skip("TODO after fix multidataset")
 def test_multidataset_frames():
     """Check that all dataset frames are incorporated and aligned correctly."""
     repo_ids = [
@@ -421,7 +421,6 @@ def test_multidataset_frames():
     assert len(dataset) == sum(len(d) for d in sub_datasets)
     assert dataset.num_frames == sum(d.num_frames for d in sub_datasets)
     assert dataset.num_episodes == sum(d.num_episodes for d in sub_datasets)
-
     expected_dataset_indices = []
     for i, sub_dataset in enumerate(sub_datasets):
         expected_dataset_indices.extend([i] * len(sub_dataset))
