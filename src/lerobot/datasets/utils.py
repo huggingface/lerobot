@@ -116,17 +116,21 @@ def update_chunk_file_indices(chunk_idx: int, file_idx: int, chunks_size: int):
     return chunk_idx, file_idx
 
 
-def load_nested_dataset(pq_dir: Path) -> Dataset:
+def load_nested_dataset(pq_dir: Path, features: datasets.Features | None = None) -> Dataset:
     """Find parquet files in provided directory {pq_dir}/chunk-xxx/file-xxx.parquet
     Convert parquet files to pyarrow memory mapped in a cache folder for efficient RAM usage
     Concatenate all pyarrow references to return HF Dataset format
+
+    Args:
+        pq_dir: Directory containing parquet files
+        features: Optional features schema to ensure consistent loading of complex types like images
     """
     paths = sorted(pq_dir.glob("*/*.parquet"))
     if len(paths) == 0:
         raise FileNotFoundError(f"Provided directory does not contain any parquet file: {pq_dir}")
 
     # TODO(rcadene): set num_proc to accelerate conversion to pyarrow
-    datasets = [Dataset.from_parquet(str(path)) for path in paths]
+    datasets = [Dataset.from_parquet(str(path), features=features) for path in paths]
     return concatenate_datasets(datasets)
 
 
