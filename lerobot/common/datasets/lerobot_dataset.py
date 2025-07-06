@@ -1004,21 +1004,25 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         logging.info(f"Starting batch video encoding for episodes {start_episode} to {end_episode - 1}")
 
-        # Encode all episodes but don't update video info or cleanup until the end
+        # Encode all episodes with cleanup enabled for individual episodes
         for ep_idx in range(start_episode, end_episode):
             logging.info(f"Encoding videos for episode {ep_idx}")
             self.encode_episode_videos(
                 ep_idx,
-                cleanup_images=False,
+                cleanup_images=True,
             )
-
-        # Update video info once for the entire batch
-        self.meta.update_video_info()
 
         # Cleanup all images once for the entire batch
         img_dir = self.root / "images"
         if img_dir.is_dir():
-            shutil.rmtree(img_dir)
+            # Check for any remaining PNG files
+            png_files = list(img_dir.rglob("*.png"))
+            if not png_files:
+                # Only remove the images directory if no PNG files remain
+                shutil.rmtree(img_dir)
+                logging.info("Cleaned up empty images directory")
+            else:
+                logging.info(f"Images directory is not empty, containing {len(png_files)} PNG files")
 
         logging.info("Batch video encoding completed")
 
