@@ -855,11 +855,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         # Only encode videos if requested
         if encode_videos and len(self.meta.video_keys) > 0:
-            video_paths = self.encode_episode_videos(
-                episode_index,
-                update_video_info=True,  # Update immediately for each episode
-                cleanup_images=False,  # wait until post-encoding validations
-            )
+            video_paths = self.encode_episode_videos(episode_index, cleanup_images=False)
             for key in self.meta.video_keys:
                 episode_buffer[key] = video_paths[key]
 
@@ -954,7 +950,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             self.encode_episode_videos(ep_idx)
 
     def encode_episode_videos(
-        self, episode_index: int, update_video_info: bool = True, cleanup_images: bool = True
+        self, episode_index: int, cleanup_images: bool = True
     ) -> dict:
         """
         Use ffmpeg to convert frames stored as png into mp4 videos.
@@ -968,7 +964,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         Args:
             episode_index: Episode to encode
-            update_video_info: Whether to update video info in metadata
             cleanup_images: Whether to cleanup raw images for this episode
 
         Returns:
@@ -990,8 +985,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
             if cleanup_images:
                 shutil.rmtree(img_dir)
 
-        # Update video info
-        if update_video_info and len(self.meta.video_keys) > 0:
+        # Update video info (only needed when first episode is encoded since it reads from episode 0)
+        if len(self.meta.video_keys) > 0 and episode_index == 0:
             self.meta.update_video_info()
 
         return video_paths
@@ -1014,7 +1009,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
             logging.info(f"Encoding videos for episode {ep_idx}")
             self.encode_episode_videos(
                 ep_idx,
-                update_video_info=False,
                 cleanup_images=False,
             )
 
