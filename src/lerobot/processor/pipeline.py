@@ -42,7 +42,7 @@ class TransitionIndex(IntEnum):
 
 # (observation, action, reward, done, truncated, info, complementary_data)
 EnvTransition = Tuple[
-    Any | None,  # observation
+    dict[str, Any] | None,  # observation
     Any | None,  # action
     float | None,  # reward
     bool | None,  # done
@@ -162,6 +162,79 @@ class ProcessorStep(Protocol):
     def reset(self) -> None: ...
 
 
+def _default_batch_to_transition(batch: dict[str, Any]) -> EnvTransition:  # noqa: D401
+    """Convert a *batch* dict coming from Learobot replay/dataset code into an
+    ``EnvTransition`` tuple.
+
+    The function is intentionally **strictly positional** – it maps well known
+    keys to the fixed slot order used inside the pipeline.  Missing keys are
+    filled with sane defaults (``None`` or ``0.0``/``False``).
+
+    Keys recognised (case-sensitive):
+
+    * "observation.*" (keys starting with "observation." are grouped into observation dict)
+    * "action"
+    * "next.reward"
+    * "next.done"
+    * "next.truncated"
+    * "info"
+
+    Additional keys are ignored so that existing dataloaders can carry extra
+    metadata without breaking the processor.
+    """
+
+    # Handle observation and observation.* keys
+    observation_keys = {k: v for k, v in batch.items() if k.startswith("observation.")}
+
+    observation = None
+    if observation_keys:
+        observation = {}
+        # Add observation.* keys to the observation dict, removing the "observation." prefix
+        for key, value in observation_keys.items():
+            observation[key] = value
+
+    return (
+        observation,
+        batch.get("action"),
+        batch.get("next.reward", 0.0),
+        batch.get("next.done", False),
+        batch.get("next.truncated", False),
+        batch.get("info", {}),
+        {},
+    )
+
+
+def _default_transition_to_batch(transition: EnvTransition) -> dict[str, Any]:  # noqa: D401
+    """Inverse of :pyfunc:`_default_batch_to_transition`. Returns a dict with
+    the canonical field names used throughout *LeRobot*.
+    """
+
+    (
+        observation,
+        action,
+        reward,
+        done,
+        truncated,
+        info,
+        _,
+    ) = transition
+
+    batch = {
+        "action": action,
+        "next.reward": reward,
+        "next.done": done,
+        "next.truncated": truncated,
+        "info": info,
+    }
+
+    # Handle observation - flatten dict to observation.* keys if it's a dict
+    if isinstance(observation, dict):
+        # Check if this looks like a dict that was created from observation.* keys
+        for key, value in observation.items():
+            batch[key] = value
+    return batch
+
+
 @dataclass
 class RobotProcessor(ModelHubMixin):
     """
@@ -200,6 +273,13 @@ class RobotProcessor(ModelHubMixin):
     name: str = "RobotProcessor"
     seed: int | None = None
 
+    to_transition: Callable[[dict[str, Any]], EnvTransition] = field(
+        default_factory=lambda: _default_batch_to_transition, repr=False
+    )
+    to_batch: Callable[[EnvTransition], dict[str, Any]] = field(
+        default_factory=lambda: _default_transition_to_batch, repr=False
+    )
+
     # Processor-level hooks
     # A hook can optionally return a modified transition.  If it returns
     # ``None`` the current value is left untouched.
@@ -211,14 +291,29 @@ class RobotProcessor(ModelHubMixin):
     )
     reset_hooks: list[Callable[[], None]] = field(default_factory=list, repr=False)
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        """Run *transition* through every step, firing hooks on the way."""
+    def __call__(self, data: EnvTransition | dict[str, Any]):
+        """Process *data* through all steps.
 
-        # Basic validation with helpful error message
+        The method accepts **either** the classic :pydata:`EnvTransition` tuple
+        **or** a *batch* dictionary (like the ones returned by
+        :class:`lerobot.utils.buffer.ReplayBuffer` or
+        :class:`lerobot.datasets.lerobot_dataset.LeRobotDataset`).  If a dict is
+        supplied it is first converted to the internal tuple format using
+        :pyattr:`to_transition`; after all steps are executed the tuple is
+        transformed back into a dict with :pyattr:`to_batch` and the result is
+        returned – thereby preserving the caller's original data type.
+        """
+
+        called_with_batch = isinstance(data, dict)
+
+        transition = self.to_transition(data) if called_with_batch else data
+
+        # Basic validation with helpful error message for tuple input
         if not isinstance(transition, tuple) or len(transition) != 7:
             raise ValueError(
-                f"EnvTransition must be a 7-tuple of (observation, action, reward, done, truncated, info, complementary_data), "
-                f"got {type(transition).__name__} with length {len(transition) if hasattr(transition, '__len__') else 'unknown'}"
+                "EnvTransition must be a 7-tuple of (observation, action, reward, done, "
+                "truncated, info, complementary_data). "
+                f"Got {type(transition).__name__} with length {len(transition) if hasattr(transition, '__len__') else 'unknown'}."
             )
 
         for idx, processor_step in enumerate(self.steps):
@@ -234,7 +329,7 @@ class RobotProcessor(ModelHubMixin):
                 if updated is not None:
                     transition = updated
 
-        return transition
+        return self.to_batch(transition) if called_with_batch else transition
 
     def step_through(self, transition: EnvTransition) -> Iterable[EnvTransition]:
         """Yield the intermediate Transition instances after each processor step."""
@@ -737,3 +832,22 @@ class InfoProcessor:
             *transition[TransitionIndex.COMPLEMENTARY_DATA :],
         )
         return transition
+
+
+class IdentityProcessor:
+    """Identity processor that does nothing."""
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        return transition
+
+    def get_config(self) -> dict[str, Any]:
+        return {}
+
+    def state_dict(self) -> dict[str, torch.Tensor]:
+        return {}
+
+    def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
+        pass
+
+    def reset(self) -> None:
+        pass
