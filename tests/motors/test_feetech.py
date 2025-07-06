@@ -5,10 +5,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from lerobot.common.motors import Motor, MotorCalibration, MotorNormMode
-from lerobot.common.motors.feetech import MODEL_NUMBER, MODEL_NUMBER_TABLE, FeetechMotorsBus
-from lerobot.common.motors.feetech.tables import STS_SMS_SERIES_CONTROL_TABLE
-from lerobot.common.utils.encoding_utils import encode_sign_magnitude
+from lerobot.motors import Motor, MotorCalibration, MotorNormMode
+from lerobot.motors.feetech import MODEL_NUMBER, MODEL_NUMBER_TABLE, FeetechMotorsBus
+from lerobot.motors.feetech.tables import STS_SMS_SERIES_CONTROL_TABLE
+from lerobot.utils.encoding_utils import encode_sign_magnitude
 
 try:
     import scservo_sdk as scs
@@ -432,7 +432,7 @@ def test_record_ranges_of_motion(mock_motors, dummy_motors):
     stub = mock_motors.build_sequential_sync_read_stub(
         *STS_SMS_SERIES_CONTROL_TABLE["Present_Position"], positions
     )
-    with patch("lerobot.common.motors.motors_bus.enter_pressed", side_effect=[False, True]):
+    with patch("lerobot.motors.motors_bus.enter_pressed", side_effect=[False, True]):
         bus = FeetechMotorsBus(port=mock_motors.port, motors=dummy_motors)
         bus.connect(handshake=False)
 

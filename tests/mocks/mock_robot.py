@@ -3,9 +3,9 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Any
 
-from lerobot.common.cameras import CameraConfig, make_cameras_from_configs
-from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from lerobot.common.robots import Robot, RobotConfig
+from lerobot.cameras import CameraConfig, make_cameras_from_configs
+from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.robots import Robot, RobotConfig
 
 
 @RobotConfig.register_subclass("mock_robot")
