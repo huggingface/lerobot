@@ -33,37 +33,15 @@ python -m lerobot.datasets.v21.convert_dataset_v20_to_v21 \
 
 import argparse
 import logging
-from pathlib import Path
 
-import jsonlines
 from huggingface_hub import HfApi
 
 from lerobot.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset
-from lerobot.datasets.utils import STATS_PATH, load_stats, serialize_dict, write_info
+from lerobot.datasets.utils import STATS_PATH, load_stats, write_info
 from lerobot.datasets.v21.convert_stats import check_aggregate_stats, convert_stats
 
 V20 = "v2.0"
 V21 = "v2.1"
-
-### LEGACY FUNCTIONS REMOVED FROM UTILS ###
-
-LEGACY_EPISODES_STATS_PATH = "episodes_stats.jsonl"
-
-
-def append_jsonlines(data: dict, fpath: Path) -> None:
-    fpath.parent.mkdir(exist_ok=True, parents=True)
-    with jsonlines.open(fpath, "a") as writer:
-        writer.write(data)
-
-
-def legacy_write_episode_stats(episode_index: int, episode_stats: dict, local_dir: Path):
-    # We wrap episode_stats in a dictionary since `episode_stats["episode_index"]`
-    # is a dictionary of stats and not an integer.
-    episode_stats = {"episode_index": episode_index, "stats": serialize_dict(episode_stats)}
-    append_jsonlines(episode_stats, local_dir / LEGACY_EPISODES_STATS_PATH)
-
-
-######## END OF LEGACY FUNCTIONS ########
 
 
 class SuppressWarnings:
