@@ -52,7 +52,7 @@ class KochScrewdriverFollowerConfig(RobotConfig):
     # Ratio of the above limit at which the software clutch engages.
     # When |present_current| >= limit * clutch_ratio the follower will cut the
     # screwdriver velocity command to 0 and send haptic feedback to the leader.
-    clutch_ratio: float = 0.9
+    clutch_ratio: float = 0.5
 
     # Cool-down duration (seconds) during which any velocity command for the
     # screwdriver is forced to zero after the clutch engages.  This allows the

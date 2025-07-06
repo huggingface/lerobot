@@ -7,11 +7,12 @@ from lerobot.common.cameras.opencv import OpenCVCameraConfig
 from lerobot.common.utils.robot_utils import busy_wait
 import numpy as np
 
-inference_time_s = 15
+inference_time_s = 60
 fps = 30
 device = "cuda"  # TODO: On Mac, use "mps" or "cpu"
 
-ckpt_path = "outputs/train/act_koch_screwdriver_with_validation_16/checkpoints/last/pretrained_model"
+# ckpt_path = "outputs/train/act_koch_screwdriver_with_validation_16/checkpoints/last/pretrained_model"
+ckpt_path = "outputs/modal/pretrained_model"
 policy = ACTPolicy.from_pretrained(ckpt_path)
 policy.to(device)
 

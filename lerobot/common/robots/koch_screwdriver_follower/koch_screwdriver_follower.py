@@ -292,6 +292,7 @@ class KochScrewdriverFollower(Robot):
         """Cut velocity to 0 if current close to limit and update clutch flag."""
 
         present = abs(self._read_screwdriver_current())
+        print(f"Present current: {present}")
         threshold_on  = self._screw_limit * self.config.clutch_ratio          # engage clutch
         threshold_off = self._screw_limit * (self.config.clutch_ratio * 0.6)  # release clutch (hysteresis)
 
