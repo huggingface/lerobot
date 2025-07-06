@@ -987,19 +987,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 episode_index=episode_index, image_key=key, frame_index=0
             ).parent
             encode_video_frames(img_dir, video_path, self.fps, overwrite=True)
+            if cleanup_images:
+                shutil.rmtree(img_dir)
 
         # Update video info
         if update_video_info and len(self.meta.video_keys) > 0:
             self.meta.update_video_info()
-
-        # Cleanup raw images for this episode
-        if cleanup_images:
-            for key in self.meta.video_keys:
-                img_dir = self._get_image_file_path(
-                    episode_index=episode_index, image_key=key, frame_index=0
-                ).parent
-                if img_dir.exists():
-                    shutil.rmtree(img_dir)
 
         return video_paths
 
