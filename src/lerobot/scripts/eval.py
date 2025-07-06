@@ -131,7 +131,14 @@ def rollout(
         render_callback(env)
 
     # Create observation processing processor
-    obs_processor = RobotProcessor([VanillaObservationProcessor()])
+    # NOTE: During environment interaction, we skip batch dictionary conversion
+    # since that format is only needed for loss computation during training.
+    # Using identity functions to avoid unnecessary format transformations.
+    obs_processor = RobotProcessor(
+        [VanillaObservationProcessor()],
+        to_transition=lambda x: x,
+        to_output=lambda x: x,
+    )
 
     all_observations = []
     all_actions = []
@@ -152,7 +159,7 @@ def rollout(
     check_env_attributes_and_types(env)
     while not np.all(done):
         # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
-        transition = (observation, None, None, None, None, None, None)
+        transition = (observation, None, None, None, None, info, None)
         processed_transition = obs_processor(transition)
         observation = processed_transition[TransitionIndex.OBSERVATION]
         if return_observations:
