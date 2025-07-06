@@ -262,48 +262,24 @@ class VideoEncodingManager:
         self.last_encoded_episode = dataset.num_episodes - 1
         self.play_sounds = play_sounds
 
-    def should_encode_batch(self, force=False):
-        """Check if we should encode the current batch."""
-        return self.use_batched_encoding and (self.episodes_since_last_encoding >= self.batch_size or force)
-
-    def save_episode_and_maybe_encode(self, force_encode=False):
-        """Save episode and potentially encode batch."""
-        if self.use_batched_encoding:
-            self.dataset.save_episode(encode_videos=False)
-            self.episodes_since_last_encoding += 1
-
-            if self.should_encode_batch(force=force_encode):
-                self._encode_current_batch()
-        else:
-            # default behavior: encode videos immediately
-            self.dataset.save_episode(encode_videos=True)
-
-    def _encode_current_batch(self):
-        """Encode the current batch of episodes."""
-        if self.episodes_since_last_encoding > 0:
-            start_ep = self.last_encoded_episode + 1
-            end_ep = self.dataset.num_episodes
-            log_say(
-                f"Batch encoding videos for {self.episodes_since_last_encoding} episodes, "
-                f"from episode {start_ep} to episode {end_ep - 1}",
-                self.play_sounds,
-            )
-            self.dataset.batch_encode_videos(start_ep, end_ep)
-            self.last_encoded_episode = end_ep - 1
-            self.episodes_since_last_encoding = 0
-
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """Ensure any pending batch encoding is completed on exit (both normal and exception cases)."""
-        if self.episodes_since_last_encoding > 0:
+        if self.use_batched_encoding and self.episodes_since_last_encoding > 0:
             if exc_type is not None:
                 print("Exception occurred. Encoding pending episodes before exit...")
             else:
                 print("Recording stopped. Encoding remaining episodes...")
             try:
-                self._encode_current_batch()
+                start_ep = self.last_encoded_episode + 1
+                end_ep = self.dataset.num_episodes
+                log_say(
+                    f"Batch encoding videos for {self.episodes_since_last_encoding} episodes, "
+                    f"from episode {start_ep} to episode {end_ep - 1}",
+                    self.play_sounds,
+                )
+                self.dataset.batch_encode_videos(start_ep, end_ep)
             except Exception as e:
                 print(f"Something went wrong while encoding videos on exit: {e}")
         return False  # Don't suppress the original exception
@@ -399,12 +375,27 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 dataset.clear_episode_buffer()
                 continue
 
-        # Pass force_encode=True when exiting early to ensure pending episodes are encoded
-        video_encoding_manager.save_episode_and_maybe_encode(
-            force_encode=(events["exit_early"] or events["stop_recording"])
-        )
+            if video_encoding_manager.use_batched_encoding:
+                dataset.save_episode(encode_videos=False)
+                video_encoding_manager.episodes_since_last_encoding += 1
+                
+                # Check if we should encode current batch
+                if video_encoding_manager.episodes_since_last_encoding >= video_encoding_manager.batch_size:
+                    start_ep = video_encoding_manager.last_encoded_episode + 1
+                    end_ep = dataset.num_episodes
+                    log_say(
+                        f"Batch encoding videos for {video_encoding_manager.episodes_since_last_encoding} episodes, "
+                        f"from episode {start_ep} to episode {end_ep - 1}",
+                        cfg.play_sounds,
+                    )
+                    dataset.batch_encode_videos(start_ep, end_ep)
+                    video_encoding_manager.last_encoded_episode = end_ep - 1
+                    video_encoding_manager.episodes_since_last_encoding = 0
+            else:
+                # Default behavior: encode videos immediately
+                dataset.save_episode(encode_videos=True)
 
-        recorded_episodes += 1
+            recorded_episodes += 1
 
     log_say("Stop recording", cfg.play_sounds, blocking=True)
 
