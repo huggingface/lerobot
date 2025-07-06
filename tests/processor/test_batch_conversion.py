@@ -224,7 +224,7 @@ def test_complex_nested_observation():
 
     # Check that all observation keys are preserved
     original_obs_keys = {k for k in batch if k.startswith("observation.")}
-    reconstructed_obs_keys = {k for k in reconstructed_batch.keys() if k.startswith("observation.")}
+    reconstructed_obs_keys = {k for k in reconstructed_batch if k.startswith("observation.")}
 
     assert original_obs_keys == reconstructed_obs_keys
 
