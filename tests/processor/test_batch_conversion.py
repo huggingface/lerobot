@@ -273,7 +273,7 @@ def test_custom_converter():
         batch["custom_field"] = "custom_value"
         return batch
 
-    proc = RobotProcessor([], to_transition=to_tr, to_batch=to_batch)
+    proc = RobotProcessor([], to_transition=to_tr, to_output=to_batch)
     batch = _dummy_batch()
     out = proc(batch)
 
