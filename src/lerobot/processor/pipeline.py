@@ -43,10 +43,10 @@ class TransitionIndex(IntEnum):
 # (observation, action, reward, done, truncated, info, complementary_data)
 EnvTransition = Tuple[
     dict[str, Any] | None,  # observation
-    Any | None,  # action
-    float | None,  # reward
-    bool | None,  # done
-    bool | None,  # truncated
+    Any | torch.Tensor | None,  # action
+    float | torch.Tensor | None,  # reward
+    bool | torch.Tensor | None,  # done
+    bool | torch.Tensor | None,  # truncated
     Dict[str, Any] | None,  # info
     Dict[str, Any] | None,  # complementary_data
 ]

@@ -159,12 +159,13 @@ def rollout(
     check_env_attributes_and_types(env)
     while not np.all(done):
         # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
-        transition = (observation, None, None, None, None, info, None)
+        transition = (observation, None, None, None, None, None, None)
         processed_transition = obs_processor(transition)
         observation = processed_transition[TransitionIndex.OBSERVATION]
         if return_observations:
             all_observations.append(deepcopy(observation))
 
+        # TODO(azouitine): Move this in processor side
         observation = {
             key: observation[key].to(device, non_blocking=device.type == "cuda") for key in observation
         }
