@@ -1,3 +1,19 @@
+#!/usr/bin/env python
+
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 This script will help you convert any LeRobot dataset already pushed to the hub from codebase version 2.1 to
 3.0. It will:
@@ -11,7 +27,7 @@ This script will help you convert any LeRobot dataset already pushed to the hub 
 Usage:
 
 ```bash
-python lerobot/datasets/v30/convert_dataset_v21_to_v30.py \
+python src/lerobot/datasets/v30/convert_dataset_v21_to_v30.py \
     --repo-id=lerobot/pusht
 ```
 
