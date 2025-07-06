@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 import torch
 
+from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.processor.normalize_processor import (
     NormalizerProcessor,
     UnnormalizerProcessor,
@@ -76,6 +77,21 @@ def test_unsupported_type():
         _convert_stats_to_tensors(stats)
 
 
+# Helper functions to create feature maps and norm maps
+def _create_observation_features():
+    return {
+        "observation.image": PolicyFeature(FeatureType.VISUAL, (3, 96, 96)),
+        "observation.state": PolicyFeature(FeatureType.STATE, (2,)),
+    }
+
+
+def _create_observation_norm_map():
+    return {
+        FeatureType.VISUAL: NormalizationMode.MEAN_STD,
+        FeatureType.STATE: NormalizationMode.MIN_MAX,
+    }
+
+
 # Fixtures for observation normalisation tests using NormalizerProcessor
 @pytest.fixture
 def observation_stats():
@@ -94,7 +110,9 @@ def observation_stats():
 @pytest.fixture
 def observation_normalizer(observation_stats):
     """Return a NormalizerProcessor that only has observation stats (no action)."""
-    return NormalizerProcessor(stats=observation_stats)
+    features = _create_observation_features()
+    norm_map = _create_observation_norm_map()
+    return NormalizerProcessor(features=features, norm_map=norm_map, stats=observation_stats)
 
 
 def test_mean_std_normalization(observation_normalizer):
@@ -129,7 +147,11 @@ def test_min_max_normalization(observation_normalizer):
 
 
 def test_selective_normalization(observation_stats):
-    normalizer = NormalizerProcessor(stats=observation_stats, normalize_keys={"observation.image"})
+    features = _create_observation_features()
+    norm_map = _create_observation_norm_map()
+    normalizer = NormalizerProcessor(
+        features=features, norm_map=norm_map, stats=observation_stats, normalize_keys={"observation.image"}
+    )
 
     observation = {
         "observation.image": torch.tensor([0.7, 0.5, 0.3]),
@@ -148,7 +170,9 @@ def test_selective_normalization(observation_stats):
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 def test_device_compatibility(observation_stats):
-    normalizer = NormalizerProcessor(stats=observation_stats)
+    features = _create_observation_features()
+    norm_map = _create_observation_norm_map()
+    normalizer = NormalizerProcessor(features=features, norm_map=norm_map, stats=observation_stats)
     observation = {
         "observation.image": torch.tensor([0.7, 0.5, 0.3]).cuda(),
     }
@@ -165,10 +189,19 @@ def test_from_lerobot_dataset():
     mock_dataset = Mock()
     mock_dataset.meta.stats = {
         "observation.image": {"mean": [0.5], "std": [0.2]},
-        "action": {"mean": [0.0], "std": [1.0]},  # Should be filtered out
+        "action": {"mean": [0.0], "std": [1.0]},
     }
 
-    normalizer = NormalizerProcessor.from_lerobot_dataset(mock_dataset)
+    features = {
+        "observation.image": PolicyFeature(FeatureType.VISUAL, (3, 96, 96)),
+        "action": PolicyFeature(FeatureType.ACTION, (1,)),
+    }
+    norm_map = {
+        FeatureType.VISUAL: NormalizationMode.MEAN_STD,
+        FeatureType.ACTION: NormalizationMode.MEAN_STD,
+    }
+
+    normalizer = NormalizerProcessor.from_lerobot_dataset(mock_dataset, features, norm_map)
 
     # Both observation and action statistics should be present in tensor stats
     assert "observation.image" in normalizer._tensor_stats
@@ -180,7 +213,9 @@ def test_state_dict_save_load(observation_normalizer):
     state_dict = observation_normalizer.state_dict()
 
     # Create new normalizer and load state
-    new_normalizer = NormalizerProcessor(stats={})
+    features = _create_observation_features()
+    norm_map = _create_observation_norm_map()
+    new_normalizer = NormalizerProcessor(features=features, norm_map=norm_map, stats={})
     new_normalizer.load_state_dict(state_dict)
 
     # Test that it works the same
@@ -210,8 +245,30 @@ def action_stats_min_max():
     }
 
 
+def _create_action_features():
+    return {
+        "action": PolicyFeature(FeatureType.ACTION, (3,)),
+    }
+
+
+def _create_action_norm_map_mean_std():
+    return {
+        FeatureType.ACTION: NormalizationMode.MEAN_STD,
+    }
+
+
+def _create_action_norm_map_min_max():
+    return {
+        FeatureType.ACTION: NormalizationMode.MIN_MAX,
+    }
+
+
 def test_mean_std_unnormalization(action_stats_mean_std):
-    unnormalizer = UnnormalizerProcessor(stats={"action": action_stats_mean_std})
+    features = _create_action_features()
+    norm_map = _create_action_norm_map_mean_std()
+    unnormalizer = UnnormalizerProcessor(
+        features=features, norm_map=norm_map, stats={"action": action_stats_mean_std}
+    )
 
     normalized_action = torch.tensor([1.0, -0.5, 2.0])
     transition = (None, normalized_action, None, None, None, None, None)
@@ -225,7 +282,11 @@ def test_mean_std_unnormalization(action_stats_mean_std):
 
 
 def test_min_max_unnormalization(action_stats_min_max):
-    unnormalizer = UnnormalizerProcessor(stats={"action": action_stats_min_max})
+    features = _create_action_features()
+    norm_map = _create_action_norm_map_min_max()
+    unnormalizer = UnnormalizerProcessor(
+        features=features, norm_map=norm_map, stats={"action": action_stats_min_max}
+    )
 
     # Actions in [-1, 1]
     normalized_action = torch.tensor([0.0, -1.0, 1.0])
@@ -247,7 +308,11 @@ def test_min_max_unnormalization(action_stats_min_max):
 
 
 def test_numpy_action_input(action_stats_mean_std):
-    unnormalizer = UnnormalizerProcessor(stats={"action": action_stats_mean_std})
+    features = _create_action_features()
+    norm_map = _create_action_norm_map_mean_std()
+    unnormalizer = UnnormalizerProcessor(
+        features=features, norm_map=norm_map, stats={"action": action_stats_mean_std}
+    )
 
     normalized_action = np.array([1.0, -0.5, 2.0], dtype=np.float32)
     transition = (None, normalized_action, None, None, None, None, None)
@@ -261,7 +326,11 @@ def test_numpy_action_input(action_stats_mean_std):
 
 
 def test_none_action(action_stats_mean_std):
-    unnormalizer = UnnormalizerProcessor(stats={"action": action_stats_mean_std})
+    features = _create_action_features()
+    norm_map = _create_action_norm_map_mean_std()
+    unnormalizer = UnnormalizerProcessor(
+        features=features, norm_map=norm_map, stats={"action": action_stats_mean_std}
+    )
 
     transition = (None, None, None, None, None, None, None)
     result = unnormalizer(transition)
@@ -273,7 +342,9 @@ def test_none_action(action_stats_mean_std):
 def test_action_from_lerobot_dataset():
     mock_dataset = Mock()
     mock_dataset.meta.stats = {"action": {"mean": [0.0], "std": [1.0]}}
-    unnormalizer = UnnormalizerProcessor.from_lerobot_dataset(mock_dataset)
+    features = {"action": PolicyFeature(FeatureType.ACTION, (1,))}
+    norm_map = {FeatureType.ACTION: NormalizationMode.MEAN_STD}
+    unnormalizer = UnnormalizerProcessor.from_lerobot_dataset(mock_dataset, features, norm_map)
     assert "mean" in unnormalizer._tensor_stats["action"]
 
 
@@ -296,9 +367,27 @@ def full_stats():
     }
 
 
+def _create_full_features():
+    return {
+        "observation.image": PolicyFeature(FeatureType.VISUAL, (3, 96, 96)),
+        "observation.state": PolicyFeature(FeatureType.STATE, (2,)),
+        "action": PolicyFeature(FeatureType.ACTION, (2,)),
+    }
+
+
+def _create_full_norm_map():
+    return {
+        FeatureType.VISUAL: NormalizationMode.MEAN_STD,
+        FeatureType.STATE: NormalizationMode.MIN_MAX,
+        FeatureType.ACTION: NormalizationMode.MEAN_STD,
+    }
+
+
 @pytest.fixture
 def normalizer_processor(full_stats):
-    return NormalizerProcessor(stats=full_stats)
+    features = _create_full_features()
+    norm_map = _create_full_norm_map()
+    return NormalizerProcessor(features=features, norm_map=norm_map, stats=full_stats)
 
 
 def test_combined_normalization(normalizer_processor):
@@ -331,7 +420,12 @@ def test_processor_from_lerobot_dataset(full_stats):
     mock_dataset = Mock()
     mock_dataset.meta.stats = full_stats
 
-    processor = NormalizerProcessor.from_lerobot_dataset(mock_dataset, normalize_keys={"observation.image"})
+    features = _create_full_features()
+    norm_map = _create_full_norm_map()
+
+    processor = NormalizerProcessor.from_lerobot_dataset(
+        mock_dataset, features, norm_map, normalize_keys={"observation.image"}
+    )
 
     assert processor.normalize_keys == {"observation.image"}
     assert "observation.image" in processor._tensor_stats
@@ -339,7 +433,11 @@ def test_processor_from_lerobot_dataset(full_stats):
 
 
 def test_get_config(full_stats):
-    processor = NormalizerProcessor(stats=full_stats, normalize_keys={"observation.image"}, eps=1e-6)
+    features = _create_full_features()
+    norm_map = _create_full_norm_map()
+    processor = NormalizerProcessor(
+        features=features, norm_map=norm_map, stats=full_stats, normalize_keys={"observation.image"}, eps=1e-6
+    )
 
     config = processor.get_config()
     assert config == {"normalize_keys": ["observation.image"], "eps": 1e-6}
@@ -366,7 +464,9 @@ def test_integration_with_robot_processor(normalizer_processor):
 # Edge case tests
 def test_empty_observation():
     stats = {"observation.image": {"mean": [0.5], "std": [0.2]}}
-    normalizer = NormalizerProcessor(stats=stats)
+    features = {"observation.image": PolicyFeature(FeatureType.VISUAL, (3, 96, 96))}
+    norm_map = {FeatureType.VISUAL: NormalizationMode.MEAN_STD}
+    normalizer = NormalizerProcessor(features=features, norm_map=norm_map, stats=stats)
 
     transition = (None, None, None, None, None, None, None)
     result = normalizer(transition)
@@ -375,19 +475,23 @@ def test_empty_observation():
 
 
 def test_empty_stats():
-    normalizer = NormalizerProcessor(stats={})
+    features = {"observation.image": PolicyFeature(FeatureType.VISUAL, (3, 96, 96))}
+    norm_map = {FeatureType.VISUAL: NormalizationMode.MEAN_STD}
+    normalizer = NormalizerProcessor(features=features, norm_map=norm_map, stats={})
     observation = {"observation.image": torch.tensor([0.5])}
     transition = (observation, None, None, None, None, None, None)
 
     result = normalizer(transition)
-    # Should return observation unchanged
+    # Should return observation unchanged since no stats are available
     assert torch.allclose(result[0]["observation.image"], observation["observation.image"])
 
 
 def test_partial_stats():
     """If statistics are incomplete, the value should pass through unchanged."""
     stats = {"observation.image": {"mean": [0.5]}}  # Missing std / (min,max)
-    normalizer = NormalizerProcessor(stats=stats)
+    features = {"observation.image": PolicyFeature(FeatureType.VISUAL, (3, 96, 96))}
+    norm_map = {FeatureType.VISUAL: NormalizationMode.MEAN_STD}
+    normalizer = NormalizerProcessor(features=features, norm_map=norm_map, stats=stats)
     observation = {"observation.image": torch.tensor([0.7])}
     transition = (observation, None, None, None, None, None, None)
 
@@ -399,6 +503,9 @@ def test_missing_action_stats_no_error():
     mock_dataset = Mock()
     mock_dataset.meta.stats = {"observation.image": {"mean": [0.5], "std": [0.2]}}
 
-    processor = UnnormalizerProcessor.from_lerobot_dataset(mock_dataset)
+    features = {"observation.image": PolicyFeature(FeatureType.VISUAL, (3, 96, 96))}
+    norm_map = {FeatureType.VISUAL: NormalizationMode.MEAN_STD}
+
+    processor = UnnormalizerProcessor.from_lerobot_dataset(mock_dataset, features, norm_map)
     # The tensor stats should not contain the 'action' key
     assert "action" not in processor._tensor_stats
