@@ -14,9 +14,9 @@ from lerobot.scripts.server.constants import SUPPORTED_POLICIES
 from lerobot.scripts.server.helpers import (
     FPSTracker,
     Observation,
+    RemotePolicyConfig,
     TimedAction,
     TimedObservation,
-    TinyPolicyConfig,
     get_logger,
     observations_similar,
     raw_observation_to_observation,
@@ -30,7 +30,7 @@ from lerobot.transport import (
 
 class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
     prefix = "policy_server"
-    logger = get_logger(prefix)
+    logger = get_logger(prefix)  # TODO(fracapuano): Reduce logging verbosity
 
     def __init__(self, config: PolicyServerConfig):
         self.config = config
@@ -39,7 +39,19 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
         # FPS measurement
         self.fps_tracker = FPSTracker(target_fps=config.fps)
 
-        self._setup_server()
+        self.observation_queue = Queue(maxsize=1)
+
+        # TODO(fracapuano): Add lock
+        self._predicted_timesteps = set()
+
+        self.last_processed_obs = None
+
+        # Attributes will be set by SendPolicyInstructions
+        self.device = None
+        self.policy_type = None
+        self.lerobot_features = None
+        self.actions_per_chunk = None
+        self.policy = None
 
     @property
     def running(self):
@@ -49,37 +61,42 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
     def policy_image_features(self):
         return self.policy.config.image_features
 
-    def _setup_server(self) -> None:
+    def _reset_server(self) -> None:
         """Flushes server state when new client connects."""
         # only running inference on the latest observation received by the server
+        self._running_event.clear()
         self.observation_queue = Queue(maxsize=1)
+
         self._predicted_timesteps = set()
-        self._predicted_observations = Queue(maxsize=1)
 
     def Ready(self, request, context):  # noqa: N802
         client_id = context.peer()
         self.logger.info(f"Client {client_id} connected and ready")
-        self._setup_server()  # new client's handshake clears server state
-
+        self._reset_server()
         self._running_event.set()
 
         return async_inference_pb2.Empty()
 
-    def _validate_policy_specs(self, policy_specs: TinyPolicyConfig) -> None:
-        assert isinstance(policy_specs, TinyPolicyConfig), (
-            f"Policy specs must be a TinyPolicyConfig. Got {type(policy_specs)}"
-        )
-        assert policy_specs.policy_type in SUPPORTED_POLICIES, (
-            f"Policy type {policy_specs.policy_type} not supported. Supported policies: {SUPPORTED_POLICIES}"
-        )
-
     def SendPolicyInstructions(self, request, context):  # noqa: N802
         """Receive policy instructions from the robot client"""
+
+        if not self.running:
+            self.logger.warning("Server is not running. Ignoring policy instructions.")
+            return async_inference_pb2.Empty()
+
         client_id = context.peer()
         self.logger.debug(f"Receiving policy instructions from {client_id}")
 
         policy_specs = pickle.loads(request.data)  # nosec
-        self._validate_policy_specs(policy_specs)
+
+        if not isinstance(policy_specs, RemotePolicyConfig):
+            raise TypeError(f"Policy specs must be a RemotePolicyConfig. Got {type(policy_specs)}")
+
+        if policy_specs.policy_type not in SUPPORTED_POLICIES:
+            raise ValueError(
+                f"Policy type {policy_specs.policy_type} not supported. "
+                f"Supported policies: {SUPPORTED_POLICIES}"
+            )
 
         self.logger.info(
             f"Policy type: {policy_specs.policy_type} | "
@@ -123,6 +140,7 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
         obs_timestamp = timed_observation.get_timestamp()
 
         # Calculate FPS metrics
+        # TODO(fracapuano): Consider using time.time() instead
         fps_metrics = self.fps_tracker.calculate_fps_metrics(obs_timestamp)
 
         self.logger.info(
@@ -138,7 +156,7 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
             f"Deserialization time: {deserialize_time:.6f}s"
         )
 
-        if not self._maybe_enqueue_observation(
+        if not self._enqueue_observation(
             timed_observation  # wrapping a RawObservation
         ):
             self.logger.info(f"Observation #{obs_timestep} has been filtered out")
@@ -153,6 +171,7 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
 
         # Generate action based on the most recent observation and its timestep
         try:
+            getactions_starts = time.perf_counter()
             obs = self.observation_queue.get(timeout=self.config.obs_queue_timeout)
             self.logger.info(
                 f"Running inference for observation #{obs.get_timestep()} (must_go: {obs.must_go})"
@@ -183,6 +202,10 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
                 f"Total time: {inference_time + serialize_time:.2f}s"
             )
 
+            time.sleep(
+                max(0, self.config.inference_latency - max(0, time.perf_counter() - getactions_starts))
+            )  # sleep controls inference latency
+
             return actions
 
         except Empty:  # no observation added to queue in obs_queue_timeout
@@ -192,17 +215,6 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
             self.logger.error(f"Error in StreamActions: {e}")
 
             return async_inference_pb2.Empty()
-
-    def _enqueue_and_go(self, obs: TimedObservation):
-        # If queue is full, get the old observation to make room
-        if self.observation_queue.full():
-            # pops from queue
-            _ = self.observation_queue.get_nowait()
-            self.logger.debug("Observation queue was full, removed oldest observation")
-
-        # Now put the new observation (never blocks as queue is non-full here)
-        self.observation_queue.put(obs)
-        return True
 
     def _obs_sanity_checks(self, obs: TimedObservation, previous_obs: TimedObservation) -> bool:
         if obs.get_timestep() in self._predicted_timesteps:
@@ -218,16 +230,28 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
         else:
             return True
 
-    def _maybe_enqueue_observation(self, obs: TimedObservation) -> bool:
+    def _enqueue_observation(self, obs: TimedObservation) -> bool:
         """Enqueue an observation if it must go through processing, otherwise skip it.
         Observations not in queue are never run through the policy network"""
 
-        if obs.must_go or not hasattr(self, "last_processed_obs"):
-            self.logger.info(f"[MUST GO] Enqueued observation #{obs.get_timestep()} for direct processing!")
-            return self._enqueue_and_go(obs)
+        if (
+            obs.must_go
+            or self.last_processed_obs is None
+            or self._obs_sanity_checks(obs, self.last_processed_obs)
+        ):
+            self.logger.debug(
+                f"Enqueuing observation. Must go: {obs.must_go} | Last processed obs: {self.last_processed_obs.get_timestep() if self.last_processed_obs else 'None'}"
+            )
 
-        if self._obs_sanity_checks(obs, self.last_processed_obs):
-            return self._enqueue_and_go(obs)
+            # If queue is full, get the old observation to make room
+            if self.observation_queue.full():
+                # pops from queue
+                _ = self.observation_queue.get_nowait()
+                self.logger.debug("Observation queue was full, removed oldest observation")
+
+            # Now put the new observation (never blocks as queue is non-full here)
+            self.observation_queue.put(obs)
+            return True
 
         return False
 
@@ -307,15 +331,11 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
             f"Total time: {1000 * (postprocessing_time - inference_starts):.2f}ms"
         )
 
-        time.sleep(
-            max(0, self.config.inference_latency - max(0, time.perf_counter() - inference_starts))
-        )  # sleep controls inference latency
-
         return action_chunk
 
     def stop(self):
         """Stop the server"""
-        self._running_event.clear()
+        self._reset_server()
         self.logger.info("Server stopping...")
 
 
@@ -339,14 +359,10 @@ def serve(config: Optional[PolicyServerConfig] = None, host: str = "localhost", 
     policy_server.logger.info(f"PolicyServer started on {config.host}:{config.port}")
     server.start()
 
-    try:
-        server.wait_for_termination()
+    server.wait_for_termination()
 
-    except KeyboardInterrupt:
-        policy_server.logger.info("Keyboard interrupt received")
-
-        policy_server.stop()
+    policy_server.logger.info("Server terminated")
 
 
 if __name__ == "__main__":
-    serve()  # pass a
+    serve()
