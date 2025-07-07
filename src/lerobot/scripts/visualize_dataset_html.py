@@ -152,13 +152,17 @@ def run_server(
         dataset_version = (
             str(dataset.meta._version) if isinstance(dataset, LeRobotDataset) else dataset.codebase_version
         )
+
+        # Check minimum version requirement
         match = re.search(r"v(\d+)\.", dataset_version)
         if match:
             major_version = int(match.group(1))
             if major_version < 2:
                 return "Make sure to convert your LeRobotDataset to v2 & above."
 
+        # Get episode data once
         episode_data_csv_str, columns, ignored_columns = get_episode_data(dataset, episode_id)
+
         dataset_info = {
             "repo_id": f"{dataset_namespace}/{dataset_name}",
             "num_samples": dataset.num_frames
@@ -169,19 +173,47 @@ def run_server(
             else dataset.total_episodes,
             "fps": dataset.fps,
         }
+
         if isinstance(dataset, LeRobotDataset):
-            video_paths = [
-                dataset.meta.get_video_file_path(episode_id, key) for key in dataset.meta.video_keys
-            ]
-            videos_info = [
-                {
-                    "url": url_for("static", filename=str(video_path).replace("\\", "/")),
-                    "filename": video_path.parent.name,
-                }
-                for video_path in video_paths
-            ]
+            # Handle local datasets
+            # Determine if this is a chunked video dataset (v3.0+)
+            is_v3_or_later = False
+            match = re.search(r"v(\d+)\.(\d+)", dataset_version)
+            if match:
+                major_version = int(match.group(1))
+                is_v3_or_later = major_version >= 3
+
+            # Create videos_info with unified structure
+            videos_info = []
+
+            for key in dataset.meta.video_keys:
+                video_path = dataset.meta.get_video_file_path(episode_id, key)
+
+                if is_v3_or_later:
+                    # For v3.0+ datasets, get episode timestamps from chunked videos
+                    episode = dataset.meta.episodes[episode_id]
+                    from_timestamp = episode.get(f"videos/{key}/from_timestamp", 0)
+                    to_timestamp = episode.get(f"videos/{key}/to_timestamp", None)
+                    filename = key
+                else:
+                    # For v2.1 and earlier, videos are already per-episode
+                    from_timestamp = None
+                    to_timestamp = None
+                    filename = video_path.parent.name
+
+                videos_info.append(
+                    {
+                        "url": url_for("static", filename=str(video_path).replace("\\", "/")),
+                        "filename": filename,
+                        "start_time": from_timestamp,
+                        "end_time": to_timestamp,
+                        "is_chunked": is_v3_or_later,
+                    }
+                )
+
             tasks = dataset.meta.episodes[episode_id]["tasks"]
         else:
+            # Handle remote datasets from HF Hub
             video_keys = [key for key, ft in dataset.features.items() if ft["dtype"] == "video"]
             videos_info = [
                 {
@@ -192,6 +224,9 @@ def run_server(
                         episode_index=episode_id,
                     ),
                     "filename": video_key,
+                    "start_time": None,
+                    "end_time": None,
+                    "is_chunked": False,
                 }
                 for video_key in video_keys
             ]
