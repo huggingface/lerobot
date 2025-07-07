@@ -1,0 +1,2387 @@
+00ri/so100_battery:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+00ri/so100_battery_bin_center:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+0x00raghu/toffee_blue:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+0x00raghu/toffee_blue_2:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+0x00raghu/toffee_red:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+0x00raghu/toffee_red_2:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+0x00raghu/toffee_red_3__:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+0x00raghu/toffee_to_hand_1:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+0x00raghu/toffee_to_hand_2:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+1g0rrr/offline_dataset_name2:
+  observation.images.front: observation.image
+  observation.images.side: observation.image2
+1g0rrr/offline_dataset_name2_cropped_resized:
+  observation.images.front: observation.image
+  observation.images.side: observation.image2
+1g0rrr/reward_dataset_name2:
+  observation.images.front: observation.image
+  observation.images.side: observation.image2
+1g0rrr/reward_dataset_name2_cropped_resized:
+  observation.images.front: observation.image
+  observation.images.side: observation.image2
+1g0rrr/reward_pickplace1:
+  observation.images.laptop: observation.image
+1g0rrr/reward_pickplace1_cropped_resized:
+  observation.images.laptop: observation.image
+1g0rrr/sam_openpi03:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+1g0rrr/sam_openpi_cube_low10:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+1g0rrr/sam_openpi_cube_top10:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+1g0rrr/sam_openpi_solder1:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+1g0rrr/sam_openpi_solder2:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+1g0rrr/sam_openpi_wire10:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+1g0rrr/screw1:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+356c/so100_duck_reposition_1:
+  observation.images.body: observation.image2
+  observation.images.overhead: observation.image
+  observation.images.side: observation.image3
+356c/so100_nut_sort_1:
+  observation.images.body: observation.image2
+  observation.images.overhead: observation.image
+  observation.images.side: observation.image3
+356c/so100_rope_reposition_1:
+  observation.images.body: observation.image2
+  observation.images.overhead: observation.image
+  observation.images.side: observation.image3
+AK51/4090_01:
+  observation.images.base_cam: observation.image3
+  observation.images.left_arm_cam: observation.image2
+  observation.images.right_arm_cam: null
+  observation.images.top_cam: observation.image
+AaronNewman/screwdriver_task_batch1:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+AaronNewman/screwdriver_task_batch2:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+AaronNewman/screwdriver_task_batch3:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+Allen-488/koch_dataset_50:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image3
+Anas0711/Gr00t_lerobot_state_action:
+  absolute_action: null
+  annotation.human.action.task_description: null
+  annotation.human.validity: null
+  next.reward: null
+  observation.images.image: observation.image
+  observation.images.wrist_image: observation.image2
+Anas0711/Gr00t_lerobot_state_action_180:
+  absolute_action: null
+  annotation.human.action.task_description: null
+  annotation.human.validity: null
+  next.reward: null
+  observation.images.image: observation.image
+  observation.images.wrist_image: observation.image2
+Anas0711/Gr00t_lerobot_state_action_600:
+  absolute_action: null
+  annotation.human.action.task_description: null
+  annotation.human.validity: null
+  next.reward: null
+  observation.images.image: observation.image
+  observation.images.wrist_image: observation.image2
+Anas0711/Gr00t_lerobot_state_action_60_continuous:
+  absolute_action: null
+  annotation.human.action.task_description: null
+  annotation.human.validity: null
+  next.reward: null
+  observation.images.image: observation.image
+  observation.images.wrist_image: observation.image2
+Anas0711/Gr00t_lerobot_state_action_box_1:
+  absolute_action: null
+  annotation.human.action.task_description: null
+  annotation.human.validity: null
+  next.reward: null
+  observation.images.image: observation.image
+  observation.images.wrist_image: observation.image2
+Anas0711/Gr00t_lerobot_state_action_box_2:
+  absolute_action: null
+  annotation.human.action.task_description: null
+  annotation.human.validity: null
+  next.reward: null
+  observation.images.image: observation.image
+  observation.images.wrist_image: observation.image2
+AndrejOrsula/lerobot_double_ball_stacking_random:
+  observation.images.realsense: observation.image
+  observation.images.side: observation.image2
+Ashton3/lerobot-aloha:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+Bartm3/dice2:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+Bartm3/tape_to_bin:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+Bartm3/tape_to_bin2:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+Beegbrain/align_cubes_green_blue:
+  observation.images.back: observation.image3
+  observation.images.side: observation.image
+Beegbrain/align_three_pens:
+  observation.images.back: observation.image3
+  observation.images.side: observation.image
+Beegbrain/moss_close_drawer_teabox:
+  observation.images.back: observation.image3
+  observation.images.front: observation.image
+Beegbrain/moss_open_drawer_teabox:
+  observation.images.back: observation.image3
+  observation.images.front: observation.image
+Beegbrain/moss_put_cube_teabox:
+  observation.images.back: observation.image3
+  observation.images.front: observation.image
+Beegbrain/moss_stack_cubes:
+  observation.images.back: observation.image3
+  observation.images.front: observation.image
+Beegbrain/oc_stack_cubes:
+  observation.images.realsense: observation.image3
+  observation.images.realsense_top: observation.image
+Beegbrain/pick_lemon_and_drop_in_bowl:
+  observation.images.realsense_side: observation.image
+  observation.images.realsense_top: observation.image2
+Beegbrain/pick_place_green_block:
+  observation.images.realsense_side: observation.image2
+  observation.images.realsense_top: observation.image
+Beegbrain/pick_place_green_block_lr:
+  observation.images.realsense_side: observation.image2
+  observation.images.realsense_top: observation.image
+Beegbrain/put_green_into_blue_bin:
+  observation.images.back: observation.image3
+  observation.images.side: observation.image
+Beegbrain/put_red_triangle_green_rect:
+  observation.images.back: observation.image3
+  observation.images.side: observation.image
+Beegbrain/put_screwdriver_box:
+  observation.images.back: observation.image3
+  observation.images.side: observation.image
+Beegbrain/so100_put_cube_cup:
+  observation.images.realsense_side: observation.image2
+  observation.images.realsense_top: observation.image
+Beegbrain/stack_2_cubes:
+  observation.images.laptop: observation.image
+Beegbrain/stack_green_on_blue_cube:
+  observation.images.back: observation.image3
+  observation.images.side: observation.image
+Beegbrain/stack_two_cubes:
+  observation.images.realsense_side: observation.image2
+  observation.images.realsense_top: observation.image
+Beegbrain/sweep_tissue_cube:
+  observation.images.realsense_side: observation.image
+  observation.images.realsense_top: observation.image2
+BlobDieKatze/GrabBlocks:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+CSCSXX/pick_place_cube_1.17:
+  observation.images.side: observation.image2
+  observation.images.top: observation.image
+CSCSXX/pick_place_cube_1.18:
+  observation.images.side: observation.image2
+  observation.images.top: observation.image
+Chojins/chess_game_000_white:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+Chojins/chess_game_000_white_red:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+Chojins/chess_game_001_blue_stereo:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+Chojins/chess_game_001_red_stereo:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+Chojins/chess_game_001_white:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+Chojins/chess_game_002_white:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+Chojins/chess_game_003_white:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+Chojins/chess_game_004_white:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+Chojins/chess_game_005_white:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+Chojins/chess_game_006_white:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+Chojins/chess_game_007_white:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+Chojins/chess_game_009_white:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+Cidoyi/so100_all_notes:
+  observation.images.keyboard_camera: observation.image
+Cidoyi/so100_all_notes_1:
+  observation.images.keyboard_camera: observation.image
+Cidoyi/so100_all_notes_3:
+  observation.images.keyboard_camera: observation.image
+Clementppr/lerobot_pick_and_place_dataset_world_model:
+  observation.images.laptop: observation.image
+Congying1112/so100_place_blue_bottle_with_single_camera:
+  observation.images.onhand: observation.image2
+Congying1112/so100_place_blue_bottle_with_two_cameras:
+  observation.images.onhand: observation.image2
+  observation.images.top: observation.image
+Congying1112/so100_place_blue_bottle_with_two_cameras2:
+  observation.images.onhand: observation.image2
+  observation.images.top: observation.image
+Congying1112/so100_simplepick_with_2_cameras_from_top:
+  observation.images.onhand: observation.image2
+  observation.images.top: observation.image
+Congying1112/so100_switch_with_onhand_camera:
+  observation.images.onhand: observation.image2
+CrazyYhang/A1234-B-C_mvA2B:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+Deason11/Open_the_drawer_to_place_items:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+Deason11/PLACE_TAPE_PUSH_DRAWER:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+Deason11/Random_Kitchen:
+  observation.images.L_OverheadCamera: observation.image
+  observation.images.R_OverheadCamera: observation.image3
+  observation.images.wrist: observation.image2
+Deason11/mobile_manipulator_0319:
+  observation.images.L_OverheadCamera: observation.image
+  observation.images.R_OverheadCamera: observation.image3
+  observation.images.wrist: observation.image2
+Deason11/mobile_manipulator_0326:
+  observation.images.L_OverheadCamera: observation.image
+  observation.images.R_OverheadCamera: observation.image3
+  observation.images.wrist: observation.image2
+DimiSch/so100_50ep_2:
+  observation.images.realsense: observation.image
+DimiSch/so100_50ep_3:
+  observation.images.realsense: observation.image
+DimiSch/so100_terra_50_2:
+  observation.images.realsense: observation.image
+Dongkkka/cable_pick_and_place2:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+DorayakiLin/so100_pick_charger_on_tissue:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+DorayakiLin/so100_pick_cube_in_box:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+DorayakiLin/so100_stack_cube:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+Eyas/grab_bouillon:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image3
+Eyas/grab_pink_lighter_10_per_loc:
+  observation.images.laptop: observation.image
+FeiYjf/Grab_Pieces:
+  observation.images.left: observation.image
+  observation.images.right: observation.image2
+FeiYjf/Hold_Pieces:
+  observation.images.left: observation.image
+  observation.images.right: observation.image2
+FeiYjf/Makalu_push:
+  observation.images.left: observation.image2
+  observation.images.right: observation.image
+FeiYjf/Maklu_dataset:
+  observation.images.left: observation.image
+  observation.images.right: observation.image2
+FeiYjf/Test_NNNN:
+  observation.images.left: observation.image
+  observation.images.right: observation.image2
+FeiYjf/new_Dataset:
+  observation.images.left: observation.image
+  observation.images.right: observation.image2
+FeiYjf/new_GtoR:
+  observation.images.left: observation.image
+  observation.images.right: observation.image2
+FeiYjf/push_0094:
+  observation.images.left: observation.image
+  observation.images.right: observation.image2
+FeiYjf/push_gg:
+  observation.images.left: observation.image2
+  observation.images.right: observation.image
+FsqZ/so100_1:
+  observation.images.side: observation.image
+Gano007/so100_doliprane:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+Gano007/so100_gano:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+Gano007/so100_lolo:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+Gano007/so100_medic:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+Gano007/so100_second:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+Gongsta/grasp_duck_in_cup:
+  observation.images.laptop: observation.image
+HITHY/so100-kiwi:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+HITHY/so100_peach:
+  observation.images.laptop: observation.image
+HITHY/so100_peach1:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+HITHY/so100_peach3:
+  observation.images.laptop: observation.image
+HITHY/so100_peach4:
+  observation.images.laptop: observation.image
+HITHY/so100_redstrawberry:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+HITHY/so100_strawberry:
+  observation.images.laptop: observation.image
+HWJ658970/fat_fish:
+  observation.images.front: observation.image
+  observation.images.phone: observation.image3
+HWJ658970/lego_100_class:
+  observation.images.front: observation.image
+  observation.images.phone: observation.image3
+HWJ658970/lego_50:
+  observation.images.front: observation.image
+  observation.images.phone: observation.image3
+HWJ658970/lego_50_camera_change:
+  observation.images.front: observation.image
+  observation.images.phone: observation.image3
+HYAIYN/so100_get_orange_10epi:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+HappyPablo/dec3_data2:
+  observation.images.laptop: null
+  observation.images.phone: observation.image2
+HuaihaiLyu/groceries:
+  observation.images.cam_high: observation.image
+  observation.images.cam_left_wrist: observation.image2
+  observation.images.cam_right_wrist: observation.image3
+HuaihaiLyu/stackbasket:
+  observation.images.cam_high: observation.image
+  observation.images.cam_left_wrist: observation.image2
+  observation.images.cam_right_wrist: observation.image3
+IPEC-COMMUNITY/berkeley_mvp_lerobot:
+  observation.images.hand_image: observation.image
+IPEC-COMMUNITY/libero_10_no_noops_image_lerobot:
+  observation.images.image: observation.image
+  observation.images.wrist_image: observation.image2
+IPEC-COMMUNITY/ucsd_kitchen_dataset_lerobot:
+  observation.images.image: observation.image
+Ityl/so100_recording1:
+  observation.images.realsense_side: observation.image2
+  observation.images.realsense_top: observation.image
+Ityl/so100_recording2:
+  observation.images.realsense_side: observation.image2
+  observation.images.realsense_top: observation.image
+JJwuj/koch_static_grasp_0402_v5:
+  observation.images.E12: observation.image2
+  observation.images.E22S: observation.image
+Jiafei1224/so100_pa222per:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+Jiangeng/so100_413:
+  observation.images.top: observation.image2
+  observation.images.wrist_left: observation.image
+KeWangRobotics/piper_push_cube_gamepad_1:
+  observation.images.top: observation.image
+  observation.images.wrist: observation.image2
+KeWangRobotics/piper_push_cube_gamepad_1_cropped_resized:
+  observation.images.top: observation.image
+  observation.images.wrist: observation.image2
+KeWangRobotics/piper_push_cube_gamepad_2:
+  observation.images.top: observation.image
+  observation.images.wrist: observation.image2
+KeWangRobotics/piper_push_cube_gamepad_2_cropped_resized:
+  observation.images.top: observation.image
+  observation.images.wrist: observation.image2
+KeWangRobotics/piper_rl_1:
+  observation.images.top: observation.image
+  observation.images.wrist: observation.image2
+KeWangRobotics/piper_rl_1_cropped_resized:
+  observation.images.top: observation.image
+  observation.images.wrist: observation.image2
+KeWangRobotics/piper_rl_2:
+  observation.images.top: observation.image
+  observation.images.wrist: observation.image2
+KeWangRobotics/piper_rl_2_cropped_resized:
+  observation.images.top: observation.image
+  observation.images.wrist: observation.image2
+KeWangRobotics/piper_rl_3:
+  observation.images.top: observation.image
+  observation.images.wrist: observation.image2
+KeWangRobotics/piper_rl_3_cropped_resized:
+  observation.images.top: observation.image
+  observation.images.wrist: observation.image2
+KeWangRobotics/piper_rl_4:
+  observation.images.top: observation.image
+  observation.images.wrist: observation.image2
+KeWangRobotics/piper_rl_4_cropped_resized:
+  observation.images.top: observation.image
+  observation.images.wrist: observation.image2
+LegrandFrederic/Orange-brick-lower-resolution:
+  observation.images.main.left: observation.image
+  observation.images.main.right: observation.image2
+  observation.images.secondary_0: observation.image3
+LemonadeDai/so100_coca:
+  observation.images.top: observation.image
+  observation.images.wrist: observation.image2
+Loki0929/so100_100:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+Loki0929/so100_duck:
+  observation.images.third: observation.image3
+  observation.images.top: observation.image
+  observation.images.wrist: observation.image2
+Lugenbott/koch_1225:
+  observation.images.Camera0: observation.image
+  observation.images.Camera2: observation.image2
+Mohamedal/put_banana:
+  observation.images.realsense_side: observation.image
+  observation.images.realsense_top: observation.image2
+MossProphet/so100_square-1-2-3.2:
+  observation.images.Arm_left: observation.image2
+  observation.images.Arm_right: null
+  observation.images.External: observation.image3
+Mwuqiu/so100_0408:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+Mwuqiu/so100_0408_muti:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+NONHUMAN-RESEARCH/SOARM100_TASK_VENDA:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+NONHUMAN-RESEARCH/SOARM100_TASK_VENDA_BOX:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+Odog16/so100_cube_drop_pick_v1:
+  observation.images.workspace: observation.image
+  observation.images.wrist: observation.image2
+Odog16/so100_cube_stacking_v1:
+  observation.images.Workspace: observation.image
+  observation.images.Wrist: observation.image2
+Odog16/so100_tea_towel_folding_v1:
+  observation.images.workspace: observation.image
+  observation.images.wrist: observation.image2
+Ofiroz91/so_100_cube2bowl:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+Pi-robot/barbecue_flip:
+  observation.images.top: observation.image2
+  observation.images.wrist: observation.image
+Pi-robot/barbecue_put:
+  observation.images.top: observation.image2
+  observation.images.wrist: observation.image
+RLWRLD/put_cube_sync:
+  observation.images.cam_high: observation.image
+  observation.images.cam_right_wrist: observation.image2
+RasmusP/so100_Orange2Green:
+  observation.images.phone: observation.image
+  observation.images.webcam: observation.image2
+RasmusP/so100_dataset50ep:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+RasmusP/so100_dataset50ep_a:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+SeanLMH/so100_picknplace:
+  observation.images.front: observation.image2
+  observation.images.overhead: observation.image
+SeanLMH/so100_picknplace_v2:
+  observation.images.front: observation.image2
+  observation.images.overhead: observation.image
+Setchii/so100_grab_ball:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+T-K-233/koch_k1_pour_shot:
+  observation.images.gripper: observation.image2
+  observation.images.side: observation.image3
+  observation.images.top: observation.image
+T1g3rGE/so100_pickplace_small_20250407_171912:
+  observation.images.webcam: observation.image2
+TrossenRoboticsCommunity/aloha_ai_block:
+  observation.images.cam_high: observation.image
+  observation.images.cam_left_wrist: observation.image2
+  observation.images.cam_low: null
+  observation.images.cam_right_wrist: observation.image3
+TrossenRoboticsCommunity/aloha_baseline_dataset:
+  observation.images.cam_high: observation.image
+  observation.images.cam_left_wrist: observation.image2
+  observation.images.cam_low: null
+  observation.images.cam_right_wrist: observation.image3
+TrossenRoboticsCommunity/aloha_fold_tshirt:
+  observation.images.cam_left_wrist: observation.image2
+  observation.images.cam_low: observation.image
+  observation.images.cam_right_wrist: observation.image3
+TrossenRoboticsCommunity/aloha_stationary_logo_assembly:
+  observation.images.cam_high: observation.image
+  observation.images.cam_left_wrist: observation.image2
+  observation.images.cam_low: observation.image3
+  observation.images.cam_right_wrist: null
+VoicAndrei/so100_banana_to_plate_only:
+  observation.images.right: observation.image2
+  observation.images.top: observation.image
+VoicAndrei/so100_banana_to_plate_rebel_full:
+  observation.images.right: observation.image2
+  observation.images.top: observation.image
+Winster/so100_cube:
+  observation.images.laptop: observation.image
+Winster/so100_sim:
+  observation.images.laptop: observation.image
+XXRRSSRR/so100_v3_num_episodes_50:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+Yotofu/so100_sweeper_shoes:
+  observation.images.end_depth: null
+  observation.images.end_rgb: observation.image3
+  observation.images.front_depth: observation.image2
+  observation.images.front_rgb: observation.image
+Yuanzhu/koch_bimanual_grasp_0:
+  observation.images.top_camera: observation.image
+Yuanzhu/koch_bimanual_grasp_3:
+  observation.images.hand_camera: observation.image2
+  observation.images.side_camera: observation.image3
+  observation.images.top_camera: observation.image
+ZCM5115/so100_1210:
+  observation.images.hikvision: observation.image2
+  observation.images.laptop: observation.image
+ZCM5115/so100_2Arm3cameras_movebox:
+  observation.images.left: observation.image2
+  observation.images.right: observation.image3
+  observation.images.top: observation.image
+ZGGZZG/so100_drop0:
+  observation.images.left: observation.image2
+  observation.images.up: observation.image
+ZGGZZG/so100_drop1:
+  observation.images.left: observation.image2
+  observation.images.up: observation.image
+Zak-Y/so100_grap_dataset:
+  observation.images.Left_follower: observation.image2
+  observation.images.Logic_camera: observation.image
+  observation.images.Right_follower: observation.image3
+Zak-Y/so100_three_cameras_dataset:
+  observation.images.Left_follower: observation.image2
+  observation.images.Logic_camera: observation.image
+  observation.images.Right_follower: observation.image2
+Zhaoting123/koch_cleanDesk_:
+  observation.images.phone: observation.image
+abbyoneill/data_w_mug:
+  observation.images.logitech1: observation.image
+  observation.images.logitech2: observation.image2
+abbyoneill/new_dataset_pick_place:
+  observation.images.logitech1: observation.image
+  observation.images.logitech2: observation.image3
+abbyoneill/pusht:
+  observation.images.logitech1: observation.image
+  observation.images.logitech2: observation.image3
+abbyoneill/thurs1120pickplace:
+  observation.images.logitech1: observation.image
+  observation.images.logitech2: observation.image3
+abhisb/so100_51_ep:
+  observation.images.front: observation.image3
+  observation.images.mobile: observation.image2
+  observation.images.overhead: observation.image
+abokinala/sputnik_100_11_pick_place_container:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+abokinala/sputnik_100_12_pick_place_container:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+abokinala/sputnik_100_14_pick_place_container:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+abokinala/sputnik_100_23_pick_place_surface:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+abokinala/sputnik_100_46_custom_tasks:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+abokinala/sputnik_100_54_kitchen_tasks:
+  observation.images.laptop: null
+  observation.images.phone: observation.image
+abokinala/sputnik_100_55_kitchen_tasks:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+abokinala/sputnik_100_58_kitchen_tasks:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+abokinala/sputnik_100_60_kitchen_tasks:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+abougdira/cube_target:
+  observation.images.realsense: observation.image3
+  observation.images.realsense_top: observation.image
+acrampette/third_arm_01:
+  observation.images.wrist: observation.image2
+acrampette/third_arm_02:
+  observation.images.wrist: observation.image2
+ad330/cubePlace:
+  observation.images.phone: observation.image
+  observation.images.wristCam: observation.image2
+ad330/so100_box_pickPlace:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+aergogo/so100_pick_place:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+agonyxx/koch-aloha:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+  observation.images.phone2: observation.image3
+aimihat/so100_tape:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+airthebear/so100_GL:
+  observation.images.laptop: observation.image
+aliberts/koch_tutorial:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image3
+allenchienxxx/so100Test:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+andabi/D10:
+  observation.images.bird: observation.image
+  observation.images.wrist_left: observation.image2
+  observation.images.wrist_right: observation.image3
+andabi/D11:
+  observation.images.bird: observation.image
+  observation.images.wrist_left: observation.image2
+  observation.images.wrist_right: observation.image3
+andabi/D12:
+  observation.images.bird: observation.image
+  observation.images.wrist_left: observation.image2
+  observation.images.wrist_right: observation.image3
+andabi/D13:
+  observation.images.bird: observation.image
+  observation.images.wrist_left: observation.image2
+  observation.images.wrist_right: observation.image3
+andabi/D14:
+  observation.images.bird: observation.image
+  observation.images.wrist_left: observation.image2
+  observation.images.wrist_right: observation.image3
+andabi/D15:
+  observation.images.bird: observation.image
+  observation.images.wrist_left: observation.image2
+  observation.images.wrist_right: observation.image3
+andabi/D16:
+  observation.images.bird: observation.image
+  observation.images.wrist_left: observation.image2
+  observation.images.wrist_right: observation.image3
+andabi/D17:
+  observation.images.bird: observation.image
+  observation.images.wrist_left: observation.image2
+  observation.images.wrist_right: observation.image3
+andabi/D2:
+  observation.images.bird: observation.image
+  observation.images.wrist_left: observation.image2
+  observation.images.wrist_right: observation.image3
+andabi/D3:
+  observation.images.bird: observation.image
+  observation.images.wrist_left: observation.image2
+  observation.images.wrist_right: observation.image3
+andabi/D4:
+  observation.images.bird: observation.image
+  observation.images.wrist_left: observation.image2
+  observation.images.wrist_right: observation.image3
+andabi/D5:
+  observation.images.bird: observation.image
+  observation.images.wrist_left: observation.image2
+  observation.images.wrist_right: observation.image3
+andabi/D6:
+  observation.images.bird: observation.image
+  observation.images.wrist_left: observation.image2
+  observation.images.wrist_right: observation.image3
+andabi/D7:
+  observation.images.bird: observation.image
+  observation.images.wrist_left: observation.image2
+  observation.images.wrist_right: observation.image3
+andabi/D8:
+  observation.images.bird: observation.image
+  observation.images.wrist_left: observation.image2
+  observation.images.wrist_right: observation.image3
+andabi/D9:
+  observation.images.bird: observation.image
+  observation.images.wrist_left: observation.image2
+  observation.images.wrist_right: observation.image3
+andabi/a_shoe_easy_10:
+  observation.images.bird: observation.image
+  observation.images.wrist_left: observation.image2
+  observation.images.wrist_right: observation.image3
+andabi/shoes_easy:
+  observation.images.bird: observation.image
+  observation.images.wrist_left: observation.image2
+  observation.images.wrist_right: observation.image3
+andlyu/so100_indoor_0:
+  observation.images.arm_left: observation.image2
+  observation.images.arm_right: observation.image3
+  observation.images.base_left: null
+  observation.images.base_right: observation.image
+andlyu/so100_indoor_1:
+  observation.images.arm_left: observation.image3
+  observation.images.arm_right: observation.image2
+  observation.images.base_left: null
+  observation.images.base_right: observation.image
+andlyu/so100_indoor_10:
+  observation.images.arm: observation.image
+  observation.images.base: observation.image3
+  observation.images.base_right: null
+  observation.images.gripper: observation.image2
+andlyu/so100_indoor_2:
+  observation.images.arm_left: observation.image2
+  observation.images.arm_right: observation.image3
+  observation.images.base_left: null
+  observation.images.base_right: observation.image
+andlyu/so100_indoor_3:
+  observation.images.arm_left: observation.image3
+  observation.images.arm_right: observation.image2
+  observation.images.base_left: null
+  observation.images.base_right: observation.image
+andlyu/so100_indoor_4:
+  observation.images.arm_left: observation.image2
+  observation.images.arm_right: observation.image3
+  observation.images.base_left: null
+  observation.images.base_right: observation.image
+andlyu/so100_indoor_val2:
+  observation.images.arm: observation.image
+  observation.images.base: observation.image3
+  observation.images.base_right: null
+  observation.images.gripper: observation.image2
+andlyu/so100_indoor_val_0:
+  observation.images.arm: observation.image
+  observation.images.base: observation.image3
+  observation.images.gripper: observation.image2
+andreasBihlmaier/dual_arm_transfer_2025_02_16:
+  observation.images.webcam_1: observation.image3
+  observation.images.webcam_2: observation.image2
+  observation.images.webcam_3: observation.image
+andrewcole712/so100_tape_bin_place:
+  observation.images.phone: observation.image
+andy309/so100_0311_1152:
+  observation.images.back: observation.image2
+  observation.images.top: observation.image
+  observation.images.wrist_right: observation.image3
+andy309/so100_0313_no_wrist_camera:
+  observation.images.back: observation.image2
+  observation.images.top: observation.image
+andy309/so100_0313_no_wrist_camera_with_two_arms_cloths:
+  observation.images.back: observation.image2
+  observation.images.top: observation.image
+andy309/so100_0314_fold_cloths:
+  observation.images.back: observation.image2
+  observation.images.top: observation.image
+aractingi/pick_place_lego_cube:
+  observation.images.top: observation.image2
+  observation.images.wrist: observation.image
+aractingi/pick_place_lego_cube_1:
+  observation.images.top: observation.image2
+  observation.images.wrist: observation.image
+aractingi/pick_place_lego_cube_cropped_resized:
+  observation.images.top: observation.image2
+  observation.images.wrist: observation.image
+aractingi/push_cube_front_side_reward:
+  observation.images.front: observation.image
+  observation.images.side: observation.image2
+aractingi/push_cube_front_side_reward_cropped_resized:
+  observation.images.front: observation.image
+  observation.images.side: observation.image2
+aractingi/push_cube_front_side_reward_long:
+  observation.images.front: observation.image
+  observation.images.side: observation.image2
+aractingi/push_cube_front_side_reward_long_cropped_resized:
+  observation.images.front: observation.image
+  observation.images.side: observation.image2
+aractingi/push_cube_offline_data:
+  observation.images.front: observation.image
+  observation.images.wrist: observation.image2
+aractingi/push_cube_offline_data_cropped_resized:
+  observation.images.front: observation.image
+  observation.images.wrist: observation.image2
+aractingi/push_cube_overfit:
+  observation.images.front: observation.image
+  observation.images.side: observation.image2
+aractingi/push_cube_overfit_cropped_resized:
+  observation.images.front: observation.image
+  observation.images.side: observation.image2
+aractingi/push_cube_reward:
+  observation.images.front: observation.image
+  observation.images.side: observation.image2
+aractingi/push_cube_reward_cropped_resized:
+  observation.images.front: observation.image
+  observation.images.side: observation.image2
+aractingi/push_cube_reward_data:
+  observation.images.front: observation.image
+  observation.images.wrist: observation.image2
+aractingi/push_cube_reward_data_cropped_resized:
+  observation.images.front: observation.image
+  observation.images.wrist: observation.image2
+aractingi/push_cube_simp_cropped_resized:
+  observation.images.front: observation.image
+  observation.images.side: observation.image2
+aractingi/push_cube_square_light_offline_demo:
+  observation.images.front: observation.image
+  observation.images.side: observation.image2
+aractingi/push_cube_square_light_offline_demo_cropped_resized:
+  observation.images.front: observation.image
+  observation.images.side: observation.image2
+aractingi/push_cube_square_light_reward:
+  observation.images.front: observation.image
+  observation.images.side: observation.image2
+aractingi/push_cube_square_offline_demo:
+  observation.images.front: observation.image
+  observation.images.side: observation.image2
+aractingi/push_cube_square_offline_demo_cropped_resized:
+  observation.images.front: observation.image
+  observation.images.side: observation.image2
+aractingi/push_cube_square_reward_1:
+  observation.images.front: observation.image
+  observation.images.side: observation.image2
+aractingi/push_cube_square_reward_1_cropped_resized:
+  observation.images.front: observation.image
+  observation.images.side: observation.image2
+aractingi/push_cube_square_reward_cropped_resized:
+  observation.images.front: observation.image
+  observation.images.side: observation.image2
+aractingi/push_cube_to_face_reward:
+  observation.images.front: observation.image
+  observation.images.wrist: observation.image2
+aractingi/push_cube_to_face_reward_cropped_resized:
+  observation.images.front: observation.image
+  observation.images.wrist: observation.image2
+aractingi/push_green_cube_hf:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+aractingi/push_green_cube_hf_cropped_resized:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+arclabmit/Koch_twoarms:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image3
+arclabmit/koch_gear_and_bin:
+  observation.images.nexigo_webcam: observation.image
+  observation.images.realsense: observation.image3
+astroyat/cube:
+  observation.images.laptop: observation.image
+badwolf256/so100_twin_cam_duck:
+  observation.images.realsense: observation.image
+  observation.images.wrist: observation.image2
+badwolf256/so100_twin_cam_duck_v2:
+  observation.images.realsense: observation.image
+  observation.images.wrist: observation.image2
+badwolf256/so100_twin_cam_duck_v3:
+  observation.images.realsense: observation.image
+  observation.images.wrist: observation.image2
+baladhurgesh97/so100_final_picking_3:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+bensprenger/chess_game_001_blue_stereo:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+bensprenger/left_arm_yellow_brick_in_box_v0:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+bensprenger/left_arm_yellow_brick_in_box_with_purple_noise_v0:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+bensprenger/right_arm_p_brick_in_box_with_y_noise_v0:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+bnarin/so100_tic_tac_toe_move_0_0:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+bnarin/so100_tic_tac_toe_move_1_0:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+bnarin/so100_tic_tac_toe_move_2_1:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+bnarin/so100_tic_tac_toe_move_4_0:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+bnarin/so100_tic_tac_toe_we_do_it_live:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+cadene/droid_1.0.1:
+  action.cartesian_position: null
+  action.cartesian_velocity: null
+  action.gripper_position: null
+  action.gripper_velocity: null
+  action.joint_position: null
+  action.joint_velocity: null
+  action.original: null
+  building: null
+  camera_extrinsics.exterior_1_left: null
+  camera_extrinsics.exterior_2_left: null
+  camera_extrinsics.wrist_left: null
+  collector_id: null
+  date: null
+  discount: null
+  is_episode_successful: null
+  language_instruction: null
+  language_instruction_2: null
+  language_instruction_3: null
+  observation.images.exterior_1_left: observation.image
+  observation.images.exterior_2_left: observation.image3
+  observation.images.wrist_left: observation.image2
+  observation.state.cartesian_position: null
+  observation.state.gripper_position: null
+  observation.state.joint_position: null
+  task_category: null
+carpit680/giraffe_sock_demo_1:
+  observation.images.webcam: observation.image
+carpit680/giraffe_sock_demo_2:
+  observation.images.webcam: observation.image
+carpit680/giraffe_task:
+  observation.images.webcam: observation.image
+chmadran/so100_dataset04:
+  observation.images.laptop: observation.image
+chmadran/so100_dataset08:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+chmadran/so100_home_dataset:
+  observation.images.laptop: observation.image3
+  observation.images.logitech: observation.image
+  observation.images.phone: observation.image2
+cmcgartoll/cube_color_organizer:
+  observation.images.claw: observation.image2
+  observation.images.front: observation.image
+  observation.images.phone: observation.image3
+ctbfl/sort_battery:
+  observation.images.laptop: observation.image3
+  observation.images.phone: observation.image
+  observation.images.wrist: observation.image2
+danaaubakirova/so100_task_1:
+  observation.images.top: observation.image
+  observation.images.wrist: observation.image2
+danaaubakirova/so100_task_2:
+  observation.images.top: observation.image
+  observation.images.wrist: observation.image2
+danaaubakirova/so100_task_3:
+  observation.images.top: observation.image
+  observation.images.wrist: observation.image2
+danaaubakirova/so100_task_4:
+  observation.images.top: observation.image
+  observation.images.wrist: observation.image2
+danaaubakirova/so100_v2_task_1:
+  observation.images.top: observation.image
+  observation.images.wrist: observation.image2
+danaaubakirova/so100_v2_task_2:
+  observation.images.top: observation.image
+  observation.images.wrist: observation.image2
+danaaubakirova/so100_v2_task_3:
+  observation.images.top: observation.image
+  observation.images.wrist: observation.image2
+danaaubakirova/so100_v2_task_4:
+  observation.images.top: observation.image
+  observation.images.wrist: observation.image2
+danaaubakirova/svla_so100_task1_v3:
+  observation.images.top: observation.image
+  observation.images.wrist: observation.image2
+danaaubakirova/svla_so100_task4_v3:
+  observation.images.top: observation.image
+  observation.images.wrist: observation.image2
+danaaubakirova/svla_so100_task4_v3_clean:
+  observation.images.top: observation.image
+  observation.images.wrist: observation.image2
+danaaubakirova/svla_so100_task4_v3_multiple:
+  observation.images.top: observation.image
+  observation.images.wrist: observation.image2
+danaaubakirova/svla_so100_task5_v3:
+  observation.images.top: observation.image
+  observation.images.wrist: observation.image2
+danaaubakirova/svla_so100_task5_v3_clean:
+  observation.images.top: observation.image
+  observation.images.wrist: observation.image2
+danielkr452/so100_work6:
+  observation.images.laptop: null
+  observation.images.phone: observation.image2
+danmac1/real_real332:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+dboemer/koch_50-samples:
+  observation.images.side: observation.image3
+  observation.images.top: observation.image
+dc2ac/so100-t5:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+denghj/dataset_red_tape01:
+  observation.images.laptop: observation.image
+dkdltu1111/omx-bottle1:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+dop0/koch_pick_terminal:
+  observation.images.side: observation.image3
+  observation.images.top: observation.image
+  observation.images.wrist: observation.image2
+doujiangwang/task1_10epi_100000step:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+doujiangwang/task2_10epi_100000step:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+doujiangwang/task4_10epi_100000step:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+doujiangwang/task5_10epi_100000step:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+dragon-95/so100_sorting:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+dragon-95/so100_sorting_1:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+dragon-95/so100_sorting_2:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+dragon-95/so100_sorting_3:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+dsfsg/bring_bottle:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+  observation.images.phone2: observation.image3
+dsfsg/grasp_pen_and_bottle:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image3
+  observation.images.phone2: observation.image2
+dsfsg/grasp_pens:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+  observation.images.phone2: observation.image3
+duthvik/sputnik_100_17_pick_place_container:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+duthvik/sputnik_100_18_pick_place_container:
+  observation.images.laptop: observation.image
+  observation.images.side_view: observation.image3
+  observation.images.usb_front: observation.image2
+duthvik/sputnik_100_24_pick_place_surface:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+duthvik/sputnik_100_25_pick_place_surface:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+duthvik/sputnik_100_26_pick_place_surface:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+duthvik/sputnik_100_27_pick_place_surface:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+duthvik/sputnik_100_29_pick_place_surface:
+  observation.images.laptop: observation.image
+  observation.images.side_view: observation.image3
+  observation.images.usb_front: observation.image2
+duthvik/sputnik_100_31_pour_liquid:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+duthvik/sputnik_100_32_pour_liquid:
+  observation.images.laptop: observation.image
+  observation.images.side_view: observation.image3
+  observation.images.usb_front: observation.image2
+duthvik/sputnik_100_41_custom_tasks:
+  observation.images.laptop: observation.image
+  observation.images.side_view: observation.image3
+  observation.images.usb_front: observation.image2
+duthvik/sputnik_100_42_custom_tasks:
+  observation.images.laptop: observation.image
+  observation.images.side_view: observation.image3
+  observation.images.usb_front: observation.image2
+duthvik/sputnik_100_43_custom_tasks:
+  observation.images.laptop: observation.image
+  observation.images.side_view: observation.image3
+  observation.images.usb_front: observation.image2
+duthvik/sputnik_100_44_custom_tasks:
+  observation.images.laptop: observation.image
+  observation.images.side_view: observation.image3
+  observation.images.usb_front: observation.image2
+duthvik/sputnik_100_45_custom_tasks:
+  observation.images.laptop: observation.image
+  observation.images.side_view: observation.image3
+  observation.images.usb_front: observation.image2
+duthvik/sputnik_100_51_kitchen_tasks:
+  observation.images.laptop: observation.image
+  observation.images.side_view: observation.image3
+  observation.images.usb_front: observation.image2
+duthvik/sputnik_100_52_kitchen_tasks:
+  observation.images.laptop: observation.image
+  observation.images.side_view: observation.image3
+  observation.images.usb_front: observation.image2
+duthvik/sputnik_100_53_kitchen_tasks:
+  observation.images.laptop: observation.image
+  observation.images.side_view: observation.image3
+  observation.images.usb_front: observation.image2
+ellen2imagine/pusht_green1:
+  observation.images.phone: observation.image
+ellen2imagine/pusht_green_same_init2:
+  observation.images.phone: observation.image
+engineer0002/pepper:
+  observation.images.left_wrist: observation.image2
+  observation.images.right_wrist: observation.image3
+  observation.images.top: observation.image
+ethanCSL/your_task_name:
+  observation.images.front: observation.image
+  observation.images.phone: observation.image2
+francescocrivelli/carrot_eating:
+  observation.images.endeffector: observation.image2
+  observation.images.workspace: observation.image
+francescocrivelli/orange_feeding:
+  observation.images.endeffector: observation.image2
+  observation.images.workspace: observation.image
+frk2/so100large:
+  observation.images.top: observation.image
+  observation.images.wrist: observation.image2
+frk2/so100largediffcam:
+  observation.images.top: observation.image
+  observation.images.wrist: observation.image2
+ganker5/so100_action_20250403:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+ganker5/so100_color_0328:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+ganker5/so100_dataline_0328:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+ganker5/so100_dataline_20250331:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+ganker5/so100_push_20250328:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+ganker5/so100_push_20250331:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+ganker5/so100_toy_20250402:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+gxy1111/so100_pick_place:
+  observation.images.eye: observation.image
+  observation.images.wrist: observation.image2
+hangwu/koch_pick_terminal:
+  observation.images.side: observation.image3
+  observation.images.top: observation.image
+  observation.images.wrist: observation.image2
+hangwu/piper_pick_terminal_2:
+  observation.images.depth: null
+  observation.images.realsense_color: observation.image3
+  observation.images.side: observation.image2
+  observation.images.top: observation.image
+hangwu/piper_pick_terminal_and_place:
+  observation.images.depth: null
+  observation.images.realsense_color: observation.image3
+  observation.images.side: observation.image2
+  observation.images.top: observation.image
+hannesill/koch_pnp_2_blocks_2_bins_200:
+  observation.images.laptop: observation.image3
+  observation.images.phone: observation.image
+hannesill/koch_pnp_simple_50:
+  observation.images.laptop: observation.image3
+  observation.images.phone: observation.image
+hegdearyandev/so100_eraser_cup_v1:
+  observation.images.phone: observation.image2
+  observation.images.webcam-0: observation.image
+helper2424/hil-serl-push-circle-classifier:
+  observation.images.web0: observation.image
+  observation.images.web1: observation.image3
+hkphoooey/throw_stuffie:
+  observation.images.phone: observation.image
+ibru/bob_jetson:
+  observation.images.front: observation.image
+  observation.images.wrist: observation.image2
+ibru/bobo_groot_n1_trash_picker:
+  observation.images.front: observation.image
+  observation.images.wrist: observation.image2
+ibru/bobo_jetson:
+  observation.images.front: observation.image
+  observation.images.wrist: observation.image2
+ibru/bobo_trash_collector:
+  observation.images.front: observation.image
+  observation.images.wrist: observation.image2
+imatrixlee/koch_place:
+  observation.images.eye: observation.image2
+  observation.images.laptop: observation.image3
+  observation.images.phone: observation.image
+imsyed00/so100_yellowbowl_pickplace_1:
+  observation.images.laptop: observation.image
+isadev/bougies1:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+isadev/bougies2:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+isadev/bougies3:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+jackvial/koch_with_rewards_4:
+  observation.images.main: observation.image
+jadechoghari/genesis-1k:
+  observation.image.side: observation.image3
+  observation.image.top: observation.image
+  observation.image.wrist: observation.image2
+jadechoghari/svla_so101-sim_task4_v3_multiple_1:
+  observation.image.side: observation.image3
+  observation.image.top: observation.image
+  observation.image.wrist: observation.image2
+jadechoghari/svla_so101-sim_task4_v3_multiple_2:
+  observation.image.side: observation.image3
+  observation.image.top: observation.image
+  observation.image.wrist: observation.image2
+jainamit/koch:
+  observation.images.nexigo: observation.image
+jainamit/koch_pickcube:
+  observation.images.front_camera: observation.image
+jainamit/koch_realcube3:
+  observation.images.front_camera: observation.image
+jannick-st/classifier:
+  observation.images.cam_high: observation.image
+  observation.images.cam_left_wrist: observation.image2
+  observation.images.cam_low: observation.image3
+  observation.images.cam_right_wrist: null
+jannick-st/push-cube-classifier_cropped_resized:
+  observation.images.cam_low: observation.image
+  observation.images.cam_right_wrist: observation.image2
+  observation.images.cam_top: observation.image
+jbraumann/so100_1902:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+jchun/so100_pickplace_small_20250322_193929:
+  observation.images.cv: observation.image2
+  observation.images.main: observation.image3
+  observation.images.webcam: observation.image
+jchun/so100_pickplace_small_20250323_120056:
+  observation.images.cv: observation.image3
+  observation.images.main: observation.image2
+  observation.images.webcam: observation.image
+jiajun001/eraser00_2:
+  observation.images.hand: observation.image2
+  observation.images.side: observation.image
+jiajun001/eraser00_3:
+  observation.images.front: observation.image
+  observation.images.hand: observation.image2
+  observation.images.side: observation.image3
+jlesein/TestBoulon2:
+  observation.images.robor: observation.image2
+  observation.images.top: observation.image
+jlesein/TestBoulon7:
+  observation.images.robor: observation.image2
+  observation.images.top: observation.image
+jlitch/so100multicam3:
+  observation.images.overview2: observation.image
+  observation.images.wrist: observation.image2
+jlitch/so100multicam6:
+  observation.images.overview2: observation.image
+  observation.images.wrist: observation.image2
+jlitch/so100multicam7:
+  observation.images.overview2: observation.image
+  observation.images.wrist: observation.image2
+jmrog/so100_sweet_pick:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+joaoocruz00/so100_makeitD1:
+  observation.images.laptop: observation.image2
+  observation.images.realsensergb: observation.image
+jpata/so100_pick_place_tangerine:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+kantine/domotic_dishTidyUp_anomaly:
+  observation.images.logitech_1: observation.image
+  observation.images.logitech_2: observation.image2
+kantine/domotic_dishTidyUp_expert:
+  observation.images.logitech_1: observation.image
+  observation.images.logitech_2: observation.image2
+kantine/domotic_groceriesSorting_anomaly:
+  observation.images.logitech_1: observation.image
+  observation.images.logitech_2: observation.image2
+kantine/domotic_groceriesSorting_expert:
+  observation.images.logitech_1: observation.image
+  observation.images.logitech_2: observation.image2
+kantine/domotic_makingCoffee_anomaly:
+  observation.images.logitech_1: observation.image
+  observation.images.logitech_2: observation.image2
+kantine/domotic_makingCoffee_expert:
+  observation.images.logitech_1: observation.image
+  observation.images.logitech_2: observation.image2
+kantine/domotic_pouringCoffee_anomaly:
+  observation.images.logitech_1: observation.image
+  observation.images.logitech_2: observation.image2
+kantine/domotic_pouringCoffee_expert:
+  observation.images.logitech_1: observation.image
+  observation.images.logitech_2: observation.image2
+kantine/domotic_setTheTable_anomaly:
+  observation.images.logitech_1: observation.image
+  observation.images.logitech_2: observation.image2
+kantine/domotic_setTheTable_expert:
+  observation.images.logitech_1: observation.image
+  observation.images.logitech_2: observation.image2
+kantine/domotic_vegetagblesAndFruitsSorting_anomaly:
+  observation.images.logitech_1: observation.image
+  observation.images.logitech_2: observation.image2
+kantine/domotic_vegetagblesAndFruitsSorting_expert:
+  observation.images.logitech_1: observation.image
+  observation.images.logitech_2: observation.image2
+kantine/flip_A0:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+kantine/flip_A1:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+kantine/flip_A2:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+kantine/flip_A3:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+kantine/flip_A4:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+kantine/flip_A5:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+kantine/industrial_robothon_buttons_anomaly:
+  observation.images.logitech_1: observation.image2
+  observation.images.logitech_2: observation.image
+kantine/industrial_robothon_buttons_expert:
+  observation.images.logitech_1: observation.image2
+  observation.images.logitech_2: observation.image
+kantine/industrial_robothon_hatchAndProbe_anomaly:
+  observation.images.logitech_1: observation.image2
+  observation.images.logitech_2: observation.image
+kantine/industrial_robothon_hatchAndProbe_expert:
+  observation.images.logitech_1: observation.image2
+  observation.images.logitech_2: observation.image
+kantine/industrial_screws_sorting_anomaly:
+  observation.images.logitech_1: observation.image2
+  observation.images.logitech_2: observation.image
+kantine/industrial_screws_sorting_expert:
+  observation.images.logitech_1: observation.image
+  observation.images.logitech_2: observation.image2
+kantine/industrial_soldering_anomaly:
+  observation.images.logitech_1: observation.image
+  observation.images.logitech_2: observation.image2
+kantine/industrial_soldering_expert:
+  observation.images.logitech_1: observation.image
+  observation.images.logitech_2: observation.image2
+kantine/so100_kapla_tower6:
+  observation.images.logitech_1: observation.image
+  observation.images.logitech_2: observation.image2
+kevin510/lerobot-cat-toy-placement:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+koenvanwijk/blue2:
+  observation.images.laptop: observation.image
+  observation.images.phone: null
+koenvanwijk/blue52:
+  observation.images.laptop: observation.image
+  observation.images.phone: null
+koenvanwijk/orange50-1:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+koenvanwijk/orange50-variation-2:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+kumarhans/so100_tape_task:
+  observation.images.laptop1: observation.image
+  observation.images.laptop2: observation.image2
+lalalala0620/koch_blue_paper_tape:
+  observation.images.front: observation.image
+  observation.images.phone: observation.image3
+lerobot/aloha_mobile_cabinet:
+  observation.effort: null
+  observation.images.cam_high: observation.image
+  observation.images.cam_left_wrist: observation.image2
+  observation.images.cam_low: null
+  observation.images.cam_right_wrist: observation.image3
+lerobot/aloha_mobile_chair:
+  observation.effort: null
+  observation.images.cam_high: observation.image
+  observation.images.cam_left_wrist: observation.image2
+  observation.images.cam_low: null
+  observation.images.cam_right_wrist: observation.image3
+lerobot/aloha_mobile_elevator:
+  observation.effort: null
+  observation.images.cam_high: observation.image
+  observation.images.cam_left_wrist: observation.image2
+  observation.images.cam_low: null
+  observation.images.cam_right_wrist: observation.image3
+lerobot/aloha_mobile_shrimp:
+  observation.effort: null
+  observation.images.cam_high: observation.image
+  observation.images.cam_left_wrist: observation.image2
+  observation.images.cam_low: null
+  observation.images.cam_right_wrist: observation.image3
+lerobot/aloha_mobile_wash_pan:
+  observation.effort: null
+  observation.images.cam_high: observation.image
+  observation.images.cam_left_wrist: observation.image2
+  observation.images.cam_low: null
+  observation.images.cam_right_wrist: observation.image3
+lerobot/aloha_mobile_wipe_wine:
+  observation.effort: null
+  observation.images.cam_high: observation.image
+  observation.images.cam_left_wrist: observation.image2
+  observation.images.cam_low: null
+  observation.images.cam_right_wrist: observation.image3
+lerobot/aloha_sim_transfer_cube_human:
+  observation.images.top: observation.image
+lerobot/aloha_static_coffee:
+  observation.effort: null
+  observation.images.cam_high: observation.image
+  observation.images.cam_left_wrist: observation.image2
+  observation.images.cam_low: null
+  observation.images.cam_right_wrist: observation.image3
+lerobot/aloha_static_cups_open:
+  observation.effort: null
+  observation.images.cam_high: observation.image
+  observation.images.cam_left_wrist: observation.image2
+  observation.images.cam_low: null
+  observation.images.cam_right_wrist: observation.image3
+lerobot/aloha_static_screw_driver:
+  observation.effort: null
+  observation.images.cam_high: observation.image
+  observation.images.cam_left_wrist: observation.image2
+  observation.images.cam_low: null
+  observation.images.cam_right_wrist: observation.image3
+lerobot/aloha_static_towel:
+  observation.effort: null
+  observation.images.cam_high: observation.image
+  observation.images.cam_left_wrist: observation.image2
+  observation.images.cam_low: null
+  observation.images.cam_right_wrist: observation.image3
+lerobot/aloha_static_vinh_cup:
+  observation.effort: null
+  observation.images.cam_high: observation.image
+  observation.images.cam_left_wrist: observation.image2
+  observation.images.cam_low: null
+  observation.images.cam_right_wrist: observation.image3
+lerobot/aloha_static_vinh_cup_left:
+  observation.effort: null
+  observation.images.cam_high: observation.image
+  observation.images.cam_left_wrist: observation.image2
+  observation.images.cam_low: null
+  observation.images.cam_right_wrist: observation.image3
+lerobot/aloha_static_ziploc_slide:
+  observation.effort: null
+  observation.images.cam_high: observation.image
+  observation.images.cam_left_wrist: observation.image2
+  observation.images.cam_low: null
+  observation.images.cam_right_wrist: observation.image3
+lerobot/berkeley_fanuc_manipulation:
+  observation.images.image: observation.image
+  observation.images.wrist_image: observation.image2
+lerobot/iamlab_cmu_pickup_insert:
+  observation.images.image: observation.image
+  observation.images.wrist_image: observation.image2
+lerobot/jaco_play:
+  observation.images.image: observation.image
+  observation.images.image_wrist: observation.image2
+lerobot/libero_10_image:
+  observation.images.image: observation.image
+  observation.images.wrist_image: observation.image2
+lerobot/libero_goal_image:
+  observation.images.image: observation.image
+  observation.images.wrist_image: observation.image2
+lerobot/libero_object_image:
+  observation.images.image: observation.image
+  observation.images.wrist_image: observation.image2
+lerobot/libero_spatial_image:
+  observation.images.image: observation.image
+  observation.images.wrist_image: observation.image2
+lerobot/roboturk:
+  observation.images.front_rgb: observation.image
+lerobot/stanford_hydra_dataset:
+  observation.images.image: observation.image
+  observation.images.wrist_image: observation.image2
+lerobot/taco_play:
+  observation.images.rgb_gripper: observation.image2
+  observation.images.rgb_static: observation.image
+lerobot/toto:
+  observation.images.image: observation.image
+lirislab/close_top_drawer_teabox:
+  observation.images.realsense_side: observation.image2
+  observation.images.realsense_top: observation.image
+lirislab/fold_bottom_right:
+  observation.images.realsense_side: observation.image2
+  observation.images.realsense_top: observation.image
+lirislab/green_lego_block_into_mug:
+  observation.images.realsense_side: observation.image2
+  observation.images.realsense_top: observation.image
+lirislab/green_lego_block_into_mug_easy:
+  observation.images.realsense_side: observation.image2
+  observation.images.realsense_top: observation.image
+lirislab/guess_who_lighting:
+  observation.images.mounted: observation.image2
+lirislab/guess_who_no_cond:
+  observation.images.mounted: observation.image2
+lirislab/guess_who_so100:
+  observation.images.mounted: observation.image
+lirislab/lemon_into_bowl:
+  observation.images.realsense_side: observation.image2
+  observation.images.realsense_top: observation.image
+lirislab/open_top_drawer_teabox:
+  observation.images.realsense_side: observation.image2
+  observation.images.realsense_top: observation.image
+lirislab/push_cup_target:
+  observation.images.realsense_side: observation.image2
+  observation.images.realsense_top: observation.image
+lirislab/put_banana_bowl:
+  observation.images.realsense_side: observation.image2
+  observation.images.realsense_top: observation.image
+lirislab/put_caps_into_teabox:
+  observation.images.realsense_side: observation.image2
+  observation.images.realsense_top: observation.image
+lirislab/put_coffee_cap_teabox:
+  observation.images.realsense_side: observation.image2
+  observation.images.realsense_top: observation.image
+lirislab/red_cube_into_blue_cube:
+  observation.images.realsense_side: observation.image2
+  observation.images.realsense_top: observation.image
+lirislab/red_cube_into_green_lego_block:
+  observation.images.realsense_side: observation.image2
+  observation.images.realsense_top: observation.image
+lirislab/red_cube_into_mug:
+  observation.images.realsense_side: observation.image2
+  observation.images.realsense_top: observation.image
+lirislab/so100_demo:
+  observation.images.front: observation.image
+lirislab/stack_two_red_cubes:
+  observation.images.realsense_side: observation.image2
+  observation.images.realsense_top: observation.image
+lirislab/sweep_tissue_cube:
+  observation.images.realsense_side: observation.image2
+  observation.images.realsense_top: observation.image
+lirislab/unfold_bottom_right:
+  observation.images.realsense_side: observation.image2
+  observation.images.realsense_top: observation.image
+liuhuanjim013/so100_block:
+  observation.images.hand: observation.image2
+  observation.images.top: observation.image
+liuhuanjim013/so100_th:
+  observation.images.front: observation.image
+  observation.images.top: observation.image2
+liuhuanjim013/so100_th_1:
+  observation.images.hand: observation.image2
+  observation.images.top: observation.image
+liyitenga/so100_bi_giveme5:
+  observation.images.center: observation.image
+  observation.images.left_follower: observation.image2
+  observation.images.right_follower: observation.image3
+liyitenga/so100_bi_hello:
+  observation.images.center: observation.image
+  observation.images.left_follower: observation.image2
+  observation.images.right_follower: observation.image3
+liyitenga/so100_pick_taffy1:
+  observation.images.left: observation.image
+liyitenga/so100_pick_taffy10:
+  observation.images.gripper: observation.image2
+  observation.images.left: observation.image3
+  observation.images.top: observation.image
+liyitenga/so100_pick_taffy2:
+  observation.images.gripper: observation.image2
+  observation.images.top: observation.image
+liyitenga/so100_pick_taffy3:
+  observation.images.gripper: observation.image2
+  observation.images.top: observation.image
+liyitenga/so100_pick_taffy4:
+  observation.images.gripper: observation.image2
+  observation.images.top: observation.image
+liyitenga/so100_pick_taffy5:
+  observation.images.gripper: observation.image2
+  observation.images.top: observation.image
+liyitenga/so100_pick_taffy6:
+  observation.images.gripper: observation.image2
+  observation.images.top: observation.image
+liyitenga/so100_pick_taffy7:
+  observation.images.gripper: observation.image2
+  observation.images.left_top: observation.image3
+  observation.images.top: observation.image
+liyitenga/so100_pick_taffy8:
+  observation.images.gripper: observation.image2
+  observation.images.top: observation.image
+lizi178119985/so100_jia:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+lucasngoo/so100_strawberry_grape:
+  observation.images.webcam: observation.image
+luke250305/play_dice_250311.1:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+m1b/so100_bluelego:
+  observation.images.phone: null
+  observation.images.side: observation.image
+m1b/so100_bluelego_updt:
+  observation.images.phone: observation.image
+  observation.images.side: observation.image2
+ma3oun/rpi_squares_1:
+  observation.images.laptop: observation.image
+maximilienroberti/so100_lego_red_box:
+  observation.images.cam_left: observation.image
+  observation.images.cam_middle: observation.image3
+  observation.images.cam_right: observation.image2
+meteorinc/koch_tea:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+mikechambers/block_cup_14:
+  observation.images.main_cam: observation.image
+  observation.images.secondary_cam: observation.image2
+mikechambers/block_cup_5:
+  observation.images.main_cam: observation.image
+  observation.images.secondary_cam: observation.image2
+mlfu7/pi0_conversion_no_pad_video:
+  exterior_image_1_left: observation.image
+  wrist_image_left: observation.image2
+nbaron99/so100_pick_and_place2:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+nbaron99/so100_pick_and_place4:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+ncavallo/moss_train_gc_block:
+  observation.images.front: observation.image
+  observation.images.top: observation.image2
+ncavallo/moss_train_grasp:
+  observation.images.front: observation.image
+  observation.images.top: observation.image2
+ncavallo/moss_train_grasp_new:
+  observation.images.front: observation.image
+  observation.images.top: observation.image2
+nduque/act_50_ep:
+  observation.images.above: observation.image3
+  observation.images.front: observation.image
+nduque/act_50_ep2:
+  observation.images.above: observation.image3
+  observation.images.front: observation.image
+nduque/cam_setup2:
+  observation.images.above: observation.image3
+  observation.images.front: observation.image
+nduque/robustness_e1:
+  observation.images.above: observation.image3
+  observation.images.front: observation.image
+nduque/robustness_e2:
+  observation.images.above: observation.image3
+  observation.images.front: observation.image
+nduque/robustness_e3:
+  observation.images.above: observation.image3
+  observation.images.front: observation.image
+nduque/robustness_e4:
+  observation.images.above: observation.image3
+  observation.images.front: observation.image
+nduque/robustness_e5:
+  observation.images.above: observation.image3
+  observation.images.front: observation.image
+nguyen-v/press_red_button_new:
+  observation.images.left: observation.image2
+  observation.images.right: observation.image3
+  observation.images.top: observation.image
+nguyen-v/so100_bimanual_grab_lemon_put_in_box2:
+  observation.images.left: observation.image2
+  observation.images.right: observation.image3
+  observation.images.top: observation.image
+nguyen-v/so100_press_red_button:
+  observation.images.back: observation.image3
+  observation.images.left: observation.image2
+  observation.images.right: null
+  observation.images.top: observation.image
+nguyen-v/so100_rotate_red_button:
+  observation.images.left: observation.image2
+  observation.images.right: observation.image3
+  observation.images.top: observation.image
+nimitvasavat/Gr00t_lerobot:
+  absolute_action: null
+  annotation.human.action.task_description: null
+  annotation.human.validity: null
+  next.reward: null
+  observation.images.back_image: observation.image3
+  observation.images.image: observation.image
+  observation.images.wrist_image: observation.image2
+nimitvasavat/Gr00t_lerobotV2:
+  absolute_action: null
+  annotation.human.action.task_description: null
+  annotation.human.validity: null
+  next.reward: null
+  observation.images.image: observation.image
+  observation.images.wrist_image: observation.image2
+nimitvasavat/Gr00t_lerobot_state_action:
+  absolute_action: null
+  annotation.human.action.task_description: null
+  annotation.human.validity: null
+  next.reward: null
+  observation.images.image: observation.image
+  observation.images.wrist_image: observation.image2
+pandaRQ/pick_med_1:
+  observation.images.laptop: observation.image
+  observation.images.laptop1: observation.image2
+  observation.images.laptop2: observation.image3
+pandaRQ/pickmed:
+  observation.images.laptop: observation.image
+  observation.images.laptop1: observation.image2
+  observation.images.laptop2: observation.image3
+paszea/so100_lego:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+paszea/so100_lego_2cam:
+  observation.images.front: observation.image
+  observation.images.top: observation.image2
+paszea/so100_lego_mix:
+  observation.images.phone: observation.image
+paszea/so100_whale:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+paszea/so100_whale_2:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+paszea/so100_whale_3:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+paszea/so100_whale_4:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+paszea/so100_whale_grab:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+pengjunkun/so100_push_to_hole:
+  observation.images.laptop: observation.image
+pepijn223/lekiwi_block_cleanup2:
+  observation.images.front: observation.image
+  observation.images.wrist: observation.image2
+pepijn223/lekiwi_drive_in_circle:
+  observation.images.front: observation.image
+  observation.images.wrist: observation.image2
+pepijn223/lekiwi_drive_in_circle_recover:
+  observation.images.front: observation.image
+  observation.images.wrist: observation.image2
+pepijn223/lekiwi_pen:
+  observation.images.front: observation.image
+  observation.images.wrist: observation.image2
+pepijn223/yellow_lego_in_box1:
+  observation.images.phone: observation.image
+phospho-ai/OrangeBrick3Cameras:
+  observation.images.main.left: observation.image3
+  observation.images.main.right: observation.image2
+  observation.images.secondary_0: observation.image
+physical-intelligence/libero:
+  actions: action
+  image: observation.image
+  state: observation.state
+  wrist_image: observation.image2
+pierfabre/chicken:
+  observation.images.robot: observation.image2
+  observation.images.webcam: observation.image
+pierfabre/cow:
+  observation.images.robot: observation.image2
+  observation.images.webcam: observation.image
+pierfabre/cow2:
+  observation.images.robot: observation.image2
+  observation.images.webcam: observation.image
+pierfabre/horse:
+  observation.images.robot: observation.image2
+  observation.images.webcam: observation.image
+pierfabre/pig2:
+  observation.images.robot: observation.image2
+  observation.images.webcam: observation.image
+pierfabre/pig3:
+  observation.images.robot: observation.image2
+  observation.images.webcam: observation.image
+pierfabre/rabbit:
+  observation.images.robot: observation.image2
+  observation.images.webcam: observation.image
+pierfabre/sheep:
+  observation.images.robot: observation.image2
+  observation.images.webcam: observation.image
+pietroom/actualeasytask:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+pietroom/first_task_short:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+pietroom/holdthis:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+pietroom/second_task:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+pranavsaroha/so100_carrot_1:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+pranavsaroha/so100_carrot_2:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+pranavsaroha/so100_carrot_3:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+pranavsaroha/so100_carrot_4:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+pranavsaroha/so100_carrot_5:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+pranavsaroha/so100_legos4:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+pranavsaroha/so100_onelego2:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+pranavsaroha/so100_onelego3:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+pranavsaroha/so100_squishy:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+pranavsaroha/so100_squishy100:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+pranavsaroha/so100_squishy2colors:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+pranavsaroha/so100_squishy2colors_1:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+pranavsaroha/so100_squishy2colors_2_new:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+rabhishek100/so100_train_dataset:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+rgarreta/koch_pick_place_lego:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+rgarreta/koch_pick_place_lego_v2:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+rgarreta/koch_pick_place_lego_v3:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+rgarreta/koch_pick_place_lego_v6:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+rgarreta/koch_pick_place_lego_v7:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+rgarreta/koch_pick_place_lego_v8:
+  observation.images.lateral: observation.image3
+  observation.images.top: observation.image
+  observation.images.wrist: observation.image2
+roboticshack/left-arm-grasp-lego-brick:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+roboticshack/sandee-kiwiv10:
+  observation.images.front: observation.image3
+  observation.images.wrist: observation.image2
+roboticshack/team-7-left-arm-grasp-motor:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+roboticshack/team-7-right-arm-grasp-tape:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+roboticshack/team10-red-block:
+  observation.images.phone: observation.image2
+  observation.images.top: observation.image
+roboticshack/team11_pianobot:
+  observation.images.keyboard_camera: observation.image
+roboticshack/team13-three-balls-stacking:
+  observation.images.realsense: observation.image
+  observation.images.side: observation.image2
+roboticshack/team13-two-balls-stacking:
+  observation.images.realsense: observation.image
+  observation.images.side: observation.image2
+roboticshack/team16-can-stacking:
+  observation.images.head: observation.image
+  observation.images.wrist: observation.image2
+roboticshack/team16-water-pouring:
+  observation.images.head: observation.image
+  observation.images.wrist: observation.image2
+roboticshack/team2-guess_who_less_ligth:
+  observation.images.mounted: observation.image2
+roboticshack/team2-guess_who_so100:
+  observation.images.mounted: observation.image
+roboticshack/team2-guess_who_so100_edge_case:
+  observation.images.mounted: observation.image2
+roboticshack/team2-guess_who_so100_light:
+  observation.images.mounted: observation.image2
+roboticshack/team9-pick_chicken_place_plate:
+  observation.images.static_left: observation.image
+  observation.images.static_right: observation.image2
+roboticshack/team9-pick_cube_place_static_plate:
+  observation.images.static_left: observation.image
+  observation.images.static_right: observation.image2
+roboticshack/team_5-QuiEstCe_everyBox:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+samanthalhy/so100_herding_1:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+samsam0510/cube_reorientation_2:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+samsam0510/cube_reorientation_4:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+samsam0510/glove_reorientation_1:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+samsam0510/mj_data_temp:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+samsam0510/tape_insert_1:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+samsam0510/tape_insert_2:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+samsam0510/tooth_extraction_3:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+samsam0510/tooth_extraction_4:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+satvikahuja/mixer_on_off:
+  observation.images.Lwebcam: observation.image
+  observation.images.laptop: observation.image2
+  observation.images.macwebcam: null
+  observation.images.phone: null
+satvikahuja/mixer_on_off_new:
+  observation.images.Lwebcam: observation.image
+  observation.images.laptop: observation.image2
+  observation.images.macwebcam: null
+  observation.images.phone: null
+satvikahuja/mixer_on_off_new_1:
+  observation.images.Lwebcam: observation.image
+  observation.images.laptop: observation.image2
+  observation.images.macwebcam: observation.image3
+  observation.images.phone: null
+satvikahuja/mixer_on_off_new_4:
+  observation.images.Lwebcam: observation.image
+  observation.images.laptop: observation.image2
+  observation.images.macwebcam: null
+  observation.images.phone: null
+satvikahuja/orange_mixer_1:
+  observation.images.Lwebcam: observation.image
+  observation.images.laptop: observation.image2
+  observation.images.macwebcam: null
+  observation.images.phone: null
+satvikahuja/orange_pick_place_new1:
+  observation.images.Lwebcam: observation.image
+  observation.images.laptop: observation.image2
+  observation.images.macwebcam: null
+  observation.images.phone: null
+seeingrain/241228_pick_place_2cams:
+  observation.images.side: observation.image3
+  observation.images.top: observation.image
+seeingrain/lego_3cameras:
+  observation.images.side: observation.image3
+  observation.images.top: observation.image
+  observation.images.wrist: observation.image2
+seeingrain/one_shot_learning_18episodes:
+  observation.images.laptop: observation.image3
+  observation.images.phone: observation.image
+seeingrain/pick_lego_to_hand:
+  observation.images.laptop: observation.image3
+  observation.images.phone: observation.image
+seeingrain/pick_place_lego:
+  observation.images.laptop: observation.image3
+  observation.images.phone: observation.image
+seeingrain/pick_place_lego_wider_range_dang:
+  observation.images.laptop: observation.image3
+  observation.images.phone: observation.image
+seeingrain/pick_place_lego_wider_range_dong:
+  observation.images.laptop: observation.image3
+  observation.images.phone: observation.image
+seeingrain/pick_place_lego_wider_range_richard:
+  observation.images.laptop: observation.image3
+  observation.images.phone: observation.image
+seeingrain/pick_place_pink_lego:
+  observation.images.laptop: observation.image3
+  observation.images.phone: observation.image
+seeingrain/pick_place_pink_lego_few_samples:
+  observation.images.laptop: observation.image3
+  observation.images.phone: observation.image
+seeingrain/pick_place_red_lego:
+  observation.images.laptop: observation.image3
+  observation.images.phone: observation.image
+shin1107/koch_move_block_with_some_positions:
+  observation.images.front: observation.image
+  observation.images.top: observation.image3
+shin1107/koch_move_block_with_some_shapes:
+  observation.images.front: observation.image
+  observation.images.top: observation.image3
+shin1107/koch_train_block:
+  observation.images.front: observation.image
+  observation.images.top: observation.image3
+shreyasgite/so100_base_env:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+shreyasgite/so100_base_left:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+shreyasgite/so100_legocube_50:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+sihyun77/mond_1:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+sihyun77/mond_13:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+sihyun77/si_so100:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+sihyun77/sihyun_3_17_1:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+sihyun77/sihyun_3_17_2:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+sihyun77/sihyun_3_17_5:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+sihyun77/sihyun_king:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+sihyun77/sihyun_main:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+sihyun77/sihyun_main_2:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+sihyun77/sihyun_main_3:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+sihyun77/suho_3_17_1:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+sihyun77/suho_3_17_3:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+sihyun77/suho_angel:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+sihyun77/suho_main_2:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+sihyun77/suho_red:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+sihyun77/suho_red2:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+sihyun77/suho_so100:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+sixpigs1/so100_insert_cylinder_error:
+  observation.images.above: observation.image2
+  observation.images.rightfront: observation.image
+sixpigs1/so100_pick_cube_in_box:
+  observation.images.above: observation.image2
+  observation.images.rightfront: observation.image
+sixpigs1/so100_pick_cube_in_box_error:
+  observation.images.above: observation.image
+  observation.images.rightfront: observation.image2
+sixpigs1/so100_pull_cube_by_tool_error:
+  observation.images.above: observation.image2
+  observation.images.rightfront: observation.image
+sixpigs1/so100_pull_cube_error:
+  observation.images.above: observation.image
+  observation.images.rightfront: observation.image2
+sixpigs1/so100_push_cube_error:
+  observation.images.above: observation.image
+  observation.images.rightfront: observation.image2
+sixpigs1/so100_stack_cube_error:
+  observation.images.above: observation.image2
+  observation.images.rightfront: observation.image
+smanni/train_so100_fluffy_box:
+  observation.images.intel_realsense: observation.image
+speedyyoshi/so100_grasp_pink_block:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+sshh11/so100_orange_50ep_1:
+  observation.images.laptop: observation.image
+sshh11/so100_orange_50ep_2:
+  observation.images.laptop: observation.image
+swarajgosavi/act_kikobot_block_real:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+swarajgosavi/act_kikobot_pusht_real:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+swarajgosavi/kikobot_pusht_real_v2:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+takuzennn/aloha-pick100:
+  observation.image.camera1: observation.image
+  observation.image.camera2: observation.image2
+  observation.image.camera3: observation.image3
+takuzennn/square3:
+  observations.images.agentview: observation.image
+  observations.images.robot0_eye_in_hand: observation.image2
+thedevansh/mar16_1336:
+  observation.images.laptop: observation.image
+theo-michel/lekiwi_v2:
+  observation.images.front: observation.image
+  observation.images.wrist: observation.image2
+theo-michel/lekiwi_v5:
+  observation.images.front: observation.image
+  observation.images.wrist: observation.image2
+therarelab/med_dis_rare_6:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+therarelab/so100_pick_place:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+therarelab/so100_pick_place_2:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+tkc79/so100_lego_box_1:
+  observation.images.arm: observation.image2
+  observation.images.laptop: observation.image
+tkc79/so100_lego_box_2:
+  observation.images.arm: observation.image2
+  observation.images.laptop: observation.image
+triton7777/so100_dataset_mix:
+  observation.images.gripper: observation.image2
+  observation.images.s_left: null
+  observation.images.s_right: observation.image3
+  observation.images.top: observation.image
+twerdster/koch_new_training_red:
+  observation.images.iphone: observation.image2
+  observation.images.laptop: observation.image3
+twerdster/koch_training_red:
+  observation.images.rightegocam: observation.image2
+  observation.images.rightstereocam: observation.image3
+underctrl/handcamera_single_blue:
+  observation.images.android: observation.image
+  observation.images.handcam: observation.image2
+  observation.images.webcam: observation.image3
+underctrl/mutli-stacked-block_mutli-color_pick-up_80:
+  observation.images.phone: observation.image3
+  observation.images.webcam: observation.image
+underctrl/single-block_blue-color_pick-up_80:
+  observation.images.phone: observation.image3
+  observation.images.webcam: observation.image
+underctrl/single-block_multi-color_pick-up_50:
+  observation.images.phone: observation.image3
+  observation.images.webcam: observation.image
+underctrl/single-stacked-block_mutli-color_pick-up_80:
+  observation.images.phone: observation.image3
+  observation.images.webcam: observation.image
+underctrl/single-stacked-block_two-color_pick-up_80:
+  observation.images.phone: observation.image3
+  observation.images.webcam: observation.image
+vaishanthr/toy_pick_place:
+  observation.images.gipper_cam: observation.image2
+  observation.images.webcam: observation.image
+vaishanthr/toy_pickplace:
+  observation.images.gipper_cam: observation.image2
+  observation.images.webcam: observation.image
+vaishanthr/toy_pickplace_50ep:
+  observation.images.gipper_cam: observation.image2
+  observation.images.webcam: observation.image
+vladfatu/so100_above:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+vladfatu/so100_ds:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+vladfatu/so100_office:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+wangjl1512/doll:
+  observation.images.top: observation.image
+  observation.images.wrist: observation.image2
+wangjl1512/pour_water:
+  observation.images.laptop: observation.image
+wcode/so100_put_pen_50:
+  observation.images.hand: observation.image2
+  observation.images.top: observation.image
+weiye11/so100_410_zwy:
+  observation.images.top: observation.image
+  observation.images.wrist_left: observation.image2
+yg-dev/koch_red_pen2:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+yskim2025/unitylerobot:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+yuz1wan/so100_button:
+  observation.images.side: observation.image
+  observation.images.wrist: observation.image2
+yuz1wan/so100_fold_0227_1:
+  observation.images.side: observation.image
+yuz1wan/so100_fold_0227_2:
+  observation.images.side: observation.image
+  observation.images.wrist: observation.image2
+yuz1wan/so100_pick_pink:
+  observation.images.side: observation.image
+  observation.images.wrist: observation.image2
+yuz1wan/so100_pick_wahaha:
+  observation.images.side: observation.image
+  observation.images.wrist: observation.image2
+yuz1wan/so100_pickplace:
+  observation.images.side: observation.image
+  observation.images.wrist: observation.image2
+yuz1wan/so100_pickplace_0223_2:
+  observation.images.side: observation.image
+yuz1wan/so100_pickplace_0223_3:
+  observation.images.side: observation.image
+yuz1wan/so100_pour_cup:
+  observation.images.side: observation.image
+  observation.images.wrist: observation.image2
+yuz1wan/so100_pp_pink:
+  observation.images.side: observation.image
+  observation.images.wrist: observation.image2
+zaringleb/so100_cube_2:
+  observation.images.cam_high: observation.image
+zaringleb/so100_cube_4_binary:
+  observation.images.cam_high: observation.image
+zaringleb/so100_cube_5_linear:
+  observation.images.cam_high: observation.image
+zaringleb/so100_cube_6_2d:
+  observation.images.cam_high: observation.image
+zaringleb/so100_cude_linear_and_2d_comb:
+  observation.images.cam_high: observation.image
+zijian2022/321:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+zijian2022/assemblyarm2:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+zijian2022/backgrounda:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+zijian2022/backgroundb:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+zijian2022/bi1:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+zijian2022/bi2:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+zijian2022/c0:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+zijian2022/close3:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+zijian2022/closer3:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+zijian2022/digitalfix:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+zijian2022/digitalfix2:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+zijian2022/digitalfix3:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+zijian2022/force1:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+zijian2022/force2:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+zijian2022/force3:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+zijian2022/hand1:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+zijian2022/insert2:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+zijian2022/l10_1:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+zijian2022/l10_5:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+zijian2022/l9:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+zijian2022/llm40:
+  observation.images.laptop: observation.image2
+  observation.images.phone: observation.image
+zijian2022/n1_2:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+zijian2022/noticehuman1:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+zijian2022/noticehuman2:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+zijian2022/noticehuman3:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+zijian2022/noticehuman5:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+zijian2022/noticehuman50:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+zijian2022/noticehuman60:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+zijian2022/noticehuman70:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+zijian2022/so100_318:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+zijian2022/so100_318_1:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+zijian2022/sort1:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image2
+zliu157/i3r:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image3
+zliu157/i3r2:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image3
+zliu157/i3r3:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image3
+zliu157/i3r5:
+  observation.images.laptop: observation.image
+  observation.images.phone: observation.image3

@@ -1,0 +1,1012 @@
+00ri/so100_battery:
+  0: Grasp a battery and put it in the bin.
+00ri/so100_battery_bin_center:
+  0: Grasp a battery and put it in the bin.
+1g0rrr/sam_openpi03:
+  0: Grasp a blue cube and put it in the gray box.
+1g0rrr/sam_openpi_solder1:
+  0: bring contact to the pad on the board.
+1g0rrr/sam_openpi_solder2:
+  0: bring contact to the pad on the board.
+1g0rrr/screw1:
+  0: Grasp a lego block and put it in the bin.
+356c/so100_duck_reposition_1:
+  0: Grasp the tool and use it to move the duck to the indicated position.
+356c/so100_nut_sort_1:
+  0: Pick up the steel nuts and sort them by color.
+356c/so100_rope_reposition_1:
+  0: Grasp rope and reposition.
+Allen-488/koch_dataset_50:
+  0: Grasp a block and put it in the bin.
+AndrejOrsula/lerobot_double_ball_stacking_random:
+  0: Stack the balls on top of each other.
+Bartm3/dice2:
+  0: Grasp a dice and put it in the bin.
+Bartm3/tape_to_bin:
+  0: Grasp a tape and put it in the bin.
+Bartm3/tape_to_bin2:
+  0: Grasp a tape and put it in the bin.
+Beegbrain/align_cubes_green_blue:
+  0: Put the green cubes on the left and the blue cube on the right
+Beegbrain/align_three_pens:
+  0: picks up a pen.
+Beegbrain/moss_close_drawer_teabox:
+  0: Close the top drawer of the teabox
+Beegbrain/moss_open_drawer_teabox:
+  0: Open the top drawer of the teabox
+Beegbrain/moss_put_cube_teabox:
+  0: Put the green cube in the top drawer of the teabox
+Beegbrain/moss_stack_cubes:
+  0: Stack the green cube on top of the blue cube
+Beegbrain/oc_stack_cubes:
+  0: stack the red cube on the blue cube
+Beegbrain/pick_lemon_and_drop_in_bowl:
+  0: Pick the yellow lemon and drop it in the red bowl.
+Beegbrain/pick_place_green_block:
+  0: Pick up the green block and place in the red cup.
+Beegbrain/put_green_into_blue_bin:
+  0: Put the green cube into the blue bin
+Beegbrain/put_red_triangle_green_rect:
+  0: Put the red triangle on top of the green rectangle
+Beegbrain/put_screwdriver_box:
+  0: Put the screwdriver into the box
+Beegbrain/stack_2_cubes:
+  0: picks up the red block.
+Beegbrain/stack_green_on_blue_cube:
+  0: Stack the blue cube on top of the green cube
+Beegbrain/sweep_tissue_cube:
+  0: Sweep the red cubes to the right with the tissue.
+BlobDieKatze/GrabBlocks:
+  0: Grasp a lego block and put it in the bin.
+CSCSXX/pick_place_cube_1.17:
+  0: Pick up the red block and place it in the box.
+CSCSXX/pick_place_cube_1.18:
+  0: Pick up the cube and place it in the box.
+Chojins/chess_game_000_white:
+  0: Move the blue chess pieces as indicated by the highlighted squares
+Chojins/chess_game_000_white_red:
+  0: Move the red chess pieces to the highlighted squares.
+Chojins/chess_game_001_blue_stereo:
+  0: Move the blue chess pieces to the highlighted squares
+Chojins/chess_game_001_red_stereo:
+  0: Move the red chess pieces to the highlighted squares
+Chojins/chess_game_001_white:
+  0: Move the blue chess pieces as indicated by the highlighted squares
+Chojins/chess_game_002_white:
+  0: Move the blue chess pieces as indicated by the highlighted squares
+Chojins/chess_game_003_white:
+  0: Move the blue chess pieces as indicated by the highlighted squares
+Chojins/chess_game_004_white:
+  0: Move the blue chess pieces as indicated by the highlighted squares
+Chojins/chess_game_005_white:
+  0: Move the blue chess pieces as indicated by the highlighted squares
+Chojins/chess_game_006_white:
+  0: Move the blue chess pieces as indicated by the highlighted squares
+Chojins/chess_game_007_white:
+  0: Move the blue chess pieces as indicated by the highlighted squares
+Chojins/chess_game_009_white:
+  0: Move the blue chess pieces to the highlighted squares.
+Cidoyi/so100_all_notes_1:
+  0: Connect the cable to the device.
+Clementppr/lerobot_pick_and_place_dataset_world_model:
+  0: Grasp a fruit and put it in the cup.
+CrazyYhang/A1234-B-C_mvA2B:
+  0: Move the top disk from the left column to the middle column.
+Deason11/Open_the_drawer_to_place_items:
+  0: Put the objects in the open drawer.
+Deason11/PLACE_TAPE_PUSH_DRAWER:
+  0: 'Place the tape in the drawer and close it. '
+Deason11/Random_Kitchen:
+  0: Pick up the cup and place it on the table.
+Deason11/mobile_manipulator_0319:
+  0: Grasp a lego block and put it in the bin.
+Deason11/mobile_manipulator_0326:
+  0: Grasp a lego block and put it in the bin.
+  1: mobile_lekiwi.
+DimiSch/so100_50ep_2:
+  0: Place the yellow object in the bowl.
+DimiSch/so100_50ep_3:
+  0: Pick the yellow button from the table.
+DimiSch/so100_terra_50_2:
+  0: Grasp a lego block and put it in the bin.
+Dongkkka/cable_pick_and_place2:
+  0: Put a black charging cable in a black bowl and put a red charging cable in a
+    green bowl
+DorayakiLin/so100_pick_charger_on_tissue:
+  0: Pick up the charger and put it on the white tissue.
+DorayakiLin/so100_pick_cube_in_box:
+  0: Pick up the red cube and put it in the box.
+Eyas/grab_bouillon:
+  0: picks up the box and places it in the box.
+Eyas/grab_pink_lighter_10_per_loc:
+  0: Pick up the pink object from the table.
+FeiYjf/Grab_Pieces:
+  0: places the black object on the table.
+FeiYjf/Makalu_push:
+  0: Pick up the blue cube.
+FeiYjf/Maklu_dataset:
+  0: Pick up the blue cube and place it on the paper.
+FeiYjf/Test_NNNN:
+  0: Pick up the purple cube and move it to the right.
+FeiYjf/new_Dataset:
+  0: Pick up the blue cube.
+FeiYjf/new_GtoR:
+  0: Move along the line on the paper from start to end.
+FsqZ/so100_1:
+  0: Put the yellow cube inside the purple box.
+Gano007/so100_doliprane:
+  0: Grasp a medic box and put it in the bin.
+Gano007/so100_gano:
+  0: Grasp a box and put it in the bin.
+Gano007/so100_medic:
+  0: Grasp a medic box and put it in the bin.
+Gano007/so100_second:
+  0: Grasp a yellow box and put it in the bin.
+Gongsta/grasp_duck_in_cup:
+  0: Grasp the rubber duck and put it in the cup.
+HITHY/so100_peach:
+  0: Grasp a peach and put it in the bin.
+HITHY/so100_peach3:
+  0: Grasp a peach and put it in the bin.
+HITHY/so100_peach4:
+  0: Grasp a peach and put it on the plate.
+HITHY/so100_strawberry:
+  0: Grasp a strawberry and put it in the bin.
+HWJ658970/fat_fish:
+  0: Grasp a fat fish toy and put it in the bin.
+HWJ658970/lego_100_class:
+  0: Separate yellow and white Lego blocks and place them into the bin.
+HWJ658970/lego_50:
+  0: Grasp a yellow lego block and put it in the bin.
+HWJ658970/lego_50_camera_change:
+  0: Grasp a yellow lego block and put it in the bin.
+HuaihaiLyu/groceries:
+  0: Pick the brown long bread and Egg yolk pasry into package
+IPEC-COMMUNITY/berkeley_mvp_lerobot:
+  0: push wooden cube
+  1: pick detergent from the sink
+  2: reach red block
+  3: pick yellow cube
+  4: close fridge door
+  5: pick fruit
+IPEC-COMMUNITY/ucsd_kitchen_dataset_lerobot:
+  0: Turn on the faucet
+  1: Put the bowl inside the kitchen cabinet
+  2: Open the oven door
+  3: Place the teapot on the stove
+  4: Put the white box into the sink
+  5: Open the carbinet door
+  6: Put the green box into the sink
+  7: Put the canned spam into the sink
+Ityl/so100_recording1:
+  0: Putting the red square onto the yellow piece
+Ityl/so100_recording2:
+  0: Pick up the red cube and place it on top of the blue cube.
+Jiangeng/so100_413:
+  0: Pick up the cube and place it on top of the black circle.
+KeWangRobotics/piper_push_cube_gamepad_1:
+  0: push the cube to the black area
+KeWangRobotics/piper_push_cube_gamepad_1_cropped_resized:
+  0: push the cube to the black area
+KeWangRobotics/piper_rl_1:
+  0: Pick up the cube and place it in the box.
+KeWangRobotics/piper_rl_1_cropped_resized:
+  0: picks up the cube.
+KeWangRobotics/piper_rl_2:
+  0: Move the cube to the right side of the table.
+KeWangRobotics/piper_rl_2_cropped_resized:
+  0: Move the block to the right side of the table.
+KeWangRobotics/piper_rl_3:
+  0: Pick up the wooden block.
+KeWangRobotics/piper_rl_3_cropped_resized:
+  0: Place the block in the box.
+KeWangRobotics/piper_rl_4:
+  0: Move the block slightly.
+KeWangRobotics/piper_rl_4_cropped_resized:
+  0: picks the wooden block.
+LemonadeDai/so100_coca:
+  0: Grasp the Coca-Cola can and orient it upright with the top facing up.
+Loki0929/so100_100:
+  0: Grasp a rubber duck and put it in the box.
+Loki0929/so100_duck:
+  0: Grasp red, green, yellow ducks and put them in the box.
+Lugenbott/koch_1225:
+  0: Pick up the blue block and place it in the red box.
+Mohamedal/put_banana:
+  0: Put the banana in the red bowl.
+Mwuqiu/so100_0408_muti:
+  0: Grasp a yellow duck and put it in the box.
+NONHUMAN-RESEARCH/SOARM100_TASK_VENDA:
+  0: Pick up the object and place it in the box.
+NONHUMAN-RESEARCH/SOARM100_TASK_VENDA_BOX:
+  0: Move the cube to the right side of the table.
+Odog16/so100_cube_drop_pick_v1:
+  0: Pick up the orange cube, release it, and then pick it up again.
+Odog16/so100_cube_stacking_v1:
+  0: 'Stack the cubes in the following order from bottom to top: black, blue, then
+    orange.'
+Odog16/so100_tea_towel_folding_v1:
+  0: Fold tea towel into quarters
+Ofiroz91/so_100_cube2bowl:
+  0: placing cube inside a red bawl
+Pi-robot/barbecue_flip:
+  0: Pick up the orange cone and place it on the table.
+Pi-robot/barbecue_put:
+  0: Pick up the stick and place it in the grill.
+RasmusP/so100_Orange2Green:
+  0: Grasp the orange block and drop it in the box.
+RasmusP/so100_dataset50ep:
+  0: Grasp a square block and put it in the box.
+SeanLMH/so100_picknplace:
+  0: Pick up the blue block and place it in the yellow box.
+SeanLMH/so100_picknplace_v2:
+  0: picks up blue cube and places it in yellow box.
+Setchii/so100_grab_ball:
+  0: Grasp a ball and put it on a goblet.
+T-K-233/koch_k1_pour_shot:
+  0: Place the glass on the table.
+TrossenRoboticsCommunity/aloha_baseline_dataset:
+  0: Pick up a blue block and put it in a green bowl. Baseline dataset for testing
+TrossenRoboticsCommunity/aloha_fold_tshirt:
+  0: Fold the t-shirt.
+TrossenRoboticsCommunity/aloha_stationary_logo_assembly:
+  0: Assemble the Trossen Robotics Logo.
+VoicAndrei/so100_banana_to_plate_only:
+  0: Pick up the banana and place it on the plate.
+VoicAndrei/so100_banana_to_plate_rebel_full:
+  0: Pick up the banana and place it on the place
+Winster/so100_cube:
+  0: Grasp a lego block and put it in the bin.
+XXRRSSRR/so100_v3_num_episodes_50:
+  0: Grasp a box and put it in the side.
+Yuanzhu/koch_bimanual_grasp_0:
+  0: places the yellow block on the mousepad.
+Yuanzhu/koch_bimanual_grasp_3:
+  0: picks up a yellow block.
+ZCM5115/so100_1210:
+  0: picks up the USB cable.
+ZCM5115/so100_2Arm3cameras_movebox:
+  0: Pick up the white box from the table.
+ZGGZZG/so100_drop0:
+  0: Grasp a ball and put it in the hole.
+ZGGZZG/so100_drop1:
+  0: Grasp a cube and put it in the right place.
+Zhaoting123/koch_cleanDesk_:
+  0: Grasp a card and use it to clean the desk
+abbyoneill/data_w_mug:
+  0: Grasp a lego block and put it in the bin.
+abbyoneill/new_dataset_pick_place:
+  0: Grasp a lego block and put it in the bin.
+abbyoneill/pusht:
+  0: Grasp a lego block and put it in the bin.
+abbyoneill/thurs1120pickplace:
+  0: Grasp a lego block and put it in the bin.
+abhisb/so100_51_ep:
+  0: Pick up the cube and place it in the box.
+abougdira/cube_target:
+  0: put_the cube on the yellow target
+acrampette/third_arm_01:
+  0: Pick up the circuit board from the table.
+acrampette/third_arm_02:
+  0: Pick up the tie and place it in the box.
+ad330/cubePlace:
+  0: Grasp white cube and place it in the bowl.
+ad330/so100_box_pickPlace:
+  0: places jar in box.
+aimihat/so100_tape:
+  0: Pick up the tape and put it in the bowl.
+aliberts/koch_tutorial:
+  0: Pick the Lego block and drop it in the box on the right.
+allenchienxxx/so100Test:
+  0: Grasp a lego block and put it in the bin.
+andabi/D10:
+  0: picks up the shoe.
+andabi/D11:
+  0: The  picks up the paper and places it on the table.
+andabi/D12:
+  0: The  places the cube in the box.
+andabi/D13:
+  0: picks up shoes.
+andabi/D14:
+  0: picks up shoes.
+andabi/D15:
+  0: picks up the shoe.
+andabi/D16:
+  0: picks up the shoe.
+andabi/D17:
+  0: picks up the shoe.
+andabi/D2:
+  0: Pick up the shoe and place it on the table.
+andabi/D3:
+  0: picks up the shoe.
+andabi/D4:
+  0: picks up the shoe.
+andabi/D5:
+  0: places shoe on table.
+andabi/D6:
+  0: picks up the shoe.
+andabi/D7:
+  0: picks up the shoe.
+andabi/D8:
+  0: picks up the shoe.
+andabi/D9:
+  0: The  picks up the paper and places it on the table.
+andabi/shoes_easy:
+  0: picks up the shoe.
+andlyu/so100_indoor_1:
+  0: Locate and grasp the blueberry.
+andlyu/so100_indoor_3:
+  0: Locate and grasp the blueberry.
+andrewcole712/so100_tape_bin_place:
+  0: Place the tape in the wooden box.
+andy309/so100_0311_1152:
+  0: Grasp and put it in the bin.
+andy309/so100_0314_fold_cloths:
+  0: fold the cloths, use two cameras, two arms.
+aractingi/push_cube_offline_data:
+  0: Push the green cube to the yellow sticker.
+aractingi/push_cube_offline_data_cropped_resized:
+  0: Push the green cube to the yellow sticker
+arclabmit/Koch_twoarms:
+  0: official two arms recordings10
+arclabmit/koch_gear_and_bin:
+  0: Pick the gear and place it in the bin.
+baladhurgesh97/so100_final_picking_3:
+  0: Grasp a carrot, plastic bottle and put it in respective bins.
+bensprenger/chess_game_001_blue_stereo:
+  0: Move the blue chess pieces to the highlighted squares.
+bensprenger/left_arm_yellow_brick_in_box_v0:
+  0: Grasp the yellow lego block and put it in the box.
+bensprenger/left_arm_yellow_brick_in_box_with_purple_noise_v0:
+  0: Grasp a yellow lego block and put it in the bin.
+bensprenger/right_arm_p_brick_in_box_with_y_noise_v0:
+  0: Grasp the purple lego block and put it in the box.
+bnarin/so100_tic_tac_toe_we_do_it_live:
+  0: move tic tac toe as player 2.
+carpit680/giraffe_sock_demo_1:
+  0: Grasp a sock off the floor.
+carpit680/giraffe_task:
+  0: Grasp a block and put it in the bin.
+chmadran/so100_dataset04:
+  0: picks the blue block and places it in the red cup.
+chmadran/so100_dataset08:
+  0: places blue block on paper.
+chmadran/so100_home_dataset:
+  0: Grasp a lego block and put it in the bin.
+cmcgartoll/cube_color_organizer:
+  0: Organize blue cube
+  1: Organize red cube
+  2: Organize yellow cube
+ctbfl/sort_battery:
+  0: put the battery into battery_box
+dboemer/koch_50-samples:
+  0: Pick up the red block and place it on top of the yellow box.
+dkdltu1111/omx-bottle1:
+  0: Grasp a lego block and put it in the bin.
+dop0/koch_pick_terminal:
+  0: Pick up the terminal and place on the cover.
+dragon-95/so100_sorting:
+  0: Pick up the object from box A and place it in box B.
+dragon-95/so100_sorting_1:
+  0: Pick up the object from box A and place it in box B.
+dragon-95/so100_sorting_2:
+  0: Pick up the object from box A and place it in box B.
+dragon-95/so100_sorting_3:
+  0: Pick up the object from box A and place it in box B.
+ellen2imagine/pusht_green1:
+  0: Place the green block in the box.
+ellen2imagine/pusht_green_same_init2:
+  0: Place the green block in the correct position.
+engineer0002/pepper:
+  0: Place the bottle on the table.
+francescocrivelli/carrot_eating:
+  0: pick up carrot and bring to mouth
+frk2/so100large:
+  0: Pick up roll of tape and put it in the bin.
+frk2/so100largediffcam:
+  0: Pick up roll of tape and put it in the bin
+ganker5/so100_color_0328:
+  0: Grasp a lego block and put it in the bin.
+ganker5/so100_dataline_0328:
+  0: Grasp a lego block and put it in the bin.
+ganker5/so100_dataline_20250331:
+  0: Grasp a lego block and put it in the bin.
+ganker5/so100_push_20250328:
+  0: Grasp a lego block and put it in the bin.
+ganker5/so100_push_20250331:
+  0: Grasp a lego block and put it in the bin.
+ganker5/so100_toy_20250402:
+  0: Grasp a lego block and put it in the bin.
+gxy1111/so100_pick_place:
+  0: Grasp a toy panda and put it in the cup.
+hangwu/koch_pick_terminal:
+  0: Pick up the terminal and place on the cover.
+hangwu/piper_pick_terminal_2:
+  0: Grasp the white terminal and put it on the green lid.
+hangwu/piper_pick_terminal_and_place:
+  0: Grasp a terminal and put it on the black box.
+hannesill/koch_pnp_2_blocks_2_bins_200:
+  0: Grasp the blue block first and put it in the first bin that has a specific position
+    and orientation. Then grasp the white block and put it in the second bin that
+    has a specific position and orientation.
+hannesill/koch_pnp_simple_50:
+  0: Grasp a small block with a specific orientation and put it in the bin with a
+    specific position and orientation.
+hegdearyandev/so100_eraser_cup_v1:
+  0: picks up the red object.
+helper2424/hil-serl-push-circle-classifier:
+  0: Push small circle object to the correct position
+hkphoooey/throw_stuffie:
+  0: Grab stuffed animal and throw it on the dot.
+ibru/bob_jetson:
+  0: Drive forward pickup the object and put it in the red box and drive back.
+ibru/bobo_jetson:
+  0: Drive forward pickup the object and put it in the red box and drive back.
+  1: Driver forward
+ibru/bobo_trash_collector:
+  0: Bobo Trash collect and place it in a bin
+imatrixlee/koch_place:
+  0: Pick up the white object and place it on the table.
+isadev/bougies1:
+  0: Put the candles in the box.
+isadev/bougies2:
+  0: grab the candle wick and place it in the tray.
+isadev/bougies3:
+  0: Grab the candle wick by the aluminium plate and place it in the box.
+jainamit/koch_pickcube:
+  0: Pick up the blue cube and place it in the box.
+jainamit/koch_realcube3:
+  0: pick up the cube real with keyboard input
+jannick-st/classifier:
+  0: Move the blue object to the right side of the table.
+jannick-st/push-cube-classifier_cropped_resized:
+  0: Close the cabinet door.
+jbraumann/so100_1902:
+  0: picks up the yellow ball.
+jchun/so100_pickplace_small_20250323_120056:
+  0: Grasp items from white bowl and place in black tray
+jiajun001/eraser00_2:
+  0: picks tissue paper from box.
+jiajun001/eraser00_3:
+  0: Pick up the white object from the table.
+jlesein/TestBoulon7:
+  0: Pick up the bolt and put it on the plate.
+jlitch/so100multicam7:
+  0: pick up brick and put in bin
+jmrog/so100_sweet_pick:
+  0: Pick up the candy and place it in the bowl.
+joaoocruz00/so100_makeitD1:
+  0: Grasp a lego block and put it in the bin.
+jpata/so100_pick_place_tangerine:
+  0: Pick up the tangerine and place it.
+kevin510/lerobot-cat-toy-placement:
+  0: Grasp the cat toy and put it in the cup.
+koenvanwijk/blue52:
+  0: places blue block on red LEGO piece.
+koenvanwijk/orange50-1:
+  0: 'Pick up the orange object and but it in the LEGO box. '
+koenvanwijk/orange50-variation-2:
+  0: 'Pick up the orange object and but it in the LEGO box. '
+kumarhans/so100_tape_task:
+  0: Grasp a roll of tape and put it over the candle case.
+lalalala0620/koch_blue_paper_tape:
+  0: Grasp a blue paper tape and put it in the bin.
+lerobot/aloha_mobile_cabinet:
+  0: Open the top cabinet, store the pot inside it then close the cabinet.
+lerobot/aloha_mobile_chair:
+  0: Push the chairs in front of the desk to place them against it.
+lerobot/aloha_mobile_elevator:
+  0: Take the elevator to the 1st floor.
+lerobot/aloha_mobile_wash_pan:
+  0: Pick up the pan, rinse it in the sink and then place it in the drying rack.
+lerobot/aloha_mobile_wipe_wine:
+  0: Pick up the wet cloth on the faucet and use it to clean the spilled wine on the
+    table and underneath the glass.
+lerobot/aloha_static_candy:
+  0: Pick up the candy and unwrap it.
+lerobot/aloha_static_coffee:
+  0: Place the coffee capsule inside the capsule container, then place the cup onto
+    the center of the cup tray, then push the 'Hot Water' and 'Travel Mug' buttons.
+lerobot/aloha_static_coffee_new:
+  0: Place the coffee capsule inside the capsule container, then place the cup onto
+    the center of the cup tray.
+lerobot/aloha_static_cups_open:
+  0: Pick up the plastic cup and open its lid.
+lerobot/aloha_static_pro_pencil:
+  0: Pick up the pencil with the right arm, hand it over to the left arm then place
+    it back onto the table.
+lerobot/aloha_static_screw_driver:
+  0: Pick up the screwdriver with the right arm, hand it over to the left arm then
+    place it into the cup.
+lerobot/aloha_static_towel:
+  0: Pick up a piece of paper towel and place it on the spilled liquid.
+lerobot/aloha_static_vinh_cup:
+  0: Pick up the platic cup with the right arm, then pop its lid open with the left
+    arm.
+lerobot/aloha_static_vinh_cup_left:
+  0: Pick up the platic cup with the left arm, then pop its lid open with the right
+    arm.
+lerobot/aloha_static_ziploc_slide:
+  0: Slide open the ziploc bag.
+lirislab/close_top_drawer_teabox:
+  0: Close the top drawer of the teabox
+lirislab/fold_bottom_right:
+  0: Fold the bag from the bottom right corner.
+lirislab/green_lego_block_into_mug:
+  0: pick the green block and place it in the red cup
+lirislab/guess_who_lighting:
+  0: Pick up the card from the shelf.
+lirislab/guess_who_no_cond:
+  0: Place the card in the slot.
+lirislab/lemon_into_bowl:
+  0: Pick the yellow lemon and drop it in the red bowl
+lirislab/open_top_drawer_teabox:
+  0: Open the top drawer of the teabox
+lirislab/push_cup_target:
+  0: Push the red cup to the pink target
+lirislab/put_banana_bowl:
+  0: Put the banana into the red bowl
+lirislab/put_caps_into_teabox:
+  0: Pick the coffee capsule and put it into the top drawer of the teabox
+lirislab/put_coffee_cap_teabox:
+  0: Put the coffee capsule into the top drawer of the teabox.
+lirislab/red_cube_into_blue_cube:
+  0: Put the red cube on top of the blue cube.
+lirislab/red_cube_into_green_lego_block:
+  0: Put the red cube on top of the yellow cube.
+lirislab/so100_demo:
+  0: Put the banana into the red bowl.
+lirislab/sweep_tissue_cube:
+  0: Sweep the red cubes to the right with the tissue bag.
+lirislab/unfold_bottom_right:
+  0: Unfold the bag from bottom right corner
+liuhuanjim013/so100_block:
+  0: Grasp a lego block and put it in the bin.
+liuhuanjim013/so100_th:
+  0: Grasp a lego figure and put it in the box.
+liyitenga/so100_pick_taffy3:
+  0: Place the eraser in the container.
+liyitenga/so100_pick_taffy6:
+  0: Pick up the toy and place it in the purple cup.
+liyitenga/so100_pick_taffy7:
+  0: Pick up the toy and place it in the box.
+lizi178119985/so100_jia:
+  0: Grasp a lego block and put it in the bin.
+ma3oun/rpi_squares_1:
+  0: Raspberry Pi 5 squares recording 1
+maximilienroberti/so100_lego_red_box:
+  0: Placing the red Lego in the red box bin.
+mikechambers/block_cup_14:
+  0: Grasp a block and put it in a cup.
+mlfu7/pi0_conversion_no_pad_video:
+  0: pickplace deer greybowl
+  1: stack red on green
+  2: stack orange cup to yellow cup
+  3: put orange cup into yellow cup
+  4: put push red pen to blue pen
+  5: put tiger to black bowl
+  6: put potato in bot to black bowl
+  7: pick up green triangle
+  8: put push blue pen to red pen
+  9: close drawer
+  10: put push green block to red
+  11: pickup potato
+  12: open drawer
+  13: put closing tongs
+  14: poke block
+  15: put push blue cube
+  16: poke tiger
+  17: pick red cube into black bowl
+  18: pick blue cube stack on wood block
+  19: pick blue cube into grey bowl
+  20: put red ball in black bowl
+  21: pick green triangle into pink bowl
+  22: pick red ball into pink bowl
+  23: poke green triangle
+  24: poke grey bowl
+  25: put blue cube pink bowl
+  26: put red cube into black bowl
+  27: put deer into gray bowl
+  28: put red ball into pink bowl
+  29: put green triangle into pink bowl
+  30: put pour from yellow cup into black bowl
+  31: put pour blue cup into pink bowl
+  32: put brown cube into gray bowl
+nbaron99/so100_pick_and_place2:
+  0: picks up the white object.
+nbaron99/so100_pick_and_place4:
+  0: Pick up the triangular object and place it on a green sticker.
+ncavallo/moss_train_gc_block:
+  0: Grasp a lego block and put it in the bin.
+ncavallo/moss_train_grasp:
+  0: Grasp a lego block and put it in the bin.
+ncavallo/moss_train_grasp_new:
+  0: Grasp a lego block and put it in the bin.
+nduque/act_50_ep:
+  0: Grasp a green block and put it in the bin.
+nduque/act_50_ep2:
+  0: Grasp a green block and put it in the bin.
+nduque/cam_setup2:
+  0: Grasp a green block  and put it in the bin.
+nduque/robustness_e2:
+  0: Grasp a green dice and put it in the bin.
+nduque/robustness_e3:
+  0: Grasp a green dice and put it in the bin.
+nduque/robustness_e4:
+  0: Grasp a green dice and put it in the bin.
+nduque/robustness_e5:
+  0: Grasp a green dice and put it in the bin.
+nguyen-v/press_red_button_new:
+  0: Press the red button with the black arm
+nguyen-v/so100_bimanual_grab_lemon_put_in_box2:
+  0: Grab the lemon with the black arm, then give it to the green arm, then place
+    the lemon in the cardboard box with the green arm.
+nguyen-v/so100_press_red_button:
+  0: The  places the cube in the box.
+nguyen-v/so100_rotate_red_button:
+  0: Rotate the red button clockwise  with the black arm
+nimitvasavat/Gr00t_lerobot:
+  0: Place the cereal box on the shelf.
+nimitvasavat/Gr00t_lerobotV2:
+  0: Place the chocolate chip cookie dough box on the table.
+nimitvasavat/Gr00t_lerobot_state_action:
+  0: Place the chocolate chip cookie dough box on the table.
+pandaRQ/pick_med_1:
+  0: Pick up the object and place it in the box.
+pandaRQ/pickmed:
+  0: Place the green block on the table.
+paszea/so100_lego:
+  0: Grasp a lego and put it in the basket.
+paszea/so100_lego_2cam:
+  0: Grap lego blocks and put them in the plate.
+paszea/so100_lego_mix:
+  0: Grasp lego blocks and put them in the plate.
+paszea/so100_whale_2:
+  0: Grasp a whale and put it in the plate.
+paszea/so100_whale_3:
+  0: Grasp a whale and put it in the plate.
+paszea/so100_whale_4:
+  0: Grasp a whale and put it in the plate.
+paszea/so100_whale_grab:
+  0: Grasp a whale and put it in the plate.
+pengjunkun/so100_push_to_hole:
+  0: Push the T into the hole.
+pepijn223/lekiwi_block_cleanup2:
+  0: Put red block in black box
+pepijn223/lekiwi_drive_in_circle:
+  0: Pick up the red object and place it on the table.
+pepijn223/lekiwi_pen:
+  0: Fold the jeans.
+pierfabre/chicken:
+  0: Pick the chicken and place it to the right.
+pierfabre/cow2:
+  0: Pick the cow and place it to the right.
+pierfabre/horse:
+  0: Pick the horse and place it to the right.
+pierfabre/pig2:
+  0: Pick the pig and place it to the right.
+pierfabre/pig3:
+  0: Pick the pig and place it to the right.
+pierfabre/rabbit:
+  0: Pick the rabbit and place it to the right.
+  1: Pick the rabbit and put it to the right
+pierfabre/sheep:
+  0: Pick the sheep and place it to the right.
+pietroom/actualeasytask:
+  0: Grasp the marker and put it in the plastic box.
+pietroom/first_task_short:
+  0: Pick up the marker from the box.
+pietroom/holdthis:
+  0: Hold the object steadily without releasing it.
+pranavsaroha/so100_carrot_1:
+  0: pick a carrot and put it in the bin
+pranavsaroha/so100_carrot_2:
+  0: Pick up a carrot and put it in the bin.
+pranavsaroha/so100_carrot_3:
+  0: pick a carrot and put it in the bin
+pranavsaroha/so100_carrot_5:
+  0: Pick up a carrot and put it in the bin.
+pranavsaroha/so100_legos4:
+  0: Pick up the LEGO block and place it in the bowl of the same color as the LEGO
+    block.
+pranavsaroha/so100_onelego2:
+  0: Pick up the green LEGO block and place it in the green bowl.
+pranavsaroha/so100_onelego3:
+  0: Pick up the green LEGO block and place it in the green bowl.
+pranavsaroha/so100_squishy:
+  0: pick a squishy and put it in the bin
+pranavsaroha/so100_squishy100:
+  0: pick a squishy and put it in the bin
+pranavsaroha/so100_squishy2colors_1:
+  0: pick the squishies and put them in the bins with their corresponding colors
+pranavsaroha/so100_squishy2colors_2_new:
+  0: pick the squishies and put them in the bins with their corresponding colors
+rabhishek100/so100_train_dataset:
+  0: picks tape and places it in a cup.
+rgarreta/koch_pick_place_lego:
+  0: Pick the Lego block and drop it in the box on the right.
+rgarreta/koch_pick_place_lego_v2:
+  0: Pick the Lego block and drop it in the box on the right.
+rgarreta/koch_pick_place_lego_v3:
+  0: Pick the Lego block and drop it in the box on the right. Top and wrist cameras.
+rgarreta/koch_pick_place_lego_v6:
+  0: Grasp a lego block and put it in the bin.
+rgarreta/koch_pick_place_lego_v7:
+  0: Grasp a lego block and put it in the bin.
+rgarreta/koch_pick_place_lego_v8:
+  0: Grasp a lego block and put it in the bin.
+roboticshack/left-arm-grasp-lego-brick:
+  0: Grasp the lego brick and put it in the box.
+roboticshack/sandee-kiwiv10:
+  0: Place the bottle on the table.
+roboticshack/team-7-left-arm-grasp-motor:
+  0: Grasp the black motor and put it in the box.
+roboticshack/team-7-right-arm-grasp-tape:
+  0: Grasp the tape and put it in the box.
+roboticshack/team10-red-block:
+  0: Pick a red lego block and move it to the right.
+roboticshack/team11_pianobot:
+  0: Point at the keyboard.
+roboticshack/team13-three-balls-stacking:
+  0: Stack the balls on top of each other.
+roboticshack/team13-two-balls-stacking:
+  0: Stack the balls on top of each other.
+roboticshack/team16-can-stacking:
+  0: Grasp the flipped cup and stack it on top of the midpoint between the two other
+    cups to create a tower
+roboticshack/team16-water-pouring:
+  0: Pouring water from one cup to another cup
+roboticshack/team2-guess_who_less_ligth:
+  0: Pick up the card and place it in the slot.
+roboticshack/team2-guess_who_so100:
+  0: Pick up the card from the shelf.
+roboticshack/team2-guess_who_so100_light:
+  0: Place the card in the slot.
+roboticshack/team9-pick_chicken_place_plate:
+  0: Pick up the chicken and place on orange plate
+roboticshack/team9-pick_cube_place_static_plate:
+  0: Pick up the green cube and place on orange plate.
+samanthalhy/so100_herding_1:
+  0: Grasp a green tool and herd all the particles to the grey bin.
+samsam0510/cube_reorientation_2:
+  0: Rotate the object so it aligns with the silhouette on the table.
+samsam0510/cube_reorientation_4:
+  0: Rotate the object so it aligns with respect to the line on the table.
+samsam0510/glove_reorientation_1:
+  0: Rotate the glove so the bottom part aligns with the line on the table.
+samsam0510/tape_insert_1:
+  0: Grasp a red tape and put it on the box.
+samsam0510/tape_insert_2:
+  0: Grasp a red tape and put it in the yellow tape.
+samsam0510/tooth_extraction_3:
+  0: Extract the tooth and put it somewhere.
+samsam0510/tooth_extraction_4:
+  0: Extarct the molar and put it somewhere.
+satvikahuja/mixer_on_off:
+  0: switch the mixer on or off
+satvikahuja/mixer_on_off_new:
+  0: Adjust the s position.
+satvikahuja/mixer_on_off_new_1:
+  0: Press the button on the blender.
+satvikahuja/mixer_on_off_new_4:
+  0: Place the lid on the blender.
+satvikahuja/orange_mixer_1:
+  0: pick orange and place in mixer
+satvikahuja/orange_pick_place_new1:
+  0: Pick up the orange and place it in the bowl.
+seeingrain/241228_pick_place_2cams:
+  0: Place the cube in the basket.
+seeingrain/lego_3cameras:
+  0: Pick up the red block and place it in the basket.
+seeingrain/one_shot_learning_18episodes:
+  0: Pick up the red block and place it in the basket.
+seeingrain/pick_lego_to_hand:
+  0: places blue object on table.
+seeingrain/pick_place_lego:
+  0: Place the cube in the basket.
+seeingrain/pick_place_lego_wider_range_dang:
+  0: Pick up the cube and place it in the basket.
+seeingrain/pick_place_lego_wider_range_dong:
+  0: Pick up the blue object and place it in the basket.
+seeingrain/pick_place_lego_wider_range_richard:
+  0: Pick up the blue cube and place it in the basket.
+seeingrain/pick_place_pink_lego:
+  0: Pick up the red cube and place it in the basket.
+seeingrain/pick_place_pink_lego_few_samples:
+  0: 'pick_place_pink_lego_few_samples '
+shin1107/koch_move_block_with_some_shapes:
+  0: Grasp a block and put it in the hole with some shapes.
+shin1107/koch_train_block:
+  0: Grasp a block and put it in the hole.
+shreyasgite/so100_base_env:
+  0: Grasp a lego block and put it in the bin.
+shreyasgite/so100_base_left:
+  0: Grasp a lego block and put it in the bin.
+shreyasgite/so100_legocube_50:
+  0: Grasp a lego block and put it in the bin.
+sihyun77/mond_1:
+  0: Grasp a lego block and put it in the bin.
+sihyun77/mond_13:
+  0: Grasp a lego block and put it in the bin.
+sihyun77/si_so100:
+  0: Grasp a lego block and put it in the bin.
+sihyun77/sihyun_3_17_2:
+  0: Grasp a lego block and put it in the bin.
+sihyun77/sihyun_3_17_5:
+  0: Grasp a lego block and put it in the bin.
+sihyun77/sihyun_king:
+  0: Grasp a lego block and put it in the bin.
+sihyun77/sihyun_main_2:
+  0: Grasp a lego block and put it in the bin.
+sihyun77/sihyun_main_3:
+  0: Grasp a lego block and put it in the bin.
+sihyun77/suho_3_17_1:
+  0: Grasp a lego block and put it in the bin.
+sihyun77/suho_3_17_3:
+  0: Grasp a lego block and put it in the bin.
+sihyun77/suho_angel:
+  0: Grasp a lego block and put it in the bin.
+sihyun77/suho_main_2:
+  0: Grasp a lego block and put it in the bin.
+sihyun77/suho_red:
+  0: Grasp a lego block and put it in the bin.
+sihyun77/suho_so100:
+  0: Grasp a lego block and put it in the bin.
+sixpigs1/so100_insert_cylinder_error:
+  0: Pick up the cylinder, upright it, and insert it into the middle hole of the shelf
+    with position offset when grasping.
+  1: Pick up the cylinder, upright it, and insert it into the middle hole of the shelf
+    with gripper error when grasping.
+  2: Pick up the cylinder, upright it, and insert it into the middle hole of the shelf
+    with rotation offset when uprighting.
+  3: Pick up the cylinder, upright it, and insert it into the middle hole of the shelf
+    with position offset when inserting.
+  4: Pick up the cylinder, upright it, and insert it into the middle hole of the shelf
+    with choice error when inserting.
+  5: Pick up the cylinder, upright it, and insert it into the middle hole of the shelf
+    without errors.
+sixpigs1/so100_pick_cube_in_box:
+  0: Pick up the red cube and put it in the box.
+sixpigs1/so100_pick_cube_in_box_error:
+  0: Pick up the red cube and put it in the box with position offset when grasping.
+  1: Pick up the red cube and put it in the box with gripper error when grasping.
+  2: Pick up the red cube and put it in the box with position offset when releasing.
+  3: Pick up the red cube and put it in the box without errors.
+sixpigs1/so100_pull_cube_by_tool_error:
+  0: Pick up the L-shaped tool and pull the purple cube by the tool with position
+    offset when grasping.
+  1: Pick up the L-shaped tool and pull the purple cube by the tool with rotation
+    offset when grasping.
+  2: Pick up the L-shaped tool and pull the purple cube by the tool with gripper error
+    when grasping.
+  3: Pick up the L-shaped tool and pull the purple cube by the tool with position
+    offset when lowering.
+  4: Pick up the L-shaped tool and pull the purple cube by the tool with rotation
+    offset when lowering.
+  5: Pick up the L-shaped tool and pull the purple cube by the tool with position
+    offset when pulling.
+  6: Pick up the L-shaped tool and pull the purple cube by the tool with gripper error
+    when pulling.
+  7: Pick up the L-shaped tool and pull the purple cube by the tool without errors.
+sixpigs1/so100_pull_cube_error:
+  0: Pull the yellow cube to the red and white target with position offset when reaching.
+  1: Pull the yellow cube to the red and white target with position offset when pulling.
+  2: Pull the yellow cube to the red and white target with gripper error when pulling.
+  3: Pull the yellow cube to the red and white target without errors.
+sixpigs1/so100_push_cube_error:
+  0: Push the blue cube to the red and white target with position offset when reaching.
+  1: Push the blue cube to the red and white target with position offset when pushing.
+  2: Push the blue cube to the red and white target with gripper error when pushing.
+  3: Push the blue cube to the red and white target without errors.
+sixpigs1/so100_stack_cube_error:
+  0: Pick up the red cube and stack it on the green cube with position offset when
+    grasping.
+  1: Pick up the red cube and stack it on the green cube with gripper error when grasping.
+  2: Pick up the red cube and stack it on the green cube with position offset when
+    stacking.
+  3: Pick up the red cube and stack it on the green cube without errors
+smanni/train_so100_fluffy_box:
+  0: Grasp a small object and place it in the box.
+speedyyoshi/so100_grasp_pink_block:
+  0: Grasp a lego block and put it in the bin.
+sshh11/so100_orange_50ep_1:
+  0: Grasp an orange object and put it in the bin.
+sshh11/so100_orange_50ep_2:
+  0: Grasp an orange object and put it in the bin.
+swarajgosavi/act_kikobot_block_real:
+  0: Pick up the blue cube and place it in the box.
+swarajgosavi/act_kikobot_pusht_real:
+  0: picks up the red block.
+takuzennn/aloha-pick100:
+  0: arm pick pen and put it into the cup
+takuzennn/square3:
+  0: Pick the cube from the table.
+thedevansh/mar16_1336:
+  0: Grasp a lego block and put it in the bin.
+theo-michel/lekiwi_v2:
+  0: Pick up the can on the ground
+theo-michel/lekiwi_v5:
+  0: Pick up the can on the ground
+therarelab/med_dis_rare_6:
+  0: places green object in box.
+therarelab/so100_pick_place_2:
+  0: Pick a plaster roll and place it to the blue sticker.
+tkc79/so100_lego_box_1:
+  0: Grasp a lego block and put it in the box.
+tkc79/so100_lego_box_2:
+  0: Grasp a lego block and put it in the box.
+triton7777/so100_dataset_mix:
+  0: Pick up the black tape and place it inside the white tape roll.
+  1: Pick up the gift miniatures and place them in the black box.
+  2: Sort the mixed objects into their appropriate categories.
+  3: Place the pens into the pen holder.
+  4: Place pens, bottles, and any suitable items into the pen holder, as appropriate.
+  5: Place the oranges into the yellow basket.
+  6: Stack the plates and place the cup on top.
+twerdster/koch_new_training_red:
+  0: move red cube into cellotape circle
+twerdster/koch_training_red:
+  0: Pick up the red block.
+underctrl/handcamera_single_blue:
+  0: Pick the Lego block and drop it in the box on the right.
+underctrl/mutli-stacked-block_mutli-color_pick-up_80:
+  0: Pick single block of multi-color  and drop it in the box on the right.
+underctrl/single-block_blue-color_pick-up_80:
+  0: Pick single block of multi-color  and drop it in the box on the right.
+underctrl/single-block_multi-color_pick-up_50:
+  0: Pick single block of multi-color  and drop it in the box on the right.
+underctrl/single-stacked-block_mutli-color_pick-up_80:
+  0: Pick single block of multi-color  and drop it in the box on the right.
+underctrl/single-stacked-block_two-color_pick-up_80:
+  0: Pick single block of multi-color  and drop it in the box on the right.
+vladfatu/so100_above:
+  0: Pick up red object and place it in the box.
+vladfatu/so100_ds:
+  0: Pick up the cube and place it in the box.
+vladfatu/so100_office:
+  0: Pick up the red object and place it in the box.
+weiye11/so100_410_zwy:
+  0: Pick up the cube and place it on the black circle.
+yuz1wan/so100_pickplace:
+  0: Pick the pink block and place it in the paper cup.
+zaringleb/so100_cube_4_binary:
+  0: Grasp a lego block and put it in the bin.
+zaringleb/so100_cube_5_linear:
+  0: Grasp a lego block and put it in the bin.
+zaringleb/so100_cube_6_2d:
+  0: Grasp a lego block and put it in the bin.
+zaringleb/so100_cude_linear_and_2d_comb:
+  0: Grasp a lego block and put it in the bin.
+zijian2022/321:
+  0: Grasp a lego block and put it in the bin.
+zijian2022/backgrounda:
+  0: Grasp a lego block and put it in the bin.
+zijian2022/backgroundb:
+  0: Grasp a lego block and put it in the bin.
+zijian2022/c0:
+  0: Grasp a lego block and put it in the bin based on color.
+  1: Grasp a lego block and put it in the bin.
+zijian2022/close3:
+  0: Grasp a lego block and put it in the bin.
+zijian2022/digitalfix3:
+  0: Grasp a lego block and put it in the bin.
+zijian2022/insert2:
+  0: Grasp a lego block and put it in the bin.
+zijian2022/noticehuman3:
+  0: Notice human.
+zijian2022/noticehuman5:
+  0: picks up the box.
+zijian2022/noticehuman70:
+  0: Stop movement when human encounter testbed.
+  1: Stop movement when human encounter testbed w/ trigger.
+zijian2022/sort1:
+  0: 'Grasp a box and sort it by color: place grey boxes on the left and black boxes
+    on the right.'
+zliu157/i3r:
+  0: Grasp a lego block and put it in the bin.
+zliu157/i3r2:
+  0: Grasp a i3r logo and put it in the bin.
+zliu157/i3r3:
+  0: Grasp a i3r logo and put it in the bin.
+zliu157/i3r5:
+  0: Grasp a i3r logo and put it in the bin.
