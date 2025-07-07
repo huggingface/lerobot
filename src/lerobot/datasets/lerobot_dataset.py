@@ -15,8 +15,8 @@
 # limitations under the License.
 import contextlib
 import logging
-import shutil
 import os
+import shutil
 from pathlib import Path
 from typing import Callable
 
@@ -32,7 +32,13 @@ from huggingface_hub.constants import REPOCARD_NAME
 from huggingface_hub.errors import RevisionNotFoundError
 
 from lerobot.common.constants import HF_LEROBOT_HOME
-from lerobot.common.datasets.compute_stats import aggregate_stats, compute_episode_stats #aggregate_stats_per_robot_type,
+
+# FIXME: remove this import
+from lerobot.common.datasets.collators import pad_tensor
+from lerobot.common.datasets.compute_stats import (  # aggregate_stats_per_robot_type,
+    aggregate_stats,
+    compute_episode_stats,
+)
 from lerobot.common.datasets.image_writer import AsyncImageWriter, write_image
 from lerobot.common.datasets.utils import (
     DEFAULT_FEATURES,
@@ -50,7 +56,6 @@ from lerobot.common.datasets.utils import (
     embed_images,
     get_delta_indices,
     get_episode_data_index,
-    get_features_from_robot,
     get_hf_features_from_features,
     get_safe_version,
     hf_transform_to_torch,
@@ -67,11 +72,14 @@ from lerobot.common.datasets.utils import (
     write_episode_stats,
     write_info,
     write_json,
-    #keep_datasets_with_the_same_features_per_robot_type,
-    #map_dict_pad_keys,
-    #keep_datasets_with_valid_fps,
-    #find_start_of_motion,
+    # keep_datasets_with_the_same_features_per_robot_type,
+    # map_dict_pad_keys,
+    # keep_datasets_with_valid_fps,
+    # find_start_of_motion,
 )
+
+# from lerobot.common.robot_devices.robots.utils import Robot
+from lerobot.configs.datasets import ROBOT_TYPE_KEYS_MAPPING
 from lerobot.datasets.video_utils import (
     VideoFrame,
     decode_video_frames,
@@ -80,21 +88,17 @@ from lerobot.datasets.video_utils import (
     get_video_info,
 )
 
-#from lerobot.common.robot_devices.robots.utils import Robot
-from lerobot.configs.datasets import ROBOT_TYPE_KEYS_MAPPING, TASKS_KEYS_MAPPING
-#FIXME: remove this import
-from lerobot.common.datasets.collators import pad_tensor
-
 CODEBASE_VERSION = "v2.1"
 LEROBOT_HOME = Path(os.getenv("LEROBOT_HOME", "~/.cache/huggingface/lerobot")).expanduser()
 
 
 def find_start_of_motion(velocities, window_size, threshold, motion_buffer):
     for t in range(len(velocities) - window_size):
-        window_mean = velocities[t:t+window_size].mean()
+        window_mean = velocities[t : t + window_size].mean()
         if window_mean > threshold:
             return max(0, t - motion_buffer)  # include slight context before motion
     return 0
+
 
 class LeRobotDatasetMetadata:
     def __init__(
@@ -129,6 +133,7 @@ class LeRobotDatasetMetadata:
         self.info["features"] = map_dict_keys(
             self.info["features"], feature_keys_mapping=self.feature_keys_mapping
         )
+
     def load_metadata(self):
         self.info = load_info(self.root)
         check_version_compatibility(self.repo_id, self._version, CODEBASE_VERSION)
@@ -818,7 +823,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         # Add frame features to episode_buffer
         for key in frame:
-            
             if key not in self.features:
                 raise ValueError(
                     f"An element of the frame is not in the features. '{key}' not in '{self.features.keys()}'."
@@ -1035,6 +1039,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.video_backend = video_backend if video_backend is not None else get_safe_default_codec()
         return obj
 
+
 def reshape_features_to_max_dim(features: dict, reshape_dim: int = -1, keys_to_max_dim: dict = {}) -> dict:
     """Reshape features to have a maximum dimension of `max_dim`."""
     reshaped_features = {}
@@ -1052,6 +1057,7 @@ def reshape_features_to_max_dim(features: dict, reshape_dim: int = -1, keys_to_m
             reshaped_features[key] = features[key]
     return reshaped_features
 
+
 def str_to_torch_dtype(dtype_str):
     """Convert a dtype string to a torch dtype."""
     mapping = {
@@ -1061,10 +1067,12 @@ def str_to_torch_dtype(dtype_str):
         "bool": torch.bool,
         "video": torch.float32,  # Assuming video is stored as uint8 images
     }
-    return mapping.get(dtype_str, torch.float32)  
+    return mapping.get(dtype_str, torch.float32)
+
+
 def create_padded_features(item: dict, features: dict = {}):
     for key, ft in features.items():
-        if any([k in key for k in ["cam", "effort", "absolute"]]): # FIXME(mshukor): temporary hack
+        if any([k in key for k in ["cam", "effort", "absolute"]]):  # FIXME(mshukor): temporary hack
             continue
         shape = ft["shape"]
         if len(shape) == 3:  # images to torch format (C, H, W)
@@ -1075,11 +1083,12 @@ def create_padded_features(item: dict, features: dict = {}):
             dtype = str_to_torch_dtype(ft["dtype"])
             item[key] = torch.zeros(shape, dtype=dtype)
             item[f"{key}_padding_mask"] = torch.tensor(0, dtype=torch.int64)
-            if "image" in key: # FIXME(mshukor): support other observations
+            if "image" in key:  # FIXME(mshukor): support other observations
                 item[f"{key}_is_pad"] = torch.BoolTensor([False])
         else:
             item[f"{key}_padding_mask"] = torch.tensor(1, dtype=torch.int64)
     return item
+
 
 class MultiLeRobotDataset(torch.utils.data.Dataset):
     """A dataset consisting of multiple underlying `LeRobotDataset`s.
@@ -1156,16 +1165,14 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
             self.disabled_features.update(extra_keys)
 
         self.image_transforms = image_transforms
-        self.delta_timestamps = self.delta_timestamps = delta_timestamps.get(
-            repo_id, None
-        )
+        self.delta_timestamps = self.delta_timestamps = delta_timestamps.get(repo_id, None)
         # TODO(rcadene, aliberts): We should not perform this aggregation for datasets
         # with multiple robots of different ranges. Instead we should have one normalization
         # per robot.
         for ds in _datasets:
             ds.meta.info["robot_type"] = ROBOT_TYPE_KEYS_MAPPING.get(ds.repo_id, ds.meta.info["robot_type"])
             ds.robot_type = ds.meta.info["robot_type"]
-        #self.stats = aggregate_stats([dataset.meta.stats for dataset in self._datasets])
+        # self.stats = aggregate_stats([dataset.meta.stats for dataset in self._datasets])
         _datasets = keep_datasets_with_valid_fps(_datasets, min_fps=min_fps, max_fps=max_fps)
         self._datasets, datasets_maks = keep_datasets_with_the_same_features_per_robot_type(_datasets)
         self.sampling_weights = [self.sampling_weights[i] for i in range(len(_datasets)) if datasets_maks[i]]
@@ -1206,7 +1213,12 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
                             pad_value = 1
                         else:
                             continue
-                        self.stats[robot_type_][feat_key][k] = pad_tensor(v, max_size=self.keys_to_max_dim.get(feat_key, -1), pad_dim=-1, pad_value=pad_value)
+                        self.stats[robot_type_][feat_key][k] = pad_tensor(
+                            v,
+                            max_size=self.keys_to_max_dim.get(feat_key, -1),
+                            pad_dim=-1,
+                            pad_value=pad_value,
+                        )
 
         self.meta.stats = self.stats
         # self.meta.info["features"] = aggregate_features(self._datasets)
@@ -1307,7 +1319,6 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         # Determine which dataset to get an item from based on the index.
         dataset_idx = np.searchsorted(self.cumulative_sizes, idx, side="right").item() - 1
         local_idx = (idx - self.cumulative_sizes[dataset_idx]).item()
-
 
         item = self._datasets[dataset_idx][local_idx]
         item["dataset_index"] = torch.tensor(dataset_idx)

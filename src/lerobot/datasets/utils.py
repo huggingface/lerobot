@@ -860,7 +860,9 @@ def validate_episode_buffer(episode_buffer: dict, total_episodes: int, features:
         )
 
 
-def map_dict_keys(item: dict, feature_keys_mapping: dict, training_features: list = None, pad_key: str = "is_pad") -> dict:
+def map_dict_keys(
+    item: dict, feature_keys_mapping: dict, training_features: list = None, pad_key: str = "is_pad"
+) -> dict:
     """Maps feature keys from the dataset to the keys used in the model."""
     if feature_keys_mapping is None:
         return item
