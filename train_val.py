@@ -14,6 +14,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""
+Training script with validation support for LeRobot.
+
+IMPORTANT NOTE ON EPISODE INDEXING:
+This script includes a critical fix for episode indexing when using train/val splits.
+Without this fix, validation loss will be artificially high (5-6x training loss) because
+the dataset returns data from incorrect episode boundaries.
+
+The issue occurs because:
+1. When episodes are filtered (e.g., val episodes [1000, 1001, 1002...]), 
+   the episode_data_index is re-indexed to [0, 1, 2...]
+2. But the actual data still contains original episode indices
+3. This mismatch causes the dataset to return frames from wrong episodes
+4. The fix properly maps between original and filtered episode indices
+"""
+
 import json
 import logging
 import math
@@ -68,8 +84,6 @@ class ValidationConfig:
     val_freq: int = 500     # How often to run validation (in training steps)
     val_batch_size: int = 8 # Batch size for validation
     save_split: bool = True # Whether to save the train/val split to disk
-    log_train_eval_loss: bool = False  # Whether to also log training loss in eval mode
-    train_eval_freq: int = 1000  # How often to compute training loss in eval mode (in steps)
 
 
 @dataclass
@@ -184,27 +198,62 @@ def create_validation_dataset(cfg: TrainValPipelineConfig, val_episodes: list[in
     
     dataset = make_dataset(val_cfg)
     
-    # Fix episode indexing issue by creating a custom episode mapping
-    # The issue is that episode_data_index is indexed by position in filtered list,
-    # but the dataset items still have original episode indices
+    # Fix episode indexing issue by creating a proper episode mapping
+    # The core issue is that when episodes are filtered, episode_data_index gets re-indexed
+    # but the actual data still contains original episode indices
     
-    logging.info(f"Applying episode index mapping for validation dataset with {len(val_episodes)} episodes")
+    logging.info(f"Fixing episode index mapping for validation dataset with {len(val_episodes)} episodes")
+    
     # Create mapping from original episode index to position in filtered list
     original_to_filtered_idx = {ep_idx: i for i, ep_idx in enumerate(val_episodes)}
     
-    # Monkey patch the _get_query_indices method to handle the mapping correctly
-    original_get_query_indices = dataset._get_query_indices
+    def fixed_getitem(idx: int) -> dict:
+        item = dataset.hf_dataset[idx]
+        original_ep_idx = item["episode_index"].item()
+        
+        # Map the original episode index to the filtered position
+        if original_ep_idx not in original_to_filtered_idx:
+            raise ValueError(f"Episode {original_ep_idx} not found in validation episodes")
+        
+        # Temporarily change the episode index to the filtered position for lookups
+        filtered_ep_idx = original_to_filtered_idx[original_ep_idx]
+        item["episode_index"] = torch.tensor(filtered_ep_idx)
+        
+        # Process the item with the corrected episode index
+        ep_idx = filtered_ep_idx
+        
+        query_indices = None
+        if dataset.delta_indices is not None:
+            query_indices, padding = dataset._get_query_indices(idx, ep_idx)
+            query_result = dataset._query_hf_dataset(query_indices)
+            item = {**item, **padding}
+            for key, val in query_result.items():
+                item[key] = val
+        
+        if len(dataset.meta.video_keys) > 0:
+            current_ts = item["timestamp"].item()
+            query_timestamps = dataset._get_query_timestamps(current_ts, query_indices)
+            # Use original episode index for video file lookup
+            video_frames = dataset._query_videos(query_timestamps, original_ep_idx)
+            item = {**video_frames, **item}
+        
+        if dataset.image_transforms is not None:
+            image_keys = dataset.meta.camera_keys
+            for cam in image_keys:
+                item[cam] = dataset.image_transforms(item[cam])
+        
+        # Add task as a string
+        task_idx = item["task_index"].item()
+        item["task"] = dataset.meta.tasks[task_idx]
+        
+        # Restore the original episode index in the returned item
+        item["episode_index"] = torch.tensor(original_ep_idx)
+        
+        return item
     
-    def fixed_get_query_indices(idx: int, ep_idx: int):
-        # Map original episode index to filtered position
-        if ep_idx in original_to_filtered_idx:
-            filtered_ep_idx = original_to_filtered_idx[ep_idx]
-            return original_get_query_indices(idx, filtered_ep_idx)
-        else:
-            # Should not happen if episodes are filtered correctly
-            raise ValueError(f"Episode {ep_idx} not found in validation episodes {val_episodes}")
+    # Apply the fixed __getitem__ method
+    dataset.__getitem__ = fixed_getitem
     
-    dataset._get_query_indices = fixed_get_query_indices
     return dataset
 
 
@@ -355,25 +404,60 @@ def train(cfg: TrainValPipelineConfig):
     
     # Fix episode indexing issue for training dataset as well
     if cfg.validation.enable and train_episodes:
-        logging.info(f"Applying episode index mapping for training dataset with {len(train_episodes)} episodes")
+        logging.info(f"Fixing episode index mapping for training dataset with {len(train_episodes)} episodes")
+        
         # Create mapping from original episode index to position in filtered list
         original_to_filtered_idx = {ep_idx: i for i, ep_idx in enumerate(train_episodes)}
         
-        # Monkey patch the _get_query_indices method to handle the mapping correctly
-        original_get_query_indices = dataset._get_query_indices
+        # Override __getitem__ to properly handle episode index mapping
+        original_getitem = dataset.__getitem__
         
-        def fixed_get_query_indices(idx: int, ep_idx: int):
-            # Map original episode index to filtered position
-            if ep_idx in original_to_filtered_idx:
-                filtered_ep_idx = original_to_filtered_idx[ep_idx]
-                return original_get_query_indices(idx, filtered_ep_idx)
-            else:
-                # Should not happen if episodes are filtered correctly
-                raise ValueError(f"Episode {ep_idx} not found in training episodes {train_episodes}")
+        def fixed_getitem(idx: int) -> dict:
+            item = dataset.hf_dataset[idx]
+            original_ep_idx = item["episode_index"].item()
+            
+            # Map the original episode index to the filtered position
+            if original_ep_idx not in original_to_filtered_idx:
+                raise ValueError(f"Episode {original_ep_idx} not found in training episodes")
+            
+            # Temporarily change the episode index to the filtered position for lookups
+            filtered_ep_idx = original_to_filtered_idx[original_ep_idx]
+            item["episode_index"] = torch.tensor(filtered_ep_idx)
+            
+            # Process the item with the corrected episode index
+            ep_idx = filtered_ep_idx
+            
+            query_indices = None
+            if dataset.delta_indices is not None:
+                query_indices, padding = dataset._get_query_indices(idx, ep_idx)
+                query_result = dataset._query_hf_dataset(query_indices)
+                item = {**item, **padding}
+                for key, val in query_result.items():
+                    item[key] = val
+            
+            if len(dataset.meta.video_keys) > 0:
+                current_ts = item["timestamp"].item()
+                query_timestamps = dataset._get_query_timestamps(current_ts, query_indices)
+                # Use original episode index for video file lookup
+                video_frames = dataset._query_videos(query_timestamps, original_ep_idx)
+                item = {**video_frames, **item}
+            
+            if dataset.image_transforms is not None:
+                image_keys = dataset.meta.camera_keys
+                for cam in image_keys:
+                    item[cam] = dataset.image_transforms(item[cam])
+            
+            # Add task as a string
+            task_idx = item["task_index"].item()
+            item["task"] = dataset.meta.tasks[task_idx]
+            
+            # Restore the original episode index in the returned item
+            item["episode_index"] = torch.tensor(original_ep_idx)
+            
+            return item
         
-        # Only apply the fix if the dataset uses delta_indices (temporal context)
-        if hasattr(dataset, 'delta_indices') and dataset.delta_indices is not None:
-            dataset._get_query_indices = fixed_get_query_indices
+        # Apply the fixed __getitem__ method
+        dataset.__getitem__ = fixed_getitem
 
     # Create environment used for evaluating checkpoints during training on simulation data.
     eval_env = None
@@ -480,9 +564,6 @@ def train(cfg: TrainValPipelineConfig):
         is_env_eval_step = cfg.env and cfg.eval_freq > 0 and step % cfg.eval_freq == 0
         is_val_step = (cfg.validation.enable and val_dataset and 
                       cfg.validation.val_freq > 0 and step % cfg.validation.val_freq == 0)
-        is_train_eval_step = (cfg.validation.log_train_eval_loss and 
-                             cfg.validation.train_eval_freq > 0 and 
-                             step % cfg.validation.train_eval_freq == 0)
 
         if is_log_step:
             logging.info(train_tracker)
@@ -494,7 +575,7 @@ def train(cfg: TrainValPipelineConfig):
             train_tracker.reset_averages()
 
         # Run validation
-        if is_val_step or is_train_eval_step:
+        if is_val_step:
             metrics_to_log = {}
             
             # Run validation if scheduled
@@ -514,31 +595,6 @@ def train(cfg: TrainValPipelineConfig):
                 val_metrics["val_time_s"] = val_time
                 metrics_to_log.update(val_metrics)
                 logging.info(f"Validation metrics: {val_metrics}")
-            
-            # Compute training loss in eval mode if scheduled
-            if is_train_eval_step:
-                logging.info(f"Computing training loss in eval mode at step {step}")
-                start_train_eval_time = time.perf_counter()
-                
-                train_eval_metrics = run_validation(
-                    policy=policy,
-                    val_dataset=dataset,  # Use training dataset
-                    device=device,
-                    batch_size=cfg.validation.val_batch_size,
-                    num_workers=cfg.num_workers
-                )
-                
-                train_eval_time = time.perf_counter() - start_train_eval_time
-                
-                # Rename metrics to distinguish from validation
-                train_eval_metrics = {k.replace("val_", "train_eval_"): v for k, v in train_eval_metrics.items()}
-                train_eval_metrics["train_eval_time_s"] = train_eval_time
-                metrics_to_log.update(train_eval_metrics)
-                logging.info(f"Training eval metrics: {train_eval_metrics}")
-                
-                # Log the ratio to show dropout effect if both are available
-                if "val_loss" in metrics_to_log and "train_eval_loss" in metrics_to_log:
-                    metrics_to_log["dropout_effect_ratio"] = metrics_to_log["val_loss"] / metrics_to_log["train_eval_loss"]
             
             # Log all metrics to wandb
             if wandb_logger and metrics_to_log:
@@ -604,9 +660,7 @@ if __name__ == "__main__":
 #     --log_freq=100 \
 #     --validation.val_freq=200 \
 #     --validation.enable=true \
-#     --validation.val_ratio=0.2 \
-#     --validation.log_train_eval_loss=true \
-#     --validation.train_eval_freq=1000 \
+#     --validation.val_ratio=0.2 \  
 #     --batch_size=8 \
 #     --wandb.enable=true \
 #     --wandb.project=lerobot_training
@@ -614,5 +668,3 @@ if __name__ == "__main__":
 # Key features:
 # - Uses EpisodeAwareSampler to preserve temporal structure in action chunks
 # - Proper train/validation split with no data leakage
-# - Optional train_eval_loss computation to see dropout effect
-# - Separate frequencies for validation (val_freq) and train eval loss (train_eval_freq) 

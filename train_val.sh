@@ -16,10 +16,8 @@ python train_val.py \
     --validation.val_freq=2000 \
     --validation.enable=true \
     --validation.val_ratio=0.2 \
-    --validation.train_eval_freq=10000 \
     --batch_size=8 \
     --wandb.enable=true \
-    --validation.log_train_eval_loss=true \
     --save_freq=10000 \
     --wandb.project="self_driving_screwdriver_${RUN_ID}"
     

@@ -7,12 +7,12 @@ from lerobot.common.cameras.opencv import OpenCVCameraConfig
 from lerobot.common.utils.robot_utils import busy_wait
 import numpy as np
 
-inference_time_s = 60
+inference_time_s = 20
 fps = 30
 device = "cuda"  # TODO: On Mac, use "mps" or "cpu"
 
 # ckpt_path = "outputs/train/act_koch_screwdriver_with_validation_16/checkpoints/last/pretrained_model"
-ckpt_path = "outputs/modal/pretrained_model"
+ckpt_path = "outputs/screwdriver_attach_orange_panel_cleaned_t90_v10_clean_5/checkpoints/060000/pretrained_model"
 policy = ACTPolicy.from_pretrained(ckpt_path)
 policy.to(device)
 
@@ -44,7 +44,7 @@ robot_config = KochScrewdriverFollowerConfig(
 robot = make_robot_from_config(robot_config)
 robot.connect()
 
-for _ in range(inference_time_s * fps):
+for t in range(inference_time_s * fps):
     start_time = time.perf_counter()
 
     # Read the follower state and access the frames from the cameras
@@ -95,9 +95,11 @@ for _ in range(inference_time_s * fps):
         "screwdriver.vel": action[5].item()
     }
     
-    # SAFETY: Not sending action to real robot
-    print(f"Would send action: {action_dict}")
     robot.send_action(action_dict)
+    
+    # Print t ever module fps
+    if t % fps == 0:
+        print(f"t: {t}")
 
     dt_s = time.perf_counter() - start_time
     busy_wait(1 / fps - dt_s)
