@@ -189,7 +189,7 @@ def _default_batch_to_transition(batch: dict[str, Any]) -> EnvTransition:  # noq
     observation = None
     if observation_keys:
         observation = {}
-        # Add observation.* keys to the observation dict, removing the "observation." prefix
+        # Add observation.* keys to the observation dict
         for key, value in observation_keys.items():
             observation[key] = value
 
