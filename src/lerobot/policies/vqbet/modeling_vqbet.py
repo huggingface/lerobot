@@ -118,7 +118,6 @@ class VQBeTPolicy(PreTrainedPolicy):
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
         batch = {k: torch.stack(list(self._queues[k]), dim=1) for k in batch if k in self._queues}
         actions = self.vqbet(batch, rollout=True)[:, : self.config.action_chunk_size]
-        actions = self.unnormalize_outputs({ACTION: actions})[ACTION]
         return actions
 
     @torch.no_grad()
