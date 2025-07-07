@@ -129,7 +129,6 @@ class TDMPCPolicy(PreTrainedPolicy):
 
         actions = torch.clamp(actions, -1, +1)
 
-        actions = self.unnormalize_outputs({ACTION: actions})[ACTION]
         return actions
 
     @torch.no_grad()
