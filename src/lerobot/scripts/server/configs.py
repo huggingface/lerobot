@@ -39,9 +39,6 @@ class PolicyServerConfig:
         if self.port < 1 or self.port > 65535:
             raise ValueError(f"Port must be between 1 and 65535, got {self.port}")
 
-        if self.actions_per_chunk <= 0:
-            raise ValueError(f"actions_per_chunk must be positive, got {self.actions_per_chunk}")
-
         if self.environment_dt <= 0:
             raise ValueError(f"environment_dt must be positive, got {self.environment_dt}")
 
@@ -66,7 +63,6 @@ class PolicyServerConfig:
         return {
             "host": self.host,
             "port": self.port,
-            "actions_per_chunk": self.actions_per_chunk,
             "fps": self.fps,
             "environment_dt": self.environment_dt,
             "idle_wait": self.idle_wait,
