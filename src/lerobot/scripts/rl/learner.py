@@ -1049,10 +1049,8 @@ def get_observation_features(
         return None, None
 
     with torch.no_grad():
-        observation_features = policy.actor.encoder.get_cached_image_features(observations, normalize=True)
-        next_observation_features = policy.actor.encoder.get_cached_image_features(
-            next_observations, normalize=True
-        )
+        observation_features = policy.actor.encoder.get_cached_image_features(observations)
+        next_observation_features = policy.actor.encoder.get_cached_image_features(next_observations)
 
     return observation_features, next_observation_features
 
