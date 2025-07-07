@@ -15,4 +15,4 @@ DEFAULT_OBS_QUEUE_TIMEOUT = 2
 SUPPORTED_POLICIES = ["act", "smolvla", "diffusion", "pi0", "tdmpc", "vqbet"]
 
 # TODO: Add all other robots
-SUPPORTED_ROBOTS = ["so100"]
+SUPPORTED_ROBOTS = ["so100", "so101"]

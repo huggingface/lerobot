@@ -14,15 +14,11 @@ import torch
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.configs.types import PolicyFeature
-from lerobot.constants import OBS_IMAGE, OBS_IMAGES, OBS_STATE
+from lerobot.constants import OBS_IMAGES, OBS_STATE
 from lerobot.datasets.utils import build_dataset_frame, hw_to_dataset_features
 
 # NOTE: Configs need to be loaded for the client to be able to instantiate the policy config
-from lerobot.policies.act.configuration_act import ACTConfig  # noqa: F401
-from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig  # noqa: F401
-from lerobot.policies.pi0.configuration_pi0 import PI0Config  # noqa: F401
-from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig  # noqa: F401
-from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig  # noqa: F401
+from lerobot.policies import ACTConfig, DiffusionConfig, PI0Config, SmolVLAConfig, VQBeTConfig  # noqa: F401
 from lerobot.robots.robot import Robot
 from lerobot.robots.so100_follower import SO100FollowerConfig
 from lerobot.robots.utils import make_robot_from_config
@@ -71,13 +67,6 @@ def map_robot_keys_to_lerobot_features(robot: Robot) -> dict[str, dict]:
 
 def is_image_key(k: str) -> bool:
     return k.startswith(OBS_IMAGES)
-
-
-def map_image_key_to_smolvla_base_key(idx: int) -> str:
-    """Dataset contain image features keys named as observation.images.<camera_name>, but SmolVLA adapts this
-    to observation.image, observation.image2, ..."""
-    idx_text = str(idx + 1) if idx != 0 else ""
-    return f"{OBS_IMAGE}{idx_text}"
 
 
 def resize_robot_observation_image(image: torch.tensor, resize_dims: tuple[int, int, int]) -> torch.tensor:
@@ -204,6 +193,7 @@ def make_robot(args: argparse.Namespace) -> Robot:
     return make_robot_from_config(config)
 
 
+# TODO(fracapuano): Reduce logging verbosity
 def get_logger(name: str, log_to_file: bool = True) -> logging.Logger:
     """
     Get a logger using the standardized logging setup from utils.py.
@@ -239,6 +229,7 @@ class TimedData:
         timestep: The timestep of the data.
     """
 
+    # TODO(fracapuano): re-evaluate the use of timestamp
     timestamp: float
     timestep: int
 
@@ -295,7 +286,7 @@ class FPSTracker:
 
 
 @dataclass
-class TinyPolicyConfig:
+class RemotePolicyConfig:
     policy_type: str
     pretrained_name_or_path: str
     lerobot_features: dict[str, PolicyFeature]
@@ -305,7 +296,7 @@ class TinyPolicyConfig:
 
 def _compare_observation_states(obs1_state: torch.Tensor, obs2_state: torch.Tensor, atol: float) -> bool:
     """Check if two observation states are similar, under a tolerance threshold"""
-    return torch.linalg.norm(obs1_state - obs2_state) < atol
+    return bool(torch.linalg.norm(obs1_state - obs2_state) < atol)
 
 
 def observations_similar(
@@ -325,7 +316,7 @@ def observations_similar(
         make_lerobot_observation(obs2.get_observation(), lerobot_features)
     )
 
-    return bool(_compare_observation_states(obs1_state, obs2_state, atol=atol))
+    return _compare_observation_states(obs1_state, obs2_state, atol=atol)
 
 
 def send_bytes_in_chunks(
@@ -386,7 +377,6 @@ def receive_bytes_in_chunks(
             bytes_buffer.truncate(0)
             bytes_buffer.write(item.data)
             logger.debug(f"{log_prefix} Received data at step 0")
-            step = 0
 
         elif item.transfer_state == async_inference_pb2.TransferState.TRANSFER_MIDDLE:
             bytes_buffer.write(item.data)
@@ -401,7 +391,6 @@ def receive_bytes_in_chunks(
 
             bytes_buffer.seek(0)
             bytes_buffer.truncate(0)
-            step = 0
 
             logger.debug(f"{log_prefix} Queue updated")
             return complete_bytes

@@ -15,12 +15,13 @@ from lerobot.scripts.server.helpers import (
     FPSTracker,
     Observation,
     RawObservation,
+    RemotePolicyConfig,
     TimedAction,
     TimedObservation,
-    TinyPolicyConfig,
     get_logger,
     make_robot,
     map_robot_keys_to_lerobot_features,
+    send_bytes_in_chunks,
     validate_robot_cameras_for_policy,
     visualize_action_queue_size,
 )
@@ -28,12 +29,11 @@ from lerobot.transport import (
     async_inference_pb2,  # type: ignore
     async_inference_pb2_grpc,  # type: ignore
 )
-from lerobot.transport.utils import send_bytes_in_chunks
 
 
 class RobotClient:
     prefix = "robot_client"
-    logger = get_logger(prefix)
+    logger = get_logger(prefix)  # TODO(fracapuano): Reduce logging verbosity
 
     def __init__(self, config: RobotClientConfig):
         # Store configuration
@@ -42,7 +42,7 @@ class RobotClient:
         # Use environment variable if server_address is not provided in config
         self.server_address = config.server_address
 
-        self.policy_config = TinyPolicyConfig(
+        self.policy_config = RemotePolicyConfig(
             config.policy_type,
             config.pretrained_name_or_path,
             config.lerobot_features,
@@ -62,6 +62,7 @@ class RobotClient:
         self._chunk_size_threshold = config.chunk_size_threshold
 
         self.action_queue = Queue()
+        self.action_queue_size = []
         self.start_barrier = threading.Barrier(2)  # 2 threads: action receiver, control loop
 
         # FPS measurement
@@ -72,6 +73,8 @@ class RobotClient:
 
         self.logger.info("Robot connected and ready")
 
+        # TODO(fracapuano): Either find a logic local to the control_loop or replace this with an event. This such that we can remove
+        # the must_go in the receive_actions() thread, otherwise we need a lock.
         self.must_go = True  # does the observation qualify for direct processing on the policy server?
 
     @property
@@ -101,7 +104,6 @@ class RobotClient:
             self.stub.SendPolicyInstructions(policy_setup)
 
             self._running_event.set()
-            self.action_queue_size = []
 
             return True
 
@@ -126,10 +128,10 @@ class RobotClient:
         """Send observation to the policy server.
         Returns True if the observation was sent successfully, False otherwise."""
         if not self.running:
-            self.logger.warning("Client not running")
-            return False
+            raise RuntimeError("Client not running. Run RobotClient.start() before sending observations.")
 
-        assert isinstance(obs, TimedObservation), "Input observation needs to be a TimedObservation!"
+        if not isinstance(obs, TimedObservation):
+            raise ValueError("Input observation needs to be a TimedObservation!")
 
         start_time = time.perf_counter()
         observation_bytes = pickle.dumps(obs)
@@ -153,10 +155,7 @@ class RobotClient:
             self.logger.error(f"Error sending observation #{obs.get_timestep()}: {e}")
             return False
 
-    def _validate_action(self, action: TimedAction):
-        """Received actions are keps only when they have been produced for now or later, never before"""
-        return not action.get_timestep() <= self.latest_action
-
+    # TODO(fracapuano): Reduce logging verbosity
     def _inspect_action_queue(self):
         queue_size = self.action_queue.qsize()
         timestamps = sorted([action.get_timestep() for action in self.action_queue.queue])
@@ -175,21 +174,24 @@ class RobotClient:
             def aggregate_fn(x1, x2):
                 return x2
 
-        action_intersections: list[torch.Tensor] = []
+        future_action_queue = Queue()
         current_action_queue = {
             action.get_timestep(): action.get_action() for action in self.action_queue.queue
         }
 
         for new_action in incoming_actions:
-            if not self._validate_action(new_action):
+            # New action is older than the latest action in the queue, skip it
+            if new_action.get_timestep() <= self.latest_action:
                 continue
 
+            # If the new action's timestep is not in the current action queue, add it directly
             elif new_action.get_timestep() not in current_action_queue:
-                action_intersections.append(new_action)
+                future_action_queue.put(new_action)
                 continue
 
+            # If the new action's timestep is in the current action queue, aggregate it
             # TODO(fracapuano): There is probably a way to do this with broadcasting of the two action tensors
-            action_intersections.append(
+            future_action_queue.put(
                 TimedAction(
                     timestamp=new_action.get_timestamp(),
                     timestep=new_action.get_timestep(),
@@ -199,12 +201,8 @@ class RobotClient:
                 )
             )
 
-        new_queue = Queue()
-        for action in action_intersections:
-            # if self._validate_action(action):
-            new_queue.put(action)
-
-        self.action_queue = new_queue
+        # TODO(fracapuano): Add a lock
+        self.action_queue = future_action_queue
 
     def receive_actions(self):
         """Receive actions from the policy server"""
@@ -275,18 +273,9 @@ class RobotClient:
             except grpc.RpcError as e:
                 self.logger.error(f"Error receiving actions: {e}")
 
-    def _actions_available(self):
+    def actions_available(self):
         """Check if there are actions available in the queue"""
         return not self.action_queue.empty()
-
-    def _get_next_action(self) -> Optional[TimedAction]:
-        """Get the next action from the queue"""
-        try:
-            action = self.action_queue.get_nowait()
-            return action
-
-        except Empty:
-            return None
 
     def _clear_action_queue(self):
         """Clear the existing queue"""
@@ -300,8 +289,18 @@ class RobotClient:
         action = {key: action_tensor[i].item() for i, key in enumerate(self.robot.action_features)}
         return action
 
-    def _perform_action(self, timed_action: TimedAction) -> Action:
-        self.robot.send_action(self._action_tensor_to_action_dict(timed_action.get_action()))
+    def control_loop_action(self) -> Optional[Action]:
+        """Reading and performing actions in local queue"""
+        self.action_queue_size.append(self.action_queue.qsize())
+
+        # Get action from queue
+        get_start = time.perf_counter()
+        timed_action = self.action_queue.get_nowait()
+        get_end = time.perf_counter() - get_start
+
+        _performed_action = self.robot.send_action(
+            self._action_tensor_to_action_dict(timed_action.get_action())
+        )
         self.latest_action = timed_action.get_timestep()
 
         self.logger.debug(
@@ -309,19 +308,6 @@ class RobotClient:
             f"Action #{timed_action.get_timestep()} performed | "
             f"Queue size: {self.action_queue.qsize()}"
         )
-
-        return timed_action.get_action()
-
-    def control_loop_action(self) -> Optional[Action]:
-        """Reading and performing actions in local queue"""
-        self.action_queue_size.append(self.action_queue.qsize())
-
-        # Get action from queue
-        get_start = time.perf_counter()
-        timed_action = self._get_next_action()
-        get_end = time.perf_counter() - get_start
-
-        _performed_action = self._perform_action(timed_action)
 
         self.logger.debug(
             f"Popping action from queue to perform took {get_end:.6f}s | "
@@ -334,16 +320,25 @@ class RobotClient:
         """Flags when the client is ready to send an observation"""
         return self.action_queue.qsize() / self.action_chunk_size <= self._chunk_size_threshold
 
-    def control_loop_observation(self, get_observation_fn) -> Observation:
+    def control_loop_observation(self, task: str) -> Observation:
         try:
             # Get serialized observation bytes from the function
             start_time = time.perf_counter()
-            observation = get_observation_fn()
+
+            raw_observation: RawObservation = self.robot.get_observation()
+            raw_observation["task"] = task
+
+            observation = TimedObservation(
+                timestamp=time.time(),  # need time.time() to compare timestamps across client and server
+                observation=raw_observation,
+                timestep=max(self.latest_action, 0),
+            )
+
             obs_capture_time = time.perf_counter() - start_time
 
             # If there are no actions left in the queue, the observation must go through processing!
             observation.must_go = self.must_go and self.action_queue.empty()
-            self.send_observation(observation)
+            _ = self.send_observation(observation)
 
             self.logger.debug(f"QUEUE SIZE: {self.action_queue.qsize()} (Must go: {observation.must_go})")
             if observation.must_go:
@@ -363,44 +358,42 @@ class RobotClient:
                 f"Ts={observation.get_timestamp():.6f} | Capturing observation took {obs_capture_time:.6f}s"
             )
 
-            # The actual observation is wrapped in a TimedObservation, get_observation() returns the tensor
-            _captured_observation = observation.get_observation()
-            return _captured_observation
+            return raw_observation
 
         except Exception as e:
             self.logger.error(f"Error in observation sender: {e}")
 
-    def control_loop(self, get_observation_fn: Callable[[], Observation]) -> tuple[Observation, Action]:
+    def control_loop(self, task: str = "") -> tuple[Observation, Action]:
         """Combined function for executing actions and streaming observations"""
         # Wait at barrier for synchronized start
         self.start_barrier.wait()
         self.logger.info("Control loop thread starting")
 
-        control_loops = 0
         _performed_action = None
         _captured_observation = None
 
         while self.running:
             control_loop_start = time.perf_counter()
             """Control loop: (1) Performing actions, when available"""
-            if self._actions_available():
+            if self.actions_available():
                 _performed_action = self.control_loop_action()
 
             """Control loop: (2) Streaming observations to the remote policy server"""
             if self._ready_to_send_observation():
-                _captured_observation = self.control_loop_observation(get_observation_fn)
+                _captured_observation = self.control_loop_observation(task)
 
-            self.logger.warning(f"Control loop (ms): {(time.perf_counter() - control_loop_start) * 1000:.2f}")
+            self.logger.info(f"Control loop (ms): {(time.perf_counter() - control_loop_start) * 1000:.2f}")
             # Dynamically adjust sleep time to maintain the desired control frequency
             time.sleep(max(0, self.config.environment_dt - (time.perf_counter() - control_loop_start)))
-
-            control_loops += 1
 
         return _captured_observation, _performed_action
 
 
+# TODO(Steven): Replace with draccus parsing + use make_robot + pass robot in the constructor
 def parse_args():
     parser = argparse.ArgumentParser(description="Robot client for executing tasks via policy server")
+
+    # TODO(Steven): Remove default value + do a check that the task is not empty
     parser.add_argument(
         "--task",
         type=str,
@@ -496,26 +489,13 @@ def async_client(args: argparse.Namespace):
         policy_device=args.policy_device,
         chunk_size_threshold=args.chunk_size_threshold,
         aggregate_fn=lambda old, new: 0.3 * old + 0.7 * new,
+        actions_per_chunk=args.actions_per_chunk,
     )
 
     # Create client with config
     client = RobotClient(config)
 
     if client.start():
-
-        def make_observation() -> TimedObservation:
-            # Function to make observations starting from the robot's get_observation() method
-            observation: RawObservation = client.robot.get_observation()
-            observation["task"] = args.task
-
-            observation = TimedObservation(
-                timestamp=time.time(),  # need time.time() to compare timestamps across client and server
-                observation=observation,
-                timestep=max(client.latest_action, 0),
-            )
-
-            return observation
-
         client.logger.info("Starting action receiver thread...")
 
         # Create and start action receiver thread
@@ -526,13 +506,11 @@ def async_client(args: argparse.Namespace):
 
         try:
             # The main thread runs the control loop
-            client.control_loop(make_observation)
-
-        except KeyboardInterrupt:
-            client.stop()
-            action_receiver_thread.join()
+            client.control_loop(task=args.task)
 
         finally:
+            client.stop()
+            action_receiver_thread.join()
             if args.debug_visualize_queue_size:
                 visualize_action_queue_size(client.action_queue_size)
 

@@ -5,6 +5,7 @@ import torch
 
 from lerobot.robots.robot import Robot
 from lerobot.scripts.server.constants import (
+    DEFAULT_FPS,
     DEFAULT_IDLE_WAIT,
     DEFAULT_INFERENCE_LATENCY,
     DEFAULT_OBS_QUEUE_TIMEOUT,
@@ -24,7 +25,7 @@ class PolicyServerConfig:
     port: int = field(default=8080, metadata={"help": "Port number to bind the server to"})
 
     # Timing configuration
-    fps: int = field(default=30, metadata={"help": "Frames per second"})
+    fps: int = field(default=DEFAULT_FPS, metadata={"help": "Frames per second"})
     idle_wait: float = field(default=DEFAULT_IDLE_WAIT, metadata={"help": "Idle wait time in seconds"})
     inference_latency: float = field(
         default=DEFAULT_INFERENCE_LATENCY, metadata={"help": "Target inference latency in seconds"}
@@ -100,7 +101,7 @@ class RobotClientConfig:
 
     # Control behavior configuration
     chunk_size_threshold: float = field(default=0.5, metadata={"help": "Threshold for chunk size control"})
-    fps: int = field(default=30, metadata={"help": "Frames per second"})
+    fps: int = field(default=DEFAULT_FPS, metadata={"help": "Frames per second"})
 
     aggregate_fn: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = field(
         default=None, metadata={"help": "Function to aggregate actions on overlapping sections"}
