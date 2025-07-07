@@ -413,6 +413,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
 
         return batch
 
+    @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
         self.eval()
 
@@ -422,7 +423,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
         actions = self._get_action_chunk(batch, noise)
         return actions
 
-    @torch.no_grad
+    @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
         """Select a single action given environment observations.
 
