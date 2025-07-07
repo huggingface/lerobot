@@ -34,6 +34,7 @@ from lerobot.policies.sac.reward_model.configuration_classifier import RewardCla
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.policies.tdmpc.configuration_tdmpc import TDMPCConfig
 from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
+from lerobot.processor.pipeline import RobotProcessor
 
 
 def get_policy_class(name: str) -> PreTrainedPolicy:
@@ -101,6 +102,83 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         raise ValueError(f"Policy type '{policy_type}' is not available.")
 
 
+def make_processor(
+    policy_cfg: PreTrainedConfig,
+    pretrained_path: str | None = None,
+    **kwargs,
+) -> tuple[RobotProcessor, RobotProcessor]:
+    """Make a processor instance for a given policy type.
+
+    This function creates the appropriate processor configuration based on the policy type.
+    Each policy type has its own processor with specific preprocessing steps.
+
+    Args:
+        policy_type: The type of policy to create a processor for (e.g., "act", "diffusion", etc.)
+        pretrained_path: Optional path to load a pretrained processor from. If provided, loads
+            the processor from this path instead of creating a new one.
+        **kwargs: Additional keyword arguments passed to the processor creation.
+
+    Returns:
+        RobotProcessor: The configured processor instance.
+
+    Raises:
+        NotImplementedError: If the policy type doesn't have a processor implemented.
+    """
+    if pretrained_path:
+        # Load a pretrained processor
+        # TODO(azouitine): Handle this case.
+        raise NotImplementedError("Loading a pretrained processor is not implemented.")
+
+    # Create a new processor based on policy type
+    if policy_cfg.type == "tdmpc":
+        from lerobot.policies.tdmpc.processor_tdmpc import make_tdmpc_processor
+
+        return make_tdmpc_processor(policy_cfg, **kwargs)
+
+    elif policy_cfg.type == "diffusion":
+        from lerobot.policies.diffusion.processor_diffusion import make_diffusion_processor
+
+        return make_diffusion_processor(policy_cfg, **kwargs)
+
+    elif policy_cfg.type == "act":
+        from lerobot.policies.act.processor_act import make_act_processor
+
+        return make_act_processor(policy_cfg, **kwargs)
+
+    elif policy_cfg.type == "vqbet":
+        from lerobot.policies.vqbet.processor_vqbet import make_vqbet_processor
+
+        return make_vqbet_processor(policy_cfg, **kwargs)
+
+    elif policy_cfg.type == "pi0":
+        from lerobot.policies.pi0.processor_pi0 import make_pi0_processor
+
+        return make_pi0_processor(policy_cfg, **kwargs)
+
+    elif policy_cfg.type == "pi0fast":
+        from lerobot.policies.pi0fast.processor_pi0fast import make_pi0fast_processor
+
+        return make_pi0fast_processor(policy_cfg, **kwargs)
+
+    elif policy_cfg.type == "sac":
+        from lerobot.policies.sac.processor_sac import make_sac_processor
+
+        return make_sac_processor(policy_cfg, **kwargs)
+
+    elif policy_cfg.type == "reward_classifier":
+        from lerobot.policies.sac.reward_model.processor_classifier import make_classifier_processor
+
+        return make_classifier_processor(policy_cfg, **kwargs)
+
+    elif policy_cfg.type == "smolvla":
+        from lerobot.policies.smolvla.processor_smolvla import make_smolvla_processor
+
+        return make_smolvla_processor(policy_cfg, **kwargs)
+
+    else:
+        raise NotImplementedError(f"Processor for policy type '{policy_cfg.type}' is not implemented.")
+
+
 def make_policy(
     cfg: PreTrainedConfig,
     ds_meta: LeRobotDatasetMetadata | None = None,
@@ -147,7 +225,6 @@ def make_policy(
     kwargs = {}
     if ds_meta is not None:
         features = dataset_to_policy_features(ds_meta.features)
-        kwargs["dataset_stats"] = ds_meta.stats
     else:
         if not cfg.pretrained_path:
             logging.warning(

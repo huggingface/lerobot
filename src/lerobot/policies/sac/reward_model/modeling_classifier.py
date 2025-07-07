@@ -20,7 +20,6 @@ import torch
 from torch import Tensor, nn
 
 from lerobot.constants import OBS_IMAGE, REWARD
-from lerobot.policies.normalize import Normalize, Unnormalize
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
 
@@ -108,21 +107,11 @@ class Classifier(PreTrainedPolicy):
     def __init__(
         self,
         config: RewardClassifierConfig,
-        dataset_stats: dict[str, dict[str, Tensor]] | None = None,
     ):
         from transformers import AutoModel
 
         super().__init__(config)
         self.config = config
-
-        # Initialize normalization (standardized with the policy framework)
-        self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
-        self.normalize_targets = Normalize(
-            config.output_features, config.normalization_mapping, dataset_stats
-        )
-        self.unnormalize_outputs = Unnormalize(
-            config.output_features, config.normalization_mapping, dataset_stats
-        )
 
         # Set up encoder
         encoder = AutoModel.from_pretrained(self.config.model_name, trust_remote_code=True)
@@ -247,10 +236,6 @@ class Classifier(PreTrainedPolicy):
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict[str, Tensor]]:
         """Standard forward pass for training compatible with train.py."""
-        # Normalize inputs if needed
-        batch = self.normalize_inputs(batch)
-        batch = self.normalize_targets(batch)
-
         # Extract images and labels
         images, labels = self.extract_images_and_labels(batch)
 
