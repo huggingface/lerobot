@@ -1,10 +1,39 @@
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""
+Example:
+```shell
+python src/lerobot/scripts/server/policy_server.py \
+    --host=127.0.0.1 \
+    --port=8080 \
+    --fps=30 \
+    --inference_latency=0.033 \
+    --obs_queue_timeout=1
+```
+"""
+
+import logging
 import pickle  # nosec
 import threading
 import time
 from concurrent import futures
+from dataclasses import asdict
+from pprint import pformat
 from queue import Empty, Queue
-from typing import Optional
 
+import draccus
 import grpc
 import torch
 
@@ -339,24 +368,24 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
         self.logger.info("Server stopping...")
 
 
-def serve(config: Optional[PolicyServerConfig] = None, host: str = "localhost", port: int = 8080):
+@draccus.wrap()
+def serve(cfg: PolicyServerConfig):
     """Start the PolicyServer with the given configuration.
 
     Args:
         config: PolicyServerConfig instance. If None, uses default configuration.
     """
-    if config is None:
-        config = PolicyServerConfig(host=host, port=port)
+    logging.info(pformat(asdict(cfg)))
 
     # Create the server instance first
-    policy_server = PolicyServer(config)
+    policy_server = PolicyServer(cfg)
 
     # Setup and start gRPC server
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
     async_inference_pb2_grpc.add_AsyncInferenceServicer_to_server(policy_server, server)
-    server.add_insecure_port(f"{config.host}:{config.port}")
+    server.add_insecure_port(f"{cfg.host}:{cfg.port}")
 
-    policy_server.logger.info(f"PolicyServer started on {config.host}:{config.port}")
+    policy_server.logger.info(f"PolicyServer started on {cfg.host}:{cfg.port}")
     server.start()
 
     server.wait_for_termination()

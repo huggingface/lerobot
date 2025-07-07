@@ -1,12 +1,24 @@
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 import torch
 
-from lerobot.robots.robot import Robot
 from lerobot.scripts.server.constants import (
     DEFAULT_FPS,
-    DEFAULT_IDLE_WAIT,
     DEFAULT_INFERENCE_LATENCY,
     DEFAULT_OBS_QUEUE_TIMEOUT,
 )
@@ -26,7 +38,6 @@ class PolicyServerConfig:
 
     # Timing configuration
     fps: int = field(default=DEFAULT_FPS, metadata={"help": "Frames per second"})
-    idle_wait: float = field(default=DEFAULT_IDLE_WAIT, metadata={"help": "Idle wait time in seconds"})
     inference_latency: float = field(
         default=DEFAULT_INFERENCE_LATENCY, metadata={"help": "Target inference latency in seconds"}
     )
@@ -43,11 +54,11 @@ class PolicyServerConfig:
         if self.environment_dt <= 0:
             raise ValueError(f"environment_dt must be positive, got {self.environment_dt}")
 
-        if self.idle_wait < 0:
-            raise ValueError(f"idle_wait must be non-negative, got {self.idle_wait}")
-
         if self.inference_latency < 0:
             raise ValueError(f"inference_latency must be non-negative, got {self.inference_latency}")
+
+        if self.obs_queue_timeout < 0:
+            raise ValueError(f"obs_queue_timeout must be non-negative, got {self.obs_queue_timeout}")
 
     @classmethod
     def from_dict(cls, config_dict: dict) -> "PolicyServerConfig":
@@ -66,7 +77,6 @@ class PolicyServerConfig:
             "port": self.port,
             "fps": self.fps,
             "environment_dt": self.environment_dt,
-            "idle_wait": self.idle_wait,
             "inference_latency": self.inference_latency,
         }
 
@@ -79,8 +89,6 @@ class RobotClientConfig:
     including network connection, policy settings, and control behavior.
     """
 
-    # Robot to wrap with async inference capabilities
-    robot: Robot = field(metadata={"help": "Robot instance to use"})
     # Policy configuration
     policy_type: str = field(metadata={"help": "Type of policy to use"})
     pretrained_name_or_path: str = field(metadata={"help": "Pretrained model name or path"})
@@ -132,9 +140,6 @@ class RobotClientConfig:
         if self.fps <= 0:
             raise ValueError(f"fps must be positive, got {self.fps}")
 
-        if not self.robot:
-            raise ValueError("robot cannot be empty")
-
     @classmethod
     def from_dict(cls, config_dict: dict) -> "RobotClientConfig":
         """Create a RobotClientConfig from a dictionary."""
@@ -149,5 +154,4 @@ class RobotClientConfig:
             "policy_device": self.policy_device,
             "chunk_size_threshold": self.chunk_size_threshold,
             "fps": self.fps,
-            "robot": self.robot,
         }
