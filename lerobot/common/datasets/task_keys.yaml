@@ -1,0 +1,9 @@
+lerobot/aloha_static_coffee:
+  task_annotation_key: observation.task_type
+  task_id_key: observation.task_id
+  task_name_key: observation.task_name
+
+lerobot/aloha_static_towel:
+  task_annotation_key: observation.task_type
+  task_id_key: observation.task_id
+  task_name_key: observation.task_name

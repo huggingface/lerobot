@@ -1,0 +1,5 @@
+lerobot/aloha_static_coffee:
+  robot_type: panda
+
+lerobot/aloha_static_towel:
+  robot_type: kuka

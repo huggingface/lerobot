@@ -1,0 +1,13 @@
+lerobot/aloha_static_coffee:
+  observation.images.cam_high: obs.image
+  observation.images.cam_left_wrist: obs.image_2
+  observation.images.cam_right_wrist: obs.image_3
+  observation.images.cam_low: null
+  observation.effort: null
+
+lerobot/aloha_static_towel:
+  observation.images.cam_high: obs.image
+  observation.images.cam_left_wrist: obs.image_2
+  observation.images.cam_right_wrist: obs.image_3
+  observation.images.cam_low: null
+  observation.effort: null
