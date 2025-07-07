@@ -28,7 +28,6 @@ import torchvision
 from torch import Tensor, nn
 
 from lerobot.constants import ACTION, OBS_IMAGES, OBS_STATE
-from lerobot.policies.normalize import Normalize, Unnormalize
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import get_device_from_parameters, get_output_shape, populate_queues
 from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
@@ -48,7 +47,6 @@ class VQBeTPolicy(PreTrainedPolicy):
     def __init__(
         self,
         config: VQBeTConfig | None = None,
-        dataset_stats: dict[str, dict[str, Tensor]] | None = None,
     ):
         """
         Args:
@@ -60,14 +58,6 @@ class VQBeTPolicy(PreTrainedPolicy):
         super().__init__(config)
         config.validate_features()
         self.config = config
-
-        self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
-        self.normalize_targets = Normalize(
-            config.output_features, config.normalization_mapping, dataset_stats
-        )
-        self.unnormalize_outputs = Unnormalize(
-            config.output_features, config.normalization_mapping, dataset_stats
-        )
 
         self.vqbet = VQBeTModel(config)
 
@@ -140,7 +130,6 @@ class VQBeTPolicy(PreTrainedPolicy):
         queue is empty.
         """
 
-        batch = self.normalize_inputs(batch)
         batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
         batch["observation.images"] = torch.stack([batch[key] for key in self.config.image_features], dim=-4)
         # Note: It's important that this happens after stacking the images into a single key.
@@ -162,10 +151,8 @@ class VQBeTPolicy(PreTrainedPolicy):
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
         """Run the batch through the model and compute the loss for training or validation."""
-        batch = self.normalize_inputs(batch)
         batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
         batch[OBS_IMAGES] = torch.stack([batch[key] for key in self.config.image_features], dim=-4)
-        batch = self.normalize_targets(batch)
         # VQ-BeT discretizes action using VQ-VAE before training BeT (please refer to section 3.2 in the VQ-BeT paper https://huggingface.co/papers/2403.03181)
         if not self.vqbet.action_head.vqvae_model.discretized.item():
             # loss: total loss of training RVQ

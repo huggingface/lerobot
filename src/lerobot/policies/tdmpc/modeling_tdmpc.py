@@ -36,7 +36,6 @@ import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
 
 from lerobot.constants import ACTION, OBS_ENV_STATE, OBS_IMAGE, OBS_STATE, REWARD
-from lerobot.policies.normalize import Normalize, Unnormalize
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.tdmpc.configuration_tdmpc import TDMPCConfig
 from lerobot.policies.utils import get_device_from_parameters, get_output_shape, populate_queues
@@ -63,25 +62,18 @@ class TDMPCPolicy(PreTrainedPolicy):
     config_class = TDMPCConfig
     name = "tdmpc"
 
-    def __init__(self, config: TDMPCConfig, dataset_stats: dict[str, dict[str, Tensor]] | None = None):
+    def __init__(
+        self,
+        config: TDMPCConfig,
+    ):
         """
         Args:
             config: Policy configuration class instance or None, in which case the default instantiation of
                 the configuration class is used.
-            dataset_stats: Dataset statistics to be used for normalization. If not passed here, it is expected
-                that they will be passed with a call to `load_state_dict` before the policy is used.
         """
         super().__init__(config)
         config.validate_features()
         self.config = config
-
-        self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
-        self.normalize_targets = Normalize(
-            config.output_features, config.normalization_mapping, dataset_stats
-        )
-        self.unnormalize_outputs = Unnormalize(
-            config.output_features, config.normalization_mapping, dataset_stats
-        )
 
         self.model = TDMPCTOLD(config)
         self.model_target = deepcopy(self.model)
@@ -143,7 +135,6 @@ class TDMPCPolicy(PreTrainedPolicy):
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
         """Select a single action given environment observations."""
-        batch = self.normalize_inputs(batch)
         if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
             batch[OBS_IMAGE] = batch[next(iter(self.config.image_features))]
@@ -315,11 +306,9 @@ class TDMPCPolicy(PreTrainedPolicy):
         """
         device = get_device_from_parameters(self)
 
-        batch = self.normalize_inputs(batch)
         if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
             batch[OBS_IMAGE] = batch[next(iter(self.config.image_features))]
-        batch = self.normalize_targets(batch)
 
         info = {}
 
