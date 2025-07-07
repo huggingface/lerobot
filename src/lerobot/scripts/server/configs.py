@@ -88,6 +88,9 @@ class RobotClientConfig:
     lerobot_features: dict[str, dict] = field(
         metadata={"help": "Features for dataset recording/inference, in the LeRobot format"}
     )
+    # Policies typically output K actions at max, but we can use less to avoid wasting bandwidth (as actions
+    # would be aggregated on the client side anyway, depending on the value of `chunk_size_threshold`)
+    actions_per_chunk: int = field(metadata={"help": "Number of actions per chunk"})
 
     # Network configuration
     server_address: str = field(default="localhost:8080", metadata={"help": "Server address to connect to"})

@@ -43,7 +43,11 @@ class RobotClient:
         self.server_address = config.server_address
 
         self.policy_config = TinyPolicyConfig(
-            config.policy_type, config.pretrained_name_or_path, config.lerobot_features, config.policy_device
+            config.policy_type,
+            config.pretrained_name_or_path,
+            config.lerobot_features,
+            config.actions_per_chunk,
+            config.policy_device,
         )
         self.channel = grpc.insecure_channel(self.server_address)
         self.stub = async_inference_pb2_grpc.AsyncInferenceStub(self.channel)
@@ -241,6 +245,7 @@ class RobotClient:
                     self.logger.info(
                         f"Received action chunk for step #{first_action_timestep} | "
                         f"Latest action: #{self.latest_action} | "
+                        f"Incoming actions: {incoming_timesteps[0]}:{incoming_timesteps[-1]} | "
                         f"Network latency (server->client): {server_to_client_latency:.2f}ms | "
                         f"Deserialization time: {deserialize_time * 1000:.2f}ms"
                     )
@@ -419,6 +424,13 @@ def parse_args():
     parser.add_argument(
         "--policy-device", type=str, default="mps", help="Device for policy inference (default: cuda)"
     )
+    parser.add_argument(
+        "--actions-per-chunk",
+        type=int,
+        default=50,
+        help="Number of actions per chunk (default: 50)",
+    )
+
     parser.add_argument(
         "--chunk-size-threshold",
         type=float,
