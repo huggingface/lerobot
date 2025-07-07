@@ -87,6 +87,23 @@ class NormalizerProcessor:
         )
 
     def __post_init__(self):
+        # Handle deserialization from JSON config
+        if self.features and isinstance(list(self.features.values())[0], dict):
+            # Features came from JSON - need to reconstruct PolicyFeature objects
+            reconstructed_features = {}
+            for key, ft_dict in self.features.items():
+                reconstructed_features[key] = PolicyFeature(
+                    type=FeatureType(ft_dict["type"]), shape=tuple(ft_dict["shape"])
+                )
+            self.features = reconstructed_features
+
+        if self.norm_map and isinstance(list(self.norm_map.keys())[0], str):
+            # norm_map came from JSON - need to reconstruct enum keys and values
+            reconstructed_norm_map = {}
+            for ft_type_str, norm_mode_str in self.norm_map.items():
+                reconstructed_norm_map[FeatureType(ft_type_str)] = NormalizationMode(norm_mode_str)
+            self.norm_map = reconstructed_norm_map
+
         # Convert statistics once so we avoid repeated numpy→Tensor conversions
         # during runtime.
         self.stats = self.stats or {}
@@ -161,7 +178,13 @@ class NormalizerProcessor:
         )
 
     def get_config(self) -> dict[str, Any]:
-        config = {"eps": self.eps}
+        config = {
+            "eps": self.eps,
+            "features": {
+                key: {"type": ft.type.value, "shape": ft.shape} for key, ft in self.features.items()
+            },
+            "norm_map": {ft_type.value: norm_mode.value for ft_type, norm_mode in self.norm_map.items()},
+        }
         if self.normalize_keys is not None:
             # Serialise as a list for YAML / JSON friendliness
             config["normalize_keys"] = sorted(self.normalize_keys)
@@ -212,6 +235,23 @@ class UnnormalizerProcessor:
         return cls(features=features, norm_map=norm_map, stats=dataset.meta.stats, eps=eps)
 
     def __post_init__(self):
+        # Handle deserialization from JSON config
+        if self.features and isinstance(list(self.features.values())[0], dict):
+            # Features came from JSON - need to reconstruct PolicyFeature objects
+            reconstructed_features = {}
+            for key, ft_dict in self.features.items():
+                reconstructed_features[key] = PolicyFeature(
+                    type=FeatureType(ft_dict["type"]), shape=tuple(ft_dict["shape"])
+                )
+            self.features = reconstructed_features
+
+        if self.norm_map and isinstance(list(self.norm_map.keys())[0], str):
+            # norm_map came from JSON - need to reconstruct enum keys and values
+            reconstructed_norm_map = {}
+            for ft_type_str, norm_mode_str in self.norm_map.items():
+                reconstructed_norm_map[FeatureType(ft_type_str)] = NormalizationMode(norm_mode_str)
+            self.norm_map = reconstructed_norm_map
+
         self.stats = self.stats or {}
         self._tensor_stats = _convert_stats_to_tensors(self.stats)
 
@@ -269,7 +309,13 @@ class UnnormalizerProcessor:
         )
 
     def get_config(self) -> dict[str, Any]:
-        return {"eps": self.eps}
+        return {
+            "eps": self.eps,
+            "features": {
+                key: {"type": ft.type.value, "shape": ft.shape} for key, ft in self.features.items()
+            },
+            "norm_map": {ft_type.value: norm_mode.value for ft_type, norm_mode in self.norm_map.items()},
+        }
 
     def state_dict(self) -> dict[str, Tensor]:
         flat = {}

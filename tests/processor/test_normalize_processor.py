@@ -440,7 +440,21 @@ def test_get_config(full_stats):
     )
 
     config = processor.get_config()
-    assert config == {"normalize_keys": ["observation.image"], "eps": 1e-6}
+    expected_config = {
+        "normalize_keys": ["observation.image"],
+        "eps": 1e-6,
+        "features": {
+            "observation.image": {"type": "VISUAL", "shape": (3, 96, 96)},
+            "observation.state": {"type": "STATE", "shape": (2,)},
+            "action": {"type": "ACTION", "shape": (2,)},
+        },
+        "norm_map": {
+            "VISUAL": "MEAN_STD",
+            "STATE": "MIN_MAX",
+            "ACTION": "MEAN_STD",
+        },
+    }
+    assert config == expected_config
 
 
 def test_integration_with_robot_processor(normalizer_processor):
@@ -509,3 +523,47 @@ def test_missing_action_stats_no_error():
     processor = UnnormalizerProcessor.from_lerobot_dataset(mock_dataset, features, norm_map)
     # The tensor stats should not contain the 'action' key
     assert "action" not in processor._tensor_stats
+
+
+def test_serialization_roundtrip(full_stats):
+    """Test that features and norm_map can be serialized and deserialized correctly."""
+    features = _create_full_features()
+    norm_map = _create_full_norm_map()
+    original_processor = NormalizerProcessor(
+        features=features, norm_map=norm_map, stats=full_stats, normalize_keys={"observation.image"}, eps=1e-6
+    )
+
+    # Get config (serialization)
+    config = original_processor.get_config()
+
+    # Create a new processor from the config (deserialization)
+    new_processor = NormalizerProcessor(
+        features=config["features"],
+        norm_map=config["norm_map"],
+        stats=full_stats,
+        normalize_keys=set(config["normalize_keys"]),
+        eps=config["eps"],
+    )
+
+    # Test that both processors work the same way
+    observation = {
+        "observation.image": torch.tensor([0.7, 0.5, 0.3]),
+        "observation.state": torch.tensor([0.5, 0.0]),
+    }
+    action = torch.tensor([1.0, -0.5])
+    transition = (observation, action, 1.0, False, False, {}, {})
+
+    result1 = original_processor(transition)
+    result2 = new_processor(transition)
+
+    # Compare results
+    assert torch.allclose(result1[0]["observation.image"], result2[0]["observation.image"])
+    assert torch.allclose(result1[1], result2[1])
+
+    # Verify features and norm_map are correctly reconstructed
+    assert new_processor.features.keys() == original_processor.features.keys()
+    for key in new_processor.features:
+        assert new_processor.features[key].type == original_processor.features[key].type
+        assert new_processor.features[key].shape == original_processor.features[key].shape
+
+    assert new_processor.norm_map == original_processor.norm_map
