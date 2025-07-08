@@ -182,8 +182,6 @@ class SO101FollowerT(Robot):
         """
         Compute disturbance torques using direct model-based approach:
         τ_disturbance = τ_measured - τ_gravity - τ_inertia
-
-        This replaces the DOB and gives cleaner, delay-free disturbance estimation.
         """
         # Get gravity compensation
         tau_gravity = self._gravity_from_q(q_rad)
@@ -265,6 +263,22 @@ class SO101FollowerT(Robot):
                 self.bus.write("Torque_Limit", motor, 1000, num_retry=2)  # 100%
                 self.bus.write("Return_Delay_Time", motor, 0, num_retry=2)
 
+                # Disable interfering protection systems for better torque response
+                # Read current unloading condition and disable current/overload protection
+                current_unload = int(self.bus.read("Unloading_Condition", motor, normalize=False))
+
+                # Disable multiple protection systems that can interfere with torque control:
+                # Bit 32 (0x20): Load overload protection - causes torque limiting
+                # Bit 16 (0x10): Current protection - causes current limiting during high torque
+                # Bit 8 (0x08): Speed protection - can interfere with velocity control
+                safe_unload = current_unload & ~(32 | 16 | 8)  # Remove bits 32, 16, 8
+
+                self.bus.write("Unloading_Condition", motor, safe_unload, num_retry=2)
+                print(f"Motor {motor}: Unloading condition 0x{current_unload:02X} → 0x{safe_unload:02X}")
+                print(
+                    "  Disabled: Load overload (bit 32), Current protection (bit 16), Speed protection (bit 8)"
+                )
+
     def setup_motors(self) -> None:
         for motor in reversed(self.bus.motors):
             input(f"Connect the controller board to the '{motor}' motor only and press enter.")
@@ -281,15 +295,15 @@ class SO101FollowerT(Robot):
         pos_deg = self.bus.sync_read("Present_Position", num_retry=5)
         pos_rad = self._deg_to_rad(pos_deg)
 
-        # velocity (read directly from motor - more accurate than numerical differentiation)
-        # Present_Velocity is in units of 0.732 RPM (revolutions per minute)
-        vel_rpm_units = self.bus.sync_read("Present_Velocity", num_retry=5)
-        # Convert: raw_units → RPM → rad/s
-        # rpm = raw_value * 0.732
-        # rad/s = rpm * (2π / 60)
-        vel_rad = {m: v * 0.732 * (2 * math.pi / 60) for m, v in vel_rpm_units.items()}
+        # velocity - calculate from position differences (HLS3625 motors in torque mode don't respond to Present_Velocity sync_read)
+        if self._prev_pos_rad is None or self._prev_t is None:
+            vel_rad = dict.fromkeys(pos_rad, 0.0)
+        else:
+            dt = t_now - self._prev_t
+            dt = max(dt, 1e-4)  # Avoid division by zero
+            vel_rad = {m: (pos_rad[m] - self._prev_pos_rad[m]) / dt for m in pos_rad}
 
-        # acceleration - calculate from motor velocity (motor's Acceleration register is settings only)
+        # acceleration - calculate from velocity differences
         if self._prev_vel_rad is None or self._prev_t is None:
             acc_rad = dict.fromkeys(pos_rad, 0.0)
         else:

@@ -176,6 +176,7 @@ HLS_SERIES_CONTROL_TABLE = {
     "Minimum_Startup_Force": (24, 2),
     "CW_Dead_Zone": (26, 1),
     "CCW_Dead_Zone": (27, 1),
+    "Protection_Current": (28, 2),
     "Homing_Offset": (31, 2),
     "Operating_Mode": (33, 1),
     "P_Coefficient_Curr": (34, 1),
@@ -190,6 +191,7 @@ HLS_SERIES_CONTROL_TABLE = {
     "P_Coefficient_Ring": (50, 1),
     "D_Coefficient_Ring": (51, 1),
     "I_Coefficient_Ring": (52, 1),
+    "km": (53, 1),
     "Lock": (55, 1),
     # SRAM feedback
     "Present_Position": (56, 2),

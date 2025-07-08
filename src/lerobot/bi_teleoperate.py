@@ -1,7 +1,6 @@
 import math
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
@@ -10,7 +9,7 @@ from lerobot.robots.so101_follower_torque.so101_follower_t import SO101FollowerT
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.visualization_utils import _init_rerun, log_rerun_data
 
-FRQ = 300
+FRQ = 100
 PRINT_HZ = 10
 RERUN_HZ = 100
 ESC_CLR_EOL = "\x1b[K"
@@ -42,11 +41,9 @@ leader = SO101FollowerT(leader_cfg)
 follower.connect()
 leader.connect()
 
-exec_f = ThreadPoolExecutor(max_workers=1)
-exec_l = ThreadPoolExecutor(max_workers=1)
-
 # Initialize Rerun for visualization
 _init_rerun("bilateral_teleoperation")
+
 
 print("Starting 4-channel bilateral teleoperation")
 first_print = True
@@ -60,9 +57,7 @@ pos_l_prev = None
 while True:
     tic = time.perf_counter()
 
-    fut_l = exec_l.submit(leader.get_observation)
-    fut_f = exec_f.submit(follower.get_observation)
-    obs_l, obs_f = fut_l.result(), fut_f.result()
+    obs_l, obs_f = leader.get_observation(), follower.get_observation()
 
     dt = tic - tic_prev
     tic_prev = tic
@@ -111,30 +106,47 @@ while True:
     inertia_f = follower._inertia_from_q_dq(pos_f, vel_f, acc_f)
     inertia_l = leader._inertia_from_q_dq(pos_l, vel_l, acc_l)
 
-    Kp = 8.0  # Position gain
-    Kd = 0.5  # Velocity gain
-    Kf = 0.05  # Force reflection gain
+    # Joint-specific control gains for better tracking
+    Kp_gains = {  # Position gains [Nm/rad] - higher for proximal joints
+        "shoulder_pan": 7.0,
+        "shoulder_lift": 15.0,
+        "elbow_flex": 12.0,
+        "wrist_flex": 6.0,
+        "wrist_roll": 4.0,
+        "gripper": 2.0,
+    }
 
-    # Friction compensation parameters (feedforward)
+    Kd_gains = {  # Velocity gains [Nm⋅s/rad] - matched to position gains
+        "shoulder_pan": 0.4,
+        "shoulder_lift": 0.7,
+        "elbow_flex": 0.6,
+        "wrist_flex": 0.4,
+        "wrist_roll": 0.3,
+        "gripper": 0.2,
+    }
+
+    Kf = 0.05  # Force reflection gain (global)
+
     use_friction_comp = True  # Enable/disable friction compensation
+    use_gravity_comp = True  # Set to True to enable gravity compensation
 
     # Friction model: τ_friction = b_viscous * ω + fc_coulomb * sign(ω)
     friction_viscous = {  # Viscous friction coefficient [Nm⋅s/rad] per joint
         "shoulder_pan": 0.02,
-        "shoulder_lift": 0.05,
-        "elbow_flex": 0.03,
-        "wrist_flex": 0.01,
-        "wrist_roll": 0.01,
-        "gripper": 0.005,
+        "shoulder_lift": 0.08,
+        "elbow_flex": 0.05,
+        "wrist_flex": 0.02,
+        "wrist_roll": 0.015,
+        "gripper": 0.01,
     }
 
-    friction_coulomb = {  # Coulomb friction [Nm] per joint
-        "shoulder_pan": 0.08,
-        "shoulder_lift": 0.15,
-        "elbow_flex": 0.10,
-        "wrist_flex": 0.05,
-        "wrist_roll": 0.03,
-        "gripper": 0.02,
+    friction_coulomb = {  # Coulomb friction [Nm] per joint - increased static friction
+        "shoulder_pan": 0.05,
+        "shoulder_lift": 0.30,
+        "elbow_flex": 0.20,
+        "wrist_flex": 0.10,
+        "wrist_roll": 0.06,
+        "gripper": 0.04,
     }
 
     for j in follower.bus.motors:
@@ -160,25 +172,35 @@ while True:
             tau_friction_f = 0.0
             tau_friction_l = 0.0
 
-        # Follower control with friction compensation
-        tau_pos_f = Kp * (theta_cmd_f - pos_f[j])
-        tau_vel_f = Kd * (omega_cmd_f - vel_f[j])
+        # Follower control with joint-specific gains and friction compensation
+        tau_pos_f = Kp_gains[j] * (theta_cmd_f - pos_f[j])
+        tau_vel_f = Kd_gains[j] * (omega_cmd_f - vel_f[j])
         tau_force_f = Kf * (tau_cmd_f_ref - tau_reaction_f[j])
-        tau_ref_f = tau_pos_f + tau_vel_f + tau_force_f + grav_f[j] + inertia_f[j] + tau_friction_f
 
-        # Leader control with friction compensation
-        tau_pos_l = Kp * (theta_cmd_l - pos_l[j])
-        tau_vel_l = Kd * (omega_cmd_l - vel_l[j])
+        # Apply gravity compensation conditionally
+        tau_gravity_f = grav_f[j] if use_gravity_comp else 0.0
+        tau_inertia_f = inertia_f[j] if use_gravity_comp else 0.0
+
+        tau_ref_f = tau_pos_f + tau_vel_f + tau_force_f + tau_gravity_f + tau_inertia_f + tau_friction_f
+
+        # Leader control with joint-specific gains and friction compensation
+        tau_pos_l = Kp_gains[j] * (theta_cmd_l - pos_l[j])
+        tau_vel_l = Kd_gains[j] * (omega_cmd_l - vel_l[j])
         tau_force_l = Kf * (tau_cmd_l_ref - tau_reaction_l[j])
-        tau_ref_l = tau_pos_l + tau_vel_l + tau_force_l + grav_l[j] + inertia_l[j] + tau_friction_l
+
+        # Apply gravity compensation conditionally
+        tau_gravity_l = grav_l[j] if use_gravity_comp else 0.0
+        tau_inertia_l = inertia_l[j] if use_gravity_comp else 0.0
+
+        tau_ref_l = tau_pos_l + tau_vel_l + tau_force_l + tau_gravity_l + tau_inertia_l + tau_friction_l
 
         tau_cmd_f.append(tau_ref_f)
         tau_cmd_l.append(tau_ref_l)
 
         # Store interaction torques (cmd minus deterministic components) for model
-        tau_interaction_l[j] = tau_ref_l - grav_l[j] - inertia_l[j] - tau_friction_l
+        tau_interaction_l[j] = tau_ref_l - tau_gravity_l - tau_inertia_l - tau_friction_l
         tau_interaction_f[j] = -(
-            tau_meas_f[j] - grav_f[j] - inertia_f[j] - tau_friction_f
+            tau_meas_f[j] - tau_gravity_f - tau_inertia_f - tau_friction_f
         )  # Invert to match leader
 
         # Store debug info
@@ -187,8 +209,8 @@ while True:
             "τ_pos": tau_pos_f,
             "τ_vel": tau_vel_f,
             "τ_force": tau_force_f,
-            "τ_gravity": grav_f[j],
-            "τ_inertia": inertia_f[j],
+            "τ_gravity": tau_gravity_f,  # Use conditional gravity value
+            "τ_inertia": tau_inertia_f,  # Use conditional inertia value
             "τ_friction": tau_friction_f,  # Add friction to debug info
             "τ_reaction": tau_reaction_f[j],
             "τ_ref": tau_ref_f,
@@ -201,8 +223,8 @@ while True:
             "τ_pos": tau_pos_l,
             "τ_vel": tau_vel_l,
             "τ_force": tau_force_l,
-            "τ_gravity": grav_l[j],
-            "τ_inertia": inertia_l[j],
+            "τ_gravity": tau_gravity_l,  # Use conditional gravity value
+            "τ_inertia": tau_inertia_l,  # Use conditional inertia value
             "τ_friction": tau_friction_l,  # Add friction to debug info
             "τ_reaction": tau_reaction_l[j],
             "τ_ref": tau_ref_l,
@@ -284,50 +306,21 @@ while True:
         lines.append("• Meas  (measured)  = Raw torque from motor current sensor")
         lines.append("• Cmd   (command)   = Final torque sent to motor")
         lines.append("-" * 100)
-        lines.append("Model-Based Analysis:")
-        lines.append(
-            f"{'Joint':<13} {'Gravity':<8} {'Inertia':<8} {'Friction':<8} {'Reaction':<8} {'Errors':<12} {'Balance':<8}"
-        )
-        lines.append("             (feed-fwd) (feed-fwd) (feed-fwd) (external) (pos/vel)   (τ_ref)")
-        for j in follower.bus.motors:
-            debug_f = debug_info_f[j]
-            g_dir = "↑" if debug_f["τ_gravity"] > 0 else "↓" if debug_f["τ_gravity"] < 0 else "≈0"
-            i_dir = "+" if debug_f["τ_inertia"] > 0.05 else "-" if debug_f["τ_inertia"] < -0.05 else "≈0"
-            f_dir = "+" if debug_f["τ_friction"] > 0.02 else "-" if debug_f["τ_friction"] < -0.02 else "≈0"
-            r_dir = "+" if debug_f["τ_reaction"] > 0.05 else "-" if debug_f["τ_reaction"] < -0.05 else "≈0"
-
-            pos_err_sign = "+" if debug_f["θ_err"] > 0 else "-" if debug_f["θ_err"] < 0 else "0"
-            vel_err_sign = "+" if debug_f["ω_err"] > 0 else "-" if debug_f["ω_err"] < 0 else "0"
-
-            # Check balance: τ_ref should equal sum of components
-            expected_sum = (
-                debug_f["τ_pos"]
-                + debug_f["τ_vel"]
-                + debug_f["τ_force"]
-                + debug_f["τ_gravity"]
-                + debug_f["τ_inertia"]
-                + debug_f["τ_friction"]
-            )
-            balance_check = "✓" if abs(expected_sum - debug_f["τ_ref"]) < 0.01 else "✗"
-
-            lines.append(
-                f"{j:<13s}"
-                f"{g_dir:<8s}"
-                f"{i_dir:<8s}"
-                f"{f_dir:<8s}"
-                f"{r_dir:<8s}"
-                f"θ:{pos_err_sign}ω:{vel_err_sign}    "
-                f"{balance_check}"
-            )
-
-        lines.append("-" * 100)
         lines.append("Cmd = Pos + Vel + Force + Grav + Inert + Frict")
         lines.append("React = Meas - Grav - Inert  (external forces)")
         lines.append("Force = Kf × (reflect_other_robot - React)  (telepresence)")
         lines.append("Frict = b_visc×ω + f_coulomb×sign(ω)  (transparency)")
-        lines.append(f"Control Gains: Kp={Kp} (position) | Kd={Kd} (velocity) | Kf={Kf} (force reflection)")
+        lines.append(
+            f"Control Gains: Kp=joint-specific (position) | Kd=joint-specific (velocity) | Kf={Kf} (force reflection)"
+        )
+        lines.append(
+            f"Joint Gains: shoulder_pan Kp={Kp_gains['shoulder_pan']:.1f} | shoulder_lift Kp={Kp_gains['shoulder_lift']:.1f} | elbow_flex Kp={Kp_gains['elbow_flex']:.1f}"
+        )
         lines.append(
             f"Friction Comp: {'ON' if use_friction_comp else 'OFF'} | Viscous: {friction_viscous['shoulder_pan']:.3f} | Coulomb: {friction_coulomb['shoulder_pan']:.3f} (shoulder example)"
+        )
+        lines.append(
+            f"Gravity Comp: {'ON' if use_gravity_comp else 'OFF'} | Inertia Comp: {'ON' if use_gravity_comp else 'OFF'} | (Both disabled for testing)"
         )
 
         block = "\n".join(lines)
