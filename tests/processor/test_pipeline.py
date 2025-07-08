@@ -194,7 +194,7 @@ def test_invalid_transition_format():
 
 
 def test_step_through():
-    """Test step_through method."""
+    """Test step_through method with tuple input."""
     step1 = MockStep("step1")
     step2 = MockStep("step2")
     pipeline = RobotProcessor([step1, step2])
@@ -207,6 +207,40 @@ def test_step_through():
     assert results[0] == transition  # Original
     assert "step1_counter" in results[1][6]  # After step1
     assert "step2_counter" in results[2][6]  # After step2
+
+    # Ensure all results are tuples (same format as input)
+    for result in results:
+        assert isinstance(result, tuple)
+        assert len(result) == 7
+
+
+def test_step_through_with_dict():
+    """Test step_through method with dict input."""
+    step1 = MockStep("step1")
+    step2 = MockStep("step2")
+    pipeline = RobotProcessor([step1, step2])
+
+    batch = {
+        "observation.image": None,
+        "action": None,
+        "next.reward": 0.0,
+        "next.done": False,
+        "next.truncated": False,
+        "info": {},
+    }
+
+    results = list(pipeline.step_through(batch))
+
+    assert len(results) == 3  # Original + 2 steps
+
+    # Ensure all results are dicts (same format as input)
+    for result in results:
+        assert isinstance(result, dict)
+
+    # Check that the processing worked - the complementary data from steps
+    # should show up in the info or complementary_data fields when converted back to dict
+    # Note: This depends on how _default_transition_to_batch handles complementary_data
+    # For now, just check that we get dict outputs
 
 
 def test_indexing():
