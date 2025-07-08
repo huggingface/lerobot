@@ -134,9 +134,9 @@ class RobotClient:
 
         self.logger.info("Robot connected and ready")
 
-        # TODO(fracapuano): Either find a logic local to the control_loop or replace this with an event. This such that we can remove
-        # the must_go in the receive_actions() thread, otherwise we need a lock.
-        self.must_go = True  # does the observation qualify for direct processing on the policy server?
+        # Use an event for thread-safe coordination
+        self.must_go = threading.Event()
+        self.must_go.set()  # Initially set - observations qualify for direct processing
 
     @property
     def running(self):
@@ -316,7 +316,7 @@ class RobotClient:
                 self._aggregate_action_queues(timed_actions, self.config.aggregate_fn)
                 queue_update_time = time.perf_counter() - start_time
 
-                self.must_go = True  # after receiving actions, next empty queue triggers must-go processing!
+                self.must_go.set()  # after receiving actions, next empty queue triggers must-go processing!
 
                 if verbose:
                     # Get queue state after changes
@@ -411,15 +411,15 @@ class RobotClient:
 
             # If there are no actions left in the queue, the observation must go through processing!
             with self.action_queue_lock:
-                observation.must_go = self.must_go and self.action_queue.empty()
+                observation.must_go = self.must_go.is_set() and self.action_queue.empty()
                 current_queue_size = self.action_queue.qsize()
 
             _ = self.send_observation(observation)
 
             self.logger.debug(f"QUEUE SIZE: {current_queue_size} (Must go: {observation.must_go})")
             if observation.must_go:
-                # must-go flag will be set again after receiving actions
-                self.must_go = False
+                # must-go event will be set again after receiving actions
+                self.must_go.clear()
 
             if verbose:
                 # Calculate comprehensive FPS metrics
