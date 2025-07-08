@@ -40,6 +40,7 @@ service AsyncInference {
   // Policy -> Robot to share actions predicted for given observations
   rpc SendObservations(stream Observation) returns (Empty);
   rpc GetActions(Empty) returns (Actions);
+  rpc GetActionsUnary(stream Observation) returns (Actions);
   rpc SendPolicyInstructions(PolicySetup) returns (Empty);
   rpc Ready(Empty) returns (Empty);
 }

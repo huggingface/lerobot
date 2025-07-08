@@ -106,6 +106,21 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
 
         return services_pb2.Empty()
 
+    def GetActionsUnary(self, request_iterator, context):  # noqa: N802
+        """Returns actions to the robot client. Actions are sent as a single
+        chunk, containing multiple actions."""
+        client_id = context.peer()
+        self.logger.debug(f"Client {client_id} connected for action streaming")
+
+        observations_bytes = receive_bytes_in_chunks(request_iterator, self._running_event, self.logger)
+
+        observations = pickle.loads(observations_bytes)  # nosec
+
+        action_chunk = self._predict_action_chunk(observations)
+        actions_bytes = pickle.dumps(action_chunk)  # nosec
+
+        return services_pb2.Actions(data=actions_bytes)
+
     def SendPolicyInstructions(self, request, context):  # noqa: N802
         """Receive policy instructions from the robot client"""
 
