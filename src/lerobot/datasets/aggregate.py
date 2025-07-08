@@ -154,23 +154,11 @@ def aggregate_datasets(
     repo_ids: list[str],
     aggr_repo_id: str,
     roots: list[Path] = None,
-    aggr_root=None,
+    aggr_root: Path = None,
     data_files_size_in_mb: float = None,
     video_files_size_in_mb: float = None,
-    chunks_size: int = None,
+    chunk_size: int = None,
 ):
-    """
-    Aggregate multiple datasets into a single dataset.
-
-    Args:
-        repo_ids: List of repository IDs to aggregate
-        aggr_repo_id: Repository ID for the aggregated dataset
-        roots: Optional list of local root paths for the datasets
-        aggr_root: Root path for the aggregated dataset
-        data_files_size_in_mb: Maximum size for data files in MB (defaults to DEFAULT_DATA_FILE_SIZE_IN_MB)
-        video_files_size_in_mb: Maximum size for video files in MB (defaults to DEFAULT_VIDEO_FILE_SIZE_IN_MB)
-        chunks_size: Maximum number of files per chunk (defaults to DEFAULT_CHUNK_SIZE)
-    """
     """Aggregates multiple LeRobot datasets into a single unified dataset.
 
     This is the main function that orchestrates the aggregation process by:
@@ -184,6 +172,9 @@ def aggregate_datasets(
         aggr_repo_id: Repository ID for the aggregated output dataset.
         roots: Optional list of root paths for the source datasets.
         aggr_root: Optional root path for the aggregated dataset.
+        data_files_size_in_mb: Maximum size for data files in MB (defaults to DEFAULT_DATA_FILE_SIZE_IN_MB)
+        video_files_size_in_mb: Maximum size for video files in MB (defaults to DEFAULT_VIDEO_FILE_SIZE_IN_MB)
+        chunk_size: Maximum number of files per chunk (defaults to DEFAULT_CHUNK_SIZE)
     """
     logging.info("Start aggregate_datasets")
 
@@ -192,8 +183,8 @@ def aggregate_datasets(
         data_files_size_in_mb = DEFAULT_DATA_FILE_SIZE_IN_MB
     if video_files_size_in_mb is None:
         video_files_size_in_mb = DEFAULT_VIDEO_FILE_SIZE_IN_MB
-    if chunks_size is None:
-        chunks_size = DEFAULT_CHUNK_SIZE
+    if chunk_size is None:
+        chunk_size = DEFAULT_CHUNK_SIZE
 
     # Load metadata
     all_metadata = (
@@ -231,8 +222,8 @@ def aggregate_datasets(
 
     # Process each dataset
     for src_meta in tqdm.tqdm(all_metadata, desc="Copy data and videos"):
-        videos_idx = aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chunks_size)
-        data_idx = aggregate_data(src_meta, dst_meta, data_idx, data_files_size_in_mb, chunks_size)
+        videos_idx = aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chunk_size)
+        data_idx = aggregate_data(src_meta, dst_meta, data_idx, data_files_size_in_mb, chunk_size)
 
         meta_idx = aggregate_metadata(src_meta, dst_meta, meta_idx, data_idx, videos_idx)
 
@@ -248,7 +239,7 @@ def aggregate_datasets(
 # -------------------------------
 
 
-def aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chunks_size):
+def aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chunk_size):
     """Aggregates video chunks from a source dataset into the destination dataset.
 
     Handles video file concatenation and rotation based on file size limits.
@@ -258,6 +249,8 @@ def aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chu
         src_meta: Source dataset metadata.
         dst_meta: Destination dataset metadata.
         videos_idx: Dictionary tracking video chunk and file indices.
+        video_files_size_in_mb: Maximum size for video files in MB (defaults to DEFAULT_VIDEO_FILE_SIZE_IN_MB)
+        chunk_size: Maximum number of files per chunk (defaults to DEFAULT_CHUNK_SIZE)
 
     Returns:
         dict: Updated videos_idx with current chunk and file indices.
@@ -307,7 +300,7 @@ def aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chu
 
             if dst_size + src_size >= video_files_size_in_mb:
                 # Rotate to a new chunk/file
-                chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, chunks_size)
+                chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, chunk_size)
                 dst_path = dst_meta.root / DEFAULT_VIDEO_PATH.format(
                     video_key=key,
                     chunk_index=chunk_idx,
@@ -340,7 +333,7 @@ def aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chu
     return videos_idx
 
 
-def aggregate_data(src_meta, dst_meta, data_idx, data_files_size_in_mb, chunks_size):
+def aggregate_data(src_meta, dst_meta, data_idx, data_files_size_in_mb, chunk_size):
     """Aggregates data chunks from a source dataset into the destination dataset.
 
     Reads source data files, updates indices to match the aggregated dataset,
@@ -375,7 +368,7 @@ def aggregate_data(src_meta, dst_meta, data_idx, data_files_size_in_mb, chunks_s
             src_path,
             data_idx,
             data_files_size_in_mb,
-            chunks_size,
+            chunk_size,
             DEFAULT_DATA_PATH,
             contains_images=len(dst_meta.image_keys) > 0,
             aggr_root=dst_meta.root,
