@@ -49,6 +49,7 @@ policy = Pi0Policy.from_pretrained("lerobot/pi0")
 
 """
 
+import logging
 import math
 from collections import deque
 
@@ -257,7 +258,8 @@ class PI0Policy(PreTrainedPolicy):
         """This should be called whenever the environment is reset."""
         self._action_queue = deque([], maxlen=self.config.n_action_steps)
 
-    def _transform_state_dict_keys(self, state_dict: dict) -> dict:
+    @classmethod
+    def _transform_state_dict_keys(cls, state_dict: dict) -> dict:
         """Transform state dict keys to match expected model structure."""
         import re
 
@@ -294,6 +296,31 @@ class PI0Policy(PreTrainedPolicy):
 
             transformed_dict[new_key] = value
 
+        # Handle tied weights: lm_head.weight and embed_tokens.weight share memory
+        # If we have lm_head.weight, also create embed_tokens.weight entry
+        lm_head_key = None
+        embed_tokens_key = None
+
+        for key in transformed_dict:
+            if key.endswith(".paligemma_with_expert.paligemma.lm_head.weight"):
+                lm_head_key = key
+            elif key.endswith(".paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight"):
+                embed_tokens_key = key
+
+        # If we have lm_head.weight but not embed_tokens.weight, create the embed_tokens entry
+        if lm_head_key and not embed_tokens_key:
+            embed_tokens_key = lm_head_key.replace(
+                ".lm_head.weight", ".model.language_model.embed_tokens.weight"
+            )
+            transformed_dict[embed_tokens_key] = transformed_dict[lm_head_key]
+
+        # If we have embed_tokens.weight but not lm_head.weight, create the lm_head entry
+        elif embed_tokens_key and not lm_head_key:
+            lm_head_key = embed_tokens_key.replace(
+                ".model.language_model.embed_tokens.weight", ".lm_head.weight"
+            )
+            transformed_dict[lm_head_key] = transformed_dict[embed_tokens_key]
+
         return transformed_dict
 
     @classmethod
@@ -303,15 +330,24 @@ class PI0Policy(PreTrainedPolicy):
         """Override to apply key transformations before loading."""
         from safetensors.torch import load_file
 
-        # Load the state dict from file
+        # Load the state dict from file safely
         state_dict = load_file(model_file, device=map_location)
 
         # Apply key transformations
-        transformed_state_dict = model._transform_state_dict_keys(state_dict)
+        transformed_state_dict = cls._transform_state_dict_keys(state_dict)
 
         # Load the transformed state dict
-        model.load_state_dict(transformed_state_dict, strict=strict)
+        msg = model.load_state_dict(transformed_state_dict, strict=strict)
 
+        # Log message
+        if hasattr(msg, "missing_keys") and len(msg.missing_keys) > 0:
+            logging.warning("Missing key(s):")
+            for k in msg.missing_keys:
+                logging.warning(f"    {k}")
+        if hasattr(msg, "unexpected_keys") and len(msg.unexpected_keys) > 0:
+            logging.warning("Unexpected key(s):")
+            for k in msg.unexpected_keys:
+                logging.warning(f"    {k}")
         return model
 
     def get_optim_params(self) -> dict:
