@@ -133,33 +133,33 @@ def test_time_action_chunk(policy_server: PolicyServer):
         assert abs(ta.get_timestamp() - expected_ts) < 1e-6
 
 
-def test_maybe_enqueue_observation_must_go(policy_server: PolicyServer):
+def test_enqueue_observation_must_go(policy_server: PolicyServer):
     """An observation with `must_go=True` is always enqueued."""
     obs = _make_obs(torch.zeros(6), must_go=True)
-    assert policy_server._maybe_enqueue_observation(obs) is True
+    assert policy_server._enqueue_observation(obs) is True
     assert policy_server.observation_queue.qsize() == 1
     assert policy_server.observation_queue.get_nowait() is obs
 
 
-def test_maybe_enqueue_observation_dissimilar(policy_server: PolicyServer):
+def test_enqueue_observation_dissimilar(policy_server: PolicyServer):
     """A dissimilar observation (not `must_go`) is enqueued."""
     # Set a last predicted observation.
     policy_server.last_processed_obs = _make_obs(torch.zeros(6))
     # Create a new, dissimilar observation.
     new_obs = _make_obs(torch.ones(6) * 5)  # High norm difference
 
-    assert policy_server._maybe_enqueue_observation(new_obs) is True
+    assert policy_server._enqueue_observation(new_obs) is True
     assert policy_server.observation_queue.qsize() == 1
 
 
-def test_maybe_enqueue_observation_is_skipped(policy_server: PolicyServer):
+def test_enqueue_observation_is_skipped(policy_server: PolicyServer):
     """A similar observation (not `must_go`) is skipped."""
     # Set a last predicted observation.
     policy_server.last_processed_obs = _make_obs(torch.zeros(6))
     # Create a new, very similar observation.
     new_obs = _make_obs(torch.zeros(6) + 1e-4)
 
-    assert policy_server._maybe_enqueue_observation(new_obs) is False
+    assert policy_server._enqueue_observation(new_obs) is False
     assert policy_server.observation_queue.empty() is True
 
 
@@ -180,20 +180,6 @@ def test_obs_sanity_checks(policy_server: PolicyServer):
     # Case 3 – genuinely new & dissimilar observation passes
     obs_ok = _make_obs(torch.ones(6) * 5, timestep=3)
     assert policy_server._obs_sanity_checks(obs_ok, prev) is True
-
-
-def test_enqueue_and_go_overwrites_when_full(policy_server: PolicyServer):
-    """`_enqueue_and_go` should drop the old item when queue is full."""
-    old_obs = _make_obs(torch.zeros(6), timestep=0)
-    policy_server.observation_queue.put(old_obs)
-    assert policy_server.observation_queue.full() is True
-
-    new_obs = _make_obs(torch.ones(6), timestep=1)
-    assert policy_server._enqueue_and_go(new_obs) is True
-
-    # Queue contains exactly the new observation
-    assert policy_server.observation_queue.qsize() == 1
-    assert policy_server.observation_queue.get_nowait() is new_obs
 
 
 def test_predict_action_chunk(monkeypatch, policy_server: PolicyServer):
