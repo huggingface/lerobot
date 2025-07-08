@@ -642,9 +642,19 @@ def update_policy_parameters(policy: SACPolicy, parameters_queue: Queue, device)
     bytes_state_dict = get_last_item_from_queue(parameters_queue, block=False)
     if bytes_state_dict is not None:
         logging.info("[ACTOR] Load new parameters from Learner.")
-        state_dict = bytes_to_state_dict(bytes_state_dict)
-        state_dict = move_state_dict_to_device(state_dict, device=device)
-        policy.load_state_dict(state_dict)
+        state_dicts = bytes_to_state_dict(bytes_state_dict)
+
+        # Load actor state dict
+        actor_state_dict = move_state_dict_to_device(state_dicts["policy"], device=device)
+        policy.actor.load_state_dict(actor_state_dict)
+
+        # Load discrete critic if present
+        if "discrete_critic" in state_dicts:
+            discrete_critic_state_dict = move_state_dict_to_device(
+                state_dicts["discrete_critic"], device=device
+            )
+            policy.discrete_critic.load_state_dict(discrete_critic_state_dict)
+            logging.info("[ACTOR] Loaded discrete critic parameters from Learner.")
 
 
 #################################################
