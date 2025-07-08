@@ -21,9 +21,9 @@ python src/lerobot/scripts/server/robot_client.py \
     --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \
     --robot.id=black \
     --task="dummy" \
-    --server_address=localhost:8080 \
+    --server_address=127.0.0.1:8080 \
     --policy_type=act \
-    --pretrained_name_or_path=fracapuano/act_so100_test \
+    --pretrained_name_or_path=user/model \
     --policy_device=mps \
     --actions_per_chunk=50 \
     --chunk_size_threshold=0.5 \
