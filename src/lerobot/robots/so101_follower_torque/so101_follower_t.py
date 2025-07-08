@@ -47,7 +47,45 @@ class SO101FollowerT(Robot):
 
     _CURRENT_STEP_A: float = 6.5e-3  # 6.5 mA per register LSB #http://doc.feetech.cn/#/prodinfodownload?srcType=FT-SMS-STS-emanual-229f4476422d4059abfb1cb0
     _KT_NM_PER_AMP: float = 0.814  # Torque constant Kt [N·m/A] #https://www.feetechrc.com/811177.html
-    _MAX_CURRENT_A: float = 3.0  # Safe driver limit for this model
+    _MAX_CURRENT_A: float = 2.0  # Safe driver limit for this model
+
+    # Control gains for bilateral teleoperation
+    _KP_GAINS = {  # Position gains [Nm/rad] - higher for proximal joints
+        "shoulder_pan": 7.0,
+        "shoulder_lift": 15.0,
+        "elbow_flex": 12.0,
+        "wrist_flex": 6.0,
+        "wrist_roll": 4.0,
+        "gripper": 2.0,
+    }
+
+    _KD_GAINS = {  # Velocity gains [Nm⋅s/rad] - matched to position gains
+        "shoulder_pan": 0.4,
+        "shoulder_lift": 0.7,
+        "elbow_flex": 0.6,
+        "wrist_flex": 0.4,
+        "wrist_roll": 0.3,
+        "gripper": 0.2,
+    }
+
+    # Friction model parameters
+    _FRICTION_VISCOUS = {  # Viscous friction coefficient [Nm⋅s/rad] per joint
+        "shoulder_pan": 0.02,
+        "shoulder_lift": 0.08,
+        "elbow_flex": 0.05,
+        "wrist_flex": 0.02,
+        "wrist_roll": 0.015,
+        "gripper": 0.01,
+    }
+
+    _FRICTION_COULOMB = {  # Coulomb friction [Nm] per joint
+        "shoulder_pan": 0.05,
+        "shoulder_lift": 0.30,
+        "elbow_flex": 0.20,
+        "wrist_flex": 0.10,
+        "wrist_roll": 0.06,
+        "gripper": 0.04,
+    }
 
     def __init__(self, config: SO101FollowerTConfig):
         super().__init__(config)
@@ -111,6 +149,26 @@ class SO101FollowerT(Robot):
     @property
     def is_connected(self) -> bool:
         return self.bus.is_connected and all(cam.is_connected for cam in self.cameras.values())
+
+    @property
+    def kp_gains(self) -> dict[str, float]:
+        """Position control gains [Nm/rad] for bilateral teleoperation"""
+        return self._KP_GAINS.copy()
+
+    @property
+    def kd_gains(self) -> dict[str, float]:
+        """Velocity control gains [Nm⋅s/rad] for bilateral teleoperation"""
+        return self._KD_GAINS.copy()
+
+    @property
+    def friction_viscous(self) -> dict[str, float]:
+        """Viscous friction coefficients [Nm⋅s/rad] for friction compensation"""
+        return self._FRICTION_VISCOUS.copy()
+
+    @property
+    def friction_coulomb(self) -> dict[str, float]:
+        """Coulomb friction coefficients [Nm] for friction compensation"""
+        return self._FRICTION_COULOMB.copy()
 
     def _current_to_torque_nm(self, raw: dict[str, Any]) -> dict[str, float]:
         """Convert "Present_Current" register counts (±2047) → torque [Nm].
@@ -178,10 +236,14 @@ class SO101FollowerT(Robot):
         dq_rad: dict[str, float],
         ddq_rad: dict[str, float],
         tau_measured: dict[str, float],
+        include_friction: bool = True,
     ) -> dict[str, float]:
         """
         Compute disturbance torques using direct model-based approach:
-        τ_disturbance = τ_measured - τ_gravity - τ_inertia
+        τ_disturbance = τ_measured - τ_gravity - τ_inertia - τ_friction
+
+        Args:
+            include_friction: If True, also removes friction from the disturbance calculation
         """
         # Get gravity compensation
         tau_gravity = self._gravity_from_q(q_rad)
@@ -193,6 +255,20 @@ class SO101FollowerT(Robot):
         tau_disturbance = {}
         for motor_name in self.bus.motors:
             tau_dist = tau_measured[motor_name] - tau_gravity[motor_name] - tau_inertia[motor_name]
+
+            # Optionally remove friction model
+            if include_friction:
+                # Calculate friction torque using class constants
+                omega = dq_rad[motor_name]
+                tau_friction = self._FRICTION_VISCOUS[motor_name] * omega + self._FRICTION_COULOMB[
+                    motor_name
+                ] * (1.0 if omega > 0.01 else -1.0 if omega < -0.01 else 0.0)
+
+                # Apply torque sign correction (same as for gravity/inertia)
+                tau_friction = -tau_friction  # Apply torque sign correction
+
+                tau_dist -= tau_friction
+
             tau_disturbance[motor_name] = tau_dist
 
         return tau_disturbance

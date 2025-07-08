@@ -50,6 +50,9 @@ first_print = True
 loop_count = 0
 tic_prev = time.perf_counter()
 
+use_friction_comp = True  # Enable/disable friction compensation
+use_gravity_comp = True  # Enable gravity compensation with corrected signs
+
 # Initialize previous positions for velocity calculation
 pos_f_prev = None
 pos_l_prev = None
@@ -95,8 +98,13 @@ while True:
     pos_l_prev = pos_l.copy()
 
     # Compute reaction torques using model-based approach
-    tau_reaction_f = follower._compute_model_based_disturbance(pos_f, vel_f, acc_f, tau_meas_f)
-    tau_reaction_l = leader._compute_model_based_disturbance(pos_l, vel_l, acc_l, tau_meas_l)
+    # Include friction in model-based disturbance for consistency
+    tau_reaction_f = follower._compute_model_based_disturbance(
+        pos_f, vel_f, acc_f, tau_meas_f, include_friction=use_friction_comp
+    )
+    tau_reaction_l = leader._compute_model_based_disturbance(
+        pos_l, vel_l, acc_l, tau_meas_l, include_friction=use_friction_comp
+    )
 
     # Get gravity for feed-forward compensation
     grav_f = follower._gravity_from_q(pos_f)
@@ -107,47 +115,14 @@ while True:
     inertia_l = leader._inertia_from_q_dq(pos_l, vel_l, acc_l)
 
     # Joint-specific control gains for better tracking
-    Kp_gains = {  # Position gains [Nm/rad] - higher for proximal joints
-        "shoulder_pan": 7.0,
-        "shoulder_lift": 15.0,
-        "elbow_flex": 12.0,
-        "wrist_flex": 6.0,
-        "wrist_roll": 4.0,
-        "gripper": 2.0,
-    }
-
-    Kd_gains = {  # Velocity gains [Nm⋅s/rad] - matched to position gains
-        "shoulder_pan": 0.4,
-        "shoulder_lift": 0.7,
-        "elbow_flex": 0.6,
-        "wrist_flex": 0.4,
-        "wrist_roll": 0.3,
-        "gripper": 0.2,
-    }
+    Kp_gains = follower.kp_gains  # Use robot class properties
+    Kd_gains = follower.kd_gains  # Use robot class properties
 
     Kf = 0.05  # Force reflection gain (global)
 
-    use_friction_comp = True  # Enable/disable friction compensation
-    use_gravity_comp = True  # Set to True to enable gravity compensation
-
-    # Friction model: τ_friction = b_viscous * ω + fc_coulomb * sign(ω)
-    friction_viscous = {  # Viscous friction coefficient [Nm⋅s/rad] per joint
-        "shoulder_pan": 0.02,
-        "shoulder_lift": 0.08,
-        "elbow_flex": 0.05,
-        "wrist_flex": 0.02,
-        "wrist_roll": 0.015,
-        "gripper": 0.01,
-    }
-
-    friction_coulomb = {  # Coulomb friction [Nm] per joint - increased static friction
-        "shoulder_pan": 0.05,
-        "shoulder_lift": 0.30,
-        "elbow_flex": 0.20,
-        "wrist_flex": 0.10,
-        "wrist_roll": 0.06,
-        "gripper": 0.04,
-    }
+    # Friction model parameters from robot class
+    friction_viscous = follower.friction_viscous  # Use robot class properties
+    friction_coulomb = follower.friction_coulomb  # Use robot class properties
 
     for j in follower.bus.motors:
         # Bilateral control references (eqs. 5-7)
@@ -198,10 +173,16 @@ while True:
         tau_cmd_l.append(tau_ref_l)
 
         # Store interaction torques (cmd minus deterministic components) for model
-        tau_interaction_l[j] = tau_ref_l - tau_gravity_l - tau_inertia_l - tau_friction_l
-        tau_interaction_f[j] = -(
-            tau_meas_f[j] - tau_gravity_f - tau_inertia_f - tau_friction_f
-        )  # Invert to match leader
+        if use_friction_comp:
+            # If friction compensation is enabled, friction is already removed in model-based disturbance
+            tau_interaction_l[j] = tau_ref_l - tau_gravity_l - tau_inertia_l - tau_friction_l
+            tau_interaction_f[j] = -tau_reaction_f[j]  # Already has friction removed
+        else:
+            # If friction compensation is disabled, use original logic
+            tau_interaction_l[j] = tau_ref_l - tau_gravity_l - tau_inertia_l - tau_friction_l
+            tau_interaction_f[j] = -(
+                tau_meas_f[j] - tau_gravity_f - tau_inertia_f - tau_friction_f
+            )  # Invert to match leader
 
         # Store debug info
         debug_info_f[j] = {
@@ -307,17 +288,21 @@ while True:
         lines.append("• Cmd   (command)   = Final torque sent to motor")
         lines.append("-" * 100)
         lines.append("Cmd = Pos + Vel + Force + Grav + Inert + Frict")
-        lines.append("React = Meas - Grav - Inert  (external forces)")
+        lines.append(
+            "React = Meas - Grav - Inert - Frict  (external forces)"
+            if use_friction_comp
+            else "React = Meas - Grav - Inert  (external forces)"
+        )
         lines.append("Force = Kf × (reflect_other_robot - React)  (telepresence)")
         lines.append("Frict = b_visc×ω + f_coulomb×sign(ω)  (transparency)")
         lines.append(
-            f"Control Gains: Kp=joint-specific (position) | Kd=joint-specific (velocity) | Kf={Kf} (force reflection)"
+            f"Control Gains: Kp=robot-class (position) | Kd=robot-class (velocity) | Kf={Kf} (force reflection)"
         )
         lines.append(
             f"Joint Gains: shoulder_pan Kp={Kp_gains['shoulder_pan']:.1f} | shoulder_lift Kp={Kp_gains['shoulder_lift']:.1f} | elbow_flex Kp={Kp_gains['elbow_flex']:.1f}"
         )
         lines.append(
-            f"Friction Comp: {'ON' if use_friction_comp else 'OFF'} | Viscous: {friction_viscous['shoulder_pan']:.3f} | Coulomb: {friction_coulomb['shoulder_pan']:.3f} (shoulder example)"
+            f"Friction Comp: {'ON' if use_friction_comp else 'OFF'} | Viscous: {friction_viscous['shoulder_pan']:.3f} | Coulomb: {friction_coulomb['shoulder_pan']:.3f} (robot-class)"
         )
         lines.append(
             f"Gravity Comp: {'ON' if use_gravity_comp else 'OFF'} | Inertia Comp: {'ON' if use_gravity_comp else 'OFF'} | (Both disabled for testing)"
