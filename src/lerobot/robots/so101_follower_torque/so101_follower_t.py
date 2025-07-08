@@ -47,7 +47,7 @@ class SO101FollowerT(Robot):
 
     _CURRENT_STEP_A: float = 6.5e-3  # 6.5 mA per register LSB #http://doc.feetech.cn/#/prodinfodownload?srcType=FT-SMS-STS-emanual-229f4476422d4059abfb1cb0
     _KT_NM_PER_AMP: float = 0.814  # Torque constant Kt [N·m/A] #https://www.feetechrc.com/811177.html
-    _MAX_CURRENT_A: float = 2.0  # Safe driver limit for this model
+    _MAX_CURRENT_A: float = 4.0  # Safe driver limit for this model
 
     # Control gains for bilateral teleoperation
     _KP_GAINS = {  # Position gains [Nm/rad] - higher for proximal joints
@@ -337,6 +337,7 @@ class SO101FollowerT(Robot):
                 self.bus.write("Operating_Mode", motor, 2, num_retry=2)  # Set to current mode
                 self.bus.write("Target_Torque", motor, 0, num_retry=2)
                 self.bus.write("Torque_Limit", motor, 1000, num_retry=2)  # 100%
+                self.bus.write("Max_Torque_Limit", motor, 1000, num_retry=2)  # 100%
                 self.bus.write("Return_Delay_Time", motor, 0, num_retry=2)
 
                 # Disable interfering protection systems for better torque response
