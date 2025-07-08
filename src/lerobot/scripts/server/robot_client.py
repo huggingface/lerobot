@@ -148,14 +148,14 @@ class RobotClient:
             start_time = time.perf_counter()
             self.stub.Ready(async_inference_pb2.Empty())
             end_time = time.perf_counter()
-            self.logger.info(f"Connected to policy server in {end_time - start_time:.4f}s")
+            self.logger.debug(f"Connected to policy server in {end_time - start_time:.4f}s")
 
             # send policy instructions
             policy_config_bytes = pickle.dumps(self.policy_config)
             policy_setup = async_inference_pb2.PolicySetup(data=policy_config_bytes)
 
             self.logger.info("Sending policy instructions to policy server")
-            self.logger.info(
+            self.logger.debug(
                 f"Policy type: {self.policy_config.policy_type} | "
                 f"Pretrained name or path: {self.policy_config.pretrained_name_or_path} | "
                 f"Device: {self.policy_config.device}"
@@ -176,10 +176,10 @@ class RobotClient:
         self._running_event.clear()
 
         self.robot.disconnect()
-        self.logger.info("Robot disconnected")
+        self.logger.debug("Robot disconnected")
 
         self.channel.close()
-        self.logger.info("Client stopped, channel closed")
+        self.logger.debug("Client stopped, channel closed")
 
     def send_observation(
         self,
@@ -215,7 +215,6 @@ class RobotClient:
             self.logger.error(f"Error sending observation #{obs.get_timestep()}: {e}")
             return False
 
-    # TODO(fracapuano): Reduce logging verbosity
     def _inspect_action_queue(self):
         queue_size = self.action_queue.qsize()
         timestamps = sorted([action.get_timestep() for action in self.action_queue.queue])
@@ -263,7 +262,7 @@ class RobotClient:
         # TODO(fracapuano): Add a lock
         self.action_queue = future_action_queue
 
-    def receive_actions(self):
+    def receive_actions(self, verbose: bool = False):
         """Receive actions from the policy server"""
         # Wait at barrier for synchronized start
         self.start_barrier.wait()
@@ -282,20 +281,23 @@ class RobotClient:
 
                 self.action_chunk_size = max(self.action_chunk_size, len(timed_actions))
 
-                start_time = time.perf_counter()
-
-                self.logger.info(f"Current latest action: {self.latest_action}")
-
-                # Get queue state before changes
-                old_size, old_timesteps = self._inspect_action_queue()
-                if not old_timesteps:
-                    old_timesteps = [self.latest_action]  # queue was empty
-
-                # Log incoming actions
-                incoming_timesteps = [a.get_timestep() for a in timed_actions]
-
                 # Calculate network latency if we have matching observations
-                if len(timed_actions) > 0:
+                if len(timed_actions) > 0 and verbose:
+                    self.logger.debug(f"Current latest action: {self.latest_action}")
+
+                    # Get queue state before changes
+                    old_size, old_timesteps = self._inspect_action_queue()
+                    if not old_timesteps:
+                        old_timesteps = [self.latest_action]  # queue was empty
+
+                    # Get queue state before changes
+                    old_size, old_timesteps = self._inspect_action_queue()
+                    if not old_timesteps:
+                        old_timesteps = [self.latest_action]  # queue was empty
+
+                    # Log incoming actions
+                    incoming_timesteps = [a.get_timestep() for a in timed_actions]
+
                     first_action_timestep = timed_actions[0].get_timestep()
                     server_to_client_latency = (receive_time - timed_actions[0].get_timestamp()) * 1000
 
@@ -314,20 +316,21 @@ class RobotClient:
 
                 self.must_go = True  # after receiving actions, next empty queue triggers must-go processing!
 
-                # Get queue state after changes
-                new_size, new_timesteps = self._inspect_action_queue()
+                if verbose:
+                    # Get queue state after changes
+                    new_size, new_timesteps = self._inspect_action_queue()
 
-                self.logger.info(
-                    f"Queue update complete ({queue_update_time:.6f}s) | "
-                    f"Before: {old_size} items | "
-                    f"After: {new_size} items | "
-                )
-                self.logger.info(
-                    f"Latest action: {self.latest_action} | "
-                    f"Old action steps: {old_timesteps[0]}:{old_timesteps[-1]} | "
-                    f"Incoming action steps: {incoming_timesteps[0]}:{incoming_timesteps[-1]} | "
-                    f"Updated action steps: {new_timesteps[0]}:{new_timesteps[-1]}"
-                )
+                    self.logger.info(
+                        f"Latest action: {self.latest_action} | "
+                        f"Old action steps: {old_timesteps[0]}:{old_timesteps[-1]} | "
+                        f"Incoming action steps: {incoming_timesteps[0]}:{incoming_timesteps[-1]} | "
+                        f"Updated action steps: {new_timesteps[0]}:{new_timesteps[-1]}"
+                    )
+                    self.logger.debug(
+                        f"Queue update complete ({queue_update_time:.6f}s) | "
+                        f"Before: {old_size} items | "
+                        f"After: {new_size} items | "
+                    )
 
             except grpc.RpcError as e:
                 self.logger.error(f"Error receiving actions: {e}")
@@ -348,7 +351,7 @@ class RobotClient:
         action = {key: action_tensor[i].item() for i, key in enumerate(self.robot.action_features)}
         return action
 
-    def control_loop_action(self) -> Optional[Action]:
+    def control_loop_action(self, verbose: bool = False) -> Optional[Action]:
         """Reading and performing actions in local queue"""
         self.action_queue_size.append(self.action_queue.qsize())
 
@@ -362,16 +365,17 @@ class RobotClient:
         )
         self.latest_action = timed_action.get_timestep()
 
-        self.logger.debug(
-            f"Ts={timed_action.get_timestamp()} | "
-            f"Action #{timed_action.get_timestep()} performed | "
-            f"Queue size: {self.action_queue.qsize()}"
-        )
+        if verbose:
+            self.logger.debug(
+                f"Ts={timed_action.get_timestamp()} | "
+                f"Action #{timed_action.get_timestep()} performed | "
+                f"Queue size: {self.action_queue.qsize()}"
+            )
 
-        self.logger.debug(
-            f"Popping action from queue to perform took {get_end:.6f}s | "
-            f"Queue size: {self.action_queue.qsize()}"
-        )
+            self.logger.debug(
+                f"Popping action from queue to perform took {get_end:.6f}s | "
+                f"Queue size: {self.action_queue.qsize()}"
+            )
 
         return _performed_action
 
@@ -379,7 +383,7 @@ class RobotClient:
         """Flags when the client is ready to send an observation"""
         return self.action_queue.qsize() / self.action_chunk_size <= self._chunk_size_threshold
 
-    def control_loop_observation(self, task: str) -> Observation:
+    def control_loop_observation(self, task: str, verbose: bool = False) -> Observation:
         try:
             # Get serialized observation bytes from the function
             start_time = time.perf_counter()
@@ -404,25 +408,26 @@ class RobotClient:
                 # must-go flag will be set again after receiving actions
                 self.must_go = False
 
-            # Calculate comprehensive FPS metrics
-            fps_metrics = self.fps_tracker.calculate_fps_metrics(observation.get_timestamp())
+            if verbose:
+                # Calculate comprehensive FPS metrics
+                fps_metrics = self.fps_tracker.calculate_fps_metrics(observation.get_timestamp())
 
-            self.logger.info(
-                f"Obs #{observation.get_timestep()} | "
-                f"Avg FPS: {fps_metrics['avg_fps']:.2f} | "
-                f"Target: {fps_metrics['target_fps']:.2f}"
-            )
+                self.logger.info(
+                    f"Obs #{observation.get_timestep()} | "
+                    f"Avg FPS: {fps_metrics['avg_fps']:.2f} | "
+                    f"Target: {fps_metrics['target_fps']:.2f}"
+                )
 
-            self.logger.debug(
-                f"Ts={observation.get_timestamp():.6f} | Capturing observation took {obs_capture_time:.6f}s"
-            )
+                self.logger.debug(
+                    f"Ts={observation.get_timestamp():.6f} | Capturing observation took {obs_capture_time:.6f}s"
+                )
 
             return raw_observation
 
         except Exception as e:
             self.logger.error(f"Error in observation sender: {e}")
 
-    def control_loop(self, task: str) -> tuple[Observation, Action]:
+    def control_loop(self, task: str = "", verbose: bool = False) -> tuple[Observation, Action]:
         """Combined function for executing actions and streaming observations"""
         # Wait at barrier for synchronized start
         self.start_barrier.wait()
@@ -435,11 +440,11 @@ class RobotClient:
             control_loop_start = time.perf_counter()
             """Control loop: (1) Performing actions, when available"""
             if self.actions_available():
-                _performed_action = self.control_loop_action()
+                _performed_action = self.control_loop_action(verbose)
 
             """Control loop: (2) Streaming observations to the remote policy server"""
             if self._ready_to_send_observation():
-                _captured_observation = self.control_loop_observation(task)
+                _captured_observation = self.control_loop_observation(task, verbose)
 
             self.logger.info(f"Control loop (ms): {(time.perf_counter() - control_loop_start) * 1000:.2f}")
             # Dynamically adjust sleep time to maintain the desired control frequency
