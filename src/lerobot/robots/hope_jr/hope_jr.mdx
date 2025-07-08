@@ -30,7 +30,11 @@ Before performing teleoperation, HopeJR's limbs need to be calibrated. Calibrati
 ### 1.1 Calibrate Hand
 
 ```bash
-python examples/hope_jr/vis/hand.py
+python -m lerobot.calibrate \
+    --robot.type=hope_jr_hand \
+    --robot.port=/dev/tty.usbmodem58760432281 \
+    --robot.id=blue \
+    --robot.side=right
 ```
 
 When running the calibration script, a calibration GUI will pop up. Finger joints are named as follows:
@@ -72,7 +76,11 @@ Once you have set the appropriate boundaries for all joints, click "Save" to sav
 ### 1.2 Calibrate Glove
 
 ```bash
-python examples/hope_jr/vis/glove.py
+python -m lerobot.calibrate \
+    --teleop.type=homunculus_glove \
+    --teleop.port=/dev/tty.usbmodem11201 \
+    --teleop.id=red \
+    --teleop.side=right
 ```
 
 Move each finger through its full range of motion, starting from the thumb.
@@ -102,32 +110,7 @@ middle_mcp_flexion   |   1512 |   1658 |   2136
 middle_dip           |   1484 |   1500 |   1547
 ```
 
-Once calibration is complete, the system will save the calibration data and display the current normalized values:
-
-```
-Calibration saved to /Users/your_username/.cache/huggingface/lerobot/calibration/teleoperators/homunculus_glove/left.json
-
-----------------------------------
-NAME                     |     RAW |    NORM
-thumb_cmc                |    1744 |   58.33
-thumb_mcp                |    1468 |  100.00
-thumb_pip                |    1483 |   50.00
-thumb_dip                |    2152 |   78.57
-index_mcp_abduction      |    1916 |    3.45
-index_mcp_flexion        |    1884 |   66.67
-index_dip                |    1705 |   11.11
-middle_mcp_abduction     |    1679 |   57.14
-middle_mcp_flexion       |    2076 |   90.48
-middle_dip               |    1512 |   87.50
-ring_mcp_abduction       |    1914 |   46.67
-ring_mcp_flexion         |    1866 |   75.00
-ring_dip                 |    1994 |   50.00
-pinky_mcp_abduction      |    1725 |  60.03
-pinky_mcp_flexion        |    1791 |    8.33
-pinky_dip                |    1886 |   69.23
-
-time: 2.64ms (379 Hz)
-```
+Once calibration is complete, the system will save the calibration to `/Users/your_username/.cache/huggingface/lerobot/calibration/teleoperators/homunculus_glove/right.json`
 
 ### 1.3 Calibrate Arm
 
@@ -191,24 +174,22 @@ time: 2.93ms (341 Hz)
 
 Due to global variable conflicts in the Feetech middleware, teleoperation for arm and hand must run in separate shell sessions:
 
+### Hand
 ```bash
-# Terminal 1: Left Arm
-python examples/hope_jr/teleop/left_arm_teleop.py
-
-# Terminal 2: Right Arm
-python examples/hope_jr/teleop/right_arm_teleop.py
-
-# Terminal 3: Left Hand
-python examples/hope_jr/teleop/left_hand_teleop.py
-
-# Terminal 4: Right Hand
-python examples/hope_jr/teleop/right_hand_teleop.py
+python -m lerobot.teleoperate \
+    --robot.type=hope_jr_hand \
+    --robot.port=/dev/tty.usbmodem58760432281 \
+    --robot.id=blue \
+    --robot.side=right \
+    --teleop.type=homunculus_glove \
+    --teleop.port=/dev/tty.usbmodem11201 \
+    --teleop.id=red \
+    --teleop.side=right \
+    --display_data=true \
+    --fps=30
 ```
 
-## Step 3: Record, Replay, Train
-
-### Teleoperate
-
+### Arm
 ```bash
 python -m lerobot.teleoperate \
     --robot.type=hope_jr_hand \
@@ -222,6 +203,8 @@ python -m lerobot.teleoperate \
     --display_data=true \
     --fps=30
 ```
+
+## Step 3: Record, Replay, Train
 
 ### Record
 
