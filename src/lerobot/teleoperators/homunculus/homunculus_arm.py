@@ -169,8 +169,8 @@ class HomunculusArm(Teleoperator):
         user_pressed_enter = False
         while not user_pressed_enter:
             positions = self._read(joints, normalize=False)
-            mins = {joint: min(positions[joint], min_) for joint, min_ in mins.items()}
-            maxes = {joint: max(positions[joint], max_) for joint, max_ in maxes.items()}
+            mins = {joint: int(min(positions[joint], min_)) for joint, min_ in mins.items()}
+            maxes = {joint: int(max(positions[joint], max_)) for joint, max_ in maxes.items()}
 
             if display_values:
                 print("\n-------------------------------------------")
