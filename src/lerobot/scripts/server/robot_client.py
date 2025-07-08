@@ -125,6 +125,7 @@ class RobotClient:
         self._chunk_size_threshold = config.chunk_size_threshold
 
         self.action_queue = Queue()
+        self.action_queue_lock = threading.Lock()  # Protect queue operations
         self.action_queue_size = []
         self.start_barrier = threading.Barrier(2)  # 2 threads: action receiver, control loop
 
@@ -216,8 +217,9 @@ class RobotClient:
             return False
 
     def _inspect_action_queue(self):
-        queue_size = self.action_queue.qsize()
-        timestamps = sorted([action.get_timestep() for action in self.action_queue.queue])
+        with self.action_queue_lock:
+            queue_size = self.action_queue.qsize()
+            timestamps = sorted([action.get_timestep() for action in self.action_queue.queue])
         self.logger.debug(f"Queue size: {queue_size}, Queue contents: {timestamps}")
         return queue_size, timestamps
 
@@ -248,7 +250,7 @@ class RobotClient:
                 continue
 
             # If the new action's timestep is in the current action queue, aggregate it
-            # TODO(fracapuano): There is probably a way to do this with broadcasting of the two action tensors
+            # TODO: There is probably a way to do this with broadcasting of the two action tensors
             future_action_queue.put(
                 TimedAction(
                     timestamp=new_action.get_timestamp(),
@@ -259,8 +261,8 @@ class RobotClient:
                 )
             )
 
-        # TODO(fracapuano): Add a lock
-        self.action_queue = future_action_queue
+        with self.action_queue_lock:
+            self.action_queue = future_action_queue
 
     def receive_actions(self, verbose: bool = False):
         """Receive actions from the policy server"""
@@ -337,15 +339,17 @@ class RobotClient:
 
     def actions_available(self):
         """Check if there are actions available in the queue"""
-        return not self.action_queue.empty()
+        with self.action_queue_lock:
+            return not self.action_queue.empty()
 
     def _clear_action_queue(self):
         """Clear the existing queue"""
-        while not self.action_queue.empty():
-            try:
-                self.action_queue.get_nowait()
-            except Empty:
-                break
+        with self.action_queue_lock:
+            while not self.action_queue.empty():
+                try:
+                    self.action_queue.get_nowait()
+                except Empty:
+                    break
 
     def _action_tensor_to_action_dict(self, action_tensor: torch.Tensor) -> dict[str, float]:
         action = {key: action_tensor[i].item() for i, key in enumerate(self.robot.action_features)}
@@ -353,12 +357,15 @@ class RobotClient:
 
     def control_loop_action(self, verbose: bool = False) -> Optional[Action]:
         """Reading and performing actions in local queue"""
-        self.action_queue_size.append(self.action_queue.qsize())
 
-        # Get action from queue
-        get_start = time.perf_counter()
-        timed_action = self.action_queue.get_nowait()
-        get_end = time.perf_counter() - get_start
+        # Lock only for queue operations
+        with self.action_queue_lock:
+            self.action_queue_size.append(self.action_queue.qsize())
+
+            # Get action from queue
+            get_start = time.perf_counter()
+            timed_action = self.action_queue.get_nowait()
+            get_end = time.perf_counter() - get_start
 
         _performed_action = self.robot.send_action(
             self._action_tensor_to_action_dict(timed_action.get_action())
@@ -366,22 +373,25 @@ class RobotClient:
         self.latest_action = timed_action.get_timestep()
 
         if verbose:
+            with self.action_queue_lock:
+                current_queue_size = self.action_queue.qsize()
+
             self.logger.debug(
                 f"Ts={timed_action.get_timestamp()} | "
                 f"Action #{timed_action.get_timestep()} performed | "
-                f"Queue size: {self.action_queue.qsize()}"
+                f"Queue size: {current_queue_size}"
             )
 
             self.logger.debug(
-                f"Popping action from queue to perform took {get_end:.6f}s | "
-                f"Queue size: {self.action_queue.qsize()}"
+                f"Popping action from queue to perform took {get_end:.6f}s | Queue size: {current_queue_size}"
             )
 
         return _performed_action
 
     def _ready_to_send_observation(self):
         """Flags when the client is ready to send an observation"""
-        return self.action_queue.qsize() / self.action_chunk_size <= self._chunk_size_threshold
+        with self.action_queue_lock:
+            return self.action_queue.qsize() / self.action_chunk_size <= self._chunk_size_threshold
 
     def control_loop_observation(self, task: str, verbose: bool = False) -> Observation:
         try:
@@ -400,10 +410,13 @@ class RobotClient:
             obs_capture_time = time.perf_counter() - start_time
 
             # If there are no actions left in the queue, the observation must go through processing!
-            observation.must_go = self.must_go and self.action_queue.empty()
+            with self.action_queue_lock:
+                observation.must_go = self.must_go and self.action_queue.empty()
+                current_queue_size = self.action_queue.qsize()
+
             _ = self.send_observation(observation)
 
-            self.logger.debug(f"QUEUE SIZE: {self.action_queue.qsize()} (Must go: {observation.must_go})")
+            self.logger.debug(f"QUEUE SIZE: {current_queue_size} (Must go: {observation.must_go})")
             if observation.must_go:
                 # must-go flag will be set again after receiving actions
                 self.must_go = False
