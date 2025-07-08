@@ -117,16 +117,16 @@ def init_logging(
     console_level: str = "INFO",
     file_level: str = "DEBUG",
 ):
-    def custom_format(record):
+    def custom_format(record: logging.LogRecord) -> str:
         dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         fnameline = f"{record.pathname}:{record.lineno}"
 
         # NOTE: Display PID is useful for multi-process logging.
         if display_pid:
             pid_str = f"[PID: {os.getpid()}]"
-            message = f"{record.levelname} {pid_str} {dt} {fnameline[-15:]:>15} {record.msg}"
+            message = f"{record.levelname} {pid_str} {dt} {fnameline[-15:]:>15} {record.getMessage()}"
         else:
-            message = f"{record.levelname} {dt} {fnameline[-15:]:>15} {record.msg}"
+            message = f"{record.levelname} {dt} {fnameline[-15:]:>15} {record.getMessage()}"
         return message
 
     formatter = logging.Formatter()
