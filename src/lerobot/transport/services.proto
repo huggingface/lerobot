@@ -42,7 +42,6 @@ service AsyncInference {
   rpc GetActions(Empty) returns (Actions);
   rpc SendPolicyInstructions(PolicySetup) returns (Empty);
   rpc Ready(Empty) returns (Empty);
-  rpc Stop(Empty) returns (Empty);
 }
 
 enum TransferState {

@@ -49,12 +49,12 @@ from lerobot.scripts.server.helpers import (
     get_logger,
     observations_similar,
     raw_observation_to_observation,
-    receive_bytes_in_chunks,
 )
 from lerobot.transport import (
     services_pb2,  # type: ignore
     services_pb2_grpc,  # type: ignore
 )
+from lerobot.transport.utils import receive_bytes_in_chunks
 
 
 class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):

@@ -264,11 +264,6 @@ class AsyncInferenceStub:
                 request_serializer=src_dot_lerobot_dot_transport_dot_services__pb2.Empty.SerializeToString,
                 response_deserializer=src_dot_lerobot_dot_transport_dot_services__pb2.Empty.FromString,
                 _registered_method=True)
-        self.Stop = channel.unary_unary(
-                '/transport.AsyncInference/Stop',
-                request_serializer=src_dot_lerobot_dot_transport_dot_services__pb2.Empty.SerializeToString,
-                response_deserializer=src_dot_lerobot_dot_transport_dot_services__pb2.Empty.FromString,
-                _registered_method=True)
 
 
 class AsyncInferenceServicer:
@@ -302,12 +297,6 @@ class AsyncInferenceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def Stop(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
 
 def add_AsyncInferenceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -328,11 +317,6 @@ def add_AsyncInferenceServicer_to_server(servicer, server):
             ),
             'Ready': grpc.unary_unary_rpc_method_handler(
                     servicer.Ready,
-                    request_deserializer=src_dot_lerobot_dot_transport_dot_services__pb2.Empty.FromString,
-                    response_serializer=src_dot_lerobot_dot_transport_dot_services__pb2.Empty.SerializeToString,
-            ),
-            'Stop': grpc.unary_unary_rpc_method_handler(
-                    servicer.Stop,
                     request_deserializer=src_dot_lerobot_dot_transport_dot_services__pb2.Empty.FromString,
                     response_serializer=src_dot_lerobot_dot_transport_dot_services__pb2.Empty.SerializeToString,
             ),
@@ -445,33 +429,6 @@ class AsyncInference:
             request,
             target,
             '/transport.AsyncInference/Ready',
-            src_dot_lerobot_dot_transport_dot_services__pb2.Empty.SerializeToString,
-            src_dot_lerobot_dot_transport_dot_services__pb2.Empty.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def Stop(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/transport.AsyncInference/Stop',
             src_dot_lerobot_dot_transport_dot_services__pb2.Empty.SerializeToString,
             src_dot_lerobot_dot_transport_dot_services__pb2.Empty.FromString,
             options,
