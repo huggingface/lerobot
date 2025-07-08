@@ -183,15 +183,13 @@ def _default_batch_to_transition(batch: dict[str, Any]) -> EnvTransition:  # noq
     metadata without breaking the processor.
     """
 
-    # Handle observation and observation.* keys
+    # Extract observation keys
     observation_keys = {k: v for k, v in batch.items() if k.startswith("observation.")}
+    observation = observation_keys if observation_keys else None
 
-    observation = None
-    if observation_keys:
-        observation = {}
-        # Add observation.* keys to the observation dict
-        for key, value in observation_keys.items():
-            observation[key] = value
+    # Extract padding keys for complementary data
+    pad_keys = {k: v for k, v in batch.items() if "_is_pad" in k}
+    complementary_data = pad_keys if pad_keys else {}
 
     return (
         observation,
@@ -200,7 +198,7 @@ def _default_batch_to_transition(batch: dict[str, Any]) -> EnvTransition:  # noq
         batch.get("next.done", False),
         batch.get("next.truncated", False),
         batch.get("info", {}),
-        {},
+        complementary_data,
     )
 
 
@@ -216,7 +214,7 @@ def _default_transition_to_batch(transition: EnvTransition) -> dict[str, Any]:  
         done,
         truncated,
         info,
-        _,
+        complementary_data,
     ) = transition
 
     batch = {
@@ -227,11 +225,15 @@ def _default_transition_to_batch(transition: EnvTransition) -> dict[str, Any]:  
         "info": info,
     }
 
+    # Add padding data from complementary_data
+    if complementary_data:
+        pad_data = {k: v for k, v in complementary_data.items() if "_is_pad" in k}
+        batch.update(pad_data)
+
     # Handle observation - flatten dict to observation.* keys if it's a dict
     if isinstance(observation, dict):
-        # Check if this looks like a dict that was created from observation.* keys
-        for key, value in observation.items():
-            batch[key] = value
+        batch.update(observation)
+
     return batch
 
 
