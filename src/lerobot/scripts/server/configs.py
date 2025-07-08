@@ -18,13 +18,11 @@ from typing import Callable
 import torch
 
 from lerobot.robots.config import RobotConfig
-from lerobot.robots.utils import make_robot_from_config
 from lerobot.scripts.server.constants import (
     DEFAULT_FPS,
     DEFAULT_INFERENCE_LATENCY,
     DEFAULT_OBS_QUEUE_TIMEOUT,
 )
-from lerobot.scripts.server.helpers import map_robot_keys_to_lerobot_features
 
 # Aggregate function registry for CLI usage
 AGGREGATE_FUNCTIONS = {
@@ -170,9 +168,6 @@ class RobotClientConfig:
 
         if self.actions_per_chunk <= 0:
             raise ValueError(f"actions_per_chunk must be positive, got {self.actions_per_chunk}")
-
-        robot_instance = make_robot_from_config(self.robot)
-        self.lerobot_features = map_robot_keys_to_lerobot_features(robot_instance)
 
         self.aggregate_fn = get_aggregate_function(self.aggregate_fn_name)
 

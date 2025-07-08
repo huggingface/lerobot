@@ -17,13 +17,13 @@ Example command:
 ```shell
 python src/lerobot/scripts/server/robot_client.py \
     --robot.type=so100_follower \
-    --robot.port=/dev/tty.usbmodem585A0076841 \
-    --robot.cameras="{ laptop: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}, phone: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \
-    --robot.id=follower_so100 \
+    --robot.port=/dev/tty.usbmodem58760431541 \
+    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \
+    --robot.id=black \
     --task="dummy" \
     --server_address=127.0.0.1:8080 \
     --policy_type=act \
-    --pretrained_name_or_path=fracapuano/act_so100_test \
+    --pretrained_name_or_path=user/model \
     --policy_device=mps \
     --actions_per_chunk=50 \
     --chunk_size_threshold=0.5 \
@@ -67,6 +67,7 @@ from lerobot.scripts.server.helpers import (
     TimedAction,
     TimedObservation,
     get_logger,
+    map_robot_keys_to_lerobot_features,
     send_bytes_in_chunks,
     validate_robot_cameras_for_policy,
     visualize_action_queue_size,
@@ -90,6 +91,15 @@ class RobotClient:
         # Store configuration
         self.config = config
         self.robot = make_robot_from_config(config.robot)
+
+        # Load policy config for validation
+        policy_config = PreTrainedConfig.from_pretrained(config.pretrained_name_or_path)
+        policy_image_features = policy_config.image_features
+
+        # The cameras specified for inference must match the one supported by the policy chosen
+        lerobot_features = map_robot_keys_to_lerobot_features(self.robot)
+        validate_robot_cameras_for_policy(lerobot_features, policy_image_features)
+
         self.robot.connect()
 
         # Use environment variable if server_address is not provided in config
@@ -98,7 +108,7 @@ class RobotClient:
         self.policy_config = RemotePolicyConfig(
             config.policy_type,
             config.pretrained_name_or_path,
-            config.lerobot_features,
+            lerobot_features,
             config.actions_per_chunk,
             config.policy_device,
         )
@@ -441,22 +451,11 @@ class RobotClient:
 
 @draccus.wrap()
 def async_client(cfg: RobotClientConfig):
+    logging.info(pformat(asdict(cfg)))
+
     if cfg.robot.type not in SUPPORTED_ROBOTS:
         raise ValueError(f"Robot {cfg.robot.type} not yet supported!")
 
-    # Load policy config for validation
-    policy_config = PreTrainedConfig.from_pretrained(cfg.pretrained_name_or_path)
-    policy_image_features = policy_config.image_features
-
-    # The cameras specified for inference must match the one supported by the policy chosen
-    validate_robot_cameras_for_policy(cfg.lerobot_features, policy_image_features)
-
-    # If you want to use a different aggregate function, you can do:
-    # my_aggregate_fn = lambda old, new: 0.3 * old + 0.7 * new
-    # cfg.aggregate_fn = my_aggregate_fn
-
-    # Create client with unified config (robot created at init)
-    logging.info(pformat(asdict(cfg)))
     client = RobotClient(cfg)
 
     if client.start():

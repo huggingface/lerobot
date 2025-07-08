@@ -22,7 +22,6 @@ from pathlib import Path
 from threading import Event
 from typing import Any
 
-import matplotlib.pyplot as plt
 import torch
 
 from lerobot.configs.types import PolicyFeature
@@ -50,6 +49,8 @@ Observation = dict[str, torch.Tensor]
 
 
 def visualize_action_queue_size(action_queue_size: list[int]) -> None:
+    import matplotlib.pyplot as plt
+
     fig, ax = plt.subplots()
     ax.set_title("Action Queue Size Over Time")
     ax.set_xlabel("Environment steps")
