@@ -110,7 +110,7 @@ class TDMPCPolicy(PreTrainedPolicy):
         # CEM for the next step.
         self._prev_mean: torch.Tensor | None = None
 
-    @torch.no_grad
+    @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
         """Predict a chunk of actions given environment observations."""
         batch = {key: torch.stack(list(self._queues[key]), dim=1) for key in batch if key in self._queues}
