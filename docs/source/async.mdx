@@ -45,8 +45,8 @@ python src/lerobot/scripts/server/robot_client.py \
     --robot.id=follower_so100 \ # ROBOT: your robot id, to load calibration file
     --robot.cameras="{ laptop: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}, phone: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \ # POLICY: the cameras used to acquire frames, with keys matching the keys expected by the policy
     --task="dummy" \ # POLICY: The task to run the policy on (`Fold my t-shirt`). Not necessarily defined for all policies, such as `act`
-    --policy_type=act \ # POLICY: the type of policy to run
-    --pretrained_name_or_path=fracapuano/act_so100_test \ # POLICY: the model name/path on server to the checkpoint to run
+    --policy_type=your_policy_type \ # POLICY: the type of policy to run (smolvla, act, etc)
+    --pretrained_name_or_path=user/model \ # POLICY: the model name/path on server to the checkpoint to run (e.g., lerobot/smolvla_base)
     --policy_device=mps \ # POLICY: the device to run the policy on, on the server
     --actions_per_chunk=50 \ # POLICY: the number of actions to output at once
     --chunk_size_threshold=0.5 \ # CLIENT: the threshold for the chunk size before sending a new observation to the server
@@ -130,17 +130,20 @@ The `RobotClient` streams observations to the `PolicyServer`, and receives actio
 <hfoptions id="start_robot_client">
 <hfoption id="Command">
 ```bash
-python -m lerobot.scripts.server.robot_client \
-    --server_address="localhost:8080" \
-    --robot.type="so100_follower" \  # <-- change this to your robot's type
-    --robot.port="/dev/tty.usbmodem585A0076841" \  # <-- change this to your robot's port (find_port.py)
-    --robot.id="follower_so100" \  # id of the robot
-    --robot.cameras="{"laptop": {"index_or_path": 0, "width": 1920, "height": 1080, "fps": 30}}" \  # cameras of the robot. They must match the camera keys expected by the policy
-    --policy.device="mps" \  # device to run the policy on
-    --chunk_size_threshold=0.6 \  # Threshold for the chunk size
-    --task="Fold my T-shirt"  # Textual description of the task to run the model runs
-    --policy.type=... \  # Change to the policy type to run
-    --policy.pretrained_name_or_path=... \  # path of the policy or pretrained name if available on the Hub
+python src/lerobot/scripts/server/robot_client.py \
+    --server_address=127.0.0.1:8080 \ # SERVER: the host address and port of the policy server
+    --robot.type=so100_follower \ # ROBOT: your robot type
+    --robot.port=/dev/tty.usbmodem585A0076841 \ # ROBOT: your robot port
+    --robot.id=follower_so100 \ # ROBOT: your robot id, to load calibration file
+    --robot.cameras="{ laptop: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}, phone: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \ # POLICY: the cameras used to acquire frames, with keys matching the keys expected by the policy
+    --task="dummy" \ # POLICY: The task to run the policy on (`Fold my t-shirt`). Not necessarily defined for all policies, such as `act`
+    --policy_type=your_policy_type \ # POLICY: the type of policy to run (smolvla, act, etc)
+    --pretrained_name_or_path=user/model \ # POLICY: the model name/path on server to the checkpoint to run (e.g., lerobot/smolvla_base)
+    --policy_device=mps \ # POLICY: the device to run the policy on, on the server
+    --actions_per_chunk=50 \ # POLICY: the number of actions to output at once
+    --chunk_size_threshold=0.5 \ # CLIENT: the threshold for the chunk size before sending a new observation to the server
+    --aggregate_fn_name=weighted_average \ # CLIENT: the function to aggregate actions on overlapping portions
+    --debug_visualize_queue_size=True # CLIENT: whether to visualize the queue size at runtime
 ```
 </hfoption>
 <hfoption id="API example">
