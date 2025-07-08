@@ -17,7 +17,6 @@ import os
 from dataclasses import dataclass
 
 os.environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"
-import pygame
 
 from lerobot.motors import MotorCalibration, MotorsBus
 
@@ -58,6 +57,8 @@ class RangeSlider:
     """One motor = one slider row"""
 
     def __init__(self, motor, idx, res, calibration, present, label_pad, base_y):
+        import pygame
+
         self.motor = motor
         self.res = res
         self.x0 = 40 + label_pad
@@ -89,10 +90,14 @@ class RangeSlider:
         self.tick_val = max(0, min(v, self.res))
 
     def _triangle_hit(self, pos):
+        import pygame
+
         tri_top = self.y - BAR_THICKNESS // 2 - 2
         return pygame.Rect(self.pos_x - TRI_W // 2, tri_top - TRI_H, TRI_W, TRI_H).collidepoint(pos)
 
     def handle_event(self, e):
+        import pygame
+
         if e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
             if self.min_btn.collidepoint(e.pos):
                 self.min_x, self.min_v = self.pos_x, self.pos_v
@@ -124,12 +129,16 @@ class RangeSlider:
             self.pos_v = self._val_from_pos(self.pos_x)
 
     def _draw_button(self, surf, rect, text):
+        import pygame
+
         clr = BTN_COLOR_HL if rect.collidepoint(pygame.mouse.get_pos()) else BTN_COLOR
         pygame.draw.rect(surf, clr, rect, border_radius=4)
         t = self.font.render(text, True, TEXT_COLOR)
         surf.blit(t, (rect.centerx - t.get_width() // 2, rect.centery - t.get_height() // 2))
 
     def draw(self, surf):
+        import pygame
+
         # motor name above set-min button (right-aligned)
         name_surf = self.font.render(self.motor, True, TEXT_COLOR)
         surf.blit(
@@ -208,6 +217,8 @@ class RangeSlider:
 
 class RangeFinderGUI:
     def __init__(self, bus: MotorsBus, groups: dict[str, list[str]] | None = None):
+        import pygame
+
         self.bus = bus
         self.groups = groups if groups is not None else {"all": list(bus.motors)}
         self.group_names = list(groups)
@@ -246,6 +257,8 @@ class RangeFinderGUI:
         self._adjust_height()
 
     def _adjust_height(self):
+        import pygame
+
         motors = self.groups[self.current_group]
         new_h = self.base_y + PADDING_Y * len(motors) + 40
         if new_h != self.screen.get_height():
@@ -269,6 +282,8 @@ class RangeFinderGUI:
             )
 
     def _draw_dropdown(self):
+        import pygame
+
         # collapsed box
         hover = self.dd_btn.collidepoint(pygame.mouse.get_pos())
         pygame.draw.rect(self.screen, DD_COLOR_HL if hover else DD_COLOR, self.dd_btn, border_radius=6)
@@ -301,6 +316,8 @@ class RangeFinderGUI:
             )
 
     def _handle_dropdown_event(self, e):
+        import pygame
+
         if e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
             if self.dd_btn.collidepoint(e.pos):
                 self.dd_open = not self.dd_open
@@ -335,6 +352,8 @@ class RangeFinderGUI:
             s.max_x = s._pos_from_val(s.max_v)
 
     def run(self) -> dict[str, MotorCalibration]:
+        import pygame
+
         while True:
             for e in pygame.event.get():
                 if e.type == pygame.QUIT:

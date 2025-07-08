@@ -119,10 +119,7 @@ class HopeJrArm(Robot):
 
     def configure(self) -> None:
         with self.bus.torque_disabled():
-            for motor in self.bus.motors:
-                self.bus.write("Return_Delay_Time", motor, 0)
-                self.bus.write("Maximum_Acceleration", motor, 30)
-                self.bus.write("Acceleration", motor, 30)
+            self.bus.configure_motors(maximum_acceleration=30, acceleration=30)
 
     def setup_motors(self) -> None:
         # TODO: add docstring
