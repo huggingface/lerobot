@@ -1,0 +1,18 @@
+robot:
+  type: cs66
+  ip: 192.168.101.11
+
+  cameras:
+    main_camera:
+      type: opencv
+      index_or_path: 4
+      width: 640
+      height: 400
+      fps: 30
+
+teleop:
+  type: gello
+  port: /dev/ttyUSB0
+  id: main_gello
+
+display_data: true

@@ -49,6 +49,7 @@ from lerobot.common.robots import (  # noqa: F401
     so100_follower,
     dual_so100_follower,
     so101_follower,
+    cs66, 
 )
 from lerobot.common.teleoperators import (
     Teleoperator,
@@ -59,7 +60,7 @@ from lerobot.common.utils.robot_utils import busy_wait
 from lerobot.common.utils.utils import init_logging, move_cursor_up
 from lerobot.common.utils.visualization_utils import _init_rerun
 
-from .common.teleoperators import gamepad, koch_leader, so100_leader, dual_so100_leader, so101_leader  # noqa: F401
+from .common.teleoperators import gamepad, koch_leader, so100_leader, dual_so100_leader, so101_leader, gello  # noqa: F401
 
 
 @dataclass
@@ -85,14 +86,16 @@ def teleop_loop(
             observation = robot.get_observation()
             for obs, val in observation.items():
                 if isinstance(val, float):
-                    rr.log(f"observation_{obs}", rr.Scalar(val))
+                    rr.log(f"observation_{obs}", rr.Scalars(val))
                 elif isinstance(val, np.ndarray):
                     rr.log(f"observation_{obs}", rr.Image(val), static=True)
             for act, val in action.items():
                 if isinstance(val, float):
-                    rr.log(f"action_{act}", rr.Scalar(val))
+                    rr.log(f"action_{act}", rr.Scalars(val))
 
-        robot.send_action(action)
+        # robot.send_action(action)
+        robot_joints = robot.send_action(action) # test
+
         dt_s = time.perf_counter() - loop_start
         busy_wait(1 / fps - dt_s)
 
@@ -103,6 +106,16 @@ def teleop_loop(
         for motor, value in action.items():
             print(f"{motor:<{display_len}} | {value:>7.2f}")
         print(f"\ntime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
+        
+        #################################
+        # 打印 robot_joints 对应关节名和数值
+        #  test #
+        # print("\nRobot Joints:")
+        # for i, val in enumerate(robot_joints, start=1):
+        #     print(f"  joint_{i}: {val:>8.2f}")
+
+        # print (ee_pose)
+        ##################################
 
         if duration is not None and time.perf_counter() - start >= duration:
             return
