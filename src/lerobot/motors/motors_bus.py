@@ -586,7 +586,7 @@ class MotorsBus(abc.ABC):
         pass
 
     @contextmanager
-    def torque_disabled(self):
+    def torque_disabled(self, motors: int | str | list[str] | None = None):
         """Context-manager that guarantees torque is re-enabled.
 
         This helper is useful to temporarily disable torque when configuring motors.
@@ -596,11 +596,11 @@ class MotorsBus(abc.ABC):
             ...     # Safe operations here
             ...     pass
         """
-        self.disable_torque()
+        self.disable_torque(motors)
         try:
             yield
         finally:
-            self.enable_torque()
+            self.enable_torque(motors)
 
     def set_timeout(self, timeout_ms: int | None = None):
         """Change the packet timeout used by the SDK.
@@ -653,12 +653,13 @@ class MotorsBus(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def write_calibration(self, calibration_dict: dict[str, MotorCalibration]) -> None:
-        """Write calibration parameters to the motors and cache them.
+    def write_calibration(self, calibration_dict: dict[str, MotorCalibration], cache: bool = True) -> None:
+        """Write calibration parameters to the motors and optionally cache them.
 
         Args:
             calibration_dict (dict[str, MotorCalibration]): Calibration obtained from
                 :pymeth:`read_calibration` or crafted by the user.
+            cache (bool, optional): Save the calibration to :pyattr:`calibration`. Defaults to True.
         """
         pass
 
