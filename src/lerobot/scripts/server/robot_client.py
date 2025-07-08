@@ -1,26 +1,74 @@
-import argparse
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""
+Example command:
+```shell
+python src/lerobot/scripts/server/robot_client.py \
+    --robot.type=so100_follower \
+    --robot.port=/dev/tty.usbmodem58760431541 \
+    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \
+    --robot.id=black \
+    --task="dummy" \
+    --server_address=127.0.0.1:8080 \
+    --policy_type=act \
+    --pretrained_name_or_path=user/model \
+    --policy_device=mps \
+    --actions_per_chunk=50 \
+    --chunk_size_threshold=0.5 \
+    --aggregate_fn_name=weighted_average \
+    --debug_visualize_queue_size=True
+```
+"""
+
+import logging
 import pickle  # nosec
 import threading
 import time
+from dataclasses import asdict
+from pprint import pformat
 from queue import Empty, Queue
 from typing import Callable, Optional
 
+import draccus
 import grpc
 import torch
 
+from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
+from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.configs.policies import PreTrainedConfig
+from lerobot.robots import (  # noqa: F401
+    Robot,
+    RobotConfig,
+    koch_follower,
+    make_robot_from_config,
+    so100_follower,
+    so101_follower,
+)
 from lerobot.scripts.server.configs import RobotClientConfig
+from lerobot.scripts.server.constants import SUPPORTED_ROBOTS
 from lerobot.scripts.server.helpers import (
     Action,
     FPSTracker,
     Observation,
     RawObservation,
+    RemotePolicyConfig,
     TimedAction,
     TimedObservation,
-    TinyPolicyConfig,
     get_logger,
-    make_robot,
     map_robot_keys_to_lerobot_features,
+    send_bytes_in_chunks,
     validate_robot_cameras_for_policy,
     visualize_action_queue_size,
 )
@@ -28,22 +76,41 @@ from lerobot.transport import (
     services_pb2,  # type: ignore
     services_pb2_grpc,  # type: ignore
 )
-from lerobot.transport.utils import send_bytes_in_chunks
 
 
 class RobotClient:
     prefix = "robot_client"
-    logger = get_logger(prefix)
+    logger = get_logger(prefix)  # TODO(fracapuano): Reduce logging verbosity
 
     def __init__(self, config: RobotClientConfig):
+        """Initialize RobotClient with unified configuration.
+
+        Args:
+            config: RobotClientConfig containing all configuration parameters
+        """
         # Store configuration
         self.config = config
+        self.robot = make_robot_from_config(config.robot)
+
+        # Load policy config for validation
+        policy_config = PreTrainedConfig.from_pretrained(config.pretrained_name_or_path)
+        policy_image_features = policy_config.image_features
+
+        # The cameras specified for inference must match the one supported by the policy chosen
+        lerobot_features = map_robot_keys_to_lerobot_features(self.robot)
+        validate_robot_cameras_for_policy(lerobot_features, policy_image_features)
+
+        self.robot.connect()
 
         # Use environment variable if server_address is not provided in config
         self.server_address = config.server_address
 
-        self.policy_config = TinyPolicyConfig(
-            config.policy_type, config.pretrained_name_or_path, config.lerobot_features, config.policy_device
+        self.policy_config = RemotePolicyConfig(
+            config.policy_type,
+            config.pretrained_name_or_path,
+            lerobot_features,
+            config.actions_per_chunk,
+            config.policy_device,
         )
         self.channel = grpc.insecure_channel(self.server_address)
         self.stub = services_pb2_grpc.AsyncInferenceStub(self.channel)
@@ -58,16 +125,16 @@ class RobotClient:
         self._chunk_size_threshold = config.chunk_size_threshold
 
         self.action_queue = Queue()
+        self.action_queue_size = []
         self.start_barrier = threading.Barrier(2)  # 2 threads: action receiver, control loop
 
         # FPS measurement
         self.fps_tracker = FPSTracker(target_fps=self.config.fps)
 
-        self.robot = self.config.robot
-        self.robot.connect()
-
         self.logger.info("Robot connected and ready")
 
+        # TODO(fracapuano): Either find a logic local to the control_loop or replace this with an event. This such that we can remove
+        # the must_go in the receive_actions() thread, otherwise we need a lock.
         self.must_go = True  # does the observation qualify for direct processing on the policy server?
 
     @property
@@ -97,7 +164,6 @@ class RobotClient:
             self.stub.SendPolicyInstructions(policy_setup)
 
             self._running_event.set()
-            self.action_queue_size = []
 
             return True
 
@@ -122,10 +188,10 @@ class RobotClient:
         """Send observation to the policy server.
         Returns True if the observation was sent successfully, False otherwise."""
         if not self.running:
-            self.logger.warning("Client not running")
-            return False
+            raise RuntimeError("Client not running. Run RobotClient.start() before sending observations.")
 
-        assert isinstance(obs, TimedObservation), "Input observation needs to be a TimedObservation!"
+        if not isinstance(obs, TimedObservation):
+            raise ValueError("Input observation needs to be a TimedObservation!")
 
         start_time = time.perf_counter()
         observation_bytes = pickle.dumps(obs)
@@ -149,10 +215,7 @@ class RobotClient:
             self.logger.error(f"Error sending observation #{obs.get_timestep()}: {e}")
             return False
 
-    def _validate_action(self, action: TimedAction):
-        """Received actions are keps only when they have been produced for now or later, never before"""
-        return not action.get_timestep() <= self.latest_action
-
+    # TODO(fracapuano): Reduce logging verbosity
     def _inspect_action_queue(self):
         queue_size = self.action_queue.qsize()
         timestamps = sorted([action.get_timestep() for action in self.action_queue.queue])
@@ -171,21 +234,24 @@ class RobotClient:
             def aggregate_fn(x1, x2):
                 return x2
 
-        action_intersections: list[torch.Tensor] = []
+        future_action_queue = Queue()
         current_action_queue = {
             action.get_timestep(): action.get_action() for action in self.action_queue.queue
         }
 
         for new_action in incoming_actions:
-            if not self._validate_action(new_action):
+            # New action is older than the latest action in the queue, skip it
+            if new_action.get_timestep() <= self.latest_action:
                 continue
 
+            # If the new action's timestep is not in the current action queue, add it directly
             elif new_action.get_timestep() not in current_action_queue:
-                action_intersections.append(new_action)
+                future_action_queue.put(new_action)
                 continue
 
+            # If the new action's timestep is in the current action queue, aggregate it
             # TODO(fracapuano): There is probably a way to do this with broadcasting of the two action tensors
-            action_intersections.append(
+            future_action_queue.put(
                 TimedAction(
                     timestamp=new_action.get_timestamp(),
                     timestep=new_action.get_timestep(),
@@ -195,12 +261,8 @@ class RobotClient:
                 )
             )
 
-        new_queue = Queue()
-        for action in action_intersections:
-            # if self._validate_action(action):
-            new_queue.put(action)
-
-        self.action_queue = new_queue
+        # TODO(fracapuano): Add a lock
+        self.action_queue = future_action_queue
 
     def receive_actions(self):
         """Receive actions from the policy server"""
@@ -241,6 +303,7 @@ class RobotClient:
                     self.logger.info(
                         f"Received action chunk for step #{first_action_timestep} | "
                         f"Latest action: #{self.latest_action} | "
+                        f"Incoming actions: {incoming_timesteps[0]}:{incoming_timesteps[-1]} | "
                         f"Network latency (server->client): {server_to_client_latency:.2f}ms | "
                         f"Deserialization time: {deserialize_time * 1000:.2f}ms"
                     )
@@ -270,18 +333,9 @@ class RobotClient:
             except grpc.RpcError as e:
                 self.logger.error(f"Error receiving actions: {e}")
 
-    def _actions_available(self):
+    def actions_available(self):
         """Check if there are actions available in the queue"""
         return not self.action_queue.empty()
-
-    def _get_next_action(self) -> Optional[TimedAction]:
-        """Get the next action from the queue"""
-        try:
-            action = self.action_queue.get_nowait()
-            return action
-
-        except Empty:
-            return None
 
     def _clear_action_queue(self):
         """Clear the existing queue"""
@@ -295,8 +349,18 @@ class RobotClient:
         action = {key: action_tensor[i].item() for i, key in enumerate(self.robot.action_features)}
         return action
 
-    def _perform_action(self, timed_action: TimedAction) -> Action:
-        self.robot.send_action(self._action_tensor_to_action_dict(timed_action.get_action()))
+    def control_loop_action(self) -> Optional[Action]:
+        """Reading and performing actions in local queue"""
+        self.action_queue_size.append(self.action_queue.qsize())
+
+        # Get action from queue
+        get_start = time.perf_counter()
+        timed_action = self.action_queue.get_nowait()
+        get_end = time.perf_counter() - get_start
+
+        _performed_action = self.robot.send_action(
+            self._action_tensor_to_action_dict(timed_action.get_action())
+        )
         self.latest_action = timed_action.get_timestep()
 
         self.logger.debug(
@@ -304,19 +368,6 @@ class RobotClient:
             f"Action #{timed_action.get_timestep()} performed | "
             f"Queue size: {self.action_queue.qsize()}"
         )
-
-        return timed_action.get_action()
-
-    def control_loop_action(self) -> Optional[Action]:
-        """Reading and performing actions in local queue"""
-        self.action_queue_size.append(self.action_queue.qsize())
-
-        # Get action from queue
-        get_start = time.perf_counter()
-        timed_action = self._get_next_action()
-        get_end = time.perf_counter() - get_start
-
-        _performed_action = self._perform_action(timed_action)
 
         self.logger.debug(
             f"Popping action from queue to perform took {get_end:.6f}s | "
@@ -329,16 +380,25 @@ class RobotClient:
         """Flags when the client is ready to send an observation"""
         return self.action_queue.qsize() / self.action_chunk_size <= self._chunk_size_threshold
 
-    def control_loop_observation(self, get_observation_fn) -> Observation:
+    def control_loop_observation(self, task: str) -> Observation:
         try:
             # Get serialized observation bytes from the function
             start_time = time.perf_counter()
-            observation = get_observation_fn()
+
+            raw_observation: RawObservation = self.robot.get_observation()
+            raw_observation["task"] = task
+
+            observation = TimedObservation(
+                timestamp=time.time(),  # need time.time() to compare timestamps across client and server
+                observation=raw_observation,
+                timestep=max(self.latest_action, 0),
+            )
+
             obs_capture_time = time.perf_counter() - start_time
 
             # If there are no actions left in the queue, the observation must go through processing!
             observation.must_go = self.must_go and self.action_queue.empty()
-            self.send_observation(observation)
+            _ = self.send_observation(observation)
 
             self.logger.debug(f"QUEUE SIZE: {self.action_queue.qsize()} (Must go: {observation.must_go})")
             if observation.must_go:
@@ -358,152 +418,47 @@ class RobotClient:
                 f"Ts={observation.get_timestamp():.6f} | Capturing observation took {obs_capture_time:.6f}s"
             )
 
-            # The actual observation is wrapped in a TimedObservation, get_observation() returns the tensor
-            _captured_observation = observation.get_observation()
-            return _captured_observation
+            return raw_observation
 
         except Exception as e:
             self.logger.error(f"Error in observation sender: {e}")
 
-    def control_loop(self, get_observation_fn: Callable[[], Observation]) -> tuple[Observation, Action]:
+    def control_loop(self, task: str) -> tuple[Observation, Action]:
         """Combined function for executing actions and streaming observations"""
         # Wait at barrier for synchronized start
         self.start_barrier.wait()
         self.logger.info("Control loop thread starting")
 
-        control_loops = 0
         _performed_action = None
         _captured_observation = None
 
         while self.running:
             control_loop_start = time.perf_counter()
             """Control loop: (1) Performing actions, when available"""
-            if self._actions_available():
+            if self.actions_available():
                 _performed_action = self.control_loop_action()
 
             """Control loop: (2) Streaming observations to the remote policy server"""
             if self._ready_to_send_observation():
-                _captured_observation = self.control_loop_observation(get_observation_fn)
+                _captured_observation = self.control_loop_observation(task)
 
-            self.logger.warning(f"Control loop (ms): {(time.perf_counter() - control_loop_start) * 1000:.2f}")
+            self.logger.info(f"Control loop (ms): {(time.perf_counter() - control_loop_start) * 1000:.2f}")
             # Dynamically adjust sleep time to maintain the desired control frequency
             time.sleep(max(0, self.config.environment_dt - (time.perf_counter() - control_loop_start)))
-
-            control_loops += 1
 
         return _captured_observation, _performed_action
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Robot client for executing tasks via policy server")
-    parser.add_argument(
-        "--task",
-        type=str,
-        default="Pick up the red cube and put in the box",
-        help="Task instruction for the robot to execute (e.g., 'fold my tshirt')",
-    )
-    parser.add_argument("--verbose", type=int, default=0, help="Verbosity level (default: 0)")
-    parser.add_argument(
-        "--server-address",
-        type=str,
-        default="localhost:8080",
-        help="Server address (default: localhost:8080)",
-    )
-    parser.add_argument("--policy-type", type=str, default="act", help="Policy type (default: smolvla)")
-    parser.add_argument(
-        "--pretrained-name-or-path",
-        type=str,
-        default="fracapuano/act_so100_test",
-        help="Pretrained model name or path (default: lerobot/smolvla_base)",
-    )
-    parser.add_argument(
-        "--policy-device", type=str, default="mps", help="Device for policy inference (default: cuda)"
-    )
-    parser.add_argument(
-        "--chunk-size-threshold",
-        type=float,
-        default=0.5,
-        help="Chunk size threshold (`g` in the paper, default: 0.5)",
-    )
-    parser.add_argument(
-        "--robot",
-        type=str,
-        default="so100",
-        help="Robot name, as per the `make_robot` function (default: so100)",
-    )
+@draccus.wrap()
+def async_client(cfg: RobotClientConfig):
+    logging.info(pformat(asdict(cfg)))
 
-    parser.add_argument(
-        "--robot-port",
-        type=str,
-        default="/dev/tty.usbmodem585A0076841",
-        help="Port on which to read/write robot joint status (e.g., '/dev/tty.usbmodem575E0031751'). Find your port with lerobot/find_port.py",
-    )
+    if cfg.robot.type not in SUPPORTED_ROBOTS:
+        raise ValueError(f"Robot {cfg.robot.type} not yet supported!")
 
-    parser.add_argument(
-        "--robot-id",
-        type=str,
-        default="follower_so100",
-        help="ID of the robot to connect to (default: follower_so100)",
-    )
-
-    parser.add_argument(
-        "--robot-cameras",
-        type=str,
-        default='{"laptop": {"index_or_path": 0, "width": 640, "height": 480, "fps": 30}, "phone": {"index_or_path": 1, "width": 640, "height": 480, "fps": 30}}',
-        help="Cameras of the robot to connect to (default: {'laptop': {'index_or_path': 0, 'width': 1920, 'height': 1080, 'fps': 30}, 'phone': {'index_or_path': 1, 'width': 1920, 'height': 1080, 'fps': 30}})",
-    )
-
-    parser.add_argument(
-        "--debug-visualize-queue-size",
-        action="store_true",
-        help="Trigger visualization of action queue size upon stopping the client, to tweak client hyperparameters (default: False)",
-    )
-
-    return parser.parse_args()
-
-
-def async_client(args: argparse.Namespace):
-    robot = make_robot(args)
-
-    # Load policy config for validation
-    policy_config = PreTrainedConfig.from_pretrained(args.pretrained_name_or_path)
-    policy_image_features = policy_config.image_features
-
-    lerobot_features = map_robot_keys_to_lerobot_features(robot)
-
-    # The cameras specified for inference must match the one supported by the policy chosen
-    validate_robot_cameras_for_policy(lerobot_features, policy_image_features)
-
-    # Create config from parsed arguments
-    config = RobotClientConfig(
-        robot=robot,
-        policy_type=args.policy_type,
-        pretrained_name_or_path=args.pretrained_name_or_path,
-        lerobot_features=lerobot_features,
-        server_address=args.server_address,
-        policy_device=args.policy_device,
-        chunk_size_threshold=args.chunk_size_threshold,
-        aggregate_fn=lambda old, new: 0.3 * old + 0.7 * new,
-    )
-
-    # Create client with config
-    client = RobotClient(config)
+    client = RobotClient(cfg)
 
     if client.start():
-
-        def make_observation() -> TimedObservation:
-            # Function to make observations starting from the robot's get_observation() method
-            observation: RawObservation = client.robot.get_observation()
-            observation["task"] = args.task
-
-            observation = TimedObservation(
-                timestamp=time.time(),  # need time.time() to compare timestamps across client and server
-                observation=observation,
-                timestep=max(client.latest_action, 0),
-            )
-
-            return observation
-
         client.logger.info("Starting action receiver thread...")
 
         # Create and start action receiver thread
@@ -514,19 +469,16 @@ def async_client(args: argparse.Namespace):
 
         try:
             # The main thread runs the control loop
-            client.control_loop(make_observation)
-
-        except KeyboardInterrupt:
-            client.stop()
-            action_receiver_thread.join()
+            client.control_loop(task=cfg.task)
 
         finally:
-            if args.debug_visualize_queue_size:
+            client.stop()
+            action_receiver_thread.join()
+            if cfg.debug_visualize_queue_size:
                 visualize_action_queue_size(client.action_queue_size)
 
             client.logger.info("Client stopped")
 
 
 if __name__ == "__main__":
-    args = parse_args()
-    async_client(args)  # run the client
+    async_client()  # run the client
