@@ -228,8 +228,7 @@ class RobotClient:
         aggregate_fn: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None,
     ):
         """Finds the same timestep actions in the queue and aggregates them using the aggregate_fn"""
-        # TODO(fracapuano): move outside of the function and make aggregate_fn an always required argument
-        if not aggregate_fn:
+        if aggregate_fn is None:
             # default aggregate function: take the latest action
             def aggregate_fn(x1, x2):
                 return x2
