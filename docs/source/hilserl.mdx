@@ -24,6 +24,7 @@ This guide provides step-by-step instructions for training a robot policy using 
 - A gamepad (recommended) or keyboard to control the robot
 - A Nvidia GPU
 - A real robot with a follower and leader arm (optional if you use the keyboard or the gamepad)
+- A URDF file for the robot for the kinematics package (check `lerobot/common/model/kinematics.py`)
 
 ## What kind of tasks can I train?
 
@@ -50,12 +51,12 @@ pip install -e ".[hilserl]"
 
 ### Understanding Configuration
 
-The training process begins with proper configuration for the HILSerl environment. The configuration class of interest is `HILSerlRobotEnvConfig` in `lerobot/common/envs/configs.py`. Which is defined as:
+The training process begins with proper configuration for the HILSerl environment. The configuration class of interest is `HILSerlRobotEnvConfig` in `lerobot/envs/configs.py`. Which is defined as:
 
 ```python
 class HILSerlRobotEnvConfig(EnvConfig):
-    robot: RobotConfig | None = None    # Main robot agent (defined in `lerobot/common/robots`)
-    teleop: TeleoperatorConfig | None = None    # Teleoperator agent, e.g., gamepad or leader arm, (defined in `lerobot/common/teleoperators`)
+    robot: RobotConfig | None = None    # Main robot agent (defined in `lerobot/robots`)
+    teleop: TeleoperatorConfig | None = None    # Teleoperator agent, e.g., gamepad or leader arm, (defined in `lerobot/teleoperators`)
     wrapper: EnvTransformConfig | None = None    # Environment wrapper settings; check `lerobot/scripts/server/gym_manipulator.py`
     fps: int = 10    # Control frequency
     name: str = "real_robot"    # Environment name
@@ -172,7 +173,7 @@ class SO100FollowerEndEffectorConfig(SO100FollowerConfig):
     )
 ```
 
-The `Teleoperator` defines the teleoperation device. You can check the list of available teleoperators in `lerobot/common/teleoperators`.
+The `Teleoperator` defines the teleoperation device. You can check the list of available teleoperators in `lerobot/teleoperators`.
 
 **Setting up the Gamepad**
 
@@ -226,7 +227,7 @@ During the online training, press `space` to take over the policy and `space` ag
 Start the recording process, an example of the config file can be found [here](https://huggingface.co/datasets/aractingi/lerobot-example-config-files/blob/main/env_config_so100.json):
 
 ```bash
-python lerobot/scripts/rl/gym_manipulator.py --config_path lerobot/configs/env_config_so100.json
+python -m lerobot.scripts.rl.gym_manipulator --config_path src/lerobot/configs/env_config_so100.json
 ```
 
 During recording:
@@ -256,7 +257,7 @@ Note: If you already know the crop parameters, you can skip this step and just s
 Use the `crop_dataset_roi.py` script to interactively select regions of interest in your camera images:
 
 ```bash
-python lerobot/scripts/rl/crop_dataset_roi.py --repo-id username/pick_lift_cube
+python -m lerobot.scripts.rl.crop_dataset_roi --repo-id username/pick_lift_cube
 ```
 
 1. For each camera view, the script will display the first frame
@@ -313,7 +314,7 @@ Before training, you need to collect a dataset with labeled examples. The `recor
 To collect a dataset, you need to modify some parameters in the environment configuration based on HILSerlRobotEnvConfig.
 
 ```bash
-python lerobot/scripts/rl/gym_manipulator.py --config_path lerobot/configs/reward_classifier_train_config.json
+python -m lerobot.scripts.rl.gym_manipulator --config_path src/lerobot/configs/reward_classifier_train_config.json
 ```
 
 **Key Parameters for Data Collection**
@@ -387,7 +388,7 @@ Example configuration for training the [reward classifier](https://huggingface.c
 To train the classifier, use the `train.py` script with your configuration:
 
 ```bash
-python lerobot/scripts/train.py --config_path path/to/reward_classifier_train_config.json
+python -m lerobot.scripts.train --config_path path/to/reward_classifier_train_config.json
 ```
 
 **Deploying and Testing the Model**
@@ -410,7 +411,7 @@ or set the argument in the json config file.
 
 Run `gym_manipulator.py` to test the model.
 ```bash
-python lerobot/scripts/rl/gym_manipulator.py --config_path path/to/env_config.json
+python -m lerobot.scripts.rl.gym_manipulator --config_path path/to/env_config.json
 ```
 
 The reward classifier will automatically provide rewards based on the visual input from the robot's cameras.
@@ -422,17 +423,17 @@ The reward classifier will automatically provide rewards based on the visual inp
 
 2. **Collect a dataset**:
    ```bash
-   python lerobot/scripts/rl/gym_manipulator.py --config_path lerobot/configs/env_config.json
+   python -m lerobot.scripts.rl.gym_manipulator --config_path src/lerobot/configs/env_config.json
    ```
 
 3. **Train the classifier**:
    ```bash
-   python lerobot/scripts/train.py --config_path lerobot/configs/reward_classifier_train_config.json
+   python -m lerobot.scripts.train --config_path src/lerobot/configs/reward_classifier_train_config.json
    ```
 
 4. **Test the classifier**:
    ```bash
-   python lerobot/scripts/rl/gym_manipulator.py --config_path lerobot/configs/env_config.json
+   python -m lerobot.scripts.rl.gym_manipulator --config_path src/lerobot/configs/env_config.json
    ```
 
 ### Training with Actor-Learner
@@ -446,7 +447,7 @@ Create a training configuration file (example available [here](https://huggingfa
 1. Configure the policy settings (`type="sac"`, `device`, etc.)
 2. Set `dataset` to your cropped dataset
 3. Configure environment settings with crop parameters
-4. Check the other parameters related to SAC in [configuration_sac.py](https://github.com/huggingface/lerobot/blob/19bb621a7d0a31c20cd3cc08b1dbab68d3031454/lerobot/common/policies/sac/configuration_sac.py#L79).
+4. Check the other parameters related to SAC in [configuration_sac.py](https://github.com/huggingface/lerobot/blob/19bb621a7d0a31c20cd3cc08b1dbab68d3031454/lerobot/policies/sac/configuration_sac.py#L79).
 5. Verify that the `policy` config is correct with the right `input_features` and `output_features` for your task.
 
 **Starting the Learner**
@@ -454,7 +455,7 @@ Create a training configuration file (example available [here](https://huggingfa
 First, start the learner server process:
 
 ```bash
-python lerobot/scripts/rl/learner.py --config_path lerobot/configs/train_config_hilserl_so100.json
+python -m lerobot.scripts.rl.learner --config_path src/lerobot/configs/train_config_hilserl_so100.json
 ```
 
 The learner:
@@ -468,7 +469,7 @@ The learner:
 In a separate terminal, start the actor process with the same configuration:
 
 ```bash
-python lerobot/scripts/rl/actor.py --config_path lerobot/configs/train_config_hilserl_so100.json
+python -m lerobot.scripts.rl.actor --config_path src/lerobot/configs/train_config_hilserl_so100.json
 ```
 
 The actor:

@@ -31,7 +31,7 @@ from pathlib import Path
 
 from safetensors.torch import save_file
 
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 
 def save_dataset_to_safetensors(output_dir, repo_id="lerobot/pusht"):

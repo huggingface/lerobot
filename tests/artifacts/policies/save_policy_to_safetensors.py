@@ -19,12 +19,12 @@ from pathlib import Path
 import torch
 from safetensors.torch import save_file
 
-from lerobot.common.datasets.factory import make_dataset
-from lerobot.common.optim.factory import make_optimizer_and_scheduler
-from lerobot.common.policies.factory import make_policy, make_policy_config
-from lerobot.common.utils.random_utils import set_seed
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
+from lerobot.datasets.factory import make_dataset
+from lerobot.optim.factory import make_optimizer_and_scheduler
+from lerobot.policies.factory import make_policy, make_policy_config
+from lerobot.utils.random_utils import set_seed
 
 
 def get_policy_stats(ds_repo_id: str, policy_name: str, policy_kwargs: dict):
