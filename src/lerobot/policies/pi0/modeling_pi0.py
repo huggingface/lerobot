@@ -472,12 +472,12 @@ class PI0FlowMatching(nn.Module):
         super().__init__()
         self.config = config
 
-        paligemma_with_export_config = PaliGemmaWithExpertConfig(
+        paligemma_with_expert_config = PaliGemmaWithExpertConfig(
             freeze_vision_encoder=self.config.freeze_vision_encoder,
             train_expert_only=self.config.train_expert_only,
             attention_implementation=self.config.attention_implementation,
         )
-        self.paligemma_with_expert = PaliGemmaWithExpertModel(paligemma_with_export_config)
+        self.paligemma_with_expert = PaliGemmaWithExpertModel(paligemma_with_expert_config)
 
         # Projections are float32
         self.state_proj = nn.Linear(self.config.max_state_dim, self.config.proj_width)
