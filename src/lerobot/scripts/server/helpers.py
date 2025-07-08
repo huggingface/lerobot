@@ -1,6 +1,18 @@
-import argparse
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import io
-import json
 import logging
 import logging.handlers
 import os
@@ -12,7 +24,6 @@ from typing import Any
 
 import torch
 
-from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.configs.types import PolicyFeature
 from lerobot.constants import OBS_IMAGES, OBS_STATE
 from lerobot.datasets.utils import build_dataset_frame, hw_to_dataset_features
@@ -20,9 +31,6 @@ from lerobot.datasets.utils import build_dataset_frame, hw_to_dataset_features
 # NOTE: Configs need to be loaded for the client to be able to instantiate the policy config
 from lerobot.policies import ACTConfig, DiffusionConfig, PI0Config, SmolVLAConfig, VQBeTConfig  # noqa: F401
 from lerobot.robots.robot import Robot
-from lerobot.robots.so100_follower import SO100FollowerConfig
-from lerobot.robots.utils import make_robot_from_config
-from lerobot.scripts.server.constants import SUPPORTED_ROBOTS
 from lerobot.transport import async_inference_pb2
 from lerobot.transport.utils import bytes_buffer_size
 from lerobot.utils.utils import init_logging
@@ -170,27 +178,6 @@ def prepare_raw_observation(
         state_dict["task"] = robot_obs["task"]
 
     return {**state_dict, **image_dict}
-
-
-def make_default_camera_config(
-    index_or_path: int = 1, fps: int = 30, width: int = 1920, height: int = 1080
-) -> OpenCVCameraConfig:
-    # NOTE(fracapuano): This will be removed when moving to draccus parser
-    return OpenCVCameraConfig(index_or_path=index_or_path, fps=fps, width=width, height=height)
-
-
-def make_robot(args: argparse.Namespace) -> Robot:
-    if args.robot not in SUPPORTED_ROBOTS:
-        raise ValueError(f"Robot {args.robot} not yet supported!")
-
-    if args.robot == "so100":
-        config = SO100FollowerConfig(
-            port=args.robot_port,
-            id=args.robot_id,
-            cameras={k: make_default_camera_config(**v) for k, v in json.loads(args.robot_cameras).items()},
-        )
-
-    return make_robot_from_config(config)
 
 
 # TODO(fracapuano): Reduce logging verbosity

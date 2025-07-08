@@ -1,15 +1,63 @@
-import argparse
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""
+Example command:
+```shell
+python src/lerobot/scripts/server/robot_client.py \
+    --robot.type=so100_follower \
+    --robot.port=/dev/tty.usbmodem58760431541 \
+    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \
+    --robot.id=black \
+    --task="dummy" \
+    --server_address=127.0.0.1:8080 \
+    --policy_type=act \
+    --pretrained_name_or_path=user/model \
+    --policy_device=mps \
+    --actions_per_chunk=50 \
+    --chunk_size_threshold=0.5 \
+    --aggregate_fn_name=weighted_average \
+    --debug_visualize_queue_size=True
+```
+"""
+
+import logging
 import pickle  # nosec
 import threading
 import time
+from dataclasses import asdict
+from pprint import pformat
 from queue import Empty, Queue
 from typing import Callable, Optional
 
+import draccus
 import grpc
 import torch
 
+from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
+from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.configs.policies import PreTrainedConfig
+from lerobot.robots import (  # noqa: F401
+    Robot,
+    RobotConfig,
+    koch_follower,
+    make_robot_from_config,
+    so100_follower,
+    so101_follower,
+)
 from lerobot.scripts.server.configs import RobotClientConfig
+from lerobot.scripts.server.constants import SUPPORTED_ROBOTS
 from lerobot.scripts.server.helpers import (
     Action,
     FPSTracker,
@@ -19,7 +67,6 @@ from lerobot.scripts.server.helpers import (
     TimedAction,
     TimedObservation,
     get_logger,
-    make_robot,
     map_robot_keys_to_lerobot_features,
     send_bytes_in_chunks,
     validate_robot_cameras_for_policy,
@@ -36,8 +83,24 @@ class RobotClient:
     logger = get_logger(prefix)  # TODO(fracapuano): Reduce logging verbosity
 
     def __init__(self, config: RobotClientConfig):
+        """Initialize RobotClient with unified configuration.
+
+        Args:
+            config: RobotClientConfig containing all configuration parameters
+        """
         # Store configuration
         self.config = config
+        self.robot = make_robot_from_config(config.robot)
+
+        # Load policy config for validation
+        policy_config = PreTrainedConfig.from_pretrained(config.pretrained_name_or_path)
+        policy_image_features = policy_config.image_features
+
+        # The cameras specified for inference must match the one supported by the policy chosen
+        lerobot_features = map_robot_keys_to_lerobot_features(self.robot)
+        validate_robot_cameras_for_policy(lerobot_features, policy_image_features)
+
+        self.robot.connect()
 
         # Use environment variable if server_address is not provided in config
         self.server_address = config.server_address
@@ -45,7 +108,7 @@ class RobotClient:
         self.policy_config = RemotePolicyConfig(
             config.policy_type,
             config.pretrained_name_or_path,
-            config.lerobot_features,
+            lerobot_features,
             config.actions_per_chunk,
             config.policy_device,
         )
@@ -67,9 +130,6 @@ class RobotClient:
 
         # FPS measurement
         self.fps_tracker = FPSTracker(target_fps=self.config.fps)
-
-        self.robot = self.config.robot
-        self.robot.connect()
 
         self.logger.info("Robot connected and ready")
 
@@ -363,7 +423,7 @@ class RobotClient:
         except Exception as e:
             self.logger.error(f"Error in observation sender: {e}")
 
-    def control_loop(self, task: str = "") -> tuple[Observation, Action]:
+    def control_loop(self, task: str) -> tuple[Observation, Action]:
         """Combined function for executing actions and streaming observations"""
         # Wait at barrier for synchronized start
         self.start_barrier.wait()
@@ -389,111 +449,14 @@ class RobotClient:
         return _captured_observation, _performed_action
 
 
-# TODO(Steven): Replace with draccus parsing + use make_robot + pass robot in the constructor
-def parse_args():
-    parser = argparse.ArgumentParser(description="Robot client for executing tasks via policy server")
+@draccus.wrap()
+def async_client(cfg: RobotClientConfig):
+    logging.info(pformat(asdict(cfg)))
 
-    # TODO(Steven): Remove default value + do a check that the task is not empty
-    parser.add_argument(
-        "--task",
-        type=str,
-        default="Pick up the red cube and put in the box",
-        help="Task instruction for the robot to execute (e.g., 'fold my tshirt')",
-    )
-    parser.add_argument("--verbose", type=int, default=0, help="Verbosity level (default: 0)")
-    parser.add_argument(
-        "--server-address",
-        type=str,
-        default="localhost:8080",
-        help="Server address (default: localhost:8080)",
-    )
-    parser.add_argument("--policy-type", type=str, default="act", help="Policy type (default: smolvla)")
-    parser.add_argument(
-        "--pretrained-name-or-path",
-        type=str,
-        default="fracapuano/act_so100_test",
-        help="Pretrained model name or path (default: lerobot/smolvla_base)",
-    )
-    parser.add_argument(
-        "--policy-device", type=str, default="mps", help="Device for policy inference (default: cuda)"
-    )
-    parser.add_argument(
-        "--actions-per-chunk",
-        type=int,
-        default=50,
-        help="Number of actions per chunk (default: 50)",
-    )
+    if cfg.robot.type not in SUPPORTED_ROBOTS:
+        raise ValueError(f"Robot {cfg.robot.type} not yet supported!")
 
-    parser.add_argument(
-        "--chunk-size-threshold",
-        type=float,
-        default=0.5,
-        help="Chunk size threshold (`g` in the paper, default: 0.5)",
-    )
-    parser.add_argument(
-        "--robot",
-        type=str,
-        default="so100",
-        help="Robot name, as per the `make_robot` function (default: so100)",
-    )
-
-    parser.add_argument(
-        "--robot-port",
-        type=str,
-        default="/dev/tty.usbmodem585A0076841",
-        help="Port on which to read/write robot joint status (e.g., '/dev/tty.usbmodem575E0031751'). Find your port with lerobot/find_port.py",
-    )
-
-    parser.add_argument(
-        "--robot-id",
-        type=str,
-        default="follower_so100",
-        help="ID of the robot to connect to (default: follower_so100)",
-    )
-
-    parser.add_argument(
-        "--robot-cameras",
-        type=str,
-        default='{"laptop": {"index_or_path": 0, "width": 640, "height": 480, "fps": 30}, "phone": {"index_or_path": 1, "width": 640, "height": 480, "fps": 30}}',
-        help="Cameras of the robot to connect to (default: {'laptop': {'index_or_path': 0, 'width': 1920, 'height': 1080, 'fps': 30}, 'phone': {'index_or_path': 1, 'width': 1920, 'height': 1080, 'fps': 30}})",
-    )
-
-    parser.add_argument(
-        "--debug-visualize-queue-size",
-        action="store_true",
-        help="Trigger visualization of action queue size upon stopping the client, to tweak client hyperparameters (default: False)",
-    )
-
-    return parser.parse_args()
-
-
-def async_client(args: argparse.Namespace):
-    robot = make_robot(args)
-
-    # Load policy config for validation
-    policy_config = PreTrainedConfig.from_pretrained(args.pretrained_name_or_path)
-    policy_image_features = policy_config.image_features
-
-    lerobot_features = map_robot_keys_to_lerobot_features(robot)
-
-    # The cameras specified for inference must match the one supported by the policy chosen
-    validate_robot_cameras_for_policy(lerobot_features, policy_image_features)
-
-    # Create config from parsed arguments
-    config = RobotClientConfig(
-        robot=robot,
-        policy_type=args.policy_type,
-        pretrained_name_or_path=args.pretrained_name_or_path,
-        lerobot_features=lerobot_features,
-        server_address=args.server_address,
-        policy_device=args.policy_device,
-        chunk_size_threshold=args.chunk_size_threshold,
-        aggregate_fn=lambda old, new: 0.3 * old + 0.7 * new,
-        actions_per_chunk=args.actions_per_chunk,
-    )
-
-    # Create client with config
-    client = RobotClient(config)
+    client = RobotClient(cfg)
 
     if client.start():
         client.logger.info("Starting action receiver thread...")
@@ -506,17 +469,16 @@ def async_client(args: argparse.Namespace):
 
         try:
             # The main thread runs the control loop
-            client.control_loop(task=args.task)
+            client.control_loop(task=cfg.task)
 
         finally:
             client.stop()
             action_receiver_thread.join()
-            if args.debug_visualize_queue_size:
+            if cfg.debug_visualize_queue_size:
                 visualize_action_queue_size(client.action_queue_size)
 
             client.logger.info("Client stopped")
 
 
 if __name__ == "__main__":
-    args = parse_args()
-    async_client(args)  # run the client
+    async_client()  # run the client
