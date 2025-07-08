@@ -335,10 +335,10 @@ class SO101FollowerT(Robot):
                     self.bus.write("Phase", motor, new_phase, normalize=False)
 
                 self.bus.write("Operating_Mode", motor, 2, num_retry=2)  # Set to current mode
-                self.bus.write("Target_Torque", motor, 0, num_retry=2)
                 self.bus.write("Torque_Limit", motor, 1000, num_retry=2)  # 100%
                 self.bus.write("Max_Torque_Limit", motor, 1000, num_retry=2)  # 100%
                 self.bus.write("Return_Delay_Time", motor, 0, num_retry=2)
+                self.bus.write("Protection_Current", motor, 1000, num_retry=2)
 
                 # Disable interfering protection systems for better torque response
                 # Read current unloading condition and disable current/overload protection

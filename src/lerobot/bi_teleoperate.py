@@ -9,7 +9,7 @@ from lerobot.robots.so101_follower_torque.so101_follower_t import SO101FollowerT
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.visualization_utils import _init_rerun, log_rerun_data
 
-FRQ = 100
+FRQ = 200
 PRINT_HZ = 10
 RERUN_HZ = 100
 ESC_CLR_EOL = "\x1b[K"
