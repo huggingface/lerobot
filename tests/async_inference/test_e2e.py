@@ -30,7 +30,6 @@ end-to-end using real (but lightweight) protocol messages.
 from __future__ import annotations
 
 import threading
-import time
 from concurrent import futures
 
 import grpc
@@ -38,7 +37,6 @@ import torch
 
 from lerobot.robots.utils import make_robot_from_config
 from lerobot.scripts.server.configs import RobotClientConfig
-from lerobot.scripts.server.helpers import TimedObservation
 from lerobot.scripts.server.policy_server import PolicyServer
 from lerobot.scripts.server.robot_client import RobotClient
 from lerobot.transport import async_inference_pb2_grpc  # type: ignore
@@ -96,11 +94,12 @@ def test_async_inference_e2e(policy_server, monkeypatch):  # noqa: F811
     # ------------------------------------------------------------------
     client_config = RobotClientConfig(
         server_address=server_address,
-        robot=mock_robot,
+        robot=test_config,
         chunk_size_threshold=0.0,
         policy_type="test",
         pretrained_name_or_path="test",
-        lerobot_features=lerobot_features,
+        actions_per_chunk=20,
+        verify_robot_cameras=False,
     )
 
     client = RobotClient(client_config)
@@ -116,19 +115,9 @@ def test_async_inference_e2e(policy_server, monkeypatch):  # noqa: F811
 
     monkeypatch.setattr(client, "_aggregate_action_queues", counting_aggregate)
 
-    # Observation producer – very simple state vector
-    def _make_observation():
-        obs_dict = mock_robot.get_observation()
-
-        return TimedObservation(
-            timestamp=time.time(),
-            observation=obs_dict,
-            timestep=max(client.latest_action, 0),
-        )
-
     # Start client threads
     action_thread = threading.Thread(target=client.receive_actions, daemon=True)
-    control_thread = threading.Thread(target=client.control_loop, args=(_make_observation,), daemon=True)
+    control_thread = threading.Thread(target=client.control_loop, args=({"task": ""}), daemon=True)
     action_thread.start()
     control_thread.start()
 
