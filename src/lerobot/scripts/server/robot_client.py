@@ -21,9 +21,9 @@ python src/lerobot/scripts/server/robot_client.py \
     --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \
     --robot.id=black \
     --task="dummy" \
-    --server_address=127.0.0.1:8080 \
+    --server_address=localhost:8080 \
     --policy_type=act \
-    --pretrained_name_or_path=user/model \
+    --pretrained_name_or_path=fracapuano/act_so100_test \
     --policy_device=mps \
     --actions_per_chunk=50 \
     --chunk_size_threshold=0.5 \
@@ -91,16 +91,17 @@ class RobotClient:
         # Store configuration
         self.config = config
         self.robot = make_robot_from_config(config.robot)
-
-        # Load policy config for validation
-        policy_config = PreTrainedConfig.from_pretrained(config.pretrained_name_or_path)
-        policy_image_features = policy_config.image_features
-
-        # The cameras specified for inference must match the one supported by the policy chosen
-        lerobot_features = map_robot_keys_to_lerobot_features(self.robot)
-        validate_robot_cameras_for_policy(lerobot_features, policy_image_features)
-
         self.robot.connect()
+
+        lerobot_features = map_robot_keys_to_lerobot_features(self.robot)
+
+        if config.verify_robot_cameras:
+            # Load policy config for validation
+            policy_config = PreTrainedConfig.from_pretrained(config.pretrained_name_or_path)
+            policy_image_features = policy_config.image_features
+
+            # The cameras specified for inference must match the one supported by the policy chosen
+            validate_robot_cameras_for_policy(lerobot_features, policy_image_features)
 
         # Use environment variable if server_address is not provided in config
         self.server_address = config.server_address
