@@ -649,7 +649,7 @@ def update_policy_parameters(policy: SACPolicy, parameters_queue: Queue, device)
         policy.actor.load_state_dict(actor_state_dict)
 
         # Load discrete critic if present
-        if "discrete_critic" in state_dicts:
+        if hasattr(policy, "discrete_critic") and "discrete_critic" in state_dicts:
             discrete_critic_state_dict = move_state_dict_to_device(
                 state_dicts["discrete_critic"], device=device
             )
