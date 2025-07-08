@@ -20,6 +20,7 @@ no real hardware is accessed. Only the queue-update mechanism is verified.
 from __future__ import annotations
 
 import time
+from queue import Queue
 
 import pytest
 import torch
@@ -180,7 +181,7 @@ def test_ready_to_send_observation(
     robot_client.action_chunk_size = chunk_size
 
     # Clear any existing actions then fill with `queue_len` dummy entries ----
-    robot_client._clear_action_queue()
+    robot_client.action_queue = Queue()
 
     dummy_actions = _make_actions(start_ts=time.time(), start_t=0, count=queue_len)
     for act in dummy_actions:
@@ -220,7 +221,7 @@ def test_ready_to_send_observation_with_varying_threshold(
     robot_client._chunk_size_threshold = g_threshold
 
     # Fill queue with dummy actions
-    robot_client._clear_action_queue()
+    robot_client.action_queue = Queue()
     dummy_actions = _make_actions(start_ts=time.time(), start_t=0, count=queue_len)
     for act in dummy_actions:
         robot_client.action_queue.put(act)
