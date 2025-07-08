@@ -111,7 +111,8 @@ class XarmEndEffector(Robot):
             os.path.join(this_dir, "lite6.urdf"), ee_link="link_tool"
         )
         self._initial_pose = None
-        self._previous_action = None
+        self._prev_action = None
+        self._prev_prev_action = None
         self._homing = False
         self._homing_pose_from_intial_compensation = np.eye(4)
 
@@ -153,10 +154,6 @@ class XarmEndEffector(Robot):
         """Return mapping of motor feature names to their Python types (float)."""
         motors = {f"joint{i}.pos": float for i in range(1, 7)}
         motors["gripper.pos"] = float
-
-        if self.config.save_effort:
-            for i in range(1, 7):
-                motors[f"joint{i}.effort"] = float
         return motors
 
     @property
@@ -257,6 +254,34 @@ class XarmEndEffector(Robot):
             for i in range(1, 7):
                 joint_pos = action[f"joint{i}.pos"]
                 joint_positions.append(joint_pos)
+
+            if self.config.limit_joints:
+                if self._prev_action is not None:
+                    dt = 1.0 / 60.0  # Assuming 60Hz control frequency
+                    max_velocity = 0.2  # Max joint velocity (rad/s)
+                    max_acceleration = 0.4  # Max joint acceleration (rad/s^2)
+                    for i in range(6):
+                        prev_pos = self._prev_action[i]
+                        prev_prev_pos = (
+                            self._prev_prev_action[i]
+                            if self._prev_prev_action is not None
+                            else prev_pos
+                        )
+                        # Compute velocity and acceleration
+                        velocity = (joint_positions[i] - prev_pos) / dt
+                        prev_velocity = (prev_pos - prev_prev_pos) / dt
+                        acceleration = (velocity - prev_velocity) / dt
+
+                        # Limit velocity
+                        velocity = np.clip(velocity, -max_velocity, max_velocity)
+                        # Limit acceleration
+                        acceleration = np.clip(acceleration, -max_acceleration, max_acceleration)
+
+                        # Integrate back to position
+                        joint_positions[i] = prev_pos + velocity * dt
+
+                self._prev_prev_action = self._prev_action
+                self._prev_action = joint_positions.copy()  # Store the current action
             self._arm.set_servo_angle_j(joint_positions)
         else:
             for i in range(1, 7):
@@ -364,7 +389,11 @@ class XarmEndEffector(Robot):
     @property
     def observation_features(self) -> dict[str, Any]:
         """Joint positions and camera image shapes returned by the robot."""
-        return {**self._motors_ft, **self._cameras_ft}
+        features = {**self._motors_ft, **self._cameras_ft}
+        if self.config.save_effort:
+            for i in range(1, 7):
+                features[f"joint{i}.effort"] = float
+        return features
 
     @property
     def cameras(self):
