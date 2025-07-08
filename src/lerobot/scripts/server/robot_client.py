@@ -70,7 +70,6 @@ from lerobot.scripts.server.helpers import (
     map_robot_keys_to_lerobot_features,
     send_bytes_in_chunks,
     validate_robot_cameras_for_policy,
-    visualize_action_queue_size,
 )
 from lerobot.transport import (
     async_inference_pb2,  # type: ignore
@@ -120,7 +119,7 @@ class RobotClient:
         self._running_event = threading.Event()
 
         # Initialize client side variables
-        # TODO(fracapuano): Missing a lock for latest_action
+        self.latest_action_lock = threading.Lock()
         self.latest_action = -1
         self.action_chunk_size = -1
 
@@ -243,8 +242,11 @@ class RobotClient:
         current_action_queue = {action.get_timestep(): action.get_action() for action in internal_queue}
 
         for new_action in incoming_actions:
+            with self.latest_action_lock:
+                latest_action = self.latest_action
+
             # New action is older than the latest action in the queue, skip it
-            if new_action.get_timestep() <= self.latest_action:
+            if new_action.get_timestep() <= latest_action:
                 continue
 
             # If the new action's timestep is not in the current action queue, add it directly
@@ -291,17 +293,20 @@ class RobotClient:
 
                 # Calculate network latency if we have matching observations
                 if len(timed_actions) > 0 and verbose:
-                    self.logger.debug(f"Current latest action: {self.latest_action}")
+                    with self.latest_action_lock:
+                        latest_action = self.latest_action
+
+                    self.logger.debug(f"Current latest action: {latest_action}")
 
                     # Get queue state before changes
                     old_size, old_timesteps = self._inspect_action_queue()
                     if not old_timesteps:
-                        old_timesteps = [self.latest_action]  # queue was empty
+                        old_timesteps = [latest_action]  # queue was empty
 
                     # Get queue state before changes
                     old_size, old_timesteps = self._inspect_action_queue()
                     if not old_timesteps:
-                        old_timesteps = [self.latest_action]  # queue was empty
+                        old_timesteps = [latest_action]  # queue was empty
 
                     # Log incoming actions
                     incoming_timesteps = [a.get_timestep() for a in timed_actions]
@@ -311,7 +316,7 @@ class RobotClient:
 
                     self.logger.info(
                         f"Received action chunk for step #{first_action_timestep} | "
-                        f"Latest action: #{self.latest_action} | "
+                        f"Latest action: #{latest_action} | "
                         f"Incoming actions: {incoming_timesteps[0]}:{incoming_timesteps[-1]} | "
                         f"Network latency (server->client): {server_to_client_latency:.2f}ms | "
                         f"Deserialization time: {deserialize_time * 1000:.2f}ms"
@@ -328,8 +333,11 @@ class RobotClient:
                     # Get queue state after changes
                     new_size, new_timesteps = self._inspect_action_queue()
 
+                    with self.latest_action_lock:
+                        latest_action = self.latest_action
+
                     self.logger.info(
-                        f"Latest action: {self.latest_action} | "
+                        f"Latest action: {latest_action} | "
                         f"Old action steps: {old_timesteps[0]}:{old_timesteps[-1]} | "
                         f"Incoming action steps: {incoming_timesteps[0]}:{incoming_timesteps[-1]} | "
                         f"Updated action steps: {new_timesteps[0]}:{new_timesteps[-1]}"
@@ -366,7 +374,8 @@ class RobotClient:
         _performed_action = self.robot.send_action(
             self._action_tensor_to_action_dict(timed_action.get_action())
         )
-        self.latest_action = timed_action.get_timestep()
+        with self.latest_action_lock:
+            self.latest_action = timed_action.get_timestep()
 
         if verbose:
             with self.action_queue_lock:
@@ -397,10 +406,13 @@ class RobotClient:
             raw_observation: RawObservation = self.robot.get_observation()
             raw_observation["task"] = task
 
+            with self.latest_action_lock:
+                latest_action = self.latest_action
+
             observation = TimedObservation(
                 timestamp=time.time(),  # need time.time() to compare timestamps across client and server
                 observation=raw_observation,
-                timestep=max(self.latest_action, 0),
+                timestep=max(latest_action, 0),
             )
 
             obs_capture_time = time.perf_counter() - start_time
@@ -487,8 +499,6 @@ def async_client(cfg: RobotClientConfig):
         finally:
             client.stop()
             action_receiver_thread.join()
-            if cfg.debug_visualize_queue_size:
-                visualize_action_queue_size(client.action_queue_size)
 
             client.logger.info("Client stopped")
 
