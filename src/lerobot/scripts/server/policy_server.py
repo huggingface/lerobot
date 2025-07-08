@@ -31,7 +31,7 @@ import time
 from concurrent import futures
 from dataclasses import asdict
 from pprint import pformat
-from queue import Empty, Queue
+from queue import Queue
 
 import draccus
 import grpc
@@ -164,101 +164,6 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         self.logger.info(f"Time taken to put policy on {self.device}: {end - start:.4f} seconds")
 
         return services_pb2.Empty()
-
-    def SendObservations(self, request_iterator, context):  # noqa: N802
-        """Receive observations from the robot client"""
-        client_id = context.peer()
-        self.logger.debug(f"Receiving observations from {client_id}")
-
-        receive_time = time.time()  # comparing timestamps so need time.time()
-        start_deserialize = time.perf_counter()
-        received_bytes = receive_bytes_in_chunks(
-            request_iterator, self._running_event, self.logger
-        )  # blocking call while looping over request_iterator
-        timed_observation = pickle.loads(received_bytes)  # nosec
-        deserialize_time = time.perf_counter() - start_deserialize
-
-        self.logger.debug(f"Received observation #{timed_observation.get_timestep()}")
-
-        obs_timestep = timed_observation.get_timestep()
-        obs_timestamp = timed_observation.get_timestamp()
-
-        # Calculate FPS metrics
-        # TODO(fracapuano): Consider using time.time() instead
-        fps_metrics = self.fps_tracker.calculate_fps_metrics(obs_timestamp)
-
-        self.logger.info(
-            f"Received observation #{obs_timestep} | "
-            f"Avg FPS: {fps_metrics['avg_fps']:.2f} | "  # fps at which observations are received from client
-            f"Target: {fps_metrics['target_fps']:.2f} | "
-            f"One-way latency: {(receive_time - obs_timestamp) * 1000:.2f}ms"
-        )
-
-        self.logger.debug(
-            f"Server timestamp: {receive_time:.6f} | "
-            f"Client timestamp: {obs_timestamp:.6f} | "
-            f"Deserialization time: {deserialize_time:.6f}s"
-        )
-
-        if not self._enqueue_observation(
-            timed_observation  # wrapping a RawObservation
-        ):
-            self.logger.info(f"Observation #{obs_timestep} has been filtered out")
-
-        return services_pb2.Empty()
-
-    def GetActions(self, request, context):  # noqa: N802
-        """Returns actions to the robot client. Actions are sent as a single
-        chunk, containing multiple actions."""
-        client_id = context.peer()
-        self.logger.debug(f"Client {client_id} connected for action streaming")
-
-        # Generate action based on the most recent observation and its timestep
-        try:
-            getactions_starts = time.perf_counter()
-            obs = self.observation_queue.get(timeout=self.config.obs_queue_timeout)
-            self.logger.info(
-                f"Running inference for observation #{obs.get_timestep()} (must_go: {obs.must_go})"
-            )
-
-            self._predicted_timesteps.add(obs.get_timestep())
-
-            start_time = time.perf_counter()
-            action_chunk = self._predict_action_chunk(obs)
-            inference_time = time.perf_counter() - start_time
-
-            start_time = time.perf_counter()
-            actions_bytes = pickle.dumps(action_chunk)  # nosec
-            serialize_time = time.perf_counter() - start_time
-
-            # Create and return the action chunk
-            actions = services_pb2.Actions(data=actions_bytes)
-
-            self.logger.info(
-                f"Action chunk #{obs.get_timestep()} generated | "
-                f"Total time: {(inference_time + serialize_time) * 1000:.2f}ms"
-            )
-
-            self.logger.debug(
-                f"Action chunk #{obs.get_timestep()} generated | "
-                f"Inference time: {inference_time:.2f}s |"
-                f"Serialize time: {serialize_time:.2f}s |"
-                f"Total time: {inference_time + serialize_time:.2f}s"
-            )
-
-            time.sleep(
-                max(0, self.config.inference_latency - max(0, time.perf_counter() - getactions_starts))
-            )  # sleep controls inference latency
-
-            return actions
-
-        except Empty:  # no observation added to queue in obs_queue_timeout
-            return services_pb2.Empty()
-
-        except Exception as e:
-            self.logger.error(f"Error in StreamActions: {e}")
-
-            return services_pb2.Empty()
 
     def _obs_sanity_checks(self, obs: TimedObservation, previous_obs: TimedObservation) -> bool:
         if obs.get_timestep() in self._predicted_timesteps:
