@@ -44,6 +44,7 @@ class HomunculusArm(Teleoperator):
         super().__init__(config)
         self.config = config
         self.serial = serial.Serial(config.port, config.baud_rate, timeout=1)
+        self.serial_lock = threading.Lock()
 
         self.joints = {
             "shoulder_pitch": MotorNormMode.RANGE_M100_100,
@@ -78,7 +79,7 @@ class HomunculusArm(Teleoperator):
         self.new_state_event = threading.Event()
         self.stop_event = threading.Event()
         self.thread = threading.Thread(target=self._read_loop, daemon=True, name=f"{self} _read_loop")
-        self.lock = threading.Lock()
+        self.state_lock = threading.Lock()
 
     @property
     def action_features(self) -> dict:
@@ -90,7 +91,8 @@ class HomunculusArm(Teleoperator):
 
     @property
     def is_connected(self) -> bool:
-        return self.thread.is_alive() and self.serial.is_open
+        with self.serial_lock:
+            return self.serial.is_open and self.thread.is_alive()
 
     def connect(self, calibrate: bool = True) -> None:
         if self.is_connected:
@@ -133,6 +135,7 @@ class HomunculusArm(Teleoperator):
         self._save_calibration()
         print("Calibration saved to", self.calibration_fpath)
 
+    # TODO(Steven): This function is copy/paste from the `HomunculusGlove` class. Consider moving it to an utility to reduce duplicated code.
     def _record_ranges_of_motion(
         self, joints: list[str] | None = None, display_values: bool = True
     ) -> tuple[dict[str, int], dict[str, int]]:
@@ -157,6 +160,8 @@ class HomunculusArm(Teleoperator):
         elif not isinstance(joints, list):
             raise TypeError(joints)
 
+        display_len = max(len(key) for key in joints)
+
         start_positions = self._read(joints, normalize=False)
         mins = start_positions.copy()
         maxes = start_positions.copy()
@@ -169,9 +174,11 @@ class HomunculusArm(Teleoperator):
 
             if display_values:
                 print("\n-------------------------------------------")
-                print(f"{'NAME':<15} | {'MIN':>6} | {'POS':>6} | {'MAX':>6}")
+                print(f"{'NAME':<{display_len}} | {'MIN':>6} | {'POS':>6} | {'MAX':>6}")
                 for joint in joints:
-                    print(f"{joint:<15} | {mins[joint]:>6} | {positions[joint]:>6} | {maxes[joint]:>6}")
+                    print(
+                        f"{joint:<{display_len}} | {mins[joint]:>6} | {positions[joint]:>6} | {maxes[joint]:>6}"
+                    )
 
             if enter_pressed():
                 user_pressed_enter = True
@@ -189,6 +196,7 @@ class HomunculusArm(Teleoperator):
     def configure(self) -> None:
         pass
 
+    # TODO(Steven): This function is copy/paste from the `HomunculusGlove` class. Consider moving it to an utility to reduce duplicated code.
     def _normalize(self, values: dict[str, int]) -> dict[str, float]:
         if not self.calibration:
             raise RuntimeError(f"{self} has no calibration registered.")
@@ -235,7 +243,7 @@ class HomunculusArm(Teleoperator):
         if not self.new_state_event.wait(timeout=timeout):
             raise TimeoutError(f"{self}: Timed out waiting for state after {timeout}s.")
 
-        with self.lock:
+        with self.state_lock:
             state = self._state
 
         self.new_state_event.clear()
@@ -260,25 +268,27 @@ class HomunculusArm(Teleoperator):
         """
         while not self.stop_event.is_set():
             try:
-                if self.serial.in_waiting > 0:
-                    self.serial.flush()
-                    raw_values = self.serial.readline().decode("utf-8").strip().split(" ")
-                    if len(raw_values) != 21:  # 16 raw + 5 angle values
-                        continue
+                raw_values = None
+                with self.serial_lock:
+                    if self.serial.in_waiting > 0:
+                        self.serial.flush()
+                        raw_values = self.serial.readline().decode("utf-8").strip().split(" ")
+                if raw_values is None or len(raw_values) != 21:  # 16 raw + 5 angle values
+                    continue
 
-                    joint_angles = {
-                        "shoulder_pitch": int(raw_values[19]),
-                        "shoulder_yaw": int(raw_values[18]),
-                        "shoulder_roll": int(raw_values[20]),
-                        "elbow_flex": int(raw_values[17]),
-                        "wrist_roll": int(raw_values[16]),
-                        "wrist_yaw": int(raw_values[1]),
-                        "wrist_pitch": int(raw_values[0]),
-                    }
+                joint_angles = {
+                    "shoulder_pitch": int(raw_values[19]),
+                    "shoulder_yaw": int(raw_values[18]),
+                    "shoulder_roll": int(raw_values[20]),
+                    "elbow_flex": int(raw_values[17]),
+                    "wrist_roll": int(raw_values[16]),
+                    "wrist_yaw": int(raw_values[1]),
+                    "wrist_pitch": int(raw_values[0]),
+                }
 
-                    with self.lock:
-                        self._state = joint_angles
-                    self.new_state_event.set()
+                with self.state_lock:
+                    self._state = joint_angles
+                self.new_state_event.set()
 
             except Exception as e:
                 logger.debug(f"Error reading frame in background thread for {self}: {e}")
@@ -295,6 +305,6 @@ class HomunculusArm(Teleoperator):
             DeviceNotConnectedError(f"{self} is not connected.")
 
         self.stop_event.set()
-        self.thread.join(timeout=0.5)
+        self.thread.join(timeout=1)
         self.serial.close()
         logger.info(f"{self} disconnected.")

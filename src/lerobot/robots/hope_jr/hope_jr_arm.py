@@ -135,12 +135,10 @@ class HopeJrArm(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        obs_dict = {}
-
         # Read arm position
         start = time.perf_counter()
+        obs_dict = self.bus.sync_read("Present_Position", self.other_motors)
         obs_dict[self.shoulder_pitch] = self.bus.read("Present_Position", self.shoulder_pitch)
-        obs_dict.update(self.bus.sync_read("Present_Position", self.other_motors))
         obs_dict = {f"{motor}.pos": val for motor, val in obs_dict.items()}
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")

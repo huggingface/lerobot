@@ -70,6 +70,7 @@ class HomunculusGlove(Teleoperator):
         super().__init__(config)
         self.config = config
         self.serial = serial.Serial(config.port, config.baud_rate, timeout=1)
+        self.serial_lock = threading.Lock()
 
         self.joints = {
             "thumb_cmc": MotorNormMode.RANGE_0_100,
@@ -104,7 +105,7 @@ class HomunculusGlove(Teleoperator):
         self.new_state_event = threading.Event()
         self.stop_event = threading.Event()
         self.thread = threading.Thread(target=self._read_loop, daemon=True, name=f"{self} _read_loop")
-        self.lock = threading.Lock()
+        self.state_lock = threading.Lock()
 
     @property
     def action_features(self) -> dict:
@@ -116,7 +117,8 @@ class HomunculusGlove(Teleoperator):
 
     @property
     def is_connected(self) -> bool:
-        return self.thread.is_alive() and self.serial.is_open
+        with self.serial_lock:
+            return self.serial.is_open and self.thread.is_alive()
 
     def connect(self, calibrate: bool = True) -> None:
         if self.is_connected:
@@ -164,12 +166,13 @@ class HomunculusGlove(Teleoperator):
         self._save_calibration()
         print("Calibration saved to", self.calibration_fpath)
 
+    # TODO(Steven): This function is copy/paste from the `HomunculusArm` class. Consider moving it to an utility to reduce duplicated code.
     def _record_ranges_of_motion(
         self, joints: list[str] | None = None, display_values: bool = True
     ) -> tuple[dict[str, int], dict[str, int]]:
         """Interactively record the min/max encoder values of each joint.
 
-        Move the fingers while the method streams live positions. Press :kbd:`Enter` to finish.
+        Move the joints while the method streams live positions. Press :kbd:`Enter` to finish.
 
         Args:
             joints (list[str] | None, optional):  Joints to record. Defaults to every joint (`None`).
@@ -224,6 +227,7 @@ class HomunculusGlove(Teleoperator):
     def configure(self) -> None:
         pass
 
+    # TODO(Steven): This function is copy/paste from the `HomunculusArm` class. Consider moving it to an utility to reduce duplicated code.
     def _normalize(self, values: dict[str, int]) -> dict[str, float]:
         if not self.calibration:
             raise RuntimeError(f"{self} has no calibration registered.")
@@ -271,7 +275,7 @@ class HomunculusGlove(Teleoperator):
         if not self.new_state_event.wait(timeout=timeout):
             raise TimeoutError(f"{self}: Timed out waiting for state after {timeout}s.")
 
-        with self.lock:
+        with self.state_lock:
             state = self._state
 
         self.new_state_event.clear()
@@ -298,19 +302,19 @@ class HomunculusGlove(Teleoperator):
         """
         while not self.stop_event.is_set():
             try:
-                if self.serial.in_waiting > 0:
-                    self.serial.flush()
-                    positions = self.serial.readline().decode("utf-8").strip().split(" ")
-                    if len(positions) != len(self.joints):
-                        continue
+                positions = None
+                with self.serial_lock:
+                    if self.serial.in_waiting > 0:
+                        self.serial.flush()
+                        positions = self.serial.readline().decode("utf-8").strip().split(" ")
+                if positions is None or len(positions) != len(self.joints):
+                    continue
 
-                    joint_positions = {
-                        joint: int(pos) for joint, pos in zip(self.joints, positions, strict=True)
-                    }
+                joint_positions = {joint: int(pos) for joint, pos in zip(self.joints, positions, strict=True)}
 
-                    with self.lock:
-                        self._state = joint_positions
-                    self.new_state_event.set()
+                with self.state_lock:
+                    self._state = joint_positions
+                self.new_state_event.set()
 
             except Exception as e:
                 logger.debug(f"Error reading frame in background thread for {self}: {e}")
@@ -329,6 +333,6 @@ class HomunculusGlove(Teleoperator):
             DeviceNotConnectedError(f"{self} is not connected.")
 
         self.stop_event.set()
-        self.thread.join(timeout=0.5)
+        self.thread.join(timeout=1)
         self.serial.close()
         logger.info(f"{self} disconnected.")

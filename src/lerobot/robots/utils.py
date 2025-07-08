@@ -49,10 +49,6 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from .viperx import ViperX
 
         return ViperX(config)
-    elif config.type == "mock_robot":
-        from tests.mocks.mock_robot import MockRobot
-
-        return MockRobot(config)
     elif config.type == "hope_jr_hand":
         from .hope_jr import HopeJrHand
 
@@ -61,6 +57,10 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from .hope_jr import HopeJrArm
 
         return HopeJrArm(config)
+    elif config.type == "mock_robot":
+        from tests.mocks.mock_robot import MockRobot
+
+        return MockRobot(config)
     else:
         raise ValueError(config.type)
 
