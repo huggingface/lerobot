@@ -55,6 +55,7 @@ def visualize_action_queue_size(action_queue_size: list[int]) -> None:
     ax.set_title("Action Queue Size Over Time")
     ax.set_xlabel("Environment steps")
     ax.set_ylabel("Action Queue Size")
+    ax.set_ylim(0, max(action_queue_size) * 1.1)
     ax.grid(True, alpha=0.3)
     ax.plot(range(len(action_queue_size)), action_queue_size)
     plt.show()
