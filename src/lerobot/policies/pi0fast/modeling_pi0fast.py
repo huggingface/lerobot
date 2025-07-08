@@ -192,12 +192,12 @@ class PI0FASTPolicy(PreTrainedPolicy):
             actions[:, :, motor_idx] = aloha_gripper_from_angular_inv(actions[:, :, motor_idx])
         return actions
 
-    @torch.no_grad
+    @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
         """Predict a chunk of actions given environment observations."""
         raise NotImplementedError("Currently not implemented for PI0FAST")
 
-    @torch.no_grad
+    @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
         """Select a single action given environment observations.
 
