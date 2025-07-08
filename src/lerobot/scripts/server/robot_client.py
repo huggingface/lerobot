@@ -239,10 +239,8 @@ class RobotClient:
         future_action_queue = Queue()
         with self.action_queue_lock:
             internal_queue = self.action_queue.queue
-        
-        current_action_queue = {
-            action.get_timestep(): action.get_action() for action in internal_queue
-        }
+
+        current_action_queue = {action.get_timestep(): action.get_action() for action in internal_queue}
 
         for new_action in incoming_actions:
             # New action is older than the latest action in the queue, skip it
