@@ -13,20 +13,21 @@
 # limitations under the License.
 
 """
-Example:
+Example command:
 ```shell
 python src/lerobot/scripts/server/robot_client.py \
     --robot.type=so100_follower \
-    --robot.port=/dev/tty.usbmodem58760431541 \
-   --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \
-    --robot.id=black \
+    --robot.port=/dev/tty.usbmodem585A0076841 \
+    --robot.cameras="{ laptop: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}, phone: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \
+    --robot.id=follower_so100 \
     --task="dummy" \
     --server_address=127.0.0.1:8080 \
-    --policy_type=smolvla \
-    --pretrained_name_or_path=lerobot/smolvla_base \
+    --policy_type=act \
+    --pretrained_name_or_path=fracapuano/act_so100_test \
     --policy_device=mps \
     --actions_per_chunk=50 \
     --chunk_size_threshold=0.5 \
+    --aggregate_fn_name=weighted_average \
     --debug_visualize_queue_size=True
 ```
 """
@@ -35,7 +36,7 @@ import logging
 import pickle  # nosec
 import threading
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from pprint import pformat
 from queue import Empty, Queue
 from typing import Callable, Optional
@@ -66,7 +67,6 @@ from lerobot.scripts.server.helpers import (
     TimedAction,
     TimedObservation,
     get_logger,
-    map_robot_keys_to_lerobot_features,
     send_bytes_in_chunks,
     validate_robot_cameras_for_policy,
     visualize_action_queue_size,
@@ -81,9 +81,16 @@ class RobotClient:
     prefix = "robot_client"
     logger = get_logger(prefix)  # TODO(fracapuano): Reduce logging verbosity
 
-    def __init__(self, robot: Robot, config: RobotClientConfig):
+    def __init__(self, config: RobotClientConfig):
+        """Initialize RobotClient with unified configuration.
+
+        Args:
+            config: RobotClientConfig containing all configuration parameters
+        """
         # Store configuration
         self.config = config
+        self.robot = make_robot_from_config(config.robot)
+        self.robot.connect()
 
         # Use environment variable if server_address is not provided in config
         self.server_address = config.server_address
@@ -113,9 +120,6 @@ class RobotClient:
 
         # FPS measurement
         self.fps_tracker = FPSTracker(target_fps=self.config.fps)
-
-        self.robot = robot
-        self.robot.connect()
 
         self.logger.info("Robot connected and ready")
 
@@ -435,68 +439,25 @@ class RobotClient:
         return _captured_observation, _performed_action
 
 
-@dataclass
-class AsyncClientConfig:
-    # Robot configuration
-    robot: RobotConfig
-
-    # Task instruction for the robot to execute (e.g., 'fold my tshirt')
-    task: str
-
-    # Server address to connect to
-    server_address: str = "localhost:8080"
-
-    # Policy type to use for inference
-    policy_type: str = "smolvla"
-
-    # Pretrained model name or path to use for the policy
-    pretrained_name_or_path: str = "lerobot/smolvla_base"
-
-    # Device to use for policy inference (e.g., 'cuda', 'cpu')
-    policy_device: str = "cuda"
-
-    # Number of actions to infere in a single chunk
-    actions_per_chunk: int = 50
-
-    # Environment control frequency
-    chunk_size_threshold: float = 0.5
-
-    # Visualize the action queue size
-    debug_visualize_queue_size: bool = False
-
-
 @draccus.wrap()
-def async_client(cfg: AsyncClientConfig):
-    logging.info(pformat(asdict(cfg)))
-
+def async_client(cfg: RobotClientConfig):
     if cfg.robot.type not in SUPPORTED_ROBOTS:
         raise ValueError(f"Robot {cfg.robot.type} not yet supported!")
-
-    robot = make_robot_from_config(cfg.robot)
 
     # Load policy config for validation
     policy_config = PreTrainedConfig.from_pretrained(cfg.pretrained_name_or_path)
     policy_image_features = policy_config.image_features
 
-    lerobot_features = map_robot_keys_to_lerobot_features(robot)
-
     # The cameras specified for inference must match the one supported by the policy chosen
-    validate_robot_cameras_for_policy(lerobot_features, policy_image_features)
+    validate_robot_cameras_for_policy(cfg.lerobot_features, policy_image_features)
 
-    # Create config from parsed arguments
-    config = RobotClientConfig(
-        policy_type=cfg.policy_type,
-        pretrained_name_or_path=cfg.pretrained_name_or_path,
-        lerobot_features=lerobot_features,
-        server_address=cfg.server_address,
-        policy_device=cfg.policy_device,
-        chunk_size_threshold=cfg.chunk_size_threshold,
-        aggregate_fn=lambda old, new: 0.3 * old + 0.7 * new,
-        actions_per_chunk=cfg.actions_per_chunk,
-    )
+    # If you want to use a different aggregate function, you can do:
+    # my_aggregate_fn = lambda old, new: 0.3 * old + 0.7 * new
+    # cfg.aggregate_fn = my_aggregate_fn
 
-    # Create client with config
-    client = RobotClient(robot, config)
+    # Create client with unified config (robot created at init)
+    logging.info(pformat(asdict(cfg)))
+    client = RobotClient(cfg)
 
     if client.start():
         client.logger.info("Starting action receiver thread...")

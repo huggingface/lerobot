@@ -13,15 +13,34 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
-from typing import Callable, Optional
+from typing import Callable
 
 import torch
 
+from lerobot.robots.config import RobotConfig
+from lerobot.robots.utils import make_robot_from_config
 from lerobot.scripts.server.constants import (
     DEFAULT_FPS,
     DEFAULT_INFERENCE_LATENCY,
     DEFAULT_OBS_QUEUE_TIMEOUT,
 )
+from lerobot.scripts.server.helpers import map_robot_keys_to_lerobot_features
+
+# Aggregate function registry for CLI usage
+AGGREGATE_FUNCTIONS = {
+    "weighted_average": lambda old, new: 0.3 * old + 0.7 * new,
+    "latest_only": lambda old, new: new,
+    "average": lambda old, new: 0.5 * old + 0.5 * new,
+    "conservative": lambda old, new: 0.7 * old + 0.3 * new,
+}
+
+
+def get_aggregate_function(name: str) -> Callable[[torch.Tensor, torch.Tensor], torch.Tensor]:
+    """Get aggregate function by name from registry."""
+    if name not in AGGREGATE_FUNCTIONS:
+        available = list(AGGREGATE_FUNCTIONS.keys())
+        raise ValueError(f"Unknown aggregate function '{name}'. Available: {available}")
+    return AGGREGATE_FUNCTIONS[name]
 
 
 @dataclass
@@ -92,14 +111,16 @@ class RobotClientConfig:
     # Policy configuration
     policy_type: str = field(metadata={"help": "Type of policy to use"})
     pretrained_name_or_path: str = field(metadata={"help": "Pretrained model name or path"})
-    # robot.get_observation() returns dict with keys different from the ones expected for recording a dataset/inference
-    # The following field helps map these keys into the expected ones through the `build_dataset_frame` dataset's util
-    lerobot_features: dict[str, dict] = field(
-        metadata={"help": "Features for dataset recording/inference, in the LeRobot format"}
-    )
+
+    # Robot configuration (for CLI usage - robot instance will be created from this)
+    robot: RobotConfig = field(metadata={"help": "Robot configuration"})
+
     # Policies typically output K actions at max, but we can use less to avoid wasting bandwidth (as actions
     # would be aggregated on the client side anyway, depending on the value of `chunk_size_threshold`)
     actions_per_chunk: int = field(metadata={"help": "Number of actions per chunk"})
+
+    # Task instruction for the robot to execute (e.g., 'fold my tshirt')
+    task: str = field(default="", metadata={"help": "Task instruction for the robot to execute"})
 
     # Network configuration
     server_address: str = field(default="localhost:8080", metadata={"help": "Server address to connect to"})
@@ -111,8 +132,15 @@ class RobotClientConfig:
     chunk_size_threshold: float = field(default=0.5, metadata={"help": "Threshold for chunk size control"})
     fps: int = field(default=DEFAULT_FPS, metadata={"help": "Frames per second"})
 
-    aggregate_fn: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = field(
-        default=None, metadata={"help": "Function to aggregate actions on overlapping sections"}
+    # Aggregate function configuration (CLI-compatible)
+    aggregate_fn_name: str = field(
+        default="weighted_average",
+        metadata={"help": f"Name of aggregate function to use. Options: {list(AGGREGATE_FUNCTIONS.keys())}"},
+    )
+
+    # Debug configuration
+    debug_visualize_queue_size: bool = field(
+        default=False, metadata={"help": "Visualize the action queue size"}
     )
 
     @property
@@ -140,6 +168,14 @@ class RobotClientConfig:
         if self.fps <= 0:
             raise ValueError(f"fps must be positive, got {self.fps}")
 
+        if self.actions_per_chunk <= 0:
+            raise ValueError(f"actions_per_chunk must be positive, got {self.actions_per_chunk}")
+
+        robot_instance = make_robot_from_config(self.robot)
+        self.lerobot_features = map_robot_keys_to_lerobot_features(robot_instance)
+
+        self.aggregate_fn = get_aggregate_function(self.aggregate_fn_name)
+
     @classmethod
     def from_dict(cls, config_dict: dict) -> "RobotClientConfig":
         """Create a RobotClientConfig from a dictionary."""
@@ -154,4 +190,8 @@ class RobotClientConfig:
             "policy_device": self.policy_device,
             "chunk_size_threshold": self.chunk_size_threshold,
             "fps": self.fps,
+            "actions_per_chunk": self.actions_per_chunk,
+            "task": self.task,
+            "debug_visualize_queue_size": self.debug_visualize_queue_size,
+            "aggregate_fn_name": self.aggregate_fn_name,
         }
