@@ -276,7 +276,7 @@ class RobotClient:
                 actions_chunk = self.stub.GetActions(async_inference_pb2.Empty())
                 if len(actions_chunk.data) == 0:
                     continue  # received `Empty` from server, wait for next call
-                
+
                 receive_time = time.time()
 
                 # Deserialize bytes back into list[TimedAction]
