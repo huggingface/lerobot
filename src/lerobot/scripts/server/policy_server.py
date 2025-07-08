@@ -16,11 +16,8 @@
 Example:
 ```shell
 python src/lerobot/scripts/server/policy_server.py \
-    --host=127.0.0.1 \
-    --port=8080 \
-    --fps=30 \
-    --inference_latency=0.033 \
-    --obs_queue_timeout=1
+    --host=localhost
+    --port=8080
 ```
 """
 
@@ -323,7 +320,7 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
         if chunk.ndim != 3:
             chunk = chunk.unsqueeze(0)  # adding batch dimension, now shape is (B, chunk_size, action_dim)
 
-        return chunk[:, : self.actions_per_chunk, :]
+        return chunk[:, : self.actions_per_chunk, :] + torch.randn_like(chunk[:, : self.actions_per_chunk, :])
 
     def _predict_action_chunk(self, observation_t: TimedObservation) -> list[TimedAction]:
         """Predict an action chunk based on an observation"""
