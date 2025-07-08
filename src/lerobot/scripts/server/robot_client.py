@@ -38,8 +38,8 @@ import threading
 import time
 from dataclasses import asdict
 from pprint import pformat
-from queue import Empty, Queue
-from typing import Callable, Optional
+from queue import Queue
+from typing import Any, Callable, Optional
 
 import draccus
 import grpc
@@ -120,6 +120,7 @@ class RobotClient:
         self._running_event = threading.Event()
 
         # Initialize client side variables
+        # TODO(fracapuano): Missing a lock for latest_action
         self.latest_action = -1
         self.action_chunk_size = -1
 
@@ -236,8 +237,11 @@ class RobotClient:
                 return x2
 
         future_action_queue = Queue()
+        with self.action_queue_lock:
+            internal_queue = self.action_queue.queue
+        
         current_action_queue = {
-            action.get_timestep(): action.get_action() for action in self.action_queue.queue
+            action.get_timestep(): action.get_action() for action in internal_queue
         }
 
         for new_action in incoming_actions:
@@ -346,30 +350,20 @@ class RobotClient:
         with self.action_queue_lock:
             return not self.action_queue.empty()
 
-    def _clear_action_queue(self):
-        """Clear the existing queue"""
-        with self.action_queue_lock:
-            while not self.action_queue.empty():
-                try:
-                    self.action_queue.get_nowait()
-                except Empty:
-                    break
-
     def _action_tensor_to_action_dict(self, action_tensor: torch.Tensor) -> dict[str, float]:
         action = {key: action_tensor[i].item() for i, key in enumerate(self.robot.action_features)}
         return action
 
-    def control_loop_action(self, verbose: bool = False) -> Optional[Action]:
+    def control_loop_action(self, verbose: bool = False) -> dict[str, Any]:
         """Reading and performing actions in local queue"""
 
         # Lock only for queue operations
+        get_start = time.perf_counter()
         with self.action_queue_lock:
             self.action_queue_size.append(self.action_queue.qsize())
-
             # Get action from queue
-            get_start = time.perf_counter()
             timed_action = self.action_queue.get_nowait()
-            get_end = time.perf_counter() - get_start
+        get_end = time.perf_counter() - get_start
 
         _performed_action = self.robot.send_action(
             self._action_tensor_to_action_dict(timed_action.get_action())
@@ -397,7 +391,7 @@ class RobotClient:
         with self.action_queue_lock:
             return self.action_queue.qsize() / self.action_chunk_size <= self._chunk_size_threshold
 
-    def control_loop_observation(self, task: str, verbose: bool = False) -> Observation:
+    def control_loop_observation(self, task: str, verbose: bool = False) -> RawObservation:
         try:
             # Get serialized observation bytes from the function
             start_time = time.perf_counter()
@@ -444,7 +438,7 @@ class RobotClient:
         except Exception as e:
             self.logger.error(f"Error in observation sender: {e}")
 
-    def control_loop(self, task: str = "", verbose: bool = False) -> tuple[Observation, Action]:
+    def control_loop(self, task: str, verbose: bool = False) -> tuple[Observation, Action]:
         """Combined function for executing actions and streaming observations"""
         # Wait at barrier for synchronized start
         self.start_barrier.wait()
