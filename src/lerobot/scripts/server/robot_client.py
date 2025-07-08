@@ -80,7 +80,7 @@ from lerobot.transport import (
 
 class RobotClient:
     prefix = "robot_client"
-    logger = get_logger(prefix)  # TODO(fracapuano): Reduce logging verbosity
+    logger = get_logger(prefix)
 
     def __init__(self, config: RobotClientConfig):
         """Initialize RobotClient with unified configuration.

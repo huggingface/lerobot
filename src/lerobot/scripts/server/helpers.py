@@ -180,7 +180,6 @@ def prepare_raw_observation(
     return {**state_dict, **image_dict}
 
 
-# TODO(fracapuano): Reduce logging verbosity
 def get_logger(name: str, log_to_file: bool = True) -> logging.Logger:
     """
     Get a logger using the standardized logging setup from utils.py.
@@ -216,7 +215,6 @@ class TimedData:
         timestep: The timestep of the data.
     """
 
-    # TODO(fracapuano): re-evaluate the use of timestamp
     timestamp: float
     timestep: int
 
