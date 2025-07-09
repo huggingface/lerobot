@@ -283,17 +283,14 @@ class VideoEncodingManager:
 
         # Clean up episode images if recording was interrupted
         if exc_type is not None:
-            try:
-                interrupted_episode_index = self.dataset.num_episodes
-                for key in self.dataset.meta.video_keys:
-                    img_dir = self.dataset._get_image_file_path(
-                        episode_index=interrupted_episode_index, image_key=key, frame_index=0
-                    ).parent
-                    if img_dir.exists():
-                        logging.debug(f"Cleaning up interrupted episode images for episode {interrupted_episode_index}, camera {key}")
-                        shutil.rmtree(img_dir)
-            except Exception as e:
-                print(f"Error cleaning up interrupted episode images: {e}")
+            interrupted_episode_index = self.dataset.num_episodes
+            for key in self.dataset.meta.video_keys:
+                img_dir = self.dataset._get_image_file_path(
+                    episode_index=interrupted_episode_index, image_key=key, frame_index=0
+                ).parent
+                if img_dir.exists():
+                    logging.debug(f"Cleaning up interrupted episode images for episode {interrupted_episode_index}, camera {key}")
+                    shutil.rmtree(img_dir)
 
         return False  # Don't suppress the original exception
 
