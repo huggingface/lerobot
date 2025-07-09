@@ -32,21 +32,25 @@ from __future__ import annotations
 import threading
 from concurrent import futures
 
+import pytest
 import torch
 
-from tests.utils import require_package
+# Skip entire module if grpc is not available
+pytest.importorskip("grpc")
 
 # -----------------------------------------------------------------------------
 # End-to-end test
 # -----------------------------------------------------------------------------
 
 
-@require_package("grpc")
 def test_async_inference_e2e(monkeypatch):
-    """Smoke-test the full asynchronous inference pipeline."""
+    """Tests the full asynchronous inference pipeline."""
+    # Import grpc-dependent modules inside the test function
     import grpc
 
+    from lerobot.robots.utils import make_robot_from_config
     from lerobot.scripts.server.configs import PolicyServerConfig, RobotClientConfig
+    from lerobot.scripts.server.helpers import map_robot_keys_to_lerobot_features
     from lerobot.scripts.server.policy_server import PolicyServer
     from lerobot.scripts.server.robot_client import RobotClient
     from lerobot.transport import (
@@ -62,6 +66,11 @@ def test_async_inference_e2e(monkeypatch):
         class _Config:
             robot_type = "dummy_robot"
 
+            @property
+            def image_features(self):
+                """Empty image features since this test doesn't use images."""
+                return {}
+
         def __init__(self):
             self.config = self._Config()
 
@@ -73,13 +82,22 @@ def test_async_inference_e2e(monkeypatch):
             batch_size = len(batch["robot_type"])
             return torch.zeros(batch_size, 20, 6)
 
-    # Create PolicyServer instance
-    test_config = PolicyServerConfig(host="localhost", port=9999)
-    policy_server = PolicyServer(test_config)
+    # ------------------------------------------------------------------
+    # 1. Create PolicyServer instance with mock policy
+    # ------------------------------------------------------------------
+    policy_server_config = PolicyServerConfig(host="localhost", port=9999)
+    policy_server = PolicyServer(policy_server_config)
     # Replace the real policy with our fast, deterministic stub.
     policy_server.policy = MockPolicy()
     policy_server.actions_per_chunk = 20
     policy_server.device = "cpu"
+
+    # Set up robot config and features
+    robot_config = MockRobotConfig()
+    mock_robot = make_robot_from_config(robot_config)
+
+    lerobot_features = map_robot_keys_to_lerobot_features(mock_robot)
+    policy_server.lerobot_features = lerobot_features
 
     # Force server to produce deterministic action chunks in test mode
     policy_server.policy_type = "act"
@@ -111,9 +129,6 @@ def test_async_inference_e2e(monkeypatch):
     # ------------------------------------------------------------------
     # 2. Create a RobotClient around the MockRobot
     # ------------------------------------------------------------------
-    # Create a mock robot config for the client
-    robot_config = MockRobotConfig()
-
     client_config = RobotClientConfig(
         server_address=server_address,
         robot=robot_config,
