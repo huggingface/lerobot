@@ -1,0 +1,3 @@
+[submodule "SO-ARM100"]
+	path = SO-ARM100
+	url = git@github.com:TheRobotStudio/SO-ARM100.git

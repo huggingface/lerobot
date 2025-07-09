@@ -54,6 +54,7 @@ from lerobot.teleoperators import (  # noqa: F401
     TeleoperatorConfig,
     gamepad,
     homunculus,
+    keyboard,
     koch_leader,
     make_teleoperator_from_config,
     so100_leader,
@@ -126,6 +127,8 @@ def teleoperate(cfg: TeleoperateConfig):
     finally:
         if cfg.display_data:
             rr.rerun_shutdown()
+            
+        
         teleop.disconnect()
         robot.disconnect()
 

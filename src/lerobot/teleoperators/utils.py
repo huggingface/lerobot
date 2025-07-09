@@ -53,6 +53,7 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
         from .keyboard.teleop_keyboard import KeyboardEndEffectorTeleop
 
         return KeyboardEndEffectorTeleop(config)
+<<<<<<< Updated upstream
     elif config.type == "homunculus_glove":
         from .homunculus import HomunculusGlove
 
@@ -61,5 +62,11 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
         from .homunculus import HomunculusArm
 
         return HomunculusArm(config)
+=======
+    elif config.type == "so101_keyboard":
+        from .keyboard.teleop_so101_keyboard import SO101KeyboardTeleop
+
+        return SO101KeyboardTeleop(config)
+>>>>>>> Stashed changes
     else:
         raise ValueError(config.type)

@@ -166,8 +166,8 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
         if self.config.use_gripper:
             return {
                 "dtype": "float32",
-                "shape": (4,),
-                "names": {"delta_x": 0, "delta_y": 1, "delta_z": 2, "gripper": 3},
+                "shape": (5,),
+                "names": {"delta_x": 0, "delta_y": 1, "delta_z": 2, "gripper": 3, "wrist_roll": 4},
             }
         else:
             return {
@@ -196,27 +196,32 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
         delta_x = 0.0
         delta_y = 0.0
         delta_z = 0.0
+        wrist_roll_action = 0.0
         gripper_action = 1.0
 
         # Generate action based on current key states
         for key, val in self.current_pressed.items():
             if key == keyboard.Key.up:
-                delta_y = -int(val)
-            elif key == keyboard.Key.down:
-                delta_y = int(val)
-            elif key == keyboard.Key.left:
                 delta_x = int(val)
-            elif key == keyboard.Key.right:
+            elif key == keyboard.Key.down:
                 delta_x = -int(val)
+            elif key == keyboard.Key.left:
+                delta_y = int(val)
+            elif key == keyboard.Key.right:
+                delta_y = -int(val)
             elif key == keyboard.Key.shift:
-                delta_z = -int(val)
-            elif key == keyboard.Key.shift_r:
                 delta_z = int(val)
-            elif key == keyboard.Key.ctrl_r:
+            elif key == keyboard.Key.shift_r:
+                delta_z = -int(val)
+            elif key == "]":
                 # Gripper actions are expected to be between 0 (close), 1 (stay), 2 (open)
                 gripper_action = int(val) + 1
-            elif key == keyboard.Key.ctrl_l:
+            elif key == "[":
                 gripper_action = int(val) - 1
+            elif key == "1":
+                wrist_roll_action = int(val)
+            elif key == "2":
+                wrist_roll_action = -int(val)
             elif val:
                 # If the key is pressed, add it to the misc_keys_queue
                 # this will record key presses that are not part of the delta_x, delta_y, delta_z
@@ -233,5 +238,7 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
 
         if self.config.use_gripper:
             action_dict["gripper"] = gripper_action
+
+        action_dict["wrist_roll"] = wrist_roll_action
 
         return action_dict

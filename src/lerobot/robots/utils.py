@@ -37,6 +37,10 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from .so101_follower import SO101Follower
 
         return SO101Follower(config)
+    elif config.type == "so101_follower_end_effector":
+        from .so101_follower import SO101FollowerEndEffector
+
+        return SO101FollowerEndEffector(config)
     elif config.type == "lekiwi":
         from .lekiwi import LeKiwi
 
@@ -64,7 +68,7 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
     else:
         raise ValueError(config.type)
 
-
+# NOTE: this shit doesn't really work
 def ensure_safe_goal_position(
     goal_present_pos: dict[str, tuple[float, float]], max_relative_target: float | dict[float]
 ) -> dict[str, float]:
