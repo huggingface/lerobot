@@ -83,6 +83,7 @@ from lerobot.common.datasets.utils_must import (
     create_padded_features,
     pad_tensor,
     map_dict_keys,
+    find_start_of_motion,
     ROBOT_TYPE_KEYS_MAPPING,
     OBS_IMAGE,
     OBS_IMAGE_2,
@@ -562,7 +563,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 self.subset_frame_ids += [frame_idx for frame_idx in range(from_ + int(self.fps*self.discard_first_n_frames), to_)]
         elif self.discard_first_idle_frames:
             print(f"Discarding first idle frames: motion_threshold={self.motion_threshold}, motion_window_size={self.motion_window_size}, motion_buffer={self.motion_buffer}")
-            self.robot_states = torch.stack(self.hf_dataset[OBS_ROBOT]).numpy()  # shape: [T, D]
+            self.robot_states = torch.stack(self.hf_dataset[OBS_STATE]).numpy()  # shape: [T, D]
             self.subset_frame_ids = []
             for ep_idx in range(self.num_episodes):
                 from_ = self.episode_data_index["from"][ep_idx]

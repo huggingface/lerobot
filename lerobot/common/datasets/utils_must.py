@@ -191,6 +191,13 @@ def map_dict_keys(item: dict, feature_keys_mapping: dict, training_features: lis
                 features[key] = item[key]
     return features
 
+def find_start_of_motion(velocities, window_size, threshold, motion_buffer):
+    for t in range(len(velocities) - window_size):
+        window_mean = velocities[t:t+window_size].mean()
+        if window_mean > threshold:
+            return max(0, t - motion_buffer)  # include slight context before motion
+    return 0
+
 import yaml
 import requests
 def load_yaml_mapping(name: str) -> dict:
@@ -205,4 +212,19 @@ def load_yaml_mapping(name: str) -> dict:
     return yaml.safe_load(response.text)
 
 # Example usage
-TASKS_KEYS_MAPPING = load_yaml_mapping("features")
+TASKS_KEYS_MAPPING = load_yaml_mapping("tasks")
+FEATURE_KEYS_MAPPING = load_yaml_mapping("features")
+EPISODES_DATASET_MAPPING = {
+    "cadene/droid_1.0.1": list(range(50)),
+    "danaaubakirova/svla_so100_task5_v3": [0, 1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51],
+    "danaaubakirova/svla_so100_task4_v3": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53],
+}
+ACTION = "action"
+OBS_STATE = "observation.state"
+TASK = "task"
+ROBOT = "robot_type"
+TRAINING_FEATURES = {
+    0: [ACTION, OBS_STATE, TASK, ROBOT, OBS_IMAGE],
+    1: [ACTION, OBS_STATE, TASK, ROBOT, OBS_IMAGE, OBS_IMAGE_2],
+    2: [ACTION, OBS_STATE, TASK, ROBOT, OBS_IMAGE, OBS_IMAGE_2, OBS_IMAGE_3],
+}
