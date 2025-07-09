@@ -50,6 +50,7 @@ def visualize_action_queue_size(action_queue_size: list[int]) -> None:
     ax.set_title("Action Queue Size Over Time")
     ax.set_xlabel("Environment steps")
     ax.set_ylabel("Action Queue Size")
+    ax.set_ylim(0, max(action_queue_size) * 1.1)
     ax.grid(True, alpha=0.3)
     ax.plot(range(len(action_queue_size)), action_queue_size)
     plt.show()
@@ -175,7 +176,6 @@ def prepare_raw_observation(
     return {**state_dict, **image_dict}
 
 
-# TODO(fracapuano): Reduce logging verbosity
 def get_logger(name: str, log_to_file: bool = True) -> logging.Logger:
     """
     Get a logger using the standardized logging setup from utils.py.
@@ -211,7 +211,6 @@ class TimedData:
         timestep: The timestep of the data.
     """
 
-    # TODO(fracapuano): re-evaluate the use of timestamp
     timestamp: float
     timestep: int
 

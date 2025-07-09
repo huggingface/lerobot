@@ -20,14 +20,13 @@ no real hardware is accessed. Only the queue-update mechanism is verified.
 from __future__ import annotations
 
 import time
+from queue import Queue
 
 import pytest
 import torch
 
-from lerobot.robots.utils import make_robot_from_config
-from lerobot.scripts.server.configs import RobotClientConfig
-from lerobot.scripts.server.helpers import TimedAction
-from lerobot.scripts.server.robot_client import RobotClient
+# Skip entire module if grpc is not available
+pytest.importorskip("grpc")
 
 # -----------------------------------------------------------------------------
 # Test fixtures
@@ -35,27 +34,31 @@ from lerobot.scripts.server.robot_client import RobotClient
 
 
 @pytest.fixture()
-def robot_client() -> RobotClient:
+def robot_client():
     """Fresh `RobotClient` instance for each test case (no threads started).
     Uses DummyRobot."""
-    from lerobot.scripts.server.helpers import map_robot_keys_to_lerobot_features
+    # Import only when the test actually runs (after decorator check)
+    from lerobot.scripts.server.configs import RobotClientConfig
+    from lerobot.scripts.server.robot_client import RobotClient
     from tests.mocks.mock_robot import MockRobotConfig
 
     test_config = MockRobotConfig()
-    robot = make_robot_from_config(test_config)
-
-    lerobot_features = map_robot_keys_to_lerobot_features(robot)
 
     # gRPC channel is not actually used in tests, so using a dummy address
     test_config = RobotClientConfig(
-        robot=robot,
+        robot=test_config,
         server_address="localhost:9999",
         policy_type="test",
         pretrained_name_or_path="test",
-        lerobot_features=lerobot_features,
+        actions_per_chunk=20,
+        verify_robot_cameras=False,
     )
 
     client = RobotClient(test_config)
+
+    # Initialize attributes that are normally set in start() method
+    client.chunks_received = 0
+    client.available_actions_size = []
 
     yield client
 
@@ -68,10 +71,12 @@ def robot_client() -> RobotClient:
 # -----------------------------------------------------------------------------
 
 
-def _make_actions(start_ts: float, start_t: int, count: int) -> list[TimedAction]:
+def _make_actions(start_ts: float, start_t: int, count: int):
     """Generate `count` consecutive TimedAction objects starting at timestep `start_t`."""
+    from lerobot.scripts.server.helpers import TimedAction
+
     fps = 30  # emulates most common frame-rate
-    actions: list[TimedAction] = []
+    actions = []
     for i in range(count):
         timestep = start_t + i
         timestamp = start_ts + i * (1 / fps)
@@ -85,9 +90,8 @@ def _make_actions(start_ts: float, start_t: int, count: int) -> list[TimedAction
 # -----------------------------------------------------------------------------
 
 
-def _test_aggregate_action_queues_discards_stale(robot_client: RobotClient):
-    """`_aggregate_action_queues` must drop actions with `timestep` <= `latest_action`."""
-    robot_client.chunks_received = 0
+def test_update_action_queue_discards_stale(robot_client):
+    """`_update_action_queue` must drop actions with `timestep` <= `latest_action`."""
 
     # Pretend we already executed up to action #4
     robot_client.latest_action = 4
@@ -116,10 +120,12 @@ def _test_aggregate_action_queues_discards_stale(robot_client: RobotClient):
     ],
 )
 def test_aggregate_action_queues_combines_actions_in_overlap(
-    robot_client: RobotClient, weight_old: float, weight_new: float
+    robot_client, weight_old: float, weight_new: float
 ):
     """`_aggregate_action_queues` must combine actions on overlapping timesteps according
     to the provided aggregate_fn, here tested with multiple coefficients."""
+    from lerobot.scripts.server.helpers import TimedAction
+
     robot_client.chunks_received = 0
 
     # Pretend we already executed up to action #4, and queue contains actions for timesteps 5..6
@@ -176,15 +182,13 @@ def test_aggregate_action_queues_combines_actions_in_overlap(
         (10, 6, False),
     ],
 )
-def test_ready_to_send_observation(
-    robot_client: RobotClient, chunk_size: int, queue_len: int, expected: bool
-):
+def test_ready_to_send_observation(robot_client, chunk_size: int, queue_len: int, expected: bool):
     """Validate `_ready_to_send_observation` ratio logic for various sizes."""
 
     robot_client.action_chunk_size = chunk_size
 
     # Clear any existing actions then fill with `queue_len` dummy entries ----
-    robot_client._clear_action_queue()
+    robot_client.action_queue = Queue()
 
     dummy_actions = _make_actions(start_ts=time.time(), start_t=0, count=queue_len)
     for act in dummy_actions:
@@ -211,9 +215,7 @@ def test_ready_to_send_observation(
         (1.0, True),
     ],
 )
-def test_ready_to_send_observation_with_varying_threshold(
-    robot_client: RobotClient, g_threshold: float, expected: bool
-):
+def test_ready_to_send_observation_with_varying_threshold(robot_client, g_threshold: float, expected: bool):
     """Validate `_ready_to_send_observation` with fixed sizes and varying `g`."""
     # Fixed sizes for this test: ratio = 6 / 10 = 0.6
     chunk_size = 10
@@ -224,7 +226,7 @@ def test_ready_to_send_observation_with_varying_threshold(
     robot_client._chunk_size_threshold = g_threshold
 
     # Fill queue with dummy actions
-    robot_client._clear_action_queue()
+    robot_client.action_queue = Queue()
     dummy_actions = _make_actions(start_ts=time.time(), start_t=0, count=queue_len)
     for act in dummy_actions:
         robot_client.action_queue.put(act)
