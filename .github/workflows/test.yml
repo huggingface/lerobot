@@ -17,7 +17,7 @@ name: Tests
 on:
   pull_request:
     paths:
-      - "lerobot/**"
+      - "src/**"
       - "tests/**"
       - "examples/**"
       - ".github/**"
@@ -29,7 +29,7 @@ on:
     branches:
       - main
     paths:
-      - "lerobot/**"
+      - "src/**"
       - "tests/**"
       - "examples/**"
       - ".github/**"
@@ -73,7 +73,7 @@ jobs:
 
       - name: Test with pytest
         run: |
-          uv run pytest tests -v --cov=./lerobot --durations=0 \
+          uv run pytest tests -v --cov=./src/lerobot --durations=0 \
             -W ignore::DeprecationWarning:imageio_ffmpeg._utils:7 \
             -W ignore::UserWarning:torch.utils.data.dataloader:558 \
             -W ignore::UserWarning:gymnasium.utils.env_checker:247 \
@@ -105,7 +105,7 @@ jobs:
 
       - name: Test with pytest
         run: |
-          uv run pytest tests -v --cov=./lerobot --durations=0 \
+          uv run pytest tests -v --cov=./src/lerobot --durations=0 \
             -W ignore::DeprecationWarning:imageio_ffmpeg._utils:7 \
             -W ignore::UserWarning:torch.utils.data.dataloader:558 \
             -W ignore::UserWarning:gymnasium.utils.env_checker:247 \

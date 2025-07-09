@@ -1,0 +1,161 @@
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""
+Simple script to control a robot from teleoperation.
+
+Example:
+
+```shell
+python -m lerobot.teleoperate \
+    --robot.type=so101_follower \
+    --robot.port=/dev/tty.usbmodem58760431541 \
+    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \
+    --robot.id=black \
+    --teleop.type=so101_leader \
+    --teleop.port=/dev/tty.usbmodem58760431551 \
+    --teleop.id=blue \
+    --display_data=true
+```
+"""
+
+import logging
+import time
+from dataclasses import asdict, dataclass
+from pprint import pformat
+from typing import Optional
+
+import draccus
+
+from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
+from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
+from lerobot.robots import (  # noqa: F401
+    Robot,
+    RobotConfig,
+    hope_jr,
+    koch_follower,
+    make_robot_from_config,
+    so100_follower,
+    so101_follower,
+)
+from lerobot.teleoperators import (  # noqa: F401
+    Teleoperator,
+    TeleoperatorConfig,
+    gamepad,
+    homunculus,
+    koch_leader,
+    make_teleoperator_from_config,
+    so100_leader,
+    so101_leader,
+)
+from lerobot.utils.robot_utils import busy_wait
+from lerobot.utils.utils import init_logging, move_cursor_up
+from lerobot.utils.visualization_utils import RerunRobotLogger
+
+
+@dataclass
+class TeleoperateConfig:
+    # TODO: pepijn, steven: if more robots require multiple teleoperators (like lekiwi) its good to make this possibele in teleop.py and record.py with List[Teleoperator]
+    teleop: TeleoperatorConfig
+    robot: RobotConfig
+    # Limit the maximum frames per second.
+    fps: int = 60
+    teleop_time_s: float | None = None
+    # Display all cameras on screen
+    display_data: bool = False
+    display_urdf: bool = False
+    # Stream camera images as a video stream or as individual frames.
+    # Video streams can be played back, but have latency and memory impact.
+    # Only latest is saved for individual frames, but little latency or memory impact.
+    # Choices are
+    #   "video" (h264 encoded)
+    #   "jpeg" (compressed, preferred for static images)
+    #   "raw" (uncompressed)
+    #   "none" (not displayed)
+    image_stream_type: str = "video"
+
+
+def teleop_loop(
+    teleop: Teleoperator,
+    robot: Robot,
+    fps: int,
+    rerun_logger: Optional[RerunRobotLogger] = None,
+    duration: float | None = None,
+):
+    display_len = max(len(key) for key in robot.action_features)
+    start = time.perf_counter()
+
+    while True:
+        loop_start = time.perf_counter()
+        action = teleop.get_action()
+
+        robot.send_action(action)
+
+        if rerun_logger is not None:
+            rerun_logger.log_all(action=action, sync_time=True)
+
+        dt_s = time.perf_counter() - loop_start
+        busy_wait(1 / fps - dt_s)
+        loop_s = time.perf_counter() - loop_start
+
+        print("\n" + "-" * (display_len + 10))
+        print(f"{'NAME':<{display_len}} | {'NORM':>7}")
+        for motor, value in action.items():
+            print(f"{motor:<{display_len}} | {value:>7.2f}")
+        print(f"\ntime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
+
+        if duration is not None and time.perf_counter() - start >= duration:
+            return
+
+        move_cursor_up(len(action) + 5)
+
+
+@draccus.wrap()
+def teleoperate(cfg: TeleoperateConfig):
+    init_logging()
+    logging.info(pformat(asdict(cfg)))
+
+    teleop = make_teleoperator_from_config(cfg.teleop)
+    robot = make_robot_from_config(cfg.robot)
+
+    teleop.connect()
+    robot.connect()
+
+    rerun_logger = None
+    if cfg.display_data:
+        if cfg.image_stream_type not in ["video", "jpeg", "raw", "none"]:
+            logging.warning(f"Invalid image_stream_type '{cfg.image_stream_type}'. Using 'video' as default.")
+            cfg.image_stream_type = "video"
+        rerun_logger = RerunRobotLogger(
+            teleop=teleop,
+            robot=robot,
+            fps=cfg.fps,
+            image_stream_type=cfg.image_stream_type,
+            log_urdf=cfg.display_urdf,
+        )
+        rerun_logger.init(session_name="teleoperation")
+
+    try:
+        teleop_loop(teleop, robot, cfg.fps, rerun_logger=rerun_logger, duration=cfg.teleop_time_s)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if rerun_logger is not None:
+            rerun_logger.cleanup()
+        teleop.disconnect()
+        robot.disconnect()
+
+
+if __name__ == "__main__":
+    teleoperate()

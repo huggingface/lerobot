@@ -24,9 +24,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from lerobot.common.cameras.configs import Cv2Rotation
-from lerobot.common.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
-from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.cameras.configs import Cv2Rotation
+from lerobot.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
+from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 # NOTE(Steven): more tests + assertions?
 TEST_ARTIFACTS_DIR = Path(__file__).parent.parent / "artifacts" / "cameras"

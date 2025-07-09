@@ -5,15 +5,15 @@ from typing import Generator
 
 import pytest
 
-from lerobot.common.envs.configs import EnvConfig
 from lerobot.configs.parser import PluginLoadError, load_plugin, parse_plugin_args, wrap
+from lerobot.envs.configs import EnvConfig
 
 
 def create_plugin_code(*, base_class: str = "EnvConfig", plugin_name: str = "test_env") -> str:
     """Creates a dummy plugin module that implements its own EnvConfig subclass."""
     return f"""
 from dataclasses import dataclass
-from lerobot.common.envs.configs import {base_class}
+from lerobot.envs.configs import {base_class}
 
 @{base_class}.register_subclass("{plugin_name}")
 @dataclass

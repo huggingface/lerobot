@@ -44,7 +44,7 @@ jobs:
         working-directory: /lerobot
     steps:
       - name: Tests
-        run: pytest -v --cov=./lerobot --disable-warnings tests
+        run: pytest -v --cov=./src/lerobot --disable-warnings tests
 
       - name: Tests end-to-end
         run: make test-end-to-end
@@ -74,7 +74,7 @@ jobs:
         run: nvidia-smi
 
       - name: Test
-        run: pytest -v --cov=./lerobot --cov-report=xml --disable-warnings tests
+        run: pytest -v --cov=./src/lerobot --cov-report=xml --disable-warnings tests
       #   TODO(aliberts): Link with HF Codecov account
       # - name: Upload coverage reports to Codecov with GitHub Action
       #   uses: codecov/codecov-action@v4
