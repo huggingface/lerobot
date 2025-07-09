@@ -269,9 +269,9 @@ class VideoEncodingManager:
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.use_batched_encoding and self.episodes_since_last_encoding > 0:
             if exc_type is not None:
-                print("Exception occurred. Encoding pending episodes before exit...")
+                logging.info("Exception occurred. Encoding pending episodes before exit...")
             else:
-                print("Recording stopped. Encoding remaining episodes...")
+                logging.info("Recording stopped. Encoding remaining episodes...")
             try:
                 start_ep = self.last_encoded_episode + 1
                 end_ep = self.dataset.num_episodes
@@ -293,7 +293,7 @@ class VideoEncodingManager:
                         episode_index=interrupted_episode_index, image_key=key, frame_index=0
                     ).parent
                     if img_dir.exists():
-                        print(f"Cleaning up interrupted episode images for episode {interrupted_episode_index}, camera {key}")
+                        logging.debug(f"Cleaning up interrupted episode images for episode {interrupted_episode_index}, camera {key}")
                         shutil.rmtree(img_dir)
             except Exception as e:
                 print(f"Error cleaning up interrupted episode images: {e}")

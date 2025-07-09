@@ -1020,9 +1020,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
             if len(png_files) == 0:
                 # Only remove the images directory if no PNG files remain
                 shutil.rmtree(img_dir)
-                logging.info("Cleaned up empty images directory")
+                logging.debug("Cleaned up empty images directory")
             else:
-                logging.info(f"Images directory is not empty, containing {len(png_files)} PNG files")
+                logging.debug(f"Images directory is not empty, containing {len(png_files)} PNG files")
 
         logging.info("Batch video encoding completed")
 
