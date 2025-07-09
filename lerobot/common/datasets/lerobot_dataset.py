@@ -1017,7 +1017,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if img_dir.is_dir():
             # Check for any remaining PNG files
             png_files = list(img_dir.rglob("*.png"))
-            if not png_files:
+            if len(png_files) == 0:
                 # Only remove the images directory if no PNG files remain
                 shutil.rmtree(img_dir)
                 logging.info("Cleaned up empty images directory")
