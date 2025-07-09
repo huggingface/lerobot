@@ -330,8 +330,9 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             fps=cfg.dataset.fps,
             image_stream_type=cfg.image_stream_type,
             log_urdf=cfg.display_urdf,
+            session_name="recording",
         )
-        rerun_logger.init("recording")
+        rerun_logger.init()
 
     listener, events = init_keyboard_listener()
 

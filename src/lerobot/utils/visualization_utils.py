@@ -24,7 +24,9 @@ import re
 import threading
 import time
 from fractions import Fraction
+from pathlib import Path
 from typing import Any, Dict, Optional, Protocol, runtime_checkable
+from uuid import uuid4
 
 import av
 import av.video.stream
@@ -34,18 +36,10 @@ import rerun as rr
 from robot_descriptions.loaders.yourdfpy import load_robot_description
 from yourdfpy.urdf import URDF, Joint
 
+from lerobot.constants import HF_LEROBOT_HOME
 from lerobot.motors.motors_bus import Motor, MotorNormMode
 from lerobot.robots.robot import Robot
 from lerobot.teleoperators.teleoperator import Teleoperator
-
-
-def _init_rerun(session_name: str = "lerobot_control_loop") -> None:
-    """Initializes the Rerun SDK for visualizing the control loop."""
-    batch_size = os.getenv("RERUN_FLUSH_NUM_BYTES", "8000")
-    os.environ["RERUN_FLUSH_NUM_BYTES"] = batch_size
-    rr.init(session_name)
-    memory_limit = os.getenv("LEROBOT_RERUN_MEMORY_LIMIT", "10%")
-    rr.spawn(memory_limit=memory_limit)
 
 
 @runtime_checkable
@@ -291,7 +285,8 @@ class VideoLogger:
             frame = av.VideoFrame.from_ndarray(img, format="rgb24")
             for packet in self.stream.encode(frame):
                 if packet.pts is not None and packet.time_base is not None:
-                    rr.set_time(self.stream_name, duration=float(packet.pts * packet.time_base))
+                    pass
+                    # rr.set_time("time", duration=float(packet.pts * packet.time_base))
                 rr.log(self.stream_name, rr.VideoStream.from_fields(sample=bytes(packet)))
 
     def close(self):
@@ -302,7 +297,8 @@ class VideoLogger:
             if self._encoder_initialized:
                 for packet in self.stream.encode():
                     if packet.pts is not None and packet.time_base is not None:
-                        rr.set_time(self.stream_name, duration=float(packet.pts * packet.time_base))
+                        pass
+                        # rr.set_time('time', duration=float(packet.pts * packet.time_base))
                     rr.log(self.stream_name, rr.VideoStream.from_fields(sample=bytes(packet)))
                 self.container.close()
                 self._encoder_initialized = False
@@ -326,6 +322,9 @@ class RerunRobotLogger:
         fps: int = 60,
         image_size: Optional[tuple[int, int]] = None,
         log_urdf: bool = True,
+        session_name: str = "lerobot_control_loop",
+        log_rrd: bool = False,
+        live_display: bool = True,
     ):
         """
         Initializes the RerunRobotLogger to log robot and teleoperation data to Rerun.
@@ -350,8 +349,13 @@ class RerunRobotLogger:
 
         self.log_urdf = log_urdf and robot is not None
 
-    def init(self, session_name: str = "lerobot_control_loop"):
-        _init_rerun(session_name=session_name)
+        self.session_name = session_name
+        self.application_id = session_name
+        self.rrd_file = Path(HF_LEROBOT_HOME) / f"recordings/{session_name}.rrd" if log_rrd else None
+        self.live_display = live_display
+
+    def init(self):
+        self._init_rerun()
 
         if self.robot is not None and self.image_stream_type == "video":
             self.video_loggers: Dict[str, VideoLogger] = {
@@ -368,6 +372,41 @@ class RerunRobotLogger:
                     f"URDF file not found for robot {self.robot.robot_type}. Skipping URDF logging: {e}"
                 )
                 self.log_urdf = False
+
+    def _increment_rrd_path(self) -> Path:
+        assert self.rrd_file is not None
+        stem = self.rrd_file.stem
+        suffix = self.rrd_file.suffix
+        parent = self.rrd_file.parent
+
+        # Pattern: data_000.rrd, data_001.rrd, etc.
+        i = 0
+        while True:
+            new_name = f"{stem}_{i:03d}{suffix}"
+            new_path = parent / new_name
+            if not new_path.exists():
+                return new_path
+            i += 1
+
+    def _init_rerun(self):
+        memory_limit = os.getenv("LEROBOT_RERUN_MEMORY_LIMIT", "10%")
+        batch_size = os.getenv("RERUN_FLUSH_NUM_BYTES", "8000")
+        os.environ["RERUN_FLUSH_NUM_BYTES"] = batch_size
+
+        self.rec = rr.new_recording(self.application_id, recording_id=uuid4(), make_default=True)
+        # self.rec = rr.RecordingStream(self.application_id, make_default=True)
+
+        sinks = []
+        if self.live_display:
+            self.rec.spawn(memory_limit=memory_limit)
+            self.rec.connect_grpc()
+            sinks.append(rr.GrpcSink())
+
+        if self.rrd_file:
+            rec_file = self._increment_rrd_path()
+            sinks.append(rr.FileSink(rec_file))
+
+        self.rec.set_sinks(*sinks)
 
     def cleanup(self):
         """
@@ -392,9 +431,9 @@ class RerunRobotLogger:
         if action is None:
             action = self.teleop.get_action() if self.teleop else {}
 
-        self.log_observations(observation)
         self.log_joint_angles(observation)
         self.log_actions(action)
+        self.log_observations(observation)
 
     def log_observations(self, observations: Dict[str, Any]):
         if self.robot is None:
@@ -403,7 +442,7 @@ class RerunRobotLogger:
 
         for obs, val in observations.items():
             if isinstance(val, float):
-                rr.log(["observation", obs], rr.Scalars(val))
+                self.rec.log(["observation", obs], rr.Scalars(val))
             elif isinstance(val, np.ndarray):
                 self.log_frame(val, obs)
 
@@ -413,7 +452,7 @@ class RerunRobotLogger:
             return
         for act, val in actions.items():
             if isinstance(val, float):
-                rr.log(["action", act], rr.Scalars(val))
+                self.rec.log(["action", act], rr.Scalars(val))
 
     def log_joint_angles(self, angles: Dict[str, Any]):
         if self.robot is None:
@@ -433,9 +472,9 @@ class RerunRobotLogger:
             logger = self.video_loggers.get(cam_name, self._create_video_logger(cam_name, frame.shape[:2]))
             logger.log_frame(frame)
         elif self.image_stream_type == "jpeg":
-            rr.log(f"observation/{cam_name}", rr.Image(frame).compress(jpeg_quality=60), static=True)
+            self.rec.log(f"observation/{cam_name}", rr.Image(frame).compress(jpeg_quality=60), static=True)
         elif self.image_stream_type == "raw":
-            rr.log(f"observation/{cam_name}", rr.Image(frame), static=True)
+            self.rec.log(f"observation/{cam_name}", rr.Image(frame), static=True)
 
     def _create_video_logger(self, cam_name: str, shape: tuple[int, int]) -> VideoLogger:
         return VideoLogger(

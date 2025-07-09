@@ -143,8 +143,9 @@ def teleoperate(cfg: TeleoperateConfig):
             fps=cfg.fps,
             image_stream_type=cfg.image_stream_type,
             log_urdf=cfg.display_urdf,
+            session_name="teleoperation",
         )
-        rerun_logger.init(session_name="teleoperation")
+        rerun_logger.init()
 
     try:
         teleop_loop(teleop, robot, cfg.fps, rerun_logger=rerun_logger, duration=cfg.teleop_time_s)
