@@ -949,9 +949,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         for ep_idx in range(self.meta.total_episodes):
             self.encode_episode_videos(ep_idx)
 
-    def encode_episode_videos(
-        self, episode_index: int, cleanup_images: bool = True
-    ) -> dict:
+    def encode_episode_videos(self, episode_index: int, cleanup_images: bool = True) -> dict:
         """
         Use ffmpeg to convert frames stored as png into mp4 videos.
         Note: `encode_video_frames` is a blocking call. Making it asynchronous shouldn't speedup encoding,

@@ -36,11 +36,11 @@ python -m lerobot.record \
 """
 
 import logging
+import shutil
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from pprint import pformat
-import shutil
 from typing import List
 
 from lerobot.cameras import (  # noqa: F401
@@ -309,7 +309,9 @@ class VideoEncodingManager:
                     episode_index=interrupted_episode_index, image_key=key, frame_index=0
                 ).parent
                 if img_dir.exists():
-                    logging.debug(f"Cleaning up interrupted episode images for episode {interrupted_episode_index}, camera {key}")
+                    logging.debug(
+                        f"Cleaning up interrupted episode images for episode {interrupted_episode_index}, camera {key}"
+                    )
                     shutil.rmtree(img_dir)
 
         # Clean up any remaining images directory if it's empty
@@ -419,7 +421,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             if video_encoding_manager.use_batched_encoding:
                 dataset.save_episode(encode_videos=False)
                 video_encoding_manager.episodes_since_last_encoding += 1
-                
+
                 # Check if we should encode current batch
                 if video_encoding_manager.episodes_since_last_encoding >= video_encoding_manager.batch_size:
                     start_ep = video_encoding_manager.last_encoded_episode + 1
