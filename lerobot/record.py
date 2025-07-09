@@ -272,17 +272,14 @@ class VideoEncodingManager:
                 logging.info("Exception occurred. Encoding pending episodes before exit...")
             else:
                 logging.info("Recording stopped. Encoding remaining episodes...")
-            try:
-                start_ep = self.last_encoded_episode + 1
-                end_ep = self.dataset.num_episodes
-                log_say(
-                    f"Batch encoding videos for {self.episodes_since_last_encoding} episodes, "
-                    f"from episode {start_ep} to episode {end_ep - 1}",
-                    self.play_sounds,
-                )
-                self.dataset.batch_encode_videos(start_ep, end_ep)
-            except Exception as e:
-                print(f"Something went wrong while encoding videos on exit: {e}")
+            start_ep = self.last_encoded_episode + 1
+            end_ep = self.dataset.num_episodes
+            log_say(
+                f"Batch encoding videos for {self.episodes_since_last_encoding} episodes, "
+                f"from episode {start_ep} to episode {end_ep - 1}",
+                self.play_sounds,
+            )
+            self.dataset.batch_encode_videos(start_ep, end_ep)
 
         # Clean up episode images if recording was interrupted
         if exc_type is not None:
