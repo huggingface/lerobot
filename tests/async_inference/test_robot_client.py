@@ -25,14 +25,14 @@ from queue import Queue
 import pytest
 import torch
 
-from tests.utils import require_package
+# Skip entire module if grpc is not available
+pytest.importorskip("grpc")
 
 # -----------------------------------------------------------------------------
 # Test fixtures
 # -----------------------------------------------------------------------------
 
 
-@require_package("grpc")
 @pytest.fixture()
 def robot_client():
     """Fresh `RobotClient` instance for each test case (no threads started).
@@ -90,7 +90,6 @@ def _make_actions(start_ts: float, start_t: int, count: int):
 # -----------------------------------------------------------------------------
 
 
-@require_package("grpc")
 def test_update_action_queue_discards_stale(robot_client):
     """`_update_action_queue` must drop actions with `timestep` <= `latest_action`."""
 
@@ -108,7 +107,6 @@ def test_update_action_queue_discards_stale(robot_client):
     assert resulting_timesteps == [5, 6, 7]
 
 
-@require_package("grpc")
 @pytest.mark.parametrize(
     "weight_old, weight_new",
     [
@@ -175,7 +173,6 @@ def test_aggregate_action_queues_combines_actions_in_overlap(
     assert torch.allclose(queue_non_overlap_actions[0].get_action(), incoming[-1].get_action())
 
 
-@require_package("grpc")
 @pytest.mark.parametrize(
     "chunk_size, queue_len, expected",
     [
@@ -200,7 +197,6 @@ def test_ready_to_send_observation(robot_client, chunk_size: int, queue_len: int
     assert robot_client._ready_to_send_observation() is expected
 
 
-@require_package("grpc")
 @pytest.mark.parametrize(
     "g_threshold, expected",
     [
