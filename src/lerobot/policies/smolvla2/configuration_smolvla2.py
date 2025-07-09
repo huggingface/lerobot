@@ -14,8 +14,8 @@
 
 from dataclasses import dataclass, field
 
-from lerobot.common.optim.optimizers import AdamWConfig
-from lerobot.common.optim.schedulers import (
+from lerobot.optim.optimizers import AdamWConfig
+from lerobot.optim.schedulers import (
     CosineDecayWithWarmupSchedulerConfig,
 )
 from lerobot.configs.policies import PreTrainedConfig
