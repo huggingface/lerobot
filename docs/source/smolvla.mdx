@@ -44,7 +44,7 @@ If you don't have a gpu device, you can train using our notebook on [![Google Co
 Pass your dataset to the training script using `--dataset.repo_id`. If you want to test your installation, run the following command where we use one of the datasets we collected for the [SmolVLA Paper](https://huggingface.co/papers/2506.01844).
 
 ```bash
-cd lerobot && python lerobot/scripts/train.py \
+cd lerobot && python -m lerobot.scripts.train \
   --policy.path=lerobot/smolvla_base \
   --dataset.repo_id=${HF_USER}/mydataset \
   --batch_size=64 \
@@ -62,7 +62,7 @@ You can start with a small batch size and increase it incrementally, if the GPU 
 Fine-tuning is an art. For a complete overview of the options for finetuning, run
 
 ```bash
-python lerobot/scripts/train.py --help
+python -m lerobot.scripts.train --help
 ```
 
 <p align="center">

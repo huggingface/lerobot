@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 import pytest
 
-from lerobot.common.motors.motors_bus import (
+from lerobot.motors.motors_bus import (
     Motor,
     MotorNormMode,
     assert_same_address,
