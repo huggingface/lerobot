@@ -63,7 +63,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
 
     def __init__(self, config: PolicyServerConfig):
         self.config = config
-        self._running_event = threading.Event()
+        self.shutdown_event = threading.Event()
 
         # FPS measurement
         self.fps_tracker = FPSTracker(target_fps=config.fps)
@@ -84,7 +84,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
 
     @property
     def running(self):
-        return self._running_event.is_set()
+        return not self.shutdown_event.is_set()
 
     @property
     def policy_image_features(self):
@@ -93,7 +93,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
     def _reset_server(self) -> None:
         """Flushes server state when new client connects."""
         # only running inference on the latest observation received by the server
-        self._running_event.clear()
+        self.shutdown_event.set()
         self.observation_queue = Queue(maxsize=1)
 
         with self._predicted_timesteps_lock:
@@ -103,7 +103,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         client_id = context.peer()
         self.logger.info(f"Client {client_id} connected and ready")
         self._reset_server()
-        self._running_event.set()
+        self.shutdown_event.clear()
 
         return services_pb2.Empty()
 
@@ -159,7 +159,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         receive_time = time.time()  # comparing timestamps so need time.time()
         start_deserialize = time.perf_counter()
         received_bytes = receive_bytes_in_chunks(
-            request_iterator, self._running_event, self.logger
+            request_iterator, None, self.shutdown_event, self.logger
         )  # blocking call while looping over request_iterator
         timed_observation = pickle.loads(received_bytes)  # nosec
         deserialize_time = time.perf_counter() - start_deserialize
