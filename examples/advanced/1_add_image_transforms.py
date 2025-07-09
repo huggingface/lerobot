@@ -22,7 +22,7 @@ from pathlib import Path
 
 from torchvision.transforms import ToPILImage, v2
 
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 dataset_repo_id = "lerobot/aloha_static_screw_driver"
 
