@@ -404,7 +404,7 @@ class RerunRobotLogger:
         for obs, val in observations.items():
             if isinstance(val, float):
                 rr.log(["observation", obs], rr.Scalars(val))
-            elif isinstance(val, np.ndarray) and obs in self.video_loggers:
+            elif isinstance(val, np.ndarray):
                 self.log_frame(val, obs)
 
     def log_actions(self, actions: Dict[str, Any]):
@@ -433,9 +433,9 @@ class RerunRobotLogger:
             logger = self.video_loggers.get(cam_name, self._create_video_logger(cam_name, frame.shape[:2]))
             logger.log_frame(frame)
         elif self.image_stream_type == "jpeg":
-            rr.log(cam_name, rr.Image(frame).compress(jpeg_quality=60), static=True)
+            rr.log(f"observation/{cam_name}", rr.Image(frame).compress(jpeg_quality=60), static=True)
         elif self.image_stream_type == "raw":
-            rr.log(cam_name, rr.Image(frame), static=True)
+            rr.log(f"observation/{cam_name}", rr.Image(frame), static=True)
 
     def _create_video_logger(self, cam_name: str, shape: tuple[int, int]) -> VideoLogger:
         return VideoLogger(
