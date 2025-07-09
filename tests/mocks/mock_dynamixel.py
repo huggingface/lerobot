@@ -5,7 +5,7 @@ import dynamixel_sdk as dxl
 import serial
 from mock_serial.mock_serial import MockSerial
 
-from lerobot.common.motors.dynamixel.dynamixel import _split_into_byte_chunks
+from lerobot.motors.dynamixel.dynamixel import _split_into_byte_chunks
 
 from .mock_serial_patch import WaitableStub
 

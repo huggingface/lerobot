@@ -1,6 +1,6 @@
 # ruff: noqa: N802
 
-from lerobot.common.motors.motors_bus import (
+from lerobot.motors.motors_bus import (
     Motor,
     MotorsBus,
 )
