@@ -187,9 +187,10 @@ def _default_batch_to_transition(batch: dict[str, Any]) -> EnvTransition:  # noq
     observation_keys = {k: v for k, v in batch.items() if k.startswith("observation.")}
     observation = observation_keys if observation_keys else None
 
-    # Extract padding keys for complementary data
+    # Extract padding and task keys for complementary data
     pad_keys = {k: v for k, v in batch.items() if "_is_pad" in k}
-    complementary_data = pad_keys if pad_keys else {}
+    task_key = {"task": batch["task"]} if "task" in batch else {}
+    complementary_data = {**pad_keys, **task_key} if pad_keys or task_key else {}
 
     return (
         observation,
@@ -225,10 +226,13 @@ def _default_transition_to_batch(transition: EnvTransition) -> dict[str, Any]:  
         "info": info,
     }
 
-    # Add padding data from complementary_data
+    # Add padding and task data from complementary_data
     if complementary_data:
         pad_data = {k: v for k, v in complementary_data.items() if "_is_pad" in k}
         batch.update(pad_data)
+
+        if "task" in complementary_data:
+            batch["task"] = complementary_data["task"]
 
     # Handle observation - flatten dict to observation.* keys if it's a dict
     if isinstance(observation, dict):
@@ -943,6 +947,40 @@ class InfoProcessor:
             transition[TransitionIndex.TRUNCATED],
             info,
             *transition[TransitionIndex.COMPLEMENTARY_DATA :],
+        )
+        return transition
+
+
+class ComplementaryDataProcessor:
+    """Base class for processors that modify only the complementary data of a transition.
+
+    Subclasses should override the `complementary_data` method to implement custom complementary data processing.
+    This class handles the boilerplate of extracting and reinserting the processed complementary data
+    into the transition tuple, eliminating the need to implement the `__call__` method in subclasses.
+    """
+
+    def complementary_data(self, complementary_data):
+        """Process the complementary data.
+
+        Args:
+            complementary_data: The complementary data to process
+
+        Returns:
+            The processed complementary data
+        """
+        return complementary_data
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        complementary_data = transition[TransitionIndex.COMPLEMENTARY_DATA]
+        complementary_data = self.complementary_data(complementary_data)
+        transition = (
+            transition[TransitionIndex.OBSERVATION],
+            transition[TransitionIndex.ACTION],
+            transition[TransitionIndex.REWARD],
+            transition[TransitionIndex.DONE],
+            transition[TransitionIndex.TRUNCATED],
+            transition[TransitionIndex.INFO],
+            complementary_data,
         )
         return transition
 
