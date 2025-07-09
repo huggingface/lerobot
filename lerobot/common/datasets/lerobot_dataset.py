@@ -1014,15 +1014,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         # Cleanup all images once for the entire batch
         img_dir = self.root / "images"
-        if img_dir.is_dir():
-            # Check for any remaining PNG files
-            png_files = list(img_dir.rglob("*.png"))
-            if len(png_files) == 0:
-                # Only remove the images directory if no PNG files remain
-                shutil.rmtree(img_dir)
-                logging.debug("Cleaned up empty images directory")
-            else:
-                logging.debug(f"Images directory is not empty, containing {len(png_files)} PNG files")
+        # Check for any remaining PNG files
+        png_files = list(img_dir.rglob("*.png"))
+        if len(png_files) == 0:
+            # Only remove the images directory if no PNG files remain
+            shutil.rmtree(img_dir)
+            logging.debug("Cleaned up empty images directory")
+        else:
+            logging.debug(f"Images directory is not empty, containing {len(png_files)} PNG files")
 
         logging.info("Batch video encoding completed")
 
