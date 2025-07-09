@@ -76,12 +76,12 @@ class RoarmRobot:
             "action": {
                 "dtype": "float32",
                 "shape": (6,),
-                "names": ["1", "2,3", "4", "5", "6"],
+                "names": ["1", "2", "3", "4", "5", "6"],
             },
             "observation.state": {
                 "dtype": "float32",
                 "shape": (6,),
-                "names": ["1", "2,3", "4", "5", "6"],
+                "names": ["1", "2", "3", "4", "5", "6"],
             },
         }
 
