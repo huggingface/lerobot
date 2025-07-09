@@ -39,8 +39,7 @@ from lerobot.policies.factory import (
 )
 from lerobot.policies.normalize import Normalize, Unnormalize
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.processor.observation_processor import VanillaObservationProcessor
-from lerobot.processor.pipeline import RobotProcessor, TransitionIndex
+from lerobot.processor import RobotProcessor, TransitionIndex, VanillaObservationProcessor
 from lerobot.utils.random_utils import seeded_context
 from tests.artifacts.policies.save_policy_to_safetensors import get_policy_stats
 from tests.utils import DEVICE, require_cpu, require_env, require_x86_64_kernel

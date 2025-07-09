@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 import torch
 
-from lerobot.processor.observation_processor import (
+from lerobot.processor import (
     ImageProcessor,
     StateProcessor,
     VanillaObservationProcessor,
