@@ -20,11 +20,11 @@ no real hardware is accessed. Only the queue-update mechanism is verified.
 from __future__ import annotations
 
 import time
+from queue import Queue
 
 import pytest
 import torch
 
-from lerobot.robots.utils import make_robot_from_config
 from lerobot.scripts.server.configs import RobotClientConfig
 from lerobot.scripts.server.helpers import TimedAction
 from lerobot.scripts.server.robot_client import RobotClient
@@ -38,21 +38,18 @@ from lerobot.scripts.server.robot_client import RobotClient
 def robot_client() -> RobotClient:
     """Fresh `RobotClient` instance for each test case (no threads started).
     Uses DummyRobot."""
-    from lerobot.scripts.server.helpers import map_robot_keys_to_lerobot_features
     from tests.mocks.mock_robot import MockRobotConfig
 
     test_config = MockRobotConfig()
-    robot = make_robot_from_config(test_config)
-
-    lerobot_features = map_robot_keys_to_lerobot_features(robot)
 
     # gRPC channel is not actually used in tests, so using a dummy address
     test_config = RobotClientConfig(
-        robot=robot,
+        robot=test_config,
         server_address="localhost:9999",
         policy_type="test",
         pretrained_name_or_path="test",
-        lerobot_features=lerobot_features,
+        actions_per_chunk=20,
+        verify_robot_cameras=False,
     )
 
     client = RobotClient(test_config)
@@ -184,7 +181,7 @@ def test_ready_to_send_observation(
     robot_client.action_chunk_size = chunk_size
 
     # Clear any existing actions then fill with `queue_len` dummy entries ----
-    robot_client._clear_action_queue()
+    robot_client.action_queue = Queue()
 
     dummy_actions = _make_actions(start_ts=time.time(), start_t=0, count=queue_len)
     for act in dummy_actions:
@@ -224,7 +221,7 @@ def test_ready_to_send_observation_with_varying_threshold(
     robot_client._chunk_size_threshold = g_threshold
 
     # Fill queue with dummy actions
-    robot_client._clear_action_queue()
+    robot_client.action_queue = Queue()
     dummy_actions = _make_actions(start_ts=time.time(), start_t=0, count=queue_len)
     for act in dummy_actions:
         robot_client.action_queue.put(act)
