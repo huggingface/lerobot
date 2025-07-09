@@ -25,7 +25,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from lerobot.processor.pipeline import EnvTransition, ProcessorStepRegistry, RobotProcessor
+from lerobot.processor import EnvTransition, ProcessorStepRegistry, RobotProcessor
 
 
 @dataclass
