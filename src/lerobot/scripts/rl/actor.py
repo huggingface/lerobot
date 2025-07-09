@@ -644,6 +644,16 @@ def update_policy_parameters(policy: SACPolicy, parameters_queue: Queue, device)
         logging.info("[ACTOR] Load new parameters from Learner.")
         state_dicts = bytes_to_state_dict(bytes_state_dict)
 
+        # TODO: check encoder parameter synchronization possible issues:
+        # 1. When shared_encoder=True, we're loading stale encoder params from actor's state_dict
+        #    instead of the updated encoder params from critic (which is optimized separately)
+        # 2. When freeze_vision_encoder=True, we waste bandwidth sending/loading frozen params
+        # 3. Need to handle encoder params correctly for both actor and discrete_critic
+        # Potential fixes:
+        # - Send critic's encoder state when shared_encoder=True
+        # - Skip encoder params entirely when freeze_vision_encoder=True
+        # - Ensure discrete_critic gets correct encoder state (currently uses encoder_critic)
+
         # Load actor state dict
         actor_state_dict = move_state_dict_to_device(state_dicts["policy"], device=device)
         policy.actor.load_state_dict(actor_state_dict)
