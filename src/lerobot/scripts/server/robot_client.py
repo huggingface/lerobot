@@ -70,6 +70,7 @@ from lerobot.scripts.server.helpers import (
     map_robot_keys_to_lerobot_features,
     send_bytes_in_chunks,
     validate_robot_cameras_for_policy,
+    visualize_action_queue_size,
 )
 from lerobot.transport import (
     async_inference_pb2,  # type: ignore
@@ -499,7 +500,8 @@ def async_client(cfg: RobotClientConfig):
         finally:
             client.stop()
             action_receiver_thread.join()
-
+            if cfg.debug_visualize_queue_size:
+                visualize_action_queue_size(client.action_queue_size)
             client.logger.info("Client stopped")
 
 
