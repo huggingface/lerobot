@@ -44,16 +44,16 @@ from tests.utils import require_package
 @require_package("grpc")
 def test_async_inference_e2e(monkeypatch):
     """Smoke-test the full asynchronous inference pipeline."""
-    # Import only when the test actually runs (after decorator check from policy_server fixture)
     import grpc
 
-    from lerobot.scripts.server import (
-        async_inference_pb2,  # type: ignore
-        async_inference_pb2_grpc,  # type: ignore
-    )
     from lerobot.scripts.server.configs import PolicyServerConfig, RobotClientConfig
     from lerobot.scripts.server.policy_server import PolicyServer
     from lerobot.scripts.server.robot_client import RobotClient
+    from lerobot.transport import (
+        async_inference_pb2,  # type: ignore
+        async_inference_pb2_grpc,  # type: ignore
+    )
+    from tests.mocks.mock_robot import MockRobotConfig
 
     # Create a stub policy similar to test_policy_server.py
     class MockPolicy:
@@ -81,7 +81,7 @@ def test_async_inference_e2e(monkeypatch):
     policy_server.actions_per_chunk = 20
     policy_server.device = "cpu"
 
-    # Force server to act-style policy; patch method to return deterministic tensor
+    # Force server to produce deterministic action chunks in test mode
     policy_server.policy_type = "act"
 
     def _fake_get_action_chunk(_self, _obs, _type="test"):
@@ -111,9 +111,12 @@ def test_async_inference_e2e(monkeypatch):
     # ------------------------------------------------------------------
     # 2. Create a RobotClient around the MockRobot
     # ------------------------------------------------------------------
+    # Create a mock robot config for the client
+    robot_config = MockRobotConfig()
+
     client_config = RobotClientConfig(
         server_address=server_address,
-        robot=test_config,
+        robot=robot_config,
         chunk_size_threshold=0.0,
         policy_type="test",
         pretrained_name_or_path="test",
