@@ -20,7 +20,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from lerobot.processor import ProcessorStepRegistry, RobotProcessor, TransitionIndex, RenameProcessor
+from lerobot.processor import ProcessorStepRegistry, RenameProcessor, RobotProcessor, TransitionIndex
 
 
 def test_basic_renaming():
