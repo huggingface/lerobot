@@ -20,24 +20,23 @@ This module provides classes for logging URDF data, video streams, and teleopera
 
 import logging
 import os
+import re
 import threading
 import time
-from dataclasses import dataclass
 from fractions import Fraction
-from pathlib import Path
-from typing import Any, Dict, Optional, Protocol, Union, runtime_checkable
+from typing import Any, Dict, Optional, Protocol, runtime_checkable
 
 import av
 import av.video.stream
 import cv2
-import defusedxml.ElementTree as ElementTree
 import numpy as np
 import rerun as rr
+from robot_descriptions.loaders.yourdfpy import load_robot_description
+from yourdfpy.urdf import URDF, Joint
 
-from lerobot.common.constants import URDFS
-from lerobot.common.motors.motors_bus import Motor, MotorNormMode
-from lerobot.common.robots.robot import Robot
-from lerobot.common.teleoperators.teleoperator import Teleoperator
+from lerobot.motors.motors_bus import Motor, MotorNormMode
+from lerobot.robots.robot import Robot
+from lerobot.teleoperators.teleoperator import Teleoperator
 
 
 def _init_rerun(session_name: str = "lerobot_control_loop") -> None:
@@ -59,79 +58,106 @@ class HasBusWithMotors(Protocol):
     bus: HasMotors
 
 
-@dataclass
-class JointInfo:
-    path: str
-    xyz: str
-    lower: float
-    upper: float
-
-
 class URDFLogger:
+    robot_name_to_desc = {
+        "so100_follower": "so_arm100_description",
+        "so100_leader": "so_arm100_description",
+        "so101_follower": "so_arm101_description",
+        "so101_leader": "so_arm101_description",
+    }
+
+    # need to convert observation features into joint names in URDF
+    urdf_joint_map = {
+        "so_arm100_description": {
+            "shoulder_pan": "1",
+            "shoulder_lift": "2",
+            "elbow_flex": "3",
+            "wrist_flex": "4",
+            "wrist_roll": "5",
+            "gripper": "6",
+        },
+        "so_arm101_description": {
+            "shoulder_pan": "1",
+            "shoulder_lift": "2",
+            "elbow_flex": "3",
+            "wrist_flex": "4",
+            "wrist_roll": "5",
+            "gripper": "6",
+        },
+    }
+
     def __init__(
         self,
         robot: Robot,
-        urdf_path: Optional[Union[str, Path]] = None,
-        entity_path_prefix: Optional[str] = None,
+        loader_kwargs: Optional[dict] = None,
     ):
         """
-        Initialize the URDFLogger with the path to the URDF file and optional motor names.
-
-        :param robot: The robot instance containing the URDF path and motor information.
-        :param urdf_path: Path to the URDF file. If not provided, it will be constructed based on the robot type.
-        :param entity_path_prefix: Optional prefix for the entity path in Rerun. Defaults to robot type.
-        :raises FileNotFoundError: If the URDF file does not exist at the specified path.
+        Loads a URDF model (downloaded + cached by robot_descriptions) via yourdfpy.
+        Maintains a map joint_name → absolute/resolved joint path.
         """
+        loader_kwargs = loader_kwargs or {}
         self.robot = robot
-        self.urdf_path = Path(urdf_path) if urdf_path else get_urdf_path_for_robot(robot)
-        self.entity_path_prefix = entity_path_prefix or robot.robot_type
-        self._joint_paths: Optional[Dict[str, JointInfo]] = None
+        self.urdf_name = self.robot_name_to_desc[robot.robot_type]
+        robot_urdf = load_robot_description(
+            self.urdf_name, build_scene_graph=False, load_collision_meshes=False
+        )
+        assert isinstance(robot_urdf, URDF)
+        self.entity_path_prefix = robot_urdf.robot.name
+        self.robot_urdf = robot_urdf
+        self.joint_paths: Dict[str, str] = self._build_joint_paths()
 
-    @property
-    def joint_paths(self):
-        if self._joint_paths is None:
-            self._joint_paths = get_revolute_joint_child_paths(self.urdf_path)
-        return self._joint_paths
+    def log_urdf(self, stream: Optional[rr.RecordingStream] = None):
+        stream = stream or rr.get_global_data_recording()
+        if stream is None:
+            raise RuntimeError("No Rerun recording stream available")
 
-    def log_urdf(self, recording_stream: Optional[rr.RecordingStream] = None):
-        """
-        This function logs the URDF file as a static asset in Rerun.
+        # Remove the collision meshes
+        pattern = re.compile(rb"<collision\b.*?</collision>", re.DOTALL)
+        xml_bytes = pattern.sub(b"", self.robot_urdf.write_xml_string())
 
-        :param recording_stream: Optional Rerun recording stream to log the URDF file. If not provided,
-                                it will use the global recording stream.
-        :raises FileNotFoundError: If the URDF file does not exist at the specified path.
-        :raises ValueError: If no recording stream is provided and no global recording stream is found.
-        """
-        if not self.urdf_path.is_file():
-            raise FileNotFoundError(f"URDF file not found: {self.urdf_path}")
-        if recording_stream is None:
-            recording_stream = rr.get_global_data_recording()
-            if recording_stream is None:
-                raise ValueError("No global recording stream found. Please provide a recording stream.")
-        recording_stream.log_file_from_path(
-            self.urdf_path.absolute(), entity_path_prefix=self.entity_path_prefix, static=True
+        stream.log_file_from_contents(
+            f"{self.robot.name}.urdf", xml_bytes, entity_path_prefix=self.entity_path_prefix, static=True
         )
 
     def log_joint_angles(self, joint_positions: Dict[str, float]):
-        """
-        Log the joint paths to Rerun.
+        for name, pos in joint_positions.items():
+            name = name.removesuffix(".pos")
+            urdf_name = self._mapped_name(name)
+            if urdf_name not in self.joint_paths:
+                continue
+            path = f"{self.entity_path_prefix}/{self.joint_paths[urdf_name]}"
+            j = self.robot_urdf.joint_map[urdf_name]
+            axis = j.axis.tolist()
+            angle = self._get_angle_rad(name, pos)
+            rr.log(
+                path,
+                rr.Transform3D(rotation=rr.datatypes.RotationAxisAngle(axis=axis, angle=angle)),
+            )
 
-        :param joint_positions: Dictionary mapping joint names to their positions.
-        """
-        for joint_name, position in joint_positions.items():
-            joint_name = joint_name.replace(".pos", "")
-            if joint_name in self.joint_paths:
-                path = self.joint_paths[joint_name].path
-                if self.entity_path_prefix:
-                    path = f"{self.entity_path_prefix}/{path}"
-                fixed_axis = list(map(float, self.joint_paths[joint_name].xyz.split(" ")))
-                angle_rad = self._get_angle_rad(joint_name, position)
-                rr.log(
-                    path,
-                    rr.Transform3D(rotation=rr.datatypes.RotationAxisAngle(axis=fixed_axis, angle=angle_rad)),
-                )
+    def _mapped_name(self, name):
+        joint_map = self.urdf_joint_map.get(self.urdf_name, {})
+        return joint_map.get(name)
 
-    def _get_motor_modes(self) -> Dict[str, MotorNormMode]:
+    def _build_joint_paths(self) -> Dict[str, str]:
+        """
+        Build a dictionary of joint name -> joint path for use in logging to rerun
+        """
+        rev = {n: j for n, j in self.robot_urdf.joint_map.items() if j.type == "revolute"}
+        child_to_joint = {j.child: j for j in rev.values()}
+        cache: Dict[str, str] = {}
+
+        def build(child: str) -> str:
+            if child in cache:
+                return cache[child]
+            j = child_to_joint.get(child)
+            path = child if j is None else f"{build(j.parent)}/{j.name}/{child}"
+            cache[child] = path
+            return path
+
+        return {name: build(j.child) for name, j in rev.items()}
+
+    @property
+    def motor_modes(self) -> Dict[str, MotorNormMode]:
         """
         Get the motor modes for the robot.
 
@@ -149,9 +175,6 @@ class URDFLogger:
         :param position: Raw position of the joint.
         :return: Joint angle in radians.
         """
-        # position is -100 to 100 range
-        if joint_name not in self.joint_paths:
-            raise ValueError(f"Joint name '{joint_name}' not found in URDF paths.")
 
         def normalize(position, motor_mode):
             """
@@ -166,98 +189,20 @@ class URDFLogger:
             else:
                 raise ValueError(f"Unsupported motor mode: {motor_mode}")
 
-        joint_info = self.joint_paths[joint_name]
-        lower_limit_rad = joint_info.lower
-        upper_limit_rad = joint_info.upper
-        if lower_limit_rad is None or upper_limit_rad is None:
-            raise ValueError(f"Joint '{joint_name}' does not have defined limits in the URDF.")
+        urdf_name = self._mapped_name(joint_name)
+        joint_info: Joint = self.robot_urdf.joint_map[urdf_name]
+        if joint_info.limit is None or joint_info.limit.upper is None or joint_info.limit.lower is None:
+            raise ValueError(f"Joint '{urdf_name}' ({joint_name}) does not have defined limits in the URDF.")
+        lower_limit_rad = joint_info.limit.lower
+        upper_limit_rad = joint_info.limit.upper
 
-        motor_mode = self._get_motor_modes().get(joint_name, MotorNormMode.RANGE_M100_100)
+        motor_mode = self.motor_modes.get(joint_name, MotorNormMode.RANGE_M100_100)
         radians = normalize(position, motor_mode) * (upper_limit_rad - lower_limit_rad) + lower_limit_rad
 
         return radians
 
     def __repr__(self):
-        return (
-            f"<URDFLogger robot={self.robot.robot_type} urdf_path={self.urdf_path} "
-            f"entity_path_prefix={self.entity_path_prefix}>"
-        )
-
-
-def get_urdf_path_for_robot(robot: Robot) -> Path:
-    """
-    Get the URDF path for a given robot instance.
-
-    :param robot: The robot instance.
-    :return: The path to the URDF file.
-    :raises FileNotFoundError: If the URDF file does not exist at the specified path.
-    """
-    repo_root = Path(__file__).resolve().parents[2]
-    urdf_path = repo_root / URDFS / robot.robot_type / (robot.robot_type + ".urdf")
-    if not urdf_path.is_file():
-        raise FileNotFoundError(f"URDF file not found at {urdf_path}. Please ensure the URDF file exists.")
-    return urdf_path
-
-
-def get_revolute_joint_child_paths(urdf_path: Union[str, Path]) -> Dict[str, JointInfo]:
-    """
-    Parse a URDF file to extract information about revolute joints and their child links.
-
-    :param urdf_path: Path to the URDF file.
-    :return: A dictionary mapping joint names to JointInfo dataclasses containing the path, xyz coordinates, and limits.
-    :raises FileNotFoundError: If the URDF file does not exist at the specified path.
-    :raises ElementTree.ParseError: If the URDF file is not a valid XML file or cannot be parsed.
-    :raises KeyError: If a required attribute is missing in the URDF file (e.g., 'name', 'link', 'xyz', 'lower', 'upper').
-    """
-    tree = ElementTree.parse(urdf_path)
-    root = tree.getroot()
-
-    # Map child link to (parent link, joint name)
-    child_to_parent_joint = {}
-    joint_to_child = {}
-    joint_to_xyz = {}
-    joint_to_limits = {}
-
-    for joint in root.findall(".//joint[@type='revolute']"):
-        parent = joint.find("parent")
-        child = joint.find("child")
-        axis = joint.find("axis")
-        limit = joint.find("limit")
-        if parent is not None and child is not None:
-            parent_link = parent.attrib["link"]
-            child_link = child.attrib["link"]
-            joint_name = joint.attrib["name"]
-            child_to_parent_joint[child_link] = (parent_link, joint_name)
-            joint_to_child[joint_name] = child_link
-            xyz = axis.attrib["xyz"] if axis is not None and "xyz" in axis.attrib else None
-            lower = float(limit.attrib["lower"]) if limit is not None and "lower" in limit.attrib else None
-            upper = float(limit.attrib["upper"]) if limit is not None and "upper" in limit.attrib else None
-            joint_to_xyz[joint_name] = xyz
-            joint_to_limits[joint_name] = (lower, upper)
-
-    # Build full path for a link, inserting joint names
-    path_cache = {}
-
-    def build_path(link):
-        if link in path_cache:
-            return path_cache[link]
-        if link not in child_to_parent_joint:
-            path_cache[link] = link
-        else:
-            parent_link, joint_name = child_to_parent_joint[link]
-            path_cache[link] = f"{build_path(parent_link)}/{joint_name}/{link}"
-        return path_cache[link]
-
-    # Map joint name to JointInfo dataclass
-    return {
-        joint: JointInfo(
-            path=build_path(child),
-            xyz=joint_to_xyz[joint],
-            lower=joint_to_limits[joint][0],
-            upper=joint_to_limits[joint][1],
-        )
-        for joint, child in joint_to_child.items()
-    }
+        return f"<URDFLogger robot={self.entity_path_prefix} joints={len(self.joint_paths)}>"
 
 
 class VideoLogger:
@@ -443,7 +388,7 @@ class RerunRobotLogger:
             rr.set_time("time", duration=np.timedelta64(time.time_ns(), "ns"))
 
         if observation is None:
-            observation = observation or self.robot.get_observation() if self.robot else {}
+            observation = self.robot.get_observation() if self.robot else {}
         if action is None:
             action = self.teleop.get_action() if self.teleop else {}
 

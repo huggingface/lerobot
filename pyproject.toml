@@ -48,7 +48,6 @@ dependencies = [
     "cmake>=3.29.0.1",
     "datasets>=2.19.0",
     "deepdiff>=7.0.1",
-    "defusedxml>=0.7.1",
     "diffusers>=0.27.2",
     "draccus==0.10.0",
     "einops>=0.8.0",
@@ -75,6 +74,8 @@ dependencies = [
     "torchvision>=0.21.0",
     "wandb>=0.16.3",
     "zarr>=2.17.0",
+    "robot-descriptions>=1.19.0",
+    "yourdfpy>=0.0.58",
 ]
 
 [project.optional-dependencies]

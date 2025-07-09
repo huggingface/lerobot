@@ -47,7 +47,6 @@ from lerobot.cameras import (  # noqa: F401
 )
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
-from lerobot.common.utils.visualization_utils import RerunRobotLogger
 from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.datasets.image_writer import safe_stop_image_writer
@@ -87,6 +86,7 @@ from lerobot.utils.utils import (
     init_logging,
     log_say,
 )
+from lerobot.utils.visualization_utils import RerunRobotLogger
 
 
 @dataclass
@@ -138,6 +138,7 @@ class RecordConfig:
     policy: PreTrainedConfig | None = None
     # Display all cameras on screen
     display_data: bool = False
+    display_urdf: bool = False
     # Stream camera images as a video stream or as individual frames.
     # Video streams can be played back, but have latency and memory impact.
     # Only latest is saved for individual frames, but little latency or memory impact.
@@ -324,7 +325,11 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             logging.warning(f"Invalid image_stream_type '{cfg.image_stream_type}'. Using 'video' as default.")
             cfg.image_stream_type = "video"
         rerun_logger = RerunRobotLogger(
-            teleop=teleop, robot=robot, fps=cfg.dataset.fps, image_stream_type=cfg.image_stream_type
+            teleop=teleop,
+            robot=robot,
+            fps=cfg.dataset.fps,
+            image_stream_type=cfg.image_stream_type,
+            log_urdf=cfg.display_urdf,
         )
         rerun_logger.init("recording")
 

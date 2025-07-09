@@ -40,9 +40,6 @@ import draccus
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
-from lerobot.common.utils.robot_utils import busy_wait
-from lerobot.common.utils.utils import init_logging, move_cursor_up
-from lerobot.common.utils.visualization_utils import RerunRobotLogger
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -62,6 +59,9 @@ from lerobot.teleoperators import (  # noqa: F401
     so100_leader,
     so101_leader,
 )
+from lerobot.utils.robot_utils import busy_wait
+from lerobot.utils.utils import init_logging, move_cursor_up
+from lerobot.utils.visualization_utils import RerunRobotLogger
 
 
 @dataclass
@@ -74,6 +74,7 @@ class TeleoperateConfig:
     teleop_time_s: float | None = None
     # Display all cameras on screen
     display_data: bool = False
+    display_urdf: bool = False
     # Stream camera images as a video stream or as individual frames.
     # Video streams can be played back, but have latency and memory impact.
     # Only latest is saved for individual frames, but little latency or memory impact.
@@ -139,7 +140,9 @@ def teleoperate(cfg: TeleoperateConfig):
         rerun_logger = RerunRobotLogger(
             teleop=teleop,
             robot=robot,
-            fps=cfg.fps,  # image_stream_type=cfg.image_stream_type
+            fps=cfg.fps,
+            image_stream_type=cfg.image_stream_type,
+            log_urdf=cfg.display_urdf,
         )
         rerun_logger.init(session_name="teleoperation")
 
