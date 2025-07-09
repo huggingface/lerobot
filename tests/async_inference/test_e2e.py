@@ -32,37 +32,56 @@ from __future__ import annotations
 import threading
 from concurrent import futures
 
-import grpc
 import torch
 
-from lerobot.robots.utils import make_robot_from_config
-from lerobot.scripts.server.configs import RobotClientConfig
-from lerobot.scripts.server.policy_server import PolicyServer
-from lerobot.scripts.server.robot_client import RobotClient
-from lerobot.transport import async_inference_pb2_grpc  # type: ignore
-from tests.async_inference.test_policy_server import policy_server  # noqa: F401
+from tests.utils import require_package
 
 # -----------------------------------------------------------------------------
 # End-to-end test
 # -----------------------------------------------------------------------------
 
 
-def test_async_inference_e2e(policy_server, monkeypatch):  # noqa: F811
-    """Tests the full asynchronous inference pipeline."""
-    # ------------------------------------------------------------------
-    # 1. Spawn a PolicyServer returning dummy action chunks
-    # ------------------------------------------------------------------
-    from lerobot.scripts.server.helpers import map_robot_keys_to_lerobot_features
-    from lerobot.transport import async_inference_pb2  # type: ignore
-    from tests.mocks.mock_robot import MockRobotConfig
+@require_package("grpc")
+def test_async_inference_e2e(monkeypatch):
+    """Smoke-test the full asynchronous inference pipeline."""
+    # Import only when the test actually runs (after decorator check from policy_server fixture)
+    import grpc
 
-    test_config = MockRobotConfig()
-    mock_robot = make_robot_from_config(test_config)
+    from lerobot.scripts.server import (
+        async_inference_pb2,  # type: ignore
+        async_inference_pb2_grpc,  # type: ignore
+    )
+    from lerobot.scripts.server.configs import PolicyServerConfig, RobotClientConfig
+    from lerobot.scripts.server.policy_server import PolicyServer
+    from lerobot.scripts.server.robot_client import RobotClient
 
-    lerobot_features = map_robot_keys_to_lerobot_features(mock_robot)
-    policy_server.lerobot_features = lerobot_features
+    # Create a stub policy similar to test_policy_server.py
+    class MockPolicy:
+        """A minimal mock for an actual policy, returning zeros."""
 
-    # Force server to produce deterministic action chunks in test mode
+        class _Config:
+            robot_type = "dummy_robot"
+
+        def __init__(self):
+            self.config = self._Config()
+
+        def to(self, *args, **kwargs):
+            return self
+
+        def model(self, batch):
+            # Return a chunk of 20 dummy actions.
+            batch_size = len(batch["robot_type"])
+            return torch.zeros(batch_size, 20, 6)
+
+    # Create PolicyServer instance
+    test_config = PolicyServerConfig(host="localhost", port=9999)
+    policy_server = PolicyServer(test_config)
+    # Replace the real policy with our fast, deterministic stub.
+    policy_server.policy = MockPolicy()
+    policy_server.actions_per_chunk = 20
+    policy_server.device = "cpu"
+
+    # Force server to act-style policy; patch method to return deterministic tensor
     policy_server.policy_type = "act"
 
     def _fake_get_action_chunk(_self, _obs, _type="test"):

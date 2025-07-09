@@ -23,16 +23,14 @@ import pytest
 import torch
 
 from lerobot.configs.types import PolicyFeature
-from lerobot.scripts.server.configs import PolicyServerConfig
-from lerobot.scripts.server.helpers import TimedObservation
-from lerobot.scripts.server.policy_server import PolicyServer
+from tests.utils import require_package
 
 # -----------------------------------------------------------------------------
 # Test fixtures
 # -----------------------------------------------------------------------------
 
 
-class _StubPolicy:
+class MockPolicy:
     """A minimal mock for an actual policy, returning zeros.
     Refer to tests/policies for tests of the individual policies supported."""
 
@@ -63,12 +61,17 @@ class _StubPolicy:
 
 
 @pytest.fixture
-def policy_server() -> PolicyServer:
+@require_package("grpc")
+def policy_server():
     """Fresh `PolicyServer` instance with a stubbed-out policy model."""
+    # Import only when the test actually runs (after decorator check)
+    from lerobot.scripts.server.configs import PolicyServerConfig
+    from lerobot.scripts.server.policy_server import PolicyServer
+
     test_config = PolicyServerConfig(host="localhost", port=9999)
     server = PolicyServer(test_config)
     # Replace the real policy with our fast, deterministic stub.
-    server.policy = _StubPolicy()
+    server.policy = MockPolicy()
     server.actions_per_chunk = 20
     server.device = "cpu"
 
@@ -89,8 +92,11 @@ def policy_server() -> PolicyServer:
 # -----------------------------------------------------------------------------
 
 
-def _make_obs(state: torch.Tensor, timestep: int = 0, must_go: bool = False) -> TimedObservation:
-    """Create a TimedObservation with raw robot observation format."""
+def _make_obs(state: torch.Tensor, timestep: int = 0, must_go: bool = False):
+    """Create a TimedObservation with a given state vector."""
+    # Import only when needed
+    from lerobot.scripts.server.helpers import TimedObservation
+
     return TimedObservation(
         observation={
             "joint1": state[0].item() if len(state) > 0 else 0.0,
@@ -111,7 +117,7 @@ def _make_obs(state: torch.Tensor, timestep: int = 0, must_go: bool = False) -> 
 # -----------------------------------------------------------------------------
 
 
-def test_time_action_chunk(policy_server: PolicyServer):
+def test_time_action_chunk(policy_server):
     """Verify that `_time_action_chunk` assigns correct timestamps and timesteps."""
     start_ts = time.time()
     start_t = 10
@@ -133,7 +139,7 @@ def test_time_action_chunk(policy_server: PolicyServer):
         assert abs(ta.get_timestamp() - expected_ts) < 1e-6
 
 
-def test_enqueue_observation_must_go(policy_server: PolicyServer):
+def test_maybe_enqueue_observation_must_go(policy_server):
     """An observation with `must_go=True` is always enqueued."""
     obs = _make_obs(torch.zeros(6), must_go=True)
     assert policy_server._enqueue_observation(obs) is True
@@ -141,7 +147,7 @@ def test_enqueue_observation_must_go(policy_server: PolicyServer):
     assert policy_server.observation_queue.get_nowait() is obs
 
 
-def test_enqueue_observation_dissimilar(policy_server: PolicyServer):
+def test_maybe_enqueue_observation_dissimilar(policy_server):
     """A dissimilar observation (not `must_go`) is enqueued."""
     # Set a last predicted observation.
     policy_server.last_processed_obs = _make_obs(torch.zeros(6))
@@ -152,7 +158,7 @@ def test_enqueue_observation_dissimilar(policy_server: PolicyServer):
     assert policy_server.observation_queue.qsize() == 1
 
 
-def test_enqueue_observation_is_skipped(policy_server: PolicyServer):
+def test_maybe_enqueue_observation_is_skipped(policy_server):
     """A similar observation (not `must_go`) is skipped."""
     # Set a last predicted observation.
     policy_server.last_processed_obs = _make_obs(torch.zeros(6))
@@ -163,7 +169,7 @@ def test_enqueue_observation_is_skipped(policy_server: PolicyServer):
     assert policy_server.observation_queue.empty() is True
 
 
-def test_obs_sanity_checks(policy_server: PolicyServer):
+def test_obs_sanity_checks(policy_server):
     """Unit-test the private `_obs_sanity_checks` helper."""
     prev = _make_obs(torch.zeros(6), timestep=0)
 
@@ -182,8 +188,10 @@ def test_obs_sanity_checks(policy_server: PolicyServer):
     assert policy_server._obs_sanity_checks(obs_ok, prev) is True
 
 
-def test_predict_action_chunk(monkeypatch, policy_server: PolicyServer):
+def test_predict_action_chunk(monkeypatch, policy_server):
     """End-to-end test of `_predict_action_chunk` with a stubbed _get_action_chunk."""
+    # Import only when needed
+    from lerobot.scripts.server.policy_server import PolicyServer
 
     # Force server to act-style policy; patch method to return deterministic tensor
     policy_server.policy_type = "act"
