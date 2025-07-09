@@ -62,7 +62,6 @@ class PolicyServerConfig:
     obs_queue_timeout: float = field(
         default=DEFAULT_OBS_QUEUE_TIMEOUT, metadata={"help": "Timeout for observation queue in seconds"}
     )
-    actions_per_chunk: int = field(default=20, metadata={"help": "Number of actions per chunk"})
 
     def __post_init__(self):
         """Validate configuration after initialization."""
