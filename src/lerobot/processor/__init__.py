@@ -32,6 +32,7 @@ from .pipeline import (
     ProcessorStepRegistry,
     RewardProcessor,
     RobotProcessor,
+    TransitionIndex,
     TruncatedProcessor,
 )
 from .rename_processor import RenameProcessor
@@ -53,6 +54,7 @@ __all__ = [
     "RewardProcessor",
     "RobotProcessor",
     "StateProcessor",
+    "TransitionIndex",
     "TruncatedProcessor",
     "VanillaObservationProcessor",
 ]

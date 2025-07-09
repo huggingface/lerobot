@@ -22,8 +22,7 @@ from gymnasium.utils.env_checker import check_env
 
 import lerobot
 from lerobot.envs.factory import make_env, make_env_config
-from lerobot.processor.observation_processor import VanillaObservationProcessor
-from lerobot.processor.pipeline import RobotProcessor, TransitionIndex
+from lerobot.processor import RobotProcessor, TransitionIndex, VanillaObservationProcessor
 from tests.utils import require_env
 
 OBS_TYPES = ["state", "pixels", "pixels_agent_pos"]

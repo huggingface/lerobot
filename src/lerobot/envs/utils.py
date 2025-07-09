@@ -36,8 +36,7 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
     Returns:
         Dictionary of observation batches with keys renamed to LeRobot format and values as tensors.
     """
-    from lerobot.processor.observation_processor import VanillaObservationProcessor
-    from lerobot.processor.pipeline import RobotProcessor, TransitionIndex
+    from lerobot.processor import RobotProcessor, TransitionIndex, VanillaObservationProcessor
 
     # Create processor with observation processor
     processor = RobotProcessor([VanillaObservationProcessor()])
