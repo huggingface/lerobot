@@ -57,6 +57,7 @@ from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
+    bi_so100_follower,
     hope_jr,
     koch_follower,
     make_robot_from_config,
@@ -66,6 +67,7 @@ from lerobot.robots import (  # noqa: F401
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
+    bi_so100_leader,
     homunculus,
     koch_leader,
     make_teleoperator_from_config,
