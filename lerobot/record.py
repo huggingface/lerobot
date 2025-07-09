@@ -292,6 +292,17 @@ class VideoEncodingManager:
                     logging.debug(f"Cleaning up interrupted episode images for episode {interrupted_episode_index}, camera {key}")
                     shutil.rmtree(img_dir)
 
+        # Clean up any remaining images directory if it's empty
+        img_dir = self.dataset.root / "images"
+        # Check for any remaining PNG files
+        png_files = list(img_dir.rglob("*.png"))
+        if len(png_files) == 0:
+            # Only remove the images directory if no PNG files remain
+            shutil.rmtree(img_dir)
+            logging.debug("Cleaned up empty images directory")
+        else:
+            logging.debug(f"Images directory is not empty, containing {len(png_files)} PNG files")
+
         return False  # Don't suppress the original exception
 
 
