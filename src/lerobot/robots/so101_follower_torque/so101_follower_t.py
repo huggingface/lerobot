@@ -15,7 +15,6 @@
 # limitations under the License.
 
 import logging
-import math
 import time
 from functools import cached_property
 from typing import Any
@@ -47,16 +46,16 @@ class SO101FollowerT(Robot):
 
     _CURRENT_STEP_A: float = 6.5e-3  # 6.5 mA per register LSB #http://doc.feetech.cn/#/prodinfodownload?srcType=FT-SMS-STS-emanual-229f4476422d4059abfb1cb0
     _KT_NM_PER_AMP: float = 0.814  # Torque constant Kt [N·m/A] #https://www.feetechrc.com/811177.html
-    _MAX_CURRENT_A: float = 4.0  # Safe driver limit for this model
+    _MAX_CURRENT_A: float = 2.0  # Safe driver limit for this model
 
     # Control gains for bilateral teleoperation
-    _KP_GAINS = {  # Position gains [Nm/rad] - higher for proximal joints
-        "shoulder_pan": 7.0,
-        "shoulder_lift": 15.0,
-        "elbow_flex": 12.0,
-        "wrist_flex": 6.0,
-        "wrist_roll": 4.0,
-        "gripper": 2.0,
+    _KP_GAINS = {  # Position gains [Nm/rad] - reduced for bilateral stability
+        "shoulder_pan": 5.0,  # Reduced from 7.0
+        "shoulder_lift": 10.0,  # Reduced from 15.0
+        "elbow_flex": 8.0,  # Reduced from 12.0 (main problem joint)
+        "wrist_flex": 4.0,  # Reduced from 6.0
+        "wrist_roll": 3.0,  # Reduced from 4.0
+        "gripper": 1.5,  # Reduced from 2.0
     }
 
     _KD_GAINS = {  # Velocity gains [Nm⋅s/rad] - matched to position gains
@@ -190,8 +189,8 @@ class SO101FollowerT(Robot):
         return counts
 
     def _deg_to_rad(self, deg: dict[str, float | int]) -> dict[str, float]:
-        """GDegrees to radians."""
-        return {m: math.radians(float(v)) for m, v in deg.items()}
+        """Degrees to radians."""
+        return {m: np.deg2rad(float(v)) for m, v in deg.items()}
 
     def _gravity_from_q(self, q_rad: dict[str, float]) -> dict[str, float]:
         """

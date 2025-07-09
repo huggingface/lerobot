@@ -28,12 +28,12 @@ def to_cmd(tau_vec, joints):
 
 follower_cfg = SO101FollowerTConfig(
     port="/dev/tty.usbmodem58760431551",
-    id="follower_arm_t",
+    id="follower_arm_tt",
 )
 
 leader_cfg = SO101FollowerTConfig(
     port="/dev/tty.usbmodem58760428721",
-    id="leader_arm_t",
+    id="leader_arm_tt",
 )
 
 follower = SO101FollowerT(follower_cfg)
@@ -77,21 +77,14 @@ while True:
 
     # Collect data for all motors
     pos_f = {j: obs_f[f"{j}.pos"] for j in follower.bus.motors}
+    vel_f = {j: obs_f[f"{j}.vel"] for j in follower.bus.motors}
     acc_f = {j: obs_f[f"{j}.acc"] for j in follower.bus.motors}
     tau_meas_f = {j: obs_f[f"{j}.tau_meas"] for j in follower.bus.motors}
 
     pos_l = {j: obs_l[f"{j}.pos"] for j in leader.bus.motors}
+    vel_l = {j: obs_l[f"{j}.vel"] for j in leader.bus.motors}
     acc_l = {j: obs_l[f"{j}.acc"] for j in leader.bus.motors}
     tau_meas_l = {j: obs_l[f"{j}.tau_meas"] for j in leader.bus.motors}
-
-    # Calculate velocities from position differences
-    if pos_f_prev is not None and pos_l_prev is not None:
-        vel_f = {j: (pos_f[j] - pos_f_prev[j]) / dt for j in follower.bus.motors}
-        vel_l = {j: (pos_l[j] - pos_l_prev[j]) / dt for j in leader.bus.motors}
-    else:
-        # First iteration: initialize with zeros
-        vel_f = dict.fromkeys(follower.bus.motors, 0.0)
-        vel_l = dict.fromkeys(leader.bus.motors, 0.0)
 
     # Update previous positions for next iteration
     pos_f_prev = pos_f.copy()
@@ -245,24 +238,50 @@ while True:
     if loop_count % (FRQ // PRINT_HZ) == 0:
         hz = 1.0 / dt
 
-        # Detailed torque analysis mode
+        # Detailed torque analysis mode - LEADER
         lines = [f"Loop {hz:6.1f} Hz    Δt {dt * 1e3:5.2f} ms"]
-        lines.append("=" * 100)
+        lines.append("=" * 106)
+        lines.append("LEADER ARM TORQUE ANALYSIS:")
         lines.append(
-            f"{'Joint':<13}{'L':>8}{'F':>8}{'Grav':>6}{'Inert':>6}{'Pos':>6}{'Vel':>6}{'Force':>6}{'Frict':>6}{'React':>6}{'Meas':>6}{'Cmd':>6}"
+            f"{'Joint':<13}{'Pos':>8}{'Grav':>6}{'Inert':>6}{'Track':>6}{'Vel':>6}{'Force':>6}{'Frict':>6}{'React':>6}{'Meas':>6}{'Cmd':>6}"
         )
         lines.append(
-            f"{'':13}{'(deg)':>8}{'(deg)':>8}{'(Nm)':>6}{'(Nm)':>6}{'(Nm)':>6}{'(Nm)':>6}{'(Nm)':>6}{'(Nm)':>6}{'(Nm)':>6}{'(Nm)':>6}{'(Nm)':>6}"
+            f"{'':13}{'(deg)':>8}{'(Nm)':>6}{'(Nm)':>6}{'(Nm)':>6}{'(Nm)':>6}{'(Nm)':>6}{'(Nm)':>6}{'(Nm)':>6}{'(Nm)':>6}{'(Nm)':>6}"
         )
-        lines.append("-" * 100)
+        lines.append("-" * 86)
 
-        for i, j in enumerate(follower.bus.motors):
-            debug_f = debug_info_f[j]
+        for i, j in enumerate(leader.bus.motors):
             debug_l = debug_info_l[j]
 
             lines.append(
                 f"{j:<13s}"
                 f"{math.degrees(pos_l[j]):+8.1f}"
+                f"{debug_l['τ_gravity']:+6.2f}"
+                f"{debug_l['τ_inertia']:+6.2f}"
+                f"{debug_l['τ_pos']:+6.2f}"
+                f"{debug_l['τ_vel']:+6.2f}"
+                f"{debug_l['τ_force']:+6.2f}"
+                f"{debug_l['τ_friction']:+6.2f}"
+                f"{debug_l['τ_reaction']:+6.2f}"
+                f"{debug_l['τ_measured']:+6.2f}"
+                f"{tau_cmd_l[i]:+6.2f}"
+            )
+
+        lines.append("")
+        lines.append("FOLLOWER ARM TORQUE ANALYSIS:")
+        lines.append(
+            f"{'Joint':<13}{'Pos':>8}{'Grav':>6}{'Inert':>6}{'Track':>6}{'Vel':>6}{'Force':>6}{'Frict':>6}{'React':>6}{'Meas':>6}{'Cmd':>6}"
+        )
+        lines.append(
+            f"{'':13}{'(deg)':>8}{'(Nm)':>6}{'(Nm)':>6}{'(Nm)':>6}{'(Nm)':>6}{'(Nm)':>6}{'(Nm)':>6}{'(Nm)':>6}{'(Nm)':>6}{'(Nm)':>6}"
+        )
+        lines.append("-" * 86)
+
+        for i, j in enumerate(follower.bus.motors):
+            debug_f = debug_info_f[j]
+
+            lines.append(
+                f"{j:<13s}"
                 f"{math.degrees(pos_f[j]):+8.1f}"
                 f"{debug_f['τ_gravity']:+6.2f}"
                 f"{debug_f['τ_inertia']:+6.2f}"
@@ -275,19 +294,21 @@ while True:
                 f"{tau_cmd_f[i]:+6.2f}"
             )
 
-        lines.append("-" * 100)
+        lines.append("")
+        lines.append("=" * 86)
         lines.append("TORQUE COMPONENT EXPLANATIONS:")
-        lines.append("• Grav  (gravity)   = Feed-forward gravity compensation")
-        lines.append("• Inert (inertia)   = Feed-forward inertia compensation")
-        lines.append("• Pos   (position)  = Position tracking control (Kp error)")
+        lines.append("• Pos   (joint pos)  = Joint position in degrees")
+        lines.append("• Grav  (gravity)    = Feed-forward gravity compensation")
+        lines.append("• Inert (inertia)    = Feed-forward inertia compensation")
+        lines.append("• Track (tracking)   = Position tracking control (Kp error)")
         lines.append("• Vel   (velocity)  = Velocity damping control (Kd error)")
         lines.append("• Force (bilateral) = Force reflection between robots (telepresence)")
         lines.append("• Frict (friction)  = Feed-forward friction compensation (transparency)")
         lines.append("• React (reaction)  = External forces (human interaction, contact)")
         lines.append("• Meas  (measured)  = Raw torque from motor current sensor")
         lines.append("• Cmd   (command)   = Final torque sent to motor")
-        lines.append("-" * 100)
-        lines.append("Cmd = Pos + Vel + Force + Grav + Inert + Frict")
+        lines.append("-" * 86)
+        lines.append("Cmd = Track + Vel + Force + Grav + Inert + Frict")
         lines.append(
             "React = Meas - Grav - Inert - Frict  (external forces)"
             if use_friction_comp
