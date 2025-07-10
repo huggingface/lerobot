@@ -140,7 +140,9 @@ def train(cfg: TrainPipelineConfig):
         cfg=cfg.policy,
         ds_meta=dataset.meta,
     )
-    preprocessor, _ = make_processor(cfg.policy, cfg.policy.pretrained_path)
+    preprocessor, _ = make_processor(
+        policy_cfg=cfg.policy, pretrained_path=cfg.policy.pretrained_path, dataset_stats=dataset.meta.stats
+    )
 
     logging.info("Creating optimizer and scheduler")
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
