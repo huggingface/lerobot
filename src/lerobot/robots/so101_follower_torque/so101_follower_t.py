@@ -327,33 +327,10 @@ class SO101FollowerT(Robot):
         with self.bus.torque_disabled():
             self.bus.configure_motors()
             for motor in self.bus.motors:
-                phase = int(self.bus.read("Phase", motor, normalize=False))
-                if phase & 0x10:  # bit-4 set = multi-turn
-                    new_phase = phase & ~0x10
-                    print(f"Switching {motor} to single-turn: 0x{phase:02X} → 0x{new_phase:02X}")
-                    self.bus.write("Phase", motor, new_phase, normalize=False)
-
                 self.bus.write("Operating_Mode", motor, 2, num_retry=2)  # Set to current mode
                 self.bus.write("Torque_Limit", motor, 1000, num_retry=2)  # 100%
                 self.bus.write("Max_Torque_Limit", motor, 1000, num_retry=2)  # 100%
-                self.bus.write("Return_Delay_Time", motor, 0, num_retry=2)
                 self.bus.write("Protection_Current", motor, 1000, num_retry=2)
-
-                # Disable interfering protection systems for better torque response
-                # Read current unloading condition and disable current/overload protection
-                current_unload = int(self.bus.read("Unloading_Condition", motor, normalize=False))
-
-                # Disable multiple protection systems that can interfere with torque control:
-                # Bit 32 (0x20): Load overload protection - causes torque limiting
-                # Bit 16 (0x10): Current protection - causes current limiting during high torque
-                # Bit 8 (0x08): Speed protection - can interfere with velocity control
-                safe_unload = current_unload & ~(32 | 16 | 8)  # Remove bits 32, 16, 8
-
-                self.bus.write("Unloading_Condition", motor, safe_unload, num_retry=2)
-                print(f"Motor {motor}: Unloading condition 0x{current_unload:02X} → 0x{safe_unload:02X}")
-                print(
-                    "  Disabled: Load overload (bit 32), Current protection (bit 16), Speed protection (bit 8)"
-                )
 
     def setup_motors(self) -> None:
         for motor in reversed(self.bus.motors):
