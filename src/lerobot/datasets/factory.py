@@ -32,6 +32,7 @@ IMAGENET_STATS = {
     "std": [[[0.229]], [[0.224]], [[0.225]]],  # (c,1,1)
 }
 
+from lerobot.common.datasets.utils_must import (EPISODES_DATASET_MAPPING, TRAINING_FEATURES, FEATURE_KEYS_MAPPING)
 
 def resolve_delta_timestamps(
     cfg: PreTrainedConfig, ds_meta: LeRobotDatasetMetadata
@@ -66,7 +67,7 @@ def resolve_delta_timestamps(
     return delta_timestamps
 
 
-def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDataset:
+def make_dataset1(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDataset:
     """Handles the logic of setting up delta timestamps and image transforms before creating a dataset.
 
     Args:
@@ -110,6 +111,99 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             f"{pformat(dataset.repo_id_to_index, indent=2)}"
         )
 
+    if cfg.dataset.use_imagenet_stats:
+        for key in dataset.meta.camera_keys:
+            for stats_type, stats in IMAGENET_STATS.items():
+                dataset.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
+
+    return dataset
+
+def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDataset:
+    """Handles the logic of setting up delta timestamps and image transforms before creating a dataset.
+
+    Args:
+        cfg (TrainPipelineConfig): A TrainPipelineConfig config which contains a DatasetConfig and a PreTrainedConfig.
+
+    Raises:
+        NotImplementedError: The MultiLeRobotDataset is currently deactivated.
+
+    Returns:
+        LeRobotDataset | MultiLeRobotDataset
+    """
+    image_transforms = (
+        ImageTransforms(cfg.dataset.image_transforms) if cfg.dataset.image_transforms.enable else None
+    )
+    if "," in cfg.dataset.repo_id:
+        repo_id = cfg.dataset.repo_id.split(",")
+        repo_id = [r for r in repo_id if r]
+    else:
+        repo_id = cfg.dataset.repo_id
+    sampling_weights = cfg.dataset.sampling_weights.split(",") if cfg.dataset.sampling_weights else None
+    feature_keys_mapping = FEATURE_KEYS_MAPPING
+    if isinstance(repo_id, str):
+        revision = getattr(cfg.dataset, "revision", None)
+        ds_meta = LeRobotDatasetMetadata(
+            cfg.dataset.repo_id,
+            local_files_only=cfg.dataset.local_files_only,
+            feature_keys_mapping=feature_keys_mapping,
+            revision=revision,
+        )
+        delta_timestamps = resolve_delta_timestamps(cfg.policy, ds_meta)
+        dataset = LeRobotDataset(
+            cfg.dataset.repo_id,
+            root=getattr(cfg.dataset, "root", None),
+            episodes=cfg.dataset.episodes,
+            delta_timestamps=delta_timestamps,
+            image_transforms=image_transforms,
+            revision=revision,
+            video_backend=cfg.dataset.video_backend,
+            local_files_only=cfg.dataset.local_files_only,
+            feature_keys_mapping=feature_keys_mapping,
+            max_action_dim=cfg.dataset.max_action_dim,
+            max_state_dim=cfg.dataset.max_state_dim,
+            max_num_images=cfg.dataset.max_num_images,
+            max_image_dim=cfg.dataset.max_image_dim,
+        )
+    else:
+        delta_timestamps = {}
+        episodes = {}
+        for i in range(len(repo_id)):
+            ds_meta = LeRobotDatasetMetadata(
+                repo_id[i],
+                local_files_only=cfg.dataset.local_files_only,
+                feature_keys_mapping=feature_keys_mapping,
+            )  # FIXME(mshukor): ?
+            delta_timestamps[repo_id[i]] = resolve_delta_timestamps(cfg.policy, ds_meta)
+            episodes[repo_id[i]] =  EPISODES_DATASET_MAPPING.get(repo_id[i], cfg.dataset.episodes)
+        training_features = TRAINING_FEATURES.get(cfg.dataset.features_version, None)
+        dataset = MultiLeRobotDataset(
+            repo_id,
+            # TODO(aliberts): add proper support for multi dataset
+            episodes=episodes,
+            delta_timestamps=delta_timestamps,
+            image_transforms=image_transforms,
+            video_backend=cfg.dataset.video_backend,
+            local_files_only=cfg.dataset.local_files_only,
+            sampling_weights=sampling_weights,
+            feature_keys_mapping=feature_keys_mapping,
+            max_action_dim=cfg.dataset.max_action_dim,
+            max_state_dim=cfg.dataset.max_state_dim,
+            max_num_images=cfg.dataset.max_num_images,
+            max_image_dim=cfg.dataset.max_image_dim,
+            train_on_all_features=cfg.dataset.train_on_all_features,
+            training_features=training_features,
+            discard_first_n_frames=cfg.dataset.discard_first_n_frames,
+            min_fps=cfg.dataset.min_fps,
+            max_fps=cfg.dataset.max_fps,
+            discard_first_idle_frames=cfg.dataset.discard_first_idle_frames,
+            motion_threshold=cfg.dataset.motion_threshold,
+            motion_window_size=cfg.dataset.motion_window_size,
+            motion_buffer=cfg.dataset.motion_buffer,
+        )
+        logging.info(
+            "Multiple datasets were provided. Applied the following index mapping to the provided datasets: "
+            f"{pformat(dataset.repo_id_to_index , indent=2)}"
+        )
     if cfg.dataset.use_imagenet_stats:
         for key in dataset.meta.camera_keys:
             for stats_type, stats in IMAGENET_STATS.items():
