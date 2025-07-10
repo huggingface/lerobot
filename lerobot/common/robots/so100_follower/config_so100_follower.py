@@ -30,7 +30,7 @@ class SO100FollowerConfig(RobotConfig):
     # `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
     # Set this to a positive scalar to have the same value for all motors, or a list that is the same length as
     # the number of motors in your follower arms.
-    max_relative_target: int | None = None
+    max_relative_target: float | dict[str, float] | None = 25.0
 
     # cameras
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
