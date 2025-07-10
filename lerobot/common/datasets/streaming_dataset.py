@@ -1,4 +1,3 @@
-import random
 from pathlib import Path
 from typing import Callable, Dict, Generator, Iterator
 
@@ -74,6 +73,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         max_num_shards: int = 16,
         seed: int = 42,
         rng: np.random.Generator | None = None,
+        shuffle: bool = True,
     ):
         """Initialize a StreamingLeRobotDataset.
 
@@ -92,6 +92,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             max_num_shards (int, optional): Number of shards to re-shard the input dataset into. Defaults to 16.
             seed (int, optional): Reproducibility random seed.
             rng (np.random.Generator | None, optional): Random number generator.
+            shuffle (bool, optional): Whether to shuffle the dataset across exhaustions. Defaults to True.
         """
         super().__init__()
         self.repo_id = repo_id
@@ -103,6 +104,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         self.video_backend = video_backend if video_backend else get_safe_default_codec()
         self.seed = seed
         self.rng = rng if rng is not None else np.random.default_rng(seed)
+        self.shuffle = shuffle
 
         self.streaming = streaming
         self.buffer_size = buffer_size
@@ -138,8 +140,9 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             yield from (int(i) for i in rng.integers(0, buffer_size, size=random_batch_size))
 
     @staticmethod
-    def _infinite_generator_over_elements(elements: list[int]) -> Iterator[int]:
-        return (random.choice(list(elements)) for _ in iter(int, 1))
+    def _infinite_generator_over_elements(rng: np.random.Generator, elements: list[int]) -> Iterator[int]:
+        while True:
+            yield rng.choice(elements)
 
     def load_hf_dataset(self) -> datasets.IterableDataset:
         dataset = load_dataset(self.repo_id, split="train", streaming=self.streaming)
@@ -149,7 +152,10 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         return dataset
 
     def __iter__(self) -> Iterator[Dict[str, torch.Tensor]]:
-        buffer_indices_generator = self._iter_random_indices(self.rng, self.buffer_size)
+        # keep the same seed across exhaustions if shuffle is False, otherwise shuffle data across exhaustions
+        rng = np.random.default_rng(self.seed) if not self.shuffle else self.rng
+
+        buffer_indices_generator = self._iter_random_indices(rng, self.buffer_size)
 
         # This buffer is populated while iterating on the dataset's shards
         frames_buffer = []
@@ -160,7 +166,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
 
         try:
             while available_shards := list(idx_to_iterable_dataset.keys()):
-                shard_key = next(self._infinite_generator_over_elements(available_shards))
+                shard_key = next(self._infinite_generator_over_elements(rng, available_shards))
                 dataset = idx_to_iterable_dataset[shard_key]  # selects which shard to iterate on
                 for frame in self.make_frame(dataset):
                     if len(frames_buffer) == self.buffer_size:
@@ -179,7 +185,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             del idx_to_iterable_dataset[shard_key]
 
         # Once shards are all exhausted, shuffle the buffer and yield the remaining frames
-        self.rng.shuffle(frames_buffer)
+        rng.shuffle(frames_buffer)
         yield from frames_buffer
 
     def _make_iterable_dataset(self, dataset: datasets.IterableDataset) -> Iterator:
