@@ -46,13 +46,13 @@ class SO101FollowerT(Robot):
 
     _CURRENT_STEP_A: float = 6.5e-3  # 6.5 mA per register LSB #http://doc.feetech.cn/#/prodinfodownload?srcType=FT-SMS-STS-emanual-229f4476422d4059abfb1cb0
     _KT_NM_PER_AMP: float = 0.814  # Torque constant Kt [N·m/A] #https://www.feetechrc.com/811177.html
-    _MAX_CURRENT_A: float = 2.0  # Safe driver limit for this model
+    _MAX_CURRENT_A: float = 3.0  # Safe driver limit for this model
 
     # Control gains for bilateral teleoperation
     _KP_GAINS = {  # Position gains [Nm/rad] - reduced for bilateral stability
         "shoulder_pan": 5.0,  # Reduced from 7.0
-        "shoulder_lift": 10.0,  # Reduced from 15.0
-        "elbow_flex": 8.0,  # Reduced from 12.0 (main problem joint)
+        "shoulder_lift": 15.0,  # Reduced from 15.0
+        "elbow_flex": 12.0,  # Reduced from 12.0 (main problem joint)
         "wrist_flex": 4.0,  # Reduced from 6.0
         "wrist_roll": 3.0,  # Reduced from 4.0
         "gripper": 1.5,  # Reduced from 2.0
@@ -89,6 +89,11 @@ class SO101FollowerT(Robot):
     def __init__(self, config: SO101FollowerTConfig):
         super().__init__(config)
         self.config = config
+
+        # Ensure calibration is loaded before creating the bus
+        if self.calibration_fpath.is_file() and not self.calibration:
+            self._load_calibration()
+
         self.bus = FeetechMotorsBus(
             port=self.config.port,
             motors={
@@ -280,6 +285,12 @@ class SO101FollowerT(Robot):
         if self.is_connected:
             raise DeviceAlreadyConnectedError(f"{self} already connected")
 
+        # Ensure calibration is loaded from file if it exists
+        if self.calibration_fpath.is_file() and not self.calibration:
+            self._load_calibration()
+            # Update the bus with the loaded calibration
+            self.bus.calibration = self.calibration
+
         self.bus.connect()
         if not self.is_calibrated and calibrate:
             self.calibrate()
@@ -292,7 +303,8 @@ class SO101FollowerT(Robot):
 
     @property
     def is_calibrated(self) -> bool:
-        return self.bus.is_calibrated
+        # Check if calibration file exists and is loaded
+        return self.calibration_fpath.is_file() and bool(self.calibration)
 
     def calibrate(self) -> None:
         logger.info(f"\nRunning calibration of {self}")
@@ -314,12 +326,14 @@ class SO101FollowerT(Robot):
             self.calibration[motor] = MotorCalibration(
                 id=m.id,
                 drive_mode=0,
-                homing_offset=homing_offsets[motor],
-                range_min=range_mins[motor],
-                range_max=range_maxes[motor],
+                homing_offset=int(homing_offsets[motor]),
+                range_min=int(range_mins[motor]),
+                range_max=int(range_maxes[motor]),
             )
 
-        self.bus.write_calibration(self.calibration)
+        # Update the bus calibration with the new values
+        self.bus.calibration = self.calibration
+        # Save calibration to file only
         self._save_calibration()
         print("Calibration saved to", self.calibration_fpath)
 
@@ -330,7 +344,6 @@ class SO101FollowerT(Robot):
                 self.bus.write("Operating_Mode", motor, 2, num_retry=2)  # Set to current mode
                 self.bus.write("Torque_Limit", motor, 1000, num_retry=2)  # 100%
                 self.bus.write("Max_Torque_Limit", motor, 1000, num_retry=2)  # 100%
-                self.bus.write("Protection_Current", motor, 1000, num_retry=2)
 
     def setup_motors(self) -> None:
         for motor in reversed(self.bus.motors):
@@ -409,6 +422,10 @@ class SO101FollowerT(Robot):
         max_cnt = int(round(self._MAX_CURRENT_A / self._CURRENT_STEP_A))
         counts = {}
         for joint, τ in tau_cmd_nm.items():
+            # Set wrist_flex commands to 0
+            if joint == "wrist_flex":
+                counts[joint] = 0
+                continue
             cnt = τ * self.torque_sign[joint] * inv_coef  # flip SIGN
             cnt = max(-max_cnt, min(max_cnt, cnt))
             counts[joint] = int(round(cnt))
