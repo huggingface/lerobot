@@ -85,6 +85,7 @@ dora = [
 ]
 dynamixel = ["dynamixel-sdk>=3.7.31"]
 feetech = ["feetech-servo-sdk>=1.0.0"]
+piper = ["piper-sdk>=0.3.2"]
 gamepad = ["pygame>=2.5.1", "hidapi>=0.14.0"]
 hopejr = ["feetech-servo-sdk>=1.0.0", "pygame>=2.5.1"]
 kinematics = ["placo>=0.9.6"]
