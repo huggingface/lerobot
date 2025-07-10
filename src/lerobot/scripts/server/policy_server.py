@@ -30,6 +30,7 @@ import threading
 import time
 from concurrent import futures
 from dataclasses import asdict
+from http.server import HTTPServer
 from pprint import pformat
 from queue import Empty, Queue
 
@@ -39,13 +40,14 @@ import torch
 
 from lerobot.policies.factory import get_policy_class
 from lerobot.scripts.server.configs import PolicyServerConfig
-from lerobot.scripts.server.constants import SUPPORTED_POLICIES
+from lerobot.scripts.server.constants import HEALTH_CHECK_PORT, HEALTH_SERVER_HOST, SUPPORTED_POLICIES
 from lerobot.scripts.server.helpers import (
     FPSTracker,
     Observation,
     RemotePolicyConfig,
     TimedAction,
     TimedObservation,
+    create_health_handler,
     get_logger,
     observations_similar,
     raw_observation_to_observation,
@@ -81,6 +83,30 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
         self.lerobot_features = None
         self.actions_per_chunk = None
         self.policy = None
+
+        # HTTP health server
+        self.http_server = None
+        self.http_thread = None
+
+    def start_health_server(self):
+        """Start HTTP server for health checks on port 8081."""
+        try:
+            health_handler = create_health_handler(self)
+            self.http_server = HTTPServer((HEALTH_SERVER_HOST, HEALTH_CHECK_PORT), health_handler)
+            self.http_thread = threading.Thread(target=self.http_server.serve_forever, daemon=True)
+            self.http_thread.start()
+            self.logger.info(f"Health server started on port {HEALTH_CHECK_PORT}")
+        except Exception as e:
+            self.logger.error(f"Failed to start health server: {e}")
+
+    def stop_health_server(self):
+        """Stop the HTTP health server."""
+        if self.http_server:
+            self.http_server.shutdown()
+            self.http_server.server_close()
+            if self.http_thread:
+                self.http_thread.join(timeout=5)
+            self.logger.info("Health server stopped")
 
     @property
     def running(self):
@@ -372,6 +398,7 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
         """Stop the server"""
         self._reset_server()
         self.logger.info("Server stopping...")
+        self.stop_health_server()
 
 
 @draccus.wrap()
@@ -385,6 +412,7 @@ def serve(cfg: PolicyServerConfig):
 
     # Create the server instance first
     policy_server = PolicyServer(cfg)
+    policy_server.start_health_server()
 
     # Setup and start gRPC server
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
@@ -397,6 +425,7 @@ def serve(cfg: PolicyServerConfig):
     server.wait_for_termination()
 
     policy_server.logger.info("Server terminated")
+    policy_server.stop_health_server()
 
 
 if __name__ == "__main__":

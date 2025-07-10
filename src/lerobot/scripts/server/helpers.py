@@ -13,11 +13,13 @@
 # limitations under the License.
 
 import io
+import json
 import logging
 import logging.handlers
 import os
 import time
 from dataclasses import dataclass
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from threading import Event
 from typing import Any
@@ -204,6 +206,83 @@ def get_logger(name: str, log_to_file: bool = True) -> logging.Logger:
 
     # Return a named logger
     return logging.getLogger(name)
+
+
+def create_health_handler(policy_server):
+    """Factory function to create health handler with policy server reference."""
+
+    def handler(*args, **kwargs):
+        return HealthHandler(policy_server, *args, **kwargs)
+
+    return handler
+
+
+class HealthHandler(BaseHTTPRequestHandler):
+    """HTTP handler for health checks."""
+
+    def __init__(self, policy_server, *args, **kwargs):
+        self.policy_server = policy_server
+        super().__init__(*args, **kwargs)
+
+    def do_GET(self):  # noqa: N802
+        """Handle GET requests for health check."""
+        if self.path == "/health":
+            self.send_health_response()
+        elif self.path == "/":
+            self.send_info_response()
+        else:
+            self.send_error(404, "Not Found")
+
+    def send_health_response(self):
+        """Send health check response."""
+        try:
+            # Check if the policy server is in a healthy state
+            is_healthy = (
+                hasattr(self.policy_server, "_running_event")
+                and self.policy_server._running_event is not None
+            )
+
+            status_code = 200 if is_healthy else 503
+            response = {
+                "status": "healthy" if is_healthy else "unhealthy",
+                "timestamp": time.time(),
+                "server_running": self.policy_server.running
+                if hasattr(self.policy_server, "running")
+                else False,
+                "policy_loaded": self.policy_server.policy is not None
+                if hasattr(self.policy_server, "policy")
+                else False,
+            }
+
+            self.send_response(status_code)
+            self.send_header("Content-type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(response).encode())
+
+        except Exception as e:
+            self.send_response(500)
+            self.send_header("Content-type", "application/json")
+            self.end_headers()
+            error_response = {"status": "error", "message": str(e)}
+            self.wfile.write(json.dumps(error_response).encode())
+
+    def send_info_response(self):
+        """Send basic server info."""
+        response = {
+            "service": "lerobot-policy-server",
+            "version": "1.0.0",
+            "endpoints": {"health": "/health", "grpc_port": self.policy_server.config.port},
+        }
+
+        self.send_response(200)
+        self.send_header("Content-type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps(response).encode())
+
+    def log_message(self, format, *args):
+        """Override to use our logger instead of stderr."""
+        if hasattr(self.policy_server, "logger"):
+            self.policy_server.logger.debug(f"HTTP: {format % args}")
 
 
 @dataclass

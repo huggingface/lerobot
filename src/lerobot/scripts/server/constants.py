@@ -27,3 +27,7 @@ SUPPORTED_POLICIES = ["act", "smolvla", "diffusion", "pi0", "tdmpc", "vqbet"]
 
 # TODO: Add all other robots
 SUPPORTED_ROBOTS = ["so100_follower", "so101_follower"]
+
+"""Networking support"""
+HEALTH_CHECK_PORT = 8081
+HEALTH_SERVER_HOST = "0.0.0.0"  # nosec
