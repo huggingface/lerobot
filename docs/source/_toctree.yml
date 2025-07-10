@@ -18,7 +18,7 @@
   - local: hilserl_sim
     title: Train RL in Simulation
   - local: async
-    title: Setup Asynchronous Inference
+    title: Use Async Inference
   title: "Tutorials"
 - sections:
   - local: smolvla
