@@ -13,13 +13,35 @@
 # limitations under the License.
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 
+import jsonlines
 import numpy as np
 from tqdm import tqdm
 
 from lerobot.datasets.compute_stats import aggregate_stats, get_feature_stats, sample_indices
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.utils import write_episode_stats
+from lerobot.datasets.utils import serialize_dict
+
+### LEGACY FUNCTIONS REMOVED FROM UTILS ###
+
+LEGACY_EPISODES_STATS_PATH = "episodes_stats.jsonl"
+
+
+def append_jsonlines(data: dict, fpath: Path) -> None:
+    fpath.parent.mkdir(exist_ok=True, parents=True)
+    with jsonlines.open(fpath, "a") as writer:
+        writer.write(data)
+
+
+def legacy_write_episode_stats(episode_index: int, episode_stats: dict, local_dir: Path):
+    # We wrap episode_stats in a dictionary since `episode_stats["episode_index"]`
+    # is a dictionary of stats and not an integer.
+    episode_stats = {"episode_index": episode_index, "stats": serialize_dict(episode_stats)}
+    append_jsonlines(episode_stats, local_dir / LEGACY_EPISODES_STATS_PATH)
+
+
+######## END OF LEGACY FUNCTIONS ########
 
 
 def sample_episode_video_frames(dataset: LeRobotDataset, episode_index: int, ft_key: str) -> np.ndarray:
@@ -72,7 +94,7 @@ def convert_stats(dataset: LeRobotDataset, num_workers: int = 0):
             convert_episode_stats(dataset, ep_idx)
 
     for ep_idx in tqdm(range(total_episodes)):
-        write_episode_stats(ep_idx, dataset.meta.episodes_stats[ep_idx], dataset.root)
+        legacy_write_episode_stats(ep_idx, dataset.meta.episodes_stats[ep_idx], dataset.root)
 
 
 def check_aggregate_stats(

@@ -31,7 +31,7 @@ dataset = LeRobotDataset(dataset_repo_id, episodes=[0])
 # This is equivalent to `dataset = LeRobotDataset(dataset_repo_id, image_transforms=None)`
 
 # Get the index of the first observation in the first episode
-first_idx = dataset.episode_data_index["from"][0].item()
+first_idx = dataset.meta.episodes["dataset_from_index"][0]
 
 # Get the frame corresponding to the first camera
 frame = dataset[first_idx][dataset.meta.camera_keys[0]]
