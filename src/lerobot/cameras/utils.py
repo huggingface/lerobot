@@ -73,26 +73,25 @@ def get_cv2_backend() -> int:
     import cv2
 
     # Mapping from short names to cv2 constants
-    _BACKEND_MAP: Dict[str, int] = {
-        "any":           cv2.CAP_ANY,
-        "dshow":         cv2.CAP_DSHOW,
-        "msmf":          cv2.CAP_MSMF,
-        "vfw":           cv2.CAP_VFW,
-        "avfoundation":  cv2.CAP_AVFOUNDATION,
-        "v4l2":          cv2.CAP_V4L2,
-        "gstreamer":     cv2.CAP_GSTREAMER,
+    cv2_backends: dict[str, int] = {
+        "any": cv2.CAP_ANY,
+        "dshow": cv2.CAP_DSHOW,
+        "msmf": cv2.CAP_MSMF,
+        "vfw": cv2.CAP_VFW,
+        "avfoundation": cv2.CAP_AVFOUNDATION,
+        "v4l2": cv2.CAP_V4L2,
+        "gstreamer": cv2.CAP_GSTREAMER,
     }
 
     env: str = os.getenv("LEROBOT_OPENCV_BACKEND", "").strip().lower()
     if env:
         try:
-            return _BACKEND_MAP[env]
+            return cv2_backends[env]
         except KeyError:
-            valid_opts = ", ".join(_BACKEND_MAP.keys())
+            valid_opts = ", ".join(cv2_backends.keys())
             raise ValueError(
-                f"Unknown backend '{env}' in LEROBOT_OPENCV_BACKEND; "
-                f"valid options are: {valid_opts}"
-            )
+                f"Unknown backend '{env}' in LEROBOT_OPENCV_BACKEND; valid options are: {valid_opts}"
+            ) from None
 
     system: str = platform.system()
     if system == "Windows":
