@@ -1,14 +1,14 @@
 # Implementation of Piper robot for LeRobot
 
 from dataclasses import dataclass, field
-from lerobot.cameras import CameraConfig
+from typing import Any
+
+from lerobot.cameras import CameraConfig, make_cameras_from_configs
 from lerobot.cameras.opencv import OpenCVCameraConfig
 from lerobot.robots import Robot, RobotConfig
-from lerobot.cameras import make_cameras_from_configs
-from lerobot.motors import Motor, MotorNormMode
-from lerobot.motors.feetech import FeetechMotorsBus
-from typing import Any
+
 from .piper_sdk_interface import PiperSDKInterface
+
 
 @RobotConfig.register_subclass("piper")
 @dataclass
@@ -25,6 +25,7 @@ class PiperConfig(RobotConfig):
         }
     )
 
+
 class Piper(Robot):
     config_class = PiperConfig
     name = "piper"
@@ -36,15 +37,11 @@ class Piper(Robot):
 
     @property
     def _motors_ft(self) -> dict[str, type]:
-        return {
-            f"joint_{i}.pos": float for i in range(7)
-        }
+        return {f"joint_{i}.pos": float for i in range(7)}
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
-        return {
-            cam: (self.cameras[cam].height, self.cameras[cam].width, 3) for cam in self.cameras
-        }
+        return {cam: (self.cameras[cam].height, self.cameras[cam].width, 3) for cam in self.cameras}
 
     @property
     def observation_features(self) -> dict:
@@ -82,14 +79,14 @@ class Piper(Robot):
 
     def get_observation(self) -> dict[str, Any]:
         obs_dict = self.sdk.get_status()
-        
+
         for cam_key, cam in self.cameras.items():
             obs_dict[cam_key] = cam.async_read()
         return obs_dict
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         # map the action from the leader to joints for the follower
-        positions = [ 
+        positions = [
             action.get("shoulder_pan.pos"),
             action.get("shoulder_lift.pos"),
             action.get("elbow_flex.pos"),
@@ -98,6 +95,6 @@ class Piper(Robot):
             action.get("wrist_roll.pos"),
             action.get("gripper.pos"),
         ]
-        
+
         self.sdk.set_joint_positions(positions)
         return action
