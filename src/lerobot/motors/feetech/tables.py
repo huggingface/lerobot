@@ -189,7 +189,7 @@ MODEL_RESOLUTION = {
     "scs_series": 1024,
     "sts3215": 4096,
     "sts3250": 4096,
-    "sm8512bl": 65536,
+    "sm8512bl": 4096,
     "scs0009": 1024,
 }
 
