@@ -82,6 +82,10 @@ def teleop_loop(
 ):
     display_len = max(len(key) for key in robot.action_features)
     start = time.perf_counter()
+    
+    # Track cumulative end-effector positions for end-effector robots (fallback)
+    cumulative_ee_pos = {"x": 0.0, "y": 0.0, "z": 0.0}
+    
     while True:
         loop_start = time.perf_counter()
         action = teleop.get_action()
@@ -95,10 +99,57 @@ def teleop_loop(
 
         loop_s = time.perf_counter() - loop_start
 
-        print("\n" + "-" * (display_len + 10))
-        print(f"{'NAME':<{display_len}} | {'NORM':>7}")
+        # Get current motor state for display
+        current_state = robot.get_observation()
+
+        # Update cumulative end-effector positions (fallback)
+        if "delta_x" in action:
+            cumulative_ee_pos["x"] += action["delta_x"]
+        if "delta_y" in action:
+            cumulative_ee_pos["y"] += action["delta_y"]
+        if "delta_z" in action:
+            cumulative_ee_pos["z"] += action["delta_z"]
+
+        print("\n" + "-" * (display_len + 20))
+        print(f"{'NAME':<{display_len}} | {'DELTA':>7} | {'STATE':>7}")
         for motor, value in action.items():
-            print(f"{motor:<{display_len}} | {value:>7.2f}")
+            # For end-effector robots, action keys might not directly match state keys
+            # Try to find corresponding state key
+            state_key = motor
+            if motor not in current_state:
+                # For end-effector robots, try to map action keys to motor state keys
+                if motor == "delta_x":
+                    # Try to get actual end-effector position from robot if available
+                    if hasattr(robot, 'current_ee_pos') and robot.current_ee_pos is not None:
+                        state_value = robot.current_ee_pos[0, 3]  # x position
+                    else:
+                        state_value = cumulative_ee_pos["x"]
+                elif motor == "delta_y":
+                    if hasattr(robot, 'current_ee_pos') and robot.current_ee_pos is not None:
+                        state_value = robot.current_ee_pos[1, 3]  # y position
+                    else:
+                        state_value = cumulative_ee_pos["y"]
+                elif motor == "delta_z":
+                    if hasattr(robot, 'current_ee_pos') and robot.current_ee_pos is not None:
+                        state_value = robot.current_ee_pos[2, 3]  # z position
+                    else:
+                        state_value = cumulative_ee_pos["z"]
+                elif motor == "wrist_roll":
+                    # Map to wrist_roll.pos
+                    state_key = "wrist_roll.pos"
+                    state_value = current_state.get(state_key, 0.0)
+                elif motor == "gripper":
+                    # Map to gripper.pos
+                    state_key = "gripper.pos"
+                    state_value = current_state.get(state_key, 0.0)
+                else:
+                    # Try with .pos suffix
+                    state_key = f"{motor}.pos"
+                    state_value = current_state.get(state_key, 0.0)
+            else:
+                state_value = current_state[motor]
+            
+            print(f"{motor:<{display_len}} | {value:>7.2f} | {state_value:>7.2f}")
         print(f"\ntime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
 
         if duration is not None and time.perf_counter() - start >= duration:
