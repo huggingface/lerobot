@@ -36,6 +36,7 @@ python -m lerobot.record \
 """
 
 import logging
+import shutil
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -122,6 +123,9 @@ class DatasetRecordConfig:
     # Too many threads might cause unstable teleoperation fps due to main thread being blocked.
     # Not enough threads might cause low camera fps.
     num_image_writer_threads_per_camera: int = 4
+    # Number of episodes to record before batch encoding videos
+    # Set to 1 for immediate encoding (default behavior), or higher for batched encoding
+    video_encoding_batch_size: int = 1
 
     def __post_init__(self):
         if self.single_task is None:
@@ -257,6 +261,73 @@ def record_loop(
         timestamp = time.perf_counter() - start_episode_t
 
 
+class VideoEncodingManager:
+    """
+    Manages video encoding for dataset recording, supporting both immediate and batch encoding modes.
+
+    This context manager ensures that video encoding is completed properly even if exceptions occur
+    during the recording process or if recording is stopped early. It supports two modes:
+    - Immediate encoding: Videos are encoded after each episode (batch_size=1)
+    - Batch encoding: Videos are encoded in batches after multiple episodes (batch_size>1)
+
+    Args:
+        dataset: The LeRobotDataset instance
+        batch_size: Number of episodes to accumulate before encoding videos
+    """
+
+    def __init__(self, dataset, batch_size, play_sounds=True):
+        self.dataset = dataset
+        self.batch_size = batch_size
+        self.use_batched_encoding = batch_size > 1
+        self.episodes_since_last_encoding = 0
+        self.last_encoded_episode = dataset.num_episodes - 1
+        self.play_sounds = play_sounds
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.use_batched_encoding and self.episodes_since_last_encoding > 0:
+            if exc_type is not None:
+                logging.info("Exception occurred. Encoding pending episodes before exit...")
+            else:
+                logging.info("Recording stopped. Encoding remaining episodes...")
+            start_ep = self.last_encoded_episode + 1
+            end_ep = self.dataset.num_episodes
+            log_say(
+                f"Batch encoding videos for {self.episodes_since_last_encoding} episodes, "
+                f"from episode {start_ep} to episode {end_ep - 1}",
+                self.play_sounds,
+            )
+            self.dataset.batch_encode_videos(start_ep, end_ep)
+
+        # Clean up episode images if recording was interrupted
+        if exc_type is not None:
+            interrupted_episode_index = self.dataset.num_episodes
+            for key in self.dataset.meta.video_keys:
+                img_dir = self.dataset._get_image_file_path(
+                    episode_index=interrupted_episode_index, image_key=key, frame_index=0
+                ).parent
+                if img_dir.exists():
+                    logging.debug(
+                        f"Cleaning up interrupted episode images for episode {interrupted_episode_index}, camera {key}"
+                    )
+                    shutil.rmtree(img_dir)
+
+        # Clean up any remaining images directory if it's empty
+        img_dir = self.dataset.root / "images"
+        # Check for any remaining PNG files
+        png_files = list(img_dir.rglob("*.png"))
+        if len(png_files) == 0:
+            # Only remove the images directory if no PNG files remain
+            shutil.rmtree(img_dir)
+            logging.debug("Cleaned up empty images directory")
+        else:
+            logging.debug(f"Images directory is not empty, containing {len(png_files)} PNG files")
+
+        return False  # Don't suppress the original exception
+
+
 @parser.wrap()
 def record(cfg: RecordConfig) -> LeRobotDataset:
     init_logging()
@@ -306,46 +377,68 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     listener, events = init_keyboard_listener()
 
-    recorded_episodes = 0
-    while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
-        log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
-        record_loop(
-            robot=robot,
-            events=events,
-            fps=cfg.dataset.fps,
-            teleop=teleop,
-            policy=policy,
-            dataset=dataset,
-            control_time_s=cfg.dataset.episode_time_s,
-            single_task=cfg.dataset.single_task,
-            display_data=cfg.display_data,
-        )
-
-        # Execute a few seconds without recording to give time to manually reset the environment
-        # Skip reset for the last episode to be recorded
-        if not events["stop_recording"] and (
-            (recorded_episodes < cfg.dataset.num_episodes - 1) or events["rerecord_episode"]
-        ):
-            log_say("Reset the environment", cfg.play_sounds)
+    with VideoEncodingManager(
+        dataset, cfg.dataset.video_encoding_batch_size, cfg.play_sounds
+    ) as video_encoding_manager:
+        recorded_episodes = 0
+        while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
+            log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
             record_loop(
                 robot=robot,
                 events=events,
                 fps=cfg.dataset.fps,
                 teleop=teleop,
-                control_time_s=cfg.dataset.reset_time_s,
+                policy=policy,
+                dataset=dataset,
+                control_time_s=cfg.dataset.episode_time_s,
                 single_task=cfg.dataset.single_task,
                 display_data=cfg.display_data,
             )
 
-        if events["rerecord_episode"]:
-            log_say("Re-record episode", cfg.play_sounds)
-            events["rerecord_episode"] = False
-            events["exit_early"] = False
-            dataset.clear_episode_buffer()
-            continue
+            # Execute a few seconds without recording to give time to manually reset the environment
+            # Skip reset for the last episode to be recorded
+            if not events["stop_recording"] and (
+                (recorded_episodes < cfg.dataset.num_episodes - 1) or events["rerecord_episode"]
+            ):
+                log_say("Reset the environment", cfg.play_sounds)
+                record_loop(
+                    robot=robot,
+                    events=events,
+                    fps=cfg.dataset.fps,
+                    teleop=teleop,
+                    control_time_s=cfg.dataset.reset_time_s,
+                    single_task=cfg.dataset.single_task,
+                    display_data=cfg.display_data,
+                )
 
-        dataset.save_episode()
-        recorded_episodes += 1
+            if events["rerecord_episode"]:
+                log_say("Re-record episode", cfg.play_sounds)
+                events["rerecord_episode"] = False
+                events["exit_early"] = False
+                dataset.clear_episode_buffer()
+                continue
+
+            if video_encoding_manager.use_batched_encoding:
+                dataset.save_episode(encode_videos=False)
+                video_encoding_manager.episodes_since_last_encoding += 1
+
+                # Check if we should encode current batch
+                if video_encoding_manager.episodes_since_last_encoding >= video_encoding_manager.batch_size:
+                    start_ep = video_encoding_manager.last_encoded_episode + 1
+                    end_ep = dataset.num_episodes
+                    log_say(
+                        f"Batch encoding videos for {video_encoding_manager.episodes_since_last_encoding} episodes, "
+                        f"from episode {start_ep} to episode {end_ep - 1}",
+                        cfg.play_sounds,
+                    )
+                    dataset.batch_encode_videos(start_ep, end_ep)
+                    video_encoding_manager.last_encoded_episode = end_ep - 1
+                    video_encoding_manager.episodes_since_last_encoding = 0
+            else:
+                # Default behavior: encode videos immediately
+                dataset.save_episode(encode_videos=True)
+
+            recorded_episodes += 1
 
     log_say("Stop recording", cfg.play_sounds, blocking=True)
 
