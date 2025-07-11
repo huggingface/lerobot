@@ -125,9 +125,30 @@ def _assert_type_and_shape(stats_list: list[dict[str, dict]]):
 
 def aggregate_feature_stats(stats_ft_list: list[dict[str, dict]]) -> dict[str, dict[str, np.ndarray]]:
     """Aggregates stats for a single feature."""
-    means = np.stack([s["mean"] for s in stats_ft_list])
-    variances = np.stack([s["std"] ** 2 for s in stats_ft_list])
-    counts = np.stack([s["count"] for s in stats_ft_list])
+    # Filter out stats that don't have required keys
+    valid_stats = []
+    for s in stats_ft_list:
+        if all(key in s for key in ["mean", "std", "count", "min", "max"]):
+            valid_stats.append(s)
+        else:
+            # If count is missing, add it with a default value
+            if "count" not in s:
+                s["count"] = np.array([1])  # Default count
+            valid_stats.append(s)
+    
+    if not valid_stats:
+        # If no valid stats, return empty stats
+        return {
+            "min": np.array([0]),
+            "max": np.array([0]),
+            "mean": np.array([0]),
+            "std": np.array([0]),
+            "count": np.array([0]),
+        }
+    
+    means = np.stack([s["mean"] for s in valid_stats])
+    variances = np.stack([s["std"] ** 2 for s in valid_stats])
+    counts = np.stack([s["count"] for s in valid_stats])
     total_count = counts.sum(axis=0)
 
     # Prepare weighted mean by matching number of dimensions
@@ -144,8 +165,8 @@ def aggregate_feature_stats(stats_ft_list: list[dict[str, dict]]) -> dict[str, d
     total_variance = weighted_variances.sum(axis=0) / total_count
 
     return {
-        "min": np.min(np.stack([s["min"] for s in stats_ft_list]), axis=0),
-        "max": np.max(np.stack([s["max"] for s in stats_ft_list]), axis=0),
+        "min": np.min(np.stack([s["min"] for s in valid_stats]), axis=0),
+        "max": np.max(np.stack([s["max"] for s in valid_stats]), axis=0),
         "mean": total_mean,
         "std": np.sqrt(total_variance),
         "count": total_count,

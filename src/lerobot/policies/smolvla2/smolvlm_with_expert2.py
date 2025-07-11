@@ -24,6 +24,7 @@ from transformers import (
     AutoProcessor,
     SmolVLMForConditionalGeneration,
 )
+from peft import LoraConfig, TaskType, get_peft_model
 
 
 def apply_rope(x, positions, max_wavelength=10_000):

@@ -32,7 +32,7 @@ IMAGENET_STATS = {
     "std": [[[0.229]], [[0.224]], [[0.225]]],  # (c,1,1)
 }
 
-from lerobot.common.datasets.utils_must import EPISODES_DATASET_MAPPING, FEATURE_KEYS_MAPPING
+from lerobot.datasets.utils_must import EPISODES_DATASET_MAPPING, FEATURE_KEYS_MAPPING
 
 
 def resolve_delta_timestamps(
@@ -106,6 +106,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             image_transforms=image_transforms,
             revision=revision,
             video_backend=cfg.dataset.video_backend,
+            download_videos=True,
             feature_keys_mapping=feature_keys_mapping,
             max_action_dim=cfg.dataset.max_action_dim,
             max_state_dim=cfg.dataset.max_state_dim,
@@ -132,6 +133,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             delta_timestamps=delta_timestamps,
             image_transforms=image_transforms,
             video_backend=cfg.dataset.video_backend,
+            download_videos=True,
             sampling_weights=sampling_weights,
             feature_keys_mapping=feature_keys_mapping,
             max_action_dim=cfg.policy.max_action_dim,

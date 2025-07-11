@@ -65,13 +65,13 @@ from torch import Tensor, nn
 from transformers import AutoProcessor
 
 from lerobot.constants import ACTION, OBS_STATE
-from lerobot.datasets import IMAGES_ORDER
+from lerobot.configs.datasets import IMAGES_ORDER
 from lerobot.policies.normalize import (
     Normalize,
     Unnormalize,
 )
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.policies.smolvla.smolvlm_with_expert import SmolVLMWithExpertModel
+from lerobot.policies.smolvla2.smolvlm_with_expert2 import SmolVLMWithExpertModel
 from lerobot.policies.smolvla2.configuration_smolvla2 import SmolVLA2Config
 from lerobot.policies.utils import (
     populate_queues,
@@ -389,9 +389,40 @@ class SmolVLA2Policy(PreTrainedPolicy):
     def get_optim_params(self) -> dict:
         return self.parameters()
 
+    def _get_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
+        for k in batch:
+            if k in self._queues:
+                batch[k] = torch.stack(list(self._queues[k]), dim=1)
+
+        images, img_masks = self.prepare_images(batch)
+        state = self.prepare_state(batch)
+        lang_tokens, lang_masks = self.prepare_language(batch)
+
+        actions = self.model.sample_actions(images, img_masks, lang_tokens, lang_masks, state, noise=noise)
+
+        # Unpad actions
+        original_action_dim = self.config.action_feature.shape[0]
+        actions = actions[:, :, :original_action_dim]
+
+        actions = self.unnormalize_outputs({ACTION: actions})[ACTION]
+
+        if self.config.adapt_to_pi_aloha:
+            actions = self._pi_aloha_encode_actions(actions)
+
+        return actions
+
     def merge_peft_model_weights(self) -> None:
         if "lora" in self.config.peft_method:
             self.model.vlm_with_expert.merge_lora_weights()
+
+    def predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
+        self.eval()
+
+        batch = self._prepare_batch(batch)
+        self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
+
+        actions = self._get_action_chunk(batch, noise)
+        return actions
 
     @torch.no_grad
     def select_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
@@ -691,7 +722,6 @@ class VLAFlowMatching(nn.Module):
             model_id=self.config.vlm_model_name,
             freeze_vision_encoder=self.config.freeze_vision_encoder,
             train_expert_only=self.config.train_expert_only,
-            attention_implementation=self.config.attention_implementation,
             load_vlm_weights=self.config.load_vlm_weights,
             attention_mode=self.config.attention_mode,
             num_expert_layers=self.config.num_expert_layers,
