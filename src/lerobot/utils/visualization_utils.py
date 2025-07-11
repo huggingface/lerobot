@@ -227,8 +227,6 @@ class VideoLogger:
         self._width = width
         self._height = height
         self.fps = fps
-        self._last_frame: Optional[np.ndarray] = None
-        self._last_frame_time: Optional[float] = None
         self._frame_interval = 1.0 / fps
         self._lock = threading.Lock()
         self._encoder_initialized = False
@@ -263,12 +261,7 @@ class VideoLogger:
         :raises RuntimeError: If the video stream is not initialized or if the image shape does not match the expected dimensions.
         :return: None
         """
-        now = time.perf_counter()
         with self._lock:
-            if self._last_frame_time is not None and (now - self._last_frame_time) < self._frame_interval:
-                return  # Skip frame: too soon for target FPS
-            self._last_frame_time = now
-
             if self._width is None or self._height is None:
                 self._height, self._width = img.shape[:2]
 
@@ -278,10 +271,6 @@ class VideoLogger:
             if img.shape != (self._height, self._width, 3):
                 img = cv2.resize(img, (self._width, self._height))
 
-            if self._last_frame is not None and np.array_equal(img, self._last_frame):
-                return  # Skip identical frame
-
-            self._last_frame = img.copy()
             frame = av.VideoFrame.from_ndarray(img, format="rgb24")
             for packet in self.stream.encode(frame):
                 if packet.pts is not None and packet.time_base is not None:
@@ -323,6 +312,7 @@ class RerunRobotLogger:
         image_size: Optional[tuple[int, int]] = None,
         log_urdf: bool = True,
         session_name: str = "lerobot_control_loop",
+        root: str | Path | None = None,
         log_rrd: bool = False,
         live_display: bool = True,
     ):
@@ -351,8 +341,11 @@ class RerunRobotLogger:
 
         self.session_name = session_name
         self.application_id = session_name
-        self.rrd_file = Path(HF_LEROBOT_HOME) / f"recordings/{session_name}.rrd" if log_rrd else None
+        self.root = Path(root) if root is not None else HF_LEROBOT_HOME / session_name
+        self.log_rrd = log_rrd
         self.live_display = live_display
+
+        self.active = False
 
     def init(self):
         self._init_rerun()
@@ -373,17 +366,19 @@ class RerunRobotLogger:
                 )
                 self.log_urdf = False
 
-    def _increment_rrd_path(self) -> Path:
-        assert self.rrd_file is not None
-        stem = self.rrd_file.stem
-        suffix = self.rrd_file.suffix
-        parent = self.rrd_file.parent
+        self.active = True
 
-        # Pattern: data_000.rrd, data_001.rrd, etc.
+    def stop_recording(self):
+        self.active = False
+
+    def _increment_rrd_path(self) -> Path:
+        assert self.root is not None
+
+        # Pattern: episode_000.rrd, episode_001.rrd, etc.
         i = 0
         while True:
-            new_name = f"{stem}_{i:03d}{suffix}"
-            new_path = parent / new_name
+            new_name = f"episode_{i:03d}.rrd"
+            new_path = self.root / "recordings" / new_name
             if not new_path.exists():
                 return new_path
             i += 1
@@ -402,9 +397,14 @@ class RerunRobotLogger:
             self.rec.connect_grpc()
             sinks.append(rr.GrpcSink())
 
-        if self.rrd_file:
+        if self.log_rrd:
             rec_file = self._increment_rrd_path()
+            rec_file.parent.mkdir(parents=True, exist_ok=True)
             sinks.append(rr.FileSink(rec_file))
+
+            self.rec.send_recording_name(rec_file.stem)
+        else:
+            self.rec.send_recording_name(self.session_name)
 
         self.rec.set_sinks(*sinks)
 
@@ -424,7 +424,7 @@ class RerunRobotLogger:
         This is useful for synchronizing the logs with the robot's time.
         """
         if sync_time:
-            rr.set_time("time", duration=np.timedelta64(time.time_ns(), "ns"))
+            rr.set_time("time", timestamp=np.datetime64(time.time_ns(), "ns"))
 
         if observation is None:
             observation = self.robot.get_observation() if self.robot else {}
@@ -436,6 +436,8 @@ class RerunRobotLogger:
         self.log_observations(observation)
 
     def log_observations(self, observations: Dict[str, Any]):
+        if not self.active:
+            return
         if self.robot is None:
             logging.warning("No robot instance available for logging observations.")
             return
@@ -447,6 +449,8 @@ class RerunRobotLogger:
                 self.log_frame(val, obs)
 
     def log_actions(self, actions: Dict[str, Any]):
+        if not self.active:
+            return
         if self.teleop is None:
             logging.warning("No teleoperator instance available for logging actions.")
             return
@@ -455,6 +459,8 @@ class RerunRobotLogger:
                 self.rec.log(["action", act], rr.Scalars(val))
 
     def log_joint_angles(self, angles: Dict[str, Any]):
+        if not self.active:
+            return
         if self.robot is None:
             logging.warning("No robot instance available for logging joint angles.")
             return

@@ -139,6 +139,7 @@ class RecordConfig:
     # Display all cameras on screen
     display_data: bool = False
     display_urdf: bool = False
+    log_rrd: bool = False
     # Stream camera images as a video stream or as individual frames.
     # Video streams can be played back, but have latency and memory impact.
     # Only latest is saved for individual frames, but little latency or memory impact.
@@ -205,6 +206,10 @@ def record_loop(
     # if policy is given it needs cleaning up
     if policy is not None:
         policy.reset()
+
+    if rerun_logger is not None:
+        # Launch Rerun and begin a new episode/recording
+        rerun_logger.init()
 
     timestamp = 0
     start_episode_t = time.perf_counter()
@@ -330,9 +335,10 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             fps=cfg.dataset.fps,
             image_stream_type=cfg.image_stream_type,
             log_urdf=cfg.display_urdf,
-            session_name="recording",
+            session_name=cfg.dataset.repo_id,
+            root=dataset.root,
+            log_rrd=cfg.log_rrd,
         )
-        rerun_logger.init()
 
     listener, events = init_keyboard_listener()
 
@@ -356,6 +362,8 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         if not events["stop_recording"] and (
             (recorded_episodes < cfg.dataset.num_episodes - 1) or events["rerecord_episode"]
         ):
+            if rerun_logger is not None:
+                rerun_logger.stop_recording()
             log_say("Reset the environment", cfg.play_sounds)
             record_loop(
                 robot=robot,
@@ -364,7 +372,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 teleop=teleop,
                 control_time_s=cfg.dataset.reset_time_s,
                 single_task=cfg.dataset.single_task,
-                rerun_logger=rerun_logger,
+                rerun_logger=None,
             )
 
         if events["rerecord_episode"]:

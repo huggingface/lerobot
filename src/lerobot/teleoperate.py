@@ -75,6 +75,7 @@ class TeleoperateConfig:
     # Display all cameras on screen
     display_data: bool = False
     display_urdf: bool = False
+    log_rrd: bool = False
     # Stream camera images as a video stream or as individual frames.
     # Video streams can be played back, but have latency and memory impact.
     # Only latest is saved for individual frames, but little latency or memory impact.
@@ -144,6 +145,7 @@ def teleoperate(cfg: TeleoperateConfig):
             image_stream_type=cfg.image_stream_type,
             log_urdf=cfg.display_urdf,
             session_name="teleoperation",
+            log_rrd=cfg.log_rrd,
         )
         rerun_logger.init()
 
