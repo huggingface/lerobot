@@ -37,9 +37,7 @@ service LearnerService {
 // Robot send observations to & executes action received from a remote Policy server
 service AsyncInference {
   // Robot -> Policy to share observations with a remote inference server
-  // Policy -> Robot to share actions predicted for given observations
-  rpc SendObservations(stream Observation) returns (Empty);
-  rpc GetActions(Empty) returns (Actions);
+  rpc GetActions(stream Observation) returns (Actions);
   rpc SendPolicyInstructions(PolicySetup) returns (Empty);
   rpc Ready(Empty) returns (Empty);
 }
