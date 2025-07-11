@@ -282,6 +282,12 @@ Your dataset will be automatically tagged with `LeRobot` for the community to fi
 
 You can look for other LeRobot datasets on the hub by searching for `LeRobot` [tags](https://huggingface.co/datasets?other=LeRobot).
 
+You can also push your local dataset to the Hub manually, running:
+```bash
+huggingface-cli upload ${HF_USER}/record-test ~/.cache/huggingface/lerobot/{repo-id} --repo-type dataset
+```
+
+
 #### Record function
 
 The `record` function provides a suite of tools for capturing and managing data during robot operation:

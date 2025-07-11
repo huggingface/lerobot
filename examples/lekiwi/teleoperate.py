@@ -17,7 +17,7 @@ robot = LeKiwiClient(robot_config)
 leader_arm = SO100Leader(teleop_arm_config)
 keyboard = KeyboardTeleop(keyboard_config)
 
-# To connect you already should have this script running on LeKiwi: `python -m lerobot.common.robots.lekiwi.lekiwi_host --robot.id=my_awesome_kiwi`
+# To connect you already should have this script running on LeKiwi: `python -m lerobot.robots.lekiwi.lekiwi_host --robot.id=my_awesome_kiwi`
 robot.connect()
 leader_arm.connect()
 keyboard.connect()

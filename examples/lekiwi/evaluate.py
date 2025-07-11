@@ -33,7 +33,7 @@ dataset = LeRobotDataset.create(
     image_writer_threads=4,
 )
 
-# To connect you already should have this script running on LeKiwi: `python -m lerobot.common.robots.lekiwi.lekiwi_host --robot.id=my_awesome_kiwi`
+# To connect you already should have this script running on LeKiwi: `python -m lerobot.robots.lekiwi.lekiwi_host --robot.id=my_awesome_kiwi`
 robot.connect()
 
 _init_rerun(session_name="recording")
