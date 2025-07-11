@@ -3,10 +3,19 @@ Utils function by Mustafa to refactor
 """
 import torch
 import numpy as np
-from lerobot.common.datasets.compute_stats import (
+from lerobot.datasets.compute_stats import (
     aggregate_stats
 )
 from collections import defaultdict
+from torch.utils.data.dataloader import default_collate
+import torch.nn.functional as F
+
+import torch
+from typing import Dict, List
+
+
+
+from typing import Dict, List
 OBS_IMAGE = "observation.image"
 OBS_IMAGE_2 = "observation.image2"
 OBS_IMAGE_3 = "observation.image3"
@@ -170,6 +179,9 @@ def pad_tensor(
     is_numpy = isinstance(tensor, np.ndarray)
     if is_numpy:
         tensor = torch.tensor(tensor)
+    if tensor.ndim == 0:
+        # Scalar — return as-is, no padding needed
+        return tensor
     pad = max_size - tensor.shape[pad_dim]
     if pad > 0:
         pad_sizes = (0, pad)  # pad right
@@ -189,6 +201,8 @@ def map_dict_keys(item: dict, feature_keys_mapping: dict, training_features: lis
         else:
             if training_features is None or key in training_features or pad_key in key:
                 features[key] = item[key]
+
+    # breakpoint()
     return features
 
 def find_start_of_motion(velocities, window_size, threshold, motion_buffer):
@@ -228,3 +242,48 @@ TRAINING_FEATURES = {
     1: [ACTION, OBS_STATE, TASK, ROBOT, OBS_IMAGE, OBS_IMAGE_2],
     2: [ACTION, OBS_STATE, TASK, ROBOT, OBS_IMAGE, OBS_IMAGE_2, OBS_IMAGE_3],
 }
+
+def is_batch_need_padding(values: list[torch.Tensor], pad_dim: int = -1) -> int:
+    return len(values[0].shape) > 0  # and len(set([v.shape[pad_dim] for v in values])) > 1
+
+
+def pad_tensor_to_shape(tensor: torch.Tensor, target_shape: tuple, pad_value: float = 0.0) -> torch.Tensor:
+    """Pads a tensor to the target shape (right/bottom only)."""
+    pad = []
+    for actual, target in zip(reversed(tensor.shape), reversed(target_shape)):
+        pad.extend([0, max(target - actual, 0)])
+    return F.pad(tensor, pad, value=pad_value)
+
+
+def multidataset_collate_fn(
+    batch: List[Dict[str, torch.Tensor]],
+    keys_to_max_dim: Dict[str, tuple] = {},
+    pad_value: float = 0.0,
+) -> Dict[str, torch.Tensor]:
+    """
+    Pads tensors to given target shape (if provided), otherwise uses per-batch max.
+    Supports 1D (e.g. action), 3D (e.g. [C,H,W] images).
+    """
+    collated_batch = [{} for _ in range(len(batch))]
+    batch_keys = batch[0].keys()
+
+    for key in batch_keys:
+        values = [sample[key] for sample in batch]
+        sample = values[0]
+
+        if not isinstance(sample, torch.Tensor):
+            for i in range(len(batch)):
+                collated_batch[i][key] = values[i]
+            continue
+
+        # use user-specified shape if available
+        if key in keys_to_max_dim and keys_to_max_dim[key] is not None:
+            target_shape = keys_to_max_dim[key]
+        else:
+            # compute per-batch max shape
+            target_shape = tuple(max(v.shape[i] for v in values) for i in range(sample.ndim))
+
+        for i in range(len(batch)):
+            collated_batch[i][key] = pad_tensor_to_shape(values[i], target_shape, pad_value=pad_value)
+
+    return default_collate(collated_batch)

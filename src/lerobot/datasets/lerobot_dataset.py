@@ -82,7 +82,7 @@ from lerobot.datasets.video_utils import (
 )
 
 # mustafa stuff here
-from lerobot.common.datasets.utils_must import (
+from lerobot.datasets.utils_must import (
     reshape_features_to_max_dim,
     keep_datasets_with_valid_fps,
     keep_datasets_with_the_same_features_per_robot_type,
@@ -97,7 +97,7 @@ from lerobot.common.datasets.utils_must import (
     OBS_IMAGE_3,
     TASKS_KEYS_MAPPING,
 )
-from lerobot.common.constants import (
+from lerobot.constants import (
     ACTION,
     OBS_ENV_STATE,
     OBS_STATE,
@@ -124,7 +124,6 @@ class LeRobotDatasetMetadata:
         feature_keys_mapping: dict[str, str] | None = None,
         revision: str | None = None,
         force_cache_sync: bool = False,
-        feature_keys_mapping: dict[str, str] | None = None,
     ):
         self.repo_id = repo_id
         self.local_files_only = local_files_only

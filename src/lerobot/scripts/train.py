@@ -51,7 +51,8 @@ from lerobot.utils.utils import (
     init_logging,
 )
 from lerobot.utils.wandb_utils import WandBLogger
-
+from lerobot.datasets.utils_must import multidataset_collate_fn
+from functools import partial
 
 def update_policy(
     train_metrics: MetricsTracker,
@@ -173,7 +174,9 @@ def train(cfg: TrainPipelineConfig):
     else:
         shuffle = True
         sampler = None
-
+    
+    keys_to_max_dim = getattr(dataset.meta, "keys_to_max_dim", {})
+    collate_fn = partial(multidataset_collate_fn, keys_to_max_dim=keys_to_max_dim)
     dataloader = torch.utils.data.DataLoader(
         dataset,
         num_workers=cfg.num_workers,
