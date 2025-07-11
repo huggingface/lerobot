@@ -21,6 +21,7 @@ from typing import Any
 import numpy as np
 
 from ..teleoperator import Teleoperator
+from ..utils import rtz_to_xyz_delta
 from .configuration_gamepad import GamepadTeleopConfig
 
 
@@ -51,6 +52,11 @@ class GamepadTeleop(Teleoperator):
         self.robot_type = config.type
 
         self.gamepad = None
+        
+        # Track current polar position for coordinate conversion (RTZ mode)
+        self.current_r = 0.0
+        self.current_theta = 0.0
+        self.current_z = 0.0
 
     @property
     def action_features(self) -> dict:
@@ -74,12 +80,26 @@ class GamepadTeleop(Teleoperator):
     def connect(self) -> None:
         # use HidApi for macos
         # if sys.platform == "darwin":
-        #     # NOTE: On macOS, pygame doesn’t reliably detect input from some controllers so we fall back to hidapi
+        #     # NOTE: On macOS, pygame doesn't reliably detect input from some controllers so we fall back to hidapi
         #     from .gamepad_utils import GamepadControllerHID as Gamepad
         # else:
         from .gamepad_utils import GamepadController as Gamepad
 
-        self.gamepad = Gamepad()
+        # Determine step sizes based on coordinate system
+        if self.config.coordinate_system.value == "rtz":
+            x_step_size = self.config.deltas.get("r", 1.0)
+            y_step_size = self.config.deltas.get("t", 1.0)
+            z_step_size = self.config.deltas.get("z", 1.0)
+        else:  # xyz
+            x_step_size = self.config.deltas.get("x", 1.0)
+            y_step_size = self.config.deltas.get("y", 1.0)
+            z_step_size = self.config.deltas.get("z", 1.0)
+
+        self.gamepad = Gamepad(
+            x_step_size=x_step_size,
+            y_step_size=y_step_size,
+            z_step_size=z_step_size
+        )
         self.gamepad.start()
 
     def get_action(self) -> dict[str, Any]:
@@ -88,6 +108,16 @@ class GamepadTeleop(Teleoperator):
 
         # Get movement deltas from the controller
         delta_x, delta_y, delta_z = self.gamepad.get_deltas()
+
+        # Apply coordinate transformation if using RTZ
+        if self.config.coordinate_system.value == "rtz":
+            # In RTZ mode, the gamepad inputs are interpreted as:
+            # delta_x (from gamepad) -> delta_r (radial)
+            # delta_y (from gamepad) -> delta_theta (angular)
+            # delta_z (from gamepad) -> delta_z (vertical)
+            delta_x, delta_y, delta_z, self.current_r, self.current_theta, self.current_z = rtz_to_xyz_delta(
+                delta_x, delta_y, delta_z, self.current_r, self.current_theta, self.current_z
+            )
 
         # Create action from gamepad input
         gamepad_action = np.array([delta_x, delta_y, delta_z], dtype=np.float32)

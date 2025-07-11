@@ -18,13 +18,13 @@ import logging
 import os
 import sys
 import time
-import math
 from queue import Queue
 from typing import Any
 
 from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..teleoperator import Teleoperator
+from ..utils import rtz_to_xyz_delta
 from .configuration_keyboard import KeyboardEndEffectorTeleopConfig, KeyboardTeleopConfig
 
 PYNPUT_AVAILABLE = True
@@ -152,7 +152,7 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
     """
     Teleop class to use keyboard inputs for end effector control.
     Designed to be used with the `So100FollowerEndEffector` robot.
-    Uses RTZ polar coordinates internally and converts to XYZ cartesian coordinates.
+    Supports both XYZ cartesian and RTZ polar coordinate systems.
     """
 
     config_class = KeyboardEndEffectorTeleopConfig
@@ -163,7 +163,7 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
         self.config = config
         self.misc_keys_queue = Queue()
         
-        # Track current polar position for coordinate conversion
+        # Track current polar position for coordinate conversion (RTZ mode)
         self.current_r = 0.0
         self.current_theta = 0.0
         self.current_z = 0.0
@@ -193,45 +193,6 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
             key = key.char
         self.event_queue.put((key, False))
 
-    def _rtz_to_xyz_delta(self, delta_r: float, delta_theta: float, delta_z: float) -> tuple[float, float, float]:
-        """
-        Convert RTZ polar coordinate deltas to XYZ cartesian coordinate deltas.
-        
-        Args:
-            delta_r: Radial delta (distance from origin)
-            delta_theta: Angular delta (rotation around Z-axis, in radians)
-            delta_z: Vertical delta (same as Z in cartesian)
-            
-        Returns:
-            Tuple of (delta_x, delta_y, delta_z) in cartesian coordinates
-        """
-        # Update current polar position
-        self.current_r += delta_r
-        self.current_theta += delta_theta
-        self.current_z += delta_z
-        
-        # Convert to cartesian coordinates
-        # x = r * cos(theta)
-        # y = r * sin(theta)
-        # z = z (same in both systems)
-        
-        # Calculate current cartesian position
-        current_x = self.current_r * math.cos(self.current_theta)
-        current_y = self.current_r * math.sin(self.current_theta)
-        current_z = self.current_z
-        
-        # Calculate previous cartesian position
-        prev_x = (self.current_r - delta_r) * math.cos(self.current_theta - delta_theta)
-        prev_y = (self.current_r - delta_r) * math.sin(self.current_theta - delta_theta)
-        prev_z = self.current_z - delta_z
-        
-        # Calculate deltas
-        delta_x = current_x - prev_x
-        delta_y = current_y - prev_y
-        delta_z = current_z - prev_z
-        
-        return delta_x, delta_y, delta_z
-
     def get_action(self) -> dict[str, Any]:
         if not self.is_connected:
             raise DeviceNotConnectedError(
@@ -239,27 +200,53 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
             )
 
         self._drain_pressed_keys()
-        delta_r = 0.0
-        delta_theta = 0.0
-        delta_z = 0.0
+        
+        # Initialize deltas based on coordinate system
+        if self.config.coordinate_system.value == "rtz":
+            delta_r = 0.0
+            delta_theta = 0.0
+            delta_z = 0.0
+        else:  # xyz
+            delta_x = 0.0
+            delta_y = 0.0
+            delta_z = 0.0
+            
         wrist_roll_action = 0.0
         gripper_action = 1.0
 
         # Generate action based on current key states
         for key, val in self.current_pressed.items():
-            if key == keyboard.Key.up:
-                delta_r = int(val) * 0.2  # Radial movement (forward/backward)
-            elif key == keyboard.Key.down:
-                delta_r = -int(val) * 0.2  # Radial movement (forward/backward)
-            elif key == keyboard.Key.left:
-                delta_theta = int(val) * 0.05  # Angular movement (rotation around Z-axis)
-            elif key == keyboard.Key.right:
-                delta_theta = -int(val) * 0.05  # Angular movement (rotation around Z-axis)
-            elif key == keyboard.Key.shift:
-                delta_z = int(val)  # Vertical movement (up/down)
-            elif key == keyboard.Key.shift_r:
-                delta_z = -int(val)  # Vertical movement (up/down)
-            elif key == "]":
+            if self.config.coordinate_system.value == "rtz":
+                # RTZ mode: use polar coordinates
+                if key == keyboard.Key.up:
+                    delta_r = int(val) * self.config.deltas.get("r", 0.2)  # Radial movement (forward/backward)
+                elif key == keyboard.Key.down:
+                    delta_r = -int(val) * self.config.deltas.get("r", 0.2)  # Radial movement (forward/backward)
+                elif key == keyboard.Key.left:
+                    delta_theta = int(val) * self.config.deltas.get("t", 0.05)  # Angular movement (rotation around Z-axis)
+                elif key == keyboard.Key.right:
+                    delta_theta = -int(val) * self.config.deltas.get("t", 0.05)  # Angular movement (rotation around Z-axis)
+                elif key == keyboard.Key.shift:
+                    delta_z = int(val) * self.config.deltas.get("z", 1.0)  # Vertical movement (up/down)
+                elif key == keyboard.Key.shift_r:
+                    delta_z = -int(val) * self.config.deltas.get("z", 1.0)  # Vertical movement (up/down)
+            else:
+                # XYZ mode: use cartesian coordinates
+                if key == keyboard.Key.up:
+                    delta_x = int(val) * self.config.deltas.get("x", 1.0)  # Forward/backward
+                elif key == keyboard.Key.down:
+                    delta_x = -int(val) * self.config.deltas.get("x", 1.0)  # Forward/backward
+                elif key == keyboard.Key.left:
+                    delta_y = int(val) * self.config.deltas.get("y", 1.0)  # Left/right
+                elif key == keyboard.Key.right:
+                    delta_y = -int(val) * self.config.deltas.get("y", 1.0)  # Left/right
+                elif key == keyboard.Key.shift:
+                    delta_z = int(val) * self.config.deltas.get("z", 1.0)  # Vertical movement (up/down)
+                elif key == keyboard.Key.shift_r:
+                    delta_z = -int(val) * self.config.deltas.get("z", 1.0)  # Vertical movement (up/down)
+            
+            # Common controls for both modes
+            if key == "]":
                 # Gripper actions are expected to be between 0 (close), 1 (stay), 2 (open)
                 gripper_action = int(val) + 1
             elif key == "[":
@@ -276,8 +263,12 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
 
         self.current_pressed.clear()
 
-        # Convert RTZ polar coordinates to XYZ cartesian coordinates
-        delta_x, delta_y, delta_z = self._rtz_to_xyz_delta(delta_r, delta_theta, delta_z)
+        # Convert coordinates if needed
+        if self.config.coordinate_system.value == "rtz":
+            # Convert RTZ polar coordinates to XYZ cartesian coordinates
+            delta_x, delta_y, delta_z, self.current_r, self.current_theta, self.current_z = rtz_to_xyz_delta(
+                delta_r, delta_theta, delta_z, self.current_r, self.current_theta, self.current_z
+            )
 
         action_dict = {
             "delta_x": delta_x,

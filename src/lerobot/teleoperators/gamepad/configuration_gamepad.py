@@ -14,12 +14,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import Enum
 
 from ..config import TeleoperatorConfig
+
+
+class CoordinateSystem(Enum):
+    XYZ = "xyz"
+    RTZ = "rtz"
 
 
 @TeleoperatorConfig.register_subclass("gamepad")
 @dataclass
 class GamepadTeleopConfig(TeleoperatorConfig):
     use_gripper: bool = True
+    # Coordinate system to use for movement
+    coordinate_system: CoordinateSystem = CoordinateSystem.XYZ
+    # Step sizes for movement sensitivity (in meters)
+    # For XYZ: x, y, z represent cartesian coordinates
+    # For RTZ: r, t, z represent radial, theta (angular), and vertical coordinates
+    deltas: dict[str, float] = field(
+        default_factory=lambda: {"x": 0.25, "y": 0.25, "z": 0.25}
+        # default_factory=lambda: {"r": 1.0, "t": 0.25, "z": 0.5}
+    )

@@ -14,9 +14,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import Enum
 
 from ..config import TeleoperatorConfig
+
+
+class CoordinateSystem(Enum):
+    XYZ = "xyz"
+    RTZ = "rtz"
 
 
 @TeleoperatorConfig.register_subclass("keyboard")
@@ -24,6 +30,15 @@ from ..config import TeleoperatorConfig
 class KeyboardTeleopConfig(TeleoperatorConfig):
     # TODO(Steven): Consider setting in here the keys that we want to capture/listen
     mock: bool = False
+    # Coordinate system to use for movement
+    coordinate_system: CoordinateSystem = CoordinateSystem.XYZ
+    # Step sizes for movement sensitivity (in meters)
+    # For XYZ: x, y, z represent cartesian coordinates
+    # For RTZ: r, t, z represent radial, theta (angular), and vertical coordinates
+    deltas: dict[str, float] = field(
+        default_factory=lambda: {"x": 1.0, "y": 1.0, "z": 1.0}
+        # default_factory=lambda: {"r": 1.0, "t": 0.25, "z": 0.5}
+    )
 
 
 @TeleoperatorConfig.register_subclass("keyboard_ee")
