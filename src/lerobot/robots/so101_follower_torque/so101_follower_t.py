@@ -52,12 +52,12 @@ class SO101FollowerT(Robot):
 
     # Control gains for bilateral teleoperation
     _KP_GAINS = {  # Position gains [Nm/rad] - reduced for bilateral stability
-        "shoulder_pan": 5.0,
+        "shoulder_pan": 6.0,
         "shoulder_lift": 7.0,
         "elbow_flex": 7.0,
-        "wrist_flex": 4.0,
-        "wrist_roll": 3.0,
-        "gripper": 3.0,
+        "wrist_flex": 5.0,
+        "wrist_roll": 4.0,
+        "gripper": 4.0,
     }
 
     _KD_GAINS = {  # Velocity gains [Nm⋅s/rad] - matched to position gains
@@ -80,12 +80,12 @@ class SO101FollowerT(Robot):
     }
 
     _FRICTION_COULOMB = {  # Coulomb friction [Nm] per joint
-        "shoulder_pan": 0.05,
+        "shoulder_pan": 0.15,
         "shoulder_lift": 0.25,
         "elbow_flex": 0.20,
-        "wrist_flex": 0.15,
-        "wrist_roll": 0.06,
-        "gripper": 0.04,
+        "wrist_flex": 0.20,
+        "wrist_roll": 0.15,
+        "gripper": 0.15,
     }
 
     def __init__(self, config: SO101FollowerTConfig):
