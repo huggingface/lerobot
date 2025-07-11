@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import collections
 import logging
 import time
 from functools import cached_property
@@ -21,6 +22,7 @@ from typing import Any
 
 import numpy as np
 import pinocchio as pin
+from scipy.signal import butter, lfilter
 
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
@@ -50,21 +52,21 @@ class SO101FollowerT(Robot):
 
     # Control gains for bilateral teleoperation
     _KP_GAINS = {  # Position gains [Nm/rad] - reduced for bilateral stability
-        "shoulder_pan": 5.0,  # Reduced from 7.0
-        "shoulder_lift": 15.0,  # Reduced from 15.0
-        "elbow_flex": 12.0,  # Reduced from 12.0 (main problem joint)
-        "wrist_flex": 4.0,  # Reduced from 6.0
-        "wrist_roll": 3.0,  # Reduced from 4.0
-        "gripper": 1.5,  # Reduced from 2.0
+        "shoulder_pan": 5.0,
+        "shoulder_lift": 7.0,
+        "elbow_flex": 7.0,
+        "wrist_flex": 4.0,
+        "wrist_roll": 3.0,
+        "gripper": 3.0,
     }
 
     _KD_GAINS = {  # Velocity gains [Nm⋅s/rad] - matched to position gains
         "shoulder_pan": 0.4,
-        "shoulder_lift": 0.7,
-        "elbow_flex": 0.6,
+        "shoulder_lift": 0.8,
+        "elbow_flex": 0.7,
         "wrist_flex": 0.4,
         "wrist_roll": 0.3,
-        "gripper": 0.2,
+        "gripper": 0.3,
     }
 
     # Friction model parameters
@@ -79,9 +81,9 @@ class SO101FollowerT(Robot):
 
     _FRICTION_COULOMB = {  # Coulomb friction [Nm] per joint
         "shoulder_pan": 0.05,
-        "shoulder_lift": 0.30,
+        "shoulder_lift": 0.25,
         "elbow_flex": 0.20,
-        "wrist_flex": 0.10,
+        "wrist_flex": 0.15,
         "wrist_roll": 0.06,
         "gripper": 0.04,
     }
@@ -125,6 +127,21 @@ class SO101FollowerT(Robot):
         self._prev_pos_rad: dict[str, float] | None = None
         self._prev_vel_rad: dict[str, float] | None = None
         self._prev_t: float | None = None
+
+        # Butterworth low-pass filter parameters
+        self._cutoff_freq = 10.0  # Hz - cutoff frequency for the filter
+        self._filter_order = 2  # Filter order (2nd order is common)
+        self._sampling_freq = 100.0  # Hz - assumed control loop frequency
+
+        # Design the Butterworth filter
+        nyquist_freq = self._sampling_freq / 2
+        normalized_cutoff = self._cutoff_freq / nyquist_freq
+        self._b, self._a = butter(self._filter_order, normalized_cutoff, btype="low")
+
+        # History buffers for filtering
+        self._pos_history = {m: collections.deque(maxlen=20) for m in self.bus.motors}
+        self._vel_raw_history = {m: collections.deque(maxlen=20) for m in self.bus.motors}
+        self._time_history = collections.deque(maxlen=20)
 
     @property
     def _motors_ft(self) -> dict[str, type]:
@@ -173,6 +190,38 @@ class SO101FollowerT(Robot):
     def friction_coulomb(self) -> dict[str, float]:
         """Coulomb friction coefficients [Nm] for friction compensation"""
         return self._FRICTION_COULOMB.copy()
+
+    def set_butterworth_params(self, cutoff_freq: float = 10.0, order: int = 2) -> None:
+        """Configure Butterworth low-pass filter parameters for velocity/acceleration estimation.
+
+        Args:
+            cutoff_freq: Cutoff frequency in Hz (default: 10 Hz)
+            order: Filter order (default: 2)
+        """
+        if cutoff_freq <= 0:
+            raise ValueError("Cutoff frequency must be positive")
+        if cutoff_freq >= self._sampling_freq / 2:
+            raise ValueError(
+                f"Cutoff frequency must be less than Nyquist frequency ({self._sampling_freq / 2} Hz)"
+            )
+        if order < 1:
+            raise ValueError("Filter order must be at least 1")
+
+        self._cutoff_freq = cutoff_freq
+        self._filter_order = order
+
+        # Redesign the filter
+        nyquist_freq = self._sampling_freq / 2
+        normalized_cutoff = self._cutoff_freq / nyquist_freq
+        self._b, self._a = butter(self._filter_order, normalized_cutoff, btype="low")
+
+        # Clear history buffers
+        for m in self.bus.motors:
+            self._pos_history[m].clear()
+            self._vel_raw_history[m].clear()
+        self._time_history.clear()
+
+        logger.info(f"Butterworth filter updated: cutoff_freq={cutoff_freq} Hz, order={order}")
 
     def _current_to_torque_nm(self, raw: dict[str, Any]) -> dict[str, float]:
         """Convert "Present_Current" register counts (±2047) → torque [Nm].
@@ -362,15 +411,42 @@ class SO101FollowerT(Robot):
         pos_deg = self.bus.sync_read("Present_Position", num_retry=5)
         pos_rad = self._deg_to_rad(pos_deg)
 
-        # velocity - calculate from position differences (HLS3625 motors in torque mode don't respond to Present_Velocity sync_read)
+        # Store position and time history
+        for m in pos_rad:
+            self._pos_history[m].append(pos_rad[m])
+        self._time_history.append(t_now)
+
+        # Calculate raw velocity using finite differences
+        vel_rad_raw = {}
         if self._prev_pos_rad is None or self._prev_t is None:
-            vel_rad = dict.fromkeys(pos_rad, 0.0)
+            vel_rad_raw = dict.fromkeys(pos_rad, 0.0)
         else:
             dt = t_now - self._prev_t
             dt = max(dt, 1e-4)  # Avoid division by zero
-            vel_rad = {m: (pos_rad[m] - self._prev_pos_rad[m]) / dt for m in pos_rad}
+            vel_rad_raw = {m: (pos_rad[m] - self._prev_pos_rad[m]) / dt for m in pos_rad}
 
-        # acceleration - calculate from velocity differences
+        # Store raw velocity history
+        for m in vel_rad_raw:
+            self._vel_raw_history[m].append(vel_rad_raw[m])
+
+        # Apply Butterworth low-pass filter to velocity
+        vel_rad = {}
+        for m in pos_rad:
+            if len(self._vel_raw_history[m]) >= 10:  # Need enough samples for good filtering
+                # Convert deque to numpy array
+                vel_raw_array = np.array(list(self._vel_raw_history[m]))
+
+                # Apply Butterworth filter
+                vel_filtered = lfilter(self._b, self._a, vel_raw_array)
+
+                # Use the most recent filtered value
+                vel_rad[m] = vel_filtered[-1]
+            else:
+                # Not enough history, use raw velocity
+                vel_rad[m] = vel_rad_raw[m]
+
+        # Calculate acceleration from filtered velocity
+        acc_rad = {}
         if self._prev_vel_rad is None or self._prev_t is None:
             acc_rad = dict.fromkeys(pos_rad, 0.0)
         else:
