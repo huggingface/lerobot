@@ -46,7 +46,7 @@ class SO101FollowerT(Robot):
 
     _CURRENT_STEP_A: float = 6.5e-3  # 6.5 mA per register LSB #http://doc.feetech.cn/#/prodinfodownload?srcType=FT-SMS-STS-emanual-229f4476422d4059abfb1cb0
     _KT_NM_PER_AMP: float = 0.814  # Torque constant Kt [N·m/A] #https://www.feetechrc.com/811177.html
-    _MAX_CURRENT_A: float = 3.0  # Safe driver limit for this model
+    _MAX_CURRENT_A: float = 4.0  # Safe driver limit for this model
 
     # Control gains for bilateral teleoperation
     _KP_GAINS = {  # Position gains [Nm/rad] - reduced for bilateral stability
@@ -344,6 +344,7 @@ class SO101FollowerT(Robot):
                 self.bus.write("Operating_Mode", motor, 2, num_retry=2)  # Set to current mode
                 self.bus.write("Torque_Limit", motor, 1000, num_retry=2)  # 100%
                 self.bus.write("Max_Torque_Limit", motor, 1000, num_retry=2)  # 100%
+                self.bus.write("Overcurrent_Protection_Time", motor, 250, num_retry=2)
 
     def setup_motors(self) -> None:
         for motor in reversed(self.bus.motors):
@@ -422,10 +423,6 @@ class SO101FollowerT(Robot):
         max_cnt = int(round(self._MAX_CURRENT_A / self._CURRENT_STEP_A))
         counts = {}
         for joint, τ in tau_cmd_nm.items():
-            # Set wrist_flex commands to 0
-            if joint == "wrist_flex":
-                counts[joint] = 0
-                continue
             cnt = τ * self.torque_sign[joint] * inv_coef  # flip SIGN
             cnt = max(-max_cnt, min(max_cnt, cnt))
             counts[joint] = int(round(cnt))

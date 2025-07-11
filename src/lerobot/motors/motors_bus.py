@@ -444,8 +444,8 @@ class MotorsBus(abc.ABC):
         try:
             if not self.port_handler.openPort():
                 raise OSError(f"Failed to open port '{self.port}'.")
-            elif handshake:
-                self._handshake()
+            # elif handshake:
+            # self._handshake()
         except (FileNotFoundError, OSError, serial.SerialException) as e:
             raise ConnectionError(
                 f"\nCould not connect on port '{self.port}'. Make sure you are using the correct port."
