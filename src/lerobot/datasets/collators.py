@@ -1,8 +1,9 @@
 from typing import Dict, List
 
+import numpy as np
 import torch
 from torch.utils.data.dataloader import default_collate
-import numpy as np
+
 
 def is_batch_need_padding(values: list[torch.Tensor], pad_dim: int = -1) -> int:
     return len(values[0].shape) > 0  # and len(set([v.shape[pad_dim] for v in values])) > 1
@@ -51,7 +52,8 @@ def multidataset_collate_fn(
         if (
             key in keys_to_max_dim
             and isinstance(values[0], torch.Tensor)
-            and is_batch_need_padding(values, pad_dim=pad_dim) and keys_to_max_dim[key] is not None
+            and is_batch_need_padding(values, pad_dim=pad_dim)
+            and keys_to_max_dim[key] is not None
         ):
             max_size = keys_to_max_dim[key]
             for i in range(len(batch)):
