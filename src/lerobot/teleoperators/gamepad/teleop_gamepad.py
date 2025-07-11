@@ -73,11 +73,11 @@ class GamepadTeleop(Teleoperator):
 
     def connect(self) -> None:
         # use HidApi for macos
-        if sys.platform == "darwin":
-            # NOTE: On macOS, pygame doesn’t reliably detect input from some controllers so we fall back to hidapi
-            from .gamepad_utils import GamepadControllerHID as Gamepad
-        else:
-            from .gamepad_utils import GamepadController as Gamepad
+        # if sys.platform == "darwin":
+        #     # NOTE: On macOS, pygame doesn’t reliably detect input from some controllers so we fall back to hidapi
+        #     from .gamepad_utils import GamepadControllerHID as Gamepad
+        # else:
+        from .gamepad_utils import GamepadController as Gamepad
 
         self.gamepad = Gamepad()
         self.gamepad.start()
