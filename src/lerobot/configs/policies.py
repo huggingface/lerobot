@@ -60,6 +60,9 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     # automatic gradient scaling is used.
     use_amp: bool = False
 
+    # Whether the policy employed PEFT for training.
+    use_peft: bool = False
+
     push_to_hub: bool = True
     repo_id: str | None = None
 
@@ -83,6 +86,12 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
                 f"Automatic Mixed Precision (amp) is not available on device '{self.device}'. Deactivating AMP."
             )
             self.use_amp = False
+
+    def get(self, name, default=None):
+        return getattr(self, name, default)
+
+    def __contains__(self, name):
+        return hasattr(self, name)
 
     @property
     def type(self) -> str:
