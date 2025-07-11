@@ -485,12 +485,10 @@ class ACT(nn.Module):
                 self.encoder_env_state_input_proj(batch["observation.environment_state"])
             )
 
-        # Camera observation features and positional embeddings.
         if self.config.image_features:
-            all_cam_features = []
-            all_cam_pos_embeds = []
-
             # For a list of images, the H and W may vary but H*W is constant.
+            # NOTE: If modifying this section, verify on MPS devices that
+            # gradients remain stable (no explosions or NaNs).
             for img in batch["observation.images"]:
                 cam_features = self.backbone(img)["feature_map"]
                 cam_pos_embed = self.encoder_cam_feat_pos_embed(cam_features).to(dtype=cam_features.dtype)
@@ -500,11 +498,10 @@ class ACT(nn.Module):
                 cam_features = einops.rearrange(cam_features, "b c h w -> (h w) b c")
                 cam_pos_embed = einops.rearrange(cam_pos_embed, "b c h w -> (h w) b c")
 
-                all_cam_features.append(cam_features)
-                all_cam_pos_embeds.append(cam_pos_embed)
-
-            encoder_in_tokens.extend(torch.cat(all_cam_features, axis=0))
-            encoder_in_pos_embed.extend(torch.cat(all_cam_pos_embeds, axis=0))
+                # Extend immediately instead of accumulating and concatenating
+                # Convert to list to extend properly
+                encoder_in_tokens.extend(list(cam_features))
+                encoder_in_pos_embed.extend(list(cam_pos_embed))
 
         # Stack all tokens along the sequence dimension.
         encoder_in_tokens = torch.stack(encoder_in_tokens, axis=0)
