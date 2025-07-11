@@ -305,10 +305,10 @@ STS_SMS_SERIES_ENCODINGS_TABLE = {
 # HLS series sign-magnitude encoding bits
 HLS_SERIES_ENCODINGS_TABLE = {
     "Homing_Offset": 15,  # BIT15 represents positive/negative direction
-    # "Goal_Position": 15,  # BIT15 represents positive/negative direction
+    "Goal_Position": 15,  # BIT15 represents positive/negative direction
     "Target_Torque": 15,  # BIT15 represents positive/negative direction in constant current mode
     "Goal_Velocity": 15,  # BIT15 represents positive/negative direction in constant speed mode
-    # "Present_Position": 15,  # BIT15 represents positive/negative direction
+    "Present_Position": 15,  # BIT15 represents positive/negative direction
     "Present_Velocity": 15,  # BIT15 represents positive/negative direction
     "Present_Current": 15,  # BIT15 represents positive/negative direction
     "Present_Load": 10,  # BIT10 represents positive/negative direction
