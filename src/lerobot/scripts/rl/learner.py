@@ -77,6 +77,7 @@ from lerobot.scripts.rl import learner_service
 from lerobot.teleoperators import gamepad, so101_leader  # noqa: F401
 from lerobot.transport import services_pb2_grpc
 from lerobot.transport.utils import (
+    MAX_MESSAGE_SIZE,
     bytes_to_python_object,
     bytes_to_transitions,
     state_to_bytes,
@@ -658,8 +659,8 @@ def start_learner(
     server = grpc.server(
         ThreadPoolExecutor(max_workers=learner_service.MAX_WORKERS),
         options=[
-            ("grpc.max_receive_message_length", learner_service.MAX_MESSAGE_SIZE),
-            ("grpc.max_send_message_length", learner_service.MAX_MESSAGE_SIZE),
+            ("grpc.max_receive_message_length", MAX_MESSAGE_SIZE),
+            ("grpc.max_send_message_length", MAX_MESSAGE_SIZE),
         ],
     )
 
