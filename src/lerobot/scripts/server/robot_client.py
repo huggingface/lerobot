@@ -76,6 +76,8 @@ from lerobot.transport import (
     services_pb2_grpc,  # type: ignore
 )
 from lerobot.transport.utils import send_bytes_in_chunks
+from lerobot.utils import queue
+from lerobot.utils.queue import get_last_item_from_queue
 
 
 class RobotClient:
@@ -126,10 +128,9 @@ class RobotClient:
 
         self._chunk_size_threshold = config.chunk_size_threshold
 
+        self.actions_bytes_queue = Queue()
         self.action_queue = Queue()
-        self.action_queue_lock = threading.Lock()  # Protect queue operations
         self.action_queue_size = []
-        self.start_barrier = threading.Barrier(2)  # 2 threads: action receiver, control loop
 
         # FPS measurement
         self.fps_tracker = FPSTracker(target_fps=self.config.fps)
@@ -137,8 +138,7 @@ class RobotClient:
         self.logger.info("Robot connected and ready")
 
         # Use an event for thread-safe coordination
-        self.must_go = threading.Event()
-        self.must_go.set()  # Initially set - observations qualify for direct processing
+        self.observation_bytes_queue = Queue()
 
     @property
     def running(self):
@@ -183,40 +183,6 @@ class RobotClient:
 
         self.channel.close()
         self.logger.debug("Client stopped, channel closed")
-
-    def send_observation(
-        self,
-        obs: TimedObservation,
-    ) -> bool:
-        """Send observation to the policy server.
-        Returns True if the observation was sent successfully, False otherwise."""
-        if not self.running:
-            raise RuntimeError("Client not running. Run RobotClient.start() before sending observations.")
-
-        if not isinstance(obs, TimedObservation):
-            raise ValueError("Input observation needs to be a TimedObservation!")
-
-        start_time = time.perf_counter()
-        observation_bytes = pickle.dumps(obs)
-        serialize_time = time.perf_counter() - start_time
-        self.logger.debug(f"Observation serialization time: {serialize_time:.6f}s")
-
-        try:
-            observation_iterator = send_bytes_in_chunks(
-                observation_bytes,
-                services_pb2.Observation,
-                log_prefix="[CLIENT] Observation",
-                silent=True,
-            )
-            _ = self.stub.SendObservations(observation_iterator)
-            obs_timestep = obs.get_timestep()
-            self.logger.info(f"Sent observation #{obs_timestep} | ")
-
-            return True
-
-        except grpc.RpcError as e:
-            self.logger.error(f"Error sending observation #{obs.get_timestep()}: {e}")
-            return False
 
     def _inspect_action_queue(self):
         with self.action_queue_lock:
@@ -270,10 +236,21 @@ class RobotClient:
         with self.action_queue_lock:
             self.action_queue = future_action_queue
 
-    def receive_actions(self, verbose: bool = False):
+    def _extract_actions_from_bytes_queue(self):
+        result = []
+
+        while True:
+            try:
+                bytes = self.actions_bytes_queue.get_nowait()
+                actions = pickle.loads(bytes)
+                result.extend(actions)
+            except queue.Empty:
+                break
+
+        return result
+
+    def send_actions(self, verbose: bool = False):
         """Receive actions from the policy server"""
-        # Wait at barrier for synchronized start
-        self.start_barrier.wait()
         self.logger.info("Action receiving thread starting")
 
         while self.running:
@@ -352,17 +329,46 @@ class RobotClient:
             except grpc.RpcError as e:
                 self.logger.error(f"Error receiving actions: {e}")
 
-    def actions_available(self):
-        """Check if there are actions available in the queue"""
-        with self.action_queue_lock:
-            return not self.action_queue.empty()
+    def start_communication_thread(self):
+        self.action_receiver_thread = threading.Thread(target=self.get_actions_loop, daemon=True)
+        self.action_receiver_thread.start()
+
+    def get_actions_loop(self):
+        # This method is handle tranpsortation only, it doesn't know anything about the logic
+        # it sends and receives bytes from the policy server
+        while self.running:
+            observation_bytes = get_last_item_from_queue(
+                self.observation_bytes_queue, block=True, timeout=self.config.obs_queue_timeout
+            )
+
+            if not self.running:
+                break
+
+            if observation_bytes is None:
+                continue
+
+            observation_iterator = send_bytes_in_chunks(
+                observation_bytes,
+                services_pb2.Observation,
+                log_prefix="[CLIENT] Observation",
+                silent=True,
+            )
+
+            actions_bytes = self.stub.GetActions(observation_iterator)
+            self.actions_bytes_queue.put(actions_bytes)
 
     def _action_tensor_to_action_dict(self, action_tensor: torch.Tensor) -> dict[str, float]:
         action = {key: action_tensor[i].item() for i, key in enumerate(self.robot.action_features)}
         return action
 
-    def control_loop_action(self, verbose: bool = False) -> dict[str, Any]:
+    def _update_action_queue(self):
+        actions_from_policy_server = self._extract_actions_from_bytes_queue()
+        self._aggregate_action_queues(actions_from_policy_server, self.config.aggregate_fn)
+
+    def apply_action(self, verbose: bool = False) -> dict[str, Any]:
         """Reading and performing actions in local queue"""
+        if self.action_queue.empty():
+            return
 
         # Lock only for queue operations
         get_start = time.perf_counter()
@@ -399,55 +405,25 @@ class RobotClient:
         with self.action_queue_lock:
             return self.action_queue.qsize() / self.action_chunk_size <= self._chunk_size_threshold
 
-    def control_loop_observation(self, task: str, verbose: bool = False) -> RawObservation:
-        try:
-            # Get serialized observation bytes from the function
-            start_time = time.perf_counter()
+    def push_observation_to_queue(self, task: str, verbose: bool = False) -> RawObservation | None:
+        if not self._ready_to_send_observation():
+            return
 
-            raw_observation: RawObservation = self.robot.get_observation()
-            raw_observation["task"] = task
+        # Get serialized observation bytes from the function
+        raw_observation: RawObservation = self.robot.get_observation()
+        raw_observation["task"] = task
 
-            with self.latest_action_lock:
-                latest_action = self.latest_action
+        observation = TimedObservation(
+            timestamp=time.time(),  # need time.time() to compare timestamps across client and server
+            observation=raw_observation,
+            timestep=0,
+        )
 
-            observation = TimedObservation(
-                timestamp=time.time(),  # need time.time() to compare timestamps across client and server
-                observation=raw_observation,
-                timestep=max(latest_action, 0),
-            )
+        observation_bytes = pickle.dumps(observation)
 
-            obs_capture_time = time.perf_counter() - start_time
+        self.observation_bytes_queue.put(observation_bytes)
 
-            # If there are no actions left in the queue, the observation must go through processing!
-            with self.action_queue_lock:
-                observation.must_go = self.must_go.is_set() and self.action_queue.empty()
-                current_queue_size = self.action_queue.qsize()
-
-            _ = self.send_observation(observation)
-
-            self.logger.debug(f"QUEUE SIZE: {current_queue_size} (Must go: {observation.must_go})")
-            if observation.must_go:
-                # must-go event will be set again after receiving actions
-                self.must_go.clear()
-
-            if verbose:
-                # Calculate comprehensive FPS metrics
-                fps_metrics = self.fps_tracker.calculate_fps_metrics(observation.get_timestamp())
-
-                self.logger.info(
-                    f"Obs #{observation.get_timestep()} | "
-                    f"Avg FPS: {fps_metrics['avg_fps']:.2f} | "
-                    f"Target: {fps_metrics['target_fps']:.2f}"
-                )
-
-                self.logger.debug(
-                    f"Ts={observation.get_timestamp():.6f} | Capturing observation took {obs_capture_time:.6f}s"
-                )
-
-            return raw_observation
-
-        except Exception as e:
-            self.logger.error(f"Error in observation sender: {e}")
+        return raw_observation
 
     def control_loop(self, task: str, verbose: bool = False) -> tuple[Observation, Action]:
         """Combined function for executing actions and streaming observations"""
@@ -455,24 +431,19 @@ class RobotClient:
         self.start_barrier.wait()
         self.logger.info("Control loop thread starting")
 
-        _performed_action = None
-        _captured_observation = None
-
         while self.running:
             control_loop_start = time.perf_counter()
-            """Control loop: (1) Performing actions, when available"""
-            if self.actions_available():
-                _performed_action = self.control_loop_action(verbose)
 
-            """Control loop: (2) Streaming observations to the remote policy server"""
-            if self._ready_to_send_observation():
-                _captured_observation = self.control_loop_observation(task, verbose)
+            self._update_action_queue()
+            self.apply_action()
+            self.push_observation_to_queue(task, verbose)
 
-            self.logger.info(f"Control loop (ms): {(time.perf_counter() - control_loop_start) * 1000:.2f}")
-            # Dynamically adjust sleep time to maintain the desired control frequency
-            time.sleep(max(0, self.config.environment_dt - (time.perf_counter() - control_loop_start)))
+            self._sleep(control_loop_start, self.config.environment_dt)
 
-        return _captured_observation, _performed_action
+    def _sleep(self, control_loop_start: float, max_sleep_time: float):
+        time_to_sleep = max(0, self.config.environment_dt - (time.perf_counter() - control_loop_start))
+        if time_to_sleep > max_sleep_time:
+            time.sleep(max_sleep_time)
 
 
 @draccus.wrap()
@@ -484,25 +455,27 @@ def async_client(cfg: RobotClientConfig):
 
     client = RobotClient(cfg)
 
-    if client.start():
-        client.logger.info("Starting action receiver thread...")
+    if not client.start():
+        return
 
-        # Create and start action receiver thread
-        action_receiver_thread = threading.Thread(target=client.receive_actions, daemon=True)
+    client.logger.info("Starting action receiver thread...")
 
-        # Start action receiver thread
-        action_receiver_thread.start()
+    # Create and start action receiver thread
+    action_receiver_thread = threading.Thread(target=client.receive_actions, daemon=True)
 
-        try:
-            # The main thread runs the control loop
-            client.control_loop(task=cfg.task)
+    # Start action receiver thread
+    action_receiver_thread.start()
 
-        finally:
-            client.stop()
-            action_receiver_thread.join()
-            if cfg.debug_visualize_queue_size:
-                visualize_action_queue_size(client.action_queue_size)
-            client.logger.info("Client stopped")
+    try:
+        # The main thread runs the control loop
+        client.control_loop(task=cfg.task)
+
+    finally:
+        client.stop()
+        action_receiver_thread.join()
+        if cfg.debug_visualize_queue_size:
+            visualize_action_queue_size(client.action_queue_size)
+        client.logger.info("Client stopped")
 
 
 if __name__ == "__main__":
