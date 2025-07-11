@@ -143,8 +143,7 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
         policy_class = get_policy_class(self.policy_type)
 
         start = time.perf_counter()
-        self.policy = policy_class.from_pretrained(policy_specs.pretrained_name_or_path)
-        self.policy.to(self.device)
+        self.policy = policy_class.from_pretrained(policy_specs.pretrained_name_or_path, device=self.device)
         end = time.perf_counter()
 
         self.logger.info(f"Time taken to put policy on {self.device}: {end - start:.4f} seconds")
