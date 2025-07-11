@@ -32,7 +32,8 @@ IMAGENET_STATS = {
     "std": [[[0.229]], [[0.224]], [[0.225]]],  # (c,1,1)
 }
 
-from lerobot.common.datasets.utils_must import (EPISODES_DATASET_MAPPING, TRAINING_FEATURES, FEATURE_KEYS_MAPPING)
+from lerobot.common.datasets.utils_must import EPISODES_DATASET_MAPPING, FEATURE_KEYS_MAPPING
+
 
 def resolve_delta_timestamps(
     cfg: PreTrainedConfig, ds_meta: LeRobotDatasetMetadata
@@ -65,6 +66,7 @@ def resolve_delta_timestamps(
         delta_timestamps = None
 
     return delta_timestamps
+
 
 def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDataset:
     """Handles the logic of setting up delta timestamps and image transforms before creating a dataset.
@@ -119,9 +121,9 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
                 feature_keys_mapping=feature_keys_mapping,
             )  # FIXME(mshukor): ?
             delta_timestamps[repo_id[i]] = resolve_delta_timestamps(cfg.policy, ds_meta)
-            episodes[repo_id[i]] =  EPISODES_DATASET_MAPPING.get(repo_id[i], cfg.dataset.episodes)
+            episodes[repo_id[i]] = EPISODES_DATASET_MAPPING.get(repo_id[i], cfg.dataset.episodes)
         # training_features = TRAINING_FEATURES.get(cfg.dataset.features_version, None)
-        #FIXME: (jadechoghari): check support for training features
+        # FIXME: (jadechoghari): check support for training features
         training_features = None
         dataset = MultiLeRobotDataset(
             repo_id,
@@ -148,7 +150,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
         )
         logging.info(
             "Multiple datasets were provided. Applied the following index mapping to the provided datasets: "
-            f"{pformat(dataset.repo_id_to_index , indent=2)}"
+            f"{pformat(dataset.repo_id_to_index, indent=2)}"
         )
     if cfg.dataset.use_imagenet_stats:
         for key in dataset.meta.camera_keys:

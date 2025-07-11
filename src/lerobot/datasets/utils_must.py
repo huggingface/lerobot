@@ -1,24 +1,21 @@
 """
 Utils function by Mustafa to refactor
 """
-import torch
-import numpy as np
-from lerobot.datasets.compute_stats import (
-    aggregate_stats
-)
+
 from collections import defaultdict
-from torch.utils.data.dataloader import default_collate
-import torch.nn.functional as F
+from typing import Dict, List
 
+import numpy as np
 import torch
-from typing import Dict, List
+import torch.nn.functional as F
+from torch.utils.data.dataloader import default_collate
 
+from lerobot.datasets.compute_stats import aggregate_stats
 
-
-from typing import Dict, List
 OBS_IMAGE = "observation.image"
 OBS_IMAGE_2 = "observation.image2"
 OBS_IMAGE_3 = "observation.image3"
+
 
 def reshape_features_to_max_dim(features: dict, reshape_dim: int = -1, keys_to_max_dim: dict = {}) -> dict:
     """Reshape features to have a maximum dimension of `max_dim`."""
@@ -37,10 +34,11 @@ def reshape_features_to_max_dim(features: dict, reshape_dim: int = -1, keys_to_m
             reshaped_features[key] = features[key]
     return reshaped_features
 
-def keep_datasets_with_valid_fps(
-    ls_datasets: list, min_fps: int = 1, max_fps: int = 100
-) -> list:
-    print(f"Keeping datasets with fps between {min_fps} and {max_fps}. Considering {len(ls_datasets)} datasets.")
+
+def keep_datasets_with_valid_fps(ls_datasets: list, min_fps: int = 1, max_fps: int = 100) -> list:
+    print(
+        f"Keeping datasets with fps between {min_fps} and {max_fps}. Considering {len(ls_datasets)} datasets."
+    )
     for ds in ls_datasets:
         if ds.fps < min_fps or ds.fps > max_fps:
             print(f"Dataset {ds} has invalid fps: {ds.fps}. Removing it.")
@@ -48,9 +46,8 @@ def keep_datasets_with_valid_fps(
     print(f"Keeping {len(ls_datasets)} datasets with valid fps.")
     return ls_datasets
 
-def keep_datasets_with_the_same_features_per_robot_type(
-    ls_datasets: list
-) -> list:
+
+def keep_datasets_with_the_same_features_per_robot_type(ls_datasets: list) -> list:
     """
     Filters datasets to only keep those with consistent feature shapes per robot type.
 
@@ -68,7 +65,8 @@ def keep_datasets_with_the_same_features_per_robot_type(
         # Collect all stats dicts for this robot type
         stats_list = [
             ep_stats
-            for ds in ls_datasets if ds.meta.info["robot_type"] == robot_type
+            for ds in ls_datasets
+            if ds.meta.info["robot_type"] == robot_type
             for ep_stats in ds.meta.episodes_stats.values()
         ]
         if not stats_list:
@@ -84,7 +82,9 @@ def keep_datasets_with_the_same_features_per_robot_type(
 
                 for stats in stats_list:
                     value = stats.get(key)
-                    if value and "mean" in value and isinstance(value["mean"], (torch.Tensor, np.ndarray)): # FIXME(mshukor): check all stats; min, mean, max
+                    if (
+                        value and "mean" in value and isinstance(value["mean"], (torch.Tensor, np.ndarray))
+                    ):  # FIXME(mshukor): check all stats; min, mean, max
                         shape_counter[value["mean"].shape] += 1
                 if not shape_counter:
                     continue
@@ -97,16 +97,22 @@ def keep_datasets_with_the_same_features_per_robot_type(
                 if not first_ep_stats:
                     continue
                 value = first_ep_stats.get(key)
-                if value and "mean" in value and isinstance(value["mean"], (torch.Tensor, np.ndarray)) and value["mean"].shape != main_shape:
+                if (
+                    value
+                    and "mean" in value
+                    and isinstance(value["mean"], (torch.Tensor, np.ndarray))
+                    and value["mean"].shape != main_shape
+                ):
                     datasets_to_remove.add(ds)
                     break
 
     # Filter out inconsistent datasets
     datasets_maks = [ds not in datasets_to_remove for ds in ls_datasets]
     filtered_datasets = [ds for ds in ls_datasets if ds not in datasets_to_remove]
-    print(f"Keeping {len(filtered_datasets)} datasets. Removed {len(datasets_to_remove)} inconsistent ones. Inconsistent datasets:\n{datasets_to_remove}")
+    print(
+        f"Keeping {len(filtered_datasets)} datasets. Removed {len(datasets_to_remove)} inconsistent ones. Inconsistent datasets:\n{datasets_to_remove}"
+    )
     return filtered_datasets, datasets_maks
-
 
 
 def aggregate_stats_per_robot_type(ls_datasets) -> dict[str, dict[str, torch.Tensor]]:
@@ -133,6 +139,7 @@ def aggregate_stats_per_robot_type(ls_datasets) -> dict[str, dict[str, torch.Ten
         stats[robot_type] = stat
     return stats
 
+
 def str_to_torch_dtype(dtype_str):
     """Convert a dtype string to a torch dtype."""
     mapping = {
@@ -144,9 +151,10 @@ def str_to_torch_dtype(dtype_str):
     }
     return mapping.get(dtype_str, torch.float32)  # Default to float32
 
+
 def create_padded_features(item: dict, features: dict = {}):
     for key, ft in features.items():
-        if any([k in key for k in ["cam", "effort", "absolute"]]): # FIXME(mshukor): temporary hack
+        if any([k in key for k in ["cam", "effort", "absolute"]]):  # FIXME(mshukor): temporary hack
             continue
         shape = ft["shape"]
         if len(shape) == 3:  # images to torch format (C, H, W)
@@ -157,11 +165,12 @@ def create_padded_features(item: dict, features: dict = {}):
             dtype = str_to_torch_dtype(ft["dtype"])
             item[key] = torch.zeros(shape, dtype=dtype)
             item[f"{key}_padding_mask"] = torch.tensor(0, dtype=torch.int64)
-            if "image" in key: # FIXME(mshukor): support other observations
+            if "image" in key:  # FIXME(mshukor): support other observations
                 item[f"{key}_is_pad"] = torch.BoolTensor([False])
         else:
             item[f"{key}_padding_mask"] = torch.tensor(1, dtype=torch.int64)
     return item
+
 
 ROBOT_TYPE_KEYS_MAPPING = {
     "lerobot/stanford_hydra_dataset": "static_single_arm",
@@ -172,6 +181,7 @@ ROBOT_TYPE_KEYS_MAPPING = {
     "lerobot/jaco_play": "static_single_arm",
     "lerobot/taco_play": "static_single_arm_7statedim",
 }
+
 
 def pad_tensor(
     tensor: torch.Tensor, max_size: int, pad_dim: int = -1, pad_value: float = 0.0
@@ -188,7 +198,10 @@ def pad_tensor(
         tensor = torch.nn.functional.pad(tensor, pad_sizes, value=pad_value)
     return tensor.numpy() if is_numpy else tensor
 
-def map_dict_keys(item: dict, feature_keys_mapping: dict, training_features: list = None, pad_key: str = "is_pad") -> dict:
+
+def map_dict_keys(
+    item: dict, feature_keys_mapping: dict, training_features: list = None, pad_key: str = "is_pad"
+) -> dict:
     """Maps feature keys from the dataset to the keys used in the model."""
     if feature_keys_mapping is None:
         return item
@@ -205,15 +218,19 @@ def map_dict_keys(item: dict, feature_keys_mapping: dict, training_features: lis
     # breakpoint()
     return features
 
+
 def find_start_of_motion(velocities, window_size, threshold, motion_buffer):
     for t in range(len(velocities) - window_size):
-        window_mean = velocities[t:t+window_size].mean()
+        window_mean = velocities[t : t + window_size].mean()
         if window_mean > threshold:
             return max(0, t - motion_buffer)  # include slight context before motion
     return 0
 
-import yaml
+
 import requests
+import yaml
+
+
 def load_yaml_mapping(name: str) -> dict:
     """
     Loads a YAML mapping from a Hugging Face repo.
@@ -225,13 +242,115 @@ def load_yaml_mapping(name: str) -> dict:
 
     return yaml.safe_load(response.text)
 
+
 # Example usage
 TASKS_KEYS_MAPPING = load_yaml_mapping("tasks")
 FEATURE_KEYS_MAPPING = load_yaml_mapping("features")
 EPISODES_DATASET_MAPPING = {
     "cadene/droid_1.0.1": list(range(50)),
-    "danaaubakirova/svla_so100_task5_v3": [0, 1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51],
-    "danaaubakirova/svla_so100_task4_v3": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53],
+    "danaaubakirova/svla_so100_task5_v3": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+    ],
+    "danaaubakirova/svla_so100_task4_v3": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+    ],
 }
 ACTION = "action"
 OBS_STATE = "observation.state"
@@ -243,6 +362,7 @@ TRAINING_FEATURES = {
     2: [ACTION, OBS_STATE, TASK, ROBOT, OBS_IMAGE, OBS_IMAGE_2, OBS_IMAGE_3],
 }
 
+
 def is_batch_need_padding(values: list[torch.Tensor], pad_dim: int = -1) -> int:
     return len(values[0].shape) > 0  # and len(set([v.shape[pad_dim] for v in values])) > 1
 
@@ -250,7 +370,7 @@ def is_batch_need_padding(values: list[torch.Tensor], pad_dim: int = -1) -> int:
 def pad_tensor_to_shape(tensor: torch.Tensor, target_shape: tuple, pad_value: float = 0.0) -> torch.Tensor:
     """Pads a tensor to the target shape (right/bottom only)."""
     pad = []
-    for actual, target in zip(reversed(tensor.shape), reversed(target_shape)):
+    for actual, target in zip(reversed(tensor.shape), reversed(target_shape), strict=False):
         pad.extend([0, max(target - actual, 0)])
     return F.pad(tensor, pad, value=pad_value)
 

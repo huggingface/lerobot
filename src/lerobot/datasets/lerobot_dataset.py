@@ -14,10 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import contextlib
-import copy
 import logging
-import shutil
 import os
+import shutil
 from pathlib import Path
 from typing import Callable
 
@@ -32,8 +31,16 @@ from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.constants import REPOCARD_NAME
 from huggingface_hub.errors import RevisionNotFoundError
 
-from lerobot.constants import HF_LEROBOT_HOME
-from lerobot.datasets.compute_stats import aggregate_stats, compute_episode_stats #aggregate_stats_per_robot_type,
+from lerobot.constants import (
+    ACTION,
+    HF_LEROBOT_HOME,
+    OBS_ENV_STATE,
+    OBS_STATE,
+)
+from lerobot.datasets.compute_stats import (  # aggregate_stats_per_robot_type,
+    aggregate_stats,
+    compute_episode_stats,
+)
 from lerobot.datasets.image_writer import AsyncImageWriter, write_image
 from lerobot.datasets.utils import (
     DEFAULT_FEATURES,
@@ -43,7 +50,6 @@ from lerobot.datasets.utils import (
     _validate_feature_names,
     append_jsonlines,
     backward_compatible_episodes_stats,
-    check_delta_timestamps,
     check_timestamps_sync,
     check_version_compatibility,
     create_empty_dataset_info,
@@ -51,7 +57,6 @@ from lerobot.datasets.utils import (
     embed_images,
     get_delta_indices,
     get_episode_data_index,
-    get_features_from_robot,
     get_hf_features_from_features,
     get_safe_version,
     hf_transform_to_torch,
@@ -68,10 +73,27 @@ from lerobot.datasets.utils import (
     write_episode_stats,
     write_info,
     write_json,
-    #keep_datasets_with_the_same_features_per_robot_type,
-    #map_dict_pad_keys,
-    #keep_datasets_with_valid_fps,
-    #find_start_of_motion,
+    # keep_datasets_with_the_same_features_per_robot_type,
+    # map_dict_pad_keys,
+    # keep_datasets_with_valid_fps,
+    # find_start_of_motion,
+)
+
+# mustafa stuff here
+from lerobot.datasets.utils_must import (
+    OBS_IMAGE,
+    OBS_IMAGE_2,
+    OBS_IMAGE_3,
+    ROBOT_TYPE_KEYS_MAPPING,
+    TASKS_KEYS_MAPPING,
+    aggregate_stats_per_robot_type,
+    create_padded_features,
+    find_start_of_motion,
+    keep_datasets_with_the_same_features_per_robot_type,
+    keep_datasets_with_valid_fps,
+    map_dict_keys,
+    pad_tensor,
+    reshape_features_to_max_dim,
 )
 from lerobot.datasets.video_utils import (
     VideoFrame,
@@ -81,39 +103,17 @@ from lerobot.datasets.video_utils import (
     get_video_info,
 )
 
-# mustafa stuff here
-from lerobot.datasets.utils_must import (
-    reshape_features_to_max_dim,
-    keep_datasets_with_valid_fps,
-    keep_datasets_with_the_same_features_per_robot_type,
-    aggregate_stats_per_robot_type,
-    create_padded_features,
-    pad_tensor,
-    map_dict_keys,
-    find_start_of_motion,
-    ROBOT_TYPE_KEYS_MAPPING,
-    OBS_IMAGE,
-    OBS_IMAGE_2,
-    OBS_IMAGE_3,
-    TASKS_KEYS_MAPPING,
-)
-from lerobot.constants import (
-    ACTION,
-    OBS_ENV_STATE,
-    OBS_STATE,
-
-)
-
 CODEBASE_VERSION = "v2.1"
 LEROBOT_HOME = Path(os.getenv("LEROBOT_HOME", "~/.cache/huggingface/lerobot")).expanduser()
 
 
 def find_start_of_motion(velocities, window_size, threshold, motion_buffer):
     for t in range(len(velocities) - window_size):
-        window_mean = velocities[t:t+window_size].mean()
+        window_mean = velocities[t : t + window_size].mean()
         if window_mean > threshold:
             return max(0, t - motion_buffer)  # include slight context before motion
     return 0
+
 
 class LeRobotDatasetMetadata:
     def __init__(
@@ -400,7 +400,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         force_cache_sync: bool = False,
         download_videos: bool = True,
         video_backend: str | None = None,
-
         # new thing by M
         feature_keys_mapping: dict[str, str] | None = None,
         max_action_dim: int = None,
@@ -549,7 +548,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # Load metadata
         # TODO: change
         self.meta = LeRobotDatasetMetadata(
-            self.repo_id, self.root, self.revision, force_cache_sync=force_cache_sync,
+            self.repo_id,
+            self.root,
+            self.revision,
+            force_cache_sync=force_cache_sync,
             feature_keys_mapping=feature_keys_mapping,
         )
         if self.episodes is not None and self.meta._version >= packaging.version.parse("v2.1"):
@@ -577,9 +579,13 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 from_ = self.episode_data_index["from"][ep_idx]
                 to_ = self.episode_data_index["to"][ep_idx]
                 # TODO implement advanced strategy
-                self.subset_frame_ids += [frame_idx for frame_idx in range(from_ + int(self.fps*self.discard_first_n_frames), to_)]
+                self.subset_frame_ids += [
+                    frame_idx for frame_idx in range(from_ + int(self.fps * self.discard_first_n_frames), to_)
+                ]
         elif self.discard_first_idle_frames:
-            print(f"Discarding first idle frames: motion_threshold={self.motion_threshold}, motion_window_size={self.motion_window_size}, motion_buffer={self.motion_buffer}")
+            print(
+                f"Discarding first idle frames: motion_threshold={self.motion_threshold}, motion_window_size={self.motion_window_size}, motion_buffer={self.motion_buffer}"
+            )
             self.robot_states = torch.stack(self.hf_dataset[OBS_STATE]).numpy()  # shape: [T, D]
             self.subset_frame_ids = []
             for ep_idx in range(self.num_episodes):
@@ -587,8 +593,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 to_ = self.episode_data_index["to"][ep_idx]
                 ep_states = self.robot_states[from_:to_]
                 velocities = np.linalg.norm(np.diff(ep_states, axis=0), axis=1)
-                velocities = np.concatenate([[0.0], velocities]) 
-                start_idx = find_start_of_motion(velocities, self.motion_window_size, self.motion_threshold, self.motion_buffer)
+                velocities = np.concatenate([[0.0], velocities])
+                start_idx = find_start_of_motion(
+                    velocities, self.motion_window_size, self.motion_threshold, self.motion_buffer
+                )
                 self.subset_frame_ids += list(range(from_ + start_idx, to_))
 
         # Check timestamps
@@ -606,7 +614,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         # Mustafa
         self.meta.info["features"] = map_dict_keys(
-            self.meta.info["features"], feature_keys_mapping=self.feature_keys_mapping, training_features=self.training_features
+            self.meta.info["features"],
+            feature_keys_mapping=self.feature_keys_mapping,
+            training_features=self.training_features,
         )
         self.keys_to_max_dim = {
             ACTION: max_action_dim,
@@ -619,7 +629,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.meta.info["features"] = reshape_features_to_max_dim(
             self.meta.info["features"], reshape_dim=-1, keys_to_max_dim=self.keys_to_max_dim
         )
-        self.meta.stats = map_dict_keys(self.meta.stats, feature_keys_mapping=self.feature_keys_mapping, training_features=self.training_features)
+        self.meta.stats = map_dict_keys(
+            self.meta.stats,
+            feature_keys_mapping=self.feature_keys_mapping,
+            training_features=self.training_features,
+        )
         self.robot_type = self.meta.info.get("robot_type", "")
         # Override tasks
         print(TASKS_KEYS_MAPPING.get(self.repo_id, self.meta.tasks), "previous", self.meta.tasks)
@@ -807,7 +821,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def _query_hf_dataset(self, query_indices: dict[str, list[int]]) -> dict:
         queries = {}
         for key, q_idx in query_indices.items():
-            if key not in self.meta.video_keys and self.inverse_feature_keys_mapping.get(key, key) not in self.meta.video_keys:
+            if (
+                key not in self.meta.video_keys
+                and self.inverse_feature_keys_mapping.get(key, key) not in self.meta.video_keys
+            ):
                 key_ = (
                     self.inverse_feature_keys_mapping.get(key, key)
                     if self.inverse_feature_keys_mapping
@@ -868,7 +885,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
             print(self.meta.tasks, task_idx, self.repo_id)
         if "robot_type" not in item:
             item["robot_type"] = self.robot_type
-        item = map_dict_keys(item, feature_keys_mapping=self.feature_keys_mapping, training_features=self.training_features)
+        item = map_dict_keys(
+            item, feature_keys_mapping=self.feature_keys_mapping, training_features=self.training_features
+        )
         # Add padded features
         # item = self._add_padded_features(item, self.training_features)
         if self.image_transforms is not None:
@@ -942,7 +961,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         # Add frame features to episode_buffer
         for key in frame:
-            
             if key not in self.features:
                 raise ValueError(
                     f"An element of the frame is not in the features. '{key}' not in '{self.features.keys()}'."
@@ -1159,6 +1177,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.video_backend = video_backend if video_backend is not None else get_safe_default_codec()
         return obj
 
+
 class MultiLeRobotDatasetMeta:
     def __init__(
         self,
@@ -1185,7 +1204,7 @@ class MultiLeRobotDatasetMeta:
                 intersection.intersection_update(ds.features)
             if not intersection:
                 raise RuntimeError("No common features across datasets.")
-            for repo_id, ds in zip(repo_ids, datasets):
+            for repo_id, ds in zip(repo_ids, datasets, strict=False):
                 extra = set(ds.features) - intersection
                 logging.warning(f"Disabling {extra} for repo {repo_id}")
                 self.disabled_features.update(extra)
@@ -1210,19 +1229,17 @@ class MultiLeRobotDatasetMeta:
                     for k, v in feat_stats.items():
                         pad_value = 0 if k in ["min", "mean"] else 1
                         self.stats[robot_type_][feat_key][k] = pad_tensor(
-                            v, max_size=self.keys_to_max_dim.get(feat_key, -1), pad_dim=-1, pad_value=pad_value
+                            v,
+                            max_size=self.keys_to_max_dim.get(feat_key, -1),
+                            pad_dim=-1,
+                            pad_value=pad_value,
                         )
 
         # step 5: episodes & tasks
-        self.episodes = {
-            repo_id: ds.meta.episodes for repo_id, ds in zip(repo_ids, datasets)
-        }
-        self.tasks = {
-            repo_id: ds.meta.tasks for repo_id, ds in zip(repo_ids, datasets)
-        }
-        self.info = {
-            repo_id: ds.meta.info for repo_id, ds in zip(repo_ids, datasets)
-        }
+        self.episodes = {repo_id: ds.meta.episodes for repo_id, ds in zip(repo_ids, datasets, strict=False)}
+        self.tasks = {repo_id: ds.meta.tasks for repo_id, ds in zip(repo_ids, datasets, strict=False)}
+        self.info = {repo_id: ds.meta.info for repo_id, ds in zip(repo_ids, datasets, strict=False)}
+
 
 class MultiLeRobotDatasetCleaner:
     def __init__(
@@ -1243,7 +1260,9 @@ class MultiLeRobotDatasetCleaner:
         valid_fps_datasets = keep_datasets_with_valid_fps(datasets, min_fps=min_fps, max_fps=max_fps)
 
         # step 2: keep datasets with same features per robot type
-        consistent_datasets, keep_mask = keep_datasets_with_the_same_features_per_robot_type(valid_fps_datasets)
+        consistent_datasets, keep_mask = keep_datasets_with_the_same_features_per_robot_type(
+            valid_fps_datasets
+        )
 
         self.cleaned_datasets = consistent_datasets
         self.keep_mask = keep_mask
@@ -1257,7 +1276,7 @@ class MultiLeRobotDatasetCleaner:
             [0] + list(torch.cumsum(torch.tensor([len(d) for d in consistent_datasets]), dim=0))
         )
         self.cleaned_weights = np.array(self.cleaned_weights, dtype=np.float32)
-      
+
 
 class MultiLeRobotDataset(torch.utils.data.Dataset):
     """A dataset consisting of multiple underlying `LeRobotDataset`s.
@@ -1277,7 +1296,6 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         download_videos: bool = True,
         local_files_only: bool = False,
         video_backend: str | None = None,
-
         # add
         sampling_weights: list[float] | None = None,
         feature_keys_mapping: dict[str, dict[str, str]] | None = None,
@@ -1298,7 +1316,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         super().__init__()
         self.repo_ids = repo_ids
         self.root = Path(root) if root else HF_LEROBOT_HOME
-        self.tolerances_s = tolerances_s if tolerances_s else {repo_id: 1e-4 for repo_id in repo_ids}
+        self.tolerances_s = tolerances_s if tolerances_s else dict.fromkeys(repo_ids, 0.0001)
         # Construct the underlying datasets passing everything but `transform` and `delta_timestamps` which
         # are handled by this class.
         _datasets = []
@@ -1320,7 +1338,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
                         root=self.root / repo_id,
                         episodes=episodes.get(repo_id, None) if episodes else None,
                         image_transforms=image_transforms,
-                        delta_timestamps = delta_timestamps.get(repo_id, None) if delta_timestamps else None,
+                        delta_timestamps=delta_timestamps.get(repo_id, None) if delta_timestamps else None,
                         tolerance_s=self.tolerances_s[repo_id],
                         download_videos=download_videos,
                         video_backend=video_backend,
@@ -1384,7 +1402,6 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         )
         self.disabled_features = self.meta.disabled_features
         self.stats = self.meta.stats
-
 
     @property
     def repo_id_to_index(self):

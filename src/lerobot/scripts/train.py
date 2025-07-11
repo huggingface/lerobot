@@ -16,6 +16,7 @@
 import logging
 import time
 from contextlib import nullcontext
+from functools import partial
 from pprint import pformat
 from typing import Any
 
@@ -29,6 +30,7 @@ from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.sampler import EpisodeAwareSampler
 from lerobot.datasets.utils import cycle
+from lerobot.datasets.utils_must import multidataset_collate_fn
 from lerobot.envs.factory import make_env
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies.factory import make_policy
@@ -51,8 +53,7 @@ from lerobot.utils.utils import (
     init_logging,
 )
 from lerobot.utils.wandb_utils import WandBLogger
-from lerobot.datasets.utils_must import multidataset_collate_fn
-from functools import partial
+
 
 def update_policy(
     train_metrics: MetricsTracker,
@@ -174,7 +175,7 @@ def train(cfg: TrainPipelineConfig):
     else:
         shuffle = True
         sampler = None
-    
+
     keys_to_max_dim = getattr(dataset.meta, "keys_to_max_dim", {})
     collate_fn = partial(multidataset_collate_fn, keys_to_max_dim=keys_to_max_dim)
     dataloader = torch.utils.data.DataLoader(

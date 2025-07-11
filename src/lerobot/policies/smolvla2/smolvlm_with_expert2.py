@@ -177,8 +177,10 @@ class SmolVLMWithExpertModel(nn.Module):
         else:
             self.vlm = self.vlm.merge_and_unload()
 
-    def get_vlm_model(self,):
-        if hasattr(self.vlm.model, "model"): # When using peft
+    def get_vlm_model(
+        self,
+    ):
+        if hasattr(self.vlm.model, "model"):  # When using peft
             return self.vlm.model.model
         else:
             return self.vlm.model
