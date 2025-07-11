@@ -487,8 +487,8 @@ class ACT(nn.Module):
 
         if self.config.image_features:
             # For a list of images, the H and W may vary but H*W is constant.
-            # NOTE: Please if you want to change this, test on MPS, and observe if you don't get
-            # gradient explosion issues or NaNs.
+            # NOTE: If modifying this section, verify on MPS devices that
+            # gradients remain stable (no explosions or NaNs).
             for img in batch["observation.images"]:
                 cam_features = self.backbone(img)["feature_map"]
                 cam_pos_embed = self.encoder_cam_feat_pos_embed(cam_features).to(dtype=cam_features.dtype)
