@@ -86,7 +86,7 @@ from lerobot.utils.utils import (
     init_logging,
     log_say,
 )
-from lerobot.utils.visualization_utils import _init_rerun, log_rerun_data
+from lerobot.utils.visualization_utils import RerunRobotLogger
 
 
 @dataclass
@@ -138,6 +138,16 @@ class RecordConfig:
     policy: PreTrainedConfig | None = None
     # Display all cameras on screen
     display_data: bool = False
+    display_urdf: bool = False
+    # Stream camera images as a video stream or as individual frames.
+    # Video streams can be played back, but have latency and memory impact.
+    # Only latest is saved for individual frames, but little latency or memory impact.
+    # Choices are
+    #   "video" (h264 encoded)
+    #   "jpeg" (compressed, preferred for static images)
+    #   "raw" (uncompressed)
+    #   "none" (not displayed)
+    image_stream_type: str = "video"
     # Use vocal synthesis to read events.
     play_sounds: bool = True
     # Resume recording on an existing dataset.
@@ -170,7 +180,7 @@ def record_loop(
     policy: PreTrainedPolicy | None = None,
     control_time_s: int | None = None,
     single_task: str | None = None,
-    display_data: bool = False,
+    rerun_logger: RerunRobotLogger | None = None,
 ):
     if dataset is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
@@ -198,7 +208,8 @@ def record_loop(
 
     timestamp = 0
     start_episode_t = time.perf_counter()
-    while timestamp < control_time_s:
+
+    while control_time_s is None or timestamp < control_time_s:
         start_loop_t = time.perf_counter()
 
         if events["exit_early"]:
@@ -206,17 +217,22 @@ def record_loop(
             break
 
         observation = robot.get_observation()
-
-        if policy is not None or dataset is not None:
+        observation_frame = None
+        if dataset is not None:
             observation_frame = build_dataset_frame(dataset.features, observation, prefix="observation")
 
-        if policy is not None:
+        if policy is not None and observation_frame is not None:
+            device = (
+                policy.config.device
+                if hasattr(policy.config, "device") and policy.config.device is not None
+                else "cpu"
+            )
             action_values = predict_action(
                 observation_frame,
                 policy,
-                get_safe_torch_device(policy.config.device),
-                policy.config.use_amp,
-                task=single_task,
+                get_safe_torch_device(device),
+                policy.config.use_amp if hasattr(policy.config, "use_amp") else False,
+                task=single_task if single_task is not None else "",
                 robot_type=robot.robot_type,
             )
             action = {key: action_values[i].item() for i, key in enumerate(robot.action_features)}
@@ -243,13 +259,13 @@ def record_loop(
         # so action actually sent is saved in the dataset.
         sent_action = robot.send_action(action)
 
-        if dataset is not None:
+        if dataset is not None and observation_frame is not None:
             action_frame = build_dataset_frame(dataset.features, sent_action, prefix="action")
             frame = {**observation_frame, **action_frame}
-            dataset.add_frame(frame, task=single_task)
+            dataset.add_frame(frame, task=single_task if single_task is not None else "")
 
-        if display_data:
-            log_rerun_data(observation, action)
+        if rerun_logger is not None:
+            rerun_logger.log_all(observation=observation, action=action, sync_time=True)
 
         dt_s = time.perf_counter() - start_loop_t
         busy_wait(1 / fps - dt_s)
@@ -261,8 +277,6 @@ def record_loop(
 def record(cfg: RecordConfig) -> LeRobotDataset:
     init_logging()
     logging.info(pformat(asdict(cfg)))
-    if cfg.display_data:
-        _init_rerun(session_name="recording")
 
     robot = make_robot_from_config(cfg.robot)
     teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
@@ -271,16 +285,17 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     obs_features = hw_to_dataset_features(robot.observation_features, "observation", cfg.dataset.video)
     dataset_features = {**action_features, **obs_features}
 
+    cameras = getattr(robot, "cameras", [])
     if cfg.resume:
         dataset = LeRobotDataset(
             cfg.dataset.repo_id,
             root=cfg.dataset.root,
         )
 
-        if hasattr(robot, "cameras") and len(robot.cameras) > 0:
+        if len(cameras) > 0:
             dataset.start_image_writer(
                 num_processes=cfg.dataset.num_image_writer_processes,
-                num_threads=cfg.dataset.num_image_writer_threads_per_camera * len(robot.cameras),
+                num_threads=cfg.dataset.num_image_writer_threads_per_camera * len(cameras),
             )
         sanity_check_dataset_robot_compatibility(dataset, robot, cfg.dataset.fps, dataset_features)
     else:
@@ -294,7 +309,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             features=dataset_features,
             use_videos=cfg.dataset.video,
             image_writer_processes=cfg.dataset.num_image_writer_processes,
-            image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * len(robot.cameras),
+            image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * len(cameras),
         )
 
     # Load pretrained policy
@@ -303,6 +318,20 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     robot.connect()
     if teleop is not None:
         teleop.connect()
+
+    rerun_logger = None
+    if cfg.display_data:
+        if cfg.image_stream_type not in ["video", "jpeg", "raw", "none"]:
+            logging.warning(f"Invalid image_stream_type '{cfg.image_stream_type}'. Using 'video' as default.")
+            cfg.image_stream_type = "video"
+        rerun_logger = RerunRobotLogger(
+            teleop=teleop,
+            robot=robot,
+            fps=cfg.dataset.fps,
+            image_stream_type=cfg.image_stream_type,
+            log_urdf=cfg.display_urdf,
+        )
+        rerun_logger.init("recording")
 
     listener, events = init_keyboard_listener()
 
@@ -318,7 +347,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             dataset=dataset,
             control_time_s=cfg.dataset.episode_time_s,
             single_task=cfg.dataset.single_task,
-            display_data=cfg.display_data,
+            rerun_logger=rerun_logger,
         )
 
         # Execute a few seconds without recording to give time to manually reset the environment
@@ -334,7 +363,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 teleop=teleop,
                 control_time_s=cfg.dataset.reset_time_s,
                 single_task=cfg.dataset.single_task,
-                display_data=cfg.display_data,
+                rerun_logger=rerun_logger,
             )
 
         if events["rerecord_episode"]:
@@ -355,6 +384,9 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     if not is_headless() and listener is not None:
         listener.stop()
+
+    if rerun_logger is not None:
+        rerun_logger.cleanup()
 
     if cfg.dataset.push_to_hub:
         dataset.push_to_hub(tags=cfg.dataset.tags, private=cfg.dataset.private)
