@@ -180,7 +180,7 @@ def train(cfg: TrainPipelineConfig):
         batch_size=cfg.batch_size,
         shuffle=shuffle,
         sampler=sampler,
-        pin_memory=device.type == "cpu",
+        pin_memory=device.type == "cuda",
         drop_last=False,
     )
     dl_iter = cycle(dataloader)
