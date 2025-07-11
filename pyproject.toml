@@ -74,6 +74,7 @@ dependencies = [
     "torchvision>=0.21.0",
     "wandb>=0.16.3",
     "zarr>=2.17.0",
+    "swanlab>=0.6.4",
 ]
 
 [project.optional-dependencies]
