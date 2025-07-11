@@ -182,6 +182,8 @@ def train(cfg: TrainPipelineConfig):
         sampler=sampler,
         pin_memory=device.type != "cpu",
         drop_last=False,
+        persistent_workers=cfg.persistent_workers,
+        prefetch_factor=cfg.prefetch_factor if cfg.num_workers > 0 else None,
     )
     dl_iter = cycle(dataloader)
 
