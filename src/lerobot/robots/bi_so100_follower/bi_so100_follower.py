@@ -97,6 +97,9 @@ class BiSO100Follower(Robot):
         self.left_arm.connect(calibrate)
         self.right_arm.connect(calibrate)
 
+        for cam in self.cameras.values():
+            cam.connect()
+
     @property
     def is_calibrated(self) -> bool:
         return self.left_arm.is_calibrated and self.right_arm.is_calibrated
@@ -154,3 +157,6 @@ class BiSO100Follower(Robot):
     def disconnect(self):
         self.left_arm.disconnect()
         self.right_arm.disconnect()
+
+        for cam in self.cameras.values():
+            cam.disconnect()
