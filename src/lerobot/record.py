@@ -36,14 +36,11 @@ python -m lerobot.record \
 """
 
 import logging
-import platform
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from pprint import pformat
 from typing import List
-
-import cv2
 
 from lerobot.cameras import (  # noqa: F401
     CameraConfig,  # noqa: F401
@@ -90,40 +87,6 @@ from lerobot.utils.utils import (
     log_say,
 )
 from lerobot.utils.visualization_utils import _init_rerun, log_rerun_data
-
-
-def _fix_opencv_backend():
-    """
-    Fix the OpenCV backend for Windows systems.
-
-    LeRobot's get_cv2_backend() function incorrectly returns CAP_AVFOUNDATION (macOS backend)
-    on Windows systems. This function patches it to use the correct Windows backend.
-    """
-    try:
-        from lerobot.cameras.opencv import camera_opencv
-
-        def get_cv2_backend_fixed() -> int:
-            """Fixed version of get_cv2_backend() that works correctly on all platforms"""
-            if platform.system() == "Windows":
-                return cv2.CAP_MSMF  # Use MSMF for Windows instead of AVFOUNDATION
-            elif platform.system() == "Darwin":  # macOS
-                return cv2.CAP_AVFOUNDATION
-            else:  # Linux and others
-                return cv2.CAP_ANY
-
-        # Apply the fix
-        original_backend = camera_opencv.get_cv2_backend()
-        camera_opencv.get_cv2_backend = get_cv2_backend_fixed
-        fixed_backend = get_cv2_backend_fixed()
-
-        if platform.system() == "Windows" and original_backend != fixed_backend:
-            print("✅ OpenCV camera backend fixed for Windows!")
-            print(f"   Original backend: {original_backend} (CAP_AVFOUNDATION - macOS only)")
-            print(f"   Fixed backend: {fixed_backend} (CAP_MSMF - Windows compatible)")
-
-    except ImportError:
-        # If lerobot modules aren't available yet, the fix will be applied later
-        pass
 
 
 @dataclass
@@ -297,10 +260,6 @@ def record_loop(
 @parser.wrap()
 def record(cfg: RecordConfig) -> LeRobotDataset:
     init_logging()
-
-    # Apply camera backend fix before robot initialization
-    _fix_opencv_backend()
-
     logging.info(pformat(asdict(cfg)))
     if cfg.display_data:
         _init_rerun(session_name="recording")
