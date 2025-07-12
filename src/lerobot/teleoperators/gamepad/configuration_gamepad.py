@@ -35,6 +35,6 @@ class GamepadTeleopConfig(TeleoperatorConfig):
     # For XYZ: x, y, z represent cartesian coordinates
     # For RTZ: r, t, z represent radial, theta (angular), and vertical coordinates
     deltas: dict[str, float] = field(
-        default_factory=lambda: {"x": 0.25, "y": 0.25, "z": 0.25}
+        default_factory=lambda: {"x": 0.25, "y": 0.25, "z": 0.15}
         # default_factory=lambda: {"r": 1.0, "t": 0.25, "z": 0.5}
     )

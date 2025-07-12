@@ -171,8 +171,8 @@ class SO101FollowerEndEffector(SO101Follower):
         # Enforce wrist_roll joint limits (from URDF: approximately -157 to 163 degrees)
         # Convert radians to degrees: -2.74 to 2.84 radians ≈ -157 to 163 degrees
         # TODO: remove hardcoding
-        wrist_roll_min_deg = -150.0
-        wrist_roll_max_deg = 155.0
+        wrist_roll_min_deg = -140.0
+        wrist_roll_max_deg = 140.0
         joint_action["wrist_roll.pos"] = np.clip(target_wrist_roll, wrist_roll_min_deg, wrist_roll_max_deg)
         
         # Log if wrist_roll was clipped

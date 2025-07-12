@@ -213,6 +213,15 @@ class GamepadController(InputController):
         self.deadzone = deadzone
         self.joystick = None
         self.intervention_flag = False
+        
+        # Add D-pad state tracking
+        self.dpad_up = False
+        self.dpad_down = False
+        self.dpad_left = False
+        self.dpad_right = False
+        
+        # Add gripper toggle state
+        self.gripper_toggle_state = False
 
     def start(self):
         """Initialize pygame and the gamepad."""
@@ -232,7 +241,10 @@ class GamepadController(InputController):
 
         print("Gamepad controls:")
         print("  Left analog stick: Move in X-Y plane")
-        print("  Right analog stick (vertical): Move in Z axis")
+        print("  D-pad Up/Down (buttons 11/12): Move in Z axis")
+        print("  Right Bumper (RB, button 10): Rotate wrist clockwise")
+        print("  Left Bumper (LB, button 9): Rotate wrist counter-clockwise")
+        print("  X button (button 0): Toggle gripper open/close")
         print("  B/Circle button: Exit")
         print("  Y/Triangle button: End episode with SUCCESS")
         print("  A/Cross button: End episode with FAILURE")
@@ -259,28 +271,48 @@ class GamepadController(InputController):
                 # A button (1) for failure
                 elif event.button == 1:
                     self.episode_end_status = "failure"
-                # X button (0) for rerecord
+                # X button (0) for gripper toggle
                 elif event.button == 0:
-                    self.episode_end_status = "rerecord_episode"
+                    self.gripper_toggle_state = not self.gripper_toggle_state
+                    if self.gripper_toggle_state:
+                        self.open_gripper_command = True
+                        self.close_gripper_command = False
+                    else:
+                        self.open_gripper_command = False
+                        self.close_gripper_command = True
 
-                # RB button (6) for closing gripper
-                elif event.button == 6:
-                    self.close_gripper_command = True
+                # RB button (10) for wrist roll clockwise
+                elif event.button == 10:
+                    self.dpad_right = True
 
-                # LT button (7) for opening gripper
-                elif event.button == 7:
-                    self.open_gripper_command = True
+                # LB button (9) for wrist roll counter-clockwise
+                elif event.button == 9:
+                    self.dpad_left = True
+
+                # D-pad buttons for Z-axis control
+                elif event.button == 11:  # D-pad Up
+                    self.dpad_up = True
+                elif event.button == 12:  # D-pad Down
+                    self.dpad_down = True
 
             # Reset episode status on button release
             elif event.type == pygame.JOYBUTTONUP:
-                if event.button in [0, 2, 3]:
+                if event.button in [2, 3]:
                     self.episode_end_status = None
 
-                elif event.button == 6:
-                    self.close_gripper_command = False
+                # RB button (10) release
+                elif event.button == 10:
+                    self.dpad_right = False
 
-                elif event.button == 7:
-                    self.open_gripper_command = False
+                # LB button (9) release
+                elif event.button == 9:
+                    self.dpad_left = False
+
+                # D-pad button releases
+                elif event.button == 11:  # D-pad Up
+                    self.dpad_up = False
+                elif event.button == 12:  # D-pad Down
+                    self.dpad_down = False
 
             # Check for RB button (typically button 5) for intervention flag
             if self.joystick.get_button(5):
@@ -298,24 +330,35 @@ class GamepadController(InputController):
             y_input = self.joystick.get_axis(0)  # Left/Right
             x_input = self.joystick.get_axis(1)  # Up/Down (often inverted)
 
-            # Right stick Y (typically axis 3 or 4)
-            z_input = self.joystick.get_axis(3)  # Up/Down for Z
-
             # Apply deadzone to avoid drift
             x_input = 0 if abs(x_input) < self.deadzone else x_input
             y_input = 0 if abs(y_input) < self.deadzone else y_input
-            z_input = 0 if abs(z_input) < self.deadzone else z_input
 
-            # Calculate deltas (note: may need to invert axes depending on controller)
+            # Calculate X and Y deltas from analog stick
             delta_x = -x_input * self.x_step_size  # Forward/backward
             delta_y = -y_input * self.y_step_size  # Left/right
-            delta_z = -z_input * self.z_step_size  # Up/down
+            
+            # Calculate Z delta from D-pad
+            delta_z = 0.0
+            if self.dpad_up:
+                delta_z += self.z_step_size
+            if self.dpad_down:
+                delta_z -= self.z_step_size
 
             return delta_x, delta_y, delta_z
 
         except pygame.error:
             logging.error("Error reading gamepad. Is it still connected?")
             return 0.0, 0.0, 0.0
+    
+    def get_wrist_roll_delta(self):
+        """Get the current wrist roll delta from D-pad."""
+        wrist_roll_delta = 0.0
+        if self.dpad_right:
+            wrist_roll_delta += self.z_step_size  # Use z_step_size for consistency
+        if self.dpad_left:
+            wrist_roll_delta -= self.z_step_size
+        return wrist_roll_delta
 
 
 class GamepadControllerHID(InputController):
@@ -351,6 +394,15 @@ class GamepadControllerHID(InputController):
         self.buttons = {}
         self.quit_requested = False
         self.save_requested = False
+        
+        # Add D-pad state tracking
+        self.dpad_up = False
+        self.dpad_down = False
+        self.dpad_left = False
+        self.dpad_right = False
+        
+        # Add gripper toggle state
+        self.gripper_toggle_state = False
 
     def find_device(self):
         """Look for the gamepad device by vendor and product ID."""
@@ -389,7 +441,10 @@ class GamepadControllerHID(InputController):
 
             logging.info("Gamepad controls (HID mode):")
             logging.info("  Left analog stick: Move in X-Y plane")
-            logging.info("  Right analog stick: Move in Z axis (vertical)")
+            logging.info("  D-pad Up/Down: Move in Z axis")
+            logging.info("  Right Bumper (RB): Rotate wrist clockwise")
+            logging.info("  Left Bumper (LB): Rotate wrist counter-clockwise")
+            logging.info("  X button: Toggle gripper open/close")
             logging.info("  Button 1/B/Circle: Exit")
             logging.info("  Button 2/A/Cross: End episode with SUCCESS")
             logging.info("  Button 3/X/Square: End episode with FAILURE")
@@ -442,20 +497,49 @@ class GamepadControllerHID(InputController):
                 # Check if RB is pressed then the intervention flag should be set
                 self.intervention_flag = data[6] in [2, 6, 10, 14]
 
-                # Check if RT is pressed
-                self.open_gripper_command = data[6] in [8, 10, 12]
+                # Check if RB is pressed for wrist roll clockwise
+                self.dpad_right = data[6] in [2, 6, 10, 14]
 
-                # Check if LT is pressed
-                self.close_gripper_command = data[6] in [4, 6, 12]
+                # Check if LB is pressed for wrist roll counter-clockwise
+                self.dpad_left = data[6] in [1, 5, 9, 13]
+
+                # Parse D-pad from byte 7 (this may need adjustment for different controllers)
+                # Note: For pygame controllers, D-pad events are JOYBUTTONDOWN events with buttons [11, 12, 13, 14]
+                # For HID controllers, we parse D-pad from byte data
+                dpad_value = data[7] if len(data) > 7 else 0
+                
+                # D-pad mapping (this is controller-specific and may need adjustment)
+                # For Logitech RumblePad 2, D-pad is typically in the lower 4 bits
+                dpad_direction = dpad_value & 0x0F
+                
+                # Reset D-pad states (only for Z-axis control)
+                self.dpad_up = False
+                self.dpad_down = False
+                
+                # Map D-pad values for Z-axis control only
+                if dpad_direction == 0:  # Up
+                    self.dpad_up = True
+                elif dpad_direction == 4:  # Down
+                    self.dpad_down = True
+
+                # Check if X button is pressed for gripper toggle
+                if buttons & 1 << 0:  # X button (bit 0)
+                    self.gripper_toggle_state = not self.gripper_toggle_state
+                    if self.gripper_toggle_state:
+                        self.open_gripper_command = True
+                        self.close_gripper_command = False
+                    else:
+                        self.open_gripper_command = False
+                        self.close_gripper_command = True
 
                 # Check if Y/Triangle button (bit 7) is pressed for saving
-                # Check if X/Square button (bit 5) is pressed for failure
-                # Check if A/Cross button (bit 4) is pressed for rerecording
+                # Check if A/Cross button (bit 4) is pressed for failure
+                # Check if B/Circle button (bit 5) is pressed for rerecording
                 if buttons & 1 << 7:
                     self.episode_end_status = "success"
-                elif buttons & 1 << 5:
-                    self.episode_end_status = "failure"
                 elif buttons & 1 << 4:
+                    self.episode_end_status = "failure"
+                elif buttons & 1 << 5:
                     self.episode_end_status = "rerecord_episode"
                 else:
                     self.episode_end_status = None
@@ -468,9 +552,24 @@ class GamepadControllerHID(InputController):
         # Calculate deltas - invert as needed based on controller orientation
         delta_x = -self.left_x * self.x_step_size  # Forward/backward
         delta_y = -self.left_y * self.y_step_size  # Left/right
-        delta_z = -self.right_y * self.z_step_size  # Up/down
+        
+        # Calculate Z delta from D-pad
+        delta_z = 0.0
+        if self.dpad_up:
+            delta_z += self.z_step_size
+        if self.dpad_down:
+            delta_z -= self.z_step_size
 
         return delta_x, delta_y, delta_z
+    
+    def get_wrist_roll_delta(self):
+        """Get the current wrist roll delta from D-pad."""
+        wrist_roll_delta = 0.0
+        if self.dpad_right:
+            wrist_roll_delta += self.z_step_size  # Use z_step_size for consistency
+        if self.dpad_left:
+            wrist_roll_delta -= self.z_step_size
+        return wrist_roll_delta
 
     def should_quit(self):
         """Return True if quit button was pressed."""
