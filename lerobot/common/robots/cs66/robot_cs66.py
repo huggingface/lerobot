@@ -19,6 +19,7 @@ import logging
 import time
 from functools import cached_property
 from typing import Any , Dict
+import math
 
 import numpy as np
 from .robot import RobotController
@@ -181,7 +182,7 @@ class EliteCS66(Robot):
         joint_keys = [f"joint_{i+1}.pos" for i in range(6)]
         # 发送给机器人的关节命令
         cmd_robot_joints = [
-            np.deg2rad(
+            math.radians(
                 normalize_angle_deg(float(action[key]) + self.config.joint_offsets.get(key.split('.')[0], 0.0))
             )
             for key in joint_keys if key in action
@@ -269,9 +270,9 @@ class EliteCS66(Robot):
     
     @property
     def _motor_ft(self) -> dict[str, type]:
-        data = self.robot.rt.get_output_data()
-        joint_states = data.actual_joint_positions
-        motors = {f"joint_{i+1}.pos": float for i in range(len(joint_states))}
+        # data = self.robot.rt.get_output_data()
+        # joint_states = data.actual_joint_positions
+        motors = {f"joint_{i+1}.pos": float for i in range(6)}
         motors["end_effector.pos"] = float # 定义末端类型
         # if joint_states is None:
         #     raise RuntimeError(f"{self} failed to get joint states.")

@@ -1,0 +1,34 @@
+robot:
+  type: cs66
+  ip: 192.168.101.11
+
+  cameras:
+    images.top:
+      type: intelrealsense
+      serial_number_or_name: 346122071690
+      width: 640
+      height: 480
+      fps: 30
+    images.wrist.top:
+      type: opencv
+      index_or_path: 8
+      width: 640
+      height: 480
+      fps: 30
+
+teleop:
+  type: gello
+  port: /dev/ttyUSB0
+  id: main_gello
+
+display_data: true
+resume: true
+
+dataset:
+  repo_id: xdd0225/gello_cs66_pusht_2Cam
+  num_episodes: 50
+  single_task: 'pusht'  # 任务类型
+  episode_time_s: 120          # 每个 episode 持续 120 秒（可选）
+  reset_time_s: 10             # 每次结束后等待 10 秒用于手动 reset（可选）
+  push_to_hub: true         # 是否推送到 huggingface hub
+  private: true

@@ -3,12 +3,19 @@ robot:
   ip: 192.168.101.11
 
   cameras:
-    main_camera:
-      type: opencv
-      index_or_path: 4
+    images.top:
+      type: intelrealsense
+      serial_number_or_name: 346122071690
       width: 640
-      height: 400
+      height: 480
       fps: 30
+    images.wrist.top:
+      type: opencv
+      index_or_path: 8
+      width: 640
+      height: 480
+      fps: 30
+
 
 teleop:
   type: gello
