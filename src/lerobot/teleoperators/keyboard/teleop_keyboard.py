@@ -94,6 +94,7 @@ class KeyboardTeleop(Teleoperator):
                 on_release=self._on_release,
             )
             self.listener.start()
+            self._print_controls()
         else:
             logging.info("pynput not available - skipping local keyboard listener.")
             self.listener = None
@@ -147,6 +148,19 @@ class KeyboardTeleop(Teleoperator):
         if self.listener is not None:
             self.listener.stop()
 
+    def _print_controls(self):
+        """Print the keyboard controls for the user."""
+        print("Keyboard controls:")
+        print("  Arrow keys: Move in X-Y plane")
+        print("  Shift and Shift_R: Move in Z axis")
+        print("  W key: Wrist flex up")
+        print("  S key: Wrist flex down")
+        print("  1 key: Wrist roll clockwise")
+        print("  2 key: Wrist roll counter-clockwise")
+        print("  [ key: Close gripper")
+        print("  ] key: Open gripper")
+        print("  ESC: Exit")
+
 
 class KeyboardEndEffectorTeleop(KeyboardTeleop):
     """
@@ -173,14 +187,14 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
         if self.config.use_gripper:
             return {
                 "dtype": "float32",
-                "shape": (5,),
-                "names": {"delta_x": 0, "delta_y": 1, "delta_z": 2, "gripper": 3, "wrist_roll": 4},
+                "shape": (6,),
+                "names": {"delta_x": 0, "delta_y": 1, "delta_z": 2, "gripper": 3, "wrist_roll": 4, "wrist_flex": 5},
             }
         else:
             return {
                 "dtype": "float32",
-                "shape": (3,),
-                "names": {"delta_x": 0, "delta_y": 1, "delta_z": 2},
+                "shape": (4,),
+                "names": {"delta_x": 0, "delta_y": 1, "delta_z": 2, "wrist_flex": 3},
             }
 
     def _on_press(self, key):
@@ -212,6 +226,7 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
             delta_z = 0.0
             
         wrist_roll_action = 0.0
+        wrist_flex_action = 0.0
         gripper_action = 1.0
 
         # Generate action based on current key states
@@ -255,6 +270,10 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
                 wrist_roll_action = int(val)
             elif key == "2":
                 wrist_roll_action = -int(val)
+            elif key == "w":
+                wrist_flex_action = -int(val)
+            elif key == "s":
+                wrist_flex_action = int(val)
             elif val:
                 # If the key is pressed, add it to the misc_keys_queue
                 # this will record key presses that are not part of the delta_x, delta_y, delta_z
@@ -280,5 +299,6 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
             action_dict["gripper"] = gripper_action
 
         action_dict["wrist_roll"] = wrist_roll_action
+        action_dict["wrist_flex"] = wrist_flex_action
 
         return action_dict

@@ -62,14 +62,14 @@ class GamepadTeleop(Teleoperator):
         if self.config.use_gripper:
             return {
                 "dtype": "float32",
-                "shape": (5,),
-                "names": {"delta_x": 0, "delta_y": 1, "delta_z": 2, "gripper": 3, "wrist_roll": 4},
+                "shape": (6,),
+                "names": {"delta_x": 0, "delta_y": 1, "delta_z": 2, "gripper": 3, "wrist_roll": 4, "wrist_flex": 5},
             }
         else:
             return {
                 "dtype": "float32",
-                "shape": (4,),
-                "names": {"delta_x": 0, "delta_y": 1, "delta_z": 2, "wrist_roll": 3},
+                "shape": (5,),
+                "names": {"delta_x": 0, "delta_y": 1, "delta_z": 2, "wrist_roll": 3, "wrist_flex": 4},
             }
 
     @property
@@ -127,9 +127,9 @@ class GamepadTeleop(Teleoperator):
             "delta_z": gamepad_action[2],
         }
 
-        # Default gripper action is to stay
-        gripper_action = GripperAction.STAY.value
+        # Handle gripper control based on mode
         if self.config.use_gripper:
+            # Use toggle control for both normal and pick and place modes
             gripper_command = self.gamepad.gripper_command()
             gripper_action = gripper_action_map[gripper_command]
             action_dict["gripper"] = gripper_action
@@ -137,6 +137,10 @@ class GamepadTeleop(Teleoperator):
         # Add wrist roll control
         wrist_roll_delta = self.gamepad.get_wrist_roll_delta()
         action_dict["wrist_roll"] = wrist_roll_delta
+
+        # Add wrist flex control
+        wrist_flex_delta = self.gamepad.get_wrist_flex_delta()
+        action_dict["wrist_flex"] = wrist_flex_delta
 
         return action_dict
 

@@ -83,13 +83,13 @@ class SO101FollowerEndEffector(SO101Follower):
     @property
     def action_features(self) -> dict[str, Any]:
         """
-        Define action features for end-effector control with wrist roll.
+        Define action features for end-effector control with wrist roll and wrist flex.
         Returns dictionary with dtype, shape, and names.
         """
         return {
             "dtype": "float32",
-            "shape": (5,),
-            "names": {"delta_x": 0, "delta_y": 1, "delta_z": 2, "gripper": 3, "wrist_roll": 4},
+            "shape": (6,),
+            "names": {"delta_x": 0, "delta_y": 1, "delta_z": 2, "gripper": 3, "wrist_roll": 4, "wrist_flex": 5},
         }
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
@@ -119,16 +119,17 @@ class SO101FollowerEndEffector(SO101Follower):
                     dtype=np.float32,
                 )
                 
-                # Handle wrist roll delta
+                # Handle wrist roll and wrist flex deltas
                 wrist_roll_delta = action.get("wrist_roll", 0.0)
+                wrist_flex_delta = action.get("wrist_flex", 0.0)
                 if "gripper" not in action:
                     action["gripper"] = [1.0]
-                action = np.append(delta_ee, [wrist_roll_delta, action["gripper"]])
+                action = np.append(delta_ee, [wrist_roll_delta, action["gripper"], wrist_flex_delta])
             else:
                 logger.warning(
                     f"Expected action keys 'delta_x', 'delta_y', 'delta_z', got {list(action.keys())}"
                 )
-                action = np.zeros(5, dtype=np.float32)
+                action = np.zeros(6, dtype=np.float32)
 
         if self.current_joint_pos is None:
             # Read current joint positions
@@ -176,15 +177,31 @@ class SO101FollowerEndEffector(SO101Follower):
         joint_action["wrist_roll.pos"] = np.clip(target_wrist_roll, wrist_roll_min_deg, wrist_roll_max_deg)
         
         # Log if wrist_roll was clipped
-        if target_wrist_roll != joint_action["wrist_roll.pos"]:
-            logger.warning(
-                f"Wrist roll position clipped from {target_wrist_roll:.2f}° to {joint_action['wrist_roll.pos']:.2f}° "
-                f"(limits: {wrist_roll_min_deg}° to {wrist_roll_max_deg}°)"
-            )
+        # if target_wrist_roll != joint_action["wrist_roll.pos"]:
+        #     logger.warning(
+        #         f"Wrist roll position clipped from {target_wrist_roll:.2f}° to {joint_action['wrist_roll.pos']:.2f}° "
+        #         f"(limits: {wrist_roll_min_deg}° to {wrist_roll_max_deg}°)"
+        #     )
         
-        # print(f"wrist_roll_delta: {wrist_roll_delta}")
-        # print(f"current_wrist_roll: {current_wrist_roll}")
-        # print(f"joint_action: {joint_action}")
+        # Handle wrist flex separately - add delta to current wrist flex position
+        # TODO: remove hardcoding of 9 degrees
+        wrist_flex_delta = action[5] * 3 if len(action) > 5 else 0.0
+        current_wrist_flex = self.current_joint_pos[3]  # wrist_flex is the 4th joint (index 3)
+        target_wrist_flex = current_wrist_flex + wrist_flex_delta
+        
+        # Enforce wrist_flex joint limits (from URDF: approximately -95 to 95 degrees)
+        # Convert radians to degrees: -1.66 to 1.66 radians ≈ -95 to 95 degrees
+        # TODO: remove hardcoding
+        wrist_flex_min_deg = -90.0
+        wrist_flex_max_deg = 90.0
+        joint_action["wrist_flex.pos"] = np.clip(target_wrist_flex, wrist_flex_min_deg, wrist_flex_max_deg)
+        
+        # Log if wrist_flex was clipped
+        # if target_wrist_flex != joint_action["wrist_flex.pos"]:
+        #     logger.warning(
+        #         f"Wrist flex position clipped from {target_wrist_flex:.2f}° to {joint_action['wrist_flex.pos']:.2f}° "
+        #         f"(limits: {wrist_flex_min_deg}° to {wrist_flex_max_deg}°)"
+        #     )
 
         # Handle gripper separately if included in action
         # Gripper delta action is in the range 0 - 2,
@@ -199,6 +216,7 @@ class SO101FollowerEndEffector(SO101Follower):
         self.current_ee_pos = desired_ee_pos.copy()
         self.current_joint_pos = target_joint_values_in_degrees.copy()
         self.current_joint_pos[4] = joint_action["wrist_roll.pos"]  # Update wrist roll
+        self.current_joint_pos[3] = joint_action["wrist_flex.pos"]  # Update wrist flex
         self.current_joint_pos[-1] = joint_action["gripper.pos"]
 
         # Send joint space action to parent class

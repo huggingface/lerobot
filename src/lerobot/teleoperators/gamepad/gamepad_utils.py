@@ -220,8 +220,19 @@ class GamepadController(InputController):
         self.dpad_left = False
         self.dpad_right = False
         
+        # Add wrist flex state tracking
+        self.wrist_flex_up = False
+        self.wrist_flex_down = False
+        
         # Add gripper toggle state
         self.gripper_toggle_state = False
+        
+        # Add pick and place mode state
+        self.pick_and_place_mode = False
+        
+        # Pick and place mode configuration
+        self.pick_place_z_scale = 0.3  # Reduced Z sensitivity
+        self.pick_place_gripper_scale = 0.5  # Scale for trigger-based gripper control
 
     def start(self):
         """Initialize pygame and the gamepad."""
@@ -241,14 +252,24 @@ class GamepadController(InputController):
 
         print("Gamepad controls:")
         print("  Left analog stick: Move in X-Y plane")
-        print("  D-pad Up/Down (buttons 11/12): Move in Z axis")
+        print("  Right analog stick (vertical): Move in Z axis")
+        print("  D-pad up (button 11): Wrist flex up")
+        print("  D-pad down (button 12): Wrist flex down")
         print("  Right Bumper (RB, button 10): Rotate wrist clockwise")
         print("  Left Bumper (LB, button 9): Rotate wrist counter-clockwise")
         print("  X button (button 0): Toggle gripper open/close")
+        print("  Triangle button (button 3): Toggle pick and place mode")
         print("  B/Circle button: Exit")
         print("  Y/Triangle button: End episode with SUCCESS")
         print("  A/Cross button: End episode with FAILURE")
         print("  X/Square button: Rerecord episode")
+        print("")
+        print("Pick and Place Mode:")
+        print("  - X and Y movement locked")
+        print("  - Reduced Z sensitivity")
+        print("  - Wrist roll control enabled")
+        print("  - Wrist flex control enabled")
+        print("  - X button toggles gripper")
 
     def stop(self):
         """Clean up pygame resources."""
@@ -267,7 +288,9 @@ class GamepadController(InputController):
         for event in pygame.event.get():
             if event.type == pygame.JOYBUTTONDOWN:
                 if event.button == 3:
-                    self.episode_end_status = "success"
+                    # Toggle pick and place mode instead of success
+                    self.pick_and_place_mode = not self.pick_and_place_mode
+                    print(f"Pick and place mode: {'ON' if self.pick_and_place_mode else 'OFF'}")
                 # A button (1) for failure
                 elif event.button == 1:
                     self.episode_end_status = "failure"
@@ -281,6 +304,14 @@ class GamepadController(InputController):
                         self.open_gripper_command = False
                         self.close_gripper_command = True
 
+                # D-pad up (button 11) for wrist flex up
+                elif event.button == 12:
+                    self.wrist_flex_up = True
+
+                # D-pad down (button 12) for wrist flex down
+                elif event.button == 11:
+                    self.wrist_flex_down = True
+
                 # RB button (10) for wrist roll clockwise
                 elif event.button == 10:
                     self.dpad_right = True
@@ -289,16 +320,18 @@ class GamepadController(InputController):
                 elif event.button == 9:
                     self.dpad_left = True
 
-                # D-pad buttons for Z-axis control
-                elif event.button == 11:  # D-pad Up
-                    self.dpad_up = True
-                elif event.button == 12:  # D-pad Down
-                    self.dpad_down = True
-
             # Reset episode status on button release
             elif event.type == pygame.JOYBUTTONUP:
                 if event.button in [2, 3]:
                     self.episode_end_status = None
+
+                # D-pad up (11) release
+                elif event.button == 12:
+                    self.wrist_flex_up = False
+
+                # D-pad down (12) release
+                elif event.button == 11:
+                    self.wrist_flex_down = False
 
                 # RB button (10) release
                 elif event.button == 10:
@@ -307,12 +340,6 @@ class GamepadController(InputController):
                 # LB button (9) release
                 elif event.button == 9:
                     self.dpad_left = False
-
-                # D-pad button releases
-                elif event.button == 11:  # D-pad Up
-                    self.dpad_up = False
-                elif event.button == 12:  # D-pad Down
-                    self.dpad_down = False
 
             # Check for RB button (typically button 5) for intervention flag
             if self.joystick.get_button(5):
@@ -330,20 +357,26 @@ class GamepadController(InputController):
             y_input = self.joystick.get_axis(0)  # Left/Right
             x_input = self.joystick.get_axis(1)  # Up/Down (often inverted)
 
+            # Right stick Y (typically axis 3 or 4) for Z-axis control
+            z_input = self.joystick.get_axis(3)  # Up/Down for Z
+
             # Apply deadzone to avoid drift
             x_input = 0 if abs(x_input) < self.deadzone else x_input
             y_input = 0 if abs(y_input) < self.deadzone else y_input
+            z_input = 0 if abs(z_input) < self.deadzone else z_input
 
             # Calculate X and Y deltas from analog stick
-            delta_x = -x_input * self.x_step_size  # Forward/backward
-            delta_y = -y_input * self.y_step_size  # Left/right
+            if self.pick_and_place_mode:
+                # Lock X and Y movement in pick and place mode
+                delta_x = 0.0
+                delta_y = 0.0
+            else:
+                delta_x = -x_input * self.x_step_size  # Forward/backward
+                delta_y = -y_input * self.y_step_size  # Left/right
             
-            # Calculate Z delta from D-pad
-            delta_z = 0.0
-            if self.dpad_up:
-                delta_z += self.z_step_size
-            if self.dpad_down:
-                delta_z -= self.z_step_size
+            # Calculate Z delta from right joystick
+            z_scale = self.pick_place_z_scale if self.pick_and_place_mode else 1.0
+            delta_z = -z_input * self.z_step_size * z_scale  # Up/down
 
             return delta_x, delta_y, delta_z
 
@@ -359,6 +392,15 @@ class GamepadController(InputController):
         if self.dpad_left:
             wrist_roll_delta -= self.z_step_size
         return wrist_roll_delta
+
+    def get_wrist_flex_delta(self):
+        """Get the current wrist flex delta from D-pad up/down."""
+        wrist_flex_delta = 0.0
+        if self.wrist_flex_up:
+            wrist_flex_delta += self.z_step_size  # Use z_step_size for consistency
+        if self.wrist_flex_down:
+            wrist_flex_delta -= self.z_step_size
+        return wrist_flex_delta
 
 
 class GamepadControllerHID(InputController):
@@ -401,8 +443,19 @@ class GamepadControllerHID(InputController):
         self.dpad_left = False
         self.dpad_right = False
         
+        # Add wrist flex state tracking
+        self.wrist_flex_up = False
+        self.wrist_flex_down = False
+        
         # Add gripper toggle state
         self.gripper_toggle_state = False
+        
+        # Add pick and place mode state
+        self.pick_and_place_mode = False
+        
+        # Pick and place mode configuration
+        self.pick_place_z_scale = 0.3  # Reduced Z sensitivity
+        self.pick_place_gripper_scale = 0.5  # Scale for trigger-based gripper control
 
     def find_device(self):
         """Look for the gamepad device by vendor and product ID."""
@@ -441,13 +494,23 @@ class GamepadControllerHID(InputController):
 
             logging.info("Gamepad controls (HID mode):")
             logging.info("  Left analog stick: Move in X-Y plane")
-            logging.info("  D-pad Up/Down: Move in Z axis")
+            logging.info("  Right analog stick (vertical): Move in Z axis")
+            logging.info("  D-pad up: Wrist flex up")
+            logging.info("  D-pad down: Wrist flex down")
             logging.info("  Right Bumper (RB): Rotate wrist clockwise")
             logging.info("  Left Bumper (LB): Rotate wrist counter-clockwise")
             logging.info("  X button: Toggle gripper open/close")
+            logging.info("  Triangle button: Toggle pick and place mode")
             logging.info("  Button 1/B/Circle: Exit")
             logging.info("  Button 2/A/Cross: End episode with SUCCESS")
             logging.info("  Button 3/X/Square: End episode with FAILURE")
+            logging.info("")
+            logging.info("Pick and Place Mode:")
+            logging.info("  - X and Y movement locked")
+            logging.info("  - Reduced Z sensitivity")
+            logging.info("  - Wrist roll control enabled")
+            logging.info("  - Wrist flex control enabled")
+            logging.info("  - X button toggles gripper")
 
         except OSError as e:
             logging.error(f"Error opening gamepad: {e}")
@@ -506,21 +569,43 @@ class GamepadControllerHID(InputController):
                 # Parse D-pad from byte 7 (this may need adjustment for different controllers)
                 # Note: For pygame controllers, D-pad events are JOYBUTTONDOWN events with buttons [11, 12, 13, 14]
                 # For HID controllers, we parse D-pad from byte data
+                # Note: Z-axis control is now handled by right joystick, not D-pad
                 dpad_value = data[7] if len(data) > 7 else 0
                 
                 # D-pad mapping (this is controller-specific and may need adjustment)
                 # For Logitech RumblePad 2, D-pad is typically in the lower 4 bits
                 dpad_direction = dpad_value & 0x0F
                 
-                # Reset D-pad states (only for Z-axis control)
+                # Reset D-pad states (Z-axis control moved to right joystick)
                 self.dpad_up = False
                 self.dpad_down = False
                 
-                # Map D-pad values for Z-axis control only
-                if dpad_direction == 0:  # Up
-                    self.dpad_up = True
-                elif dpad_direction == 4:  # Down
-                    self.dpad_down = True
+                # Map D-pad up/down to wrist flex control
+                # D-pad up (typically bit 0 or 1) for wrist flex up
+                if dpad_direction in [1, 2, 3]:  # Adjust these values based on your controller
+                    self.wrist_flex_up = True
+                else:
+                    self.wrist_flex_up = False
+                
+                # D-pad down (typically bit 2 or 3) for wrist flex down  
+                if dpad_direction in [5, 6, 7]:  # Adjust these values based on your controller
+                    self.wrist_flex_down = True
+                else:
+                    self.wrist_flex_down = False
+
+                # Check if Y/Triangle button (bit 7) is pressed for pick and place mode toggle
+                # Check if A/Cross button (bit 4) is pressed for failure
+                # Check if B/Circle button (bit 5) is pressed for rerecording
+                if buttons & 1 << 7:
+                    # Toggle pick and place mode instead of success
+                    self.pick_and_place_mode = not self.pick_and_place_mode
+                    logging.info(f"Pick and place mode: {'ON' if self.pick_and_place_mode else 'OFF'}")
+                elif buttons & 1 << 4:
+                    self.episode_end_status = "failure"
+                elif buttons & 1 << 5:
+                    self.episode_end_status = "rerecord_episode"
+                else:
+                    self.episode_end_status = None
 
                 # Check if X button is pressed for gripper toggle
                 if buttons & 1 << 0:  # X button (bit 0)
@@ -532,33 +617,23 @@ class GamepadControllerHID(InputController):
                         self.open_gripper_command = False
                         self.close_gripper_command = True
 
-                # Check if Y/Triangle button (bit 7) is pressed for saving
-                # Check if A/Cross button (bit 4) is pressed for failure
-                # Check if B/Circle button (bit 5) is pressed for rerecording
-                if buttons & 1 << 7:
-                    self.episode_end_status = "success"
-                elif buttons & 1 << 4:
-                    self.episode_end_status = "failure"
-                elif buttons & 1 << 5:
-                    self.episode_end_status = "rerecord_episode"
-                else:
-                    self.episode_end_status = None
-
         except OSError as e:
             logging.error(f"Error reading from gamepad: {e}")
 
     def get_deltas(self):
         """Get the current movement deltas from gamepad state."""
         # Calculate deltas - invert as needed based on controller orientation
-        delta_x = -self.left_x * self.x_step_size  # Forward/backward
-        delta_y = -self.left_y * self.y_step_size  # Left/right
+        if self.pick_and_place_mode:
+            # Lock X and Y movement in pick and place mode
+            delta_x = 0.0
+            delta_y = 0.0
+        else:
+            delta_x = -self.left_x * self.x_step_size  # Forward/backward
+            delta_y = -self.left_y * self.y_step_size  # Left/right
         
-        # Calculate Z delta from D-pad
-        delta_z = 0.0
-        if self.dpad_up:
-            delta_z += self.z_step_size
-        if self.dpad_down:
-            delta_z -= self.z_step_size
+        # Calculate Z delta from right joystick
+        z_scale = self.pick_place_z_scale if self.pick_and_place_mode else 1.0
+        delta_z = -self.right_y * self.z_step_size * z_scale  # Up/down
 
         return delta_x, delta_y, delta_z
     
@@ -570,6 +645,15 @@ class GamepadControllerHID(InputController):
         if self.dpad_left:
             wrist_roll_delta -= self.z_step_size
         return wrist_roll_delta
+
+    def get_wrist_flex_delta(self):
+        """Get the current wrist flex delta from D-pad up/down."""
+        wrist_flex_delta = 0.0
+        if self.wrist_flex_up:
+            wrist_flex_delta += self.z_step_size  # Use z_step_size for consistency
+        if self.wrist_flex_down:
+            wrist_flex_delta -= self.z_step_size
+        return wrist_flex_delta
 
     def should_quit(self):
         """Return True if quit button was pressed."""
