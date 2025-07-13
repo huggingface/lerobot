@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from lerobot.common.robots.so100_follower import (
+from lerobot.robots.so100_follower import (
     SO100Follower,
     SO100FollowerConfig,
 )
@@ -50,7 +50,7 @@ def follower():
 
     with (
         patch(
-            "lerobot.common.robots.so100_follower.so100_follower.FeetechMotorsBus",
+            "lerobot.robots.so100_follower.so100_follower.FeetechMotorsBus",
             side_effect=_bus_side_effect,
         ),
         patch.object(SO100Follower, "configure", lambda self: None),
