@@ -18,14 +18,13 @@ Provides the OpenCVCamera class for capturing frames from cameras using OpenCV.
 
 import logging
 import math
+import os
 import platform
 import time
 from pathlib import Path
 from threading import Event, Lock, Thread
 from typing import Any, Dict, List
 
-import os
-import platform
 if platform.system() == "Windows":
     # Only set if not already configured by user
     if "OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS" not in os.environ:
