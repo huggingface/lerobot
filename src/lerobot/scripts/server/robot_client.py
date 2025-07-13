@@ -125,12 +125,12 @@ class RobotClient:
 
         # Initialize client side variables
         self.latest_action = -1
-        self.action_chunk_size = -1
+        self.action_chunk_size = config.actions_per_chunk
 
         self._chunk_size_threshold = config.chunk_size_threshold
 
-        self.actions_bytes_queue = Queue()
-        self.action_queue = Queue()
+        self.actions_bytes_queue: Queue[bytes] = Queue()
+        self.action_queue: Queue[TimedAction] = Queue()
         self.action_queue_size = []
 
         # FPS measurement
@@ -139,7 +139,7 @@ class RobotClient:
         self.logger.info("Robot connected and ready")
 
         # Use an event for thread-safe coordination
-        self.observation_bytes_queue = Queue()
+        self.observation_bytes_queue: Queue[bytes] = Queue()
 
     def setup_logger(self):
         self.logger = get_logger(self.prefix)
@@ -189,13 +189,6 @@ class RobotClient:
         self.channel.close()
         self.logger.debug("Client stopped, channel closed")
 
-    def _inspect_action_queue(self):
-        with self.action_queue_lock:
-            queue_size = self.action_queue.qsize()
-            timestamps = sorted([action.get_timestep() for action in self.action_queue.queue])
-        self.logger.debug(f"Queue size: {queue_size}, Queue contents: {timestamps}")
-        return queue_size, timestamps
-
     def _aggregate_action_queues(
         self,
         incoming_actions: list[TimedAction],
@@ -203,11 +196,12 @@ class RobotClient:
     ):
         """Finds the same timestep actions in the queue and aggregates them using the aggregate_fn"""
         if aggregate_fn is None:
+            self.logger.warning("No aggregate function provided, using default: take the latest action chunk")
             # default aggregate function: take the latest action
             def aggregate_fn(x1, x2):
                 return x2
 
-        future_action_queue = Queue()
+        future_action_queue: Queue[TimedAction] = Queue()
         internal_queue = self.action_queue.queue
 
         current_action_queue = {action.get_timestep(): action.get_action() for action in internal_queue}
@@ -239,12 +233,12 @@ class RobotClient:
         self.action_queue = future_action_queue
 
     def _extract_actions_from_bytes_queue(self):
-        result = []
+        result: list[TimedAction] = []
 
         while True:
             try:
                 bytes = self.actions_bytes_queue.get_nowait()
-                actions = pickle.loads(bytes)
+                actions: list[TimedAction] = pickle.loads(bytes)
                 result.extend(actions)
             except queue.Empty:
                 break
@@ -337,7 +331,10 @@ class RobotClient:
 
     def push_observation_to_queue(self, task: str, verbose: bool = False) -> RawObservation | None:
         if not self._ready_to_send_observation():
+            # self.logger.warning(f"Not ready to send observation, skipping (action queue size: {self.action_queue.qsize()}, action chunk size: {self.action_chunk_size}, chunk size threshold: {self._chunk_size_threshold})")
             return
+
+        # self.logger.info(f"Ready to send observation, sending (action queue size: {self.action_queue.qsize()}, action chunk size: {self.action_chunk_size}, chunk size threshold: {self._chunk_size_threshold})")
 
         # Get serialized observation bytes from the function
         raw_observation: RawObservation = self.robot.get_observation()
