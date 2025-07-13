@@ -18,6 +18,8 @@ import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
+from queue import Queue
 
 import torch
 
@@ -298,3 +300,32 @@ def observations_similar(
     )
 
     return _compare_observation_states(obs1_state, obs2_state, atol=atol)
+
+
+def aggregate_actions(current_queue: Queue[TimedAction], latest_action_timestep: int, incoming_actions: list[TimedAction], aggregate_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor]) -> Queue[TimedAction]:
+    future_action_queue: Queue[TimedAction] = Queue()
+
+    current_action_queue = {action.get_timestep(): action.get_action() for action in current_queue.queue}
+
+    for new_action in incoming_actions:
+        # Skip actions that are older than the latest action
+        if new_action.get_timestep() <= latest_action_timestep:
+            continue
+
+        if new_action.get_timestep() not in current_action_queue:
+            future_action_queue.put(new_action)
+            continue
+
+        # If the new action's timestep is in the current action queue, aggregate it
+        # TODO: There is probably a way to do this with broadcasting of the two action tensors
+        future_action_queue.put(
+            TimedAction(
+                timestamp=new_action.get_timestamp(),
+                timestep=new_action.get_timestep(),
+                action=aggregate_fn(
+                    current_action_queue[new_action.get_timestep()], new_action.get_action()
+                ),
+            )
+        )
+
+    return future_action_queue
