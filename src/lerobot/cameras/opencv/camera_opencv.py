@@ -26,10 +26,9 @@ from typing import Any, Dict, List
 
 import os
 import platform
-if platform.system() == "Windows":
-    # Only set if not already configured by user
-    if "OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS" not in os.environ:
-        os.environ["OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"] = "0"
+# Fix MSMF hardware transform compatibility for Windows before importing cv2
+if platform.system() == "Windows" and "OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS" not in os.environ:
+    os.environ["OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"] = "0"
 import cv2
 import numpy as np
 
