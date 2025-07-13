@@ -18,6 +18,7 @@ Provides the OpenCVCamera class for capturing frames from cameras using OpenCV.
 
 import logging
 import math
+import os
 import platform
 import time
 from pathlib import Path
