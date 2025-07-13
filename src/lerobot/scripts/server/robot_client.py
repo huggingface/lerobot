@@ -124,6 +124,9 @@ class RobotClient:
 
         self.shutdown_event = shutdown_event
 
+        # Lock to prevent reading from and writing to the robot at the same time
+        self.robot_lock = threading.Lock()
+
         # Initialize client side variables
         self.action_queue_lock = threading.Lock()
         self.latest_action_timestep = -1
@@ -141,7 +144,7 @@ class RobotClient:
         self.logger.info("Robot connected and ready")
 
         # Use an event for thread-safe coordination
-        self.observation_bytes_queue: Queue[bytes] = Queue()
+        # self.observation_bytes_queue: Queue[bytes] = Queue()
 
     def set_up_logger(self):
         self.logger = get_logger(self.prefix)
@@ -204,13 +207,13 @@ class RobotClient:
 
         return result
 
-    def start_communication_thread(self):
+    def start_policy_client_thread(self):
         self.logger.info("Starting action receiver thread")
         self.action_receiver_thread = threading.Thread(target=self.get_actions_loop, daemon=True)
         self.action_receiver_thread.start()
         self.logger.info("Action receiver thread started")
 
-    def join_communication_thread(self):
+    def join_policy_client_thread(self):
         self.logger.info("Joining action receiver thread")
         self.action_receiver_thread.join()
         self.logger.info("Action receiver thread joined")
@@ -222,6 +225,7 @@ class RobotClient:
         self.logger.info("Starting GetActions loop")
 
         while self.running:
+            get_observation_start = time.perf_counter()
             self.action_queue_lock.acquire()
             # If there are sufficient actions in the queue, skip the loop
             if self.action_queue.qsize() / self.action_chunk_size > self._chunk_size_threshold:
@@ -229,20 +233,28 @@ class RobotClient:
                 self.action_queue_lock.release()
                 time.sleep(self.config.environment_dt)
                 continue
+
+            obs_timestep = self.latest_action_timestep + 1
+            with self.robot_lock:
+                raw_observation: RawObservation = self.robot.get_observation()
+
             self.action_queue_lock.release()
 
-            observation_bytes = get_last_item_from_queue(
-                self.observation_bytes_queue, block=True, timeout=self.config.environment_dt
+            raw_observation["task"] = self.config.task
+
+            observation = TimedObservation(
+                timestamp=time.time(),  # need time.time() to compare timestamps across client and server
+                observation=raw_observation,
+                timestep=obs_timestep,
             )
 
-            if observation_bytes is None:
-                time.sleep(self.config.environment_dt)
-                continue    
+            observation_bytes = pickle.dumps(observation)
+            get_observation_end = time.perf_counter()
 
             if not self.running:
                 break
 
-            self.logger.info("Sending observation to policy server")
+            self.logger.info(f"Sending observation to policy server | get_observation={get_observation_end - get_observation_start:.4f}s")
 
             observation_iterator = send_bytes_in_chunks(
                 observation_bytes,
@@ -272,38 +284,15 @@ class RobotClient:
         action = {key: action_tensor[i].item() for i, key in enumerate(self.robot.action_features)}
         return action
 
-    def track_action_queue_size(self):
-        self.action_queue_size.append(self.action_queue.qsize())
-        self.logger.debug(f"Action queue size: {self.action_queue_size[-1]}")
-
-    def push_observation_to_queue(self, task: str, verbose: bool = False) -> RawObservation | None:
-        # Get serialized observation bytes from the function
-        raw_observation: RawObservation = self.robot.get_observation()
-        raw_observation["task"] = task
-
-        observation = TimedObservation(
-            timestamp=time.time(),  # need time.time() to compare timestamps across client and server
-            observation=raw_observation,
-            timestep=self.latest_action_timestep + 1,
-        )
-
-        observation_bytes = pickle.dumps(observation)
-
-        self.observation_bytes_queue.put(observation_bytes)
-
-        return raw_observation
-
     def control_loop(self, task: str, verbose: bool = False) -> tuple[Observation, Action]:
         """Combined function for executing actions and streaming observations"""
         # Wait at barrier for synchronized start
         self.logger.info("Control loop thread starting")
 
-
-        self.push_observation_to_queue(task, verbose)
+        # self.push_observation_to_queue(task, verbose)
         while self.running:
             control_loop_start = time.perf_counter()
 
-            self.track_action_queue_size()
             get_action_start = time.perf_counter()
             try:
                 with self.action_queue_lock:
@@ -319,21 +308,17 @@ class RobotClient:
             get_action_end = time.perf_counter()
 
             perform_action_start = get_action_end
-            self.robot.send_action(action)
+            with self.robot_lock:
+                self.robot.send_action(action)
             perform_action_end = time.perf_counter()
 
-
-            send_observation_start = perform_action_end
-            if action_queue_size / self.action_chunk_size <= self._chunk_size_threshold:
-                self.push_observation_to_queue(task, verbose)
-            send_observation_end = time.perf_counter()
-
-            control_loop_end = send_observation_end
+            self.action_queue_size.append(action_queue_size)
+            control_loop_end = time.perf_counter()
 
             time_to_sleep = min(self.config.environment_dt, max(0, self.config.environment_dt - (control_loop_end - control_loop_start)))
 
             self.logger.info(
-                f"Ts={timed_action.get_timestamp()} | step=#{timed_action.get_timestep()} | control_loop={control_loop_end - control_loop_start:.4f}s | sleep={time_to_sleep:.4f}s | get_action={get_action_end - get_action_start:.4f}s | perform_action={perform_action_end - perform_action_start:.4f}s | send_observation={send_observation_end - send_observation_start:.4f}s | action_queue_size={action_queue_size}"
+                f"Ts={timed_action.get_timestamp()} | step=#{timed_action.get_timestep()} | control_loop={control_loop_end - control_loop_start:.4f}s | sleep={time_to_sleep:.4f}s | get_action={get_action_end - get_action_start:.4f}s | perform_action={perform_action_end - perform_action_start:.4f}s | action_queue_size={action_queue_size}"
             )
 
             time.sleep(time_to_sleep)
@@ -352,15 +337,16 @@ def async_client(cfg: RobotClientConfig):
     if not client.start():
         return
 
-    client.logger.info("Starting action receiver thread...")
+    client.logger.info("Starting policy client thread...")
 
-    client.start_communication_thread()
+    client.start_policy_client_thread()
+    client.logger.info("Policy client thread started")
 
     client.control_loop(task=cfg.task)
 
     client.stop()
-    client.join_communication_thread()
-    client.logger.info("Communication thread joined")
+    client.join_policy_client_thread()
+    client.logger.info("Policy client thread joined")
 
     if cfg.debug_visualize_queue_size:
         visualize_action_queue_size(client.action_queue_size)
