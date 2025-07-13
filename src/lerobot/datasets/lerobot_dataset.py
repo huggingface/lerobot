@@ -855,7 +855,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         # Only encode videos if requested
         if encode_videos and len(self.meta.video_keys) > 0:
-            video_paths = self.encode_episode_videos(episode_index, cleanup_images=False)
+            video_paths = self.encode_episode_videos(episode_index)
             for key in self.meta.video_keys:
                 episode_buffer[key] = video_paths[key]
 
@@ -949,7 +949,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         for ep_idx in range(self.meta.total_episodes):
             self.encode_episode_videos(ep_idx)
 
-    def encode_episode_videos(self, episode_index: int, cleanup_images: bool = True) -> dict:
+    def encode_episode_videos(self, episode_index: int) -> dict:
         """
         Use ffmpeg to convert frames stored as png into mp4 videos.
         Note: `encode_video_frames` is a blocking call. Making it asynchronous shouldn't speedup encoding,
@@ -962,7 +962,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         Args:
             episode_index: Episode to encode
-            cleanup_images: Whether to cleanup raw images for this episode
 
         Returns:
             dict: Dictionary mapping video keys to their encoded video file paths
@@ -980,8 +979,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 episode_index=episode_index, image_key=key, frame_index=0
             ).parent
             encode_video_frames(img_dir, video_path, self.fps, overwrite=True)
-            if cleanup_images:
-                shutil.rmtree(img_dir)
+            shutil.rmtree(img_dir)
 
         # Update video info (only needed when first episode is encoded since it reads from episode 0)
         if len(self.meta.video_keys) > 0 and episode_index == 0:
@@ -1005,10 +1003,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # Encode all episodes with cleanup enabled for individual episodes
         for ep_idx in range(start_episode, end_episode):
             logging.info(f"Encoding videos for episode {ep_idx}")
-            self.encode_episode_videos(
-                ep_idx,
-                cleanup_images=True,
-            )
+            self.encode_episode_videos(ep_idx)
 
         # Cleanup all images once for the entire batch
         img_dir = self.root / "images"
