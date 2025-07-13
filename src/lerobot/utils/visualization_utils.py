@@ -18,6 +18,7 @@ Helper utilities to visualize robot data with Rerun.
 This module provides classes for logging URDF data, video streams, and teleoperation data to Rerun.
 """
 
+import io
 import logging
 import os
 import re
@@ -33,6 +34,7 @@ import av.video.stream
 import cv2
 import numpy as np
 import rerun as rr
+from pyarrow import ChunkedArray
 from robot_descriptions.loaders.yourdfpy import load_robot_description
 from yourdfpy.urdf import URDF, Joint
 
@@ -498,7 +500,113 @@ class RerunRobotLogger:
         )
 
 
-def log_rerun_data(observation: dict[str | Any], action: dict[str | Any]):
+def read_h264_samples_from_recording(
+    recording: rr.dataframe.Recording, video_entity: str, timeline: str
+) -> tuple[ChunkedArray, ChunkedArray]:
+    """Load recording data and query video stream."""
+
+    view = recording.view(index=timeline, contents=video_entity)
+
+    # Make sure this is H.264 encoded.
+    # For that we just read out the first codec value batch and check whether it's H.264.
+    codec = view.select(f"{video_entity}:VideoStream:codec")
+    try:
+        first_codec_batch = codec.read_next_batch()
+        if first_codec_batch is None:
+            raise ValueError(
+                f"There's no video stream codec specified at {video_entity} for timeline {timeline}."
+            )
+    except StopIteration as err:
+        raise ValueError(f"Failed to read codec data for {video_entity} on timeline {timeline}.") from err
+
+    codec_value = first_codec_batch.column(0)[0][0].as_py()
+    if codec_value != rr.VideoCodec.H264.value:
+        raise ValueError(
+            f"Video stream codec is not H.264 at {video_entity} for timeline {timeline}. "
+            f"Got {hex(codec_value)}, but the value for H.264 is {hex(rr.VideoCodec.H264.value)}."
+        )
+
+    # Get the video stream
+    timestamps_and_samples = view.select(timeline, f"{video_entity}:VideoStream:sample").read_all()
+    times = timestamps_and_samples[0]
+    samples = timestamps_and_samples[1]
+
+    return times, samples
+
+
+def get_video_streams_from_rrd(recording: rr.dataframe.Recording):
+    """
+    Check if a video stream exists in the RRD file.
+
+    :param rrd_path: Path to the RRD file.
+    :return: The list of video stream components if found, otherwise an empty list.
+    """
+    schema = recording.schema()
+    components = schema.component_columns()
+
+    return [c for c in components if c.component_type == "rerun.components.VideoSample"]
+
+
+def extract_videos_from_rrd(recording_path, output_dir=None):
+    logging.basicConfig(level=logging.INFO)
+    rec = rr.dataframe.load_recording(recording_path)
+    schema = rec.schema()
+    vids = get_video_streams_from_rrd(rec)
+    if not vids:
+        logging.error("No video streams found in the RRD file.")
+        return []
+
+    # Pick a timeline for sequencing (prefer 'time', fallback to first)
+    timelines = [t.name for t in schema.index_columns()]
+    if not timelines:
+        logging.error("No timelines found in the RRD file.")
+        return []
+
+    idx = "time" if "time" in timelines else timelines[0]
+
+    out = Path(output_dir or ".")
+    out.mkdir(parents=True, exist_ok=True)
+
+    for comp in vids:
+        entity = comp.entity_path
+        cam = entity.rsplit("/", 1)[-1]
+        mp4 = out / f"{cam}.mp4"
+
+        times, samples = read_h264_samples_from_recording(rec, comp.entity_path, idx)
+
+        # Combine all chunks into a single contiguous buffer without flattening or copying more than needed.
+        combined = samples.combine_chunks().flatten(recursive=True)
+        buffer = combined.buffers()[1]  # Get the actual data buffer (skip null bitmap)
+        offset = combined.offset
+        length = len(combined)
+        raw_bytes = memoryview(buffer)[offset : offset + length]
+
+        # Wrap in BytesIO for PyAV compatibility.
+        byte_stream = io.BytesIO(raw_bytes)
+        input_container = av.open(byte_stream, mode="r", format="h264")  # Input is AnnexB H.264 stream.
+        input_stream = input_container.streams.video[0]
+
+        # Setup output container.
+        output_container = av.open(mp4, mode="w")
+        output_stream = output_container.add_stream_from_template(input_stream)
+        output_stream.time_base = Fraction(1, 1_000_000_000)  # nanosecond time base
+
+        # Timestamps are made relative to the first timestamp.
+        start_time = times.chunk(0)[0]
+
+        for packet, pkt_time in zip(input_container.demux(input_stream), times, strict=False):
+            pts_ns = int(pkt_time.value - start_time.value)
+            packet.pts = pts_ns
+            packet.dts = pts_ns  # dts == pts since there's no B-frames.
+            packet.time_base = Fraction(1, 1_000_000_000)
+            packet.stream = output_stream
+            output_container.mux(packet)
+
+        input_container.close()
+        output_container.close()
+
+
+def log_rerun_data(observation: dict[str, Any], action: dict[str, Any]):
     for obs, val in observation.items():
         if isinstance(val, float):
             rr.log(f"observation.{obs}", rr.Scalar(val))
