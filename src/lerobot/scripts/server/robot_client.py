@@ -374,15 +374,13 @@ class RobotClient:
             self._sleep(control_loop_start, self.config.environment_dt)
 
     def _sleep(self, control_loop_start: float, max_sleep_time: float):
-        time_to_sleep = max(0, self.config.environment_dt - (time.perf_counter() - control_loop_start))
+        time_to_sleep = min(max_sleep_time, max(0, self.config.environment_dt - (time.perf_counter() - control_loop_start)))
 
         self.logger.info(
-            f"Control loop took {time.perf_counter() - control_loop_start:.6f}s, will sleep for {time_to_sleep:.6f}s"
+            f"Control loop took {time.perf_counter() - control_loop_start:.6f}s, will sleep for {time_to_sleep:.6f}s (max sleep time: {max_sleep_time:.6f}s)"
         )
 
-        if time_to_sleep > max_sleep_time:
-            time.sleep(max_sleep_time)
-
+        time.sleep(time_to_sleep)
 
 @draccus.wrap()
 def async_client(cfg: RobotClientConfig):
