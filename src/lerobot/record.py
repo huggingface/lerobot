@@ -42,6 +42,8 @@ from pathlib import Path
 from pprint import pformat
 from typing import List
 
+from tqdm import tqdm
+
 from lerobot.cameras import (  # noqa: F401
     CameraConfig,  # noqa: F401
 )
@@ -198,8 +200,15 @@ def record_loop(
 
     timestamp = 0
     start_episode_t = time.perf_counter()
+    pbar = tqdm(
+        total=control_time_s,
+        desc="Recording" if dataset else "Preparing environment",
+        unit="s",
+        bar_format="{l_bar}{bar}| {n:.2f}/{total} [{elapsed}<{remaining}]"
+    )
     while timestamp < control_time_s:
         start_loop_t = time.perf_counter()
+        pbar.update(timestamp - pbar.n)
 
         if events["exit_early"]:
             events["exit_early"] = False
@@ -256,6 +265,8 @@ def record_loop(
 
         timestamp = time.perf_counter() - start_episode_t
 
+    pbar.close()
+
 
 @parser.wrap()
 def record(cfg: RecordConfig) -> LeRobotDataset:
@@ -308,6 +319,20 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     recorded_episodes = 0
     while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
+        log_say(f"{cfg.dataset.reset_time_s} seconds to episode {dataset.num_episodes}", cfg.play_sounds)
+        record_loop(
+            robot=robot,
+            events=events,
+            fps=cfg.dataset.fps,
+            teleop=teleop,
+            control_time_s=cfg.dataset.reset_time_s,
+            single_task=cfg.dataset.single_task,
+            display_data=cfg.display_data,
+        )
+
+        if events["stop_recording"]:
+            break
+
         log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
         record_loop(
             robot=robot,
@@ -321,22 +346,6 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             display_data=cfg.display_data,
         )
 
-        # Execute a few seconds without recording to give time to manually reset the environment
-        # Skip reset for the last episode to be recorded
-        if not events["stop_recording"] and (
-            (recorded_episodes < cfg.dataset.num_episodes - 1) or events["rerecord_episode"]
-        ):
-            log_say("Reset the environment", cfg.play_sounds)
-            record_loop(
-                robot=robot,
-                events=events,
-                fps=cfg.dataset.fps,
-                teleop=teleop,
-                control_time_s=cfg.dataset.reset_time_s,
-                single_task=cfg.dataset.single_task,
-                display_data=cfg.display_data,
-            )
-
         if events["rerecord_episode"]:
             log_say("Re-record episode", cfg.play_sounds)
             events["rerecord_episode"] = False
@@ -344,6 +353,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             dataset.clear_episode_buffer()
             continue
 
+        log_say(f"Saving episode {dataset.num_episodes}", cfg.play_sounds)
         dataset.save_episode()
         recorded_episodes += 1
 
