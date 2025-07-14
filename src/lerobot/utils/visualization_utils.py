@@ -383,23 +383,22 @@ class RerunRobotLogger:
         self.active = False
 
     def _increment_rrd_path(self) -> Path:
-        assert self.root is not None
+        # Pattern: <prefix>_000000.rrd, <prefix>_000001.rrd, etc.
+        rec_prefix = "teleop" if "teleop" in self.session_name else "episode"
+        rrd_dir = self.get_rrd_dir()
 
-        # Pattern: episode_000.rrd, episode_001.rrd, etc.
         i = 0
         while True:
-            new_name = f"episode_{i:06d}.rrd"
-            new_path = self.get_rrd_dir() / new_name
+            new_name = f"{rec_prefix}_{i:06d}.rrd"
+            new_path = rrd_dir / new_name
             if not new_path.exists():
                 return new_path
             i += 1
 
     def _init_rerun(self):
         memory_limit = os.getenv("LEROBOT_RERUN_MEMORY_LIMIT", "10%")
-        batch_size = os.getenv("RERUN_FLUSH_NUM_BYTES", "8000")
+        batch_size = os.getenv("RERUN_FLUSH_NUM_BYTES", "10240000")  # 1 MB default
         os.environ["RERUN_FLUSH_NUM_BYTES"] = batch_size
-        flush_tick_secs = os.getenv("RERUN_FLUSH_TICK_SECS", "0.03")
-        os.environ["RERUN_FLUSH_TICK_SECS"] = flush_tick_secs
 
         self.rec = rr.new_recording(self.application_id, recording_id=uuid4(), make_default=True)
 
@@ -412,6 +411,7 @@ class RerunRobotLogger:
         if self.log_rrd:
             rec_file = self._increment_rrd_path()
             rec_file.parent.mkdir(parents=True, exist_ok=True)
+            logging.info(f"Rerun recording will be saved to {rec_file}")
             sinks.append(rr.FileSink(rec_file))
 
             self.rec.send_recording_name(rec_file.stem)
