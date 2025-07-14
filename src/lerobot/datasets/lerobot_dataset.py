@@ -807,7 +807,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         self.episode_buffer["size"] += 1
 
-    def save_episode(self, episode_data: dict | None = None) -> None:
+    def save_episode(self, episode_data: dict | None = None, rrd_dir: str | Path | None = None) -> None:
         """
         This will save to disk the current episode in self.episode_buffer.
 
@@ -815,6 +815,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             episode_data (dict | None, optional): Dict containing the episode data to save. If None, this will
                 save the current episode in self.episode_buffer, which is filled with 'add_frame'. Defaults to
                 None.
+            rrd_dir (str | Path | None, optional): If provided, will attempt to extract videos from RRD files in this directory.
         """
         if not episode_data:
             episode_buffer = self.episode_buffer
@@ -850,7 +851,34 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self._save_episode_table(episode_buffer, episode_index)
         ep_stats = compute_episode_stats(episode_buffer, self.features)
 
-        if len(self.meta.video_keys) > 0:
+        used_rrd_extraction = False
+        if rrd_dir is not None and len(self.meta.video_keys) > 0:
+            import os
+
+            from lerobot.utils.visualization_utils import extract_videos_from_rrd
+
+            # Use episode-specific RRD file if it exists
+            rrd_filename = f"episode_{episode_index:06d}.rrd"
+            rrd_path = os.path.join(str(rrd_dir), rrd_filename)
+            if os.path.isfile(rrd_path):
+                for key in self.meta.video_keys:
+                    entity_name = key.rsplit(".")[-1]  # e.g. 'front'
+                    out_file = self.root / self.meta.get_video_file_path(
+                        episode_index, key
+                    )  # Ensure video file path is set
+                    save_path = extract_videos_from_rrd(rrd_path, entity_name, output=out_file)
+                    if save_path:  # If extraction succeeded
+                        episode_buffer[key] = save_path
+                        used_rrd_extraction = True
+                    else:
+                        used_rrd_extraction = False
+                        logging.warning(
+                            f"Failed to extract video for {key} from RRD file {rrd_path}. "
+                            "Falling back to encoding from images."
+                        )
+                        break
+        # If not using RRD extraction or it failed, fall back to encoding from images
+        if not used_rrd_extraction and len(self.meta.video_keys) > 0:
             video_paths = self.encode_episode_videos(episode_index)
             for key in self.meta.video_keys:
                 episode_buffer[key] = video_paths[key]

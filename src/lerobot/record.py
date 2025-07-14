@@ -382,7 +382,8 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             dataset.clear_episode_buffer()
             continue
 
-        dataset.save_episode()
+        rrd_dir = rerun_logger.get_rrd_dir() if rerun_logger is not None else None
+        dataset.save_episode(rrd_dir=rrd_dir)
         recorded_episodes += 1
 
     log_say("Stop recording", cfg.play_sounds, blocking=True)

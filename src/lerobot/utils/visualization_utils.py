@@ -276,8 +276,9 @@ class VideoLogger:
             frame = av.VideoFrame.from_ndarray(img, format="rgb24")
             for packet in self.stream.encode(frame):
                 if packet.pts is not None and packet.time_base is not None:
-                    pass
+                    # in practice, stream.encode(frame) returns a single packet, so avoid timeline issues here
                     # rr.set_time("time", duration=float(packet.pts * packet.time_base))
+                    pass
                 rr.log(self.stream_name, rr.VideoStream.from_fields(sample=bytes(packet)))
 
     def close(self):
@@ -343,7 +344,7 @@ class RerunRobotLogger:
 
         self.session_name = session_name
         self.application_id = session_name
-        self.root = Path(root) if root is not None else HF_LEROBOT_HOME / session_name
+        self.root = root
         self.log_rrd = log_rrd
         self.live_display = live_display
 
@@ -370,6 +371,14 @@ class RerunRobotLogger:
 
         self.active = True
 
+    def get_rrd_dir(self) -> Path:
+        """
+        Returns the directory where Rerun recordings are stored.
+        If the root is not set, it defaults to HF_LEROBOT_HOME/session_name/recordings.
+        """
+        dir = Path(self.root) if self.root is not None else HF_LEROBOT_HOME / self.session_name
+        return dir / "recordings"
+
     def stop_recording(self):
         self.active = False
 
@@ -379,8 +388,8 @@ class RerunRobotLogger:
         # Pattern: episode_000.rrd, episode_001.rrd, etc.
         i = 0
         while True:
-            new_name = f"episode_{i:03d}.rrd"
-            new_path = self.root / "recordings" / new_name
+            new_name = f"episode_{i:06d}.rrd"
+            new_path = self.get_rrd_dir() / new_name
             if not new_path.exists():
                 return new_path
             i += 1
@@ -389,9 +398,10 @@ class RerunRobotLogger:
         memory_limit = os.getenv("LEROBOT_RERUN_MEMORY_LIMIT", "10%")
         batch_size = os.getenv("RERUN_FLUSH_NUM_BYTES", "8000")
         os.environ["RERUN_FLUSH_NUM_BYTES"] = batch_size
+        flush_tick_secs = os.getenv("RERUN_FLUSH_TICK_SECS", "0.03")
+        os.environ["RERUN_FLUSH_TICK_SECS"] = flush_tick_secs
 
         self.rec = rr.new_recording(self.application_id, recording_id=uuid4(), make_default=True)
-        # self.rec = rr.RecordingStream(self.application_id, make_default=True)
 
         sinks = []
         if self.live_display:
@@ -547,63 +557,72 @@ def get_video_streams_from_rrd(recording: rr.dataframe.Recording):
     return [c for c in components if c.component_type == "rerun.components.VideoSample"]
 
 
-def extract_videos_from_rrd(recording_path, output_dir=None):
+def extract_videos_from_rrd(recording_path, camera_name, output=None) -> Path | None:
+    """Extract video streams from a RRD file and save them as MP4 files where the filename is the camera name.
+
+    :param recording_path: Path to the RRD file.
+    :param camera_name: Name of the camera to filter the video streams.
+    :param output: Optional output file to save. If None, uses the current directory.
+    :return: Path to the saved MP4 file or None if no video
+    """
     logging.basicConfig(level=logging.INFO)
     rec = rr.dataframe.load_recording(recording_path)
     schema = rec.schema()
     vids = get_video_streams_from_rrd(rec)
+    vids = [v for v in vids if v.entity_path.endswith(camera_name)]  # Filter by camera name
     if not vids:
-        logging.error("No video streams found in the RRD file.")
-        return []
+        logging.error(f"No video streams for {camera_name} found in the RRD file.")
+        return None
 
     # Pick a timeline for sequencing (prefer 'time', fallback to first)
     timelines = [t.name for t in schema.index_columns()]
     if not timelines:
         logging.error("No timelines found in the RRD file.")
-        return []
+        return None
 
     idx = "time" if "time" in timelines else timelines[0]
 
-    out = Path(output_dir or ".")
-    out.mkdir(parents=True, exist_ok=True)
+    comp = vids[0]
+    entity = comp.entity_path
+    cam = entity.rsplit("/", 1)[-1]
+    save_file = output or Path(".") / f"{recording_path.stem}.{cam}.mp4"
+    assert not save_file.exists()
 
-    for comp in vids:
-        entity = comp.entity_path
-        cam = entity.rsplit("/", 1)[-1]
-        mp4 = out / f"{cam}.mp4"
+    save_file.parent.mkdir(parents=True, exist_ok=True)
 
-        times, samples = read_h264_samples_from_recording(rec, comp.entity_path, idx)
+    times, samples = read_h264_samples_from_recording(rec, comp.entity_path, idx)
 
-        # Combine all chunks into a single contiguous buffer without flattening or copying more than needed.
-        combined = samples.combine_chunks().flatten(recursive=True)
-        buffer = combined.buffers()[1]  # Get the actual data buffer (skip null bitmap)
-        offset = combined.offset
-        length = len(combined)
-        raw_bytes = memoryview(buffer)[offset : offset + length]
+    # Combine all chunks into a single contiguous buffer without flattening or copying more than needed.
+    combined = samples.combine_chunks().flatten(recursive=True)
+    buffer = combined.buffers()[1]  # Get the actual data buffer (skip null bitmap)
+    offset = combined.offset
+    length = len(combined)
+    raw_bytes = memoryview(buffer)[offset : offset + length]
 
-        # Wrap in BytesIO for PyAV compatibility.
-        byte_stream = io.BytesIO(raw_bytes)
-        input_container = av.open(byte_stream, mode="r", format="h264")  # Input is AnnexB H.264 stream.
-        input_stream = input_container.streams.video[0]
+    # Wrap in BytesIO for PyAV compatibility.
+    byte_stream = io.BytesIO(raw_bytes)
+    input_container = av.open(byte_stream, mode="r", format="h264")  # Input is AnnexB H.264 stream.
+    input_stream = input_container.streams.video[0]
+    input_stream.time_base = Fraction(1, 1_000_000_000)  # nanosecond time base
 
-        # Setup output container.
-        output_container = av.open(mp4, mode="w")
-        output_stream = output_container.add_stream_from_template(input_stream)
-        output_stream.time_base = Fraction(1, 1_000_000_000)  # nanosecond time base
+    # Setup output container.
+    output_container = av.open(save_file, mode="w")
+    output_stream = output_container.add_stream_from_template(input_stream)
 
-        # Timestamps are made relative to the first timestamp.
-        start_time = times.chunk(0)[0]
+    # Timestamps are made relative to the first timestamp.
+    start_time = times.chunk(0)[0]
 
-        for packet, pkt_time in zip(input_container.demux(input_stream), times, strict=False):
-            pts_ns = int(pkt_time.value - start_time.value)
-            packet.pts = pts_ns
-            packet.dts = pts_ns  # dts == pts since there's no B-frames.
-            packet.time_base = Fraction(1, 1_000_000_000)
-            packet.stream = output_stream
-            output_container.mux(packet)
+    for packet, pkt_time in zip(input_container.demux(input_stream), times, strict=False):
+        pts_ns = int(pkt_time.value - start_time.value)
+        packet.pts = pts_ns
+        packet.dts = pts_ns  # dts == pts since there's no B-frames.
+        packet.stream = output_stream
+        output_container.mux(packet)
 
-        input_container.close()
-        output_container.close()
+    input_container.close()
+    output_container.close()
+
+    return save_file
 
 
 def log_rerun_data(observation: dict[str, Any], action: dict[str, Any]):
