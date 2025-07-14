@@ -125,7 +125,7 @@ class RobotClient:
 
         # Initialize client side variables
         self.latest_action = -1
-        self.action_chunk_size = -1
+        self.action_chunk_size = config.actions_per_chunk
 
         self._chunk_size_threshold = config.chunk_size_threshold
 
@@ -249,6 +249,7 @@ class RobotClient:
             except queue.Empty:
                 break
 
+        self.logger.info(f"Extracted {len(result)} actions from the queue")
         return result
 
     def start_communication_thread(self):
@@ -333,11 +334,16 @@ class RobotClient:
 
     def _ready_to_send_observation(self):
         """Flags when the client is ready to send an observation"""
+        self.logger.info(
+            f"Action queue size: {self.action_queue.qsize()}, action chunk size: {self.action_chunk_size}, chunk size threshold: {self._chunk_size_threshold}"
+        )
         return self.action_queue.qsize() / self.action_chunk_size <= self._chunk_size_threshold
 
     def push_observation_to_queue(self, task: str, verbose: bool = False) -> RawObservation | None:
         if not self._ready_to_send_observation():
             return
+
+        self.logger.info(f"Pushing observation to queue, action queue size: {self.action_queue.qsize()}")
 
         # Get serialized observation bytes from the function
         raw_observation: RawObservation = self.robot.get_observation()
@@ -346,7 +352,7 @@ class RobotClient:
         observation = TimedObservation(
             timestamp=time.time(),  # need time.time() to compare timestamps across client and server
             observation=raw_observation,
-            timestep=0,
+            timestep=self.latest_action + 1,
         )
 
         observation_bytes = pickle.dumps(observation)
@@ -364,18 +370,34 @@ class RobotClient:
             control_loop_start = time.perf_counter()
 
             self._update_action_queue()
+
+            control_loop_after_action_update = time.perf_counter()
+
             self.track_action_queue_size()
+
+            control_loop_after_action_update = time.perf_counter()
+
             self.apply_action()
+
+            control_loop_after_action_apply = time.perf_counter()
+
             self.push_observation_to_queue(task, verbose)
+
+            control_loop_after_observation_push = time.perf_counter()
+
+            self.logger.info(
+                f"Control loop took {time.perf_counter() - control_loop_start:.6f}s, "
+                f"action update took {control_loop_after_action_update - control_loop_start:.6f}s, "
+                f"action apply took {control_loop_after_action_apply - control_loop_after_action_update:.6f}s, "
+                f"observation push took {control_loop_after_observation_push - control_loop_after_action_apply:.6f}s"
+            )
 
             self._sleep(control_loop_start, self.config.environment_dt)
 
     def _sleep(self, control_loop_start: float, max_sleep_time: float):
         time_to_sleep = max(0, self.config.environment_dt - (time.perf_counter() - control_loop_start))
 
-        self.logger.info(
-            f"Control loop took {time.perf_counter() - control_loop_start:.6f}s, will sleep for {time_to_sleep:.6f}s"
-        )
+        self.logger.info(f"Sleeping for {time_to_sleep:.6f}s")
 
         if time_to_sleep > max_sleep_time:
             time.sleep(max_sleep_time)
