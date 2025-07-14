@@ -367,7 +367,7 @@ class RobotClient:
             time_to_sleep = min(self.config.environment_dt, max(0, self.config.environment_dt - (control_loop_end - control_loop_start)))
 
             self.logger.info(
-                f"Ts={timed_action.get_timestamp()} | step=#{timed_action.get_timestep()} | control_loop={control_loop_end - control_loop_start:.4f}s | sleep={time_to_sleep:.4f}s | get_action={get_action_end - get_action_start:.4f}s | perform_action={perform_action_end - perform_action_start:.4f}s | action_queue_size={action_queue_size}"
+                f"Ts={timed_action.get_timestamp():.4f} | step=#{timed_action.get_timestep():05d} | control_loop={control_loop_end - control_loop_start:.4f}s | sleep={time_to_sleep:.4f}s | get_action={get_action_end - get_action_start:.4f}s | perform_action={perform_action_end - perform_action_start:.4f}s | action_queue_size={action_queue_size:03d}"
             )
 
             time.sleep(time_to_sleep)
