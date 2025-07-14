@@ -305,7 +305,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     # Load pretrained policy
 
-    if cfg.policy.use_peft:
+    if cfg.policy and cfg.policy.use_peft:
         from peft import PeftModel
 
         logging.info("Loading policy's PEFT adapter.")

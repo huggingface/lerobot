@@ -79,7 +79,7 @@ def test_save_checkpoint(mock_save_training_state, tmp_path, optimizer):
     mock_save_training_state.assert_called_once()
 
 
-@patch("lerobot.common.utils.train_utils.save_training_state")
+@patch("lerobot.utils.train_utils.save_training_state")
 def test_save_checkpoint_peft(mock_save_training_state, tmp_path, optimizer):
     policy = Mock()
     policy.config = Mock()
