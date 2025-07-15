@@ -151,6 +151,10 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         # TODO(fracapuano): Add support for streaming from a local folder and not only from HF Hub
         return dataset
 
+    # TODO(fracapuano): Implement multi-threaded prefetching to accelerate data loading.
+    # The current sequential iteration is a bottleneck. A producer-consumer pattern
+    # could be used with a ThreadPoolExecutor to run `make_frame` (especially video decoding)
+    # in parallel, feeding a queue from which this iterator will yield processed items.
     def __iter__(self) -> Iterator[Dict[str, torch.Tensor]]:
         # keep the same seed across exhaustions if shuffle is False, otherwise shuffle data across exhaustions
         rng = np.random.default_rng(self.seed) if not self.shuffle else self.rng
@@ -234,6 +238,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         Segmentation Fault. This probably happens because a memory reference to the video loader is created in
         the main process and a subprocess fails to access it.
         """
+
         item = {}
         for vid_key, query_ts in query_timestamps.items():
             root = self.meta.url_root if self.streaming and not self.streaming_from_local else self.root
