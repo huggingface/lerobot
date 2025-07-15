@@ -153,7 +153,7 @@ class LeRobotDatasetMetadata:
 
     @property
     def url_root(self) -> str:
-        return f"https://huggingface.co/datasets/{self.repo_id}/resolve/main"
+        return f"hf://datasets/{self.repo_id}"
 
     @property
     def data_path(self) -> str:
