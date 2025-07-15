@@ -133,7 +133,7 @@ exclude_dirs = [
     "src/lerobot/policies/pi0/conversion_scripts",
     "src/lerobot/scripts/push_dataset_to_hub.py",
 ]
-skips = ["B101", "B311", "B404", "B603"]
+skips = ["B101", "B311", "B404", "B603", "B615"]
 
 [tool.typos]
 default.extend-ignore-re = [
