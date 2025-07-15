@@ -319,16 +319,18 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     recorded_episodes = 0
     while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
-        log_say(f"{cfg.dataset.reset_time_s} seconds to episode {dataset.num_episodes}", cfg.play_sounds)
-        record_loop(
-            robot=robot,
-            events=events,
-            fps=cfg.dataset.fps,
-            teleop=teleop,
-            control_time_s=cfg.dataset.reset_time_s,
-            single_task=cfg.dataset.single_task,
-            display_data=cfg.display_data,
-        )
+        if teleop:
+            # If there's no teleop, there's no way to prepare the robot for the next episode.
+            log_say(f"{cfg.dataset.reset_time_s} seconds to episode {dataset.num_episodes}", cfg.play_sounds)
+            record_loop(
+                robot=robot,
+                events=events,
+                fps=cfg.dataset.fps,
+                teleop=teleop,
+                control_time_s=cfg.dataset.reset_time_s,
+                single_task=cfg.dataset.single_task,
+                display_data=cfg.display_data,
+            )
 
         if events["stop_recording"]:
             break
