@@ -92,7 +92,7 @@ class RobotClient:
         # Store configuration
         self.config = config
         self.robot = make_robot_from_config(config.robot)
-        # self.robot.connect()
+        self.robot.connect()
 
         lerobot_features = map_robot_keys_to_lerobot_features(self.robot)
 
