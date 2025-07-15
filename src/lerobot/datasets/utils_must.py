@@ -407,3 +407,32 @@ def multidataset_collate_fn(
             collated_batch[i][key] = pad_tensor_to_shape(values[i], target_shape, pad_value=pad_value)
 
     return default_collate(collated_batch)
+
+def extract_keys_to_max_dim_from_features(features: dict) -> dict:
+    """
+    Extract keys_to_max_dim from feature metadata.
+
+    Args:
+        features (dict): Dictionary where each key maps to a metadata dict
+                         that includes 'shape' (tuple) and optionally 'dtype'.
+
+    Returns:
+        dict: A dict of {key: shape_tuple} for use in collate padding.
+    """
+    keys_to_max_dim = {}
+
+    for key, meta in features.items():
+        shape = meta.get("shape")
+        dtype = meta.get("dtype")
+
+        # Skip if shape is missing or not a sequence
+        if not isinstance(shape, (tuple, list)):
+            continue
+
+        # also optionally skip scalar features?
+        if len(shape) == 1 and shape[0] == 1:
+            continue
+
+        keys_to_max_dim[key] = tuple(shape)
+
+    return keys_to_max_dim
