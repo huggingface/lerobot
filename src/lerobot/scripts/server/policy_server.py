@@ -323,7 +323,7 @@ class PolicyServer(async_inference_pb2_grpc.AsyncInferenceServicer):
         if chunk.ndim != 3:
             chunk = chunk.unsqueeze(0)  # adding batch dimension, now shape is (B, chunk_size, action_dim)
 
-        return chunk[:, : self.actions_per_chunk, :] + torch.randn_like(chunk[:, : self.actions_per_chunk, :])
+        return chunk[:, : self.actions_per_chunk, :]
 
     def _predict_action_chunk(self, observation_t: TimedObservation) -> list[TimedAction]:
         """Predict an action chunk based on an observation"""
