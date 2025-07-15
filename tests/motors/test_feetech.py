@@ -219,7 +219,7 @@ def test__write(addr, length, id_, value, mock_motors, dummy_motors):
 
     comm, error = bus._write(addr, length, id_, value)
 
-    assert mock_motors.stubs[stub].called
+    assert mock_motors.stubs[stub].wait_called()
     assert comm == scs.COMM_SUCCESS
     assert error == 0
 
@@ -371,9 +371,9 @@ def test_reset_calibration(mock_motors, dummy_motors):
 
     bus.reset_calibration()
 
-    assert all(mock_motors.stubs[stub].called for stub in write_homing_stubs)
-    assert all(mock_motors.stubs[stub].called for stub in write_mins_stubs)
-    assert all(mock_motors.stubs[stub].called for stub in write_maxes_stubs)
+    assert all(mock_motors.stubs[stub].wait_called() for stub in write_homing_stubs)
+    assert all(mock_motors.stubs[stub].wait_called() for stub in write_mins_stubs)
+    assert all(mock_motors.stubs[stub].wait_called() for stub in write_maxes_stubs)
 
 
 def test_set_half_turn_homings(mock_motors, dummy_motors):
@@ -410,7 +410,7 @@ def test_set_half_turn_homings(mock_motors, dummy_motors):
 
     bus.reset_calibration.assert_called_once()
     assert mock_motors.stubs[read_pos_stub].called
-    assert all(mock_motors.stubs[stub].called for stub in write_homing_stubs)
+    assert all(mock_motors.stubs[stub].wait_called() for stub in write_homing_stubs)
 
 
 def test_record_ranges_of_motion(mock_motors, dummy_motors):
