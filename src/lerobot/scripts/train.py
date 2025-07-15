@@ -30,7 +30,7 @@ from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.sampler import EpisodeAwareSampler
 from lerobot.datasets.utils import cycle
-from lerobot.datasets.utils_must import multidataset_collate_fn, extract_keys_to_max_dim_from_features
+from lerobot.datasets.utils_must import extract_keys_to_max_dim_from_features, multidataset_collate_fn
 from lerobot.envs.factory import make_env
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies.factory import make_policy

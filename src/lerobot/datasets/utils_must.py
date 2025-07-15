@@ -408,6 +408,7 @@ def multidataset_collate_fn(
 
     return default_collate(collated_batch)
 
+
 def extract_keys_to_max_dim_from_features(features: dict) -> dict:
     """
     Extract keys_to_max_dim from feature metadata.
