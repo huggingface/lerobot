@@ -135,7 +135,7 @@ def aggregate_feature_stats(stats_ft_list: list[dict[str, dict]]) -> dict[str, d
             if "count" not in s:
                 s["count"] = np.array([1])  # Default count
             valid_stats.append(s)
-    
+
     if not valid_stats:
         # If no valid stats, return empty stats
         return {
@@ -145,7 +145,7 @@ def aggregate_feature_stats(stats_ft_list: list[dict[str, dict]]) -> dict[str, d
             "std": np.array([0]),
             "count": np.array([0]),
         }
-    
+
     means = np.stack([s["mean"] for s in valid_stats])
     variances = np.stack([s["std"] ** 2 for s in valid_stats])
     counts = np.stack([s["count"] for s in valid_stats])
