@@ -212,6 +212,10 @@ class RobotClient:
 
         current_action_queue = {action.get_timestep(): action.get_action() for action in internal_queue}
 
+        self.logger.info(
+            f"Current action queue: {current_action_queue}, incoming actions: {incoming_actions}"
+        )
+
         for new_action in incoming_actions:
             latest_action = self.latest_action
 
@@ -249,7 +253,7 @@ class RobotClient:
             except queue.Empty:
                 break
 
-        self.logger.info(f"Extracted {len(result)} actions from the queue")
+        self.logger.info(f"Extracted {result} actions from the queue")
         return result
 
     def start_communication_thread(self):
