@@ -17,12 +17,16 @@
     title: Train a Robot with RL
   - local: hilserl_sim
     title: Train RL in Simulation
+  - local: async
+    title: Use Async Inference
   title: "Tutorials"
 - sections:
   - local: smolvla
     title: Finetune SmolVLA
   title: "Policies"
 - sections:
+  - local: hope_jr
+    title: Hope Jr
   - local: so101
     title: SO-101
   - local: so100

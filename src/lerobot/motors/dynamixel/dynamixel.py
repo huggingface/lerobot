@@ -162,11 +162,11 @@ class DynamixelMotorsBus(MotorsBus):
 
         raise RuntimeError(f"Motor '{motor}' (model '{model}') was not found. Make sure it is connected.")
 
-    def configure_motors(self) -> None:
+    def configure_motors(self, return_delay_time=0) -> None:
         # By default, Dynamixel motors have a 500µs delay response time (corresponding to a value of 250 on
         # the 'Return_Delay_Time' address). We ensure this is reduced to the minimum of 2µs (value of 0).
         for motor in self.motors:
-            self.write("Return_Delay_Time", motor, 0)
+            self.write("Return_Delay_Time", motor, return_delay_time)
 
     @property
     def is_calibrated(self) -> bool:
@@ -190,13 +190,14 @@ class DynamixelMotorsBus(MotorsBus):
 
         return calibration
 
-    def write_calibration(self, calibration_dict: dict[str, MotorCalibration]) -> None:
+    def write_calibration(self, calibration_dict: dict[str, MotorCalibration], cache: bool = True) -> None:
         for motor, calibration in calibration_dict.items():
             self.write("Homing_Offset", motor, calibration.homing_offset)
             self.write("Min_Position_Limit", motor, calibration.range_min)
             self.write("Max_Position_Limit", motor, calibration.range_max)
 
-        self.calibration = calibration_dict
+        if cache:
+            self.calibration = calibration_dict
 
     def disable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
         for motor in self._get_motors_list(motors):
