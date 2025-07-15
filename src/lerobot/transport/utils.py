@@ -36,9 +36,7 @@ def bytes_buffer_size(buffer: io.BytesIO) -> int:
     return result
 
 
-def send_bytes_in_chunks(
-    buffer: bytes, message_class: Any, log_prefix: str = "", silent: bool = True, chunk_size: int = CHUNK_SIZE
-):
+def send_bytes_in_chunks(buffer: bytes, message_class: Any, log_prefix: str = "", silent: bool = True):
     buffer = io.BytesIO(buffer)
     size_in_bytes = bytes_buffer_size(buffer)
 
@@ -51,12 +49,12 @@ def send_bytes_in_chunks(
     while sent_bytes < size_in_bytes:
         transfer_state = services_pb2.TransferState.TRANSFER_MIDDLE
 
-        if sent_bytes + chunk_size >= size_in_bytes:
+        if sent_bytes + CHUNK_SIZE >= size_in_bytes:
             transfer_state = services_pb2.TransferState.TRANSFER_END
         elif sent_bytes == 0:
             transfer_state = services_pb2.TransferState.TRANSFER_BEGIN
 
-        size_to_read = min(chunk_size, size_in_bytes - sent_bytes)
+        size_to_read = min(CHUNK_SIZE, size_in_bytes - sent_bytes)
         chunk = buffer.read(size_to_read)
 
         yield message_class(transfer_state=transfer_state, data=chunk)
