@@ -39,7 +39,6 @@ import time
 from dataclasses import asdict
 from pprint import pformat
 from queue import Queue
-from typing import Any, Callable, Optional
 
 import draccus
 import grpc
@@ -66,11 +65,11 @@ from lerobot.scripts.server.helpers import (
     RemotePolicyConfig,
     TimedAction,
     TimedObservation,
+    aggregate_actions,
     get_logger,
     map_robot_keys_to_lerobot_features,
     validate_robot_cameras_for_policy,
     visualize_action_queue_size,
-    aggregate_actions,
 )
 from lerobot.transport import (
     services_pb2,  # type: ignore
@@ -79,7 +78,6 @@ from lerobot.transport import (
 from lerobot.transport.utils import send_bytes_in_chunks
 from lerobot.utils import queue
 from lerobot.utils.process import ProcessSignalHandler
-from lerobot.utils.queue import get_last_item_from_queue
 
 
 class RobotClient:
@@ -254,7 +252,9 @@ class RobotClient:
             if not self.running:
                 break
 
-            self.logger.info(f"Sending observation to policy server | get_observation={get_observation_end - get_observation_start:.4f}s")
+            self.logger.info(
+                f"Sending observation to policy server | get_observation={get_observation_end - get_observation_start:.4f}s"
+            )
 
             observation_iterator = send_bytes_in_chunks(
                 observation_bytes,
@@ -274,8 +274,10 @@ class RobotClient:
             if len(actions) > 0:
                 with self.action_queue_lock:
                     # TODO: use cv
-                    self.action_queue = aggregate_actions(self.action_queue, self.latest_action_timestep, actions, self.config.aggregate_fn)
-            
+                    self.action_queue = aggregate_actions(
+                        self.action_queue, self.latest_action_timestep, actions, self.config.aggregate_fn
+                    )
+
             time.sleep(self.config.environment_dt)
 
         self.logger.info("GetActions loop stopped")
@@ -315,13 +317,17 @@ class RobotClient:
             self.action_queue_size.append(action_queue_size)
             control_loop_end = time.perf_counter()
 
-            time_to_sleep = min(self.config.environment_dt, max(0, self.config.environment_dt - (control_loop_end - control_loop_start)))
+            time_to_sleep = min(
+                self.config.environment_dt,
+                max(0, self.config.environment_dt - (control_loop_end - control_loop_start)),
+            )
 
             self.logger.info(
                 f"Ts={timed_action.get_timestamp():.4f} | step=#{timed_action.get_timestep():05d} | control_loop={control_loop_end - control_loop_start:.4f}s | sleep={time_to_sleep:.4f}s | get_action={get_action_end - get_action_start:.4f}s | perform_action={perform_action_end - perform_action_start:.4f}s | action_queue_size={action_queue_size:03d}"
             )
 
             time.sleep(time_to_sleep)
+
 
 @draccus.wrap()
 def async_client(cfg: RobotClientConfig):

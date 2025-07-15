@@ -18,8 +18,8 @@ import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 from queue import Queue
+from typing import Callable
 
 import torch
 
@@ -28,7 +28,14 @@ from lerobot.constants import OBS_IMAGES, OBS_STATE
 from lerobot.datasets.utils import build_dataset_frame, hw_to_dataset_features
 
 # NOTE: Configs need to be loaded for the client to be able to instantiate the policy config
-from lerobot.policies import ACTConfig, DiffusionConfig, PI0Config, PI0FASTConfig, SmolVLAConfig, VQBeTConfig  # noqa: F401
+from lerobot.policies import (  # noqa: F401
+    ACTConfig,
+    DiffusionConfig,
+    PI0Config,
+    PI0FASTConfig,
+    SmolVLAConfig,
+    VQBeTConfig,
+)
 from lerobot.robots.robot import Robot
 from lerobot.utils.utils import init_logging
 
@@ -302,7 +309,12 @@ def observations_similar(
     return _compare_observation_states(obs1_state, obs2_state, atol=atol)
 
 
-def aggregate_actions(current_queue: Queue[TimedAction], latest_action_timestep: int, incoming_actions: list[TimedAction], aggregate_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor]) -> Queue[TimedAction]:
+def aggregate_actions(
+    current_queue: Queue[TimedAction],
+    latest_action_timestep: int,
+    incoming_actions: list[TimedAction],
+    aggregate_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor],
+) -> Queue[TimedAction]:
     future_action_queue: Queue[TimedAction] = Queue()
 
     current_action_queue = {action.get_timestep(): action.get_action() for action in current_queue.queue}
@@ -322,9 +334,7 @@ def aggregate_actions(current_queue: Queue[TimedAction], latest_action_timestep:
             TimedAction(
                 timestamp=new_action.get_timestamp(),
                 timestep=new_action.get_timestep(),
-                action=aggregate_fn(
-                    current_action_queue[new_action.get_timestep()], new_action.get_action()
-                ),
+                action=aggregate_fn(current_action_queue[new_action.get_timestep()], new_action.get_action()),
             )
         )
 
