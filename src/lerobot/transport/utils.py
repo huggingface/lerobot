@@ -147,26 +147,28 @@ def grpc_channel_options(
     max_receive_message_length: int = MAX_MESSAGE_SIZE,
     max_send_message_length: int = MAX_MESSAGE_SIZE,
     enable_retries: bool = True,
-    service_config: str | None = None,
+    initial_backoff: str = "0.1s",
+    max_attempts: int = 5,
+    backoff_multiplier: float = 2,
+    max_backoff: str = "2s",
 ):
-    if service_config is None:
-        service_config = {
-            "methodConfig": [
-                {
-                    "name": [{}],  # Applies to ALL methods in ALL services
-                    "retryPolicy": {
-                        "maxAttempts": 5,  # Max retries (total attempts = 5)
-                        "initialBackoff": "0.1s",  # First retry after 0.1s
-                        "maxBackoff": "2s",  # Max wait time between retries
-                        "backoffMultiplier": 2,  # Exponential backoff factor
-                        "retryableStatusCodes": [
-                            "UNAVAILABLE",
-                            "DEADLINE_EXCEEDED",
-                        ],  # Retries on network failures
-                    },
-                }
-            ]
-        }
+    service_config = {
+        "methodConfig": [
+            {
+                "name": [{}],  # Applies to ALL methods in ALL services
+                "retryPolicy": {
+                    "maxAttempts": max_attempts,  # Max retries (total attempts = 5)
+                    "initialBackoff": initial_backoff,  # First retry after 0.1s
+                    "maxBackoff": max_backoff,  # Max wait time between retries
+                    "backoffMultiplier": backoff_multiplier,  # Exponential backoff factor
+                    "retryableStatusCodes": [
+                        "UNAVAILABLE",
+                        "DEADLINE_EXCEEDED",
+                    ],  # Retries on network failures
+                },
+            }
+        ]
+    }
 
     service_config_json = json.dumps(service_config)
 

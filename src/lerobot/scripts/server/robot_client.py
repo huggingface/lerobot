@@ -92,7 +92,7 @@ class RobotClient:
         # Store configuration
         self.config = config
         self.robot = make_robot_from_config(config.robot)
-        self.robot.connect()
+        # self.robot.connect()
 
         lerobot_features = map_robot_keys_to_lerobot_features(self.robot)
 
@@ -114,7 +114,9 @@ class RobotClient:
             config.actions_per_chunk,
             config.policy_device,
         )
-        self.channel = grpc.insecure_channel(self.server_address, grpc_channel_options())
+        self.channel = grpc.insecure_channel(
+            self.server_address, grpc_channel_options(initial_backoff=f"{config.environment_dt:.4f}s")
+        )
         self.stub = async_inference_pb2_grpc.AsyncInferenceStub(self.channel)
         self.logger.info(f"Initializing client to connect to server at {self.server_address}")
 
