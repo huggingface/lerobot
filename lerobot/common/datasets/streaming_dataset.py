@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Callable, Dict, Generator, Iterator, Tuple
+from typing import Callable, Dict, Generator, Iterator
 
 import datasets
 import numpy as np
@@ -13,9 +13,7 @@ from lerobot.common.datasets.utils import (
     Backtrackable,
     LookAheadError,
     LookBackError,
-    check_delta_timestamps,
     check_version_compatibility,
-    get_delta_indices,
     item_to_torch,
 )
 from lerobot.common.datasets.video_utils import (
