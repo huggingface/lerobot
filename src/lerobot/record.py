@@ -202,7 +202,7 @@ def record_loop(
     start_episode_t = time.perf_counter()
     pbar = tqdm(
         total=control_time_s,
-        desc="Recording" if dataset else "Preparing environment",
+        desc="Preparing environment" if dataset is None else "Recording",
         unit="s",
         bar_format="{l_bar}{bar}| {n:.2f}/{total} [{elapsed}<{remaining}]"
     )
