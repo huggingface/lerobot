@@ -22,8 +22,7 @@ from pathlib import Path
 from datatrove.executor import LocalPipelineExecutor
 from datatrove.executor.slurm import SlurmPipelineExecutor
 from datatrove.pipeline.base import PipelineStep
-
-from examples.port_datasets.agibot_hdf5.download import (
+from port_datasets.agibot_hdf5.download import (
     RAW_REPO_ID,
     download_meta_data,
     get_observations_files,
@@ -44,15 +43,15 @@ class PortAgiBotShards(PipelineStep):
         import shutil
 
         from datasets.utils.tqdm import disable_progress_bars
-
-        from examples.port_datasets.agibot_hdf5.download import (
+        from port_datasets.agibot_hdf5.download import (
             RAW_REPO_ID,
             download,
             get_observations_files,
             no_depth,
         )
-        from examples.port_datasets.agibot_hdf5.port_agibot import port_agibot
-        from examples.port_datasets.droid_rlds.port_droid import validate_dataset
+        from port_datasets.agibot_hdf5.port_agibot import port_agibot
+        from port_datasets.droid_rlds.port_droid import validate_dataset
+
         from lerobot.constants import HF_LEROBOT_HOME
         from lerobot.utils.utils import init_logging
 

@@ -20,8 +20,7 @@ from pathlib import Path
 from datatrove.executor import LocalPipelineExecutor
 from datatrove.executor.slurm import SlurmPipelineExecutor
 from datatrove.pipeline.base import PipelineStep
-
-from examples.port_datasets.droid_rlds.port_droid import DROID_SHARDS
+from port_datasets.droid_rlds.port_droid import DROID_SHARDS
 
 
 class PortDroidShards(PipelineStep):
@@ -36,8 +35,8 @@ class PortDroidShards(PipelineStep):
 
     def run(self, data=None, rank: int = 0, world_size: int = 1):
         from datasets.utils.tqdm import disable_progress_bars
+        from port_datasets.droid_rlds.port_droid import port_droid, validate_dataset
 
-        from examples.port_datasets.droid_rlds.port_droid import port_droid, validate_dataset
         from lerobot.utils.utils import init_logging
 
         init_logging()

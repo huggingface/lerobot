@@ -24,8 +24,8 @@ from datatrove.executor.slurm import SlurmPipelineExecutor
 from datatrove.pipeline.base import PipelineStep
 from huggingface_hub import HfApi
 from huggingface_hub.constants import REPOCARD_NAME
+from port_datasets.droid_rlds.port_droid import DROID_SHARDS
 
-from examples.port_datasets.droid_rlds.port_droid import DROID_SHARDS
 from lerobot.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDatasetMetadata
 from lerobot.datasets.utils import create_lerobot_dataset_card
 from lerobot.utils.utils import init_logging

@@ -21,8 +21,8 @@ from pathlib import Path
 from datatrove.executor import LocalPipelineExecutor
 from datatrove.executor.slurm import SlurmPipelineExecutor
 from datatrove.pipeline.base import PipelineStep
+from port_datasets.droid_rlds.port_droid import DROID_SHARDS
 
-from examples.port_datasets.droid_rlds.port_droid import DROID_SHARDS
 from lerobot.datasets.aggregate import aggregate_datasets
 from lerobot.utils.utils import init_logging
 
