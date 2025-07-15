@@ -32,7 +32,7 @@ IMAGENET_STATS = {
     "std": [[[0.229]], [[0.224]], [[0.225]]],  # (c,1,1)
 }
 
-from lerobot.common.datasets.utils_must import EPISODES_DATASET_MAPPING, FEATURE_KEYS_MAPPING
+from lerobot.datasets.utils_must import EPISODES_DATASET_MAPPING, FEATURE_KEYS_MAPPING
 
 
 def resolve_delta_timestamps(

@@ -177,6 +177,12 @@ def train(cfg: TrainPipelineConfig):
         sampler = None
 
     keys_to_max_dim = getattr(dataset.meta, "keys_to_max_dim", {})
+    keys_to_max_dim = {
+        "action": (32,),
+        "observation.state": (32,),
+        "observation.image": (3, 1080, 1920),
+        "observation.image2": (3, 1080, 1920),
+    }
     collate_fn = partial(multidataset_collate_fn, keys_to_max_dim=keys_to_max_dim)
     dataloader = torch.utils.data.DataLoader(
         dataset,

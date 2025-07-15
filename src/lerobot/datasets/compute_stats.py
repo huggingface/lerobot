@@ -127,7 +127,8 @@ def aggregate_feature_stats(stats_ft_list: list[dict[str, dict]]) -> dict[str, d
     """Aggregates stats for a single feature."""
     means = np.stack([s["mean"] for s in stats_ft_list])
     variances = np.stack([s["std"] ** 2 for s in stats_ft_list])
-    counts = np.stack([s["count"] for s in stats_ft_list])
+    # counts = np.stack([s["count"] for s in stats_ft_list])
+    counts = np.stack([500 for s in stats_ft_list])
     total_count = counts.sum(axis=0)
 
     # Prepare weighted mean by matching number of dimensions

@@ -65,13 +65,22 @@ from torch import Tensor, nn
 from transformers import AutoProcessor
 
 from lerobot.constants import ACTION, OBS_STATE
-from lerobot.datasets import IMAGES_ORDER
+OBS_IMAGE = "observation.image"
+OBS_IMAGE_2 = "observation.image2"
+OBS_IMAGE_3 = "observation.image3"
+OBS_IMAGE_4 = "observation.image4"
+IMAGES_ORDER = {
+    OBS_IMAGE: 0,
+    OBS_IMAGE_2: 1,
+    OBS_IMAGE_3: 2,
+    OBS_IMAGE_4: 3,
+}
 from lerobot.policies.normalize import (
     Normalize,
     Unnormalize,
 )
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.policies.smolvla.smolvlm_with_expert import SmolVLMWithExpertModel
+from lerobot.policies.smolvla2.smolvlm_with_expert2 import SmolVLMWithExpertModel
 from lerobot.policies.smolvla2.configuration_smolvla2 import SmolVLA2Config
 from lerobot.policies.utils import (
     populate_queues,
@@ -80,6 +89,7 @@ from lerobot.utils.utils import get_safe_dtype
 
 # Matches ".soNNN", optionally followed by "-something", up to the "_buffer_" marker
 _VARIANT_RE = re.compile(r"\.so\d+(?:-[\w]+)?_buffer_")
+
 
 
 def canonicalise(k: str) -> str:
@@ -347,6 +357,8 @@ class SmolVLA2Policy(PreTrainedPolicy):
         super().__init__(config)
         config.validate_features()
         self.config = config
+        #FIXME: jadechoghari: dataset_stats['so100']
+        dataset_stats = dataset_stats['so100']
         self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
         self.normalize_targets = Normalize(
             config.output_features, config.normalization_mapping, dataset_stats
@@ -357,6 +369,8 @@ class SmolVLA2Policy(PreTrainedPolicy):
 
         self.language_tokenizer = AutoProcessor.from_pretrained(self.config.vlm_model_name).tokenizer
         self.model = VLAFlowMatching(config)
+        self.num_past_images = self.model.num_past_images
+        
         self.reset()
 
     def reset(self):
@@ -423,7 +437,15 @@ class SmolVLA2Policy(PreTrainedPolicy):
             actions = self._pi_aloha_encode_actions(actions)
 
         return actions
+        
+    def predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
+        self.eval()
 
+        batch = self._prepare_batch(batch)
+        self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
+
+        actions = self._get_action_chunk(batch, noise)
+        return actions
     @torch.no_grad
     def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
         """Select a single action given environment observations.
@@ -691,7 +713,7 @@ class VLAFlowMatching(nn.Module):
             model_id=self.config.vlm_model_name,
             freeze_vision_encoder=self.config.freeze_vision_encoder,
             train_expert_only=self.config.train_expert_only,
-            attention_implementation=self.config.attention_implementation,
+            # attention_implementation=self.config.attention_implementation,
             load_vlm_weights=self.config.load_vlm_weights,
             attention_mode=self.config.attention_mode,
             num_expert_layers=self.config.num_expert_layers,
@@ -973,7 +995,7 @@ class VLAFlowMatching(nn.Module):
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
             images, img_masks, lang_tokens, lang_masks, state=state
         )
-        suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(x_t, time)
+        suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(state, x_t, time)
 
         pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
         att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
