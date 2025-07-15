@@ -79,6 +79,7 @@ def update_meta_data(
             row[f"videos/{key}/to_timestamp"] = (
                 row[f"videos/{key}/to_timestamp"] + video_idx["latest_duration"]
             )
+
         row["dataset_from_index"] = row["dataset_from_index"] + dst_meta.info["total_frames"]
         row["dataset_to_index"] = row["dataset_to_index"] + dst_meta.info["total_frames"]
         row["episode_index"] = row["episode_index"] + dst_meta.info["total_episodes"]
@@ -87,8 +88,36 @@ def update_meta_data(
     return df.apply(_update, axis=1)
 
 
-def aggregate_datasets(repo_ids: list[str], aggr_repo_id: str, roots: list[Path] = None, aggr_root=None):
+def aggregate_datasets(
+    repo_ids: list[str],
+    aggr_repo_id: str,
+    roots: list[Path] = None,
+    aggr_root=None,
+    data_files_size_in_mb: float = None,
+    video_files_size_in_mb: float = None,
+    chunks_size: int = None,
+):
+    """
+    Aggregate multiple datasets into a single dataset.
+
+    Args:
+        repo_ids: List of repository IDs to aggregate
+        aggr_repo_id: Repository ID for the aggregated dataset
+        roots: Optional list of local root paths for the datasets
+        aggr_root: Root path for the aggregated dataset
+        data_files_size_in_mb: Maximum size for data files in MB (defaults to DEFAULT_DATA_FILE_SIZE_IN_MB)
+        video_files_size_in_mb: Maximum size for video files in MB (defaults to DEFAULT_VIDEO_FILE_SIZE_IN_MB)
+        chunks_size: Maximum number of files per chunk (defaults to DEFAULT_CHUNK_SIZE)
+    """
     logging.info("Start aggregate_datasets")
+
+    # Use default constants if parameters not provided
+    if data_files_size_in_mb is None:
+        data_files_size_in_mb = DEFAULT_DATA_FILE_SIZE_IN_MB
+    if video_files_size_in_mb is None:
+        video_files_size_in_mb = DEFAULT_VIDEO_FILE_SIZE_IN_MB
+    if chunks_size is None:
+        chunks_size = DEFAULT_CHUNK_SIZE
 
     # Load metadata
     all_metadata = (
@@ -126,8 +155,8 @@ def aggregate_datasets(repo_ids: list[str], aggr_repo_id: str, roots: list[Path]
 
     # Process each dataset
     for src_meta in tqdm.tqdm(all_metadata, desc="Copy data and videos"):
-        videos_idx = aggregate_videos(src_meta, dst_meta, videos_idx)
-        data_idx = aggregate_data(src_meta, dst_meta, data_idx)
+        videos_idx = aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chunks_size)
+        data_idx = aggregate_data(src_meta, dst_meta, data_idx, data_files_size_in_mb, chunks_size)
 
         meta_idx = aggregate_metadata(src_meta, dst_meta, meta_idx, data_idx, videos_idx)
 
@@ -143,7 +172,7 @@ def aggregate_datasets(repo_ids: list[str], aggr_repo_id: str, roots: list[Path]
 # -------------------------------
 
 
-def aggregate_videos(src_meta, dst_meta, videos_idx):
+def aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chunks_size):
     """
     Aggregates video chunks from a dataset into the aggregated dataset folder.
     """
@@ -157,6 +186,8 @@ def aggregate_videos(src_meta, dst_meta, videos_idx):
                 strict=False,
             )
         }
+        # Multiple files should be looped increasing the iteration index
+        unique_chunk_file_pairs = sorted(unique_chunk_file_pairs)
 
         # Current target chunk/file index
         chunk_idx = video_idx["chunk"]
@@ -175,19 +206,22 @@ def aggregate_videos(src_meta, dst_meta, videos_idx):
                 file_index=file_idx,
             )
 
+            # If a new file is created, we don't want to increment the latest_duration
+            update_latest_duration = False
+
             if not dst_path.exists():
                 # First write to this destination file
                 dst_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy(str(src_path), str(dst_path))
-                continue
+                continue  # not accumulating further, already copied the file in place
 
             # Check file sizes before appending
             src_size = get_video_size_in_mb(src_path)
             dst_size = get_video_size_in_mb(dst_path)
 
-            if dst_size + src_size >= DEFAULT_VIDEO_FILE_SIZE_IN_MB:
+            if dst_size + src_size >= video_files_size_in_mb:
                 # Rotate to a new chunk/file
-                chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, DEFAULT_CHUNK_SIZE)
+                chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, chunks_size)
                 dst_path = dst_meta.root / DEFAULT_VIDEO_PATH.format(
                     video_key=key,
                     chunk_index=chunk_idx,
@@ -196,6 +230,9 @@ def aggregate_videos(src_meta, dst_meta, videos_idx):
                 dst_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy(str(src_path), str(dst_path))
             else:
+                # Get the timestamps shift for this video
+                timestamps_shift_s = dst_meta.info["total_frames"] / dst_meta.info["fps"]
+
                 # Append to existing video file
                 concat_video_files(
                     [dst_path, src_path],
@@ -204,21 +241,29 @@ def aggregate_videos(src_meta, dst_meta, videos_idx):
                     chunk_idx,
                     file_idx,
                 )
+                # Update the latest_duration when appending (shifts timestamps!)
+                update_latest_duration = not update_latest_duration
 
         # Update the videos_idx with the final chunk and file indices for this key
         videos_idx[key]["chunk"] = chunk_idx
         videos_idx[key]["file"] = file_idx
 
+        if update_latest_duration:
+            videos_idx[key]["latest_duration"] += timestamps_shift_s
+
     return videos_idx
 
 
-def aggregate_data(src_meta, dst_meta, data_idx):
+def aggregate_data(src_meta, dst_meta, data_idx, data_files_size_in_mb, chunks_size):
     unique_chunk_file_ids = {
         (c, f)
         for c, f in zip(
             src_meta.episodes["data/chunk_index"], src_meta.episodes["data/file_index"], strict=False
         )
     }
+
+    unique_chunk_file_ids = sorted(unique_chunk_file_ids)
+
     for src_chunk_idx, src_file_idx in unique_chunk_file_ids:
         src_path = src_meta.root / DEFAULT_DATA_PATH.format(
             chunk_index=src_chunk_idx, file_index=src_file_idx
@@ -230,8 +275,8 @@ def aggregate_data(src_meta, dst_meta, data_idx):
             df,
             src_path,
             data_idx,
-            DEFAULT_DATA_FILE_SIZE_IN_MB,
-            DEFAULT_CHUNK_SIZE,
+            data_files_size_in_mb,
+            chunks_size,
             DEFAULT_DATA_PATH,
             contains_images=len(dst_meta.image_keys) > 0,
             aggr_root=dst_meta.root,
@@ -250,6 +295,7 @@ def aggregate_metadata(src_meta, dst_meta, meta_idx, data_idx, videos_idx):
         )
     }
 
+    chunk_file_ids = sorted(chunk_file_ids)
     for chunk_idx, file_idx in chunk_file_ids:
         src_path = src_meta.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
         df = pd.read_parquet(src_path)

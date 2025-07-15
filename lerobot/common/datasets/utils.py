@@ -893,8 +893,8 @@ def validate_episode_buffer(episode_buffer: dict, total_episodes: int, features:
 
 
 def to_parquet_with_hf_images(df: pandas.DataFrame, path: Path):
-    """ This function correctly writes to parquet a panda DataFrame that contains images encoded by HF dataset.
-        This way, it can be loaded by HF dataset and correctly formated images are returned.
+    """This function correctly writes to parquet a panda DataFrame that contains images encoded by HF dataset.
+    This way, it can be loaded by HF dataset and correctly formated images are returned.
     """
     # TODO(qlhoest): replace this weird synthax by `df.to_parquet(path)` only
     datasets.Dataset.from_dict(df.to_dict(orient="list")).to_parquet(path)
