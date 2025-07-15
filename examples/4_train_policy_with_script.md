@@ -156,7 +156,7 @@ INFO 2025-01-24 16:10:56 ts/train.py:263 Checkpoint policy after step 100
 Now let's simulate a crash by killing the process (hit `ctrl`+`c`). We can then simply resume this run from the last checkpoint available with:
 ```bash
 python -m lerobot.scripts.train \
-    --config_path=outputs/train/run_resumption/checkpoints/last/pretrained_model/ \
+    --config_path=outputs/train/run_resumption/checkpoints/last/pretrained_model/train_config.json \
     --resume=true
 ```
 You should see from the logging that your training picks up from where it left off.
@@ -165,7 +165,7 @@ Another reason for which you might want to resume a run is simply to extend trai
 You could double the number of steps of the previous run with:
 ```bash
 python -m lerobot.scripts.train \
-    --config_path=outputs/train/run_resumption/checkpoints/last/pretrained_model/ \
+    --config_path=outputs/train/run_resumption/checkpoints/last/pretrained_model/train_config.json \
     --resume=true \
     --steps=200000
 ```
