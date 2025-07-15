@@ -18,11 +18,7 @@ This is fundamentally different from synchronous inference (sync), where the rob
 ---
 ## Getting started with async inference
 
-<<<<<<< HEAD
 You can read more information on asynchronous inference in our [blogpost](https://huggingface.co/blog/async-robot-inference). This guide is designed to help you quickly set up and run asynchronous inference in your environment.
-=======
-You can read more information on asynchronous inference in our [blogpost](NOTE:blogpost). Here, we report a getting started guide meant to help you setup and run asynchronous inference in your setup.
->>>>>>> user/helper2424/refined_merge_proto
 
 First, install `lerobot` with the `async` tag, to install the extra dependencies required to run async inference.
 
@@ -153,7 +149,6 @@ python src/lerobot/scripts/server/robot_client.py \
 <hfoption id="API example">
 ```python
 import threading
-<<<<<<< HEAD
 from lerobot.robots.so100_follower import SO100FollowerConfig
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.scripts.server.configs import RobotClientConfig
@@ -184,78 +179,27 @@ client_cfg = RobotClientConfig(
     pretrained_name_or_path="fracapuano/smolvla_async",
     chunk_size_threshold=0.5,
     actions_per_chunk=50,  # make sure this is less than the max actions of the policy
-=======
-import time
-from lerobot.robots.so100_follower import SO100FollowerConfig, SO100Follower
-from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
-from lerobot.scripts.server.configs import RobotClientConfig
-from lerobot.scripts.server.robot_client import RobotClient
-from lerobot.scripts.server.helpers import TimedObservation, map_robot_keys_to_lerobot_features
-
-# 1. Create the robot instance
-"""Check out the cameras available in your setup by running `python lerobot/find_cameras.py`"""
-camera_cfg = {"laptop": OpenCVCameraConfig(index_or_path=0, width=1920, height=1080, fps=30)}
-robot_cfg = SO100FollowerConfig(port="/dev/tty.usbmodem585A0076841", id="follower_so100", cameras=camera_cfg)
-robot = SO100Follower(robot_cfg)
-
-# 2. Map between the raw robot features and the lerobot format
-lerobot_features = map_robot_keys_to_lerobot_features(robot)
-
-# 3. Create client configuration
-client_cfg = RobotClientConfig(
-    robot=robot,
-    server_address="localhost:8080",
-    policy_device="mps",
-    lerobot_features=lerobot_features,
-    chunk_size_threshold=0.6,
-    lerobot_features=lerobot_features,
-    policy_type=...,
-    pretrained_name_or_path=...,
->>>>>>> user/helper2424/refined_merge_proto
 )
 
 # 4. Create and start client
 client = RobotClient(client_cfg)
 
 # 5. Specify the task
-<<<<<<< HEAD
 task = "Don't do anything, stay still"
 
 if client.start():
-=======
-task = ...
-
-if client.start():
-    def make_observation() -> TimedObservation:
-        observation = client.robot.get_observation()
-        observation["task"] = task
-
-        return TimedObservation(
-            timestamp=time.time(),
-            observation=observation,
-            timestep=max(client.latest_action, 0),
-        )
-
->>>>>>> user/helper2424/refined_merge_proto
     # Start action receiver thread
     action_receiver_thread = threading.Thread(target=client.receive_actions, daemon=True)
     action_receiver_thread.start()
 
     try:
         # Run the control loop
-<<<<<<< HEAD
         client.control_loop(task)
     except KeyboardInterrupt:
         client.stop()
         action_receiver_thread.join()
         # (Optionally) plot the action queue size
         visualize_action_queue_size(client.action_queue_size)
-=======
-        client.control_loop(make_observation)
-    except KeyboardInterrupt:
-        client.stop()
-        action_receiver_thread.join()
->>>>>>> user/helper2424/refined_merge_proto
 ```
 </hfoption>
 </hfoptions>
