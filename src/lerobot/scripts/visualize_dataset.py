@@ -65,8 +65,8 @@ import argparse
 import gc
 import logging
 import time
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 import numpy as np
 import rerun as rr

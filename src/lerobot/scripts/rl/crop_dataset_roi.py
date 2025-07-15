@@ -18,7 +18,6 @@ import argparse
 import json
 from copy import deepcopy
 from pathlib import Path
-from typing import Dict, Tuple
 
 import cv2
 import torch
@@ -162,10 +161,10 @@ def get_image_from_lerobot_dataset(dataset: LeRobotDataset):
 
 def convert_lerobot_dataset_to_cropper_lerobot_dataset(
     original_dataset: LeRobotDataset,
-    crop_params_dict: Dict[str, Tuple[int, int, int, int]],
+    crop_params_dict: dict[str, tuple[int, int, int, int]],
     new_repo_id: str,
     new_dataset_root: str,
-    resize_size: Tuple[int, int] = (128, 128),
+    resize_size: tuple[int, int] = (128, 128),
     push_to_hub: bool = False,
     task: str = "",
 ) -> LeRobotDataset:

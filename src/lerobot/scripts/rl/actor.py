@@ -63,12 +63,12 @@ from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.policies.factory import make_policy
 from lerobot.policies.sac.modeling_sac import SACPolicy
 from lerobot.robots import so100_follower  # noqa: F401
-from lerobot.scripts.rl import learner_service
 from lerobot.scripts.rl.gym_manipulator import make_robot_env
 from lerobot.teleoperators import gamepad, so101_leader  # noqa: F401
 from lerobot.transport import services_pb2, services_pb2_grpc
 from lerobot.transport.utils import (
     bytes_to_state_dict,
+    grpc_channel_options,
     python_object_to_bytes,
     receive_bytes_in_chunks,
     send_bytes_in_chunks,
@@ -317,7 +317,7 @@ def act_with_policy(
         if done or truncated:
             logging.info(f"[ACTOR] Global step {interaction_step}: Episode reward: {sum_reward_episode}")
 
-            update_policy_parameters(policy=policy.actor, parameters_queue=parameters_queue, device=device)
+            update_policy_parameters(policy=policy, parameters_queue=parameters_queue, device=device)
 
             if len(list_transition_to_send_to_learner) > 0:
                 push_transitions_to_transport_queue(
@@ -399,8 +399,6 @@ def learner_service_client(
     host: str = "127.0.0.1",
     port: int = 50051,
 ) -> tuple[services_pb2_grpc.LearnerServiceStub, grpc.Channel]:
-    import json
-
     """
     Returns a client for the learner service.
 
@@ -408,34 +406,9 @@ def learner_service_client(
     So we need to create only one client and reuse it.
     """
 
-    service_config = {
-        "methodConfig": [
-            {
-                "name": [{}],  # Applies to ALL methods in ALL services
-                "retryPolicy": {
-                    "maxAttempts": 5,  # Max retries (total attempts = 5)
-                    "initialBackoff": "0.1s",  # First retry after 0.1s
-                    "maxBackoff": "2s",  # Max wait time between retries
-                    "backoffMultiplier": 2,  # Exponential backoff factor
-                    "retryableStatusCodes": [
-                        "UNAVAILABLE",
-                        "DEADLINE_EXCEEDED",
-                    ],  # Retries on network failures
-                },
-            }
-        ]
-    }
-
-    service_config_json = json.dumps(service_config)
-
     channel = grpc.insecure_channel(
         f"{host}:{port}",
-        options=[
-            ("grpc.max_receive_message_length", learner_service.MAX_MESSAGE_SIZE),
-            ("grpc.max_send_message_length", learner_service.MAX_MESSAGE_SIZE),
-            ("grpc.enable_retries", 1),
-            ("grpc.service_config", service_config_json),
-        ],
+        grpc_channel_options(),
     )
     stub = services_pb2_grpc.LearnerServiceStub(channel)
     logging.info("[ACTOR] Learner service client created")
@@ -642,9 +615,29 @@ def update_policy_parameters(policy: SACPolicy, parameters_queue: Queue, device)
     bytes_state_dict = get_last_item_from_queue(parameters_queue, block=False)
     if bytes_state_dict is not None:
         logging.info("[ACTOR] Load new parameters from Learner.")
-        state_dict = bytes_to_state_dict(bytes_state_dict)
-        state_dict = move_state_dict_to_device(state_dict, device=device)
-        policy.load_state_dict(state_dict)
+        state_dicts = bytes_to_state_dict(bytes_state_dict)
+
+        # TODO: check encoder parameter synchronization possible issues:
+        # 1. When shared_encoder=True, we're loading stale encoder params from actor's state_dict
+        #    instead of the updated encoder params from critic (which is optimized separately)
+        # 2. When freeze_vision_encoder=True, we waste bandwidth sending/loading frozen params
+        # 3. Need to handle encoder params correctly for both actor and discrete_critic
+        # Potential fixes:
+        # - Send critic's encoder state when shared_encoder=True
+        # - Skip encoder params entirely when freeze_vision_encoder=True
+        # - Ensure discrete_critic gets correct encoder state (currently uses encoder_critic)
+
+        # Load actor state dict
+        actor_state_dict = move_state_dict_to_device(state_dicts["policy"], device=device)
+        policy.actor.load_state_dict(actor_state_dict)
+
+        # Load discrete critic if present
+        if hasattr(policy, "discrete_critic") and "discrete_critic" in state_dicts:
+            discrete_critic_state_dict = move_state_dict_to_device(
+                state_dicts["discrete_critic"], device=device
+            )
+            policy.discrete_critic.load_state_dict(discrete_critic_state_dict)
+            logging.info("[ACTOR] Loaded discrete critic parameters from Learner.")
 
 
 #################################################

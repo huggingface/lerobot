@@ -17,6 +17,8 @@
     title: Train a Robot with RL
   - local: hilserl_sim
     title: Train RL in Simulation
+  - local: async
+    title: Use Async Inference
   - local: porting_datasets_v3
     title: Porting Large Datasets
   title: "Tutorials"

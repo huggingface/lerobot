@@ -181,7 +181,7 @@ def train(cfg: TrainPipelineConfig):
         batch_size=cfg.batch_size,
         shuffle=shuffle,
         sampler=sampler,
-        pin_memory=device.type != "cpu",
+        pin_memory=device.type == "cuda",
         drop_last=False,
     )
     dl_iter = cycle(dataloader)
@@ -208,7 +208,7 @@ def train(cfg: TrainPipelineConfig):
 
         for key in batch:
             if isinstance(batch[key], torch.Tensor):
-                batch[key] = batch[key].to(device, non_blocking=True)
+                batch[key] = batch[key].to(device, non_blocking=device.type == "cuda")
 
         train_tracker, output_dict = update_policy(
             train_tracker,
