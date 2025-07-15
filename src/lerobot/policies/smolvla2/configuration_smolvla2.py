@@ -14,12 +14,13 @@
 
 from dataclasses import dataclass, field
 
+from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import (
     CosineDecayWithWarmupSchedulerConfig,
 )
-from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
+
 
 @dataclass
 class PEFTConfig:
@@ -27,6 +28,7 @@ class PEFTConfig:
     lora_alpha: int = 16
     lora_dropout: float = 0.1
     target_modules: str = "q_proj,v_proj"
+
 
 @PreTrainedConfig.register_subclass("smolvla2")
 @dataclass
@@ -78,7 +80,7 @@ class SmolVLA2Config(PreTrainedConfig):
     train_state_proj: bool = True
 
     # Training presets
-    optimizer_lr: float = 2.5e-5 #1e-4
+    optimizer_lr: float = 2.5e-5  # 1e-4
     optimizer_betas: tuple[float, float] = (0.9, 0.95)
     optimizer_eps: float = 1e-8
     optimizer_weight_decay: float = 1e-10
@@ -104,19 +106,19 @@ class SmolVLA2Config(PreTrainedConfig):
     pad_language_to: str = "longest"  # "max_length"
 
     num_expert_layers: int = -1  # Less or equal to 0 is the default where the action expert has the same number of layers of VLM. Otherwise the expert have less layers.
-    num_vlm_layers: int = 16  
-    past_obs_keys: str = f"image"
+    num_vlm_layers: int = 16
+    past_obs_keys: str = "image"
     add_local_special_image_tokens: bool = False
 
     reverse_images_order: bool = False
 
     state_to_prefix: bool = False
 
-    pad_language_to: str = "longest" # "max_length"
+    pad_language_to: str = "longest"  # "max_length"
     causal_action_attention_mask: bool = False
 
-    self_attn_every_n_layers: int = -1# Number of layers used in the VLM (first num_vlm_layers layers)
-    #self_attn_every_n_layers: int = 2  # Interleave SA layers each self_attn_every_n_layers
+    self_attn_every_n_layers: int = -1  # Number of layers used in the VLM (first num_vlm_layers layers)
+    # self_attn_every_n_layers: int = 2  # Interleave SA layers each self_attn_every_n_layers
     expert_width_multiplier: float = 0.75  # The action expert hidden size (wrt to the VLM)
 
     min_period: float = 4e-3  # sensitivity range for the timestep used in sine-cosine positional encoding
@@ -133,7 +135,7 @@ class SmolVLA2Config(PreTrainedConfig):
 
     shuffle_camera_positions: bool = False
     vlm_img_size: int = -1
-    
+
     regression_loss: bool = False
 
     def __post_init__(self):

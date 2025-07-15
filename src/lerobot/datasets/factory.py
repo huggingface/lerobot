@@ -32,7 +32,8 @@ IMAGENET_STATS = {
     "std": [[[0.229]], [[0.224]], [[0.225]]],  # (c,1,1)
 }
 
-from lerobot.common.datasets.utils_must import (EPISODES_DATASET_MAPPING, TRAINING_FEATURES, FEATURE_KEYS_MAPPING)
+from lerobot.datasets.utils_must import EPISODES_DATASET_MAPPING, FEATURE_KEYS_MAPPING
+
 
 def resolve_delta_timestamps(
     cfg: PreTrainedConfig, ds_meta: LeRobotDatasetMetadata
@@ -67,57 +68,6 @@ def resolve_delta_timestamps(
     return delta_timestamps
 
 
-def make_dataset1(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDataset:
-    """Handles the logic of setting up delta timestamps and image transforms before creating a dataset.
-
-    Args:
-        cfg (TrainPipelineConfig): A TrainPipelineConfig config which contains a DatasetConfig and a PreTrainedConfig.
-
-    Raises:
-        NotImplementedError: The MultiLeRobotDataset is currently deactivated.
-
-    Returns:
-        LeRobotDataset | MultiLeRobotDataset
-    """
-    image_transforms = (
-        ImageTransforms(cfg.dataset.image_transforms) if cfg.dataset.image_transforms.enable else None
-    )
-
-    if isinstance(cfg.dataset.repo_id, str):
-        ds_meta = LeRobotDatasetMetadata(
-            cfg.dataset.repo_id, root=cfg.dataset.root, revision=cfg.dataset.revision
-        )
-        delta_timestamps = resolve_delta_timestamps(cfg.policy, ds_meta)
-        dataset = LeRobotDataset(
-            cfg.dataset.repo_id,
-            root=cfg.dataset.root,
-            episodes=cfg.dataset.episodes,
-            delta_timestamps=delta_timestamps,
-            image_transforms=image_transforms,
-            revision=cfg.dataset.revision,
-            video_backend=cfg.dataset.video_backend,
-        )
-    else:
-        raise NotImplementedError("The MultiLeRobotDataset isn't supported for now.")
-        dataset = MultiLeRobotDataset(
-            cfg.dataset.repo_id,
-            # TODO(aliberts): add proper support for multi dataset
-            # delta_timestamps=delta_timestamps,
-            image_transforms=image_transforms,
-            video_backend=cfg.dataset.video_backend,
-        )
-        logging.info(
-            "Multiple datasets were provided. Applied the following index mapping to the provided datasets: "
-            f"{pformat(dataset.repo_id_to_index, indent=2)}"
-        )
-
-    if cfg.dataset.use_imagenet_stats:
-        for key in dataset.meta.camera_keys:
-            for stats_type, stats in IMAGENET_STATS.items():
-                dataset.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
-
-    return dataset
-
 def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDataset:
     """Handles the logic of setting up delta timestamps and image transforms before creating a dataset.
 
@@ -144,7 +94,6 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
         revision = getattr(cfg.dataset, "revision", None)
         ds_meta = LeRobotDatasetMetadata(
             cfg.dataset.repo_id,
-            local_files_only=cfg.dataset.local_files_only,
             feature_keys_mapping=feature_keys_mapping,
             revision=revision,
         )
@@ -157,7 +106,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             image_transforms=image_transforms,
             revision=revision,
             video_backend=cfg.dataset.video_backend,
-            local_files_only=cfg.dataset.local_files_only,
+            download_videos=True,
             feature_keys_mapping=feature_keys_mapping,
             max_action_dim=cfg.dataset.max_action_dim,
             max_state_dim=cfg.dataset.max_state_dim,
@@ -170,12 +119,13 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
         for i in range(len(repo_id)):
             ds_meta = LeRobotDatasetMetadata(
                 repo_id[i],
-                local_files_only=cfg.dataset.local_files_only,
                 feature_keys_mapping=feature_keys_mapping,
             )  # FIXME(mshukor): ?
             delta_timestamps[repo_id[i]] = resolve_delta_timestamps(cfg.policy, ds_meta)
-            episodes[repo_id[i]] =  EPISODES_DATASET_MAPPING.get(repo_id[i], cfg.dataset.episodes)
-        training_features = TRAINING_FEATURES.get(cfg.dataset.features_version, None)
+            episodes[repo_id[i]] = EPISODES_DATASET_MAPPING.get(repo_id[i], cfg.dataset.episodes)
+        # training_features = TRAINING_FEATURES.get(cfg.dataset.features_version, None)
+        # FIXME: (jadechoghari): check support for training features
+        training_features = None
         dataset = MultiLeRobotDataset(
             repo_id,
             # TODO(aliberts): add proper support for multi dataset
@@ -183,11 +133,11 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             delta_timestamps=delta_timestamps,
             image_transforms=image_transforms,
             video_backend=cfg.dataset.video_backend,
-            local_files_only=cfg.dataset.local_files_only,
+            download_videos=True,
             sampling_weights=sampling_weights,
             feature_keys_mapping=feature_keys_mapping,
-            max_action_dim=cfg.dataset.max_action_dim,
-            max_state_dim=cfg.dataset.max_state_dim,
+            max_action_dim=cfg.policy.max_action_dim,
+            max_state_dim=cfg.policy.max_state_dim,
             max_num_images=cfg.dataset.max_num_images,
             max_image_dim=cfg.dataset.max_image_dim,
             train_on_all_features=cfg.dataset.train_on_all_features,
@@ -202,7 +152,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
         )
         logging.info(
             "Multiple datasets were provided. Applied the following index mapping to the provided datasets: "
-            f"{pformat(dataset.repo_id_to_index , indent=2)}"
+            f"{pformat(dataset.repo_id_to_index, indent=2)}"
         )
     if cfg.dataset.use_imagenet_stats:
         for key in dataset.meta.camera_keys:
