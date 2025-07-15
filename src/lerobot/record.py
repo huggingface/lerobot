@@ -204,7 +204,7 @@ def record_loop(
         total=control_time_s,
         desc="Preparing environment" if dataset is None else "Recording",
         unit="s",
-        bar_format="{l_bar}{bar}| {n:.2f}/{total} [{elapsed}<{remaining}]"
+        bar_format="{l_bar}{bar}| {n:.2f}/{total} [{elapsed}<{remaining}]",
     )
     while timestamp < control_time_s:
         start_loop_t = time.perf_counter()
