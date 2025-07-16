@@ -712,7 +712,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if self.delta_indices is not None:
             query_indices, padding = self._get_query_indices(idx, ep_idx)
             if query_indices is not None and self.need_control_output:
-                past_query_indices = query_indices["action"].copy() - 16
+                past_query_indices = [x - 16 for x in query_indices["action"].copy()]
 
             query_result = self._query_hf_dataset(query_indices)
             item = {**item, **padding}
@@ -720,8 +720,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 item[key] = val
         
         # Check if any element in past_query_indices is negative
-        if self.need_control_output and not any(delta < 0 for delta in past_query_indices["action"]):
-            item["past_action"] = self._query_hf_dataset(past_query_indices)["action"]
+        if self.need_control_output:
+            if not any(delta < 0 for delta in past_query_indices):
+                item["past_action"] = self._query_hf_dataset(dict(action=past_query_indices))["action"]
+            if "past_action" not in item:
+                item["past_action"] = torch.zeros_like(item["action"])
 
         if len(self.meta.video_keys) > 0:
             current_ts = item["timestamp"].item()

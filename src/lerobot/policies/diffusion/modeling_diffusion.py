@@ -546,8 +546,8 @@ class DiffusionControlnetModel(nn.Module):
         """
         Load pretrained UNet weights.
         """
-        _pretrained_policy = PreTrainedPolicy.from_pretrained(self.config.pretrained_unet_weights)
-        if not isinstance(_pretrained_policy, DiffusionModel):
+        _pretrained_policy = DiffusionPolicy.from_pretrained(self.config.pretrained_unet_weights)
+        if not isinstance(_pretrained_policy, DiffusionPolicy):
             raise ValueError(
                 f"Expected pretrained UNet weights to be from DiffusionModel, got {_pretrained_policy.name}."
             )
@@ -555,7 +555,7 @@ class DiffusionControlnetModel(nn.Module):
         """
         Copy UNet weights.
         """
-        self.unet.load_state_dict(_pretrained_policy.unet.state_dict(), strict=True)
+        self.unet.load_state_dict(_pretrained_policy.diffusion.unet.state_dict(), strict=True)
 
         self.control_net.diffusion_step_encoder.load_state_dict(self.unet.diffusion_step_encoder.state_dict())
         self.control_net.down_modules.load_state_dict(self.unet.down_modules.state_dict())
@@ -694,9 +694,6 @@ class DiffusionControlnetModel(nn.Module):
 
         # Encode image features and concatenate them all together along with the state vector.
         global_cond = self._prepare_global_conditioning(batch)  # (B, global_cond_dim)
-
-        if "past_action" in batch:
-            print("BATCH PAST_ACTION", batch["past_action"].shape)
 
         # Forward diffusion.
         trajectory = batch["action"]
@@ -1205,6 +1202,10 @@ class ControlNet(nn.Module):
             f"number of parameters: {sum(p.numel() for p in self.parameters())}"
         )
 
+    def zero_module(self, module):
+        for p in module.parameters():
+            nn.init.zeros_(p)
+        return module
 
     def forward(self, x: Tensor, timestep: Tensor | int, global_cond=None, control_input=None) -> Tensor:
         """
@@ -1218,6 +1219,7 @@ class ControlNet(nn.Module):
         """
         # For 1D convolutions we'll need feature dimension first.
         x = einops.rearrange(x, "b t d -> b d t")
+        control_input = einops.rearrange(control_input, "b t d -> b d t") if control_input is not None else None
         sample = x
 
         timesteps_embed = self.diffusion_step_encoder(timestep)
