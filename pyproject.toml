@@ -46,7 +46,7 @@ classifiers = [
 ]
 dependencies = [
     "cmake>=3.29.0.1",
-    "datasets>=2.19.0",
+    "datasets>=2.19.0,<=3.6.0",
     "deepdiff>=7.0.1",
     "diffusers>=0.27.2",
     "draccus==0.10.0",
@@ -79,7 +79,7 @@ dependencies = [
 [project.optional-dependencies]
 aloha = ["gym-aloha>=0.1.1 ; python_version < '4.0'"]
 docs = ["hf-doc-builder @ git+https://github.com/huggingface/doc-builder.git@main", "watchdog >= 6.0.0"]
-dev = ["pre-commit>=3.7.0", "debugpy>=1.8.1"]
+dev = ["pre-commit>=3.7.0", "debugpy>=1.8.1", "grpcio-tools==1.71.0"]
 dora = [
     "gym-dora @ git+https://github.com/dora-rs/dora-lerobot.git#subdirectory=gym_dora ; python_version < '4.0'",
 ]
@@ -105,6 +105,7 @@ hilserl = ["transformers>=4.50.3", "gym-hil>=0.1.9", "protobuf>=5.29.3", "grpcio
 umi = ["imagecodecs>=2024.1.1"]
 video_benchmark = ["scikit-image>=0.23.2", "pandas>=2.2.2"]
 xarm = ["gym-xarm>=0.1.1 ; python_version < '4.0'"]
+async = ["grpcio==1.71.0", "matplotlib>=3.10.3"]
 
 [tool.poetry]
 requires-poetry = ">=2.1"
@@ -132,7 +133,7 @@ exclude_dirs = [
     "src/lerobot/policies/pi0/conversion_scripts",
     "src/lerobot/scripts/push_dataset_to_hub.py",
 ]
-skips = ["B101", "B311", "B404", "B603"]
+skips = ["B101", "B311", "B404", "B603", "B615"]
 
 [tool.typos]
 default.extend-ignore-re = [
