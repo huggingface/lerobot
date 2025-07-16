@@ -61,9 +61,9 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from tests.mocks.mock_robot import MockRobot
 
         return MockRobot(config)
-    elif '.' in config.type:
+    elif "." in config.type:
         # If the type is a full module path, import it dynamically
-        module_path, class_name = config.type.rsplit('.', 1)
+        module_path, class_name = config.type.rsplit(".", 1)
         module = __import__(module_path, fromlist=[class_name])
         robot_class = getattr(module, class_name)
         return robot_class(config)

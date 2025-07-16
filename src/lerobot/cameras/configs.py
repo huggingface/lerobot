@@ -46,7 +46,7 @@ class CameraConfig(draccus.ChoiceRegistry, abc.ABC):
         for arg in sys.argv:
             if arg.startswith("--camera.type="):
                 class_path = arg.split("=")[1]
-                if '.' in class_path:
+                if "." in class_path:
                     module_path, _ = class_path.rsplit(".", 1)
                     __import__(module_path)
 
