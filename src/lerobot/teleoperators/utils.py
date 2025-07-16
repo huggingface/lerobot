@@ -33,6 +33,12 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
         from .so101_leader import SO101Leader
 
         return SO101Leader(config)
+    elif config.type == "so101_follower_t":
+        # For bilateral teleoperation, SO101FollowerT is used as a robot, not a teleoperator
+        # This should be handled in the record.py file instead
+        raise ValueError(
+            "so101_follower_t should be created as a robot instance for bilateral teleoperation, not as a teleoperator"
+        )
     elif config.type == "stretch3":
         from .stretch3_gamepad import Stretch3GamePad
 

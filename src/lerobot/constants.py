@@ -28,6 +28,9 @@ ROBOTS = "robots"
 ROBOT_TYPE = "robot_type"
 TELEOPERATORS = "teleoperators"
 
+ROBOTS = "robots"
+TELEOPERATORS = "teleoperators"
+
 # files & directories
 CHECKPOINTS_DIR = "checkpoints"
 LAST_CHECKPOINT_LINK = "last"

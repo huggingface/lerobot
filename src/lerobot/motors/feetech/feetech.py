@@ -223,7 +223,7 @@ class FeetechMotorsBus(MotorsBus):
         for motor in self.motors:
             # By default, Feetech motors have a 500µs delay response time (corresponding to a value of 250 on
             # the 'Return_Delay_Time' address). We ensure this is reduced to the minimum of 2µs (value of 0).
-            self.write("Return_Delay_Time", motor, return_delay_time)
+            # self.write("Return_Delay_Time", motor, 0)
             # Set 'Maximum_Acceleration' to 254 to speedup acceleration and deceleration of the motors.
             if self.protocol_version == 0:
                 self.write("Maximum_Acceleration", motor, maximum_acceleration)
@@ -231,83 +231,58 @@ class FeetechMotorsBus(MotorsBus):
 
     @property
     def is_calibrated(self) -> bool:
-        motors_calibration = self.read_calibration()
-        if set(motors_calibration) != set(self.calibration):
-            return False
-
-        same_ranges = all(
-            self.calibration[motor].range_min == cal.range_min
-            and self.calibration[motor].range_max == cal.range_max
-            for motor, cal in motors_calibration.items()
-        )
-        if self.protocol_version == 1:
-            return same_ranges
-
-        same_offsets = all(
-            self.calibration[motor].homing_offset == cal.homing_offset
-            for motor, cal in motors_calibration.items()
-        )
-        return same_ranges and same_offsets
+        # Check if calibration data has been loaded from file
+        return bool(self.calibration)
 
     def read_calibration(self) -> dict[str, MotorCalibration]:
-        offsets, mins, maxes = {}, {}, {}
-        for motor in self.motors:
-            mins[motor] = self.read("Min_Position_Limit", motor, normalize=False)
-            maxes[motor] = self.read("Max_Position_Limit", motor, normalize=False)
-            offsets[motor] = (
-                self.read("Homing_Offset", motor, normalize=False) if self.protocol_version == 0 else 0
-            )
-
+        # Return empty calibration - we don't read from motors anymore
         calibration = {}
         for motor, m in self.motors.items():
             calibration[motor] = MotorCalibration(
                 id=m.id,
                 drive_mode=0,
-                homing_offset=offsets[motor],
-                range_min=mins[motor],
-                range_max=maxes[motor],
+                homing_offset=0,
+                range_min=0,
+                range_max=4095,  # Default max resolution
             )
 
         return calibration
 
-    def write_calibration(self, calibration_dict: dict[str, MotorCalibration], cache: bool = True) -> None:
-        for motor, calibration in calibration_dict.items():
-            if self.protocol_version == 0:
-                self.write("Homing_Offset", motor, calibration.homing_offset)
-            self.write("Min_Position_Limit", motor, calibration.range_min)
-            self.write("Max_Position_Limit", motor, calibration.range_max)
-
-        if cache:
-            self.calibration = calibration_dict
+    def write_calibration(self, calibration_dict: dict[str, MotorCalibration]) -> None:
+        # Only update the in-memory calibration, don't write to motors
+        self.calibration = calibration_dict
 
     def _get_half_turn_homings(self, positions: dict[NameOrID, Value]) -> dict[NameOrID, Value]:
         """
-        On Feetech Motors:
-        Present_Position = Actual_Position - Homing_Offset
+        Calculate homing offsets such that the current position becomes 0 degrees.
+
+        For Feetech motors:
+        - The homing offset is subtracted from the raw position during normalization
+        - So to make current position = 0 degrees, homing_offset = current_raw_position
         """
         half_turn_homings = {}
         for motor, pos in positions.items():
-            model = self._get_motor_model(motor)
-            max_res = self.model_resolution_table[model] - 1
-            half_turn_homings[motor] = pos - int(max_res / 2)
+            # The homing offset should be the current position
+            # This way, when we normalize: (pos - homing_offset) = 0
+            half_turn_homings[motor] = pos
 
         return half_turn_homings
 
     def disable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
         for motor in self._get_motors_list(motors):
             self.write("Torque_Enable", motor, TorqueMode.DISABLED.value, num_retry=num_retry)
-            self.write("Lock", motor, 0, num_retry=num_retry)
+            # self.write("Lock", motor, 0, num_retry=num_retry)
 
-    def _disable_torque(self, motor_id: int, model: str, num_retry: int = 0) -> None:
+    def _disable_torque(self, motor_id: int, model: str, num_retry: int = 5) -> None:
         addr, length = get_address(self.model_ctrl_table, model, "Torque_Enable")
         self._write(addr, length, motor_id, TorqueMode.DISABLED.value, num_retry=num_retry)
-        addr, length = get_address(self.model_ctrl_table, model, "Lock")
-        self._write(addr, length, motor_id, 0, num_retry=num_retry)
+        # addr, length = get_address(self.model_ctrl_table, model, "Lock")
+        # self._write(addr, length, motor_id, 0, num_retry=num_retry)
 
-    def enable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
+    def enable_torque(self, motors: str | list[str] | None = None, num_retry: int = 5) -> None:
         for motor in self._get_motors_list(motors):
             self.write("Torque_Enable", motor, TorqueMode.ENABLED.value, num_retry=num_retry)
-            self.write("Lock", motor, 1, num_retry=num_retry)
+            # self.write("Lock", motor, 1, num_retry=num_retry)
 
     def _encode_sign(self, data_name: str, ids_values: dict[int, int]) -> dict[int, int]:
         for id_ in ids_values:

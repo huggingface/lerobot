@@ -83,6 +83,9 @@ class MotorNormMode(str, Enum):
     DEGREES = "degrees"
 
 
+COUNT_TO_DEG = 0.087  # 1 encoder count = 0.087 °
+
+
 @dataclass
 class MotorCalibration:
     id: int
@@ -441,8 +444,8 @@ class MotorsBus(abc.ABC):
         try:
             if not self.port_handler.openPort():
                 raise OSError(f"Failed to open port '{self.port}'.")
-            elif handshake:
-                self._handshake()
+            # elif handshake:
+            # self._handshake()
         except (FileNotFoundError, OSError, serial.SerialException) as e:
             raise ConnectionError(
                 f"\nCould not connect on port '{self.port}'. Make sure you are using the correct port."
@@ -711,9 +714,8 @@ class MotorsBus(abc.ABC):
         self.reset_calibration(motors)
         actual_positions = self.sync_read("Present_Position", motors, normalize=False)
         homing_offsets = self._get_half_turn_homings(actual_positions)
-        for motor, offset in homing_offsets.items():
-            self.write("Homing_Offset", motor, offset)
 
+        # Don't write to motors, just return the calculated offsets
         return homing_offsets
 
     @abc.abstractmethod
@@ -782,21 +784,32 @@ class MotorsBus(abc.ABC):
             motor = self._id_to_name(id_)
             min_ = self.calibration[motor].range_min
             max_ = self.calibration[motor].range_max
+            homing_offset = self.calibration[motor].homing_offset
             drive_mode = self.apply_drive_mode and self.calibration[motor].drive_mode
+
             if max_ == min_:
                 raise ValueError(f"Invalid calibration for motor '{motor}': min and max are equal.")
 
-            bounded_val = min(max_, max(min_, val))
             if self.motors[motor].norm_mode is MotorNormMode.RANGE_M100_100:
+                bounded_val = min(max_, max(min_, val))
                 norm = (((bounded_val - min_) / (max_ - min_)) * 200) - 100
                 normalized_values[id_] = -norm if drive_mode else norm
             elif self.motors[motor].norm_mode is MotorNormMode.RANGE_0_100:
+                bounded_val = min(max_, max(min_, val))
                 norm = ((bounded_val - min_) / (max_ - min_)) * 100
                 normalized_values[id_] = 100 - norm if drive_mode else norm
             elif self.motors[motor].norm_mode is MotorNormMode.DEGREES:
-                mid = (min_ + max_) / 2
-                max_res = self.model_resolution_table[self._id_to_model(id_)] - 1
-                normalized_values[id_] = (val - mid) * 360 / max_res
+                # For motors without wrap-around handling
+                # The homing offset becomes 0 degrees
+
+                # Calculate difference from homing position
+                diff = val - homing_offset
+
+                # Convert to degrees
+                deg = diff * COUNT_TO_DEG
+
+                # Apply drive mode if needed
+                normalized_values[id_] = -deg if drive_mode else deg
             else:
                 raise NotImplementedError
 
@@ -811,7 +824,9 @@ class MotorsBus(abc.ABC):
             motor = self._id_to_name(id_)
             min_ = self.calibration[motor].range_min
             max_ = self.calibration[motor].range_max
+            homing_offset = self.calibration[motor].homing_offset
             drive_mode = self.apply_drive_mode and self.calibration[motor].drive_mode
+
             if max_ == min_:
                 raise ValueError(f"Invalid calibration for motor '{motor}': min and max are equal.")
 
@@ -824,9 +839,22 @@ class MotorsBus(abc.ABC):
                 bounded_val = min(100.0, max(0.0, val))
                 unnormalized_values[id_] = int((bounded_val / 100) * (max_ - min_) + min_)
             elif self.motors[motor].norm_mode is MotorNormMode.DEGREES:
-                mid = (min_ + max_) / 2
-                max_res = self.model_resolution_table[self._id_to_model(id_)] - 1
-                unnormalized_values[id_] = int((val * max_res / 360) + mid)
+                # For motors without wrap-around, simple conversion back
+                # Apply drive mode if needed
+                val = -val if drive_mode else val
+
+                # Convert degrees to raw counts
+                raw_counts = int(round(val / COUNT_TO_DEG))
+
+                # Add back the homing offset
+                raw_counts_with_offset = raw_counts + homing_offset
+
+                # Ensure value stays within calibrated motor range
+                # Use the calibration min/max if available
+                if min_ is not None and max_ is not None:
+                    raw_counts_with_offset = max(min_, min(max_, raw_counts_with_offset))
+
+                unnormalized_values[id_] = raw_counts_with_offset
             else:
                 raise NotImplementedError
 
