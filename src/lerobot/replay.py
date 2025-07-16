@@ -26,6 +26,7 @@ python -m lerobot.replay \
     --dataset.episode=2
 ```
 
+Example replay with bimanual so100:
 ```shell
 python -m lerobot.replay \
   --robot.type=bi_so100_follower \

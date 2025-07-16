@@ -34,6 +34,7 @@ python -m lerobot.record \
     # --policy.path=${HF_USER}/my_policy \
 ```
 
+Example recording with bimanual so100:
 ```shell
 python -m lerobot.record \
   --robot.type=bi_so100_follower \

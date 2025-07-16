@@ -29,7 +29,7 @@ python -m lerobot.teleoperate \
     --display_data=true
 ```
 
-Example bimanual so100 teleoperation:
+Example teleoperation with bimanual so100:
 
 ```shell
 python -m lerobot.teleoperate \
