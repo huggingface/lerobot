@@ -48,7 +48,7 @@ def auto_select_torch_device() -> torch.device:
         logging.info("Cuda backend detected, using cuda.")
         return torch.device("cuda")
     elif torch.backends.mps.is_available():
-        logging.info("Metal backend detected, using cuda.")
+        logging.info("Metal backend detected, using mps.")
         return torch.device("mps")
     else:
         logging.warning("No accelerated backend detected. Using default cpu, this will be slow.")
