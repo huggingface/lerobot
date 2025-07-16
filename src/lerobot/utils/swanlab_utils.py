@@ -83,7 +83,7 @@ class SwanLabLogger:
             config=cfg.to_dict(),
             save_code=False,
             resume=cfg.resume,
-            mode=self.cfg.mode if self.cfg.mode in ["online", "offline", "disabled"] else "online",
+            mode=self.cfg.mode if self.cfg.mode in ["cloud", "offline", "local", "disabled"] else "cloud",
         )
         run_id = self._run.public.run_id
         # NOTE: We will override the cfg.swanlab.run_id with the swanlab run id.
