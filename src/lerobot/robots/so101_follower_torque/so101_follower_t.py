@@ -48,26 +48,26 @@ class SO101FollowerT(Robot):
 
     _CURRENT_STEP_A: float = 6.5e-3  # 6.5 mA per register LSB #http://doc.feetech.cn/#/prodinfodownload?srcType=FT-SMS-STS-emanual-229f4476422d4059abfb1cb0
     _KT_NM_PER_AMP: float = 0.814  # Torque constant Kt [N·m/A] #https://www.feetechrc.com/811177.html
-    _MAX_CURRENT_A: float = 4.0  # Safe driver limit
+    _MAX_CURRENT_A: float = 2.0  # Safe driver limit
 
     # Position gains [Nm/rad]
     _KP_GAINS = {
-        "shoulder_pan": 6.0,
+        "shoulder_pan": 5.0,
         "shoulder_lift": 7.0,
         "elbow_flex": 7.0,
         "wrist_flex": 5.0,
-        "wrist_roll": 4.0,
-        "gripper": 4.0,
+        "wrist_roll": 5.0,
+        "gripper": 5.0,
     }
 
     # Velocity gains [Nm⋅s/rad]
     _KD_GAINS = {
         "shoulder_pan": 0.4,
-        "shoulder_lift": 0.8,
-        "elbow_flex": 0.7,
+        "shoulder_lift": 0.6,
+        "elbow_flex": 0.6,
         "wrist_flex": 0.4,
-        "wrist_roll": 0.3,
-        "gripper": 0.3,
+        "wrist_roll": 0.4,
+        "gripper": 0.4,
     }
 
     # Force gains
@@ -82,22 +82,22 @@ class SO101FollowerT(Robot):
 
     # Viscous friction coefficient [Nm⋅s/rad] per joint
     _FRICTION_VISCOUS = {
-        "shoulder_pan": 0.02,
+        "shoulder_pan": 0.05,
         "shoulder_lift": 0.08,
         "elbow_flex": 0.05,
-        "wrist_flex": 0.02,
-        "wrist_roll": 0.015,
-        "gripper": 0.01,
+        "wrist_flex": 0.05,
+        "wrist_roll": 0.05,
+        "gripper": 0.05,
     }
 
     # Coulomb/static friction [Nm] per joint
     _FRICTION_COULOMB = {
         "shoulder_pan": 0.15,
         "shoulder_lift": 0.25,
-        "elbow_flex": 0.20,
+        "elbow_flex": 0.25,
         "wrist_flex": 0.20,
-        "wrist_roll": 0.15,
-        "gripper": 0.15,
+        "wrist_roll": 0.20,
+        "gripper": 0.20,
     }
 
     def __init__(self, config: SO101FollowerTConfig):

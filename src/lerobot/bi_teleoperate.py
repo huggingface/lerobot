@@ -7,7 +7,7 @@ from lerobot.robots.so101_follower_torque.so101_follower_t import SO101FollowerT
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.visualization_utils import _init_rerun, log_rerun_data
 
-FRQ = 200
+FRQ = 100
 PRINT_HZ = 10
 RERUN_HZ = 100
 ESC_CLR_EOL = "\x1b[K"
@@ -37,10 +37,6 @@ first_print = True
 loop_count = 0
 tic_prev = time.perf_counter()
 
-# Initialize previous positions for velocity calculation
-pos_f_prev = None
-pos_l_prev = None
-
 while True:
     tic = time.perf_counter()
 
@@ -55,10 +51,6 @@ while True:
     tau_cmd_f, tau_cmd_l = [], []
     debug_info_f, debug_info_l = {}, {}
 
-    # Collect torques with deterministic components removed for model
-    tau_interaction_l = {}
-    tau_interaction_f = {}
-
     # Collect data for all motors
     pos_f = {j: obs_f[f"{j}.pos"] for j in follower.bus.motors}
     vel_f = {j: obs_f[f"{j}.vel"] for j in follower.bus.motors}
@@ -69,10 +61,6 @@ while True:
     vel_l = {j: obs_l[f"{j}.vel"] for j in leader.bus.motors}
     acc_l = {j: obs_l[f"{j}.acc"] for j in leader.bus.motors}
     tau_meas_l = {j: obs_l[f"{j}.tau_meas"] for j in leader.bus.motors}
-
-    # Update previous positions for next iteration
-    pos_f_prev = pos_f.copy()
-    pos_l_prev = pos_l.copy()
 
     # Compute reaction torques using model-based approach
     tau_reaction_f = follower._compute_model_based_disturbance(pos_f, vel_f, acc_f, tau_meas_f)
@@ -122,7 +110,6 @@ while True:
     follower.send_action({f"{m}.effort": tau_cmd_f[i] for i, m in enumerate(follower.bus.motors)})
     leader.send_action({f"{m}.effort": tau_cmd_l[i] for i, m in enumerate(leader.bus.motors)})
 
-    # Create structured observation and action for rerun
     # Observation: follower side only (θ_f, ω_f, τ_ext)
     observation = {
         "follower_joint_angles": pos_f,  # θ_f: current angles
