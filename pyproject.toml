@@ -14,6 +14,7 @@
 
 [build-system]
 requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
 
 [project.urls]
 homepage = "https://huggingface.co/lerobot"
@@ -58,7 +59,7 @@ keywords = ["lerobot", "huggingface", "robotics",  "machine learning", "artifici
 dependencies = [
     
     # Hugging Face dependencies
-    "datasets>=2.19.0",
+    "datasets>=2.19.0,<=3.6.0", # TODO: Bumb dependency
     "diffusers>=0.27.2",
     "huggingface-hub[hf-transfer,cli]>=0.27.1",
 
@@ -91,20 +92,20 @@ dependencies = [
 [project.optional-dependencies]
 
 # Common
-pygame_dep = ["pygame>=2.5.1"]
-placo_dep = ["placo>=0.9.6"]
-transformers_dep = ["transformers>=4.50.3"]
-grpc_dep = ["grpcio==1.71.0"]
+pygame-dep = ["pygame>=2.5.1"]
+placo-dep = ["placo>=0.9.6"]
+transformers-dep = ["transformers>=4.50.3"]
+grpcio-dep = ["grpcio==1.71.0"]
 
 # Motors
 feetech = ["feetech-servo-sdk>=1.0.0"]
 dynamixel = ["dynamixel-sdk>=3.7.31"]
 
 # Robots
-gamepad = ["pygame_dep", "hidapi>=0.14.0"]
-hopejr = ["feetech", "pygame_dep"]
-lekiwi = ["feetech", "pyzmq>=26.2.1"]
-kinematics = ["placo_dep"]
+gamepad = ["lerobot[pygame-dep]", "hidapi>=0.14.0"]
+hopejr = ["lerobot[feetech]", "lerobot[pygame-dep]"]
+lekiwi = ["lerobot[feetech]", "pyzmq>=26.2.1"]
+kinematics = ["lerobot[placo-dep]"]
 intelrealsense = [
     "pyrealsense2>=2.55.1.6486 ; sys_platform != 'darwin'",
     "pyrealsense2-macosx>=2.54 ; sys_platform == 'darwin'",
@@ -116,12 +117,12 @@ stretch = [
 ] # TODO: Currently not supported
 
 # Policies
-pi0 = ["transformers_dep"]
-smolvla = ["transformers_dep", "num2words>=0.5.14", "accelerate>=1.7.0", "safetensors>=0.4.3"]
-hilserl = ["transformers_dep", "gym-hil>=0.1.9", "protobuf>=5.29.3", "grpcio_dep", "placo_dep"]
+pi0 = ["lerobot[transformers-dep]"]
+smolvla = ["lerobot[transformers-dep]", "num2words>=0.5.14", "accelerate>=1.7.0", "safetensors>=0.4.3"]
+hilserl = ["lerobot[transformers-dep]", "gym-hil>=0.1.9", "protobuf>=5.29.3", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
 
 # Features
-async = ["grpcio_dep", "matplotlib>=3.10.3"]
+async = ["lerobot[grpcio-dep]", "matplotlib>=3.10.3"]
 
 # Development
 docs = ["hf-doc-builder @ git+https://github.com/huggingface/doc-builder.git@main", "watchdog >= 6.0.0"]
@@ -135,6 +136,9 @@ pusht = ["gym-pusht>=0.1.5", "pymunk>=6.6.0,<7.0.0"] # TODO: Fix pymunk version 
 xarm = ["gym-xarm>=0.1.1"]
 
 # ---------------- Tool Configurations ----------------
+[tool.setuptools.packages.find]
+where = ["src"]
+
 [tool.ruff]
 target-version = "py310"
 line-length = 110

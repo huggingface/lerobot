@@ -22,7 +22,6 @@ from typing import Any, Dict, Optional, Tuple
 
 import cv2
 import numpy as np
-import zmq
 
 from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
@@ -35,6 +34,9 @@ class LeKiwiClient(Robot):
     name = "lekiwi_client"
 
     def __init__(self, config: LeKiwiClientConfig):
+        import zmq
+
+        self._zmq = zmq
         super().__init__(config)
         self.config = config
         self.id = config.id
@@ -117,6 +119,7 @@ class LeKiwiClient(Robot):
                 "LeKiwi Daemon is already connected. Do not run `robot.connect()` twice."
             )
 
+        zmq = self._zmq
         self.zmq_context = zmq.Context()
         self.zmq_cmd_socket = self.zmq_context.socket(zmq.PUSH)
         zmq_cmd_locator = f"tcp://{self.remote_ip}:{self.port_zmq_cmd}"
@@ -141,6 +144,7 @@ class LeKiwiClient(Robot):
 
     def _poll_and_get_latest_message(self) -> Optional[str]:
         """Polls the ZMQ socket for a limited time and returns the latest message string."""
+        zmq = self._zmq
         poller = zmq.Poller()
         poller.register(self.zmq_observation_socket, zmq.POLLIN)
 

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import abc
+import builtins
 import logging
 import os
 from importlib.resources import files
@@ -67,7 +68,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
     @classmethod
     def from_pretrained(
-        cls: Type[T],
+        cls: builtins.type[T],
         pretrained_name_or_path: str | Path,
         *,
         config: PreTrainedConfig | None = None,
