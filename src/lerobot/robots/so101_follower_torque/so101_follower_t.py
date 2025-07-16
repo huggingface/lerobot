@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 
 class SO101FollowerT(Robot):
     """
-    SO-101 Follower Arm designed by TheRobotStudio and Hugging Face.
+    SO-101 Arm with HLS3625 motors with current control.
     """
 
     config_class = SO101FollowerTConfig
@@ -48,10 +48,10 @@ class SO101FollowerT(Robot):
 
     _CURRENT_STEP_A: float = 6.5e-3  # 6.5 mA per register LSB #http://doc.feetech.cn/#/prodinfodownload?srcType=FT-SMS-STS-emanual-229f4476422d4059abfb1cb0
     _KT_NM_PER_AMP: float = 0.814  # Torque constant Kt [N·m/A] #https://www.feetechrc.com/811177.html
-    _MAX_CURRENT_A: float = 4.0  # Safe driver limit for this model
+    _MAX_CURRENT_A: float = 4.0  # Safe driver limit
 
-    # Control gains for bilateral teleoperation
-    _KP_GAINS = {  # Position gains [Nm/rad] - reduced for bilateral stability
+    # Position gains [Nm/rad]
+    _KP_GAINS = {
         "shoulder_pan": 6.0,
         "shoulder_lift": 7.0,
         "elbow_flex": 7.0,
@@ -60,7 +60,8 @@ class SO101FollowerT(Robot):
         "gripper": 4.0,
     }
 
-    _KD_GAINS = {  # Velocity gains [Nm⋅s/rad] - matched to position gains
+    # Velocity gains [Nm⋅s/rad]
+    _KD_GAINS = {
         "shoulder_pan": 0.4,
         "shoulder_lift": 0.8,
         "elbow_flex": 0.7,
@@ -69,8 +70,18 @@ class SO101FollowerT(Robot):
         "gripper": 0.3,
     }
 
-    # Friction model parameters
-    _FRICTION_VISCOUS = {  # Viscous friction coefficient [Nm⋅s/rad] per joint
+    # Force gains
+    _KF_GAINS = {
+        "shoulder_pan": 0.05,
+        "shoulder_lift": 0.05,
+        "elbow_flex": 0.05,
+        "wrist_flex": 0.05,
+        "wrist_roll": 0.05,
+        "gripper": 0.05,
+    }
+
+    # Viscous friction coefficient [Nm⋅s/rad] per joint
+    _FRICTION_VISCOUS = {
         "shoulder_pan": 0.02,
         "shoulder_lift": 0.08,
         "elbow_flex": 0.05,
@@ -79,7 +90,8 @@ class SO101FollowerT(Robot):
         "gripper": 0.01,
     }
 
-    _FRICTION_COULOMB = {  # Coulomb friction [Nm] per joint
+    # Coulomb/static friction [Nm] per joint
+    _FRICTION_COULOMB = {
         "shoulder_pan": 0.15,
         "shoulder_lift": 0.25,
         "elbow_flex": 0.20,
@@ -129,19 +141,20 @@ class SO101FollowerT(Robot):
         self._prev_t: float | None = None
 
         # Butterworth low-pass filter parameters
-        self._cutoff_freq = 10.0  # Hz - cutoff frequency for the filter
-        self._filter_order = 2  # Filter order (2nd order is common)
-        self._sampling_freq = 100.0  # Hz - assumed control loop frequency
+        self._cutoff_freq = 10.0  # Hz, cutoff frequency for the filter
+        self._filter_order = 2  # Filter order
+        self._sampling_freq = 100.0  # Hz, (control loop frequency)
 
-        # Design the Butterworth filter
         nyquist_freq = self._sampling_freq / 2
         normalized_cutoff = self._cutoff_freq / nyquist_freq
         self._b, self._a = butter(self._filter_order, normalized_cutoff, btype="low")
 
-        # History buffers for filtering
+        # History buffers
         self._pos_history = {m: collections.deque(maxlen=20) for m in self.bus.motors}
         self._vel_raw_history = {m: collections.deque(maxlen=20) for m in self.bus.motors}
         self._time_history = collections.deque(maxlen=20)
+
+        self._last_observation = None
 
     @property
     def _motors_ft(self) -> dict[str, type]:
@@ -149,8 +162,8 @@ class SO101FollowerT(Robot):
         for m in self.bus.motors:
             d[f"{m}.pos"] = float
             d[f"{m}.vel"] = float
-            d[f"{m}.acc"] = float  # Add acceleration
-            d[f"{m}.tau_meas"] = float  # Changed from tau_res to tau_meas
+            d[f"{m}.acc"] = float
+            d[f"{m}.tau_meas"] = float
         return d
 
     @property
@@ -182,6 +195,11 @@ class SO101FollowerT(Robot):
         return self._KD_GAINS.copy()
 
     @property
+    def kf_gains(self) -> dict[str, float]:
+        """Force control gains for bilateral teleoperation"""
+        return self._KF_GAINS.copy()
+
+    @property
     def friction_viscous(self) -> dict[str, float]:
         """Viscous friction coefficients [Nm⋅s/rad] for friction compensation"""
         return self._FRICTION_VISCOUS.copy()
@@ -210,12 +228,11 @@ class SO101FollowerT(Robot):
         self._cutoff_freq = cutoff_freq
         self._filter_order = order
 
-        # Redesign the filter
         nyquist_freq = self._sampling_freq / 2
         normalized_cutoff = self._cutoff_freq / nyquist_freq
         self._b, self._a = butter(self._filter_order, normalized_cutoff, btype="low")
 
-        # Clear history buffers
+        # Clear buffers
         for m in self.bus.motors:
             self._pos_history[m].clear()
             self._vel_raw_history[m].clear()
@@ -265,7 +282,6 @@ class SO101FollowerT(Robot):
         """
         Compute inertia torques τ_inertia = M(q) * ddq directly from URDF model.
         """
-        # Convert joint dictionaries to numpy arrays in correct order
         q = np.zeros(self.pin_robot.model.nq)
         dq = np.zeros(self.pin_robot.model.nv)
         ddq = np.zeros(self.pin_robot.model.nv)
@@ -289,7 +305,6 @@ class SO101FollowerT(Robot):
         dq_rad: dict[str, float],
         ddq_rad: dict[str, float],
         tau_measured: dict[str, float],
-        include_friction: bool = True,
     ) -> dict[str, float]:
         """
         Compute disturbance torques using direct model-based approach:
@@ -298,29 +313,24 @@ class SO101FollowerT(Robot):
         Args:
             include_friction: If True, also removes friction from the disturbance calculation
         """
-        # Get gravity compensation
         tau_gravity = self._gravity_from_q(q_rad)
-
-        # Get inertia compensation
         tau_inertia = self._inertia_from_q_dq(q_rad, dq_rad, ddq_rad)
 
         # Compute disturbance: what's left after removing known dynamics
         tau_disturbance = {}
+        tau_friction = {}
         for motor_name in self.bus.motors:
             tau_dist = tau_measured[motor_name] - tau_gravity[motor_name] - tau_inertia[motor_name]
 
-            # Optionally remove friction model
-            if include_friction:
-                # Calculate friction torque using class constants
-                omega = dq_rad[motor_name]
-                tau_friction = self._FRICTION_VISCOUS[motor_name] * omega + self._FRICTION_COULOMB[
-                    motor_name
-                ] * (1.0 if omega > 0.01 else -1.0 if omega < -0.01 else 0.0)
-
-                # Apply torque sign correction (same as for gravity/inertia)
-                tau_friction = -tau_friction  # Apply torque sign correction
-
-                tau_dist -= tau_friction
+            # Calculate friction torque
+            omega = dq_rad[motor_name]
+            tau_friction_motor = self._FRICTION_VISCOUS[motor_name] * omega + self._FRICTION_COULOMB[
+                motor_name
+            ] * (1.0 if omega > 0.01 else -1.0 if omega < -0.01 else 0.0)
+            # Apply torque sign correction
+            tau_friction_motor = -tau_friction_motor
+            tau_friction[motor_name] = tau_friction_motor
+            tau_dist -= tau_friction_motor
 
             tau_disturbance[motor_name] = tau_dist
 
@@ -407,7 +417,7 @@ class SO101FollowerT(Robot):
 
         t_now = time.perf_counter()
 
-        # position
+        # Position
         pos_deg = self.bus.sync_read("Present_Position", num_retry=5)
         pos_rad = self._deg_to_rad(pos_deg)
 
@@ -432,17 +442,13 @@ class SO101FollowerT(Robot):
         # Apply Butterworth low-pass filter to velocity
         vel_rad = {}
         for m in pos_rad:
-            if len(self._vel_raw_history[m]) >= 10:  # Need enough samples for good filtering
-                # Convert deque to numpy array
+            if len(self._vel_raw_history[m]) >= 10:
                 vel_raw_array = np.array(list(self._vel_raw_history[m]))
 
                 # Apply Butterworth filter
                 vel_filtered = lfilter(self._b, self._a, vel_raw_array)
-
-                # Use the most recent filtered value
                 vel_rad[m] = vel_filtered[-1]
             else:
-                # Not enough history, use raw velocity
                 vel_rad[m] = vel_rad_raw[m]
 
         # Calculate acceleration from filtered velocity
@@ -454,12 +460,11 @@ class SO101FollowerT(Robot):
             dt = max(dt, 1e-4)  # Avoid division by zero
             acc_rad = {m: (vel_rad[m] - self._prev_vel_rad[m]) / dt for m in vel_rad}
 
-        # Update previous values
         self._prev_pos_rad = pos_rad.copy()
         self._prev_vel_rad = vel_rad.copy()
         self._prev_t = t_now
 
-        # measured torque (Nm)
+        # Measured torque (Nm)
         cur_raw = self.bus.sync_read("Present_Current", normalize=False, num_retry=5)
         tau_meas = self._current_to_torque_nm(cur_raw)
 
@@ -475,6 +480,9 @@ class SO101FollowerT(Robot):
             obs_dict[cam_key] = cam.async_read()
             dt_ms = (time.perf_counter() - start) * 1e3
             logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
+
+        # Store observation for feedforward compensation
+        self._last_observation = obs_dict.copy()
 
         return obs_dict
 
@@ -494,6 +502,33 @@ class SO101FollowerT(Robot):
         tau_cmd_nm = {k.removesuffix(".effort"): float(v) for k, v in action.items() if k.endswith(".effort")}
         if not tau_cmd_nm:
             return action
+
+        # Add feedforward compensation if we have a last observation
+        if self._last_observation is not None:
+            # Extract position, velocity, acceleration from last observation
+            pos_rad = {m: self._last_observation[f"{m}.pos"] for m in self.bus.motors}
+            vel_rad = {m: self._last_observation[f"{m}.vel"] for m in self.bus.motors}
+            acc_rad = {m: self._last_observation[f"{m}.acc"] for m in self.bus.motors}
+
+            # Compute feedforward terms
+            tau_gravity = self._gravity_from_q(pos_rad)
+            tau_inertia = self._inertia_from_q_dq(pos_rad, vel_rad, acc_rad)
+
+            # Add feedforward compensation to commanded torques
+            for motor in tau_cmd_nm:
+                # Add gravity compensation
+                tau_cmd_nm[motor] += tau_gravity[motor]
+
+                # Add inertia compensation
+                tau_cmd_nm[motor] += tau_inertia[motor]
+
+                # Add friction compensation
+                omega = vel_rad[motor]
+                tau_friction = self._FRICTION_VISCOUS[motor] * omega + self._FRICTION_COULOMB[motor] * (
+                    1.0 if omega > 0.01 else -1.0 if omega < -0.01 else 0.0
+                )
+                tau_friction = -tau_friction  # Apply torque sign correction
+                tau_cmd_nm[motor] += tau_friction
 
         inv_coef = 1.0 / (self._CURRENT_STEP_A * self._KT_NM_PER_AMP)
         max_cnt = int(round(self._MAX_CURRENT_A / self._CURRENT_STEP_A))
