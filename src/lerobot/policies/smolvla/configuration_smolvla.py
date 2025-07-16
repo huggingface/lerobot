@@ -101,6 +101,13 @@ class SmolVLAConfig(PreTrainedConfig):
     min_period: float = 4e-3  # sensitivity range for the timestep used in sine-cosine positional encoding
     max_period: float = 4.0
 
+    # Inference settings
+    inference_enable_rtc: bool = False  # Whether to enable real-time action chunking (RTC): https://www.physicalintelligence.company/research/real_time_chunking
+    inference_rtc_d: int = 10 # RTC delay in ticks. Controls the number of frozen action steps. - TODO: infer from execution
+    inference_rtc_s: int = 10 # RTC execution horizon in ticks. Controls the number of action steps to not blend with the previous inference.
+    inference_rtc_beta: float = 5.0 # RTC maximum guidance weight.
+
+
     def __post_init__(self):
         super().__post_init__()
 

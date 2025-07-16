@@ -604,6 +604,19 @@ def pad_tensor(tensor, max_len, pad_value=0):
 
     return padded_tensor
 
+def make_soft_mask(d: int, s: int, H: int, device):
+    """
+    Make a soft mask for the action steps.
+    This is eq.5 in the RTC paper: https://www.physicalintelligence.company/download/real_time_chunking.pdf
+    """
+    i = torch.arange(H, device=device)
+    w = torch.zeros(H, device=device)
+    w[i < d] = 1.0
+    mid = (i >= d) & (i < H - s)
+    c = (H - s - i[mid]).float() / (H - s - d + 1)
+    w[mid] = torch.exp(c) / (torch.e - 1.0)
+    # last s steps already zero
+    return w               # shape (H,)
 
 class VLAFlowMatching(nn.Module):
     """
@@ -890,8 +903,20 @@ class VLAFlowMatching(nn.Module):
         dt = -1.0 / self.config.num_steps
         dt = torch.tensor(dt, dtype=torch.float32, device=device)
 
+        if self.config.inference_enable_rtc:
+            x_t = self.rtc_denoising_loop(noise, bsize, dt, prefix_pad_masks, past_key_values, device)
+        else:
+            x_t = self.euler_denoising_loop(noise, bsize, dt, prefix_pad_masks, past_key_values, device)
+
+        return x_t
+
+    def rtc_denoising_loop(self, noise, bsize, dt, prefix_pad_masks, past_key_values, device):
+        raise NotImplementedError("RTC denoising loop not implemented")
+
+    def euler_denoising_loop(self, noise, bsize, dt, prefix_pad_masks, past_key_values, device):
         x_t = noise
         time = torch.tensor(1.0, dtype=torch.float32, device=device)
+
         while time >= -dt / 2:
             expanded_time = time.expand(bsize)
             v_t = self.denoise_step(
