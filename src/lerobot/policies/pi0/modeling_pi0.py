@@ -260,12 +260,12 @@ class PI0Policy(PreTrainedPolicy):
     def get_optim_params(self) -> dict:
         return self.parameters()
 
-    @torch.no_grad
+    @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
         """Predict a chunk of actions given environment observations."""
         raise NotImplementedError("Currently not implemented for PI0")
 
-    @torch.no_grad
+    @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
         """Select a single action given environment observations.
 
