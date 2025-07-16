@@ -16,6 +16,7 @@
 import glob
 import importlib
 import logging
+import shutil
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -27,6 +28,8 @@ import torch
 import torchvision
 from datasets.features.features import register_feature
 from PIL import Image
+
+from lerobot.utils.utils import log_say
 
 
 def get_safe_default_codec():
@@ -451,3 +454,68 @@ def get_image_pixel_channels(image: Image):
         return 4  # RGBA
     else:
         raise ValueError("Unknown format")
+
+
+class VideoEncodingManager:
+    """
+    Context manager that ensures proper video encoding and data cleanup even if exceptions occur.
+    
+    This manager handles:
+    - Batch encoding for any remaining episodes when recording interrupted
+    - Cleaning up temporary image files from interrupted episodes
+    - Removing empty image directories
+
+    Args:
+        dataset: The LeRobotDataset instance
+        play_sounds: Whether to play audio for encoding (default: True)
+    """
+
+    def __init__(self, dataset, play_sounds=True):
+        self.dataset = dataset
+        self.play_sounds = play_sounds
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        # Handle any remaining episodes that haven't been batch encoded
+        if self.dataset.episodes_since_last_encoding > 0:
+            if exc_type is not None:
+                logging.info("Exception occurred. Encoding remaining episodes before exit...")
+            else:
+                logging.info("Recording stopped. Encoding remaining episodes...")
+            
+            start_ep = self.dataset.num_episodes - self.dataset.episodes_since_last_encoding
+            end_ep = self.dataset.num_episodes
+            log_say(
+                f"Encoding remaining {self.dataset.episodes_since_last_encoding} episodes, "
+                f"from episode {start_ep} to {end_ep - 1}",
+                self.play_sounds,
+            )
+            self.dataset.batch_encode_videos(start_ep, end_ep)
+
+        # Clean up episode images if recording was interrupted
+        if exc_type is not None:
+            interrupted_episode_index = self.dataset.num_episodes
+            for key in self.dataset.meta.video_keys:
+                img_dir = self.dataset._get_image_file_path(
+                    episode_index=interrupted_episode_index, image_key=key, frame_index=0
+                ).parent
+                if img_dir.exists():
+                    logging.debug(
+                        f"Cleaning up interrupted episode images for episode {interrupted_episode_index}, camera {key}"
+                    )
+                    shutil.rmtree(img_dir)
+
+        # Clean up any remaining images directory if it's empty
+        img_dir = self.dataset.root / "images"
+        # Check for any remaining PNG files
+        png_files = list(img_dir.rglob("*.png"))
+        if len(png_files) == 0:
+            # Only remove the images directory if no PNG files remain
+            shutil.rmtree(img_dir)
+            logging.debug("Cleaned up empty images directory")
+        else:
+            logging.debug(f"Images directory is not empty, containing {len(png_files)} PNG files")
+
+        return False  # Don't suppress the original exception
