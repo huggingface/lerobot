@@ -88,10 +88,6 @@ from lerobot.utils.utils import (
     init_logging,
     log_say,
 )
-
-from lerobot.configs import parser
-from lerobot.configs.policies import PreTrainedConfig
-
 from lerobot.utils.visualization_utils import _init_rerun, log_rerun_data
 
 
@@ -368,7 +364,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
         if events["stop_recording"]:
             break
-        
+
         dataset.save_episode()
         recorded_episodes += 1
 
@@ -390,7 +386,8 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         write_info(dataset.meta.info, dataset.root)
 
         # Now that videos are encoded, remove the temporary PNG images to save disk space.
-        import shutil, os
+        import shutil
+
         img_dir = dataset.root / "images"
         if img_dir.is_dir():
             shutil.rmtree(img_dir)
