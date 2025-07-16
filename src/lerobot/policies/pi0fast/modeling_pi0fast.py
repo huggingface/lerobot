@@ -477,8 +477,12 @@ class PI0FAST(nn.Module):
                 param.data = param.data.to(dtype=torch_precision)
         self.set_requires_grad()
         self.image_keys = self.config.image_features.keys()
-        self.ignore_index = self.pi0_paligemma.config.ignore_index
+        # Set ignore_index for loss calculation (standard value for CrossEntropyLoss)
+        self.ignore_index = -100
         self.padding_side = self.config.padding_side
+        
+        # Enable gradient checkpointing for memory optimization
+        self.pi0_paligemma.gradient_checkpointing_enable()
 
     def set_requires_grad(self):
         if self.config.freeze_vision_encoder:
@@ -492,7 +496,7 @@ class PI0FAST(nn.Module):
                     params.requires_grad = False
 
     def embed_tokens(self, tokens: torch.Tensor):
-        return self.pi0_paligemma.language_model.model.embed_tokens(tokens)
+        return self.pi0_paligemma.language_model.embed_tokens(tokens)
 
     def prepare_inputs_for_generation(self, *args, **kwargs):
         return self.pi0_paligemma.prepare_inputs_for_generation(*args, **kwargs)
