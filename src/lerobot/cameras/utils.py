@@ -37,6 +37,13 @@ def make_cameras_from_configs(camera_configs: dict[str, CameraConfig]) -> dict[s
             from .realsense.camera_realsense import RealSenseCamera
 
             cameras[key] = RealSenseCamera(cfg)
+        elif '.' in cfg.type:
+            # If the type is a full module path, import it dynamically
+            module_path, class_name = cfg.type.rsplit('.', 1)
+            module = __import__(module_path, fromlist=[class_name])
+            camera_class = getattr(module, class_name)
+            cameras[key] = camera_class(cfg)
+
         else:
             raise ValueError(f"The motor type '{cfg.type}' is not valid.")
 

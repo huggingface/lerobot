@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import abc
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -34,6 +35,18 @@ class RobotConfig(draccus.ChoiceRegistry, abc.ABC):
                         raise ValueError(
                             f"Specifying '{attr}' is required for the camera to be used in a robot"
                         )
+
+    @classmethod
+    def get_known_choices(cls):
+        choices = super().get_known_choices()
+        for arg in sys.argv:
+            if arg.startswith("--robot.type="):
+                class_path = arg.split("=")[1]
+                if '.' in class_path:
+                    module_path, _ = class_path.rsplit(".", 1)
+                    __import__(module_path)
+
+        return choices
 
     @property
     def type(self) -> str:

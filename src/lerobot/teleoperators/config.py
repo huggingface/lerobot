@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import abc
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,6 +26,18 @@ class TeleoperatorConfig(draccus.ChoiceRegistry, abc.ABC):
     id: str | None = None
     # Directory to store calibration file
     calibration_dir: Path | None = None
+
+    @classmethod
+    def get_known_choices(cls):
+        choices = super().get_known_choices()
+        for arg in sys.argv:
+            if arg.startswith("--teleop.type="):
+                class_path = arg.split("=")[1]
+                if '.' in class_path:
+                    module_path, _ = class_path.rsplit('.', 1)
+                    __import__(module_path)
+
+        return choices
 
     @property
     def type(self) -> str:
