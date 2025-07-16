@@ -859,16 +859,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         has_video_keys = len(self.meta.video_keys) > 0
         use_batched_encoding = self.batch_encoding_size > 1
-        
+
         if has_video_keys and not use_batched_encoding:
             video_paths = self.encode_episode_videos(episode_index)
             for key in self.meta.video_keys:
                 episode_buffer[key] = video_paths[key]
-            
+
         # `meta.save_episode` should be executed after encoding the videos
-        self.meta.save_episode(
-            episode_index, episode_length, episode_tasks, ep_stats
-        )
+        self.meta.save_episode(episode_index, episode_length, episode_tasks, ep_stats)
 
         # Check if we should trigger batch encoding
         if has_video_keys and use_batched_encoding:
@@ -876,7 +874,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
             if self.episodes_since_last_encoding == self.batch_encoding_size:
                 start_ep = self.num_episodes - self.batch_encoding_size
                 end_ep = self.num_episodes
-                logging.info(f"Batch encoding {self.batch_encoding_size} videos for episodes {start_ep} to {end_ep - 1}")
+                logging.info(
+                    f"Batch encoding {self.batch_encoding_size} videos for episodes {start_ep} to {end_ep - 1}"
+                )
                 self.batch_encode_videos(start_ep, end_ep)
                 self.episodes_since_last_encoding = 0
 
@@ -896,7 +896,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         assert len(parquet_files) == self.num_episodes
 
         video_files = list(self.root.rglob("*.mp4"))
-        assert len(video_files) == (self.num_episodes - self.episodes_since_last_encoding) * len(self.meta.video_keys)
+        assert len(video_files) == (self.num_episodes - self.episodes_since_last_encoding) * len(
+            self.meta.video_keys
+        )
 
         if not episode_data:  # Reset the buffer
             self.episode_buffer = self.create_episode_buffer()
@@ -913,7 +915,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
     def clear_episode_buffer(self) -> None:
         episode_index = self.episode_buffer["episode_index"]
-        
+
         # Clean up image files for the current episode buffer
         if self.image_writer is not None:
             for cam_key in self.meta.camera_keys:

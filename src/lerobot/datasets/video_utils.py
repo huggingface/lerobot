@@ -459,7 +459,7 @@ def get_image_pixel_channels(image: Image):
 class VideoEncodingManager:
     """
     Context manager that ensures proper video encoding and data cleanup even if exceptions occur.
-    
+
     This manager handles:
     - Batch encoding for any remaining episodes when recording interrupted
     - Cleaning up temporary image files from interrupted episodes
@@ -484,7 +484,7 @@ class VideoEncodingManager:
                 logging.info("Exception occurred. Encoding remaining episodes before exit...")
             else:
                 logging.info("Recording stopped. Encoding remaining episodes...")
-            
+
             start_ep = self.dataset.num_episodes - self.dataset.episodes_since_last_encoding
             end_ep = self.dataset.num_episodes
             log_say(
