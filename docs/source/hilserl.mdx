@@ -4,18 +4,22 @@ In this tutorial you will go through the full Human-in-the-Loop Sample-Efficient
 
 HIL-SERL is a sample-efficient reinforcement learning algorithm that combines human demonstrations with online learning and human interventions. The approach starts from a small set of human demonstrations, uses them to train a reward classifier, and then employs an actor-learner architecture where humans can intervene during policy execution to guide exploration and correct unsafe behaviors. In this tutorial, you'll use a gamepad to provide interventions and control the robot during the learning process.
 
-It combines three key ingredients:
-	1.	**Offline demonstrations & reward classifier:** a handful of human-teleop episodes plus a vision-based success detector give the policy a shaped starting point.
-	2.	**On-robot actor / learner loop with human interventions:** a distributed Soft Actor Critic (SAC) learner updates the policy while an actor explores on the physical robot; the human can jump in at any time to correct dangerous or unproductive behaviour.
-	3.	**Safety & efficiency tools:** joint/end-effector (EE) bounds, crop region of interest (ROI) preprocessing and WandB monitoring keep the data useful and the hardware safe.
+It combines three key ingredients: 1. **Offline demonstrations & reward classifier:** a handful of human-teleop episodes plus a vision-based success detector give the policy a shaped starting point. 2. **On-robot actor / learner loop with human interventions:** a distributed Soft Actor Critic (SAC) learner updates the policy while an actor explores on the physical robot; the human can jump in at any time to correct dangerous or unproductive behaviour. 3. **Safety & efficiency tools:** joint/end-effector (EE) bounds, crop region of interest (ROI) preprocessing and WandB monitoring keep the data useful and the hardware safe.
 
 Together these elements let HIL-SERL reach near-perfect task success and faster cycle times than imitation-only baselines.
 
 <p align="center">
-  <img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/hilserl-main-figure.png" alt="HIL-SERL workflow" title="HIL-SERL workflow" width="100%"></img>
+  <img
+    src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/hilserl-main-figure.png"
+    alt="HIL-SERL workflow"
+    title="HIL-SERL workflow"
+    width="100%"
+  ></img>
 </p>
 
-<p align="center"><i>HIL-SERL workflow, Luo et al. 2024</i></p>
+<p align="center">
+  <i>HIL-SERL workflow, Luo et al. 2024</i>
+</p>
 
 This guide provides step-by-step instructions for training a robot policy using LeRobot's HilSerl implementation to train on a real robot.
 
@@ -29,6 +33,7 @@ This guide provides step-by-step instructions for training a robot policy using 
 ## What kind of tasks can I train?
 
 One can use HIL-SERL to train on a variety of manipulation tasks. Some recommendations:
+
 - Start with a simple task to understand how the system works.
   - Push cube to a goal region
   - Pick and lift cube with the gripper
@@ -53,6 +58,7 @@ pip install -e ".[hilserl]"
 
 The training process begins with proper configuration for the HILSerl environment. The configuration class of interest is `HILSerlRobotEnvConfig` in `lerobot/envs/configs.py`. Which is defined as:
 
+<!-- prettier-ignore-start -->
 ```python
 class HILSerlRobotEnvConfig(EnvConfig):
     robot: RobotConfig | None = None    # Main robot agent (defined in `lerobot/robots`)
@@ -72,7 +78,7 @@ class HILSerlRobotEnvConfig(EnvConfig):
     reward_classifier_pretrained_path: str | None = None    # For reward model
     number_of_steps_after_success: int = 0    # For reward classifier, collect more positive examples after a success to train a classifier
 ```
-
+<!-- prettier-ignore-end -->
 
 ### Finding Robot Workspace Bounds
 
@@ -131,6 +137,7 @@ Create a configuration file for recording demonstrations (or edit an existing on
 5. Configure `robot`, `cameras`, and other hardware settings
 
 Example configuration section:
+
 ```json
 "mode": "record",
 "repo_id": "username/pick_lift_cube",
@@ -150,6 +157,7 @@ HIL-Serl learns actions in the end-effector space of the robot. Therefore, the t
 
 For that we need to define a version of the robot that takes actions in the end-effector space. Check the robot class `SO100FollowerEndEffector` and its configuration `SO100FollowerEndEffectorConfig` for the default parameters related to the end-effector space.
 
+<!-- prettier-ignore-start -->
 ```python
 class SO100FollowerEndEffectorConfig(SO100FollowerConfig):
     """Configuration for the SO100FollowerEndEffector robot."""
@@ -172,6 +180,7 @@ class SO100FollowerEndEffectorConfig(SO100FollowerConfig):
         }
     )
 ```
+<!-- prettier-ignore-end -->
 
 The `Teleoperator` defines the teleoperation device. You can check the list of available teleoperators in `lerobot/teleoperators`.
 
@@ -189,9 +198,16 @@ To setup the gamepad, you need to set the `control_mode` to `"gamepad"` and defi
 ```
 
 <p align="center">
-  <img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/gamepad_guide.jpg?raw=true" alt="Figure shows the control mappings on a Logitech gamepad." title="Gamepad Control Mapping" width="100%"></img>
+  <img
+    src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/gamepad_guide.jpg?raw=true"
+    alt="Figure shows the control mappings on a Logitech gamepad."
+    title="Gamepad Control Mapping"
+    width="100%"
+  ></img>
 </p>
-<p align="center"><i>Gamepad button mapping for robot control and episode management</i></p>
+<p align="center">
+  <i>Gamepad button mapping for robot control and episode management</i>
+</p>
 
 **Setting up the SO101 leader**
 
@@ -215,7 +231,10 @@ During the online training, press `space` to take over the policy and `space` ag
 
 <div class="video-container">
   <video controls width="600">
-    <source src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/so101_leader_tutorial.mp4" type="video/mp4" />
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/so101_leader_tutorial.mp4"
+      type="video/mp4"
+    />
   </video>
 </div>
 
@@ -231,6 +250,7 @@ python -m lerobot.scripts.rl.gym_manipulator --config_path src/lerobot/configs/e
 ```
 
 During recording:
+
 1. The robot will reset to the initial position defined in the configuration file `fixed_reset_joint_positions`
 2. Complete the task successfully
 3. The episode ends with a reward of 1 when you press the "success" button
@@ -239,13 +259,13 @@ During recording:
 6. The process automatically continues to the next episode
 7. After recording all episodes, the dataset is pushed to the Hugging Face Hub (optional) and saved locally
 
-
 ### Processing the Dataset
 
 After collecting demonstrations, process them to determine optimal camera crops.
 Reinforcement learning is sensitive to background distractions, so it is important to crop the images to the relevant workspace area.
 
 Visual RL algorithms learn directly from pixel inputs, making them vulnerable to irrelevant visual information. Background elements like changing lighting, shadows, people moving, or objects outside the workspace can confuse the learning process. Good ROI selection should:
+
 - Include only the essential workspace where the task happens
 - Capture the robot's end-effector and all objects involved in the task
 - Exclude unnecessary background elements and distractions
@@ -267,6 +287,7 @@ python -m lerobot.scripts.rl.crop_dataset_roi --repo-id username/pick_lift_cube
 5. The script outputs cropping parameters and creates a new cropped dataset
 
 Example output:
+
 ```
 Selected Rectangular Regions of Interest (top, left, height, width):
 observation.images.side: [180, 207, 180, 200]
@@ -274,11 +295,15 @@ observation.images.front: [180, 250, 120, 150]
 ```
 
 <p align="center">
-<img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/crop_dataset.gif" width="600"/>
+  <img
+    src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/crop_dataset.gif"
+    width="600"
+  />
 </p>
 
-<p align="center"><i>Interactive cropping tool for selecting regions of interest</i></p>
-
+<p align="center">
+  <i>Interactive cropping tool for selecting regions of interest</i>
+</p>
 
 **Updating Configuration**
 
@@ -294,8 +319,7 @@ Add these crop parameters to your training configuration:
 
 **Recommended image resolution**
 
-Most vision-based policies have been validated on square inputs of either **128×128** (default) or **64×64** pixels.  We therefore advise setting the resize_size parameter to [128, 128] – or [64, 64] if you need to save GPU memory and bandwidth.  Other resolutions are possible but have not been extensively tested.
-
+Most vision-based policies have been validated on square inputs of either **128×128** (default) or **64×64** pixels. We therefore advise setting the resize_size parameter to [128, 128] – or [64, 64] if you need to save GPU memory and bandwidth. Other resolutions are possible but have not been extensively tested.
 
 ### Training a Reward Classifier
 
@@ -332,13 +356,13 @@ Example configuration section for data collection:
 
 ```json
 {
-    "mode": "record",
-    "repo_id": "hf_username/dataset_name",
-    "dataset_root": "data/your_dataset",
-    "num_episodes": 20,
-    "push_to_hub": true,
-    "fps": 10,
-    "number_of_steps_after_success": 15
+  "mode": "record",
+  "repo_id": "hf_username/dataset_name",
+  "dataset_root": "data/your_dataset",
+  "num_episodes": 20,
+  "push_to_hub": true,
+  "fps": 10,
+  "number_of_steps_after_success": 15
 }
 ```
 
@@ -395,21 +419,25 @@ python -m lerobot.scripts.train --config_path path/to/reward_classifier_train_co
 
 To use your trained reward classifier, configure the `HILSerlRobotEnvConfig` to use your model:
 
+<!-- prettier-ignore-start -->
 ```python
 env_config = HILSerlRobotEnvConfig(
     reward_classifier_pretrained_path="path_to_your_pretrained_trained_model",
     # Other environment parameters
 )
 ```
+<!-- prettier-ignore-end -->
+
 or set the argument in the json config file.
 
 ```json
 {
-    "reward_classifier_pretrained_path": "path_to_your_pretrained_model"
+  "reward_classifier_pretrained_path": "path_to_your_pretrained_model"
 }
 ```
 
 Run `gym_manipulator.py` to test the model.
+
 ```bash
 python -m lerobot.scripts.rl.gym_manipulator --config_path path/to/env_config.json
 ```
@@ -422,11 +450,13 @@ The reward classifier will automatically provide rewards based on the visual inp
    Create the necessary json configuration files for the reward classifier and the environment. Check the examples [here](https://huggingface.co/datasets/aractingi/lerobot-example-config-files/tree/main).
 
 2. **Collect a dataset**:
+
    ```bash
    python -m lerobot.scripts.rl.gym_manipulator --config_path src/lerobot/configs/env_config.json
    ```
 
 3. **Train the classifier**:
+
    ```bash
    python -m lerobot.scripts.train --config_path src/lerobot/configs/reward_classifier_train_config.json
    ```
@@ -459,6 +489,7 @@ python -m lerobot.scripts.rl.learner --config_path src/lerobot/configs/train_con
 ```
 
 The learner:
+
 - Initializes the policy network
 - Prepares replay buffers
 - Opens a `gRPC` server to communicate with actors
@@ -473,6 +504,7 @@ python -m lerobot.scripts.rl.actor --config_path src/lerobot/configs/train_confi
 ```
 
 The actor:
+
 - Connects to the learner via `gRPC`
 - Initializes the environment
 - Execute rollouts of the policy to collect experience
@@ -496,10 +528,19 @@ The training proceeds automatically:
 - A successful experiment is one where the human has to intervene at the start but then reduces the amount of interventions as the policy improves. You can monitor the intervention rate in the `wandb` dashboard.
 
 <p align="center">
-  <img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/hil_effect.png?raw=true" alt="Figure shows the control mappings on a Logitech gamepad." title="Gamepad Control Mapping" width="100%"></img>
+  <img
+    src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/hil_effect.png?raw=true"
+    alt="Figure shows the control mappings on a Logitech gamepad."
+    title="Gamepad Control Mapping"
+    width="100%"
+  ></img>
 </p>
 
-<p align="center"><i>Example showing how human interventions help guide policy learning over time</i></p>
+<p align="center">
+  <i>
+    Example showing how human interventions help guide policy learning over time
+  </i>
+</p>
 
 - The figure shows the plot of the episodic reward over interaction step. The figure shows the effect of human interventions on the policy learning.
 - The orange curve is an experiment without any human interventions. While the pink and blue curves are experiments with human interventions.
@@ -510,7 +551,9 @@ The training proceeds automatically:
 If you have `wandb.enable` set to `true` in your configuration, you can monitor training progress in real-time through the [Weights & Biases](https://wandb.ai/site/) dashboard.
 
 ### Guide to Human Interventions
+
 The learning process is very sensitive to the intervention strategy. It will takes a few runs to understand how to intervene effectively. Some tips and hints:
+
 - Allow the policy to explore for a few episodes at the start of training.
 - Avoid intervening for long periods of time. Try to intervene in situation to correct the robot's behaviour when it goes off track.
 - Once the policy starts achieving the task, even if its not perfect, you can limit your interventions to simple quick actions like a simple grasping commands.
@@ -518,26 +561,36 @@ The learning process is very sensitive to the intervention strategy. It will tak
 The ideal behaviour is that your intervention rate should drop gradually during training as shown in the figure below.
 
 <p align="center">
-  <img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/intervention_rate_tutorial_rl.png?raw=true" alt="Intervention rate" title="Intervention rate during training" width="100%"></img>
+  <img
+    src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/intervention_rate_tutorial_rl.png?raw=true"
+    alt="Intervention rate"
+    title="Intervention rate during training"
+    width="100%"
+  ></img>
 </p>
 
-<p align="center"><i>Plot of the intervention rate during a training run on a pick and lift cube task</i></p>
+<p align="center">
+  <i>
+    Plot of the intervention rate during a training run on a pick and lift cube
+    task
+  </i>
+</p>
 
 ### Key hyperparameters to tune
 
 Some configuration values have a disproportionate impact on training stability and speed:
 
 - **`temperature_init`** (`policy.temperature_init`) – initial entropy temperature in SAC. Higher values encourage more exploration; lower values make the policy more deterministic early on. A good starting point is `1e-2`. We observed that setting it too high can make human interventions ineffective and slow down learning.
-- **`policy_parameters_push_frequency`** (`policy.actor_learner_config.policy_parameters_push_frequency`) – interval in *seconds* between two weight pushes from the learner to the actor. The default is `4 s`. Decrease to **1-2 s** to provide fresher weights (at the cost of more network traffic); increase only if your connection is slow, as this will reduce sample efficiency.
+- **`policy_parameters_push_frequency`** (`policy.actor_learner_config.policy_parameters_push_frequency`) – interval in _seconds_ between two weight pushes from the learner to the actor. The default is `4 s`. Decrease to **1-2 s** to provide fresher weights (at the cost of more network traffic); increase only if your connection is slow, as this will reduce sample efficiency.
 - **`storage_device`** (`policy.storage_device`) – device on which the learner keeps the policy parameters. If you have spare GPU memory, set this to `"cuda"` (instead of the default `"cpu"`). Keeping the weights on-GPU removes CPU→GPU transfer overhead and can significantly increase the number of learner updates per second.
-
 
 Congrats 🎉, you have finished this tutorial!
 
 > [!TIP]
->  If you have any questions or need help, please reach out on [Discord](https://discord.com/invite/s3KuuzsPFb).
+> If you have any questions or need help, please reach out on [Discord](https://discord.com/invite/s3KuuzsPFb).
 
 Paper citation:
+
 ```
 @article{luo2024precise,
   title={Precise and Dexterous Robotic Manipulation via Human-in-the-Loop Reinforcement Learning},

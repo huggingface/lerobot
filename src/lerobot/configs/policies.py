@@ -19,7 +19,7 @@ import os
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Type, TypeVar
+from typing import TypeVar
 
 import draccus
 from huggingface_hub import hf_hub_download

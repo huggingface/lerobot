@@ -15,7 +15,7 @@
 import builtins
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, Type, TypeVar
+from typing import Any, TypeVar
 
 from huggingface_hub import HfApi
 from huggingface_hub.utils import validate_hf_hub_args

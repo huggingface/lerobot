@@ -54,7 +54,7 @@ python -m lerobot.scripts.train \
   --wandb.enable=true
 ```
 
-*Writes checkpoints to `outputs/train/<desired_policy_repo_id>/checkpoints/`.*
+_Writes checkpoints to `outputs/train/<desired_policy_repo_id>/checkpoints/`._
 
 ### Evaluate the policy/run inference
 
@@ -72,4 +72,4 @@ Prefix the dataset repo with **eval\_** and supply `--policy.path` pointing to a
 
 ## Model Details
 
-* **License:** {{ license | default("\[More Information Needed]", true) }}
+- **License:** {{ license | default("\[More Information Needed]", true) }}
