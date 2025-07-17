@@ -958,9 +958,9 @@ class VLAFlowMatching(nn.Module):
         while time >= -dt / 2:
             tau = 1 - time # tau goes from 0 to 1, to be consistent with the paper
             # ΠGDM guidance
+            v_pi = -self.denoise_step(prefix_pad_masks, past_key_values, A_tau, time.expand(bsize))
             A_tau.requires_grad_(True)
             with torch.enable_grad():
-                v_pi = -self.denoise_step(prefix_pad_masks, past_key_values, A_tau, time.expand(bsize))
                 A_hat = A_tau + (1 - tau) * v_pi     # Â¹_tau   Eq. 3
                 err   = (A_prev - A_hat) * W_row
                 grad_outputs = err.clone().detach()
@@ -972,16 +972,16 @@ class VLAFlowMatching(nn.Module):
             A_tau = A_tau - dt * (v_pi + scale * g)
             A_tau = A_tau.detach() # stop grads before next step
 
-            # For debugging
-            A_tau_d_err = (A_prev[:,:d]-A_tau[:,:d]).norm()
-            print(f"{time=} {tau=} {err[:,:d].norm()=} {A_tau_d_err=} {scale=} {g.norm()=}")
+            # For debugging, this makes the code slower
+            # A_tau_d_err = (A_prev[:,:d]-A_tau[:,:d]).norm()
+            # print(f"{time=} {tau=} {err[:,:d].norm()=} {A_tau_d_err=} {scale=} {g.norm()=}")
 
             time += dt
 
         # sanity check: the first d steps of A_prev should be the similar to the first d steps of A_tau because of masking
-        A_tau_d_err = (A_prev[:,:d]-A_tau[:,:d]).norm()
-        if A_tau_d_err > 0.5:
-            print(f"WARNING: [RTC] The first {d=} steps of the new chunk are too different from the previous chunk. This may result in jerky motion. {A_tau_d_err=}")
+        # A_tau_d_err = (A_prev[:,:d]-A_tau[:,:d]).norm()
+        # if A_tau_d_err > 0.5:
+        #     print(f"WARNING: [RTC] The first {d=} steps of the new chunk are too different from the previous chunk. This may result in jerky motion. {A_tau_d_err=}")
 
         self.prev_chunk = A_tau
         return A_tau
