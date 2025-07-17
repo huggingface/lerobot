@@ -108,13 +108,13 @@ class KochFollower(Robot):
 
     def calibrate(self, calibration: dict[str, MotorCalibration] | None = None) -> None:
         if calibration is not None and calibration:
-            logging.info("Mismatch between calibration values in the motor and the calibration file")
+            logger.info("Mismatch between calibration values in the motor and the calibration file")
 
             user_input = input(
                 f"Press ENTER to use provided calibration file associated with the id {self.id}, or type 'c' and press ENTER to run calibration: "
             )
             if user_input.strip().lower() != "c":
-                logging.info(f"Using provided calibration file associated with the id {self.id}")
+                logger.info(f"Using provided calibration file associated with the id {self.id}")
                 self.bus.write_calibration(calibration)
                 return
         logger.info(f"\nRunning calibration of {self}")
