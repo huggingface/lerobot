@@ -141,6 +141,13 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
 
         start = time.perf_counter()
         self.policy = policy_class.from_pretrained(policy_specs.pretrained_name_or_path)
+        # TODO: this is only for testing. Remove this after testing.
+        self.policy.config.inference_enable_rtc = True
+        # If s is too high, the robot will jump forward, if it's too low, the robot will jump backward.
+        # Ideally, we want the robot to give us s, which should line up with the observation time.
+        self.policy.config.inference_rtc_s = 50
+        # d can be set conservatively. The higher d is, the less responsive the robot will be (it will continue to follow the old action for a longer time). If d is too low, the robot may become jerky.
+        self.policy.config.inference_rtc_d = 25
         self.policy.to(self.device)
         end = time.perf_counter()
 
