@@ -12,6 +12,7 @@ And advise if it's your first time printing or if you don't own a 3D printer.
 To install LeRobot, follow our [Installation Guide](./installation)
 
 In addition to these instructions, you need to install the Feetech SDK:
+
 ```bash
 pip install -e ".[feetech]"
 ```
@@ -20,16 +21,17 @@ pip install -e ".[feetech]"
 
 The follower arm uses 6x STS3215 motors with 1/345 gearing. The leader, however, uses three differently geared motors to make sure it can both sustain its own weight and it can be moved without requiring much force. Which motor is needed for which joint is shown in the table below.
 
-| Leader-Arm Axis | Motor | Gear Ratio |
-|-----------------|:-------:|:----------:|
-| Base / Shoulder Pan | 1 | 1 / 191 |
-| Shoulder Lift       | 2 | 1 / 345 |
-| Elbow Flex          | 3 | 1 / 191 |
-| Wrist Flex          | 4 | 1 / 147 |
-| Wrist Roll          | 5 | 1 / 147 |
-| Gripper             | 6 | 1 / 147 |
+| Leader-Arm Axis     | Motor | Gear Ratio |
+| ------------------- | :---: | :--------: |
+| Base / Shoulder Pan |   1   |  1 / 191   |
+| Shoulder Lift       |   2   |  1 / 345   |
+| Elbow Flex          |   3   |  1 / 191   |
+| Wrist Flex          |   4   |  1 / 147   |
+| Wrist Roll          |   5   |  1 / 147   |
+| Gripper             |   6   |  1 / 147   |
 
 ### Clean Parts
+
 Remove all support material from the 3D-printed parts. The easiest way to do this is using a small screwdriver to get underneath the support material.
 
 ### Joint 1
@@ -44,7 +46,10 @@ Remove all support material from the 3D-printed parts. The easiest way to do thi
 
 <div class="video-container">
   <video controls width="600">
-    <source src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Joint1_v2.mp4" type="video/mp4" />
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Joint1_v2.mp4"
+      type="video/mp4"
+    />
   </video>
 </div>
 
@@ -57,7 +62,10 @@ Remove all support material from the 3D-printed parts. The easiest way to do thi
 
 <div class="video-container">
   <video controls width="600">
-    <source src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Joint2_v2.mp4" type="video/mp4" />
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Joint2_v2.mp4"
+      type="video/mp4"
+    />
   </video>
 </div>
 
@@ -69,7 +77,10 @@ Remove all support material from the 3D-printed parts. The easiest way to do thi
 
 <div class="video-container">
   <video controls width="600">
-    <source src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Joint3_v2.mp4" type="video/mp4" />
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Joint3_v2.mp4"
+      type="video/mp4"
+    />
   </video>
 </div>
 
@@ -81,7 +92,10 @@ Remove all support material from the 3D-printed parts. The easiest way to do thi
 
 <div class="video-container">
   <video controls width="600">
-    <source src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Joint4_v2.mp4" type="video/mp4" />
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Joint4_v2.mp4"
+      type="video/mp4"
+    />
   </video>
 </div>
 
@@ -93,7 +107,10 @@ Remove all support material from the 3D-printed parts. The easiest way to do thi
 
 <div class="video-container">
   <video controls width="600">
-    <source src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Joint5_v2.mp4" type="video/mp4" />
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Joint5_v2.mp4"
+      type="video/mp4"
+    />
   </video>
 </div>
 
@@ -109,7 +126,10 @@ Remove all support material from the 3D-printed parts. The easiest way to do thi
 
 <div class="video-container">
   <video controls width="600">
-    <source src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Gripper_v2.mp4" type="video/mp4" />
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Gripper_v2.mp4"
+      type="video/mp4"
+    />
   </video>
 </div>
 
@@ -123,7 +143,10 @@ Remove all support material from the 3D-printed parts. The easiest way to do thi
 
 <div class="video-container">
   <video controls width="600">
-    <source src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Leader_v2.mp4" type="video/mp4" />
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Leader_v2.mp4"
+      type="video/mp4"
+    />
   </video>
 </div>
 
@@ -135,6 +158,7 @@ Remove all support material from the 3D-printed parts. The easiest way to do thi
 ### 1. Find the USB ports associated with each arm
 
 To find the port for each bus servo adapter, run this script:
+
 ```bash
 python -m lerobot.find_port
 ```
@@ -161,6 +185,7 @@ Where the found port is: `/dev/tty.usbmodem575E0032081` corresponding to your le
 <hfoption id="Linux">
 
 On Linux, you might need to give access to the USB ports by running:
+
 ```bash
 sudo chmod 666 /dev/ttyACM0
 sudo chmod 666 /dev/ttyACM1
@@ -198,7 +223,10 @@ The video below shows the sequence of steps for setting the motor ids.
 
 <div class="video-container">
   <video controls width="600">
-    <source src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/setup_motors_so101_2.mp4" type="video/mp4" />
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/setup_motors_so101_2.mp4"
+      type="video/mp4"
+    />
   </video>
 </div>
 
@@ -214,9 +242,11 @@ python -m lerobot.setup_motors \
     --robot.type=so101_follower \
     --robot.port=/dev/tty.usbmodem585A0076841  # <- paste here the port found at previous step
 ```
+
 </hfoption>
 <hfoption id="API example">
 
+<!-- prettier-ignore-start -->
 ```python
 from lerobot.robots.so101_follower import SO101Follower, SO101FollowerConfig
 
@@ -227,10 +257,13 @@ config = SO101FollowerConfig(
 follower = SO101Follower(config)
 follower.setup_motors()
 ```
+<!-- prettier-ignore-end -->
+
 </hfoption>
 </hfoptions>
 
 You should see the following instruction
+
 ```bash
 Connect the controller board to the 'gripper' motor only and press enter.
 ```
@@ -240,22 +273,26 @@ As instructed, plug the gripper's motor. Make sure it's the only motor connected
 <details>
 <summary>Troubleshooting</summary>
 
-  If you get an error at that point, check your cables and make sure they are plugged in properly:
-  <ul>
-    <li>Power supply</li>
-    <li>USB cable between your computer and the controller board</li>
-    <li>The 3-pin cable from the controller board to the motor</li>
-  </ul>
+If you get an error at that point, check your cables and make sure they are plugged in properly:
 
-  If you are using a Waveshare controller board, make sure that the two jumpers are set on the `B` channel (USB).
+<ul>
+  <li>Power supply</li>
+  <li>USB cable between your computer and the controller board</li>
+  <li>The 3-pin cable from the controller board to the motor</li>
+</ul>
+
+If you are using a Waveshare controller board, make sure that the two jumpers are set on the `B` channel (USB).
+
 </details>
 
 You should then see the following message:
+
 ```bash
 'gripper' motor id set to 6
 ```
 
 Followed by the next instruction:
+
 ```bash
 Connect the controller board to the 'wrist_roll' motor only and press enter.
 ```
@@ -270,6 +307,7 @@ Repeat the operation for each motor as instructed.
 When you are done, the script will simply finish, at which point the motors are ready to be used. You can now plug the 3-pin cable from each motor to the next one, and the cable from the first motor (the 'shoulder pan' with id=1) to the controller board, which can now be attached to the base of the arm.
 
 #### Leader
+
 Do the same steps for the leader arm.
 
 <hfoptions id="setup_motors">
@@ -280,9 +318,11 @@ python -m lerobot.setup_motors \
     --teleop.type=so101_leader \
     --teleop.port=/dev/tty.usbmodem575E0031751  # <- paste here the port found at previous step
 ```
+
 </hfoption>
 <hfoption id="API example">
 
+<!-- prettier-ignore-start -->
 ```python
 from lerobot.teleoperators.so101_leader import SO101Leader, SO101LeaderConfig
 
@@ -293,6 +333,8 @@ config = SO101LeaderConfig(
 leader = SO101Leader(config)
 leader.setup_motors()
 ```
+<!-- prettier-ignore-end -->
+
 </hfoption>
 </hfoptions>
 
@@ -314,9 +356,11 @@ python -m lerobot.calibrate \
     --robot.port=/dev/tty.usbmodem58760431551 \ # <- The port of your robot
     --robot.id=my_awesome_follower_arm # <- Give the robot a unique name
 ```
+
 </hfoption>
 <hfoption id="API example">
 
+<!-- prettier-ignore-start -->
 ```python
 from lerobot.robots.so101_follower import SO101FollowerConfig, SO101Follower
 
@@ -330,6 +374,8 @@ follower.connect(calibrate=False)
 follower.calibrate()
 follower.disconnect()
 ```
+<!-- prettier-ignore-end -->
+
 </hfoption>
 </hfoptions>
 
@@ -339,7 +385,10 @@ The video below shows how to perform the calibration. First you need to move the
 
 <div class="video-container">
   <video controls width="600">
-    <source src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/calibrate_so101_2.mp4" type="video/mp4" />
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/calibrate_so101_2.mp4"
+      type="video/mp4"
+    />
   </video>
 </div>
 
@@ -356,9 +405,11 @@ python -m lerobot.calibrate \
     --teleop.port=/dev/tty.usbmodem58760431551 \ # <- The port of your robot
     --teleop.id=my_awesome_leader_arm # <- Give the robot a unique name
 ```
+
 </hfoption>
 <hfoption id="API example">
 
+<!-- prettier-ignore-start -->
 ```python
 from lerobot.teleoperators.so101_leader import SO101LeaderConfig, SO101Leader
 
@@ -372,10 +423,12 @@ leader.connect(calibrate=False)
 leader.calibrate()
 leader.disconnect()
 ```
+<!-- prettier-ignore-end -->
+
 </hfoption>
 </hfoptions>
 
 Congrats 🎉, your robot is all set to learn a task on its own. Start training it by following this tutorial: [Getting started with real-world robots](./getting_started_real_world_robot)
 
 > [!TIP]
->  If you have any questions or need help, please reach out on [Discord](https://discord.com/invite/s3KuuzsPFb).
+> If you have any questions or need help, please reach out on [Discord](https://discord.com/invite/s3KuuzsPFb).
