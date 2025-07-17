@@ -36,8 +36,11 @@ def get_last_item_from_queue(queue: Queue, block=True, timeout: float = 0.1) -> 
         # On Mac, avoid using `qsize` due to unreliable implementation.
         # There is a comment on `qsize` code in the Python source:
         # Raises NotImplementedError on Mac OSX because of broken sem_getvalue()
-        with suppress(Empty):
-            item = queue.get_nowait()
+        try:
+            while True:
+                item = queue.get_nowait()
+        except Empty:
+            pass
 
         return item
 
