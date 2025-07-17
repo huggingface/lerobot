@@ -160,11 +160,32 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         client_id = context.peer()
         self.logger.debug(f"Client {client_id} connected for action streaming")
 
+        receive_start = time.perf_counter()
         received_bytes = receive_bytes_in_chunks(request_iterator, None, self.shutdown_event, self.logger)
+        receive_time = time.perf_counter() - receive_start
+        unpack_start = time.perf_counter()
         obs = pickle.loads(received_bytes)  # nosec
+        unpack_time = time.perf_counter() - unpack_start
+        predict_start = time.perf_counter()
         action_chunk = self._predict_action_chunk(obs)
+        predict_time = time.perf_counter() - predict_start
+        pack_start = time.perf_counter()
         actions_bytes = pickle.dumps(action_chunk)  # nosec
+        pack_time = time.perf_counter() - pack_start
         actions = services_pb2.Actions(data=actions_bytes)
+        send_start = time.perf_counter()
+        send_time = time.perf_counter() - send_start
+        total_time = time.perf_counter() - receive_start
+
+        self.logger.info(
+            f"Observation {obs.get_timestep()}"
+            f" | Receive: {receive_time:.3f}s"
+            f" | Unpack: {unpack_time:.3f}s"
+            f" | Predict: {predict_time:.3f}s"
+            f" | Pack: {pack_time:.3f}s"
+            f" | Send: {send_time:.3f}s"
+            f" | Total: {total_time:.3f}s"
+        )
 
         return actions
 
@@ -205,12 +226,12 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
 
     def _predict_action_chunk(self, observation_t: TimedObservation) -> list[TimedAction]:
         """Predict an action chunk based on an observation"""
-        inference_starts = time.perf_counter()
+        step_start = time.perf_counter()
 
         """1. Prepare observation"""
-        start_time = time.perf_counter()
+        preprocessing_start = time.perf_counter()
         observation = self._prepare_observation(observation_t)
-        preprocessing_time = time.perf_counter() - start_time
+        preprocessing_time = time.perf_counter() - preprocessing_start
 
         if self.last_processed_obs is None:
             rtc_s = None
@@ -225,33 +246,27 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         self.last_processed_obs: TimedObservation = observation_t
 
         """2. Get action chunk"""
-        start_time = time.perf_counter()
+        inference_start = time.perf_counter()
         action_tensor = self._get_action_chunk(observation, rtc_s=rtc_s, rtc_d=rtc_d)
-        inference_time = time.perf_counter() - start_time
+        inference_time = time.perf_counter() - inference_start
 
         """3. Post-inference processing"""
-        start_time = time.perf_counter()
+        postprocessing_start = time.perf_counter()
         # Move to CPU before serializing
         action_tensor = action_tensor.cpu().squeeze(0)
 
         action_chunk = self._time_action_chunk(
             observation_t.get_timestamp(), list(action_tensor), observation_t.get_timestep()
         )
-        postprocessing_time = time.perf_counter() - start_time
-        inference_stops = time.perf_counter()
+        postprocessing_time = time.perf_counter() - postprocessing_start
+        total_time = time.perf_counter() - step_start
 
-        self.logger.info(
-            f"Observation {observation_t.get_timestep()} |"
-            f"Inference time: {1000 * (inference_stops - inference_starts):.2f}ms"
-        )
-
-        # full-process latency breakdown for debugging purposes
         self.logger.debug(
-            f"Observation {observation_t.get_timestep()} | "
-            f"Preprocessing time: {1000 * (preprocessing_time - inference_starts):.2f}ms | "
-            f"Inference time: {1000 * (inference_time - preprocessing_time):.2f}ms | "
-            f"Postprocessing time: {1000 * (postprocessing_time - inference_time):.2f}ms | "
-            f"Total time: {1000 * (postprocessing_time - inference_starts):.2f}ms"
+            f"Observation {observation_t.get_timestep()}"
+            f" | Preprocessing: {(preprocessing_time):.3f}s"
+            f" | Inference: {(inference_time):.3f}s"
+            f" | Postprocessing: {(postprocessing_time):.3f}s"
+            f" | Total: {(total_time):.3f}s"
         )
 
         return action_chunk
@@ -275,7 +290,7 @@ def serve(cfg: PolicyServerConfig):
     policy_server = PolicyServer(cfg)
 
     # Setup and start gRPC server
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=4), compression=grpc.Compression.Deflate)
     services_pb2_grpc.add_AsyncInferenceServicer_to_server(policy_server, server)
     server.add_insecure_port(f"{cfg.host}:{cfg.port}")
 
