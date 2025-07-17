@@ -37,6 +37,7 @@ import draccus
 import grpc
 import torch
 
+from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.factory import get_policy_class
 from lerobot.scripts.server.configs import PolicyServerConfig
 from lerobot.scripts.server.constants import SUPPORTED_POLICIES
@@ -139,14 +140,17 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         policy_class = get_policy_class(self.policy_type)
 
         start = time.perf_counter()
-        self.policy = policy_class.from_pretrained(policy_specs.pretrained_name_or_path)
-        # TODO: this is only for testing. Remove this after testing.
-        self.policy.config.inference_enable_rtc = True
-        # # If s is too high, the robot will jump forward, if it's too low, the robot will jump backward.
-        # # Ideally, we want the robot to give us s, which should line up with the observation time.
-        # self.policy.config.inference_rtc_s = 50
-        # # d can be set conservatively. The higher d is, the less responsive the robot will be (it will continue to follow the old action for a longer time). If d is too low, the robot may become jerky.
-        # self.policy.config.inference_rtc_d = 25
+        policy_config = PreTrainedConfig.from_pretrained(policy_specs.pretrained_name_or_path)
+
+        # TODO: this is hard-coded only for testing. Make the client pass these as args
+        policy_config.inference_enable_rtc = True
+        policy_config.compile_model = True
+
+        self.policy = policy_class.from_pretrained(
+            policy_specs.pretrained_name_or_path,
+            config=policy_config,
+        )
+
         self.policy.to(self.device)
         end = time.perf_counter()
 
@@ -241,7 +245,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             rtc_s = observation_t.get_timestep() - self.last_processed_obs.get_timestep()
             print(f"Calculated rtc_s: {rtc_s}")
             # inference delay in ticks. TODO: calculate this from difference in timestamps, assuming clock sync.
-            rtc_d = 25
+            rtc_d = 30
 
         self.last_processed_obs: TimedObservation = observation_t
 

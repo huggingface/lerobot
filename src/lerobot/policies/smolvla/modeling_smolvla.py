@@ -55,6 +55,7 @@ policy = SmolVLAPolicy.from_pretrained("lerobot/smolvla_base")
 import math
 import os
 import re
+import time
 from collections import deque
 
 import safetensors
@@ -698,6 +699,11 @@ class VLAFlowMatching(nn.Module):
         # used for RTC
         self.prev_chunk = None
 
+        if self.config.compile_model:
+            self.denoise_step = torch.compile(self._denoise_step, mode="reduce-overhead")
+        else:
+            self.denoise_step = self._denoise_step
+
     def set_requires_grad(self):
         for params in self.state_proj.parameters():
             params.requires_grad = self.config.train_state_proj
@@ -960,23 +966,34 @@ class VLAFlowMatching(nn.Module):
 
         H = self.config.chunk_size
 
+        total_start = time.perf_counter()
+        denoise_time = 0
+        grad_time = 0
+
+        # s_end = s
+        s_end = 150
         # Prepare the guidance mask
-        W = make_soft_mask(d, s, H, device)
+        W = make_soft_mask(d, s_end, H, device)
         W_row = W[None, :, None]            # broadcast to (B,H,M)
 
         A_tau = noise                         # A^0  ~ 𝒩(0,I)
-        time  = torch.tensor(1.0, device=device)
+        t  = torch.tensor(1.0, device=device)
 
-        while time >= -dt / 2:
-            tau = 1 - time # tau goes from 0 to 1, to be consistent with the paper
+        while t >= -dt / 2:
+            tau = 1 - t # tau goes from 0 to 1, to be consistent with the paper
             # ΠGDM guidance
-            v_pi = -self.denoise_step(prefix_pad_masks, past_key_values, A_tau, time.expand(bsize))
+            denoise_start = time.perf_counter()
+            v_pi = -self.denoise_step(prefix_pad_masks, past_key_values, A_tau, t.expand(bsize))
+            denoise_time += time.perf_counter() - denoise_start
+
+            grad_start = time.perf_counter()
             A_tau.requires_grad_(True)
             with torch.enable_grad():
                 A_hat = A_tau + (1 - tau) * v_pi     # Â¹_tau   Eq. 3
                 err   = (A_prev - A_hat) * W_row
                 grad_outputs = err.clone().detach()
                 g = torch.autograd.grad(A_hat, A_tau, grad_outputs, retain_graph=True)[0]
+            grad_time += time.perf_counter() - grad_start
 
             r_sq = (1 - tau)**2 / (tau**2 + (1 - tau)**2) # Eq. 4
             scale = min(self.config.inference_rtc_beta, (1 - tau) / (tau * r_sq))  # Eq.2
@@ -986,36 +1003,40 @@ class VLAFlowMatching(nn.Module):
 
             # For debugging. This makes the code slower
             # A_tau_d_err = (A_prev[:,:d]-A_tau[:,:d]).norm()
-            # print(f"{time=} {tau=} {err[:,:d].norm()=} {A_tau_d_err=} {scale=} {g.norm()=}")
+            # print(f"{t=} {tau=} {err[:,:d].norm()=} {A_tau_d_err=} {scale=} {g.norm()=}")
 
-            time += dt
+            t += dt
 
         # sanity check: the first d steps of A_prev should be the similar to the first d steps of A_tau because of masking
         # A_tau_d_err = (A_prev[:,:d]-A_tau[:,:d]).norm()
         # if A_tau_d_err > 0.5:
         #     print(f"WARNING: [RTC] The first {d=} steps of the new chunk are too different from the previous chunk. This may result in jerky motion. {A_tau_d_err=}")
 
+        # For debugging.
+        # total_time = time.perf_counter() - total_start
+        # print(f"RTC denoising total time: {total_time:.2f}s | Denoise: {denoise_time:.2f}s | Grad: {grad_time:.2f}s")
+
         self.prev_chunk = A_tau
         return A_tau
 
     def euler_denoise(self, noise, bsize, dt, prefix_pad_masks, past_key_values, device):
         x_t = noise
-        time = torch.tensor(1.0, dtype=torch.float32, device=device)
+        t = torch.tensor(1.0, dtype=torch.float32, device=device)
 
-        while time >= -dt / 2:
-            expanded_time = time.expand(bsize)
+        while t >= -dt / 2:
+            expanded_t = t.expand(bsize)
             v_t = self.denoise_step(
                 prefix_pad_masks,
                 past_key_values,
                 x_t,
-                expanded_time,
+                expanded_t,
             )
             # Euler step
             x_t += dt * v_t
-            time += dt
+            t += dt
         return x_t
 
-    def denoise_step(
+    def _denoise_step(
         self,
         prefix_pad_masks,
         past_key_values,
