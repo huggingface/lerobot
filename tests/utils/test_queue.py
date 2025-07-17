@@ -34,7 +34,7 @@ def test_get_last_item_single_item():
     assert queue.empty()
 
 
-def test_get_last_item_multiple_items_with_torch_queue():
+def test_get_last_item_multiple_items():
     """Test getting the last item when queue has multiple items."""
     queue = TorchMPQueue()
     items = ["first", "second", "third", "fourth", "last"]
@@ -47,6 +47,8 @@ def test_get_last_item_multiple_items_with_torch_queue():
     assert result == "last"
     assert queue.empty()
 
+
+def test_get_last_item_multiple_items_with_torch_queue():
     """Test getting the last item when queue has multiple items."""
     queue = Queue()
     items = ["first", "second", "third", "fourth", "last"]
