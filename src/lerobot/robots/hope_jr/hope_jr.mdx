@@ -9,6 +9,7 @@
 Follow the [installation instructions](https://github.com/huggingface/lerobot#installation) to install LeRobot.
 
 Install LeRobot with HopeJR dependencies:
+
 ```bash
 pip install -e ".[hopejr]"
 ```
@@ -40,35 +41,39 @@ python -m lerobot.calibrate \
 When running the calibration script, a calibration GUI will pop up. Finger joints are named as follows:
 
 **Thumb**:
+
 - **CMC**: base joint connecting thumb to hand
 - **MCP**: knuckle joint
 - **PIP**: first finger joint
 - **DIP** : fingertip joint
 
 **Index, Middle, Ring, and Pinky fingers**:
+
 - **Radial flexor**: Moves base of finger towards the thumb
 - **Ulnar flexor**: Moves base of finger towards the pinky
 - **PIP/DIP**: Flexes the distal and proximal phalanx of the finger
 
 Each one of these will need to be calibrated individually via the GUI.
- Note that ulnar and radial flexors should have ranges of the same size (but with different offsets) in order to get symmetric movement.
+Note that ulnar and radial flexors should have ranges of the same size (but with different offsets) in order to get symmetric movement.
 
 <p align="center">
-  <img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/calibration_gui_1.png"
+  <img
+    src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/calibration_gui_1.png"
     alt="Setting boundaries in the hand calibration GUI"
     title="Setting boundaries in the hand calibration GUI"
-    width="100%">
-  </img>
+    width="100%"
+  ></img>
 </p>
 
 Use the calibration interface to set the range boundaries for each joint as shown above.
 
 <p align="center">
-  <img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/calibration_gui_2.png"
+  <img
+    src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/calibration_gui_2.png"
     alt="Saving calibration values"
     title="Saving calibration values"
-    width="100%">
-  </img>
+    width="100%"
+  ></img>
 </p>
 
 Once you have set the appropriate boundaries for all joints, click "Save" to save the calibration values to the motors.
@@ -122,16 +127,18 @@ python -m lerobot.calibrate \
 ```
 
 This will open a calibration GUI where you can set the range limits for each motor. The arm motions are organized as follows:
+
 - **Shoulder**: pitch, yaw, and roll
 - **Elbow**: flex
 - **Wrist**: pitch, yaw, and roll
 
 <p align="center">
-  <img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/calibration_gui_2.png"
+  <img
+    src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/calibration_gui_2.png"
     alt="Setting boundaries in the arm calibration GUI"
     title="Setting boundaries in the arm calibration GUI"
-    width="100%">
-  </img>
+    width="100%"
+  ></img>
 </p>
 
 Use the calibration interface to set the range boundaries for each joint. Move each joint through its full range of motion and adjust the minimum and maximum values accordingly. Once you have set the appropriate boundaries for all joints, save the calibration.
@@ -169,6 +176,7 @@ Calibration saved to /Users/your_username/.cache/huggingface/lerobot/calibration
 Due to global variable conflicts in the Feetech middleware, teleoperation for arm and hand must run in separate shell sessions:
 
 ### Hand
+
 ```bash
 python -m lerobot.teleoperate \
     --robot.type=hope_jr_hand \
@@ -184,6 +192,7 @@ python -m lerobot.teleoperate \
 ```
 
 ### Arm
+
 ```bash
 python -m lerobot.teleoperate \
     --robot.type=hope_jr_arm \
