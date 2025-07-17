@@ -18,12 +18,16 @@ import threading
 import time
 from queue import Queue
 
+import pytest
+from torch.multiprocessing import Queue as TorchMPQueue
+
 from lerobot.utils.queue import get_last_item_from_queue
 
 
-def test_get_last_item_single_item():
+@pytest.mark.parametrize("queue_cls", [Queue, TorchMPQueue])
+def test_get_last_item_single_item(queue_cls):
     """Test getting the last item when queue has only one item."""
-    queue = Queue()
+    queue = queue_cls()
     queue.put("single_item")
 
     result = get_last_item_from_queue(queue)
@@ -32,9 +36,10 @@ def test_get_last_item_single_item():
     assert queue.empty()
 
 
-def test_get_last_item_multiple_items():
+@pytest.mark.parametrize("queue_cls", [Queue, TorchMPQueue])
+def test_get_last_item_multiple_items(queue_cls):
     """Test getting the last item when queue has multiple items."""
-    queue = Queue()
+    queue = queue_cls()
     items = ["first", "second", "third", "fourth", "last"]
 
     for item in items:
@@ -46,9 +51,10 @@ def test_get_last_item_multiple_items():
     assert queue.empty()
 
 
-def test_get_last_item_different_types():
+@pytest.mark.parametrize("queue_cls", [Queue, TorchMPQueue])
+def test_get_last_item_different_types(queue_cls):
     """Test with different data types in the queue."""
-    queue = Queue()
+    queue = queue_cls()
     items = [1, 2.5, "string", {"key": "value"}, [1, 2, 3], ("tuple", "data")]
 
     for item in items:
@@ -60,9 +66,10 @@ def test_get_last_item_different_types():
     assert queue.empty()
 
 
-def test_get_last_item_maxsize_queue():
+@pytest.mark.parametrize("queue_cls", [Queue, TorchMPQueue])
+def test_get_last_item_maxsize_queue(queue_cls):
     """Test with a queue that has a maximum size."""
-    queue = Queue(maxsize=5)
+    queue = queue_cls(maxsize=5)
 
     # Fill the queue
     for i in range(5):
@@ -77,9 +84,10 @@ def test_get_last_item_maxsize_queue():
     assert queue.empty()
 
 
-def test_get_last_item_with_none_values():
+@pytest.mark.parametrize("queue_cls", [Queue, TorchMPQueue])
+def test_get_last_item_with_none_values(queue_cls):
     """Test with None values in the queue."""
-    queue = Queue()
+    queue = queue_cls()
     items = [1, None, 2, None, 3]
 
     for item in items:
@@ -94,23 +102,26 @@ def test_get_last_item_with_none_values():
     assert queue.empty()
 
 
-def test_get_last_item_blocking_timeout():
+@pytest.mark.parametrize("queue_cls", [Queue, TorchMPQueue])
+def test_get_last_item_blocking_timeout(queue_cls):
     """Test get_last_item_from_queue returns None on timeout."""
-    queue = Queue()
+    queue = queue_cls()
     result = get_last_item_from_queue(queue, block=True, timeout=0.1)
     assert result is None
 
 
-def test_get_last_item_non_blocking_empty():
+@pytest.mark.parametrize("queue_cls", [Queue, TorchMPQueue])
+def test_get_last_item_non_blocking_empty(queue_cls):
     """Test get_last_item_from_queue with block=False on an empty queue returns None."""
-    queue = Queue()
+    queue = queue_cls()
     result = get_last_item_from_queue(queue, block=False)
     assert result is None
 
 
-def test_get_last_item_non_blocking_success():
+@pytest.mark.parametrize("queue_cls", [Queue, TorchMPQueue])
+def test_get_last_item_non_blocking_success(queue_cls):
     """Test get_last_item_from_queue with block=False on a non-empty queue."""
-    queue = Queue()
+    queue = queue_cls()
     items = ["first", "second", "last"]
     for item in items:
         queue.put(item)
@@ -123,9 +134,10 @@ def test_get_last_item_non_blocking_success():
     assert queue.empty()
 
 
-def test_get_last_item_blocking_waits_for_item():
+@pytest.mark.parametrize("queue_cls", [Queue, TorchMPQueue])
+def test_get_last_item_blocking_waits_for_item(queue_cls):
     """Test that get_last_item_from_queue waits for an item if block=True."""
-    queue = Queue()
+    queue = queue_cls()
     result = []
 
     def producer():
