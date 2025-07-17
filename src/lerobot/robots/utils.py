@@ -65,7 +65,10 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         # If the type is a full module path, import it dynamically
         module_path, class_name = config.type.rsplit(".", 1)
         module = __import__(module_path, fromlist=[class_name])
-        robot_class = getattr(module, class_name)
+        try:
+            robot_class = getattr(module, class_name)
+        except AttributeError:
+            raise ValueError(f"Class '{class_name}' not found in module '{module_path}' for type '{config.type}'.")
         return robot_class(config)
 
     else:
