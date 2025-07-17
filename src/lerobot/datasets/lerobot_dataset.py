@@ -17,8 +17,8 @@ import contextlib
 import logging
 import shutil
 import tempfile
-from pathlib import Path
 from collections.abc import Callable
+from pathlib import Path
 
 import datasets
 import numpy as np
