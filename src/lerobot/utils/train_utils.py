@@ -74,6 +74,7 @@ def save_checkpoint(
     policy: PreTrainedPolicy,
     optimizer: Optimizer,
     scheduler: LRScheduler | None = None,
+    preprocessor=None,
 ) -> None:
     """This function creates the following directory structure:
 
@@ -81,7 +82,9 @@ def save_checkpoint(
     ├── pretrained_model/
     │   ├── config.json  # policy config
     │   ├── model.safetensors  # policy weights
-    │   └── train_config.json  # train config
+    │   ├── train_config.json  # train config
+    │   ├── processor.json  # processor config (if preprocessor provided)
+    │   └── step_*.safetensors  # processor state files (if any)
     └── training_state/
         ├── optimizer_param_groups.json  #  optimizer param groups
         ├── optimizer_state.safetensors  # optimizer state
@@ -95,10 +98,13 @@ def save_checkpoint(
         policy (PreTrainedPolicy): The policy to save.
         optimizer (Optimizer | None, optional): The optimizer to save the state from. Defaults to None.
         scheduler (LRScheduler | None, optional): The scheduler to save the state from. Defaults to None.
+        preprocessor: The preprocessor/pipeline to save. Defaults to None.
     """
     pretrained_dir = checkpoint_dir / PRETRAINED_MODEL_DIR
     policy.save_pretrained(pretrained_dir)
     cfg.save_pretrained(pretrained_dir)
+    if preprocessor is not None:
+        preprocessor.save_pretrained(pretrained_dir)
     save_training_state(checkpoint_dir, step, optimizer, scheduler)
 
 
