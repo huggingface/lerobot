@@ -21,7 +21,7 @@ Example:
 python -m lerobot.record \
     --robot.type=so100_follower \
     --robot.port=/dev/tty.usbmodem58760431541 \
-    --robot.cameras="{laptop: {type: opencv, camera_index: 0, width: 640, height: 480}}" \
+    --robot.cameras="{laptop: {type: opencv, index_or_path: 0, width: 640, height: 480}}" \
     --robot.id=black \
     --dataset.repo_id=aliberts/record-test \
     --dataset.num_episodes=2 \
@@ -39,17 +39,20 @@ Example with bilateral teleoperation:
 ```shell
 python -m lerobot.record \
     --robot.type=so101_follower_t \
-    --robot.port=/dev/tty.usbmodem58760431551 \
+    --robot.port=/dev/tty.usbmodem58760432961 \
     --robot.id=follower_arm_torque \
     --dataset.repo_id=pepijn/bilateral-teleop-test \
     --dataset.num_episodes=5 \
     --dataset.single_task="Wipe the table" \
     --biteleop=true \
     --teleop.type=so101_follower_t \
-    --teleop.port=/dev/tty.usbmodem58760428721 \
+    --teleop.port=/dev/tty.usbmodem58760432571 \
     --teleop.id=leader_arm_torque \
+    --dataset.fps=100 \
+    --robot.cameras="{side: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 100}}" \
     --display_data=true
 ```
+
 """
 
 import logging
@@ -254,7 +257,6 @@ def record_loop(
             and isinstance(teleop, SO101FollowerT)
             and policy is None
         ):
-            # Bilateral teleoperation control
             # Get observations from both arms
             obs_f = observation  # robot is the follower
             obs_l = teleop.get_observation()
@@ -266,6 +268,7 @@ def record_loop(
 
             pos_l = {j: obs_l[f"{j}.pos"] for j in teleop.bus.motors}
             vel_l = {j: obs_l[f"{j}.vel"] for j in teleop.bus.motors}
+            acc_l = {j: obs_l[f"{j}.acc"] for j in teleop.bus.motors}
             tau_reaction_l = {j: obs_l[f"{j}.effort"] for j in teleop.bus.motors}
 
             # Get control gains from robot
@@ -275,16 +278,20 @@ def record_loop(
 
             # Compute torque commands in one line using list comprehension
             tau_cmd_f = [
-                kp_gains[j] * (pos_l[j] - pos_f[j])  # Position tracking
-                + kd_gains[j] * (vel_l[j] - vel_f[j])  # Velocity damping
-                + kf_gains[j] * (-tau_reaction_l[j] - tau_reaction_f[j])  # Force reflection
+                (
+                    kp_gains[j] * (pos_l[j] - pos_f[j])  # Position tracking
+                    + kd_gains[j] * (vel_l[j] - vel_f[j])  # Velocity damping
+                    + kf_gains[j] * (-tau_reaction_l[j] - tau_reaction_f[j])
+                )  # Force reflection
                 for j in robot.bus.motors
             ]
 
             tau_cmd_l = [
-                kp_gains[j] * (pos_f[j] - pos_l[j])  # Position tracking
-                + kd_gains[j] * (vel_f[j] - vel_l[j])  # Velocity damping
-                + kf_gains[j] * (-tau_reaction_f[j] - tau_reaction_l[j])  # Force reflection
+                (
+                    kp_gains[j] * (pos_f[j] - pos_l[j])  # Position tracking
+                    + kd_gains[j] * (vel_f[j] - vel_l[j])  # Velocity damping
+                    + kf_gains[j] * (-tau_reaction_f[j] - tau_reaction_l[j])
+                )  # Force reflection
                 for j in teleop.bus.motors
             ]
 
@@ -292,29 +299,23 @@ def record_loop(
             action = {f"{m}.effort": tau_cmd_f[i] for i, m in enumerate(robot.bus.motors)}
             teleop_action = {f"{m}.effort": tau_cmd_l[i] for i, m in enumerate(teleop.bus.motors)}
             teleop.send_action(teleop_action)
+            robot.send_action(action)
 
             # For bilateral teleoperation, create custom observation and action for dataset
-            # Observation: follower position and reaction torque
-            bilateral_observation = {}
-            for j in robot.bus.motors:
-                bilateral_observation[f"{j}.pos"] = pos_f[j]
-                bilateral_observation[f"{j}.effort"] = tau_reaction_f[j]
-
-            # Action: leader position and interaction torque
             bilateral_action = {}
             for j in teleop.bus.motors:
                 bilateral_action[f"{j}.pos"] = pos_l[j]
-                bilateral_action[f"{j}.effort"] = tau_reaction_l[j]
+                bilateral_action[f"{j}.vel"] = vel_l[j]
+                bilateral_action[f"{j}.acc"] = acc_l[j]
+                bilateral_action[f"{j}.effort"] = -tau_reaction_l[j]
 
             # Override the observation_frame and action for dataset recording
             if dataset is not None:
-                observation_frame = build_dataset_frame(
-                    dataset.features, bilateral_observation, prefix="observation"
-                )
+                observation_frame = build_dataset_frame(dataset.features, observation, prefix="observation")
                 # Store bilateral_action to be used later when building action_frame
                 action = bilateral_action
 
-        elif policy is not None:
+        elif policy is not None and not biteleop:
             action_values = predict_action(
                 observation_frame,
                 policy,
@@ -345,7 +346,8 @@ def record_loop(
 
         # Action can eventually be clipped using `max_relative_target`,
         # so action actually sent is saved in the dataset.
-        sent_action = robot.send_action(action)
+        if not biteleop:
+            sent_action = robot.send_action(action)
 
         if dataset is not None:
             # For bilateral teleoperation, use the bilateral_action (leader pos & torque)
