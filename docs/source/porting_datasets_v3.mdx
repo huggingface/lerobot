@@ -7,6 +7,7 @@ This tutorial explains how to port large-scale robotic datasets to the LeRobot D
 Dataset v3.0 fundamentally changes how data is organized and stored:
 
 **v2.1 Structure (Episode-based)**:
+
 ```
 dataset/
 ├── data/chunk-000/episode_000000.parquet
@@ -16,6 +17,7 @@ dataset/
 ```
 
 **v3.0 Structure (File-based)**:
+
 ```
 dataset/
 ├── data/chunk-000/file-000.parquet        # Multiple episodes per file
@@ -30,16 +32,19 @@ This transition from individual episode files to file-based chunks dramatically 
 Dataset v3.0 introduces significant improvements for handling large datasets:
 
 ### 🏗️ **Enhanced File Organization**
+
 - **File-based structure**: Episodes are now grouped into chunked files rather than individual episode files
 - **Configurable file sizes**: for data and video files
 - **Improved storage efficiency**: Better compression and reduced overhead
 
 ### 📊 **Modern Metadata Management**
+
 - **Parquet-based metadata**: Replaced JSON Lines with efficient parquet format
 - **Structured episode access**: Direct pandas DataFrame access via `dataset.meta.episodes`
 - **Per-episode statistics**: Enhanced statistics tracking at episode level
 
 ### 🚀 **Performance Enhancements**
+
 - **Memory-mapped access**: Improved RAM usage through PyArrow memory mapping
 - **Faster loading**: Significantly reduced dataset initialization time
 - **Better scalability**: Designed for datasets with millions of episodes
@@ -56,6 +61,7 @@ Before porting large datasets, ensure you have:
 ## Understanding the DROID Dataset
 
 [DROID 1.0.1](https://droid-dataset.github.io/droid/the-droid-dataset) is an excellent example of a large-scale robotic dataset:
+
 - **Size**: 1.7TB (RLDS format), 8.7TB (raw data)
 - **Structure**: 2048 pre-defined TensorFlow dataset shards
 - **Content**: 76,000+ robot manipulation trajectories from Franka Emika Panda robots
@@ -64,6 +70,7 @@ Before porting large datasets, ensure you have:
 - **Hosting**: Google Cloud Storage with public access via `gsutil`
 
 The dataset contains diverse manipulation demonstrations with:
+
 - Multiple camera views (wrist camera, exterior cameras)
 - Natural language task descriptions
 - Robot proprioceptive state and actions
@@ -109,6 +116,7 @@ DROID_FEATURES = {
 ### Step 1: Install Dependencies
 
 For DROID specifically:
+
 ```bash
 pip install tensorflow
 pip install tensorflow_datasets
@@ -133,6 +141,7 @@ gsutil -m cp -r gs://gresearch/robotics/droid_100 /your/data/
 
 > [!WARNING]
 > Large datasets require substantial time and storage:
+>
 > - **Full DROID (1.7TB)**: Several days to download depending on bandwidth
 > - **Processing time**: 7+ days for local porting of full dataset
 > - **Upload time**: 3+ days to push to Hugging Face Hub
@@ -150,6 +159,7 @@ python examples/port_datasets/droid_rlds/port_droid.py \
 ### Development and Testing
 
 For development, you can port a single shard:
+
 ```bash
 python examples/port_datasets/droid_rlds/port_droid.py \
     --raw-dir /your/data/droid/1.0.1 \
@@ -173,6 +183,7 @@ pip install datatrove  # Hugging Face's distributed processing library
 ### Step 2: Configure Your SLURM Environment
 
 Find your partition information:
+
 ```bash
 sinfo --format="%R"  # List available partitions
 sinfo -N -p your_partition -h -o "%N cpus=%c mem=%m"  # Check resources
@@ -206,21 +217,25 @@ python examples/port_datasets/droid_rlds/slurm_port_shards.py \
 ### Step 4: Monitor Progress
 
 Check running jobs:
+
 ```bash
 squeue -u $USER
 ```
 
 Monitor overall progress:
+
 ```bash
 jobs_status /your/logs
 ```
 
 Inspect individual job logs:
+
 ```bash
 less /your/logs/port_droid/slurm_jobs/JOB_ID_WORKER_ID.out
 ```
 
 Debug failed jobs:
+
 ```bash
 failed_logs /your/logs/port_droid
 ```
@@ -280,8 +295,6 @@ dataset/
 
 This replaces the old episode-per-file structure with efficient, optimally-sized chunks.
 
-
-
 ## Migrating from Dataset v2.1
 
 If you have existing datasets in v2.1 format, use the migration tool:
@@ -292,6 +305,7 @@ python src/lerobot/datasets/v30/convert_dataset_v21_to_v30.py \
 ```
 
 This automatically:
+
 - Converts file structure to v3.0 format
 - Migrates metadata from JSON Lines to parquet
 - Aggregates statistics and creates per-episode stats

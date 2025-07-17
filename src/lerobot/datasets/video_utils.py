@@ -345,7 +345,7 @@ def get_audio_info(video_path: Path | str) -> dict:
         "json",
         str(video_path),
     ]
-    result = subprocess.run(ffprobe_audio_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    result = subprocess.run(ffprobe_audio_cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"Error running ffprobe: {result.stderr}")
 
@@ -381,7 +381,7 @@ def get_video_info(video_path: Path | str) -> dict:
         "json",
         str(video_path),
     ]
-    result = subprocess.run(ffprobe_video_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    result = subprocess.run(ffprobe_video_cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"Error running ffprobe: {result.stderr}")
 

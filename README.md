@@ -218,7 +218,7 @@ Under the hood, the `LeRobotDataset` format makes use of several ways to seriali
 
 Here are the important details and internal structure organization of a typical `LeRobotDataset` instantiated with `dataset = LeRobotDataset("lerobot/aloha_static_coffee")`. The exact features will change from dataset to dataset but not the main aspects:
 
-```
+````
 dataset attributes:
   ├ hf_dataset: a Hugging Face dataset (backed by Arrow/parquet). Typical features example:
   │  ├ observation.images.cam_high (VideoFrame):
@@ -278,7 +278,7 @@ python -m lerobot.scripts.eval \
     --eval.n_episodes=10 \
     --policy.use_amp=false \
     --policy.device=cuda
-```
+````
 
 Note: After training your own policy, you can re-evaluate the checkpoints with:
 
