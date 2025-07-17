@@ -72,8 +72,6 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         self._predicted_timesteps_lock = threading.Lock()
         self._predicted_timesteps = set()
 
-        self.last_processed_obs = None
-
         # Attributes will be set by SendPolicyInstructions
         self.device = None
         self.policy_type = None
@@ -136,6 +134,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         self.policy_type = policy_specs.policy_type  # act, pi0, etc.
         self.lerobot_features = policy_specs.lerobot_features
         self.actions_per_chunk = policy_specs.actions_per_chunk
+        self.last_processed_obs = None
 
         policy_class = get_policy_class(self.policy_type)
 
@@ -143,11 +142,11 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         self.policy = policy_class.from_pretrained(policy_specs.pretrained_name_or_path)
         # TODO: this is only for testing. Remove this after testing.
         self.policy.config.inference_enable_rtc = True
-        # If s is too high, the robot will jump forward, if it's too low, the robot will jump backward.
-        # Ideally, we want the robot to give us s, which should line up with the observation time.
-        self.policy.config.inference_rtc_s = 50
-        # d can be set conservatively. The higher d is, the less responsive the robot will be (it will continue to follow the old action for a longer time). If d is too low, the robot may become jerky.
-        self.policy.config.inference_rtc_d = 25
+        # # If s is too high, the robot will jump forward, if it's too low, the robot will jump backward.
+        # # Ideally, we want the robot to give us s, which should line up with the observation time.
+        # self.policy.config.inference_rtc_s = 50
+        # # d can be set conservatively. The higher d is, the less responsive the robot will be (it will continue to follow the old action for a longer time). If d is too low, the robot may become jerky.
+        # self.policy.config.inference_rtc_d = 25
         self.policy.to(self.device)
         end = time.perf_counter()
 
@@ -196,9 +195,9 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
 
         return observation
 
-    def _get_action_chunk(self, observation: dict[str, torch.Tensor]) -> torch.Tensor:
-        """Get an action chunk from the policy. The chunk contains only"""
-        chunk = self.policy.predict_action_chunk(observation)
+    def _get_action_chunk(self, observation: dict[str, torch.Tensor], rtc_s: int, rtc_d: int) -> torch.Tensor:
+        """Get an action chunk from the policy."""
+        chunk = self.policy.predict_action_chunk(observation, rtc_s=rtc_s, rtc_d=rtc_d)
         if chunk.ndim != 3:
             chunk = chunk.unsqueeze(0)  # adding batch dimension, now shape is (B, chunk_size, action_dim)
 
@@ -213,11 +212,21 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         observation = self._prepare_observation(observation_t)
         preprocessing_time = time.perf_counter() - start_time
 
+        if self.last_processed_obs is None:
+            rtc_s = None
+            rtc_d = None
+        else:
+            # the number of ticks executed since the beginning of the last action chunk
+            rtc_s = observation_t.get_timestep() - self.last_processed_obs.get_timestep()
+            print(f"Calculated rtc_s: {rtc_s}")
+            # inference delay in ticks. TODO: calculate this from difference in timestamps, assuming clock sync.
+            rtc_d = 25
+
         self.last_processed_obs: TimedObservation = observation_t
 
         """2. Get action chunk"""
         start_time = time.perf_counter()
-        action_tensor = self._get_action_chunk(observation)
+        action_tensor = self._get_action_chunk(observation, rtc_s=rtc_s, rtc_d=rtc_d)
         inference_time = time.perf_counter() - start_time
 
         """3. Post-inference processing"""

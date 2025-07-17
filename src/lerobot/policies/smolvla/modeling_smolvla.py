@@ -383,7 +383,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
     def get_optim_params(self) -> dict:
         return self.parameters()
 
-    def _get_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
+    def _get_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None, rtc_s: int | None = None, rtc_d: int | None = None) -> Tensor:
         for k in batch:
             if k in self._queues:
                 batch[k] = torch.stack(list(self._queues[k]), dim=1)
@@ -392,7 +392,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
         state = self.prepare_state(batch)
         lang_tokens, lang_masks = self.prepare_language(batch)
 
-        actions = self.model.sample_actions(images, img_masks, lang_tokens, lang_masks, state, noise=noise)
+        actions = self.model.sample_actions(images, img_masks, lang_tokens, lang_masks, state, noise=noise, rtc_s=rtc_s, rtc_d=rtc_d)
 
         # Unpad actions
         original_action_dim = self.config.action_feature.shape[0]
@@ -414,17 +414,17 @@ class SmolVLAPolicy(PreTrainedPolicy):
         return batch
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None, rtc_s: int | None = None, rtc_d: int | None = None) -> Tensor:
         self.eval()
 
         batch = self._prepare_batch(batch)
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
 
-        actions = self._get_action_chunk(batch, noise)
+        actions = self._get_action_chunk(batch, noise, rtc_s=rtc_s, rtc_d=rtc_d)
         return actions
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
+    def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None, rtc_s: int | None = None, rtc_d: int | None = None) -> Tensor:
         """Select a single action given environment observations.
 
         This method wraps `select_actions` in order to return one action at a time for execution in the
@@ -438,7 +438,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
         # Action queue logic for n_action_steps > 1. When the action_queue is depleted, populate it by
         # querying the policy.
         if len(self._queues[ACTION]) == 0:
-            actions = self._get_action_chunk(batch, noise)
+            actions = self._get_action_chunk(batch, noise, rtc_s=rtc_s, rtc_d=rtc_d)
 
             # `self.predict_action_chunk` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
             # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
@@ -892,7 +892,7 @@ class VLAFlowMatching(nn.Module):
         losses = F.mse_loss(u_t, v_t, reduction="none")
         return losses
 
-    def sample_actions(self, images, img_masks, lang_tokens, lang_masks, state, noise=None) -> Tensor:
+    def sample_actions(self, images, img_masks, lang_tokens, lang_masks, state, noise=None, rtc_s=None, rtc_d=None) -> Tensor:
         """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
         bsize = state.shape[0]
         device = state.device
@@ -919,16 +919,27 @@ class VLAFlowMatching(nn.Module):
         dt = torch.tensor(dt, dtype=torch.float32, device=device)
 
         if self.config.inference_enable_rtc:
-            x_t = self.rtc_denoise(noise, bsize, dt, prefix_pad_masks, past_key_values, device)
+            x_t = self.rtc_denoise(noise, bsize, dt, prefix_pad_masks, past_key_values, device, s=rtc_s, d=rtc_d)
         else:
             x_t = self.euler_denoise(noise, bsize, dt, prefix_pad_masks, past_key_values, device)
 
         return x_t
 
-    def rtc_denoise(self, noise, bsize, dt, prefix_pad_masks, past_key_values, device):
+    def rtc_denoise(self, noise, bsize, dt, prefix_pad_masks, past_key_values, device, s, d):
         """
         Real-time chunking (RTC) denoising.
 
+        Parameters:
+        - noise: the initial noise to denoise
+        - bsize: batch size
+        - dt: time step
+        - prefix_pad_masks: the padding masks for the prefix
+        - past_key_values: the past key values for the prefix
+        - device: the device to run the denoising on
+        - s: number of steps to not blend with the previous chunk
+        - d: number of steps to blend with the previous chunk
+
+        Reference:
         https://www.physicalintelligence.company/download/real_time_chunking.pdf
         """
         if self.prev_chunk is None:
@@ -936,16 +947,17 @@ class VLAFlowMatching(nn.Module):
             x_t = self.euler_denoise(noise, bsize, dt, prefix_pad_masks, past_key_values, device)
             self.prev_chunk = x_t
             return x_t
+        
+        if s is None or d is None:
+            raise ValueError(f"s and d must be provided for RTC denoising (current {s=}, {d=}).")
 
         # Prepare the previous chunk for guidance
         A_prev = self.prev_chunk
-        # Rotate the second (time) dimension left by `s` steps and pad the right with zeros
-        s = self.config.inference_rtc_s
-        # Keep the unexecuted part, pad the remainder with zeros
+        # Rotate the second (time) dimension left by `s` steps and pad the right with zeros.
+        # Keep the unexecuted part, pad the remainder with zeros.
         pad = torch.zeros_like(A_prev[:, :s])
         A_prev = torch.cat([A_prev[:, s:], pad], dim=1)
 
-        d = self.config.inference_rtc_d
         H = self.config.chunk_size
 
         # Prepare the guidance mask
