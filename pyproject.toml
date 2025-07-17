@@ -110,11 +110,11 @@ intelrealsense = [
     "pyrealsense2>=2.55.1.6486 ; sys_platform != 'darwin'",
     "pyrealsense2-macosx>=2.54 ; sys_platform == 'darwin'",
 ]
-stretch = [
-    "hello-robot-stretch-body>=0.7.27 ; sys_platform == 'linux'",
-    "pyrender @ git+https://github.com/mmatl/pyrender.git ; sys_platform == 'linux'",
-    "pyrealsense2>=2.55.1.6486 ; sys_platform != 'darwin'"
-] # TODO: Currently not supported
+# stretch = [
+#     "hello-robot-stretch-body>=0.7.27 ; sys_platform == 'linux'",
+#     "pyrender @ git+https://github.com/mmatl/pyrender.git ; sys_platform == 'linux'",
+#     "pyrealsense2>=2.55.1.6486 ; sys_platform != 'darwin'"
+# ] # TODO: Currently not supported
 
 # Policies
 pi0 = ["lerobot[transformers-dep]"]
@@ -134,6 +134,27 @@ video_benchmark = ["scikit-image>=0.23.2", "pandas>=2.2.2"]
 aloha = ["gym-aloha>=0.1.1"]
 pusht = ["gym-pusht>=0.1.5", "pymunk>=6.6.0,<7.0.0"] # TODO: Fix pymunk version in gym-pusht instead
 xarm = ["gym-xarm>=0.1.1"]
+
+# All
+all = [
+    "lerobot[dynamixel]",
+    "lerobot[gamepad]",
+    "lerobot[hopejr]",
+    "lerobot[lekiwi]",
+    "lerobot[kinematics]",
+    "lerobot[intelrealsense]",
+    "lerobot[pi0]",
+    "lerobot[smolvla]",
+    "lerobot[hilserl]",
+    "lerobot[async]",
+    "lerobot[docs]",
+    "lerobot[dev]",
+    "lerobot[test]",
+    "lerobot[video_benchmark]",
+    "lerobot[aloha]",
+    "lerobot[pusht]",
+    "lerobot[xarm]"
+]
 
 # ---------------- Tool Configurations ----------------
 [tool.setuptools.packages.find]
