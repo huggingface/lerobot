@@ -107,7 +107,8 @@ def predict_action(
 ):
     observation = copy(observation)
     with (
-        torch.inference_mode(),
+        # Can't use torch.inference_mode() because RTC denoising requires gradients
+        torch.no_grad(),
         torch.autocast(device_type=device.type) if device.type == "cuda" and use_amp else nullcontext(),
     ):
         # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension

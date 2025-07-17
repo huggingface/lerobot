@@ -604,19 +604,31 @@ def pad_tensor(tensor, max_len, pad_value=0):
 
     return padded_tensor
 
-def make_soft_mask(d: int, s: int, H: int, device):
+def make_soft_mask(d: int, s: int, H: int, device) -> torch.Tensor:
     """
-    Make a soft mask for the action steps.
-    This is eq.5 in the RTC paper: https://www.physicalintelligence.company/download/real_time_chunking.pdf
+    Soft-mask W (Eq. 5, RTC paper).
+    Returns shape (H,) on `device`.
     """
-    i = torch.arange(H, device=device)
-    w = torch.zeros(H, device=device)
-    w[i < d] = 1.0
-    mid = (i >= d) & (i < H - s)
-    c = (H - s - i[mid]).float() / (H - s - d + 1)
-    w[mid] = torch.exp(c) / (torch.e - 1.0)
-    # last s steps already zero
-    return w               # shape (H,)
+    i = torch.arange(H, device=device, dtype=torch.float32)
+
+    # region masks
+    first  = i < d
+    middle = (i >= d) & (i < H - s)
+    last   = i >= H - s
+
+    # allocate
+    w = torch.zeros(H, device=device, dtype=torch.float32)
+
+    # first d steps → 1
+    w[first] = 1.0
+
+    # middle region → c_i * (e^{c_i} − 1) / (e − 1)
+    if middle.any():
+        c = (H - s - i[middle]) / (H - s - d + 1)        # c_i ∈ (0,1]
+        w[middle] = c * (torch.exp(c) - 1.0) / (math.e - 1.0)
+
+    # last s steps already 0
+    return w
 
 class VLAFlowMatching(nn.Module):
     """
@@ -682,6 +694,9 @@ class VLAFlowMatching(nn.Module):
         self.add_image_special_tokens = self.config.add_image_special_tokens
         self.image_end_token = torch.tensor([self.fake_image_token], dtype=torch.long)
         self.prefix_length = self.config.prefix_length
+
+        # used for RTC
+        self.prev_chunk = None
 
     def set_requires_grad(self):
         for params in self.state_proj.parameters():
@@ -904,16 +919,74 @@ class VLAFlowMatching(nn.Module):
         dt = torch.tensor(dt, dtype=torch.float32, device=device)
 
         if self.config.inference_enable_rtc:
-            x_t = self.rtc_denoising_loop(noise, bsize, dt, prefix_pad_masks, past_key_values, device)
+            x_t = self.rtc_denoise(noise, bsize, dt, prefix_pad_masks, past_key_values, device)
         else:
-            x_t = self.euler_denoising_loop(noise, bsize, dt, prefix_pad_masks, past_key_values, device)
+            x_t = self.euler_denoise(noise, bsize, dt, prefix_pad_masks, past_key_values, device)
 
         return x_t
 
-    def rtc_denoising_loop(self, noise, bsize, dt, prefix_pad_masks, past_key_values, device):
-        raise NotImplementedError("RTC denoising loop not implemented")
+    def rtc_denoise(self, noise, bsize, dt, prefix_pad_masks, past_key_values, device):
+        """
+        Real-time chunking (RTC) denoising.
 
-    def euler_denoising_loop(self, noise, bsize, dt, prefix_pad_masks, past_key_values, device):
+        https://www.physicalintelligence.company/download/real_time_chunking.pdf
+        """
+        if self.prev_chunk is None:
+            # First step, no guidance
+            x_t = self.euler_denoise(noise, bsize, dt, prefix_pad_masks, past_key_values, device)
+            self.prev_chunk = x_t
+            return x_t
+
+        # Prepare the previous chunk for guidance
+        A_prev = self.prev_chunk
+        # Rotate the second (time) dimension left by `s` steps and pad the right with zeros
+        s = self.config.inference_rtc_s
+        # Keep the unexecuted part, pad the remainder with zeros
+        pad = torch.zeros_like(A_prev[:, :s])
+        A_prev = torch.cat([A_prev[:, s:], pad], dim=1)
+
+        d = self.config.inference_rtc_d
+        H = self.config.chunk_size
+
+        # Prepare the guidance mask
+        W = make_soft_mask(d, s, H, device)
+        W_row = W[None, :, None]            # broadcast to (B,H,M)
+
+        A_tau = noise                         # A^0  ~ 𝒩(0,I)
+        time  = torch.tensor(1.0, device=device)
+
+        while time >= -dt / 2:
+            tau = 1 - time # tau goes from 0 to 1, to be consistent with the paper
+            # ΠGDM guidance
+            A_tau.requires_grad_(True)
+            with torch.enable_grad():
+                v_pi = -self.denoise_step(prefix_pad_masks, past_key_values, A_tau, time.expand(bsize))
+                A_hat = A_tau + (1 - tau) * v_pi     # Â¹_tau   Eq. 3
+                err   = (A_prev - A_hat) * W_row
+                grad_outputs = err.clone().detach()
+                g = torch.autograd.grad(A_hat, A_tau, grad_outputs, retain_graph=True)[0]
+
+            r_sq = (1 - tau)**2 / (tau**2 + (1 - tau)**2) # Eq. 4
+            scale = min(self.config.inference_rtc_beta, (1 - tau) / (tau * r_sq))  # Eq.2
+            # integration step  Eq. 1
+            A_tau = A_tau - dt * (v_pi + scale * g)
+            A_tau = A_tau.detach() # stop grads before next step
+
+            # For debugging
+            A_tau_d_err = (A_prev[:,:d]-A_tau[:,:d]).norm()
+            print(f"{time=} {tau=} {err[:,:d].norm()=} {A_tau_d_err=} {scale=} {g.norm()=}")
+
+            time += dt
+
+        # sanity check: the first d steps of A_prev should be the similar to the first d steps of A_tau because of masking
+        A_tau_d_err = (A_prev[:,:d]-A_tau[:,:d]).norm()
+        if A_tau_d_err > 0.5:
+            print(f"WARNING: [RTC] The first {d=} steps of the new chunk are too different from the previous chunk. This may result in jerky motion. {A_tau_d_err=}")
+
+        self.prev_chunk = A_tau
+        return A_tau
+
+    def euler_denoise(self, noise, bsize, dt, prefix_pad_masks, past_key_values, device):
         x_t = noise
         time = torch.tensor(1.0, dtype=torch.float32, device=device)
 
