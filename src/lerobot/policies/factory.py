@@ -35,7 +35,7 @@ from lerobot.policies.sac.reward_model.configuration_classifier import RewardCla
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.policies.tdmpc.configuration_tdmpc import TDMPCConfig
 from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
-from lerobot.processor.pipeline import EnvTransition, RobotProcessor, TransitionIndex
+from lerobot.processor.pipeline import EnvTransition, IdentityProcessor, RobotProcessor, TransitionIndex
 
 
 def get_policy_class(name: str) -> PreTrainedPolicy:
@@ -128,7 +128,9 @@ def make_processor(
     if pretrained_path:
         # Load a pretrained processor
         # TODO(azouitine): Handle this case.
-        raise NotImplementedError("Loading a pretrained processor is not implemented.")
+        return RobotProcessor.from_pretrained(source=pretrained_path), RobotProcessor(
+            steps=[IdentityProcessor()], name="post_processor"
+        )
 
     # Create a new processor based on policy type
     if policy_cfg.type == "tdmpc":
