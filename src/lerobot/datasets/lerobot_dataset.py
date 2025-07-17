@@ -861,9 +861,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         use_batched_encoding = self.batch_encoding_size > 1
 
         if has_video_keys and not use_batched_encoding:
-            video_paths = self.encode_episode_videos(episode_index)
-            for key in self.meta.video_keys:
-                episode_buffer[key] = video_paths[key]
+            self.encode_episode_videos(episode_index)
 
         # `meta.save_episode` should be executed after encoding the videos
         self.meta.save_episode(episode_index, episode_length, episode_tasks, ep_stats)
@@ -891,10 +889,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
             self.tolerance_s,
         )
 
-        # Verify that we have one parquet file per episode
+        # Verify that we have one parquet file per episode and the number of video files matches the number of encoded episodes
         parquet_files = list(self.root.rglob("*.parquet"))
         assert len(parquet_files) == self.num_episodes
-
         video_files = list(self.root.rglob("*.mp4"))
         assert len(video_files) == (self.num_episodes - self.episodes_since_last_encoding) * len(
             self.meta.video_keys
@@ -962,7 +959,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         for ep_idx in range(self.meta.total_episodes):
             self.encode_episode_videos(ep_idx)
 
-    def encode_episode_videos(self, episode_index: int) -> dict:
+    def encode_episode_videos(self, episode_index: int) -> None:
         """
         Use ffmpeg to convert frames stored as png into mp4 videos.
         Note: `encode_video_frames` is a blocking call. Making it asynchronous shouldn't speedup encoding,
@@ -974,17 +971,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         - Raw image cleanup
 
         Args:
-            episode_index: Episode to encode
-
-        Returns:
-            dict: Dictionary mapping video keys to their encoded video file paths
+            episode_index (int): Index of the episode to encode.
         """
-        video_paths = {}
-
-        # Encode videos
         for key in self.meta.video_keys:
             video_path = self.root / self.meta.get_video_file_path(episode_index, key)
-            video_paths[key] = str(video_path)
             if video_path.is_file():
                 # Skip if video is already encoded. Could be the case when resuming data recording.
                 continue
@@ -997,8 +987,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # Update video info (only needed when first episode is encoded since it reads from episode 0)
         if len(self.meta.video_keys) > 0 and episode_index == 0:
             self.meta.update_video_info()
-
-        return video_paths
 
     def batch_encode_videos(self, start_episode: int = 0, end_episode: int | None = None) -> None:
         """
@@ -1024,8 +1012,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         png_files = list(img_dir.rglob("*.png"))
         if len(png_files) == 0:
             # Only remove the images directory if no PNG files remain
-            shutil.rmtree(img_dir)
-            logging.debug("Cleaned up empty images directory")
+            if img_dir.exists():
+                shutil.rmtree(img_dir)
+                logging.debug("Cleaned up empty images directory")
         else:
             logging.debug(f"Images directory is not empty, containing {len(png_files)} PNG files")
 

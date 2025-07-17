@@ -29,8 +29,6 @@ import torchvision
 from datasets.features.features import register_feature
 from PIL import Image
 
-from lerobot.utils.utils import log_say
-
 
 def get_safe_default_codec():
     if importlib.util.find_spec("torchcodec"):
@@ -467,12 +465,10 @@ class VideoEncodingManager:
 
     Args:
         dataset: The LeRobotDataset instance
-        play_sounds: Whether to play audio for encoding (default: True)
     """
 
-    def __init__(self, dataset, play_sounds=True):
+    def __init__(self, dataset):
         self.dataset = dataset
-        self.play_sounds = play_sounds
 
     def __enter__(self):
         return self
@@ -487,10 +483,9 @@ class VideoEncodingManager:
 
             start_ep = self.dataset.num_episodes - self.dataset.episodes_since_last_encoding
             end_ep = self.dataset.num_episodes
-            log_say(
+            logging.info(
                 f"Encoding remaining {self.dataset.episodes_since_last_encoding} episodes, "
-                f"from episode {start_ep} to {end_ep - 1}",
-                self.play_sounds,
+                f"from episode {start_ep} to {end_ep - 1}"
             )
             self.dataset.batch_encode_videos(start_ep, end_ep)
 
@@ -513,8 +508,9 @@ class VideoEncodingManager:
         png_files = list(img_dir.rglob("*.png"))
         if len(png_files) == 0:
             # Only remove the images directory if no PNG files remain
-            shutil.rmtree(img_dir)
-            logging.debug("Cleaned up empty images directory")
+            if img_dir.exists():
+                shutil.rmtree(img_dir)
+                logging.debug("Cleaned up empty images directory")
         else:
             logging.debug(f"Images directory is not empty, containing {len(png_files)} PNG files")
 
