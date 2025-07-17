@@ -245,7 +245,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             rtc_s = observation_t.get_timestep() - self.last_processed_obs.get_timestep()
             print(f"Calculated rtc_s: {rtc_s}")
             # inference delay in ticks. TODO: calculate this from difference in timestamps, assuming clock sync.
-            rtc_d = 30
+            rtc_d = 15
 
         self.last_processed_obs: TimedObservation = observation_t
 
