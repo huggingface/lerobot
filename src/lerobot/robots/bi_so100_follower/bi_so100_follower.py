@@ -106,8 +106,8 @@ class BiSO100Follower(Robot):
         return self.left_arm.is_calibrated and self.right_arm.is_calibrated
 
     def calibrate(self) -> None:
-        self.left_arm.calibrate(calibration=self.left_arm.calibration)
-        self.right_arm.calibrate(calibration=self.right_arm.calibration)
+        self.left_arm.calibrate()
+        self.right_arm.calibrate()
 
     def configure(self) -> None:
         self.left_arm.configure()
