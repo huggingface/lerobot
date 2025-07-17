@@ -44,7 +44,12 @@ class RobotConfig(draccus.ChoiceRegistry, abc.ABC):
                 class_path = arg.split("=")[1]
                 if "." in class_path:
                     module_path, _ = class_path.rsplit(".", 1)
-                    __import__(module_path)
+                    try:
+                        __import__(module_path)
+                    except (ImportError, ModuleNotFoundError) as e:
+                        raise ImportError(
+                            f"Failed to import module '{module_path}'. Ensure the module exists and is accessible. Original error: {e}"
+                        ) from e
 
         return choices
 
