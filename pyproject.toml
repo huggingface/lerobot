@@ -46,7 +46,7 @@ classifiers = [
 ]
 dependencies = [
     "cmake>=3.29.0.1",
-    "datasets>=2.19.0,<=3.6.0",
+    "datasets>=2.19.0,<4.0.0",
     "deepdiff>=7.0.1",
     "diffusers>=0.27.2",
     "draccus==0.10.0",

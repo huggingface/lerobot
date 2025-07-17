@@ -68,10 +68,11 @@ from tqdm import trange
 from lerobot.configs import parser
 from lerobot.configs.eval import EvalPipelineConfig
 from lerobot.envs.factory import make_env
-from lerobot.envs.utils import add_envs_task, check_env_attributes_and_types, preprocess_observation
+from lerobot.envs.utils import add_envs_task, check_env_attributes_and_types
 from lerobot.policies.factory import make_policy
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import get_device_from_parameters
+from lerobot.processor import RobotProcessor, TransitionIndex, VanillaObservationProcessor
 from lerobot.utils.io_utils import write_video
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import (
@@ -128,6 +129,16 @@ def rollout(
     if render_callback is not None:
         render_callback(env)
 
+    # Create observation processing processor
+    # NOTE: During environment interaction, we skip batch dictionary conversion
+    # since that format is only needed for loss computation during training.
+    # Using identity functions to avoid unnecessary format transformations.
+    obs_processor = RobotProcessor(
+        [VanillaObservationProcessor()],
+        to_transition=lambda x: x,
+        to_output=lambda x: x,
+    )
+
     all_observations = []
     all_actions = []
     all_rewards = []
@@ -147,10 +158,13 @@ def rollout(
     check_env_attributes_and_types(env)
     while not np.all(done):
         # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
-        observation = preprocess_observation(observation)
+        transition = (observation, None, None, None, None, None, None)
+        processed_transition = obs_processor(transition)
+        observation = processed_transition[TransitionIndex.OBSERVATION]
         if return_observations:
             all_observations.append(deepcopy(observation))
 
+        # TODO(azouitine): Move this in processor side
         observation = {
             key: observation[key].to(device, non_blocking=device.type == "cuda") for key in observation
         }
@@ -195,7 +209,9 @@ def rollout(
 
     # Track the final observation.
     if return_observations:
-        observation = preprocess_observation(observation)
+        transition = (observation, None, None, None, None, None, None)
+        processed_transition = obs_processor(transition)
+        observation = processed_transition[TransitionIndex.OBSERVATION]
         all_observations.append(deepcopy(observation))
 
     # Stack the sequence along the first dimension so that we have (batch, sequence, *) tensors.
