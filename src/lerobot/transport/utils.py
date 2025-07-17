@@ -154,6 +154,9 @@ def grpc_channel_options(
     max_attempts: int = 5,
     backoff_multiplier: float = 2,
     max_backoff: str = "2s",
+    keepalive_time_ms: int = 10000,  # send keepalive every keepalive_time_ms
+    keepalive_timeout_ms: int = 3000,  # wait keepalive_timeout_ms for ACK before closing
+    keepalive_permit_without_calls: int = 1,  # allow keepalive even with no RPCs
 ):
     service_config = {
         "methodConfig": [
@@ -182,4 +185,7 @@ def grpc_channel_options(
         ("grpc.max_send_message_length", max_send_message_length),
         ("grpc.enable_retries", retries_option),
         ("grpc.service_config", service_config_json),
+        ("grpc.keepalive_time_ms", keepalive_time_ms),
+        ("grpc.keepalive_timeout_ms", keepalive_timeout_ms),
+        ("grpc.keepalive_permit_without_calls", keepalive_permit_without_calls),
     ]

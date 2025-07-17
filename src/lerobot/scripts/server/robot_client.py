@@ -120,7 +120,9 @@ class RobotClient:
             config.policy_device,
         )
         self.channel = grpc.insecure_channel(
-            self.server_address, grpc_channel_options(initial_backoff=f"{config.environment_dt:.4f}s")
+            self.server_address,
+            options=grpc_channel_options(initial_backoff=f"{config.environment_dt:.4f}s"),
+            compression=grpc.Compression.Deflate,
         )
         self.stub = services_pb2_grpc.AsyncInferenceStub(self.channel)
         self.logger.info(f"Initializing client to connect to server at {self.server_address}")
@@ -197,52 +199,6 @@ class RobotClient:
         self.channel.close()
         self.logger.debug("Client stopped, channel closed")
 
-<<<<<<< HEAD
-    def _aggregate_action_queues(
-        self,
-        incoming_actions: list[TimedAction],
-        aggregate_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] | None = None,
-    ):
-        """Finds the same timestep actions in the queue and aggregates them using the aggregate_fn"""
-        if aggregate_fn is None:
-            self.logger.warning("No aggregate function provided, using default: take the latest action chunk")
-            # default aggregate function: take the latest action
-            def aggregate_fn(x1, x2):
-                return x2
-
-        future_action_queue: Queue[TimedAction] = Queue()
-        internal_queue = self.action_queue.queue
-
-        current_action_queue = {action.get_timestep(): action.get_action() for action in internal_queue}
-
-        for new_action in incoming_actions:
-            latest_action = self.latest_action
-
-            # New action is older than the latest action in the queue, skip it
-            if new_action.get_timestep() <= latest_action:
-                continue
-
-            # If the new action's timestep is not in the current action queue, add it directly
-            elif new_action.get_timestep() not in current_action_queue:
-                future_action_queue.put(new_action)
-                continue
-
-            # If the new action's timestep is in the current action queue, aggregate it
-            # TODO: There is probably a way to do this with broadcasting of the two action tensors
-            future_action_queue.put(
-                TimedAction(
-                    timestamp=new_action.get_timestamp(),
-                    timestep=new_action.get_timestep(),
-                    action=aggregate_fn(
-                        current_action_queue[new_action.get_timestep()], new_action.get_action()
-                    ),
-                )
-            )
-
-        self.action_queue = future_action_queue
-
-=======
->>>>>>> a14846d7 (Debug robot client)
     def _extract_actions_from_bytes_queue(self):
         result: list[TimedAction] = []
 
@@ -298,25 +254,25 @@ class RobotClient:
             )
 
             observation_bytes = pickle.dumps(observation)
-            get_observation_end = time.perf_counter()
+            get_observation_time = time.perf_counter() - get_observation_start
 
             if not self.running:
                 break
 
-            self.logger.info(f"Sending observation to policy server | get_observation={get_observation_end - get_observation_start:.4f}s")
-
+            get_actions_start = time.perf_counter()
             observation_iterator = send_bytes_in_chunks(
                 observation_bytes,
                 services_pb2.Observation,
                 log_prefix="[CLIENT] Observation",
                 silent=True,
+                # This can be tuned to optimize transfer speed. In many cases, sending more smaller chunks is better than fewer larger chunks, probably due to TCP congestion control and gRPC processing chunks before full messages are received.
+                chunk_size=1 * 1024 * 1024,
             )
 
-            start_time = time.perf_counter()
             actions_bytes = self.stub.GetActions(observation_iterator)
-            end_time = time.perf_counter()
+            get_actions_time = time.perf_counter() - get_actions_start
 
-            self.logger.info(f"GetActions took {end_time - start_time:.6f}s")
+            self.logger.info(f"Observation {obs_timestep} | get_observation={get_observation_time:.3f}s | get_actions={get_actions_time:.3f}s")
 
             actions: list[TimedAction] = pickle.loads(actions_bytes.data)
 
@@ -369,7 +325,7 @@ class RobotClient:
             # Periodically log the control loop stats
             if control_loop_end - last_log_time > 1.0:
                 self.logger.info(
-                    f"Ts={timed_action.get_timestamp():.4f} | step=#{timed_action.get_timestep():05d} | control_loop={control_loop_end - control_loop_start:.4f}s | sleep={time_to_sleep:.4f}s | get_action={get_action_end - get_action_start:.4f}s | perform_action={perform_action_end - perform_action_start:.4f}s | action_queue_size={action_queue_size:03d}"
+                    f"Ts={timed_action.get_timestamp():.3f} | step=#{timed_action.get_timestep():05d} | control_loop={control_loop_end - control_loop_start:.3f}s | sleep={time_to_sleep:.3f}s | get_action={get_action_end - get_action_start:.3f}s | perform_action={perform_action_end - perform_action_start:.3f}s | action_queue_size={action_queue_size:03d}"
                 )
                 last_log_time = control_loop_end
 
