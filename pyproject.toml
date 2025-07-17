@@ -26,12 +26,11 @@ discord = "https://discord.gg/s3KuuzsPFb"
 [project]
 name = "lerobot"
 version = "0.1.0"
-description = "🤗 LeRobot: State-of-the-art Machine Learning for Real-World Robotics"
+description = "🤗 LeRobot: State-of-the-art Machine Learning for Real-World Robotics in Pytorch"
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
 authors = [
-    { name = "Thomas Wolf", email = "thomaswolfcontact@gmail.com" },
     { name = "Rémi Cadène", email = "re.cadene@gmail.com" },
     { name = "Simon Alibert", email = "alibert.sim@gmail.com" },
     { name = "Alexander Soare", email = "alexander.soare159@gmail.com" },
@@ -43,6 +42,7 @@ authors = [
     { name = "Dana Aubakirova", email = "danaaubakirova17@gmail.com"},
     { name = "Caroline Pascal", email = "caroline8.pascal@gmail.com"},
     { name = "Martino Russi", email = "nopyeps@gmail.com"},
+    { name = "Thomas Wolf", email = "thomaswolfcontact@gmail.com" },
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
