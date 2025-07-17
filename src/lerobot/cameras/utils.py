@@ -41,7 +41,10 @@ def make_cameras_from_configs(camera_configs: dict[str, CameraConfig]) -> dict[s
             # If the type is a full module path, import it dynamically
             module_path, class_name = cfg.type.rsplit(".", 1)
             module = __import__(module_path, fromlist=[class_name])
-            camera_class = getattr(module, class_name)
+            try:
+                camera_class = getattr(module, class_name)
+            except AttributeError:
+                raise ImportError(f"Class '{class_name}' not found in module '{module_path}'. Please check the configuration.")
             cameras[key] = camera_class(cfg)
 
         else:
