@@ -26,7 +26,7 @@ import threading
 import time
 from fractions import Fraction
 from pathlib import Path
-from typing import Any, Dict, Optional, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 from uuid import uuid4
 
 import av
@@ -46,7 +46,7 @@ from lerobot.teleoperators.teleoperator import Teleoperator
 
 @runtime_checkable
 class HasMotors(Protocol):
-    motors: Dict[str, Motor]
+    motors: dict[str, Motor]
 
 
 @runtime_checkable
@@ -85,7 +85,7 @@ class URDFLogger:
     def __init__(
         self,
         robot: Robot,
-        loader_kwargs: Optional[dict] = None,
+        loader_kwargs: dict | None = None,
     ):
         """
         Loads a URDF model (downloaded + cached by robot_descriptions) via yourdfpy.
@@ -100,9 +100,9 @@ class URDFLogger:
         assert isinstance(robot_urdf, URDF)
         self.entity_path_prefix = robot_urdf.robot.name
         self.robot_urdf = robot_urdf
-        self.joint_paths: Dict[str, str] = self._build_joint_paths()
+        self.joint_paths: dict[str, str] = self._build_joint_paths()
 
-    def log_urdf(self, stream: Optional[rr.RecordingStream] = None):
+    def log_urdf(self, stream: rr.RecordingStream | None = None):
         stream = stream or rr.get_global_data_recording()
         if stream is None:
             raise RuntimeError("No Rerun recording stream available")
@@ -115,7 +115,7 @@ class URDFLogger:
             f"{self.robot.name}.urdf", xml_bytes, entity_path_prefix=self.entity_path_prefix, static=True
         )
 
-    def log_joint_angles(self, joint_positions: Dict[str, float]):
+    def log_joint_angles(self, joint_positions: dict[str, float]):
         for name, pos in joint_positions.items():
             name = name.removesuffix(".pos")
             urdf_name = self._mapped_name(name)
@@ -134,13 +134,13 @@ class URDFLogger:
         joint_map = self.urdf_joint_map.get(self.urdf_name, {})
         return joint_map.get(name)
 
-    def _build_joint_paths(self) -> Dict[str, str]:
+    def _build_joint_paths(self) -> dict[str, str]:
         """
         Build a dictionary of joint name -> joint path for use in logging to rerun
         """
         rev = {n: j for n, j in self.robot_urdf.joint_map.items() if j.type == "revolute"}
         child_to_joint = {j.child: j for j in rev.values()}
-        cache: Dict[str, str] = {}
+        cache: dict[str, str] = {}
 
         def build(child: str) -> str:
             if child in cache:
@@ -153,7 +153,7 @@ class URDFLogger:
         return {name: build(j.child) for name, j in rev.items()}
 
     @property
-    def motor_modes(self) -> Dict[str, MotorNormMode]:
+    def motor_modes(self) -> dict[str, MotorNormMode]:
         """
         Get the motor modes for the robot.
 
@@ -205,8 +205,8 @@ class VideoLogger:
     def __init__(
         self,
         stream_name: str,
-        width: Optional[int] = None,
-        height: Optional[int] = None,
+        width: int | None = None,
+        height: int | None = None,
         fps: int = 30,
         codec: str = "libx264",
         preset: str = "ultrafast",
@@ -308,11 +308,11 @@ class VideoLogger:
 class RerunRobotLogger:
     def __init__(
         self,
-        teleop: Optional[Teleoperator] = None,
-        robot: Optional[Robot] = None,
+        teleop: Teleoperator | None = None,
+        robot: Robot | None = None,
         image_stream_type: str = "video",
         fps: int = 60,
-        image_size: Optional[tuple[int, int]] = None,
+        image_size: tuple[int, int] | None = None,
         log_urdf: bool = True,
         session_name: str = "lerobot_control_loop",
         root: str | Path | None = None,
@@ -333,9 +333,9 @@ class RerunRobotLogger:
         self.robot = robot
         self.teleop = teleop
 
-        self.robot_urdf_logger: Optional[URDFLogger] = None
+        self.robot_urdf_logger: URDFLogger | None = None
         self.image_stream_type = image_stream_type
-        self.video_loggers: Dict[str, VideoLogger] = {}
+        self.video_loggers: dict[str, VideoLogger] = {}
 
         self.fps = fps
         self.width, self.height = (image_size[0], image_size[1]) if image_size else (None, None)
@@ -354,7 +354,7 @@ class RerunRobotLogger:
         self._init_rerun()
 
         if self.robot is not None and self.image_stream_type == "video":
-            self.video_loggers: Dict[str, VideoLogger] = {
+            self.video_loggers: dict[str, VideoLogger] = {
                 cam_name: self._create_video_logger(cam_name, shape)
                 for cam_name, shape in self.robot.observation_features.items()
                 if isinstance(shape, tuple)
@@ -447,7 +447,7 @@ class RerunRobotLogger:
         self.log_actions(action)
         self.log_observations(observation)
 
-    def log_observations(self, observations: Dict[str, Any]):
+    def log_observations(self, observations: dict[str, Any]):
         if not self.active:
             return
         if self.robot is None:
@@ -460,7 +460,7 @@ class RerunRobotLogger:
             elif isinstance(val, np.ndarray):
                 self.log_frame(val, obs)
 
-    def log_actions(self, actions: Dict[str, Any]):
+    def log_actions(self, actions: dict[str, Any]):
         if not self.active:
             return
         if self.teleop is None:
@@ -470,7 +470,7 @@ class RerunRobotLogger:
             if isinstance(val, float):
                 self.rec.log(["action", act], rr.Scalars(val))
 
-    def log_joint_angles(self, angles: Dict[str, Any]):
+    def log_joint_angles(self, angles: dict[str, Any]):
         if not self.active:
             return
         if self.robot is None:
@@ -628,16 +628,16 @@ def extract_videos_from_rrd(recording_path, camera_name, output=None) -> Path | 
 def log_rerun_data(observation: dict[str, Any], action: dict[str, Any]):
     for obs, val in observation.items():
         if isinstance(val, float):
-            rr.log(f"observation.{obs}", rr.Scalar(val))
+            rr.log(f"observation.{obs}", rr.Scalars(val))
         elif isinstance(val, np.ndarray):
             if val.ndim == 1:
                 for i, v in enumerate(val):
-                    rr.log(f"observation.{obs}_{i}", rr.Scalar(float(v)))
+                    rr.log(f"observation.{obs}_{i}", rr.Scalars(float(v)))
             else:
                 rr.log(f"observation.{obs}", rr.Image(val), static=True)
     for act, val in action.items():
         if isinstance(val, float):
-            rr.log(f"action.{act}", rr.Scalar(val))
+            rr.log(f"action.{act}", rr.Scalars(val))
         elif isinstance(val, np.ndarray):
             for i, v in enumerate(val):
-                rr.log(f"action.{act}_{i}", rr.Scalar(float(v)))
+                rr.log(f"action.{act}_{i}", rr.Scalars(float(v)))

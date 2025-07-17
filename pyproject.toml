@@ -81,7 +81,7 @@ dependencies = [
 
     "draccus==0.10.0", # TODO: Remove ==
     "gymnasium>=0.29.1,<1.0.0", # TODO: Bumb dependency
-    "rerun-sdk>=0.21.0,<0.23.0", # TODO: Bumb dependency
+    "rerun-sdk>=0.24.0", # TODO: Bumb dependency
 
     # Support dependencies
     "deepdiff>=7.0.1,<9.0.0",
