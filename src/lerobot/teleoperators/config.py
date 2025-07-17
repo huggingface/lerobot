@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import abc
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
