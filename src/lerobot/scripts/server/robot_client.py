@@ -338,7 +338,7 @@ class RobotClient:
         # Wait at barrier for synchronized start
         self.logger.info("Control loop thread starting")
 
-        # self.push_observation_to_queue(task, verbose)
+        last_log_time = 0
         while self.running:
             control_loop_start = time.perf_counter()
 
@@ -366,9 +366,12 @@ class RobotClient:
 
             time_to_sleep = min(self.config.environment_dt, max(0, self.config.environment_dt - (control_loop_end - control_loop_start)))
 
-            self.logger.info(
-                f"Ts={timed_action.get_timestamp():.4f} | step=#{timed_action.get_timestep():05d} | control_loop={control_loop_end - control_loop_start:.4f}s | sleep={time_to_sleep:.4f}s | get_action={get_action_end - get_action_start:.4f}s | perform_action={perform_action_end - perform_action_start:.4f}s | action_queue_size={action_queue_size:03d}"
-            )
+            # Periodically log the control loop stats
+            if control_loop_end - last_log_time > 1.0:
+                self.logger.info(
+                    f"Ts={timed_action.get_timestamp():.4f} | step=#{timed_action.get_timestep():05d} | control_loop={control_loop_end - control_loop_start:.4f}s | sleep={time_to_sleep:.4f}s | get_action={get_action_end - get_action_start:.4f}s | perform_action={perform_action_end - perform_action_start:.4f}s | action_queue_size={action_queue_size:03d}"
+                )
+                last_log_time = control_loop_end
 
             time.sleep(time_to_sleep)
 
@@ -381,6 +384,7 @@ def async_client(cfg: RobotClientConfig):
     if cfg.robot.type not in SUPPORTED_ROBOTS:
         raise ValueError(f"Robot {cfg.robot.type} not yet supported!")
 
+    # import pdb; pdb.set_trace()
     client = RobotClient(cfg, shutdown_event)
 
     if not client.start():
