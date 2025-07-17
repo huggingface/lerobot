@@ -14,5 +14,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .config_so101_leader import SO101LeaderConfig
-from .so101_leader import SO101Leader
+from .bi_so100_leader import BiSO100Leader
+from .config_bi_so100_leader import BiSO100LeaderConfig
