@@ -118,7 +118,15 @@ class RobotClient:
             config.actions_per_chunk,
             config.policy_device,
         )
-        self.channel = grpc.insecure_channel(self.server_address)
+        self.channel = grpc.insecure_channel(
+            self.server_address,
+            compression=grpc.Compression.Deflate,
+            options=[
+                ("grpc.keepalive_time_ms", 10000), # send keepalive every 10s
+                ("grpc.keepalive_timeout_ms", 3000), # wait 3s for ACK before closing
+                ("grpc.keepalive_permit_without_calls", 1), # allow keepalive even with no RPCs
+            ],
+        )
         self.stub = services_pb2_grpc.AsyncInferenceStub(self.channel)
         self.logger.info(f"Initializing client to connect to server at {self.server_address}")
 
@@ -249,25 +257,25 @@ class RobotClient:
             )
 
             observation_bytes = pickle.dumps(observation)
-            get_observation_end = time.perf_counter()
+            get_observation_time = time.perf_counter() - get_observation_start
 
             if not self.running:
                 break
 
-            self.logger.info(f"Sending observation to policy server | get_observation={get_observation_end - get_observation_start:.4f}s")
-
+            get_actions_start = time.perf_counter()
             observation_iterator = send_bytes_in_chunks(
                 observation_bytes,
                 services_pb2.Observation,
                 log_prefix="[CLIENT] Observation",
                 silent=True,
+                # This can be tuned to optimize transfer speed. In many cases, sending more smaller chunks is better than fewer larger chunks, probably due to TCP congestion control and gRPC processing chunks before full messages are received.
+                chunk_size=1 * 1024 * 1024,
             )
 
-            start_time = time.perf_counter()
             actions_bytes = self.stub.GetActions(observation_iterator)
-            end_time = time.perf_counter()
+            get_actions_time = time.perf_counter() - get_actions_start
 
-            self.logger.info(f"GetActions took {end_time - start_time:.6f}s")
+            self.logger.info(f"Observation {obs_timestep} | get_observation={get_observation_time:.3f}s | get_actions={get_actions_time:.3f}s")
 
             actions: list[TimedAction] = pickle.loads(actions_bytes.data)
 
@@ -320,7 +328,7 @@ class RobotClient:
             # Periodically log the control loop stats
             if control_loop_end - last_log_time > 1.0:
                 self.logger.info(
-                    f"Ts={timed_action.get_timestamp():.4f} | step=#{timed_action.get_timestep():05d} | control_loop={control_loop_end - control_loop_start:.4f}s | sleep={time_to_sleep:.4f}s | get_action={get_action_end - get_action_start:.4f}s | perform_action={perform_action_end - perform_action_start:.4f}s | action_queue_size={action_queue_size:03d}"
+                    f"Ts={timed_action.get_timestamp():.3f} | step=#{timed_action.get_timestep():05d} | control_loop={control_loop_end - control_loop_start:.3f}s | sleep={time_to_sleep:.3f}s | get_action={get_action_end - get_action_start:.3f}s | perform_action={perform_action_end - perform_action_start:.3f}s | action_queue_size={action_queue_size:03d}"
                 )
                 last_log_time = control_loop_end
 
