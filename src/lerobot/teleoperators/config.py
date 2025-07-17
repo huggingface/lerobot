@@ -35,7 +35,10 @@ class TeleoperatorConfig(draccus.ChoiceRegistry, abc.ABC):
                 class_path = arg.split("=")[1]
                 if "." in class_path:
                     module_path, _ = class_path.rsplit(".", 1)
-                    __import__(module_path)
+                    try:
+                        __import__(module_path)
+                    except ImportError as e:
+                        raise ImportError(f"Failed to import module '{module_path}'. Ensure the module exists and is accessible.") from e
 
         return choices
 
