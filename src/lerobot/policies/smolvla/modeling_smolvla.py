@@ -972,7 +972,7 @@ class VLAFlowMatching(nn.Module):
             A_tau = A_tau - dt * (v_pi + scale * g)
             A_tau = A_tau.detach() # stop grads before next step
 
-            # For debugging, this makes the code slower
+            # For debugging. This makes the code slower
             # A_tau_d_err = (A_prev[:,:d]-A_tau[:,:d]).norm()
             # print(f"{time=} {tau=} {err[:,:d].norm()=} {A_tau_d_err=} {scale=} {g.norm()=}")
 
