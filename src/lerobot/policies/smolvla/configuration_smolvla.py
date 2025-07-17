@@ -57,6 +57,9 @@ class SmolVLAConfig(PreTrainedConfig):
     # Gripper dimensions will remain in absolute values.
     use_delta_joint_actions_aloha: bool = False
 
+    # Whether to compile parts of the model using torch.compile. Improves inference speed but increases memory usage and startup time.
+    compile_model: bool = False
+
     # Tokenizer
     tokenizer_max_length: int = 48
 
