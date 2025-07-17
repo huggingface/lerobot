@@ -978,6 +978,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # Update video info (only needed when first episode is encoded since it reads from episode 0)
         if len(self.meta.video_keys) > 0 and episode_index == 0:
             self.meta.update_video_info()
+            write_info(self.meta.info, self.meta.root)  # ensure video info always written properly
 
     def batch_encode_videos(self, start_episode: int = 0, end_episode: int | None = None) -> None:
         """
