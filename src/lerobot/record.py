@@ -74,8 +74,9 @@ from lerobot.datasets.image_writer import safe_stop_image_writer
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import build_dataset_frame, hw_to_dataset_features
 from lerobot.datasets.video_utils import VideoEncodingManager
-from lerobot.policies.factory import make_policy
+from lerobot.policies.factory import make_policy, make_processor
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.processor import RobotProcessor
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -195,6 +196,7 @@ def record_loop(
     dataset: LeRobotDataset | None = None,
     teleop: Teleoperator | list[Teleoperator] | None = None,
     policy: PreTrainedPolicy | None = None,
+    processor: RobotProcessor | None = None,
     control_time_s: int | None = None,
     single_task: str | None = None,
     display_data: bool = False,
@@ -219,9 +221,10 @@ def record_loop(
                 "For multi-teleop, the list must contain exactly one KeyboardTeleop and one arm teleoperator. Currently only supported for LeKiwi robot."
             )
 
-    # if policy is given it needs cleaning up
-    if policy is not None:
+    # Reset policy and processor if they are provided
+    if policy is not None or processor is not None:
         policy.reset()
+        processor.reset()
 
     timestamp = 0
     start_episode_t = time.perf_counter()
@@ -237,12 +240,13 @@ def record_loop(
         if policy is not None or dataset is not None:
             observation_frame = build_dataset_frame(dataset.features, observation, prefix="observation")
 
-        if policy is not None:
+        if policy is not None or processor is not None:
             action_values = predict_action(
-                observation_frame,
-                policy,
-                get_safe_torch_device(policy.config.device),
-                policy.config.use_amp,
+                observation=observation_frame,
+                policy=policy,
+                device=get_safe_torch_device(policy.config.device),
+                processor=processor,
+                use_amp=policy.config.use_amp,
                 task=single_task,
                 robot_type=robot.robot_type,
             )
@@ -328,6 +332,13 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     # Load pretrained policy
     policy = None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
+    processor = None
+    if cfg.policy is not None:
+        processor, _ = make_processor(
+            policy_cfg=cfg.policy,
+            pretrained_path=cfg.policy.pretrained_path,
+            dataset_stats=dataset.meta.stats,
+        )
 
     robot.connect()
     if teleop is not None:
