@@ -36,6 +36,7 @@ from lerobot.policies.factory import (
     get_policy_class,
     make_policy,
     make_policy_config,
+    make_processor,
 )
 from lerobot.policies.normalize import Normalize, Unnormalize
 from lerobot.policies.pretrained import PreTrainedPolicy
@@ -149,6 +150,7 @@ def test_policy(ds_repo_id, env_name, env_kwargs, policy_name, policy_kwargs):
 
     # Check that we can make the policy object.
     dataset = make_dataset(train_cfg)
+    preprocessor, _ = make_processor(train_cfg.policy, None)
     policy = make_policy(train_cfg.policy, ds_meta=dataset.meta)
     assert isinstance(policy, PreTrainedPolicy)
 
@@ -225,6 +227,7 @@ def test_act_backbone_lr():
     assert cfg.policy.optimizer_lr_backbone == 0.001
 
     dataset = make_dataset(cfg)
+    preprocessor, _ = make_processor(cfg.policy, None)
     policy = make_policy(cfg.policy, ds_meta=dataset.meta)
     optimizer, _ = make_optimizer_and_scheduler(cfg, policy)
     assert len(optimizer.param_groups) == 2
