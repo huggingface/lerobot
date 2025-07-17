@@ -397,7 +397,7 @@ class RerunRobotLogger:
 
     def _init_rerun(self):
         memory_limit = os.getenv("LEROBOT_RERUN_MEMORY_LIMIT", "10%")
-        batch_size = os.getenv("RERUN_FLUSH_NUM_BYTES", "10240000")  # 1 MB default
+        batch_size = os.getenv("RERUN_FLUSH_NUM_BYTES", "8000")  # 8 KB default
         os.environ["RERUN_FLUSH_NUM_BYTES"] = batch_size
 
         self.rec = rr.new_recording(self.application_id, recording_id=uuid4(), make_default=True)
@@ -603,7 +603,6 @@ def extract_videos_from_rrd(recording_path, camera_name, output=None) -> Path | 
     byte_stream = io.BytesIO(raw_bytes)
     input_container = av.open(byte_stream, mode="r", format="h264")  # Input is AnnexB H.264 stream.
     input_stream = input_container.streams.video[0]
-    input_stream.time_base = Fraction(1, 1_000_000_000)  # nanosecond time base
 
     # Setup output container.
     output_container = av.open(save_file, mode="w")
@@ -616,6 +615,7 @@ def extract_videos_from_rrd(recording_path, camera_name, output=None) -> Path | 
         pts_ns = int(pkt_time.value - start_time.value)
         packet.pts = pts_ns
         packet.dts = pts_ns  # dts == pts since there's no B-frames.
+        packet.time_base = Fraction(1, 1_000_000_000)
         packet.stream = output_stream
         output_container.mux(packet)
 
