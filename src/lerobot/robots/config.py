@@ -19,6 +19,8 @@ from pathlib import Path
 
 import draccus
 
+from lerobot.utils.utils import import_dynamic_device_based_on_args
+
 
 @dataclass(kw_only=True)
 class RobotConfig(draccus.ChoiceRegistry, abc.ABC):
@@ -38,20 +40,8 @@ class RobotConfig(draccus.ChoiceRegistry, abc.ABC):
 
     @classmethod
     def get_known_choices(cls):
-        choices = super().get_known_choices()
-        for arg in sys.argv:
-            if arg.startswith("--robot.type="):
-                class_path = arg.split("=")[1]
-                if "." in class_path:
-                    module_path, _ = class_path.rsplit(".", 1)
-                    try:
-                        __import__(module_path)
-                    except (ImportError, ModuleNotFoundError) as e:
-                        raise ImportError(
-                            f"Failed to import module '{module_path}'. Ensure the module exists and is accessible. Original error: {e}"
-                        ) from e
-
-        return choices
+        import_dynamic_device_based_on_args("robot")
+        return super().get_known_choices()
 
     @property
     def type(self) -> str:

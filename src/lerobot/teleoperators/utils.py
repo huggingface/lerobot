@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from lerobot.utils.utils import make_dynamic_device_from_configs
+
 from .config import TeleoperatorConfig
 from .teleoperator import Teleoperator
 
@@ -66,10 +68,6 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
 
         return BiSO100Leader(config)
     elif "." in config.type:
-        # If the type is a full module path, import it dynamically
-        module_path, class_name = config.type.rsplit(".", 1)
-        module = __import__(module_path, fromlist=[class_name])
-        teleop_class = getattr(module, class_name)
-        return teleop_class(config)
+        return make_dynamic_device_from_configs(config)
     else:
         raise ValueError(config.type)

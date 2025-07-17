@@ -40,18 +40,6 @@ class CameraConfig(draccus.ChoiceRegistry, abc.ABC):
     width: int | None = None
     height: int | None = None
 
-    @classmethod
-    def get_known_choices(cls):
-        choices = super().get_known_choices()
-        for arg in sys.argv:
-            if arg.startswith("--camera.type="):
-                class_path = arg.split("=")[1]
-                if "." in class_path:
-                    module_path, _ = class_path.rsplit(".", 1)
-                    __import__(module_path)
-
-        return choices
-
     @property
     def type(self) -> str:
         return self.get_choice_name(self.__class__)

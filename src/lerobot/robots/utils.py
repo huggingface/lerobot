@@ -16,6 +16,7 @@ import logging
 from pprint import pformat
 
 from lerobot.robots import RobotConfig
+from lerobot.utils.utils import make_dynamic_device_from_configs
 
 from .robot import Robot
 
@@ -66,15 +67,7 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
 
         return MockRobot(config)
     elif "." in config.type:
-        # If the type is a full module path, import it dynamically
-        module_path, class_name = config.type.rsplit(".", 1)
-        module = __import__(module_path, fromlist=[class_name])
-        try:
-            robot_class = getattr(module, class_name)
-        except AttributeError:
-            raise ValueError(f"Class '{class_name}' not found in module '{module_path}' for type '{config.type}'.")
-        return robot_class(config)
-
+        return make_dynamic_device_from_configs(config)
     else:
         raise ValueError(config.type)
 
