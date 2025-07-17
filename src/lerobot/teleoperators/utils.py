@@ -61,12 +61,15 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
         from .homunculus import HomunculusArm
 
         return HomunculusArm(config)
+    elif config.type == "bi_so100_leader":
+        from .bi_so100_leader import BiSO100Leader
+
+        return BiSO100Leader(config)
     elif "." in config.type:
         # If the type is a full module path, import it dynamically
         module_path, class_name = config.type.rsplit(".", 1)
         module = __import__(module_path, fromlist=[class_name])
         teleop_class = getattr(module, class_name)
         return teleop_class(config)
-
     else:
         raise ValueError(config.type)
