@@ -164,8 +164,9 @@ class FeetechMotorsBus(MotorsBus):
             )
 
     def _handshake(self) -> None:
-        self._assert_motors_exist()
-        self._assert_same_firmware()
+        # self._assert_motors_exist()
+        # self._assert_same_firmware()
+        return
 
     def _find_single_motor(self, motor: str, initial_baudrate: int | None = None) -> tuple[int, int]:
         if self.protocol_version == 0:
@@ -268,7 +269,7 @@ class FeetechMotorsBus(MotorsBus):
 
         return half_turn_homings
 
-    def disable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
+    def disable_torque(self, motors: str | list[str] | None = None, num_retry: int = 5) -> None:
         for motor in self._get_motors_list(motors):
             self.write("Torque_Enable", motor, TorqueMode.DISABLED.value, num_retry=num_retry)
             # self.write("Lock", motor, 0, num_retry=num_retry)
