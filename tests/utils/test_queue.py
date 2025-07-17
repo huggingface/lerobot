@@ -36,7 +36,7 @@ def test_get_last_item_single_item():
 
 def test_get_last_item_multiple_items():
     """Test getting the last item when queue has multiple items."""
-    queue = TorchMPQueue()
+    queue = Queue()
     items = ["first", "second", "third", "fourth", "last"]
 
     for item in items:
@@ -50,7 +50,7 @@ def test_get_last_item_multiple_items():
 
 def test_get_last_item_multiple_items_with_torch_queue():
     """Test getting the last item when queue has multiple items."""
-    queue = Queue()
+    queue = TorchMPQueue()
     items = ["first", "second", "third", "fourth", "last"]
 
     for item in items:
