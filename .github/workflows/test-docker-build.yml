@@ -20,7 +20,9 @@ on:
   pull_request:
     paths:
       # Run only when DockerFile files are modified
-      - "docker/**"
+      - "docker/lerobot-cpu/**"
+      - "docker/lerobot-gpu/**"
+      - "docker/lerobot-gpu-dev/**"
 
 permissions: {}
 
