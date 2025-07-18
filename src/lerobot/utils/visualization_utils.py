@@ -329,25 +329,36 @@ class RerunRobotLogger:
         :param image_size: Optional tuple (width, height) for video frame size.
             If None, it will use the size from the robot's observation features.
         :param log_urdf: Whether to log the URDF of the robot. Defaults to True.
+        :param session_name: Name of the Rerun session. Defaults to "lerobot_control_loop".
+        :param root: Optional root directory for Rerun recordings. If None, defaults to HF_LEROBOT_HOME/session_name.
+        :param log_rrd: Whether to log Rerun recordings to a file. Defaults to False.
+        :param live_display: Whether to enable live display of the Rerun recording
         """
+        if not log_rrd and not live_display:
+            raise ValueError("At least one of log_rrd or live_display must be True.")
+
+        # robots
         self.robot = robot
         self.teleop = teleop
 
+        # set up URDF logging
         self.robot_urdf_logger: URDFLogger | None = None
+        self.log_urdf = log_urdf and robot is not None
+
+        # set up image logging
         self.image_stream_type = image_stream_type
         self.video_loggers: dict[str, VideoLogger] = {}
-
         self.fps = fps
         self.width, self.height = (image_size[0], image_size[1]) if image_size else (None, None)
 
-        self.log_urdf = log_urdf and robot is not None
-
+        # set up Rerun recording
         self.session_name = session_name
         self.application_id = session_name
         self.root = root
         self.log_rrd = log_rrd
         self.live_display = live_display
 
+        # if Rerun should be logging data. Call `init()` to start logging.
         self.active = False
 
     def init(self):
@@ -400,7 +411,7 @@ class RerunRobotLogger:
         batch_size = os.getenv("RERUN_FLUSH_NUM_BYTES", "8000")  # 8 KB default
         os.environ["RERUN_FLUSH_NUM_BYTES"] = batch_size
 
-        self.rec = rr.new_recording(self.application_id, recording_id=uuid4(), make_default=True)
+        self.rec = rr.RecordingStream(self.application_id, recording_id=uuid4(), make_default=True)
 
         sinks = []
         if self.live_display:
@@ -443,15 +454,13 @@ class RerunRobotLogger:
         if action is None:
             action = self.teleop.get_action() if self.teleop else {}
 
-        self.log_joint_angles(observation)
+        self.log_urdf_joint_angles(observation)
         self.log_actions(action)
         self.log_observations(observation)
+        self.log_deltas(action, observation)
 
     def log_observations(self, observations: dict[str, Any]):
         if not self.active:
-            return
-        if self.robot is None:
-            logging.warning("No robot instance available for logging observations.")
             return
 
         for obs, val in observations.items():
@@ -463,18 +472,27 @@ class RerunRobotLogger:
     def log_actions(self, actions: dict[str, Any]):
         if not self.active:
             return
-        if self.teleop is None:
-            logging.warning("No teleoperator instance available for logging actions.")
-            return
         for act, val in actions.items():
             if isinstance(val, float):
                 self.rec.log(["action", act], rr.Scalars(val))
 
-    def log_joint_angles(self, angles: dict[str, Any]):
+    def log_deltas(self, action: dict[str, Any], observation: dict[str, Any]):
+        """
+        Log the difference (delta) between actions and observations to Rerun, for scalar joint angles only.
+        Only logs keys that are present in both action and observation, and where both values are scalars (float or int).
+        """
         if not self.active:
             return
-        if self.robot is None:
-            logging.warning("No robot instance available for logging joint angles.")
+        # Only consider joint angle keys that are present in both action and observation and are scalars
+        for key in set(action.keys()) & set(observation.keys()):
+            act_val = action[key]
+            obs_val = observation[key]
+            if isinstance(act_val, (float, int)) and isinstance(obs_val, (float, int)):
+                delta = act_val - obs_val
+                self.rec.log(["delta", key], rr.Scalars(float(delta)))
+
+    def log_urdf_joint_angles(self, angles: dict[str, Any]):
+        if not self.active:
             return
         if self.log_urdf and self.robot_urdf_logger is not None:
             self.robot_urdf_logger.log_joint_angles(angles)
@@ -489,8 +507,6 @@ class RerunRobotLogger:
         if self.image_stream_type == "video":
             logger = self.video_loggers.get(cam_name, self._create_video_logger(cam_name, frame.shape[:2]))
             logger.log_frame(frame)
-        elif self.image_stream_type == "jpeg":
-            self.rec.log(f"observation/{cam_name}", rr.Image(frame).compress(jpeg_quality=60), static=True)
         elif self.image_stream_type == "raw":
             self.rec.log(f"observation/{cam_name}", rr.Image(frame), static=True)
 
