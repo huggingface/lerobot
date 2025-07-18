@@ -29,8 +29,8 @@ on:
 env:
   UV_VERSION: "0.8.0"
   PYTHON_VERSION: "3.10"
-  DOCKER_IMAGE_NAME_CPU: huggingface/lerobot-main-gpu
-  DOCKER_IMAGE_NAME_GPU: huggingface/lerobot-main-cpu
+  DOCKER_IMAGE_NAME_CPU: huggingface/lerobot-gpu:latest
+  DOCKER_IMAGE_NAME_GPU: huggingface/lerobot-cpu:latest
 
 # Ensures that only the latest commit is built, canceling older runs.
 concurrency:
@@ -43,9 +43,17 @@ jobs:
     name: Build CPU Docker for Nightly
     runs-on:
       group: aws-general-8-plus
+    outputs:
+      image_tag: ${{ env.DOCKER_IMAGE_NAME_CPU }}
     steps:
+      - name: Install Git LFS
+        run: |
+          sudo apt-get update
+          sudo apt-get install git-lfs
+          git lfs install
       - uses: actions/checkout@v4
         with:
+          lfs: true
           persist-credentials: false
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3 # zizmor: ignore[unpinned-uses]
@@ -69,9 +77,17 @@ jobs:
     name: Build GPU Docker for Nightly
     runs-on:
       group: aws-general-8-plus
+    outputs:
+      image_tag: ${{ env.DOCKER_IMAGE_NAME_CPU }}
     steps:
+      - name: Install Git LFS
+        run: |
+          sudo apt-get update
+          sudo apt-get install git-lfs
+          git lfs install
       - uses: actions/checkout@v4
         with:
+          lfs: true
           persist-credentials: false
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3 # zizmor: ignore[unpinned-uses]
@@ -97,7 +113,7 @@ jobs:
     runs-on:
       group: aws-g6-4xlarge-plus
     container:
-      image: ${{ env.DOCKER_IMAGE_NAME_CPU }} # zizmor: ignore[unpinned-images]
+      image: ${{ needs.build-docker-cpu-nightly.outputs.image_tag }} # zizmor: ignore[unpinned-images]
       credentials:
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.DOCKERHUB_PASSWORD }}
@@ -106,14 +122,8 @@ jobs:
         shell: bash
         working-directory: /lerobot
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
       - name: Run pytest on CPU
-        run: pytest tests -vv
-
+        run: pytest tests -vv --maxfail=10
       - name: Run end-to-end tests
         run: make test-end-to-end
 
@@ -124,7 +134,7 @@ jobs:
     runs-on:
       group: aws-g6-4xlarge-plus
     container:
-      image: ${{ env.DOCKER_IMAGE_NAME_GPU }} # zizmor: ignore[unpinned-images]
+      image: ${{ needs.build-docker-gpu-nightly.outputs.image_tag }} # zizmor: ignore[unpinned-images]
       options: --gpus all --shm-size "16gb"
       credentials:
         username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -134,13 +144,7 @@ jobs:
         shell: bash
         working-directory: /lerobot
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
       - name: Run pytest on GPU
-        run: pytest tests -vv
-
+        run: pytest tests -vv --maxfail=10
       - name: Run end-to-end tests
         run: make test-end-to-end

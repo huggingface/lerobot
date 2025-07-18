@@ -47,7 +47,7 @@ permissions:
 env:
   UV_VERSION: "0.8.0"
   PYTHON_VERSION: "3.10"
-  DOCKER_IMAGE_NAME: huggingface/lerobot-pr-test
+  DOCKER_IMAGE_NAME: huggingface/lerobot-gpu
 
 # Ensures that only the latest commit for a PR or branch is built, canceling older runs.
 concurrency:
@@ -64,6 +64,8 @@ jobs:
       github.event_name == 'push' ||
       github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    env:
+      MUJOCO_GL: egl
     steps:
       - uses: actions/checkout@v4
         with:
@@ -88,7 +90,7 @@ jobs:
         run: uv sync --extra "test"
 
       - name: Run pytest
-        run: uv run pytest tests -vv
+        run: uv run pytest tests -vv --maxfail=10
 
   full-tests-gate:
     # This job evaluates the need to run the full tests suite.
@@ -108,6 +110,8 @@ jobs:
     name: Full Tests
     needs: full-tests-gate
     runs-on: ubuntu-latest
+    env:
+      MUJOCO_GL: egl
     steps:
       - uses: actions/checkout@v4
         with:
@@ -131,10 +135,10 @@ jobs:
         run: uv sync --all-extras
 
       - name: Run pytest (all extras)
-        run: uv run pytest tests -vv
+        run: uv run pytest tests -vv --maxfail=10
 
       - name: Run end-to-end tests
-        run: make test-end-to-end
+        run: uv run make test-end-to-end
 
   build-and-push-docker:
     # This job builds a GPU enabled image for testing
@@ -144,10 +148,16 @@ jobs:
     runs-on:
       group: aws-general-8-plus
     outputs:
-      image_tag: ${{ steps.meta.outputs.tags }}
+      image_tag: ${{ env.DOCKER_IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}
     steps:
+      - name: Install Git LFS
+        run: |
+          sudo apt-get update
+          sudo apt-get install git-lfs
+          git lfs install
       - uses: actions/checkout@v4
         with:
+          lfs: true
           persist-credentials: false
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3 # zizmor: ignore[unpinned-uses]
@@ -158,27 +168,18 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_PASSWORD }}
-      - name: Docker meta
-        id: meta
-        uses: docker/metadata-action@v5 # zizmor: ignore[unpinned-uses]
-        with:
-          images: ${{ env.DOCKER_IMAGE_NAME }}
-          tags: |
-            type=sha,prefix=pr-${{ github.event.pull_request.number }}-,event=pr
-            type=raw,value=latest,event=push
       - name: Build and push Docker image
         uses: docker/build-push-action@v6 # zizmor: ignore[unpinned-uses]
         with:
           context: .
           file: ./docker/Dockerfile.internal
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ env.DOCKER_IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}
 
   gpu-tests:
     # This job runs pytest with all extras in a GPU enabled host
     # It runs everytime a test image is created
-    name: "GPU Tests"
+    name: GPU Tests
     needs: [build-and-push-docker]
     runs-on:
       group: aws-g6-4xlarge-plus
@@ -193,21 +194,17 @@ jobs:
         shell: bash
         working-directory: /lerobot
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
       - name: Run pytest on GPU
-        run: pytest tests -vv
+        run: pytest tests -vv --maxfail=10
       - name: Run end-to-end tests
         run: make test-end-to-end
 
   delete-pr-image:
     # This job deletes the test image recently created
     # It runs everytime after the gpu-tests have finished
-    name: "Delete PR Image"
-    if: always() && github.event.review.state == 'approved'
+    name: Delete PR Image
     needs: [gpu-tests, build-and-push-docker]
+    if: always() && github.event.review.state == 'approved' && needs.build-and-push-docker.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Get Docker Hub Token and Delete Image
