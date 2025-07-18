@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import builtins
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, Type, TypeVar
+from typing import Any, TypeVar
 
 from huggingface_hub import HfApi
 from huggingface_hub.utils import validate_hf_hub_args
@@ -85,7 +86,7 @@ class HubMixin:
     @classmethod
     @validate_hf_hub_args
     def from_pretrained(
-        cls: Type[T],
+        cls: builtins.type[T],
         pretrained_name_or_path: str | Path,
         *,
         force_download: bool = False,
