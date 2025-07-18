@@ -73,6 +73,7 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.datasets.image_writer import safe_stop_image_writer
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import build_dataset_frame, hw_to_dataset_features
+from lerobot.datasets.video_utils import VideoEncodingManager
 from lerobot.policies.factory import make_policy
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.robots import (  # noqa: F401
@@ -145,6 +146,9 @@ class DatasetRecordConfig:
     # Too many threads might cause unstable teleoperation fps due to main thread being blocked.
     # Not enough threads might cause low camera fps.
     num_image_writer_threads_per_camera: int = 4
+    # Number of episodes to record before batch encoding videos
+    # Set to 1 for immediate encoding (default behavior), or higher for batched encoding
+    video_encoding_batch_size: int = 1
 
     def __post_init__(self):
         if self.single_task is None:
@@ -318,6 +322,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         dataset = LeRobotDataset(
             cfg.dataset.repo_id,
             root=cfg.dataset.root,
+            batch_encoding_size=cfg.dataset.video_encoding_batch_size,
         )
 
         if len(cameras) > 0:
@@ -337,7 +342,8 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             features=dataset_features,
             use_videos=cfg.dataset.video,
             image_writer_processes=cfg.dataset.num_image_writer_processes,
-            image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * len(cameras),
+            image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * len(robot.cameras),
+            batch_encoding_size=cfg.dataset.video_encoding_batch_size,
         )
 
     # Load pretrained policy
@@ -365,49 +371,51 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     listener, events = init_keyboard_listener()
 
-    recorded_episodes = 0
-    while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
-        log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
-        record_loop(
-            robot=robot,
-            events=events,
-            fps=cfg.dataset.fps,
-            teleop=teleop,
-            policy=policy,
-            dataset=dataset,
-            control_time_s=cfg.dataset.episode_time_s,
-            single_task=cfg.dataset.single_task,
-            rerun_logger=rerun_logger,
-        )
-
-        # Execute a few seconds without recording to give time to manually reset the environment
-        # Skip reset for the last episode to be recorded
-        if not events["stop_recording"] and (
-            (recorded_episodes < cfg.dataset.num_episodes - 1) or events["rerecord_episode"]
-        ):
-            if rerun_logger is not None:
-                rerun_logger.stop_recording()
-            log_say("Reset the environment", cfg.play_sounds)
+    with VideoEncodingManager(dataset):
+        recorded_episodes = 0
+        while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
+            log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
             record_loop(
                 robot=robot,
                 events=events,
                 fps=cfg.dataset.fps,
                 teleop=teleop,
-                control_time_s=cfg.dataset.reset_time_s,
+                policy=policy,
+                dataset=dataset,
+                control_time_s=cfg.dataset.episode_time_s,
                 single_task=cfg.dataset.single_task,
-                rerun_logger=None,
+                rerun_logger=rerun_logger,
             )
 
-        if events["rerecord_episode"]:
-            log_say("Re-record episode", cfg.play_sounds)
-            events["rerecord_episode"] = False
-            events["exit_early"] = False
-            dataset.clear_episode_buffer()
-            continue
+            # Execute a few seconds without recording to give time to manually reset the environment
+            # Skip reset for the last episode to be recorded
+            if not events["stop_recording"] and (
+                (recorded_episodes < cfg.dataset.num_episodes - 1) or events["rerecord_episode"]
+            ):
+                if rerun_logger is not None:
+                    # will stop logging data to Rerun between episodes
+                    rerun_logger.stop_recording()
+                log_say("Reset the environment", cfg.play_sounds)
+                record_loop(
+                    robot=robot,
+                    events=events,
+                    fps=cfg.dataset.fps,
+                    teleop=teleop,
+                    control_time_s=cfg.dataset.reset_time_s,
+                    single_task=cfg.dataset.single_task,
+                    rerun_logger=None,  # avoid logging the dummy reset action
+                )
 
-        rrd_dir = rerun_logger.get_rrd_dir() if rerun_logger is not None else None
-        dataset.save_episode(rrd_dir=rrd_dir)
-        recorded_episodes += 1
+            if events["rerecord_episode"]:
+                log_say("Re-record episode", cfg.play_sounds)
+                events["rerecord_episode"] = False
+                events["exit_early"] = False
+                dataset.clear_episode_buffer()
+                continue
+
+            rrd_dir = rerun_logger.get_rrd_dir() if rerun_logger is not None else None
+            dataset.save_episode(rrd_dir=rrd_dir)
+            recorded_episodes += 1
 
     log_say("Stop recording", cfg.play_sounds, blocking=True)
 

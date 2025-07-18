@@ -15,6 +15,7 @@
 # limitations under the License.
 import contextlib
 import logging
+import os
 import shutil
 from collections.abc import Callable
 from pathlib import Path
@@ -68,10 +69,10 @@ from lerobot.datasets.utils import (
 from lerobot.datasets.video_utils import (
     VideoFrame,
     decode_video_frames,
-    encode_video_frames,
     get_safe_default_codec,
     get_video_info,
 )
+from lerobot.utils.visualization_utils import extract_videos_from_rrd
 
 CODEBASE_VERSION = "v2.1"
 
@@ -260,8 +261,6 @@ class LeRobotDatasetMetadata:
 
         self.info["splits"] = {"train": f"0:{self.info['total_episodes']}"}
         self.info["total_videos"] += len(self.video_keys)
-        if len(self.video_keys) > 0:
-            self.update_video_info()
 
         write_info(self.info, self.root)
 
@@ -342,6 +341,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         force_cache_sync: bool = False,
         download_videos: bool = True,
         video_backend: str | None = None,
+        batch_encoding_size: int = 1,
     ):
         """
         2 modes are available for instantiating this class, depending on 2 different use cases:
@@ -443,6 +443,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 True.
             video_backend (str | None, optional): Video backend to use for decoding videos. Defaults to torchcodec when available int the platform; otherwise, defaults to 'pyav'.
                 You can also use the 'pyav' decoder used by Torchvision, which used to be the default option, or 'video_reader' which is another decoder of Torchvision.
+            batch_encoding_size (int, optional): Number of episodes to accumulate before batch encoding videos.
+                Set to 1 for immediate encoding (default), or higher for batched encoding. Defaults to 1.
         """
         super().__init__()
         self.repo_id = repo_id
@@ -454,6 +456,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.revision = revision if revision else CODEBASE_VERSION
         self.video_backend = video_backend if video_backend else get_safe_default_codec()
         self.delta_indices = None
+        self.batch_encoding_size = batch_encoding_size
+        self.episodes_since_last_encoding = 0
 
         # Unused attributes
         self.image_writer = None
@@ -811,6 +815,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """
         This will save to disk the current episode in self.episode_buffer.
 
+        Video encoding is handled automatically based on batch_encoding_size:
+        - If batch_encoding_size == 1: Videos are encoded immediately after each episode
+        - If batch_encoding_size > 1: Videos are encoded in batches.
+
         Args:
             episode_data (dict | None, optional): Dict containing the episode data to save. If None, this will
                 save the current episode in self.episode_buffer, which is filled with 'add_frame'. Defaults to
@@ -851,41 +859,33 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self._save_episode_table(episode_buffer, episode_index)
         ep_stats = compute_episode_stats(episode_buffer, self.features)
 
-        used_rrd_extraction = False
-        if rrd_dir is not None and len(self.meta.video_keys) > 0:
-            import os
+        used_rrd_extraction = self.save_episode_videos_from_rrd(episode_index, rrd_dir)
 
-            from lerobot.utils.visualization_utils import extract_videos_from_rrd
-
-            # Use episode-specific RRD file if it exists
-            rrd_filename = f"episode_{episode_index:06d}.rrd"
-            rrd_path = os.path.join(str(rrd_dir), rrd_filename)
-            if os.path.isfile(rrd_path):
-                for key in self.meta.video_keys:
-                    entity_name = key.rsplit(".")[-1]  # e.g. 'front'
-                    out_file = self.root / self.meta.get_video_file_path(
-                        episode_index, key
-                    )  # Ensure video file path is set
-                    save_path = extract_videos_from_rrd(rrd_path, entity_name, output=out_file)
-                    if save_path:  # If extraction succeeded
-                        episode_buffer[key] = save_path
-                        used_rrd_extraction = True
-                    else:
-                        used_rrd_extraction = False
-                        logging.warning(
-                            f"Failed to extract video for {key} from RRD file {rrd_path}. "
-                            "Falling back to encoding from images."
-                        )
-                        break
         # If not using RRD extraction or it failed, fall back to encoding from images
-        if not used_rrd_extraction and len(self.meta.video_keys) > 0:
-            video_paths = self.encode_episode_videos(episode_index)
-            for key in self.meta.video_keys:
-                episode_buffer[key] = video_paths[key]
+        has_video_keys = len(self.meta.video_keys) > 0
+        use_batched_encoding = self.batch_encoding_size > 1
+        if not used_rrd_extraction and has_video_keys:
+            # Check if we should trigger batch encoding
+            use_batched_encoding = self.batch_encoding_size > 1
+            if use_batched_encoding:
+                video_paths = self.encode_episode_videos(episode_index)
+                for key in self.meta.video_keys:
+                    episode_buffer[key] = video_paths[key]
+            else:
+                self.episodes_since_last_encoding += 1
+                if self.episodes_since_last_encoding == self.batch_encoding_size:
+                    start_ep = self.num_episodes - self.batch_encoding_size
+                    end_ep = self.num_episodes
+                    logging.info(
+                        f"Batch encoding {self.batch_encoding_size} videos for episodes {start_ep} to {end_ep - 1}"
+                    )
+                    self.batch_encode_videos(start_ep, end_ep)
+                    self.episodes_since_last_encoding = 0
 
-        # `meta.save_episode` be executed after encoding the videos
+        # `meta.save_episode` should be executed after encoding the videos
         self.meta.save_episode(episode_index, episode_length, episode_tasks, ep_stats)
 
+        # Episode data index and timestamp checking
         ep_data_index = get_episode_data_index(self.meta.episodes, [episode_index])
         ep_data_index_np = {k: t.numpy() for k, t in ep_data_index.items()}
         check_timestamps_sync(
@@ -896,16 +896,13 @@ class LeRobotDataset(torch.utils.data.Dataset):
             self.tolerance_s,
         )
 
-        video_files = list(self.root.rglob("*.mp4"))
-        assert len(video_files) == self.num_episodes * len(self.meta.video_keys)
-
+        # Verify that we have one parquet file per episode and the number of video files matches the number of encoded episodes
         parquet_files = list(self.root.rglob("*.parquet"))
         assert len(parquet_files) == self.num_episodes
-
-        # delete images
-        img_dir = self.root / "images"
-        if img_dir.is_dir():
-            shutil.rmtree(self.root / "images")
+        video_files = list(self.root.rglob("*.mp4"))
+        assert len(video_files) == (self.num_episodes - self.episodes_since_last_encoding) * len(
+            self.meta.video_keys
+        )
 
         if not episode_data:  # Reset the buffer
             self.episode_buffer = self.create_episode_buffer()
@@ -922,6 +919,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
     def clear_episode_buffer(self) -> None:
         episode_index = self.episode_buffer["episode_index"]
+
+        # Clean up image files for the current episode buffer
         if self.image_writer is not None:
             for cam_key in self.meta.camera_keys:
                 img_dir = self._get_image_file_path(
@@ -958,34 +957,102 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if self.image_writer is not None:
             self.image_writer.wait_until_done()
 
-    def encode_videos(self) -> None:
+    def save_episode_videos_from_rrd(self, episode_index: int, rrd_dir: str | Path | None = None) -> bool:
         """
-        Use ffmpeg to convert frames stored as png into mp4 videos.
-        Note: `encode_video_frames` is a blocking call. Making it asynchronous shouldn't speedup encoding,
-        since video encoding with ffmpeg is already using multithreading.
-        """
-        for ep_idx in range(self.meta.total_episodes):
-            self.encode_episode_videos(ep_idx)
+        Extract videos from RRD files and save them to the dataset's video directory.
+        This is useful when you have RRD files containing video data and want to convert them to mp4 format.
 
-    def encode_episode_videos(self, episode_index: int) -> dict:
+        Args:
+            episode_index (int): Index of the episode to extract videos from.
+        """
+        if not rrd_dir or len(self.meta.video_keys) == 0:
+            return False
+
+        rrd_filename = f"episode_{episode_index:06d}.rrd"
+        rrd_path = os.path.join(str(rrd_dir), rrd_filename)
+        if not os.path.isfile(rrd_path):
+            return False
+
+        for key in self.meta.video_keys:
+            entity_name = key.rsplit(".")[-1]  # e.g. 'front'
+            out_file = self.root / self.meta.get_video_file_path(
+                episode_index, key
+            )  # Ensure video file path is set
+            save_path = extract_videos_from_rrd(rrd_path, entity_name, output=out_file)
+            if save_path:  # If extraction succeeded
+                self.episode_buffer[key] = save_path
+            else:
+                logging.warning(
+                    f"Failed to extract video for {key} from RRD file {rrd_path}. "
+                    "Falling back to encoding from images."
+                )
+                return False
+
+        for key in self.meta.video_keys:
+            # We have to do this separately in case the extraction fails, so we don't want to delete images
+            self.delete_image_files(episode_index, key)
+
+        return True
+
+    def encode_episode_videos(self, episode_index: int) -> None:
         """
         Use ffmpeg to convert frames stored as png into mp4 videos.
         Note: `encode_video_frames` is a blocking call. Making it asynchronous shouldn't speedup encoding,
         since video encoding with ffmpeg is already using multithreading.
+
+        This method handles video encoding steps:
+        - Video encoding via ffmpeg
+        - Video info updating in metadata
+        - Raw image cleanup
+
+        Args:
+            episode_index (int): Index of the episode to encode.
         """
-        video_paths = {}
         for key in self.meta.video_keys:
             video_path = self.root / self.meta.get_video_file_path(episode_index, key)
-            video_paths[key] = str(video_path)
             if video_path.is_file():
                 # Skip if video is already encoded. Could be the case when resuming data recording.
                 continue
-            img_dir = self._get_image_file_path(
-                episode_index=episode_index, image_key=key, frame_index=0
-            ).parent
-            encode_video_frames(img_dir, video_path, self.fps, overwrite=True)
+            self.delete_image_files(episode_index, key)
 
-        return video_paths
+        # Update video info (only needed when first episode is encoded since it reads from episode 0)
+        if len(self.meta.video_keys) > 0 and episode_index == 0:
+            self.meta.update_video_info()
+            write_info(self.meta.info, self.meta.root)  # ensure video info always written properly
+
+    def batch_encode_videos(self, start_episode: int = 0, end_episode: int | None = None) -> None:
+        """
+        Batch encode videos for multiple episodes.
+
+        Args:
+            start_episode: Starting episode index (inclusive)
+            end_episode: Ending episode index (exclusive). If None, encodes all episodes from start_episode
+        """
+        if end_episode is None:
+            end_episode = self.meta.total_episodes
+
+        logging.info(f"Starting batch video encoding for episodes {start_episode} to {end_episode - 1}")
+
+        # Encode all episodes with cleanup enabled for individual episodes
+        for ep_idx in range(start_episode, end_episode):
+            logging.info(f"Encoding videos for episode {ep_idx}")
+            self.encode_episode_videos(ep_idx)
+
+        logging.info("Batch video encoding completed")
+
+    def delete_image_files(self, episode_index: int, image_key: str) -> None:
+        """
+        Delete all image files for a given episode and image key.
+
+        Args:
+            episode_index (int): Index of the episode.
+            image_key (str): Key of the image modality.
+        """
+        img_dir = self._get_image_file_path(
+            episode_index=episode_index, image_key=image_key, frame_index=0
+        ).parent
+        if img_dir.is_dir():
+            shutil.rmtree(img_dir)
 
     @classmethod
     def create(
@@ -1000,6 +1067,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         image_writer_processes: int = 0,
         image_writer_threads: int = 0,
         video_backend: str | None = None,
+        batch_encoding_size: int = 1,
     ) -> "LeRobotDataset":
         """Create a LeRobot Dataset from scratch in order to record data."""
         obj = cls.__new__(cls)
@@ -1016,6 +1084,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.revision = None
         obj.tolerance_s = tolerance_s
         obj.image_writer = None
+        obj.batch_encoding_size = batch_encoding_size
+        obj.episodes_since_last_encoding = 0
 
         if image_writer_processes or image_writer_threads:
             obj.start_image_writer(image_writer_processes, image_writer_threads)
