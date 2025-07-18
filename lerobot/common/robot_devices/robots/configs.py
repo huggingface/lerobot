@@ -544,14 +544,20 @@ class So100RobotConfig(ManipulatorRobotConfig):
 
     cameras: dict[str, CameraConfig] = field(
         default_factory=lambda: {
-            "laptop": OpenCVCameraConfig(
+            "camera_side": OpenCVCameraConfig(
                 camera_index=0,
                 fps=30,
                 width=640,
                 height=480,
             ),
-            "phone": OpenCVCameraConfig(
+            "camera_wrist": OpenCVCameraConfig(
                 camera_index=1,
+                fps=30,
+                width=640,
+                height=480,
+            ),
+            "camera_top": OpenCVCameraConfig(
+                camera_index=2,
                 fps=30,
                 width=640,
                 height=480,
@@ -561,14 +567,19 @@ class So100RobotConfig(ManipulatorRobotConfig):
 
     microphones: dict[str, MicrophoneConfig] = field(
         default_factory=lambda: {
-            "laptop": PortAudioMicrophoneConfig(
+            "camera_side": PortAudioMicrophoneConfig(
+                microphone_index=2,
+                sample_rate=48000,
+                channels=[1, 2],
+            ),
+            "camera_wrist": PortAudioMicrophoneConfig(
                 microphone_index=0,
                 sample_rate=48000,
                 channels=[1],
             ),
-            "headset": PortAudioMicrophoneConfig(
+            "camera_top": PortAudioMicrophoneConfig(
                 microphone_index=1,
-                sample_rate=44100,
+                sample_rate=48000,
                 channels=[1],
             ),
         }
