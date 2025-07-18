@@ -112,7 +112,8 @@ class OpenCVCamera(Camera):
         self.config = config
         self.index_or_path = config.index_or_path
 
-        self.fps = config.fps
+        self.wanted_fps = config.fps
+        self.camera_fps = None
         self.color_mode = config.color_mode
         self.warmup_s = config.warmup_s
 
@@ -200,10 +201,9 @@ class OpenCVCamera(Camera):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"Cannot configure settings for {self} as it is not connected.")
 
-        if self.fps is None:
-            self.fps = self.videocapture.get(cv2.CAP_PROP_FPS)
-        else:
-            self._validate_fps()
+        # We don't set the FPS. We GET the actual (max) FPS from the camera.
+        self.camera_fps = self.videocapture.get(cv2.CAP_PROP_FPS)
+        logger.info(f"{self} is running at its default/max FPS: {self.camera_fps:.2f}")
 
         default_width = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_WIDTH)))
         default_height = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_HEIGHT)))
@@ -316,19 +316,23 @@ class OpenCVCamera(Camera):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        start_time = time.perf_counter()
+        # Start the background capture thread if it's not running
+        if self.thread is None or not self.thread.is_alive():
+            # Perform an initial blocking read to populate the first frame
+            ret, frame = self.videocapture.read()
+            if not ret or frame is None:
+                raise RuntimeError(f"{self} failed to read initial frame.")
 
-        ret, frame = self.videocapture.read()
+            self.latest_frame = self._postprocess_image(frame)
+            self._start_read_thread()
 
-        if not ret or frame is None:
-            raise RuntimeError(f"{self} read failed (status={ret}).")
+        with self.frame_lock:
+            frame = self.latest_frame
 
-        processed_frame = self._postprocess_image(frame, color_mode)
+        if frame is None:
+            raise RuntimeError(f"Internal error: Read thread started but no frame is available for {self}.")
 
-        read_duration_ms = (time.perf_counter() - start_time) * 1e3
-        logger.debug(f"{self} read took: {read_duration_ms:.1f}ms")
-
-        return processed_frame
+        return frame.copy()
 
     def _postprocess_image(self, image: np.ndarray, color_mode: ColorMode | None = None) -> np.ndarray:
         """
@@ -386,16 +390,23 @@ class OpenCVCamera(Camera):
         """
         while not self.stop_event.is_set():
             try:
-                color_image = self.read()
+                ret, frame = self.videocapture.read()
+                if not ret or frame is None:
+                    logger.warning(f"Failed to read frame in background for {self}.")
+                    time.sleep(0.01)
+                    continue
+
+                processed_frame = self._postprocess_image(frame)
 
                 with self.frame_lock:
-                    self.latest_frame = color_image
+                    self.latest_frame = processed_frame
+
                 self.new_frame_event.set()
 
-            except DeviceNotConnectedError:
-                break
             except Exception as e:
                 logger.warning(f"Error reading frame in background thread for {self}: {e}")
+                if not self.is_connected:
+                    break
 
     def _start_read_thread(self) -> None:
         """Starts or restarts the background read thread if it's not running."""

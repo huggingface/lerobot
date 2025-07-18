@@ -48,7 +48,7 @@ class SO101FollowerT(Robot):
 
     _CURRENT_STEP_A: float = 6.5e-3  # 6.5 mA per register LSB #http://doc.feetech.cn/#/prodinfodownload?srcType=FT-SMS-STS-emanual-229f4476422d4059abfb1cb0
     _KT_NM_PER_AMP: float = 0.814  # Torque constant Kt [N·m/A] #https://www.feetechrc.com/811177.html
-    _MAX_CURRENT_A: float = 2.0  # Safe driver limit
+    _MAX_CURRENT_A: float = 4.0  # Safe driver limit
 
     # Position gains [Nm/rad]
     _KP_GAINS = {
@@ -159,11 +159,11 @@ class SO101FollowerT(Robot):
     @property
     def _motors_ft(self) -> dict[str, type]:
         d: dict[str, type] = {}
-        for m in self.bus.motors:
-            d[f"{m}.pos"] = float
-            d[f"{m}.vel"] = float
-            d[f"{m}.acc"] = float
-            d[f"{m}.tau_meas"] = float
+        for motor in self.bus.motors:
+            d[f"{motor}.pos"] = float
+            d[f"{motor}.vel"] = float
+            # d[f"{motor}.acc"] = float
+            d[f"{motor}.effort"] = float
         return d
 
     @property
@@ -178,7 +178,13 @@ class SO101FollowerT(Robot):
 
     @cached_property
     def action_features(self) -> dict[str, type]:
-        return {f"{m}.effort": int for m in self.bus.motors}
+        d: dict[str, type] = {}
+        for motor in self.bus.motors:
+            d[f"{motor}.pos"] = float
+            d[f"{motor}.vel"] = float
+            # d[f"{motor}.acc"] = float
+            d[f"{motor}.effort"] = float
+        return d
 
     @property
     def is_connected(self) -> bool:
@@ -398,12 +404,8 @@ class SO101FollowerT(Robot):
 
     def configure(self) -> None:
         with self.bus.torque_disabled():
-            self.bus.configure_motors()
             for motor in self.bus.motors:
                 self.bus.write("Operating_Mode", motor, 2, num_retry=2)  # Set to current mode
-                self.bus.write("Torque_Limit", motor, 1000, num_retry=2)  # 100%
-                self.bus.write("Max_Torque_Limit", motor, 1000, num_retry=2)  # 100%
-                self.bus.write("Overcurrent_Protection_Time", motor, 250, num_retry=2)
 
     def setup_motors(self) -> None:
         for motor in reversed(self.bus.motors):
@@ -468,16 +470,19 @@ class SO101FollowerT(Robot):
         cur_raw = self.bus.sync_read("Present_Current", normalize=False, num_retry=5)
         tau_meas = self._current_to_torque_nm(cur_raw)
 
+        # Compute reaction torques using model-based approach
+        tau_reaction = self._compute_model_based_disturbance(pos_rad, vel_rad, acc_rad, tau_meas)
+
         obs_dict = {}
         obs_dict |= {f"{m}.pos": pos_rad[m] for m in self.bus.motors}
         obs_dict |= {f"{m}.vel": vel_rad[m] for m in self.bus.motors}
         obs_dict |= {f"{m}.acc": acc_rad[m] for m in self.bus.motors}
-        obs_dict |= {f"{m}.tau_meas": tau_meas[m] for m in self.bus.motors}
+        obs_dict |= {f"{m}.effort": tau_reaction[m] for m in self.bus.motors}
 
         # Capture images from cameras
         for cam_key, cam in self.cameras.items():
             start = time.perf_counter()
-            obs_dict[cam_key] = cam.async_read()
+            obs_dict[cam_key] = cam.read()
             dt_ms = (time.perf_counter() - start) * 1e3
             logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
 
