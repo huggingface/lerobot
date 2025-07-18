@@ -36,10 +36,11 @@ import logging
 import pickle  # nosec
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import asdict
 from pprint import pformat
 from queue import Queue
-from typing import Any, Callable, Optional
+from typing import Any
 
 import draccus
 import grpc
@@ -231,7 +232,7 @@ class RobotClient:
     def _aggregate_action_queues(
         self,
         incoming_actions: list[TimedAction],
-        aggregate_fn: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None,
+        aggregate_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] | None = None,
     ):
         """Finds the same timestep actions in the queue and aggregates them using the aggregate_fn"""
         if aggregate_fn is None:

@@ -1,7 +1,8 @@
 ---
 # For reference on dataset card metadata, see the spec: https://github.com/huggingface/hub-docs/blob/main/datasetcard.md?plain=1
 # Doc / guide: https://huggingface.co/docs/hub/datasets-cards
-{{ card_data }}
+# prettier-ignore
+{{card_data}}
 ---
 
 This dataset was created using [LeRobot](https://github.com/huggingface/lerobot).

@@ -46,10 +46,12 @@ class TimeBenchmark(ContextDecorator):
 
         benchmark = TimeBenchmark()
 
+
         def context_manager_example():
             with benchmark:
                 time.sleep(0.01)
             print(f"Block took {benchmark.result_ms:.2f} milliseconds")
+
 
         threads = []
         for _ in range(3):
