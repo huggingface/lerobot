@@ -148,7 +148,7 @@ class DatasetRecordConfig:
     num_image_writer_threads_per_camera: int = 4
     # Number of episodes to record before batch encoding videos
     # Set to 1 for immediate encoding (default behavior), or higher for batched encoding
-    video_encoding_batch_size: int = 1
+    video_encoding_batch_size: int = 3
 
     def __post_init__(self):
         if self.single_task is None:

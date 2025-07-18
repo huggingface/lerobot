@@ -69,6 +69,7 @@ from lerobot.datasets.utils import (
 from lerobot.datasets.video_utils import (
     VideoFrame,
     decode_video_frames,
+    encode_video_frames,
     get_safe_default_codec,
     get_video_info,
 )
@@ -864,26 +865,25 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # If not using RRD extraction or it failed, fall back to encoding from images
         has_video_keys = len(self.meta.video_keys) > 0
         use_batched_encoding = self.batch_encoding_size > 1
-        if not used_rrd_extraction and has_video_keys:
-            # Check if we should trigger batch encoding
-            use_batched_encoding = self.batch_encoding_size > 1
-            if use_batched_encoding:
-                video_paths = self.encode_episode_videos(episode_index)
-                for key in self.meta.video_keys:
-                    episode_buffer[key] = video_paths[key]
-            else:
-                self.episodes_since_last_encoding += 1
-                if self.episodes_since_last_encoding == self.batch_encoding_size:
-                    start_ep = self.num_episodes - self.batch_encoding_size
-                    end_ep = self.num_episodes
-                    logging.info(
-                        f"Batch encoding {self.batch_encoding_size} videos for episodes {start_ep} to {end_ep - 1}"
-                    )
-                    self.batch_encode_videos(start_ep, end_ep)
-                    self.episodes_since_last_encoding = 0
+        should_encode_now = not used_rrd_extraction and has_video_keys and not use_batched_encoding
+        should_batch_encode = not used_rrd_extraction and has_video_keys and use_batched_encoding
+
+        if should_encode_now:
+            self.encode_episode_videos(episode_index)
 
         # `meta.save_episode` should be executed after encoding the videos
         self.meta.save_episode(episode_index, episode_length, episode_tasks, ep_stats)
+
+        if should_batch_encode:
+            self.episodes_since_last_encoding += 1
+            if self.episodes_since_last_encoding == self.batch_encoding_size:
+                start_ep = self.num_episodes - self.batch_encoding_size
+                end_ep = self.num_episodes
+                logging.info(
+                    f"Batch encoding {self.batch_encoding_size} videos for episodes {start_ep} to {end_ep - 1}"
+                )
+                self.batch_encode_videos(start_ep, end_ep)
+                self.episodes_since_last_encoding = 0
 
         # Episode data index and timestamp checking
         ep_data_index = get_episode_data_index(self.meta.episodes, [episode_index])
@@ -1013,7 +1013,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
             if video_path.is_file():
                 # Skip if video is already encoded. Could be the case when resuming data recording.
                 continue
-            self.delete_image_files(episode_index, key)
+            img_dir = self._get_image_file_path(
+                episode_index=episode_index, image_key=key, frame_index=0
+            ).parent
+            encode_video_frames(img_dir, video_path, self.fps, overwrite=True)
+            shutil.rmtree(img_dir)
 
         # Update video info (only needed when first episode is encoded since it reads from episode 0)
         if len(self.meta.video_keys) > 0 and episode_index == 0:
