@@ -1,0 +1,23 @@
+# This workflow uploads the documentation preview built for a PR and comments the link on the PR.
+name: Documentation PR Upload
+
+on:
+  # Triggered by the completion of the main 'Documentation' workflow.
+  workflow_run: # zizmor: ignore[dangerous-triggers] We follow the same pattern as in Transformers
+    workflows: ["Documentation"]
+    types:
+      - completed
+
+jobs:
+  # This job uploads a preview of the documentation for a pull request.
+  upload_and_comment:
+    name: Upload Preview and Comment
+    if: >
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success'
+    uses: huggingface/doc-builder/.github/workflows/upload_pr_documentation.yml@main
+    with:
+      package_name: lerobot
+    secrets: # zizmor: ignore[excessive-permissions] We follow the same pattern as in Transformers
+      hf_token: ${{ secrets.HF_DOC_BUILD_PUSH }}
+      comment_bot_token: ${{ secrets.COMMENT_BOT_TOKEN }}
