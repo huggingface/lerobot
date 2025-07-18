@@ -90,6 +90,8 @@ class UploadDataset(PipelineStep):
             )
             card.push_to_hub(repo_id=self.distant_repo_id, repo_type="dataset", revision=self.branch)
 
+            hub_api.create_tag(self.distant_repo_id, tag=CODEBASE_VERSION, repo_type="dataset")
+
         def list_files_recursively(directory):
             base_path = Path(directory)
             return [str(file.relative_to(base_path)) for file in base_path.rglob("*") if file.is_file()]

@@ -914,26 +914,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # `meta.save_episode` need to be executed after encoding the videos
         self.meta.save_episode(episode_index, episode_length, episode_tasks, ep_stats, ep_metadata)
 
-        # TODO(rcadene): remove? there is only one episode in the episode buffer, no need for ep_data_index
-        # ep_data_index = get_episode_data_index(self.meta.episodes, [episode_index])
-        # ep_data_index_np = {k: t.numpy() for k, t in ep_data_index.items()}
-        # check_timestamps_sync(
-        #     episode_buffer["timestamp"],
-        #     episode_buffer["episode_index"],
-        #     ep_data_index_np,
-        #     self.fps,
-        #     self.tolerance_s,
-        # )
-
-        # TODO(rcadene): images are also deleted in clear_episode_buffer
-        # delete images
-        img_dir = self.root / "images"
-        if img_dir.is_dir():
-            shutil.rmtree(self.root / "images")
-
         if not episode_data:
-            # Reset episode buffer
-            self.episode_buffer = self.create_episode_buffer()
+            # Reset episode buffer and clean up temporary images
+            self.clear_episode_buffer()
 
     def _save_episode_data(self, episode_buffer: dict) -> dict:
         """Save episode data to a parquet file and update the Hugging Face dataset of frames data.
