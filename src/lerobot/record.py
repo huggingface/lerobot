@@ -301,7 +301,6 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         dataset = LeRobotDataset(
             cfg.dataset.repo_id,
             root=cfg.dataset.root,
-            batch_encoding_size=cfg.dataset.video_encoding_batch_size,
         )
 
         if hasattr(robot, "cameras") and len(robot.cameras) > 0:
@@ -322,7 +321,6 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             use_videos=cfg.dataset.video,
             image_writer_processes=cfg.dataset.num_image_writer_processes,
             image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * len(robot.cameras),
-            batch_encoding_size=cfg.dataset.video_encoding_batch_size,
         )
 
     # Load pretrained policy
