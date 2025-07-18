@@ -77,6 +77,7 @@ from lerobot.scripts.rl import learner_service
 from lerobot.teleoperators import gamepad, so101_leader  # noqa: F401
 from lerobot.transport import services_pb2_grpc
 from lerobot.transport.utils import (
+    MAX_MESSAGE_SIZE,
     bytes_to_python_object,
     bytes_to_transitions,
     state_to_bytes,
@@ -86,11 +87,9 @@ from lerobot.utils.process import ProcessSignalHandler
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.train_utils import (
     get_step_checkpoint_dir,
+    load_training_state as utils_load_training_state,
     save_checkpoint,
     update_last_checkpoint,
-)
-from lerobot.utils.train_utils import (
-    load_training_state as utils_load_training_state,
 )
 from lerobot.utils.transition import move_state_dict_to_device, move_transition_to_device
 from lerobot.utils.utils import (
@@ -658,8 +657,8 @@ def start_learner(
     server = grpc.server(
         ThreadPoolExecutor(max_workers=learner_service.MAX_WORKERS),
         options=[
-            ("grpc.max_receive_message_length", learner_service.MAX_MESSAGE_SIZE),
-            ("grpc.max_send_message_length", learner_service.MAX_MESSAGE_SIZE),
+            ("grpc.max_receive_message_length", MAX_MESSAGE_SIZE),
+            ("grpc.max_send_message_length", MAX_MESSAGE_SIZE),
         ],
     )
 
@@ -1109,8 +1108,18 @@ def check_nan_in_transition(
 
 def push_actor_policy_to_queue(parameters_queue: Queue, policy: nn.Module):
     logging.debug("[LEARNER] Pushing actor policy to the queue")
-    state_dict = move_state_dict_to_device(policy.actor.state_dict(), device="cpu")
-    state_bytes = state_to_bytes(state_dict)
+
+    # Create a dictionary to hold all the state dicts
+    state_dicts = {"policy": move_state_dict_to_device(policy.actor.state_dict(), device="cpu")}
+
+    # Add discrete critic if it exists
+    if hasattr(policy, "discrete_critic") and policy.discrete_critic is not None:
+        state_dicts["discrete_critic"] = move_state_dict_to_device(
+            policy.discrete_critic.state_dict(), device="cpu"
+        )
+        logging.debug("[LEARNER] Including discrete critic in state dict push")
+
+    state_bytes = state_to_bytes(state_dicts)
     parameters_queue.put(state_bytes)
 
 

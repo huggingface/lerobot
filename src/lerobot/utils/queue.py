@@ -14,6 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import platform
+from contextlib import suppress
 from queue import Empty
 from typing import Any
 
@@ -30,10 +32,21 @@ def get_last_item_from_queue(queue: Queue, block=True, timeout: float = 0.1) -> 
         item = None
 
     # Drain queue and keep only the most recent parameters
-    try:
-        while True:
+    if platform.system() == "Darwin":
+        # On Mac, avoid using `qsize` due to unreliable implementation.
+        # There is a comment on `qsize` code in the Python source:
+        # Raises NotImplementedError on Mac OSX because of broken sem_getvalue()
+        try:
+            while True:
+                item = queue.get_nowait()
+        except Empty:
+            pass
+
+        return item
+
+    # Details about using qsize in https://github.com/huggingface/lerobot/issues/1523
+    while queue.qsize() > 0:
+        with suppress(Empty):
             item = queue.get_nowait()
-    except Empty:
-        pass
 
     return item

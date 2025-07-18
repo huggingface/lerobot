@@ -19,7 +19,7 @@ Provides the RealSenseCamera class for capturing frames from Intel RealSense cam
 import logging
 import time
 from threading import Event, Lock, Thread
-from typing import Any, Dict, List
+from typing import Any
 
 import cv2
 import numpy as np
@@ -194,7 +194,7 @@ class RealSenseCamera(Camera):
         logger.info(f"{self} connected.")
 
     @staticmethod
-    def find_cameras() -> List[Dict[str, Any]]:
+    def find_cameras() -> list[dict[str, Any]]:
         """
         Detects available Intel RealSense cameras connected to the system.
 

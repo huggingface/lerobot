@@ -28,12 +28,12 @@ class RealSenseCameraConfig(CameraConfig):
     Example configurations for Intel RealSense D405:
     ```python
     # Basic configurations
-    RealSenseCameraConfig("0123456789", 30, 1280, 720)   # 1280x720 @ 30FPS
-    RealSenseCameraConfig("0123456789", 60, 640, 480)   # 640x480 @ 60FPS
+    RealSenseCameraConfig("0123456789", 30, 1280, 720)  # 1280x720 @ 30FPS
+    RealSenseCameraConfig("0123456789", 60, 640, 480)  # 640x480 @ 60FPS
 
     # Advanced configurations
     RealSenseCameraConfig("0123456789", 30, 640, 480, use_depth=True)  # With depth sensing
-    RealSenseCameraConfig("0123456789", 30, 640, 480, rotation=Cv2Rotation.ROTATE_90)     # With 90° rotation
+    RealSenseCameraConfig("0123456789", 30, 640, 480, rotation=Cv2Rotation.ROTATE_90)  # With 90° rotation
     ```
 
     Attributes:
