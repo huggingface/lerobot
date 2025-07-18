@@ -14,6 +14,9 @@
 
 # This workflow uploads the documentation preview built for a PR and comments the link on the PR.
 name: Documentation PR Upload
+permissions:
+  contents: read
+  pull-requests: write
 
 on:
   # Triggered by the completion of the main 'Documentation' workflow.
@@ -32,6 +35,6 @@ jobs:
     uses: huggingface/doc-builder/.github/workflows/upload_pr_documentation.yml@main
     with:
       package_name: lerobot
-    secrets: # zizmor: ignore[excessive-permissions] We follow the same pattern as in Transformers
+    secrets:
       hf_token: ${{ secrets.HF_DOC_BUILD_PUSH }}
       comment_bot_token: ${{ secrets.COMMENT_BOT_TOKEN }}

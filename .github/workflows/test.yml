@@ -74,8 +74,8 @@ jobs:
       # TODO(Steven): Evaluate the need of these dependencies
       - name: Install apt dependencies
         run: |
-          apt-get update && apt-get install -y build-essential git \
-          curl libglib2.0-0 libgl1-mesa-glx libegl1-mesa-dev ffmpeg \
+          sudo apt-get update && sudo apt-get install -y build-essential git \
+          curl libglib2.0-0 libegl1-mesa-dev ffmpeg \
           libusb-1.0-0-dev speech-dispatcher libgeos-dev portaudio19-dev
 
       - name: Setup uv and Python
@@ -117,9 +117,9 @@ jobs:
 
       - name: Install apt dependencies
         run: |
-          apt-get update && apt-get install -y build-essential git \
-          curl libglib2.0-0 libgl1-mesa-glx libegl1-mesa-dev ffmpeg \
-          libusb-1.0-0-dev speech-dispatcher libgeos-dev portaudio19-dev
+          sudo apt-get update && sudo apt-get install -y build-essential \
+          git curl libglib2.0-0 libegl1-mesa-dev ffmpeg libusb-1.0-0-dev \
+          speech-dispatcher libgeos-dev portaudio19-dev
 
       - name: Setup uv and Python
         uses: astral-sh/setup-uv@v6 # zizmor: ignore[unpinned-uses]

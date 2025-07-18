@@ -14,6 +14,8 @@
 
 # This workflow handles linting, formatting, and static analysis checks for the codebase.
 name: Lint, Format & Static Analysis
+permissions:
+  contents: read
 
 on:
   # Allows running this workflow manually from the Actions tab
@@ -45,7 +47,12 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
       - name: Run pre-commit hooks
         uses: pre-commit/action@v3.0.1 # zizmor: ignore[unpinned-uses]
-        with: # zizmor: ignore[excessive-permissions] We follow the same pattern as in Transformers
+        with:
           extra_args: --all-files --show-diff-on-failure --color=always
