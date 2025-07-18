@@ -229,6 +229,7 @@ default.extend-ignore-identifiers-re = [
     "pn",
     "ser",
     "ein",
+    "HSA",
 ]
 
 # TODO: Uncomment when ready to use
