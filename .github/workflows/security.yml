@@ -1,4 +1,4 @@
-# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# This workflow handles linting, formatting, and static analysis checks for the codebase.
-name: Lint, Format & Static Analysis
+# This workflow handles secret scanning using TruffleHog to detect sensitive information in the codebase.
+name: Security Check
 
 on:
   # Allows running this workflow manually from the Actions tab
@@ -34,18 +34,21 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
+permissions: {}
+
 jobs:
-  # This job runs pre-commit hooks to check code style and formatting.
-  pre-commit-checks:
-    name: Run Pre-commit Hooks
+  # This job runs TruffleHog to scan the full history of the repository for secrets.
+  trufflehog:
+    name: Secret Leaks Scan
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4 # zizmor: ignore[unpinned-uses]
         with:
+          fetch-depth: 0
           persist-credentials: false
 
-      - name: Run pre-commit hooks
-        uses: pre-commit/action@v3.0.1 # zizmor: ignore[unpinned-uses]
-        with: # zizmor: ignore[excessive-permissions] We follow the same pattern as in Transformers
-          extra_args: --all-files --show-diff-on-failure --color=always
+      - name: Secret Scanning
+        uses: trufflesecurity/trufflehog@v3.90.0  # zizmor: ignore[unpinned-uses]
+        with:
+          extra_args: --only-verified
