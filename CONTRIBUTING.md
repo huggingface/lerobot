@@ -15,10 +15,11 @@ Whichever way you choose to contribute, please be mindful to respect our
 ## You can contribute in so many ways!
 
 Some of the ways you can contribute to 🤗 LeRobot:
-* Fixing outstanding issues with the existing code.
-* Implementing new models, datasets or simulation environments.
-* Contributing to the examples or to the documentation.
-* Submitting issues related to bugs or desired new features.
+
+- Fixing outstanding issues with the existing code.
+- Implementing new models, datasets or simulation environments.
+- Contributing to the examples or to the documentation.
+- Submitting issues related to bugs or desired new features.
 
 Following the guides below, feel free to open issues and PRs and to coordinate your efforts with the community on our [Discord Channel](https://discord.gg/VjFz58wn3R). For specific inquiries, reach out to [Remi Cadene](mailto:remi.cadene@huggingface.co).
 
@@ -40,24 +41,26 @@ already reported** (use the search bar on Github under Issues).
 
 Did not find it? :( So we can act quickly on it, please follow these steps:
 
-* Include your **OS type and version**, the versions of **Python** and **PyTorch**.
-* A short, self-contained, code snippet that allows us to reproduce the bug in
+- Include your **OS type and version**, the versions of **Python** and **PyTorch**.
+- A short, self-contained, code snippet that allows us to reproduce the bug in
   less than 30s.
-* The full traceback if an exception is raised.
-* Attach any other additional information, like screenshots, you think may help.
+- The full traceback if an exception is raised.
+- Attach any other additional information, like screenshots, you think may help.
 
 ### Do you want a new feature?
 
 A good feature request addresses the following points:
 
 1. Motivation first:
-* Is it related to a problem/frustration with the library? If so, please explain
+
+- Is it related to a problem/frustration with the library? If so, please explain
   why. Providing a code snippet that demonstrates the problem is best.
-* Is it related to something you would need for a project? We'd love to hear
+- Is it related to something you would need for a project? We'd love to hear
   about it!
-* Is it something you worked on and think could benefit the community?
+- Is it something you worked on and think could benefit the community?
   Awesome! Tell us what problem it solved for you.
-2. Write a *paragraph* describing the feature.
+
+2. Write a _paragraph_ describing the feature.
 3. Provide a **code snippet** that demonstrates its future use.
 4. In case this is related to a paper, please attach a link.
 5. Attach any additional information (drawings, screenshots, etc.) you think may help.
@@ -74,12 +77,15 @@ environments ([aloha](https://github.com/huggingface/gym-aloha),
 and follow the same api design.
 
 When implementing a new dataset loadable with LeRobotDataset follow these steps:
+
 - Update `available_datasets_per_env` in `lerobot/__init__.py`
 
 When implementing a new environment (e.g. `gym_aloha`), follow these steps:
+
 - Update `available_tasks_per_env` and `available_datasets_per_env` in `lerobot/__init__.py`
 
 When implementing a new policy class (e.g. `DiffusionPolicy`) follow these steps:
+
 - Update `available_policies` and `available_policies_per_env`, in `lerobot/__init__.py`
 - Set the required `name` class attribute.
 - Update variables in `tests/test_available.py` by importing your new Policy class
@@ -133,11 +139,13 @@ Follow these steps to start contributing:
    Follow the instructions to [install poetry](https://python-poetry.org/docs/#installation) (use a version >=2.1.0) or to [install uv](https://docs.astral.sh/uv/getting-started/installation/#installation-methods) if you don't have one of them already.
 
    Set up a development environment with conda or miniconda:
+
    ```bash
    conda create -y -n lerobot-dev python=3.10 && conda activate lerobot-dev
    ```
 
    If you're using `uv`, it can manage python versions so you can instead do:
+
    ```bash
    uv venv --python 3.10 && source .venv/bin/activate
    ```
@@ -145,11 +153,13 @@ Follow these steps to start contributing:
    To develop on 🤗 LeRobot, you will at least need to install the `dev` and `test` extras dependencies along with the core library:
 
    using `poetry`
+
    ```bash
    poetry sync --extras "dev test"
    ```
 
    using `uv`
+
    ```bash
    uv sync --extra dev --extra test
    ```
@@ -157,42 +167,47 @@ Follow these steps to start contributing:
    You can also install the project with all its dependencies (including environments):
 
    using `poetry`
+
    ```bash
    poetry sync --all-extras
    ```
 
    using `uv`
+
    ```bash
    uv sync --all-extras
    ```
 
-   > **Note:** If you don't install simulation environments with `--all-extras`, the tests that require them will be skipped when running the pytest suite locally. However, they *will* be tested in the CI. In general, we advise you to install everything and test locally before pushing.
+   > **Note:** If you don't install simulation environments with `--all-extras`, the tests that require them will be skipped when running the pytest suite locally. However, they _will_ be tested in the CI. In general, we advise you to install everything and test locally before pushing.
 
    Whichever command you chose to install the project (e.g. `poetry sync --all-extras`), you should run it again when pulling code with an updated version of `pyproject.toml` and `poetry.lock` in order to synchronize your virtual environment with the new dependencies.
 
    The equivalent of `pip install some-package`, would just be:
 
    using `poetry`
+
    ```bash
    poetry add some-package
    ```
 
    using `uv`
+
    ```bash
    uv add some-package
    ```
 
    When making changes to the poetry sections of the `pyproject.toml`, you should run the following command to lock dependencies.
    using `poetry`
+
    ```bash
    poetry lock
    ```
 
    using `uv`
+
    ```bash
    uv lock
    ```
-
 
 5. Develop the features on your branch.
 
@@ -211,11 +226,13 @@ Follow these steps to start contributing:
    automatically as Git commit hooks.
 
    Install `pre-commit` hooks:
+
    ```bash
    pre-commit install
    ```
 
    You can run these hooks whenever you need on staged files with:
+
    ```bash
    pre-commit
    ```
@@ -229,6 +246,7 @@ Follow these steps to start contributing:
    ```
 
    Note, if you already committed some changes that have a wrong formatting, you can use:
+
    ```bash
    pre-commit run --all-files
    ```
@@ -249,15 +267,14 @@ Follow these steps to start contributing:
    git push -u origin a-descriptive-name-for-my-changes
    ```
 
-6. Once you are satisfied (**and the checklist below is happy too**), go to the
+7. Once you are satisfied (**and the checklist below is happy too**), go to the
    webpage of your fork on GitHub. Click on 'Pull request' to send your changes
    to the project maintainers for review.
 
-7. It's ok if maintainers ask you for changes. It happens to core contributors
+8. It's ok if maintainers ask you for changes. It happens to core contributors
    too! So everyone can see the changes in the Pull request, work in your local
    branch and push the changes to your fork. They will automatically appear in
    the pull request.
-
 
 ### Checklist
 
@@ -277,18 +294,21 @@ An extensive test suite is included to test the library behavior and several exa
 Install [git lfs](https://git-lfs.com/) to retrieve test artifacts (if you don't have it already).
 
 On Mac:
+
 ```bash
 brew install git-lfs
 git lfs install
 ```
 
 On Ubuntu:
+
 ```bash
 sudo apt-get install git-lfs
 git lfs install
 ```
 
 Pull artifacts if they're not in [tests/artifacts](tests/artifacts)
+
 ```bash
 git lfs pull
 ```
@@ -299,7 +319,6 @@ repository, here's how to run tests with `pytest` for the library:
 ```bash
 python -m pytest -sv ./tests
 ```
-
 
 You can specify a smaller set of tests in order to test only the feature
 you're working on.

@@ -1,0 +1,60 @@
+# Dockerfile.internal
+# This Dockerfile is designed for HuggingFace internal CI environments
+# that require GPU access. It starts from an NVIDIA CUDA base image.
+
+# docker build -f docker/Dockerfile.internal -t lerobot-ci .
+
+# Configure the base image for CI with GPU access
+ARG CUDA_VERSION=12.9.1
+ARG OS_VERSION=24.04
+FROM nvidia/cuda:${CUDA_VERSION}-base-ubuntu${OS_VERSION}
+
+# Define Python version argument
+ARG PYTHON_VERSION=3.10
+
+# Configure environment variables
+ENV DEBIAN_FRONTEND=noninteractive \
+    MUJOCO_GL="egl" \
+    PATH="/lerobot/.venv/bin:$PATH"
+
+# Install Python, system dependencies, and uv (as root)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    software-properties-common \
+    build-essential git curl \
+    libglib2.0-0 libgl1-mesa-glx libegl1-mesa ffmpeg \
+    libusb-1.0-0-dev \
+    speech-dispatcher libgeos-dev \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+       python${PYTHON_VERSION} \
+       python${PYTHON_VERSION}-venv \
+       python${PYTHON_VERSION}-dev \
+    && curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && mv /root/.local/bin/uv /usr/local/bin/uv \
+    && useradd --create-home --shell /bin/bash user_lerobot \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Create application directory and set permissions
+WORKDIR /lerobot
+RUN chown -R user_lerobot:user_lerobot /lerobot
+
+# Switch to the non-root user
+USER user_lerobot
+
+# Create the virtual environment
+# We use a virtual environment inside the container—even though the container itself \
+# provides isolation—to ensure compatibility with the cluster and to prevent \
+# issues with MuJoCo and OpenGL drivers.
+RUN uv venv --python python${PYTHON_VERSION}
+
+# Install Python dependencies for caching
+COPY --chown=user_lerobot:user_lerobot pyproject.toml README.md ./
+COPY --chown=user_lerobot:user_lerobot src/ src/
+RUN uv pip install --no-cache ".[all]"
+
+# Copy the rest of the application source code
+COPY --chown=user_lerobot:user_lerobot . .
+
+# Set the default command
+CMD ["/bin/bash"]

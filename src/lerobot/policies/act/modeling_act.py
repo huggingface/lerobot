@@ -21,8 +21,8 @@ The majority of changes here involve removing unused code, unifying naming, and 
 
 import math
 from collections import deque
+from collections.abc import Callable
 from itertools import chain
-from typing import Callable
 
 import einops
 import numpy as np
@@ -216,7 +216,7 @@ class ACTTemporalEnsembler:
                 continue
             avg *= exp_weights[:i].sum()
             avg += item * exp_weights[i]
-            avg /= exp_weights[:i+1].sum()
+            avg /= exp_weights[: i + 1].sum()
         print("online", avg)
         ```
         """

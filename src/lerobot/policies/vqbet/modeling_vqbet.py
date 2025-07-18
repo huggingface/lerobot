@@ -18,7 +18,7 @@
 
 import warnings
 from collections import deque
-from typing import Callable, List
+from collections.abc import Callable
 
 import einops
 import numpy as np
@@ -901,7 +901,7 @@ class MLP(torch.nn.Sequential):
     def __init__(
         self,
         in_channels: int,
-        hidden_channels: List[int],
+        hidden_channels: list[int],
     ):
         layers = []
         in_dim = in_channels

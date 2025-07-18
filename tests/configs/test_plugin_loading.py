@@ -15,9 +15,9 @@
 # limitations under the License.
 
 import sys
+from collections.abc import Generator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Generator
 
 import pytest
 
