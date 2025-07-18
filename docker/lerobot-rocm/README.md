@@ -19,6 +19,7 @@ docker build -t lerobot:latest .
 ## Running the Container
 
 ### Running a bash session
+
 ```bash
 docker run -it --rm \
   --device=/dev/kfd --device=/dev/dri \
@@ -30,6 +31,7 @@ docker run -it --rm \
 ```
 
 ### With Robot Hardware Access
+
 To access robot arms and other hardware devices, pass the device paths using `--device` flags:
 
 ```bash
@@ -82,19 +84,23 @@ python lerobot/examples/2_evaluate_pretrained_policy.py
 ## Troubleshooting
 
 **Permission denied for GPU devices:**
+
 - Ensure your user is in the `video` and `render` groups on the host
 - Check ROCm driver installation
 
 **Out of shared memory errors:**
+
 - Increase `--shm-size` value
 - Reduce `num_workers` in PyTorch DataLoaders
 
 **Robot hardware not accessible:**
+
 - Check device permissions: `ls -la /dev/ttyACM*`
 - Add your user to the `dialout` group: `sudo usermod -aG dialout $USER`
 - Verify devices are connected: `lsusb` or `dmesg | grep tty`
 
 **ROCm "invalid device function" errors:**
+
 - If you have an iGPU that is not officially supported, e.g. for Phoenix set: `export HSA_OVERRIDE_GFX_VERSION=11.0.0`
 - For other AMD GPUs, check your architecture and set accordingly
 - You can also pass this as an environment variable in Docker:
