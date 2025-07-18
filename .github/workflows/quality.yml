@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # This workflow handles linting, formatting, and static analysis checks for the codebase.
-name: Lint, Format & Static Analysis
+name: Quality
 permissions:
   contents: read
 
@@ -39,7 +39,7 @@ concurrency:
 jobs:
   # This job runs pre-commit hooks to check code style and formatting.
   pre-commit-checks:
-    name: Run Pre-commit Hooks
+    name: Run Pre-commit Hooks (Lint, Format & Static Analysis)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code

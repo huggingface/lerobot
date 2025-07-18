@@ -40,7 +40,6 @@ on:
       - "pyproject.toml"
       - "Makefile"
 
-# TODO(Steven): Evaluate the use of this
 permissions:
   contents: read
 

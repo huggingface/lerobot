@@ -13,7 +13,9 @@
 # limitations under the License.
 
 # This workflow handles nightly testing & docker images publishing.
-name: Nightly Tests
+name: Nightly
+permissions:
+  contents: read
 
 on:
   # Allows running this workflow manually from the Actions tab
@@ -22,8 +24,6 @@ on:
   # Runs at 02:00
   schedule:
     - cron: "0 2 * * *"
-
-permissions: {}
 
 # Sets up the environment variables
 env:

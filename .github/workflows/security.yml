@@ -13,7 +13,9 @@
 # limitations under the License.
 
 # This workflow handles secret scanning using TruffleHog to detect sensitive information in the codebase.
-name: Security Check
+name: Security
+permissions:
+  contents: read
 
 on:
   # Allows running this workflow manually from the Actions tab
@@ -33,8 +35,6 @@ on:
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
-
-permissions: {}
 
 jobs:
   # This job runs TruffleHog to scan the full history of the repository for secrets.
