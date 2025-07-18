@@ -971,7 +971,7 @@ class VLAFlowMatching(nn.Module):
         grad_time = 0
 
         # s_end = s
-        s_end = 70
+        s_end = 75
         # Prepare the guidance mask
         W = make_soft_mask(d, s_end, H, device)
         W_row = W[None, :, None]            # broadcast to (B,H,M)
