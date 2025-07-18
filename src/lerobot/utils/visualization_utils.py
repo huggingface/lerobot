@@ -34,6 +34,7 @@ import av.video.stream
 import cv2
 import numpy as np
 import rerun as rr
+import rerun.blueprint as rrb
 from pyarrow import ChunkedArray
 from robot_descriptions.loaders.yourdfpy import load_robot_description
 from yourdfpy.urdf import URDF, Joint
@@ -364,11 +365,9 @@ class RerunRobotLogger:
     def init(self):
         self._init_rerun()
 
-        if self.robot is not None and self.image_stream_type == "video":
+        if self.image_stream_type == "video":
             self.video_loggers: dict[str, VideoLogger] = {
-                cam_name: self._create_video_logger(cam_name, shape)
-                for cam_name, shape in self.robot.observation_features.items()
-                if isinstance(shape, tuple)
+                cam_name: self._create_video_logger(cam_name, shape) for cam_name, shape in self.cam_info()
             }
         if self.log_urdf and self.robot is not None:
             try:
@@ -381,6 +380,16 @@ class RerunRobotLogger:
                 self.log_urdf = False
 
         self.active = True
+
+    def cam_info(self):
+        if self.robot is not None:
+            return [
+                (cam_name, shape)
+                for cam_name, shape in self.robot.observation_features.items()
+                if isinstance(shape, tuple)
+            ]
+        else:
+            return []
 
     def get_rrd_dir(self) -> Path:
         """
@@ -410,13 +419,15 @@ class RerunRobotLogger:
         memory_limit = os.getenv("LEROBOT_RERUN_MEMORY_LIMIT", "10%")
         batch_size = os.getenv("RERUN_FLUSH_NUM_BYTES", "8000")  # 8 KB default
         os.environ["RERUN_FLUSH_NUM_BYTES"] = batch_size
+        tick_size = os.getenv("RERUN_FLUSH_TICK_SECS", ".008")
+        os.environ["RERUN_FLUSH_TICK_SECS"] = tick_size
 
         self.rec = rr.RecordingStream(self.application_id, recording_id=uuid4(), make_default=True)
+        self._set_blueprint()
 
         sinks = []
         if self.live_display:
             self.rec.spawn(memory_limit=memory_limit)
-            self.rec.connect_grpc()
             sinks.append(rr.GrpcSink())
 
         if self.log_rrd:
@@ -430,6 +441,37 @@ class RerunRobotLogger:
             self.rec.send_recording_name(self.session_name)
 
         self.rec.set_sinks(*sinks)
+
+    def _set_blueprint(self):
+        """Set up the Rerun blueprint for the robot logger.
+        Creates a blueprint with a 3D view for the robot URDF, time series views for observations, actions, and deltas,
+        and 2D views for each camera in the robot's observation features.
+        """
+        containers = []
+        if self.log_urdf:
+            containers.append(rrb.Spatial3DView(name=getattr(self.robot, "name", "Robot URDF"), origin="/"))
+
+        containers.append(
+            rrb.Vertical(
+                rrb.TimeSeriesView(name="observation", origin="/observation"),
+                rrb.TimeSeriesView(name="action", origin="/action"),
+                rrb.TimeSeriesView(name="delta", origin="/delta"),
+            )
+        )
+
+        camera_views = [
+            rrb.Spatial2DView(name=f"observation/{cam_name}", origin=f"observation/{cam_name}")
+            for cam_name, _ in self.cam_info()
+        ]
+        if camera_views:
+            containers.append(rrb.Vertical(*camera_views))
+
+        blueprint = rrb.Blueprint(
+            rrb.Horizontal(*containers),
+            collapse_panels=True,
+        )
+
+        self.rec.send_blueprint(blueprint)
 
     def cleanup(self):
         """
