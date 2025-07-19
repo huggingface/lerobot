@@ -876,8 +876,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 save the current episode in self.episode_buffer, which is filled with 'add_frame'. Defaults to
                 None.
         """
-        if not episode_data:
-            episode_buffer = self.episode_buffer
+        episode_buffer = episode_data if episode_data is not None else self.episode_buffer
 
         validate_episode_buffer(episode_buffer, self.meta.total_episodes, self.features)
 
@@ -1036,12 +1035,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return metadata
 
     def clear_episode_buffer(self) -> None:
-        episode_index = self.episode_buffer["episode_index"]
         if self.image_writer is not None:
             for cam_key in self.meta.camera_keys:
-                img_dir = self._get_image_file_path(
-                    episode_index=episode_index, image_key=cam_key, frame_index=0
-                ).parent
+                img_dir = self.root / "images" / cam_key
                 if img_dir.is_dir():
                     shutil.rmtree(img_dir)
 
