@@ -26,10 +26,9 @@ def old_approach_embed_prefix(images: Dict[str, torch.Tensor],
     # Old approach: list + torch.cat
     embs_list = []
     pad_masks_list = []
-    att_masks_list = []
     
     # Process images
-    for key in images.keys():
+    for _ in images.keys():
         # Simulate image embedding
         img_emb = torch.randn(bsize, num_image_tokens, hidden_size, dtype=dtype, device=device)
         embs_list.append(img_emb)
@@ -46,7 +45,6 @@ def old_approach_embed_prefix(images: Dict[str, torch.Tensor],
     # Concatenate all tensors
     embs = torch.cat(embs_list, dim=1)
     pad_masks = torch.cat(pad_masks_list, dim=1)
-    att_masks = torch.cat(att_masks_list, dim=1)
     
     # Simulate past_key_values
     past_key_values = tuple(torch.randn(bsize, 2, hidden_size, device=device) for _ in range(4))
@@ -77,7 +75,7 @@ def new_approach_embed_prefix(images: Dict[str, torch.Tensor],
     
     # Fill pre-allocated tensors
     start_idx = 0
-    for key in images.keys():
+    for _ in images.keys():
         end_idx = start_idx + num_image_tokens
         # Simulate image embedding
         img_emb = torch.randn(bsize, num_image_tokens, hidden_size, dtype=dtype, device=device)

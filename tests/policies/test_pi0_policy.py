@@ -30,7 +30,7 @@ def test_tensor_preallocation_optimization():
     
     # Simulate the old approach (list + torch.cat)
     embs_list = []
-    for i in range(seq_len):
+    for _ in range(seq_len):
         embs_list.append(torch.randn(bsize, 1, hidden_size))
     embs_old = torch.cat(embs_list, dim=1)
     
@@ -53,7 +53,7 @@ def test_memory_efficiency_comparison():
     # Measure memory usage for list approach (simulated)
     # In practice, this would create multiple intermediate tensors
     embs_list = []
-    for i in range(seq_len):
+    for _ in range(seq_len):
         embs_list.append(torch.randn(bsize, 1, hidden_size))
     embs_cat = torch.cat(embs_list, dim=1)
     

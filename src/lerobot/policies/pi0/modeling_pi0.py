@@ -21,32 +21,23 @@
 [Jax code](https://github.com/Physical-Intelligence/openpi)
 
 Designed by Physical Intelligence. Ported from Jax by Hugging Face.
-
-Install pi0 extra dependencies:
-```bash
-pip install -e ".[pi0]"
-```
-
-Example of finetuning the pi0 pretrained model (`pi0_base` in `openpi`):
-```bash
-python -m lerobot.scripts.train \
---policy.path=lerobot/pi0 \
---dataset.repo_id=danaaubakirova/koch_test
-```
-
-Example of finetuning the pi0 neural network with PaliGemma and expert Gemma
-pretrained with VLM default parameters before pi0 finetuning:
-```bash
-python -m lerobot.scripts.train \
---policy.type=pi0 \
---dataset.repo_id=danaaubakirova/koch_test
-```
-
-Example of using the pi0 pretrained model outside LeRobot training framework:
-```python
-policy = Pi0Policy.from_pretrained("lerobot/pi0")
-```
-
+┌──────────────────────────────┐
+│               actions        │
+│               ▲              │
+│              ┌┴─────┐        │
+│  kv cache    │Gemma │        │
+│  ┌──────────►│Expert│        │
+│  │           │      │        │
+│ ┌┴────────┐  │x 10  │        │
+│ │         │  └▲──▲──┘        │
+│ │PaliGemma│   │  │           │
+│ │         │   │  robot state │
+│ │         │   noise          │
+│ └▲──▲─────┘                  │
+│  │  │                        │
+│  │  image(s)                 │
+│  language tokens             │
+└──────────────────────────────┘
 """
 
 import math
@@ -592,7 +583,7 @@ class PI0FlowMatching(nn.Module):
         # Pre-allocate tensors
         dtype = self.state_proj.weight.dtype
         device = state.device
-        hidden_size = self.paligemma_with_expert.embed_language_tokens(lang_tokens).shape[-1]
+        hidden_size = self.config.proj_width  # Use proj_width instead of undefined lang_tokens
 
         embs = torch.empty((bsize, total_seq_len, hidden_size), dtype=dtype, device=device)
         # All suffix tokens are valid, so pad_masks and att_masks are all ones.

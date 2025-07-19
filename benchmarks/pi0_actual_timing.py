@@ -50,7 +50,7 @@ def measure_denoise_step_timing():
         att_masks[:, :] = 0
         
         # Simulate some computation
-        output = torch.matmul(embs, embs.transpose(-2, -1))
+        _ = torch.matmul(embs, embs.transpose(-2, -1))
         
         if torch.cuda.is_available():
             torch.cuda.synchronize()
@@ -104,11 +104,11 @@ def measure_memory_efficiency():
         
         # Simulate old approach (list + torch.cat)
         embs_list = []
-        for i in range(5):  # 5 different embeddings
+        for _ in range(5):  # 5 different embeddings
             embs_list.append(torch.randn(bsize, 256, 4096, device=device))
         
         # This creates intermediate tensors
-        embs_old = torch.cat(embs_list, dim=1)
+        torch.cat(embs_list, dim=1)
         old_memory = torch.cuda.max_memory_allocated() / 1e6  # MB
         
         # Measure new approach memory usage

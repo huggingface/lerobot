@@ -26,27 +26,23 @@ def old_approach_embed_prefix(images: Dict[str, torch.Tensor],
     # Old approach: list + torch.cat
     embs_list = []
     pad_masks_list = []
-    att_masks_list = []
     
     # Process images (more realistic with larger tensors)
-    for key in images.keys():
+    for _ in images.keys():
         # Simulate image embedding with realistic dimensions
         img_emb = torch.randn(bsize, num_image_tokens, hidden_size, dtype=dtype, device=device)
         embs_list.append(img_emb)
         pad_masks_list.append(torch.ones(bsize, num_image_tokens, dtype=torch.bool, device=device))
-        att_masks_list.append(torch.zeros(bsize, num_image_tokens, dtype=torch.int32, device=device))
     
     # Process language
     lang_seq_len = lang_tokens.shape[1]
     lang_emb = torch.randn(bsize, lang_seq_len, hidden_size, dtype=dtype, device=device)
     embs_list.append(lang_emb)
     pad_masks_list.append(lang_masks)
-    att_masks_list.append(torch.ones(bsize, lang_seq_len, dtype=torch.int32, device=device))
     
     # Concatenate all tensors (this is where the bottleneck occurs)
     embs = torch.cat(embs_list, dim=1)
     pad_masks = torch.cat(pad_masks_list, dim=1)
-    att_masks = torch.cat(att_masks_list, dim=1)
     
     # Simulate past_key_values
     past_key_values = tuple(torch.randn(bsize, 2, hidden_size, device=device) for _ in range(32))
@@ -77,7 +73,7 @@ def new_approach_embed_prefix(images: Dict[str, torch.Tensor],
     
     # Fill pre-allocated tensors (direct writes)
     start_idx = 0
-    for key in images.keys():
+    for _ in images.keys():
         end_idx = start_idx + num_image_tokens
         # Simulate image embedding with realistic dimensions
         img_emb = torch.randn(bsize, num_image_tokens, hidden_size, dtype=dtype, device=device)
