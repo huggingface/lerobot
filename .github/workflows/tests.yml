@@ -184,8 +184,10 @@ jobs:
     runs-on:
       group: aws-g6-4xlarge-plus
     env:
-      HF_HOME: /home/user_lerobot/lerobot/.cache/huggingface/lerobot
-      HF_LEROBOT_HOME: /home/user_lerobot/lerobot/.cache/huggingface/lerobot
+      HF_HOME: /home/user_lerobot/.cache/huggingface
+      HF_LEROBOT_HOME: /home/user_lerobot/.cache/huggingface/lerobot
+      TORCH_HOME: /home/user_lerobot/.cache/torch
+      TRITON_CACHE_DIR: /home/user_lerobot/.cache/triton
     container:
       image: ${{ needs.build-and-push-docker.outputs.image_tag }} # zizmor: ignore[unpinned-images]
       options: --gpus all --shm-size "16gb"
