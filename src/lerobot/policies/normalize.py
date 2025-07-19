@@ -183,6 +183,83 @@ class Normalize(nn.Module):
                 raise ValueError(norm_mode)
         return batch
 
+class NormalizePerRobotType(nn.Module):
+    """Normalizes data (e.g. "observation.image") for more stable and faster convergence during training."""
+
+    def __init__(
+        self,
+        features: dict[str, PolicyFeature],
+        norm_map: dict[str, NormalizationMode],
+        stats: dict[str, dict[str, Tensor]] | None = None,
+    ):
+        """
+        Args:
+            shapes (dict): A dictionary where keys are input modalities (e.g. "observation.image") and values
+            are their shapes (e.g. `[3,96,96]`]). These shapes are used to create the tensor buffer containing
+            mean, std, min, max statistics. If the provided `shapes` contain keys related to images, the shape
+            is adjusted to be invariant to height and width, assuming a channel-first (c, h, w) format.
+            modes (dict): A dictionary where keys are output modalities (e.g. "observation.image") and values
+                are their normalization modes among:
+                    - "mean_std": subtract the mean and divide by standard deviation.
+                    - "min_max": map to [-1, 1] range.
+            stats (dict, optional): A dictionary where keys are output modalities (e.g. "observation.image")
+                and values are dictionaries of statistic types and their values (e.g.
+                `{"mean": torch.randn(3,1,1)}, "std": torch.randn(3,1,1)}`). If provided, as expected for
+                training the model for the first time, these statistics will overwrite the default buffers. If
+                not provided, as expected for finetuning or evaluation, the default buffers should to be
+                overwritten by a call to `policy.load_state_dict(state_dict)`. That way, initializing the
+                dataset is not needed to get the stats, since they are already in the policy state_dict.
+        """
+        super().__init__()
+        self.features = features
+        self.norm_map = norm_map
+        for robot_type in stats.keys():
+            stats_buffers = create_stats_buffers(features, norm_map, stats[robot_type])
+            for key, buffer in stats_buffers.items():
+                setattr(self, f"{robot_type}_buffer_" + key.replace(".", "_"), buffer)
+
+    # TODO(rcadene): should we remove torch.no_grad?
+    @torch.no_grad
+    def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
+        batch = dict(batch)  # shallow copy avoids mutating the input batch
+        assert "robot_type" in batch, "robot_type is not in the batch"
+        robot_types = batch["robot_type"]
+
+        for key, ft in self.features.items():
+            if key not in batch:
+                continue
+
+            norm_mode = self.norm_map.get(ft.type, NormalizationMode.IDENTITY)
+            if norm_mode is NormalizationMode.IDENTITY:
+                continue
+            # FIXME(mshukor): make it more efficient
+            buffers = [
+                getattr(self, f"{robot_type}_buffer_" + key.replace(".", "_")) for robot_type in robot_types
+            ]
+            if norm_mode is NormalizationMode.MEAN_STD:
+                mean = torch.stack([buffers[i]["mean"] for i in range(len(robot_types))],dim=0)
+                std = torch.stack([buffers[i]["std"] for i in range(len(robot_types))],dim=0)
+                if batch[key].ndim == 3:
+                    mean = mean.unsqueeze(1)
+                    std = std.unsqueeze(1)
+                assert not torch.isinf(mean).any(), _no_stats_error_str("mean")
+                assert not torch.isinf(std).any(), _no_stats_error_str("std")
+                batch[key] = (batch[key] - mean) / (std + 1e-8)
+            elif norm_mode is NormalizationMode.MIN_MAX:
+                min = torch.stack([buffers[i]["min"] for i in range(len(robot_types))], dim=0)
+                max = torch.stack([buffers[i]["max"] for i in range(len(robot_types))], dim=0)
+                assert not torch.isinf(min).any(), _no_stats_error_str("min")
+                assert not torch.isinf(max).any(), _no_stats_error_str("max")
+                if batch[key].ndim == 3:
+                    min = min.unsqueeze(1)
+                    max = max.unsqueeze(1)
+                # normalize to [0,1]
+                batch[key] = (batch[key] - min) / (max - min + 1e-8)
+                # normalize to [-1, 1]
+                batch[key] = batch[key] * 2 - 1
+            else:
+                raise ValueError(norm_mode)
+        return batch
 
 class Unnormalize(nn.Module):
     """
@@ -254,6 +331,88 @@ class Unnormalize(nn.Module):
                 raise ValueError(norm_mode)
         return batch
 
+class UnnormalizePerRobotType(nn.Module):
+    """
+    Similar to `Normalize` but unnormalizes output data (e.g. `{"action": torch.randn(b,c)}`) in their
+    original range used by the environment.
+    """
+
+    def __init__(
+        self,
+        features: dict[str, PolicyFeature],
+        norm_map: dict[str, NormalizationMode],
+        stats: dict[str, dict[str, Tensor]] | None = None,
+    ):
+        """
+        Args:
+            shapes (dict): A dictionary where keys are input modalities (e.g. "observation.image") and values
+            are their shapes (e.g. `[3,96,96]`]). These shapes are used to create the tensor buffer containing
+            mean, std, min, max statistics. If the provided `shapes` contain keys related to images, the shape
+            is adjusted to be invariant to height and width, assuming a channel-first (c, h, w) format.
+            modes (dict): A dictionary where keys are output modalities (e.g. "observation.image") and values
+                are their normalization modes among:
+                    - "mean_std": subtract the mean and divide by standard deviation.
+                    - "min_max": map to [-1, 1] range.
+            stats (dict, optional): A dictionary where keys are output modalities (e.g. "observation.image")
+                and values are dictionaries of statistic types and their values (e.g.
+                `{"mean": torch.randn(3,1,1)}, "std": torch.randn(3,1,1)}`). If provided, as expected for
+                training the model for the first time, these statistics will overwrite the default buffers. If
+                not provided, as expected for finetuning or evaluation, the default buffers should to be
+                overwritten by a call to `policy.load_state_dict(state_dict)`. That way, initializing the
+                dataset is not needed to get the stats, since they are already in the policy state_dict.
+        """
+        super().__init__()
+        self.features = features
+        self.norm_map = norm_map
+        self.stats = stats
+        # `self.buffer_observation_state["mean"]` contains `torch.tensor(state_dim)`
+        for robot_type in stats.keys():
+            stats_buffers = create_stats_buffers(features, norm_map, stats[robot_type])
+            for key, buffer in stats_buffers.items():
+                setattr(self, f"{robot_type}_buffer_" + key.replace(".", "_"), buffer)
+
+    # TODO(rcadene): should we remove torch.no_grad?
+    @torch.no_grad
+    def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
+        batch = dict(batch)  # shallow copy avoids mutating the input batch
+        assert "robot_type" in batch, "robot_type is not in the batch"
+        robot_types = batch["robot_type"]
+
+        for key, ft in self.features.items():
+            if key not in batch:
+                continue
+
+            norm_mode = self.norm_map.get(ft.type, NormalizationMode.IDENTITY)
+            if norm_mode is NormalizationMode.IDENTITY:
+                continue
+
+            # buffer = getattr(self, "buffer_" + key.replace(".", "_"))
+            buffers = [
+                getattr(self, f"{robot_type}_buffer_" + key.replace(".", "_")) for robot_type in robot_types
+            ]
+
+            if norm_mode is NormalizationMode.MEAN_STD:
+                mean = torch.stack([buffers[i]["mean"] for i in range(len(robot_types))], dim=0)
+                std = torch.stack([buffers[i]["std"] for i in range(len(robot_types))], dim=0)
+                assert not torch.isinf(mean).any(), _no_stats_error_str("mean")
+                assert not torch.isinf(std).any(), _no_stats_error_str("std")
+                if batch[key].ndim == 3:
+                    mean = mean.unsqueeze(1)
+                    std = std.unsqueeze(1)
+                batch[key] = batch[key] * std + mean
+            elif norm_mode is NormalizationMode.MIN_MAX:
+                min = torch.stack([buffers[i]["min"] for i in range(len(robot_types))], dim=0)
+                max = torch.stack([buffers[i]["max"] for i in range(len(robot_types))], dim=0)
+                assert not torch.isinf(min).any(), _no_stats_error_str("min")
+                assert not torch.isinf(max).any(), _no_stats_error_str("max")
+                if batch[key].ndim == 3:
+                    min = min.unsqueeze(1)
+                    max = max.unsqueeze(1)
+                batch[key] = (batch[key] + 1) / 2
+                batch[key] = batch[key] * (max - min) + min
+            else:
+                raise ValueError(norm_mode)
+        return batch
 
 # TODO (azouitine): We should replace all normalization on the policies with register_buffer normalization
 #       and remove the `Normalize` and `Unnormalize` classes.

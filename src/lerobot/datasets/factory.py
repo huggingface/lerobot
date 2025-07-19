@@ -154,9 +154,14 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             "Multiple datasets were provided. Applied the following index mapping to the provided datasets: "
             f"{pformat(dataset.repo_id_to_index, indent=2)}"
         )
-    if cfg.dataset.use_imagenet_stats:
-        for key in dataset.meta.camera_keys:
-            for stats_type, stats in IMAGENET_STATS.items():
-                dataset.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
-
+        if cfg.dataset.use_imagenet_stats:
+            if isinstance(dataset, MultiLeRobotDataset):
+                for ds in dataset._datasets:
+                    for key in ds.meta.camera_keys:
+                        for stats_type, stats in IMAGENET_STATS.items():
+                            ds.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
+            else:  # LeRobotDataset
+                for key in dataset.meta.camera_keys:
+                    for stats_type, stats in IMAGENET_STATS.items():
+                        dataset.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
     return dataset

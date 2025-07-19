@@ -78,7 +78,9 @@ IMAGES_ORDER = {
 }
 from lerobot.policies.normalize import (
     Normalize,
+    NormalizePerRobotType,
     Unnormalize,
+    UnnormalizePerRobotType,
 )
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.smolvla2.configuration_smolvla2 import SmolVLA2Config
@@ -358,14 +360,38 @@ class SmolVLA2Policy(PreTrainedPolicy):
         config.validate_features()
         self.config = config
         # FIXME: jadechoghari: dataset_stats['so100']
-        dataset_stats = dataset_stats["so100"]
-        self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
-        self.normalize_targets = Normalize(
-            config.output_features, config.normalization_mapping, dataset_stats
-        )
-        self.unnormalize_outputs = Unnormalize(
-            config.output_features, config.normalization_mapping, dataset_stats
-        )
+        # New logic
+        self.normalize_per_robot_type = getattr(config, "normalize_per_robot_type", False)
+        
+        if self.normalize_per_robot_type:
+            # Expect dataset_stats = {robot_type: {feature_key: {mean, std, ...}}}
+            if not isinstance(dataset_stats, dict):
+                raise ValueError("Expected dataset_stats to be a dict keyed by robot_type when normalize_per_robot_type=True")
+        
+            self.normalize_inputs = NormalizePerRobotType(
+                config.input_features, config.normalization_mapping, dataset_stats
+            )
+            self.normalize_targets = NormalizePerRobotType(
+                config.output_features, config.normalization_mapping, dataset_stats
+            )
+            self.unnormalize_outputs = UnnormalizePerRobotType(
+                config.output_features, config.normalization_mapping, dataset_stats
+            )
+        else:
+            # Expect dataset_stats = {feature_key: {mean, std, ...}}
+            if isinstance(dataset_stats, dict) and len(dataset_stats) == 1:
+                # Maybe still wrapped as {repo_id: stats}
+                dataset_stats = list(dataset_stats.values())[0]
+        
+            self.normalize_inputs = Normalize(
+                config.input_features, config.normalization_mapping, dataset_stats
+            )
+            self.normalize_targets = Normalize(
+                config.output_features, config.normalization_mapping, dataset_stats
+            )
+            self.unnormalize_outputs = Unnormalize(
+                config.output_features, config.normalization_mapping, dataset_stats
+            )
 
         self.language_tokenizer = AutoProcessor.from_pretrained(self.config.vlm_model_name).tokenizer
         self.model = VLAFlowMatching(config)

@@ -45,11 +45,11 @@ class SmolVLA2Config(PreTrainedConfig):
             "ACTION": NormalizationMode.MEAN_STD,
         }
     )
-
+    normalize_per_robot_type: bool = False
     # Shorter state and action vectors will be padded
     max_state_dim: int = 32
     max_action_dim: int = 32
-
+    
     # Image preprocessing
     resize_imgs_with_padding: tuple[int, int] = (512, 512)
 
