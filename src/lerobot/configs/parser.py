@@ -19,10 +19,13 @@ from argparse import ArgumentError
 from collections.abc import Sequence
 from functools import wraps
 from pathlib import Path
+from typing import Type, TypeVar, Optional, Union
 
 import draccus
 
 from lerobot.utils.utils import has_method
+
+T = TypeVar("T")
 
 PATH_KEY = "path"
 PLUGIN_DISCOVERY_SUFFIX = "discover_packages_path"
@@ -150,6 +153,18 @@ def get_type_arg(field_name: str, args: Sequence[str] | None = None) -> str | No
 def filter_arg(field_to_filter: str, args: Sequence[str] | None = None) -> list[str]:
     return [arg for arg in args if not arg.startswith(f"--{field_to_filter}=")]
 
+def filter_args_recursive(field_name: str, args: Sequence[str] | None = None) -> tuple[list[str], list[str]]:
+    with_field = []
+    without_field = []
+
+    for arg in args:
+        if arg.startswith(f"--{field_name}.") or arg.startswith(f"--{field_name}="):
+            with_field.append(arg)
+        else:
+            without_field.append(arg)
+    
+    return with_field, without_field
+
 
 def filter_path_args(fields_to_filter: str | list[str], args: Sequence[str] | None = None) -> list[str]:
     """
@@ -183,8 +198,11 @@ def filter_path_args(fields_to_filter: str | list[str], args: Sequence[str] | No
 
     return filtered_args
 
-
-def wrap(config_path: Path | None = None):
+def parse(
+    config_class: Type[T],
+    config_path: Optional[Union[Path, str]] = None,
+    args: Optional[Sequence[str]] = None,
+) -> T:
     """
     HACK: Similar to draccus.wrap but does three additional things:
         - Will remove '.path' arguments from CLI in order to process them later on.
@@ -194,7 +212,28 @@ def wrap(config_path: Path | None = None):
             their own subclasses of config classes, so that draccus can find the right class to instantiate
             from the CLI '.type' arguments
     """
+    cli_args = args or sys.argv[1:]
+    plugin_args = parse_plugin_args(PLUGIN_DISCOVERY_SUFFIX, cli_args)
+    for plugin_cli_arg, plugin_path in plugin_args.items():
+        try:
+            load_plugin(plugin_path)
+        except PluginLoadError as e:
+            # add the relevant CLI arg to the error message
+            raise PluginLoadError(f"{e}\nFailed plugin CLI Arg: {plugin_cli_arg}") from e
+        cli_args = filter_arg(plugin_cli_arg, cli_args)
+    config_path_cli = parse_arg("config_path", cli_args)
+    if has_method(config_class, "__get_path_fields__"):
+        path_fields = config_class.__get_path_fields__()
+        cli_args = filter_path_args(path_fields, cli_args)
+    if has_method(config_class, "from_pretrained") and config_path_cli:
+        cli_args = filter_arg("config_path", cli_args)
+        cfg = config_class.from_pretrained(config_path_cli, cli_args=cli_args)
+    else:
+        cfg = draccus.parse(config_class=config_class, config_path=config_path, args=cli_args)
 
+    return cfg
+
+def wrap(config_path: Path | None = None):
     def wrapper_outer(fn):
         @wraps(fn)
         def wrapper_inner(*args, **kwargs):
@@ -204,24 +243,7 @@ def wrap(config_path: Path | None = None):
                 cfg = args[0]
                 args = args[1:]
             else:
-                cli_args = sys.argv[1:]
-                plugin_args = parse_plugin_args(PLUGIN_DISCOVERY_SUFFIX, cli_args)
-                for plugin_cli_arg, plugin_path in plugin_args.items():
-                    try:
-                        load_plugin(plugin_path)
-                    except PluginLoadError as e:
-                        # add the relevant CLI arg to the error message
-                        raise PluginLoadError(f"{e}\nFailed plugin CLI Arg: {plugin_cli_arg}") from e
-                    cli_args = filter_arg(plugin_cli_arg, cli_args)
-                config_path_cli = parse_arg("config_path", cli_args)
-                if has_method(argtype, "__get_path_fields__"):
-                    path_fields = argtype.__get_path_fields__()
-                    cli_args = filter_path_args(path_fields, cli_args)
-                if has_method(argtype, "from_pretrained") and config_path_cli:
-                    cli_args = filter_arg("config_path", cli_args)
-                    cfg = argtype.from_pretrained(config_path_cli, cli_args=cli_args)
-                else:
-                    cfg = draccus.parse(config_class=argtype, config_path=config_path, args=cli_args)
+                cfg = parse(config_class=argtype, config_path=config_path)
             response = fn(cfg, *args, **kwargs)
             return response
 

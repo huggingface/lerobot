@@ -37,6 +37,7 @@ import draccus
 import grpc
 import torch
 
+from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.factory import get_policy_class
 from lerobot.scripts.server.configs import PolicyServerConfig
@@ -74,10 +75,6 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         self._predicted_timesteps = set()
 
         # Attributes will be set by SendPolicyInstructions
-        self.device = None
-        self.policy_type = None
-        self.lerobot_features = None
-        self.actions_per_chunk = None
         self.policy = None
 
     @property
@@ -106,55 +103,42 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
     def SendPolicyInstructions(self, request, context):  # noqa: N802
         """Receive policy instructions from the robot client"""
 
+        start = time.perf_counter()
+
         if not self.running:
             self.logger.warning("Server is not running. Ignoring policy instructions.")
             return services_pb2.Empty()
 
         client_id = context.peer()
 
-        policy_specs = pickle.loads(request.data)  # nosec
+        policy_setup: RemotePolicyConfig = pickle.loads(request.data)  # nosec
 
-        if not isinstance(policy_specs, RemotePolicyConfig):
-            raise TypeError(f"Policy specs must be a RemotePolicyConfig. Got {type(policy_specs)}")
+        self.logger.info(
+            f"Receiving policy instructions from {client_id}"
+            f" | Server args: {policy_setup.server_args}"
+            f" | Actions per chunk: {policy_setup.actions_per_chunk}"
+        )
 
-        if policy_specs.policy_type not in SUPPORTED_POLICIES:
+        policy_path = parser.get_path_arg("policy", args=policy_setup.server_args)
+        cli_overrides = parser.get_cli_overrides("policy", args=policy_setup.server_args)
+        policy_config = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
+
+        if policy_config.type not in SUPPORTED_POLICIES:
             raise ValueError(
-                f"Policy type {policy_specs.policy_type} not supported. "
+                f"Policy type '{policy_config.type}' not supported. "
                 f"Supported policies: {SUPPORTED_POLICIES}"
             )
 
-        self.logger.info(
-            f"Receiving policy instructions from {client_id} | "
-            f"Policy type: {policy_specs.policy_type} | "
-            f"Pretrained name or path: {policy_specs.pretrained_name_or_path} | "
-            f"Actions per chunk: {policy_specs.actions_per_chunk} | "
-            f"Device: {policy_specs.device}"
-        )
+        policy_class = get_policy_class(policy_config.type)
+        self.policy = policy_class.from_pretrained(policy_path, config=policy_config)
 
-        self.device = policy_specs.device
-        self.policy_type = policy_specs.policy_type  # act, pi0, etc.
-        self.lerobot_features = policy_specs.lerobot_features
-        self.actions_per_chunk = policy_specs.actions_per_chunk
+        self.lerobot_features = policy_setup.lerobot_features
+        self.actions_per_chunk = policy_setup.actions_per_chunk
         self.last_processed_obs = None
 
-        policy_class = get_policy_class(self.policy_type)
-
-        start = time.perf_counter()
-        policy_config = PreTrainedConfig.from_pretrained(policy_specs.pretrained_name_or_path)
-
-        # TODO: this is hard-coded only for testing. Make the client pass these as args
-        policy_config.inference_enable_rtc = True
-        policy_config.compile_model = True
-
-        self.policy = policy_class.from_pretrained(
-            policy_specs.pretrained_name_or_path,
-            config=policy_config,
-        )
-
-        self.policy.to(self.device)
         end = time.perf_counter()
 
-        self.logger.info(f"Time taken to put policy on {self.device}: {end - start:.4f} seconds")
+        self.logger.info(f"Policy loaded on {self.policy.config.device} in {end - start:.4f} seconds")
 
         return services_pb2.Empty()
 
@@ -162,36 +146,42 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         """Returns actions to the robot client. Actions are sent as a single
         chunk, containing multiple actions."""
         client_id = context.peer()
-        self.logger.debug(f"Client {client_id} connected for action streaming")
+        try:
+            self.logger.debug(f"Client {client_id} connected for action streaming")
 
-        receive_start = time.perf_counter()
-        received_bytes = receive_bytes_in_chunks(request_iterator, None, self.shutdown_event, self.logger)
-        receive_time = time.perf_counter() - receive_start
-        unpack_start = time.perf_counter()
-        obs = pickle.loads(received_bytes)  # nosec
-        unpack_time = time.perf_counter() - unpack_start
-        predict_start = time.perf_counter()
-        action_chunk = self._predict_action_chunk(obs)
-        predict_time = time.perf_counter() - predict_start
-        pack_start = time.perf_counter()
-        actions_bytes = pickle.dumps(action_chunk)  # nosec
-        pack_time = time.perf_counter() - pack_start
-        actions = services_pb2.Actions(data=actions_bytes)
-        send_start = time.perf_counter()
-        send_time = time.perf_counter() - send_start
-        total_time = time.perf_counter() - receive_start
+            receive_start = time.perf_counter()
+            received_bytes = receive_bytes_in_chunks(request_iterator, None, self.shutdown_event, self.logger)
+            receive_time = time.perf_counter() - receive_start
+            unpack_start = time.perf_counter()
+            obs = pickle.loads(received_bytes)  # nosec
+            unpack_time = time.perf_counter() - unpack_start
+            predict_start = time.perf_counter()
+            action_chunk = self._predict_action_chunk(obs)
+            predict_time = time.perf_counter() - predict_start
+            pack_start = time.perf_counter()
+            actions_bytes = pickle.dumps(action_chunk)  # nosec
+            pack_time = time.perf_counter() - pack_start
+            actions = services_pb2.Actions(data=actions_bytes)
+            send_start = time.perf_counter()
+            send_time = time.perf_counter() - send_start
+            total_time = time.perf_counter() - receive_start
 
-        self.logger.info(
-            f"Observation {obs.get_timestep()}"
-            f" | Receive: {receive_time:.3f}s"
-            f" | Unpack: {unpack_time:.3f}s"
-            f" | Predict: {predict_time:.3f}s"
-            f" | Pack: {pack_time:.3f}s"
-            f" | Send: {send_time:.3f}s"
-            f" | Total: {total_time:.3f}s"
-        )
+            self.logger.info(
+                f"Observation {obs.get_timestep()}"
+                f" | Receive: {receive_time:.3f}s"
+                f" | Unpack: {unpack_time:.3f}s"
+                f" | Predict: {predict_time:.3f}s"
+                f" | Pack: {pack_time:.3f}s"
+                f" | Send: {send_time:.3f}s"
+                f" | Total: {total_time:.3f}s"
+            )
 
-        return actions
+            return actions
+        except Exception as e:
+            self.logger.error(f"Error processing observation from client {client_id}: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            raise
 
     def _time_action_chunk(self, t_0: float, action_chunk: list[torch.Tensor], i_0: int) -> list[TimedAction]:
         """Turn a chunk of actions into a list of TimedAction instances,
@@ -213,8 +203,8 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         observation: Observation = raw_observation_to_observation(
             observation_t.get_observation(),
             self.lerobot_features,
-            self.policy_image_features,
-            self.device,
+            self.policy.config.image_features,
+            self.policy.config.device,
         )
         # processed Observation - right keys, right dtype, right image shape
 
@@ -294,7 +284,7 @@ def serve(cfg: PolicyServerConfig):
     policy_server = PolicyServer(cfg)
 
     # Setup and start gRPC server
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=4), compression=grpc.Compression.Deflate)
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=1), compression=grpc.Compression.Deflate)
     services_pb2_grpc.add_AsyncInferenceServicer_to_server(policy_server, server)
     server.add_insecure_port(f"{cfg.host}:{cfg.port}")
 

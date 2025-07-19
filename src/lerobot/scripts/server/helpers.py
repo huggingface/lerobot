@@ -270,11 +270,9 @@ class FPSTracker:
 
 @dataclass
 class RemotePolicyConfig:
-    policy_type: str
-    pretrained_name_or_path: str
+    server_args: dict[str, list[str]]
     lerobot_features: dict[str, PolicyFeature]
     actions_per_chunk: int
-    device: str = "cpu"
 
 
 def _compare_observation_states(obs1_state: torch.Tensor, obs2_state: torch.Tensor, atol: float) -> bool:

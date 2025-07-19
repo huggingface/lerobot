@@ -35,6 +35,7 @@ python src/lerobot/scripts/server/robot_client.py \
 import logging
 import pickle  # nosec
 import threading
+import sys
 import time
 from collections.abc import Callable
 from dataclasses import asdict
@@ -46,6 +47,7 @@ import draccus
 import grpc
 import torch
 
+from lerobot.configs import parser
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.configs.policies import PreTrainedConfig
@@ -86,11 +88,12 @@ from lerobot.utils.queue import get_last_item_from_queue
 class RobotClient:
     prefix = "robot_client"
 
-    def __init__(self, config: RobotClientConfig, shutdown_event: threading.Event):
+    def __init__(self, config: RobotClientConfig, server_args: dict[str, list[str]], shutdown_event: threading.Event):
         """Initialize RobotClient with unified configuration.
 
         Args:
             config: RobotClientConfig containing all configuration parameters
+            server_args: Dictionary of CLI arguments that are directly passed to the policy server
         """
         self.set_up_logger()
 
@@ -101,23 +104,13 @@ class RobotClient:
 
         lerobot_features = map_robot_keys_to_lerobot_features(self.robot)
 
-        if config.verify_robot_cameras:
-            # Load policy config for validation
-            policy_config = PreTrainedConfig.from_pretrained(config.pretrained_name_or_path)
-            policy_image_features = policy_config.image_features
-
-            # The cameras specified for inference must match the one supported by the policy chosen
-            validate_robot_cameras_for_policy(lerobot_features, policy_image_features)
-
         # Use environment variable if server_address is not provided in config
         self.server_address = config.server_address
 
         self.policy_config = RemotePolicyConfig(
-            config.policy_type,
-            config.pretrained_name_or_path,
+            server_args,
             lerobot_features,
             config.actions_per_chunk,
-            config.policy_device,
         )
         self.channel = grpc.insecure_channel(
             self.server_address,
@@ -172,12 +165,7 @@ class RobotClient:
             policy_config_bytes = pickle.dumps(self.policy_config)
             policy_setup = services_pb2.PolicySetup(data=policy_config_bytes)
 
-            self.logger.info("Sending policy instructions to policy server")
-            self.logger.debug(
-                f"Policy type: {self.policy_config.policy_type} | "
-                f"Pretrained name or path: {self.policy_config.pretrained_name_or_path} | "
-                f"Device: {self.policy_config.device}"
-            )
+            self.logger.info(f"Sending policy instructions to policy server. Server args: {self.policy_config.server_args}")
 
             self.stub.SendPolicyInstructions(policy_setup)
 
@@ -331,8 +319,17 @@ class RobotClient:
 
             time.sleep(time_to_sleep)
 
-@draccus.wrap()
-def async_client(cfg: RobotClientConfig):
+def async_client():
+    cli_args = sys.argv[1:]
+    
+    # Filter out args that we simply pass through to the policy server
+    server_args = []
+    for arg in RobotClientConfig.server_args:
+        with_field, cli_args = parser.filter_args_recursive(arg, cli_args)
+        server_args.extend(with_field)
+
+    cfg: RobotClientConfig = draccus.parse(config_class=RobotClientConfig, args=cli_args)
+
     logging.info(pformat(asdict(cfg)))
 
     shutdown_event = ProcessSignalHandler(use_threads=True).shutdown_event
@@ -340,8 +337,7 @@ def async_client(cfg: RobotClientConfig):
     if cfg.robot.type not in SUPPORTED_ROBOTS:
         raise ValueError(f"Robot {cfg.robot.type} not yet supported!")
 
-    # import pdb; pdb.set_trace()
-    client = RobotClient(cfg, shutdown_event)
+    client = RobotClient(cfg, server_args, shutdown_event)
 
     if not client.start():
         return
