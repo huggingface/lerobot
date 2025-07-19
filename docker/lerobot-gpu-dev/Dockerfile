@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.2.2-devel-ubuntu22.04
+FROM nvidia/cuda:12.4.1-base-ubuntu22.04
 
 # Configure image
 ARG PYTHON_VERSION=3.10
@@ -16,33 +16,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     speech-dispatcher portaudio19-dev libgeos-dev \
     python${PYTHON_VERSION} python${PYTHON_VERSION}-venv python${PYTHON_VERSION}-dev \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
-
-# Install ffmpeg build dependencies. See:
-# https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu
-# TODO(aliberts): create image to build dependencies from source instead
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    autoconf automake yasm \
-    libass-dev \
-    libfreetype6-dev \
-    libgnutls28-dev \
-    libunistring-dev \
-    libmp3lame-dev \
-    libtool \
-    libvorbis-dev \
-    meson \
-    ninja-build \
-    pkg-config \
-    texinfo \
-    yasm \
-    zlib1g-dev \
-    nasm \
-    libx264-dev \
-    libx265-dev libnuma-dev \
-    libvpx-dev \
-    libfdk-aac-dev \
-    libopus-dev \
-    libsvtav1-dev libsvtav1enc-dev libsvtav1dec-dev \
-    libdav1d-dev
 
 # Install gh cli tool
 RUN (type -p wget >/dev/null || (apt update && apt-get install wget -y)) \
