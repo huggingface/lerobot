@@ -234,14 +234,14 @@ class PI0FASTPolicy(PreTrainedPolicy):
             self._action_queue.extend(actions.transpose(0, 1))
         return self._action_queue.popleft()
 
-    def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
+    def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
         if self.config.adapt_to_pi_aloha:
             batch[OBS_STATE] = self._pi_aloha_decode_state(batch[OBS_STATE])
             batch[ACTION] = self._pi_aloha_encode_actions_inv(batch[ACTION])
         batch = self.normalize_inputs(batch)
         batch = self.normalize_targets(batch)
-        loss_dict = self.model.forward(batch)
-        return loss_dict["loss"], loss_dict
+        loss, loss_dict = self.model.forward(batch)
+        return loss, loss_dict
 
 
 def block_causal_update_causal_mask(
@@ -745,8 +745,8 @@ class PI0FAST(nn.Module):
         loss = token_loss.sum() / torch.clamp(loss_mask.sum(), min=1)
 
         # Return loss dictionary
-        loss_dict = {"ce_loss": loss.item(), "loss": loss}
-        return loss_dict
+        loss_dict = {"ce_loss": loss.item(), "loss": loss.item()}
+        return loss, loss_dict
 
     def decode_actions_with_fast(
         self,
