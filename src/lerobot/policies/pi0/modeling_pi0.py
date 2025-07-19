@@ -511,130 +511,112 @@ class PI0FlowMatching(nn.Module):
     def embed_prefix(
         self, images, img_masks, lang_tokens, lang_masks
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Embed images with SigLIP and language tokens with embedding layer to prepare
-        for PaliGemma transformer processing.
+        """Embeds prefix: images and language instructions.
+
+        Args:
+            images: A dictionary of images of shape `(B, C, H, W)`.
+            img_masks: A dictionary of masks of shape `(B, H, W)` for each image.
+            lang_tokens: Language tokens of shape `(B, L)`.
+            lang_masks: Language masks of shape `(B, L)`.
+        Returns:
+            A tuple of:
+            - The embeddings of shape `(B, N, D)`.
+            - The padding masks of shape `(B, N)`.
+            - The attention masks of shape `(B, N)`.
         """
-        # Optimized: Pre-compute dimensions to avoid list operations and torch.cat
-        bsize = images[0].shape[0] if images else lang_tokens.shape[0]
-        device = images[0].device if images else lang_tokens.device
+        bsize = next(iter(images.values())).shape[0]
 
-        # Pre-compute total sequence length for pre-allocation
-        total_img_tokens = 0
-        processed_img_embs = []
-        processed_img_masks = []
+        # Calculate total sequence length for pre-allocation
+        num_active_images = sum(1 for key in self.config.image_keys if key in images)
+        img_seq_len = self.config.vlm_config.num_image_tokens
+        lang_seq_len = lang_tokens.shape[1] if self.config.use_language else 0
+        total_seq_len = num_active_images * img_seq_len + lang_seq_len
 
-        # Process all images first to determine total dimensions
-        for img, img_mask in zip(images, img_masks, strict=False):
-            img_emb = self.paligemma_with_expert.embed_image(img)
-            img_emb = img_emb.to(dtype=torch.bfloat16)
+        # Pre-allocate tensors
+        device = next(iter(images.values())).device
+        dtype = self.paligemma_with_expert.embed_image(images[next(iter(images))]).dtype
+        hidden_size = self.paligemma_with_expert.embed_image(images[next(iter(images))]).shape[-1]
 
-            # Normalize image embeddings
-            img_emb_dim = img_emb.shape[-1]
-            img_emb = img_emb * torch.tensor(img_emb_dim**0.5, dtype=img_emb.dtype, device=img_emb.device)
+        embs = torch.empty((bsize, total_seq_len, hidden_size), dtype=dtype, device=device)
+        pad_masks = torch.empty((bsize, total_seq_len), dtype=torch.bool, device=device)
+        att_masks = torch.empty((bsize, total_seq_len), dtype=torch.int32, device=device)
 
-            num_img_embs = img_emb.shape[1]
-            total_img_tokens += num_img_embs
+        # Embed images
+        start_idx = 0
+        for key in self.config.image_keys:
+            if key not in images:
+                continue
+            end_idx = start_idx + img_seq_len
+            emb = self.paligemma_with_expert.embed_image(images[key])
+            embs[:, start_idx:end_idx] = emb
+            pad_masks[:, start_idx:end_idx] = True
+            att_masks[:, start_idx:end_idx] = 0
+            start_idx = end_idx
 
-            img_mask_expanded = img_mask[:, None].expand(bsize, num_img_embs)
+        # Embed language
+        if self.config.use_language:
+            end_idx = start_idx + lang_seq_len
+            embs[:, start_idx:end_idx] = self.paligemma_with_expert.embed_language_tokens(lang_tokens)
+            pad_masks[:, start_idx:end_idx] = lang_masks
+            att_masks[:, start_idx:end_idx] = 1
 
-            processed_img_embs.append(img_emb)
-            processed_img_masks.append(img_mask_expanded)
+        past_key_values = self.paligemma_with_expert.forward(
+            inputs_embeds=[embs, None],
+            attention_mask=make_att_2d_masks(pad_masks, att_masks),
+            use_cache=True,
+            fill_kv_cache=True,
+        ).past_key_values
 
-        # Process language embeddings
-        lang_emb = self.paligemma_with_expert.embed_language_tokens(lang_tokens)
-
-        # Normalize language embeddings
-        lang_emb_dim = lang_emb.shape[-1]
-        lang_emb = lang_emb * math.sqrt(lang_emb_dim)
-
-        num_lang_embs = lang_emb.shape[1]
-        total_seq_len = total_img_tokens + num_lang_embs
-        emb_dim = processed_img_embs[0].shape[-1] if processed_img_embs else lang_emb.shape[-1]
-
-        # Pre-allocate tensors instead of using lists
-        embs = torch.empty(bsize, total_seq_len, emb_dim, dtype=torch.bfloat16, device=device)
-        pad_masks = torch.empty(bsize, total_seq_len, dtype=torch.bool, device=device)
-
-        # Fill pre-allocated tensors directly without lists or torch.cat
-        current_pos = 0
-        att_mask_values = []
-
-        # Copy image embeddings and masks
-        for img_emb, img_mask_expanded in zip(processed_img_embs, processed_img_masks, strict=False):
-            seq_len = img_emb.shape[1]
-            embs[:, current_pos : current_pos + seq_len] = img_emb
-            pad_masks[:, current_pos : current_pos + seq_len] = img_mask_expanded
-
-            # Create attention masks so that image tokens attend to each other
-            att_mask_values.extend([0] * seq_len)
-            current_pos += seq_len
-
-        # Copy language embeddings and masks
-        embs[:, current_pos : current_pos + num_lang_embs] = lang_emb
-        pad_masks[:, current_pos : current_pos + num_lang_embs] = lang_masks
-
-        # Full attention between image and language inputs
-        att_mask_values.extend([0] * num_lang_embs)
-
-        # Convert attention mask to tensor (this is unavoidable but much smaller than embs)
-        att_masks = torch.tensor(att_mask_values, dtype=torch.bool, device=device)
-        att_masks = att_masks[None, :].expand(bsize, len(att_mask_values))
-
-        return embs, pad_masks, att_masks
+        return embs, pad_masks, past_key_values
 
     def embed_suffix(self, state, noisy_actions, timestep):
-        """Embed state, noisy_actions, timestep to prepare for Expert Gemma processing."""
+        """Embeds suffix: robot state, actions and timestep.
+
+        Args:
+            state: Robot state of shape `(B, D_s)`.
+            noisy_actions: Noisy actions of shape `(B, H, D_a)`.
+            timestep: Timestep of shape `(B,)`.
+
+        Returns:
+            A tuple of:
+            - The embeddings of shape `(B, N, D)`.
+            - The padding masks of shape `(B, N)`.
+            - The attention masks of shape `(B, N)`.
+        """
+        bsize, horizon, _ = noisy_actions.shape
+
+        # Calculate total sequence length for pre-allocation
+        # state_emb, time_emb, action_embs
+        total_seq_len = 1 + 1 + horizon
+
+        # Pre-allocate tensors
+        dtype = self.state_proj.weight.dtype
+        device = state.device
+        hidden_size = self.paligemma_with_expert.embed_language_tokens(lang_tokens).shape[-1]
+
+        embs = torch.empty((bsize, total_seq_len, hidden_size), dtype=dtype, device=device)
+        # All suffix tokens are valid, so pad_masks and att_masks are all ones.
+        pad_masks = torch.ones((bsize, total_seq_len), dtype=torch.bool, device=device)
+        att_masks = torch.ones((bsize, total_seq_len), dtype=torch.int32, device=device)
+
         # Embed state
         state_emb = self.state_proj(state)
-        state_emb = state_emb.to(dtype=torch.bfloat16)
-        state_emb_expanded = state_emb[:, None, :]
+        embs[:, 0] = state_emb
 
-        bsize = state_emb.shape[0]
-        dtype = state_emb.dtype
-        device = state_emb.device
-
-        # Embed timestep using sine-cosine positional encoding with sensitivity in the range [0, 1]
+        # Embed time
         time_emb = create_sinusoidal_pos_embedding(
-            timestep, self.config.proj_width, min_period=4e-3, max_period=4.0, device=device
+            timestep,
+            self.config.proj_width,
+            self.config.time_embed_min_period,
+            self.config.time_embed_max_period,
+            device=timestep.device,
         )
-        time_emb = time_emb.type(dtype=dtype)
+        time_emb = time_emb.type(dtype)
+        embs[:, 1] = time_emb
 
-        # Fuse timestep + action information using an MLP
-        action_emb = self.action_in_proj(noisy_actions)
-
-        time_emb = time_emb[:, None, :].expand_as(action_emb)
-        action_time_emb = torch.cat([action_emb, time_emb], dim=2)
-
-        action_time_emb = self.action_time_mlp_in(action_time_emb)
-        action_time_emb = F.silu(action_time_emb)  # swish == silu
-        action_time_emb = self.action_time_mlp_out(action_time_emb)
-
-        # Optimized: Pre-compute dimensions and pre-allocate tensors
-        state_seq_len = 1  # state is always length 1
-        action_seq_len = action_time_emb.shape[1]
-        total_seq_len = state_seq_len + action_seq_len
-        emb_dim = state_emb_expanded.shape[-1]
-
-        # Pre-allocate tensors instead of using lists
-        embs = torch.empty(bsize, total_seq_len, emb_dim, dtype=dtype, device=device)
-        pad_masks = torch.empty(bsize, total_seq_len, dtype=torch.bool, device=device)
-
-        # Fill pre-allocated tensors directly without lists or torch.cat
-        # Copy state embedding and mask
-        embs[:, 0:state_seq_len] = state_emb_expanded
-        pad_masks[:, 0:state_seq_len] = True  # state mask is always True
-
-        # Copy action_time embedding and mask
-        embs[:, state_seq_len:total_seq_len] = action_time_emb
-        pad_masks[:, state_seq_len:total_seq_len] = True  # action_time mask is always True
-
-        # Create attention mask values (this is unavoidable but much smaller than embs)
-        # Set attention masks so that image and language inputs do not attend to state or actions
-        att_mask_values = [1]  # state mask
-        att_mask_values += [1] + ([0] * (self.config.n_action_steps - 1))  # action masks
-
-        att_masks = torch.tensor(att_mask_values, dtype=dtype, device=device)
-        att_masks = att_masks[None, :].expand(bsize, len(att_mask_values))
+        # Embed actions
+        noisy_actions_emb = self.action_in_proj(noisy_actions)
+        embs[:, 2:] = noisy_actions_emb
 
         return embs, pad_masks, att_masks
 
