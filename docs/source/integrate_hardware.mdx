@@ -2,23 +2,23 @@
 
 This tutorial will explain how to integrate your own robot design into the LeRobot ecosystem and have it access all of our tools (data collection, control pipelines, policy training and inference).
 
-To that end, we provide the [`Robot`](https://github.com/huggingface/lerobot/blob/main/lerobot/robots/robot.py) base class in the LeRobot which specifies a standard interface for physical robot integration. Let's see how to implement it.
+To that end, we provide the [`Robot`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/robots/robot.py) base class in the LeRobot which specifies a standard interface for physical robot integration. Let's see how to implement it.
 
 ## Prerequisites
 
 - Your own robot which exposes a communication interface (e.g. serial, CAN, TCP)
 - A way to read sensor data and send motor commands programmatically, e.g. manufacturer's SDK or API, or your own protocol implementation.
-- LeRobot installed in your environment. Follow our [Installation Guide](./installation).
+- LeRobot installed in your environment. Follow our [Installation Guide](./installation.mdx).
 
 ## Choose your motors
 
 If you're using Feetech or Dynamixel motors, LeRobot provides built-in bus interfaces:
 
-- [`FeetechMotorsBus`](https://github.com/huggingface/lerobot/blob/main/lerobot/motors/feetech/feetech.py) – for controlling Feetech servos
-- [`DynamixelMotorsBus`](https://github.com/huggingface/lerobot/blob/main/lerobot/motors/dynamixel/dynamixel.py) – for controlling Dynamixel servos
+- [`FeetechMotorsBus`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/motors/feetech/feetech.py) – for controlling Feetech servos
+- [`DynamixelMotorsBus`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/motors/dynamixel/dynamixel.py) – for controlling Dynamixel servos
 
-Please refer to the [`MotorsBus`](https://github.com/huggingface/lerobot/blob/main/lerobot/motors/motors_bus.py) abstract class to learn about its API.
-For a good example of how it can be used, you can have a look at our own [SO101 follower implementation](https://github.com/huggingface/lerobot/blob/main/lerobot/robots/so101_follower/so101_follower.py)
+Please refer to the [`MotorsBus`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/motors/motors_bus.py) abstract class to learn about its API.
+For a good example of how it can be used, you can have a look at our own [SO101 follower implementation](https://github.com/huggingface/lerobot/blob/main/src/lerobot/robots/so101_follower/so101_follower.py)
 
 Use these if compatible. Otherwise, you'll need to find or write a Python interface (not covered in this tutorial):
 
@@ -29,7 +29,7 @@ You're not alone—many community contributions use custom boards or firmware!
 
 For Feetech and Dynamixel, we currently support these servos: - Feetech: - STS & SMS series (protocol 0): `sts3215`, `sts3250`, `sm8512bl` - SCS series (protocol 1): `scs0009` - Dynamixel (protocol 2.0 only): `xl330-m077`, `xl330-m288`, `xl430-w250`, `xm430-w350`, `xm540-w270`, `xc430-w150`
 
-If you are using Feetech or Dynamixel servos that are not in this list, you can add those in the [Feetech table](https://github.com/huggingface/lerobot/blob/main/lerobot/motors/feetech/tables.py) or [Dynamixel table](https://github.com/huggingface/lerobot/blob/main/lerobot/motors/dynamixel/tables.py). Depending on the model, this will require you to add model-specific information. In most cases though, there shouldn't be a lot of additions to do.
+If you are using Feetech or Dynamixel servos that are not in this list, you can add those in the [Feetech table](https://github.com/huggingface/lerobot/blob/main/src/lerobot/motors/feetech/tables.py) or [Dynamixel table](https://github.com/huggingface/lerobot/blob/main/src/lerobot/motors/dynamixel/tables.py). Depending on the model, this will require you to add model-specific information. In most cases though, there shouldn't be a lot of additions to do.
 
 In the next sections, we'll use a `FeetechMotorsBus` as the motors interface for the examples. Replace it and adapt to your motors if necessary.
 
@@ -65,7 +65,7 @@ class MyCoolRobotConfig(RobotConfig):
 ```
 <!-- prettier-ignore-end -->
 
-Have a look at our [Cameras tutorial](./cameras) to understand how to detect and add your camera.
+[Cameras tutorial](./cameras.mdx) to understand how to detect and add your camera.
 
 Next, we'll create our actual robot class which inherits from `Robot`. This abstract class defines a contract you must follow for your robot to be usable with the rest of the LeRobot tools.
 
@@ -331,7 +331,7 @@ def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
 
 ## Adding a Teleoperator
 
-For implementing teleoperation devices, we also provide a [`Teleoperator`](https://github.com/huggingface/lerobot/blob/main/lerobot/teleoperators/teleoperator.py) base class. This class is very similar to the `Robot` base class and also doesn't assume anything on form factor.
+For implementing teleoperation devices, we also provide a [`Teleoperator`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/teleoperators/teleoperator.py) base class. This class is very similar to the `Robot` base class and also doesn't assume anything on form factor.
 
 The main differences are in the I/O functions: a teleoperator allows you to produce action via `get_action` and can receive feedback actions via `send_feedback`. Feedback could be anything controllable on the teleoperation device that could help the person controlling it understand the consequences of the actions sent. Think motion/force feedback on a leader arm, vibrations on a gamepad controller for example. To implement a teleoperator, you can follow this same tutorial and adapt it for these two methods.
 
