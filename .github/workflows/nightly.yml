@@ -112,6 +112,9 @@ jobs:
     needs: [build-docker-cpu-nightly]
     runs-on:
       group: aws-g6-4xlarge-plus
+    env:
+      HF_HOME: /home/user_lerobot/lerobot/.cache/huggingface/lerobot
+      HF_LEROBOT_HOME: /home/user_lerobot/lerobot/.cache/huggingface/lerobot
     container:
       image: ${{ needs.build-docker-cpu-nightly.outputs.image_tag }} # zizmor: ignore[unpinned-images]
       credentials:
@@ -133,6 +136,9 @@ jobs:
     needs: [build-docker-gpu-nightly]
     runs-on:
       group: aws-g6-4xlarge-plus
+    env:
+      HF_HOME: /home/user_lerobot/lerobot/.cache/huggingface/lerobot
+      HF_LEROBOT_HOME: /home/user_lerobot/lerobot/.cache/huggingface/lerobot
     container:
       image: ${{ needs.build-docker-gpu-nightly.outputs.image_tag }} # zizmor: ignore[unpinned-images]
       options: --gpus all --shm-size "16gb"

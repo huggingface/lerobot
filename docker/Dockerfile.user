@@ -46,7 +46,8 @@ USER user_lerobot
 
 # Environment variables for the testing
 ENV HOME=/home/user_lerobot \
-    HF_LEROBOT_HOME=/lerobot/.cache/huggingface/lerobot
+    HF_HOME=/home/user_lerobot/lerobot/.cache/huggingface/lerobot \
+    HF_LEROBOT_HOME=/home/user_lerobot/lerobot/.cache/huggingface/lerobot
 
 # Create the virtual environment
 # We use a virtual environment inside the container—even though the container itself \

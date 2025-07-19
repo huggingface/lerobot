@@ -183,6 +183,9 @@ jobs:
     needs: [build-and-push-docker]
     runs-on:
       group: aws-g6-4xlarge-plus
+    env:
+      HF_HOME: /home/user_lerobot/lerobot/.cache/huggingface/lerobot
+      HF_LEROBOT_HOME: /home/user_lerobot/lerobot/.cache/huggingface/lerobot
     container:
       image: ${{ needs.build-and-push-docker.outputs.image_tag }} # zizmor: ignore[unpinned-images]
       options: --gpus all --shm-size "16gb"
