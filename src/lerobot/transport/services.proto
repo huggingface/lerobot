@@ -33,6 +33,17 @@ service LearnerService {
   rpc Ready(Empty) returns (Empty);
 }
 
+// AsyncInference: from Robot perspective
+// Robot send observations to & executes action received from a remote Policy server
+service AsyncInference {
+  // Robot -> Policy to share observations with a remote inference server
+  // Policy -> Robot to share actions predicted for given observations
+  rpc SendObservations(stream Observation) returns (Empty);
+  rpc GetActions(Empty) returns (Actions);
+  rpc SendPolicyInstructions(PolicySetup) returns (Empty);
+  rpc Ready(Empty) returns (Empty);
+}
+
 enum TransferState {
     TRANSFER_UNKNOWN = 0;
     TRANSFER_BEGIN = 1;
@@ -54,6 +65,23 @@ message Parameters {
 message InteractionMessage {
   TransferState transfer_state = 1;
   bytes data = 2;
+}
+
+// Messages
+message Observation {
+  // sent by Robot, to remote Policy
+  TransferState transfer_state = 1;  // Observations can be streamed exceeding 4MB of size
+  bytes data = 2;
+}
+
+message Actions {
+  // sent by remote Policy, to Robot
+  bytes data = 1;
+}
+
+message PolicySetup {
+  // sent by Robot to remote server, to init Policy
+  bytes data = 1;
 }
 
 message Empty {}
