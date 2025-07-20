@@ -19,7 +19,8 @@ import io
 import json
 import logging
 import pickle  # nosec B403: Safe usage for internal serialization only
-from multiprocessing import Event, Queue
+from multiprocessing import Event
+from queue import Queue
 from typing import Any
 
 import torch
@@ -66,7 +67,7 @@ def send_bytes_in_chunks(buffer: bytes, message_class: Any, log_prefix: str = ""
     logging_method(f"{log_prefix} Published {sent_bytes / 1024 / 1024} MB")
 
 
-def receive_bytes_in_chunks(iterator, queue: Queue | None, shutdown_event: Event, log_prefix: str = ""):  # ruff: noqa
+def receive_bytes_in_chunks(iterator, queue: Queue | None, shutdown_event: Event, log_prefix: str = ""):
     bytes_buffer = io.BytesIO()
     step = 0
 
