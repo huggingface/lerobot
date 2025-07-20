@@ -72,7 +72,7 @@ def send_bytes_in_chunks(
     logging_method(f"{log_prefix} Published {sent_bytes / 1024 / 1024} MB")
 
 
-def receive_bytes_in_chunks(iterator, queue: Queue | None, shutdown_event: Event, log_prefix: str = ""):  # ruff: noqa
+def receive_bytes_in_chunks(iterator, queue: "Queue | None", shutdown_event: Event, log_prefix: str = ""):  # ruff: noqa
     bytes_buffer = io.BytesIO()
     step = 0
 
