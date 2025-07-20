@@ -46,24 +46,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # This job evaluates the need to run the full tests suite.
-  full-tests-gate:
-    name: Full Tests Gate
-    runs-on: ubuntu-latest
-    if: |
-      (github.event_name == 'pull_request_review' && github.event.review.state == 'approved') ||
-      github.event_name == 'push' ||
-      github.event_name == 'workflow_dispatch'
-    steps:
-      - name: Gate check
-        run: echo "Full tests will run."
 
   # This job runs the E2E tests + pytest with all extras
   # It runs everytime a PR is approved or a push to main
   full-tests:
     name: Full Tests
-    needs: full-tests-gate
     runs-on: ubuntu-latest
+    if: |
+      (github.event_name == 'pull_request_review' && github.event.review.state == 'approved') ||
+      github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch'
     env:
       MUJOCO_GL: egl
     steps:
@@ -96,11 +88,15 @@ jobs:
 
   # This job builds a GPU enabled image for testing
   # It runs everytime a PR is approved or a push to main
+  # TODO(Steven): For now we skip this job for community PRs
   build-and-push-docker:
     name: Build and Push Docker
-    needs: full-tests-gate
     runs-on:
       group: aws-general-8-plus
+    if: |
+      (github.event_name == 'pull_request_review' && github.event.review.state == 'approved' && github.event.pull_request.head.repo.fork == false) ||
+      github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch'
     outputs:
       image_tag: ${{ steps.set_tag.outputs.image_tag }}
     env:
@@ -178,7 +174,7 @@ jobs:
   delete-pr-image:
     name: Delete PR Image
     needs: [gpu-tests, build-and-push-docker]
-    if: always() && github.event.review.state == 'approved' && needs.build-and-push-docker.result == 'success'
+    if: always() && ((github.event.review.state == 'approved') || (github.event_name == 'workflow_dispatch')) && needs.build-and-push-docker.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Get Docker Hub Token and Delete Image
