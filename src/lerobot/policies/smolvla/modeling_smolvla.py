@@ -415,17 +415,17 @@ class SmolVLAPolicy(PreTrainedPolicy):
         return batch
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None, rtc_s: int | None = None, rtc_d: int | None = None) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None, steps_since_chunk_start: int | None = None, inference_latency_steps: int | None = None, **kwargs) -> Tensor:
         self.eval()
 
         batch = self._prepare_batch(batch)
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
 
-        actions = self._get_action_chunk(batch, noise, rtc_s=rtc_s, rtc_d=rtc_d)
+        actions = self._get_action_chunk(batch, noise, rtc_s=steps_since_chunk_start, rtc_d=inference_latency_steps)
         return actions
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None, rtc_s: int | None = None, rtc_d: int | None = None) -> Tensor:
+    def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None, steps_since_chunk_start: int | None = None, inference_latency_steps: int | None = None, **kwargs) -> Tensor:
         """Select a single action given environment observations.
 
         This method wraps `select_actions` in order to return one action at a time for execution in the
@@ -439,7 +439,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
         # Action queue logic for n_action_steps > 1. When the action_queue is depleted, populate it by
         # querying the policy.
         if len(self._queues[ACTION]) == 0:
-            actions = self._get_action_chunk(batch, noise, rtc_s=rtc_s, rtc_d=rtc_d)
+            actions = self._get_action_chunk(batch, noise, rtc_s=steps_since_chunk_start, rtc_d=inference_latency_steps)
 
             # `self.predict_action_chunk` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
             # effectively has shape (n_action_steps, batch_size, *), hence the transpose.

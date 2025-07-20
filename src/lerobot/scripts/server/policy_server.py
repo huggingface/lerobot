@@ -24,26 +24,22 @@ python src/lerobot/scripts/server/policy_server.py \
 ```
 """
 
-import logging
-import pickle  # nosec
-import threading
-import time
 from concurrent import futures
 from dataclasses import asdict
+import logging
+import pickle
 from pprint import pformat
-from queue import Queue
+import threading
+import time
 
 import draccus
 import grpc
-import torch
-
 from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.factory import get_policy_class
 from lerobot.scripts.server.configs import PolicyServerConfig
 from lerobot.scripts.server.constants import SUPPORTED_POLICIES
 from lerobot.scripts.server.helpers import (
-    FPSTracker,
     Observation,
     RemotePolicyConfig,
     TimedAction,
@@ -51,11 +47,9 @@ from lerobot.scripts.server.helpers import (
     get_logger,
     raw_observation_to_observation,
 )
-from lerobot.transport import (
-    services_pb2,  # type: ignore
-    services_pb2_grpc,  # type: ignore
-)
+from lerobot.transport import services_pb2, services_pb2_grpc
 from lerobot.transport.utils import receive_bytes_in_chunks
+import torch
 
 
 class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
@@ -65,14 +59,6 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
     def __init__(self, config: PolicyServerConfig):
         self.config = config
         self.shutdown_event = threading.Event()
-
-        # FPS measurement
-        self.fps_tracker = FPSTracker(target_fps=config.fps)
-
-        self.observation_queue = Queue(maxsize=1)
-
-        self._predicted_timesteps_lock = threading.Lock()
-        self._predicted_timesteps = set()
 
         # Attributes will be set by SendPolicyInstructions
         self.policy = None
@@ -89,8 +75,6 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         """Flushes server state when new client connects."""
         # only running inference on the latest observation received by the server
         self.shutdown_event.set()
-        with self._predicted_timesteps_lock:
-            self._predicted_timesteps = set()
 
     def Ready(self, request, context):  # noqa: N802
         client_id = context.peer()
@@ -151,28 +135,28 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
 
             receive_start = time.perf_counter()
             received_bytes = receive_bytes_in_chunks(request_iterator, None, self.shutdown_event, self.logger)
-            receive_time = time.perf_counter() - receive_start
-            unpack_start = time.perf_counter()
+            receive_end = time.perf_counter()
+            unpack_start = receive_end
             obs = pickle.loads(received_bytes)  # nosec
-            unpack_time = time.perf_counter() - unpack_start
-            predict_start = time.perf_counter()
+            unpack_end = time.perf_counter()
+            predict_start = unpack_end
             action_chunk = self._predict_action_chunk(obs)
-            predict_time = time.perf_counter() - predict_start
-            pack_start = time.perf_counter()
+            predict_end = time.perf_counter()
+            pack_start = predict_end
             actions_bytes = pickle.dumps(action_chunk)  # nosec
-            pack_time = time.perf_counter() - pack_start
+            pack_end = time.perf_counter()
             actions = services_pb2.Actions(data=actions_bytes)
-            send_start = time.perf_counter()
-            send_time = time.perf_counter() - send_start
-            total_time = time.perf_counter() - receive_start
+            send_start = pack_end
+            send_end = time.perf_counter()
+            total_time = send_end - receive_start
 
             self.logger.info(
                 f"Observation {obs.get_timestep()}"
-                f" | Receive: {receive_time:.3f}s"
-                f" | Unpack: {unpack_time:.3f}s"
-                f" | Predict: {predict_time:.3f}s"
-                f" | Pack: {pack_time:.3f}s"
-                f" | Send: {send_time:.3f}s"
+                f" | Receive: {receive_end - receive_start:.3f}s"
+                f" | Unpack: {unpack_end - unpack_start:.3f}s"
+                f" | Predict: {predict_end - predict_start:.3f}s"
+                f" | Pack: {pack_end - pack_start:.3f}s"
+                f" | Send: {send_end - send_start:.3f}s"
                 f" | Total: {total_time:.3f}s"
             )
 
@@ -203,20 +187,12 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         observation: Observation = raw_observation_to_observation(
             observation_t.get_observation(),
             self.lerobot_features,
-            self.policy.config.image_features,
+            self.policy_image_features,
             self.policy.config.device,
         )
         # processed Observation - right keys, right dtype, right image shape
 
         return observation
-
-    def _get_action_chunk(self, observation: dict[str, torch.Tensor], rtc_s: int, rtc_d: int) -> torch.Tensor:
-        """Get an action chunk from the policy."""
-        chunk = self.policy.predict_action_chunk(observation, rtc_s=rtc_s, rtc_d=rtc_d)
-        if chunk.ndim != 3:
-            chunk = chunk.unsqueeze(0)  # adding batch dimension, now shape is (B, chunk_size, action_dim)
-
-        return chunk[:, : self.actions_per_chunk, :]
 
     def _predict_action_chunk(self, observation_t: TimedObservation) -> list[TimedAction]:
         """Predict an action chunk based on an observation"""
@@ -225,42 +201,50 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         """1. Prepare observation"""
         preprocessing_start = time.perf_counter()
         observation = self._prepare_observation(observation_t)
-        preprocessing_time = time.perf_counter() - preprocessing_start
 
         if self.last_processed_obs is None:
-            rtc_s = None
-            rtc_d = None
+            steps_since_chunk_start = None
+            inference_latency_steps = None
         else:
             # the number of ticks executed since the beginning of the last action chunk
-            rtc_s = observation_t.get_timestep() - self.last_processed_obs.get_timestep()
-            print(f"Calculated rtc_s: {rtc_s}")
-            # inference delay in ticks. TODO: calculate this from difference in timestamps, assuming clock sync.
-            rtc_d = 15
+            steps_since_chunk_start = observation_t.get_timestep() - self.last_processed_obs.get_timestep()
+            # round-trip inference latency in ticks.
+            inference_latency_steps = 15
 
         self.last_processed_obs: TimedObservation = observation_t
+        preprocessing_end = time.perf_counter()
 
-        """2. Get action chunk"""
-        inference_start = time.perf_counter()
-        action_tensor = self._get_action_chunk(observation, rtc_s=rtc_s, rtc_d=rtc_d)
-        inference_time = time.perf_counter() - inference_start
+        """2. Get action tensor"""
+        inference_start = preprocessing_end
+        action_tensor = self.policy.predict_action_chunk(observation, steps_since_chunk_start=steps_since_chunk_start, inference_latency_steps=inference_latency_steps)
+        if action_tensor.ndim != 3:
+            action_tensor = action_tensor.unsqueeze(0)  # adding batch dimension, now shape is (B, chunk_size, action_dim)
+        if action_tensor.shape[1] != self.actions_per_chunk:
+            raise ValueError(
+                f"Expected action tensor to have {self.actions_per_chunk} actions, got {action_tensor.shape[1]}. {action_tensor.shape=}"
+            )
+
+        inference_end = time.perf_counter()
 
         """3. Post-inference processing"""
-        postprocessing_start = time.perf_counter()
+        postprocessing_start = inference_end
         # Move to CPU before serializing
-        action_tensor = action_tensor.cpu().squeeze(0)
+        action_tensor = action_tensor.cpu().squeeze(0)  # remove the first dimension
 
         action_chunk = self._time_action_chunk(
             observation_t.get_timestamp(), list(action_tensor), observation_t.get_timestep()
         )
-        postprocessing_time = time.perf_counter() - postprocessing_start
-        total_time = time.perf_counter() - step_start
+        postprocessing_end = time.perf_counter()
+        total_time = postprocessing_end - step_start
 
-        self.logger.debug(
+        self.logger.info(
             f"Observation {observation_t.get_timestep()}"
-            f" | Preprocessing: {(preprocessing_time):.3f}s"
-            f" | Inference: {(inference_time):.3f}s"
-            f" | Postprocessing: {(postprocessing_time):.3f}s"
+            f" | Preprocessing: {(preprocessing_end - preprocessing_start):.3f}s"
+            f" | Inference: {(inference_end - inference_start):.3f}s"
+            f" | Postprocessing: {(postprocessing_end - postprocessing_start):.3f}s"
             f" | Total: {(total_time):.3f}s"
+            f" | {steps_since_chunk_start=}"
+            f" | {inference_latency_steps=}"
         )
 
         return action_chunk

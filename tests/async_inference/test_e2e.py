@@ -164,7 +164,6 @@ def test_async_inference_e2e(monkeypatch):
     server.wait_for_termination(timeout=5)
 
     assert action_chunks_received["count"] > 0, "Client did not receive any action chunks"
-    assert len(policy_server._predicted_timesteps) > 0, "Server did not record any predicted timesteps"
 
     # ------------------------------------------------------------------
     # 4. Stop the system

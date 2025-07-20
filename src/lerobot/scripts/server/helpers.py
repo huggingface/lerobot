@@ -58,15 +58,6 @@ def visualize_action_queue_size(action_queue_size: list[int]) -> None:
     plt.show()
 
 
-def validate_robot_cameras_for_policy(
-    lerobot_observation_features: dict[str, dict], policy_image_features: dict[str, PolicyFeature]
-) -> None:
-    image_keys = list(filter(is_image_key, lerobot_observation_features))
-    assert set(image_keys) == set(policy_image_features.keys()), (
-        f"Policy image features must match robot cameras! Received {list(policy_image_features.keys())} != {image_keys}"
-    )
-
-
 def map_robot_keys_to_lerobot_features(robot: Robot) -> dict[str, dict]:
     return hw_to_dataset_features(robot.observation_features, "observation", use_video=False)
 
@@ -234,38 +225,9 @@ class TimedAction(TimedData):
 @dataclass
 class TimedObservation(TimedData):
     observation: RawObservation
-    must_go: bool = False
 
     def get_observation(self):
         return self.observation
-
-
-@dataclass
-class FPSTracker:
-    """Utility class to track FPS metrics over time."""
-
-    target_fps: float
-    first_timestamp: float = None
-    total_obs_count: int = 0
-
-    def calculate_fps_metrics(self, current_timestamp: float) -> dict[str, float]:
-        """Calculate average FPS vs target"""
-        self.total_obs_count += 1
-
-        # Initialize first observation time
-        if self.first_timestamp is None:
-            self.first_timestamp = current_timestamp
-
-        # Calculate overall average FPS (since start)
-        total_duration = current_timestamp - self.first_timestamp
-        avg_fps = (self.total_obs_count - 1) / total_duration if total_duration > 1e-6 else 0.0
-
-        return {"avg_fps": avg_fps, "target_fps": self.target_fps}
-
-    def reset(self):
-        """Reset the FPS tracker state"""
-        self.first_timestamp = None
-        self.total_obs_count = 0
 
 
 @dataclass
@@ -273,32 +235,6 @@ class RemotePolicyConfig:
     server_args: dict[str, list[str]]
     lerobot_features: dict[str, PolicyFeature]
     actions_per_chunk: int
-
-
-def _compare_observation_states(obs1_state: torch.Tensor, obs2_state: torch.Tensor, atol: float) -> bool:
-    """Check if two observation states are similar, under a tolerance threshold"""
-    return bool(torch.linalg.norm(obs1_state - obs2_state) < atol)
-
-
-def observations_similar(
-    obs1: TimedObservation, obs2: TimedObservation, lerobot_features: dict[str, dict], atol: float = 1
-) -> bool:
-    """Check if two observations are similar, under a tolerance threshold. Measures distance between
-    observations as the difference in joint-space between the two observations.
-
-    NOTE(fracapuano): This is a very simple check, and it is enough for the current use case.
-    An immediate next step is to use (fast) perceptual difference metrics comparing some camera views,
-    to surpass this joint-space similarity check.
-    """
-    obs1_state = extract_state_from_raw_observation(
-        make_lerobot_observation(obs1.get_observation(), lerobot_features)
-    )
-    obs2_state = extract_state_from_raw_observation(
-        make_lerobot_observation(obs2.get_observation(), lerobot_features)
-    )
-
-    return _compare_observation_states(obs1_state, obs2_state, atol=atol)
-
 
 def aggregate_actions(current_queue: Queue[TimedAction], latest_action_timestep: int, incoming_actions: list[TimedAction], aggregate_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor]) -> Queue[TimedAction]:
     future_action_queue: Queue[TimedAction] = Queue()

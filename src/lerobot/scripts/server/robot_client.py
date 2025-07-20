@@ -63,7 +63,6 @@ from lerobot.scripts.server.configs import RobotClientConfig
 from lerobot.scripts.server.constants import SUPPORTED_ROBOTS
 from lerobot.scripts.server.helpers import (
     Action,
-    FPSTracker,
     Observation,
     RawObservation,
     RemotePolicyConfig,
@@ -71,7 +70,6 @@ from lerobot.scripts.server.helpers import (
     TimedObservation,
     get_logger,
     map_robot_keys_to_lerobot_features,
-    validate_robot_cameras_for_policy,
     visualize_action_queue_size,
     aggregate_actions,
 )
@@ -132,17 +130,10 @@ class RobotClient:
 
         self._chunk_size_threshold = config.chunk_size_threshold
 
-        self.actions_bytes_queue: Queue[bytes] = Queue()
         self.action_queue: Queue[TimedAction] = Queue()
         self.action_queue_size = []
 
-        # FPS measurement
-        self.fps_tracker = FPSTracker(target_fps=self.config.fps)
-
         self.logger.info("Robot connected and ready")
-
-        # Use an event for thread-safe coordination
-        # self.observation_bytes_queue: Queue[bytes] = Queue()
 
     def set_up_logger(self):
         self.logger = get_logger(self.prefix)
@@ -186,19 +177,6 @@ class RobotClient:
 
         self.channel.close()
         self.logger.debug("Client stopped, channel closed")
-
-    def _extract_actions_from_bytes_queue(self):
-        result: list[TimedAction] = []
-
-        while True:
-            try:
-                bytes = self.actions_bytes_queue.get_nowait()
-                actions: list[TimedAction] = pickle.loads(bytes)
-                result.extend(actions)
-            except queue.Empty:
-                break
-
-        return result
 
     def start_policy_client_thread(self):
         self.logger.info("Starting action receiver thread")
