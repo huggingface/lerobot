@@ -22,7 +22,7 @@ from unittest.mock import patch
 
 import pytest
 
-from lerobot.common.utils.process import ProcessSignalHandler
+from lerobot.utils.process import ProcessSignalHandler
 
 
 # Fixture to reset shutdown_event_counter and original signal handlers before and after each test
