@@ -405,7 +405,17 @@ class SmolVLAPolicy(PreTrainedPolicy):
         emm_beta = 0.8
         self.inference_latency_steps_emm = math.ceil(max(async_stats.inference_latency_steps, emm_beta * self.inference_latency_steps_emm))
 
-        actions = self.model.sample_actions(images, img_masks, lang_tokens, lang_masks, state, noise=noise, rtc_s=async_stats.steps_since_last_chunk_start, rtc_d=self.inference_latency_steps_emm)
+        actions = self.model.sample_actions(
+            images,
+            img_masks,
+            lang_tokens,
+            lang_masks,
+            state,
+            noise=noise,
+            rtc_s=async_stats.steps_since_last_chunk_start,
+            rtc_d=self.inference_latency_steps_emm,
+            rtc_soft_mask_length=self.config.inference_rtc_soft_mask_length,
+        )
 
         # Unpad actions
         original_action_dim = self.config.action_feature.shape[0]
@@ -617,7 +627,7 @@ def pad_tensor(tensor, max_len, pad_value=0):
 
     return padded_tensor
 
-def make_soft_mask(d: int, s: int, H: int, device) -> torch.Tensor:
+def make_soft_mask(d: int, s_end: int, H: int, device) -> torch.Tensor:
     """
     Soft-mask W (Eq. 5, RTC paper).
     Returns shape (H,) on `device`.
@@ -626,8 +636,8 @@ def make_soft_mask(d: int, s: int, H: int, device) -> torch.Tensor:
 
     # region masks
     first  = i < d
-    middle = (i >= d) & (i < H - s)
-    last   = i >= H - s
+    middle = (i >= d) & (i < s_end)
+    last   = i >= s_end
 
     # allocate
     w = torch.zeros(H, device=device, dtype=torch.float32)
@@ -637,7 +647,7 @@ def make_soft_mask(d: int, s: int, H: int, device) -> torch.Tensor:
 
     # middle region → c_i * (e^{c_i} − 1) / (e − 1)
     if middle.any():
-        c = (H - s - i[middle]) / (H - s - d + 1)        # c_i ∈ (0,1]
+        c = (s_end - i[middle]) / (s_end - d + 1)        # c_i ∈ (0,1]
         w[middle] = c * (torch.exp(c) - 1.0) / (math.e - 1.0)
 
     # last s steps already 0
@@ -910,7 +920,7 @@ class VLAFlowMatching(nn.Module):
         losses = F.mse_loss(u_t, v_t, reduction="none")
         return losses
 
-    def sample_actions(self, images, img_masks, lang_tokens, lang_masks, state, noise=None, rtc_s=None, rtc_d=None) -> Tensor:
+    def sample_actions(self, images, img_masks, lang_tokens, lang_masks, state, noise=None, rtc_s=None, rtc_d=None, rtc_soft_mask_length=None) -> Tensor:
         """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
         bsize = state.shape[0]
         device = state.device
@@ -940,13 +950,13 @@ class VLAFlowMatching(nn.Module):
             if rtc_s is None or rtc_d is None:
                 raise ValueError(f"rtc_s and rtc_d must be provided for RTC inference. {rtc_s=}, {rtc_d=}")
             
-            x_t = self.rtc_denoise(noise, bsize, dt, prefix_pad_masks, past_key_values, device, s=rtc_s, d=rtc_d)
+            x_t = self.rtc_denoise(noise, bsize, dt, prefix_pad_masks, past_key_values, device, s=rtc_s, d=rtc_d, soft_mask_length=rtc_soft_mask_length)
         else:
             x_t = self.euler_denoise(noise, bsize, dt, prefix_pad_masks, past_key_values, device)
 
         return x_t
 
-    def rtc_denoise(self, noise, bsize, dt, prefix_pad_masks, past_key_values, device, s, d):
+    def rtc_denoise(self, noise, bsize, dt, prefix_pad_masks, past_key_values, device, s, d, soft_mask_length):
         """
         Real-time chunking (RTC) denoising.
 
@@ -959,6 +969,7 @@ class VLAFlowMatching(nn.Module):
         - device: the device to run the denoising on
         - s: number of steps to not blend with the previous chunk
         - d: number of steps to blend with the previous chunk
+        - soft_mask_length: number of steps to blend with the previous chunk
 
         Reference:
         https://www.physicalintelligence.company/download/real_time_chunking.pdf
@@ -985,8 +996,12 @@ class VLAFlowMatching(nn.Module):
         denoise_time = 0
         grad_time = 0
 
-        # s_end = s
-        s_end = 75
+        # s_end is the number of steps in the end to not blend with the previous chunk
+        if soft_mask_length == -1:
+            s_end = s
+        else:
+            s_end = max(0, H - d - soft_mask_length)
+
         # Prepare the guidance mask
         W = make_soft_mask(d, s_end, H, device)
         W_row = W[None, :, None]            # broadcast to (B,H,M)
