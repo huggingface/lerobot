@@ -64,6 +64,7 @@ import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 from transformers import AutoProcessor
 
+from lerobot.configs.types import AsyncStats
 from lerobot.constants import ACTION, OBS_STATE
 from lerobot.policies.normalize import (
     Normalize,
@@ -356,6 +357,11 @@ class SmolVLAPolicy(PreTrainedPolicy):
 
         self.language_tokenizer = AutoProcessor.from_pretrained(self.config.vlm_model_name).tokenizer
         self.model = VLAFlowMatching(config)
+
+        # Exponential moving maximum of inference latency steps.
+        # This allows us to get the max inference latency with the opportunity to adapt to the current inference latency.
+        self.inference_latency_steps_emm = 0
+
         self.reset()
 
     def reset(self):
@@ -384,7 +390,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
     def get_optim_params(self) -> dict:
         return self.parameters()
 
-    def _get_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None, rtc_s: int | None = None, rtc_d: int | None = None) -> Tensor:
+    def _get_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None, async_stats: AsyncStats | None = None) -> Tensor:
         for k in batch:
             if k in self._queues:
                 batch[k] = torch.stack(list(self._queues[k]), dim=1)
@@ -393,7 +399,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
         state = self.prepare_state(batch)
         lang_tokens, lang_masks = self.prepare_language(batch)
 
-        actions = self.model.sample_actions(images, img_masks, lang_tokens, lang_masks, state, noise=noise, rtc_s=rtc_s, rtc_d=rtc_d)
+        actions = self.model.sample_actions(images, img_masks, lang_tokens, lang_masks, state, noise=noise, async_stats=async_stats)
 
         # Unpad actions
         original_action_dim = self.config.action_feature.shape[0]
@@ -415,17 +421,17 @@ class SmolVLAPolicy(PreTrainedPolicy):
         return batch
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None, steps_since_last_chunk_start: int | None = None, inference_latency_steps: int | None = None, **kwargs) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None, async_stats: AsyncStats | None = None, **kwargs) -> Tensor:
         self.eval()
 
         batch = self._prepare_batch(batch)
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
 
-        actions = self._get_action_chunk(batch, noise, rtc_s=steps_since_last_chunk_start, rtc_d=inference_latency_steps)
+        actions = self._get_action_chunk(batch, noise, async_stats=async_stats)
         return actions
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None, steps_since_last_chunk_start: int | None = None, inference_latency_steps: int | None = None, **kwargs) -> Tensor:
+    def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None, async_stats: AsyncStats | None = None, **kwargs) -> Tensor:
         """Select a single action given environment observations.
 
         This method wraps `select_actions` in order to return one action at a time for execution in the
@@ -439,7 +445,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
         # Action queue logic for n_action_steps > 1. When the action_queue is depleted, populate it by
         # querying the policy.
         if len(self._queues[ACTION]) == 0:
-            actions = self._get_action_chunk(batch, noise, rtc_s=steps_since_last_chunk_start, rtc_d=inference_latency_steps)
+            actions = self._get_action_chunk(batch, noise, async_stats=async_stats)
 
             # `self.predict_action_chunk` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
             # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
@@ -898,7 +904,7 @@ class VLAFlowMatching(nn.Module):
         losses = F.mse_loss(u_t, v_t, reduction="none")
         return losses
 
-    def sample_actions(self, images, img_masks, lang_tokens, lang_masks, state, noise=None, rtc_s=None, rtc_d=None) -> Tensor:
+    def sample_actions(self, images, img_masks, lang_tokens, lang_masks, state, noise=None, async_stats: AsyncStats | None = None) -> Tensor:
         """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
         bsize = state.shape[0]
         device = state.device
@@ -925,7 +931,16 @@ class VLAFlowMatching(nn.Module):
         dt = torch.tensor(dt, dtype=torch.float32, device=device)
 
         if self.config.inference_enable_rtc:
-            x_t = self.rtc_denoise(noise, bsize, dt, prefix_pad_masks, past_key_values, device, s=rtc_s, d=rtc_d)
+            if async_stats is None:
+                raise ValueError("async_stats must be provided for RTC inference. Are you running in async mode?")
+            
+            # Exponential moving maximum of inference latency steps.
+            # When there is a spike in inference latency, we will adapt to it, and slowly return to the nominal value.
+            # emm_beta is a decay factor for the exponential moving maximum.
+            emm_beta = 0.8
+            self.inference_latency_steps_emm = math.ceil(max(async_stats.inference_latency_steps, emm_beta * self.inference_latency_steps_emm))
+
+            x_t = self.rtc_denoise(noise, bsize, dt, prefix_pad_masks, past_key_values, device, s=async_stats.steps_since_last_chunk_start, d=self.inference_latency_steps_emm)
         else:
             x_t = self.euler_denoise(noise, bsize, dt, prefix_pad_masks, past_key_values, device)
 
@@ -1012,9 +1027,8 @@ class VLAFlowMatching(nn.Module):
         # if A_tau_d_err > 0.5:
         #     print(f"WARNING: [RTC] The first {d=} steps of the new chunk are too different from the previous chunk. This may result in jerky motion. {A_tau_d_err=}")
 
-        # For debugging.
-        # total_time = time.perf_counter() - total_start
-        # print(f"RTC denoising total time: {total_time:.2f}s | Denoise: {denoise_time:.2f}s | Grad: {grad_time:.2f}s")
+        total_time = time.perf_counter() - total_start
+        print(f"RTC denoising total time: {total_time:.2f}s | Denoise: {denoise_time:.2f}s | Grad: {grad_time:.2f}s | {s=} | {d=}")
 
         self.prev_chunk = A_tau
         return A_tau
