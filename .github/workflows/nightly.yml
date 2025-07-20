@@ -38,8 +38,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # This job builds a CPU image for testing & distribution
   build-docker-cpu-nightly:
-    # This job builds a CPU image for testing & distribution
     name: Build CPU Docker for Nightly
     runs-on:
       group: aws-general-8-plus
@@ -72,8 +72,8 @@ jobs:
           push: true
           tags: ${{ env.DOCKER_IMAGE_NAME_CPU }}
 
+  # This job builds a GPU image for testing & distribution
   build-docker-gpu-nightly:
-    # This job builds a GPU image for testing & distribution
     name: Build GPU Docker for Nightly
     runs-on:
       group: aws-general-8-plus
@@ -106,8 +106,8 @@ jobs:
           push: true
           tags: ${{ env.DOCKER_IMAGE_NAME_GPU }}
 
+  # This job runs the E2E tests + pytest with all extras in the CPU image
   nightly-cpu-tests:
-    # This job runs the E2E tests + pytest with all extras in the CPU image
     name: Nightly CPU Tests
     needs: [build-docker-cpu-nightly]
     runs-on:
@@ -132,8 +132,8 @@ jobs:
       - name: Run end-to-end tests
         run: make test-end-to-end
 
+  # This job runs the E2E tests + pytest with all extras in the GPU image
   nightly-gpu-tests:
-    # This job runs the E2E tests + pytest with all extras in the GPU image
     name: Nightly GPU Tests
     needs: [build-docker-gpu-nightly]
     runs-on:
