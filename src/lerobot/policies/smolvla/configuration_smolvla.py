@@ -111,6 +111,7 @@ class SmolVLAConfig(PreTrainedConfig):
     )  # Inference delay (in action steps). If -1, it is set automatically based on roundtrip inference time.
     inference_rtc_soft_mask_length: int = -1  # The length of the soft mask for RTC (in action steps). If -1, it is set automatically to chunk_size - d - t
     inference_rtc_beta: float = 5.0  # RTC maximum guidance weight.
+    inference_rtc_debug: bool = False  # Whether to enable debug mode for RTC. Will print debug information for RTC. RTC denoising will be slower.
 
     def __post_init__(self):
         super().__post_init__()
