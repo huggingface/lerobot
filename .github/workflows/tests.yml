@@ -148,8 +148,23 @@ jobs:
     runs-on:
       group: aws-general-8-plus
     outputs:
-      image_tag: ${{ env.DOCKER_IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}
+      image_tag: ${{ steps.set_tag.outputs.image_tag }}
+    env:
+      GITHUB_EVENT_NAME: ${{ github.event_name }}
+      GITHUB_REF: ${{ github.ref }}
+      GITHUB_PR_NUMBER: ${{ github.event.pull_request.number }}
     steps:
+      - name: Set Docker image tag
+        id: set_tag
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            TAG="${DOCKER_IMAGE_NAME}:latest"
+          elif [[ -n "${GITHUB_PR_NUMBER}" ]]; then
+            TAG="${DOCKER_IMAGE_NAME}:pr-${GITHUB_PR_NUMBER}"
+          else
+            TAG="${DOCKER_IMAGE_NAME}:pr-${GITHUB_REF##*/}"
+          fi
+          echo "image_tag=$TAG" >> $GITHUB_OUTPUT
       - name: Install Git LFS
         run: |
           sudo apt-get update
@@ -174,7 +189,7 @@ jobs:
           context: .
           file: ./docker/Dockerfile.internal
           push: true
-          tags: ${{ env.DOCKER_IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}
+          tags: ${{ steps.set_tag.outputs.image_tag }}
 
   gpu-tests:
     # This job runs pytest with all extras in a GPU enabled host
