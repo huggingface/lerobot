@@ -664,7 +664,7 @@ def pad_tensor(tensor, max_len, pad_value=0):
     return padded_tensor
 
 
-def make_soft_mask(d: int, s: int, H: int, device) -> torch.Tensor:
+def make_soft_mask(d: int, s: int, H: int, device) -> torch.Tensor:  # noqa: N803 # using upper case for H to match RTC paper
     """
     Soft-mask W (Eq. 5, RTC paper).
     Returns shape (H,) on `device`.
@@ -674,7 +674,6 @@ def make_soft_mask(d: int, s: int, H: int, device) -> torch.Tensor:
     # region masks
     first = i < d
     middle = (i >= d) & (i < s)
-    last = i >= s
 
     # allocate
     w = torch.zeros(H, device=device, dtype=torch.float32)
@@ -1043,14 +1042,13 @@ class VLAFlowMatching(nn.Module):
                 f"rtc_t, rtc_d and rtc_soft_mask_length must be provided for RTC denoising (current {rtc_t=}, {rtc_d=}, {rtc_soft_mask_length=})."
             )
 
-        # Prepare the previous chunk for guidance
-        A_prev = self.prev_chunk
+        # Prepare the previous chunk for guidance.
         # Rotate the second (time) dimension left by `t` steps and pad the right with zeros.
         # Keep the unexecuted part, pad the remainder with zeros.
-        pad = torch.zeros_like(A_prev[:, :rtc_t])
-        A_prev = torch.cat([A_prev[:, rtc_t:], pad], dim=1)
+        pad = torch.zeros_like(self.prev_chunk[:, :rtc_t])
+        A_prev = torch.cat([self.prev_chunk[:, rtc_t:], pad], dim=1) # noqa: N806
 
-        H = self.config.chunk_size
+        H = self.config.chunk_size # noqa: N806
 
         total_start = time.perf_counter()
         denoise_time = 0
@@ -1063,10 +1061,12 @@ class VLAFlowMatching(nn.Module):
             rtc_s = max(0, H - rtc_d - rtc_soft_mask_length)
 
         # Prepare the guidance mask
-        W = make_soft_mask(rtc_d, rtc_s, H, device)
-        W_row = W[None, :, None]  # broadcast to (B,H,M)
+        W = make_soft_mask(rtc_d, rtc_s, H, device) # noqa: N806
+        # broadcast to (B,H,M)
+        W_row = W[None, :, None] # noqa: N806
 
-        A_tau = noise  # A^0  ~ 𝒩(0,I)
+        # A^0  ~ 𝒩(0,I)
+        A_tau = noise # noqa: N806
         t = torch.tensor(1.0, device=device)
 
         while t >= -dt / 2:
@@ -1079,7 +1079,8 @@ class VLAFlowMatching(nn.Module):
             grad_start = time.perf_counter()
             A_tau.requires_grad_(True)
             with torch.enable_grad():
-                A_hat = A_tau + (1 - tau) * v_pi  # Â¹_tau   Eq. 3
+                # Â¹_tau   Eq. 3
+                A_hat = A_tau + (1 - tau) * v_pi # noqa: N806
                 err = (A_prev - A_hat) * W_row
                 grad_outputs = err.clone().detach()
                 g = torch.autograd.grad(A_hat, A_tau, grad_outputs, retain_graph=True)[0]
@@ -1088,18 +1089,19 @@ class VLAFlowMatching(nn.Module):
             r_sq = (1 - tau) ** 2 / (tau**2 + (1 - tau) ** 2)  # Eq. 4
             scale = min(self.config.inference_rtc_beta, (1 - tau) / (tau * r_sq))  # Eq.2
             # integration step  Eq. 1
-            A_tau = A_tau - dt * (v_pi + scale * g)
-            A_tau = A_tau.detach()  # stop grads before next step
+            A_tau = A_tau - dt * (v_pi + scale * g) # noqa: N806
+            # stop grads before next step
+            A_tau = A_tau.detach() # noqa: N806
 
             if self.config.inference_rtc_debug:
                 # For debugging. This makes the code slower
-                A_tau_d_err = (A_prev[:, :rtc_d] - A_tau[:, :rtc_d]).norm()
+                A_tau_d_err = (A_prev[:, :rtc_d] - A_tau[:, :rtc_d]).norm() # noqa: N806
                 print(f"[RTC Debug] t={t.item():.2f} tau={tau.item():.2f} err[:,:rtc_d].norm()={err[:,:rtc_d].norm().item():.2f} A_tau_d_err={A_tau_d_err.item():.2f} scale={scale:.2f} g.norm()={g.norm().item():.2f}")
 
             t += dt
 
         # sanity check: the first d steps of A_prev should be the similar to the first d steps of A_tau because of masking
-        A_tau_d_err = (A_prev[:,:rtc_d]-A_tau[:,:rtc_d]).norm()
+        A_tau_d_err = (A_prev[:,:rtc_d]-A_tau[:,:rtc_d]).norm() # noqa: N806
         if A_tau_d_err > 0.5:
             print(f"WARNING: [RTC] The first {rtc_d=} steps of the new chunk are too different from the previous chunk. This may result in jerky motion. {A_tau_d_err=}")
 
