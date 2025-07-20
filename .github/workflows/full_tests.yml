@@ -12,22 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# This workflow handles testing.
-name: Tests
+# This workflow handles full testing.
+name: Full Tests
 
 on:
   # Allows running this workflow manually from the Actions tab
   workflow_dispatch:
 
-  pull_request:
-    branches:
-      - main
-    paths:
-      - "src/**"
-      - "tests/**"
-      - ".github/workflows/**"
-      - "pyproject.toml"
-      - "Makefile"
   pull_request_review:
     types: [submitted]
   push:
@@ -49,67 +40,22 @@ env:
   PYTHON_VERSION: "3.10"
   DOCKER_IMAGE_NAME: huggingface/lerobot-gpu
 
-# Ensures that only the latest commit for a PR or branch is built, canceling older runs.
+# Ensures that only the latest action is built, canceling older runs.
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
 jobs:
-  # This job runs pytests with the default dependencies.
-  # It runs everytime we commit to a PR or push to main
-  fast-pytest-tests:
-    name: Fast Pytest Tests
-    if: |
-      github.event_name == 'pull_request' ||
-      github.event_name == 'push' ||
-      github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    env:
-      MUJOCO_GL: egl
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-          lfs: true
 
-      # TODO(Steven): Evaluate the need of these dependencies
-      - name: Install apt dependencies
-        run: |
-          sudo apt-get update && sudo apt-get install -y build-essential git \
-          curl libglib2.0-0 libegl1-mesa-dev ffmpeg \
-          libusb-1.0-0-dev speech-dispatcher libgeos-dev portaudio19-dev
-
-      - name: Setup uv and Python
-        uses: astral-sh/setup-uv@v6 # zizmor: ignore[unpinned-uses]
-        with:
-          enable-cache: true
-          version: ${{ env.UV_VERSION }}
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Install lerobot with test extras
-        run: uv sync --extra "test"
-
-      - name: Run pytest
-        run: uv run pytest tests -vv --maxfail=10
-
-  full-tests-gate:
-    # This job evaluates the need to run the full tests suite.
-    name: Full Tests Gate
+  # This job runs the E2E tests + pytest with all extras
+  # It runs everytime a PR is approved or a push to main
+  full-tests:
+    name: Full Tests
     runs-on: ubuntu-latest
     if: |
       (github.event_name == 'pull_request_review' && github.event.review.state == 'approved') ||
       github.event_name == 'push' ||
       github.event_name == 'workflow_dispatch'
-    steps:
-      - name: Gate check
-        run: echo "Full tests will run."
-
-  full-tests:
-    # This job runs the E2E tests + pytest with all extras
-    # It runs everytime a PR is approved or a push to main
-    name: Full Tests
-    needs: full-tests-gate
-    runs-on: ubuntu-latest
     env:
       MUJOCO_GL: egl
     steps:
@@ -140,16 +86,35 @@ jobs:
       - name: Run end-to-end tests
         run: uv run make test-end-to-end
 
+  # This job builds a GPU enabled image for testing
+  # It runs everytime a PR is approved or a push to main
+  # TODO(Steven): For now we skip this job for community PRs
   build-and-push-docker:
-    # This job builds a GPU enabled image for testing
-    # It runs everytime a PR is approved or a push to main
     name: Build and Push Docker
-    needs: full-tests-gate
     runs-on:
       group: aws-general-8-plus
+    if: |
+      (github.event_name == 'pull_request_review' && github.event.review.state == 'approved' && github.event.pull_request.head.repo.fork == false) ||
+      github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch'
     outputs:
-      image_tag: ${{ env.DOCKER_IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}
+      image_tag: ${{ steps.set_tag.outputs.image_tag }}
+    env:
+      GITHUB_EVENT_NAME: ${{ github.event_name }}
+      GITHUB_REF: ${{ github.ref }}
+      GITHUB_PR_NUMBER: ${{ github.event.pull_request.number }}
     steps:
+      - name: Set Docker image tag
+        id: set_tag
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            TAG="${DOCKER_IMAGE_NAME}:latest"
+          elif [[ -n "${GITHUB_PR_NUMBER}" ]]; then
+            TAG="${DOCKER_IMAGE_NAME}:pr-${GITHUB_PR_NUMBER}"
+          else
+            TAG="${DOCKER_IMAGE_NAME}:pr-${GITHUB_REF##*/}"
+          fi
+          echo "image_tag=$TAG" >> $GITHUB_OUTPUT
       - name: Install Git LFS
         run: |
           sudo apt-get update
@@ -174,11 +139,11 @@ jobs:
           context: .
           file: ./docker/Dockerfile.internal
           push: true
-          tags: ${{ env.DOCKER_IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}
+          tags: ${{ steps.set_tag.outputs.image_tag }}
 
+  # This job runs pytest with all extras in a GPU enabled host
+  # It runs everytime a test image is created
   gpu-tests:
-    # This job runs pytest with all extras in a GPU enabled host
-    # It runs everytime a test image is created
     name: GPU Tests
     needs: [build-and-push-docker]
     runs-on:
@@ -204,12 +169,12 @@ jobs:
       - name: Run end-to-end tests
         run: make test-end-to-end
 
+  # This job deletes the test image recently created
+  # It runs everytime after the gpu-tests have finished
   delete-pr-image:
-    # This job deletes the test image recently created
-    # It runs everytime after the gpu-tests have finished
     name: Delete PR Image
     needs: [gpu-tests, build-and-push-docker]
-    if: always() && github.event.review.state == 'approved' && needs.build-and-push-docker.result == 'success'
+    if: always() && ((github.event.review.state == 'approved') || (github.event_name == 'workflow_dispatch')) && needs.build-and-push-docker.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Get Docker Hub Token and Delete Image
