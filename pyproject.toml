@@ -125,6 +125,7 @@ hilserl = ["lerobot[transformers-dep]", "gym-hil>=0.1.9", "lerobot[grpcio-dep]",
 
 # Features
 async = ["lerobot[grpcio-dep]", "matplotlib>=3.10.3"]
+audio = ["sounddevice>=0.5.1", "soundfile>=0.13.1", "librosa>=0.11.0", "torchaudio>=2.6.0"]
 
 # Development
 dev = ["pre-commit>=3.7.0", "debugpy>=1.8.1", "lerobot[grpcio-dep]", "grpcio-tools==1.73.1"]
@@ -149,6 +150,7 @@ all = [
     "lerobot[smolvla]",
     "lerobot[hilserl]",
     "lerobot[async]",
+    "lerobot[audio]",
     "lerobot[dev]",
     "lerobot[test]",
     "lerobot[video_benchmark]",
