@@ -132,7 +132,9 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             self.logger.debug(f"Client {client_id} connected for action streaming")
 
             receive_start = time.perf_counter()
-            received_bytes = receive_bytes_in_chunks(request_iterator, None, self.shutdown_event, PolicyServer.prefix)
+            received_bytes = receive_bytes_in_chunks(
+                request_iterator, None, self.shutdown_event, PolicyServer.prefix
+            )
             receive_end = time.perf_counter()
             unpack_start = receive_end
             obs = pickle.loads(received_bytes)  # nosec
