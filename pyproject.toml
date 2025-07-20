@@ -123,6 +123,7 @@ hilserl = ["lerobot[transformers-dep]", "gym-hil>=0.1.9", "lerobot[grpcio-dep]",
 
 # Features
 async = ["lerobot[grpcio-dep]", "matplotlib>=3.10.3"]
+audio = ["sounddevice>=0.5.1", "soundfile>=0.13.1", "librosa>=0.11.0", "torchaudio>=2.6.0"]
 
 # Development
 docs = ["hf-doc-builder @ git+https://github.com/huggingface/doc-builder.git@main", "watchdog >= 6.0.0"]
@@ -147,6 +148,7 @@ all = [
     "lerobot[smolvla]",
     "lerobot[hilserl]",
     "lerobot[async]",
+    "lerobot[audio]",
     "lerobot[docs]",
     "lerobot[dev]",
     "lerobot[test]",
