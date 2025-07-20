@@ -399,7 +399,13 @@ class SmolVLAPolicy(PreTrainedPolicy):
         state = self.prepare_state(batch)
         lang_tokens, lang_masks = self.prepare_language(batch)
 
-        actions = self.model.sample_actions(images, img_masks, lang_tokens, lang_masks, state, noise=noise, async_stats=async_stats)
+        # Exponential moving maximum of inference latency steps.
+        # When there is a spike in inference latency, we will adapt to it, and slowly return to the nominal value.
+        # emm_beta is a decay factor for the exponential moving maximum.
+        emm_beta = 0.8
+        self.inference_latency_steps_emm = math.ceil(max(async_stats.inference_latency_steps, emm_beta * self.inference_latency_steps_emm))
+
+        actions = self.model.sample_actions(images, img_masks, lang_tokens, lang_masks, state, noise=noise, rtc_s=async_stats.steps_since_last_chunk_start, rtc_d=self.inference_latency_steps_emm)
 
         # Unpad actions
         original_action_dim = self.config.action_feature.shape[0]
@@ -904,7 +910,7 @@ class VLAFlowMatching(nn.Module):
         losses = F.mse_loss(u_t, v_t, reduction="none")
         return losses
 
-    def sample_actions(self, images, img_masks, lang_tokens, lang_masks, state, noise=None, async_stats: AsyncStats | None = None) -> Tensor:
+    def sample_actions(self, images, img_masks, lang_tokens, lang_masks, state, noise=None, rtc_s=None, rtc_d=None) -> Tensor:
         """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
         bsize = state.shape[0]
         device = state.device
@@ -931,16 +937,10 @@ class VLAFlowMatching(nn.Module):
         dt = torch.tensor(dt, dtype=torch.float32, device=device)
 
         if self.config.inference_enable_rtc:
-            if async_stats is None:
-                raise ValueError("async_stats must be provided for RTC inference. Are you running in async mode?")
+            if rtc_s is None or rtc_d is None:
+                raise ValueError(f"rtc_s and rtc_d must be provided for RTC inference. {rtc_s=}, {rtc_d=}")
             
-            # Exponential moving maximum of inference latency steps.
-            # When there is a spike in inference latency, we will adapt to it, and slowly return to the nominal value.
-            # emm_beta is a decay factor for the exponential moving maximum.
-            emm_beta = 0.8
-            self.inference_latency_steps_emm = math.ceil(max(async_stats.inference_latency_steps, emm_beta * self.inference_latency_steps_emm))
-
-            x_t = self.rtc_denoise(noise, bsize, dt, prefix_pad_masks, past_key_values, device, s=async_stats.steps_since_last_chunk_start, d=self.inference_latency_steps_emm)
+            x_t = self.rtc_denoise(noise, bsize, dt, prefix_pad_masks, past_key_values, device, s=rtc_s, d=rtc_d)
         else:
             x_t = self.euler_denoise(noise, bsize, dt, prefix_pad_masks, past_key_values, device)
 
