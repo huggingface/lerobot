@@ -32,6 +32,7 @@ import time
 import draccus
 import grpc
 from lerobot.configs import parser
+from lerobot.configs.types import AsyncStats
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.factory import get_policy_class
 from lerobot.scripts.server.configs import PolicyServerConfig
