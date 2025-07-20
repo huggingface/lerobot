@@ -32,7 +32,7 @@ import concurrent.futures
 import logging
 import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import numpy as np
 from PIL import Image
@@ -46,14 +46,14 @@ from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraCon
 logger = logging.getLogger(__name__)
 
 
-def find_all_opencv_cameras() -> List[Dict[str, Any]]:
+def find_all_opencv_cameras() -> list[dict[str, Any]]:
     """
     Finds all available OpenCV cameras plugged into the system.
 
     Returns:
         A list of all available OpenCV cameras with their metadata.
     """
-    all_opencv_cameras_info: List[Dict[str, Any]] = []
+    all_opencv_cameras_info: list[dict[str, Any]] = []
     logger.info("Searching for OpenCV cameras...")
     try:
         opencv_cameras = OpenCVCamera.find_cameras()
@@ -66,14 +66,14 @@ def find_all_opencv_cameras() -> List[Dict[str, Any]]:
     return all_opencv_cameras_info
 
 
-def find_all_realsense_cameras() -> List[Dict[str, Any]]:
+def find_all_realsense_cameras() -> list[dict[str, Any]]:
     """
     Finds all available RealSense cameras plugged into the system.
 
     Returns:
         A list of all available RealSense cameras with their metadata.
     """
-    all_realsense_cameras_info: List[Dict[str, Any]] = []
+    all_realsense_cameras_info: list[dict[str, Any]] = []
     logger.info("Searching for RealSense cameras...")
     try:
         realsense_cameras = RealSenseCamera.find_cameras()
@@ -88,7 +88,7 @@ def find_all_realsense_cameras() -> List[Dict[str, Any]]:
     return all_realsense_cameras_info
 
 
-def find_and_print_cameras(camera_type_filter: str | None = None) -> List[Dict[str, Any]]:
+def find_and_print_cameras(camera_type_filter: str | None = None) -> list[dict[str, Any]]:
     """
     Finds available cameras based on an optional filter and prints their information.
 
@@ -99,7 +99,7 @@ def find_and_print_cameras(camera_type_filter: str | None = None) -> List[Dict[s
     Returns:
         A list of all available cameras matching the filter, with their metadata.
     """
-    all_cameras_info: List[Dict[str, Any]] = []
+    all_cameras_info: list[dict[str, Any]] = []
 
     if camera_type_filter:
         camera_type_filter = camera_type_filter.lower()
@@ -153,7 +153,7 @@ def save_image(
         logger.error(f"Failed to save image for camera {camera_identifier} (type {camera_type}): {e}")
 
 
-def create_camera_instance(cam_meta: Dict[str, Any]) -> Dict[str, Any] | None:
+def create_camera_instance(cam_meta: dict[str, Any]) -> dict[str, Any] | None:
     """Create and connect to a camera instance based on metadata."""
     cam_type = cam_meta.get("type")
     cam_id = cam_meta.get("id")
@@ -190,7 +190,7 @@ def create_camera_instance(cam_meta: Dict[str, Any]) -> Dict[str, Any] | None:
 
 
 def process_camera_image(
-    cam_dict: Dict[str, Any], output_dir: Path, current_time: float
+    cam_dict: dict[str, Any], output_dir: Path, current_time: float
 ) -> concurrent.futures.Future | None:
     """Capture and process an image from a single camera."""
     cam = cam_dict["instance"]
@@ -216,7 +216,7 @@ def process_camera_image(
     return None
 
 
-def cleanup_cameras(cameras_to_use: List[Dict[str, Any]]):
+def cleanup_cameras(cameras_to_use: list[dict[str, Any]]):
     """Disconnect all cameras."""
     logger.info(f"Disconnecting {len(cameras_to_use)} cameras...")
     for cam_dict in cameras_to_use:
