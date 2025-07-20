@@ -1092,15 +1092,15 @@ class VLAFlowMatching(nn.Module):
             A_tau = A_tau.detach()  # stop grads before next step
 
             # For debugging. This makes the code slower
-            # A_tau_d_err = (A_prev[:,:d]-A_tau[:,:d]).norm()
-            # print(f"{t=} {tau=} {err[:,:d].norm()=} {A_tau_d_err=} {scale=} {g.norm()=}")
+            # A_tau_d_err = (A_prev[:,:rtc_d]-A_tau[:,:rtc_d]).norm()
+            # print(f"t={t.item():.2f} tau={tau.item():.2f} err[:,:rtc_d].norm()={err[:,:rtc_d].norm().item():.2f} A_tau_d_err={A_tau_d_err.item():.2f} scale={scale:.2f} g.norm()={g.norm().item():.2f}")
 
             t += dt
 
         # sanity check: the first d steps of A_prev should be the similar to the first d steps of A_tau because of masking
-        # A_tau_d_err = (A_prev[:,:d]-A_tau[:,:d]).norm()
-        # if A_tau_d_err > 0.5:
-        #     print(f"WARNING: [RTC] The first {d=} steps of the new chunk are too different from the previous chunk. This may result in jerky motion. {A_tau_d_err=}")
+        A_tau_d_err = (A_prev[:,:rtc_d]-A_tau[:,:rtc_d]).norm()
+        if A_tau_d_err > 0.5:
+            print(f"WARNING: [RTC] The first {rtc_d=} steps of the new chunk are too different from the previous chunk. This may result in jerky motion. {A_tau_d_err=}")
 
         total_time = time.perf_counter() - total_start
         print(
