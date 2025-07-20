@@ -227,8 +227,8 @@ class RobotClient:
             if not self.running:
                 break
 
-            get_actions_start = time.perf_counter()
-            get_actions_start_timestep = self.latest_action_timestep
+            inference_start = time.perf_counter()
+            inference_start_timestep = self.latest_action_timestep
             observation_iterator = send_bytes_in_chunks(
                 observation_bytes,
                 services_pb2.Observation,
@@ -239,11 +239,11 @@ class RobotClient:
             )
 
             actions_bytes = self.stub.GetActions(observation_iterator)
-            inference_latency_steps = self.latest_action_timestep - get_actions_start_timestep
-            get_actions_time = time.perf_counter() - get_actions_start
+            inference_latency_steps = self.latest_action_timestep - inference_start_timestep
+            inference_latency = time.perf_counter() - inference_start
 
             self.logger.info(
-                f"Observation {obs_timestep} | get_observation={get_observation_time:.3f}s | get_actions={get_actions_time:.3f}s | {inference_latency_steps=}"
+                f"Observation {obs_timestep} | get_observation={get_observation_time:.3f}s | inference_latency={inference_latency:.3f}s | {inference_latency_steps=}"
             )
 
             actions: list[TimedAction] = pickle.loads(actions_bytes.data)
