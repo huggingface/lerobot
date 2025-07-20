@@ -155,6 +155,19 @@ def filter_arg(field_to_filter: str, args: Sequence[str] | None = None) -> list[
 
 
 def filter_args_recursive(field_name: str, args: Sequence[str] | None = None) -> tuple[list[str], list[str]]:
+    """
+    Filters arguments for a given field and all its subfields.
+
+    Args:
+        field_name (str): The name of the field to filter arguments for.
+        args (Sequence[str] | None): The sequence of command-line arguments to be filtered.
+            Defaults to None.
+
+    Returns:
+        tuple[list[str], list[str]]: A tuple containing two lists:
+            - The first list contains arguments that start with the field name or subfield name.
+            - The second list contains arguments that do not start with the field name or subfield name.
+    """
     with_field = []
     without_field = []
 
