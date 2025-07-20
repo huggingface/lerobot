@@ -106,10 +106,8 @@ class SmolVLAConfig(PreTrainedConfig):
 
     # Inference settings
     inference_enable_rtc: bool = False  # Whether to enable real-time action chunking (RTC): https://www.physicalintelligence.company/research/real_time_chunking
-    inference_rtc_d: int = (
-        -1
-    )  # Inference delay (in action steps). If -1, it is set automatically based on roundtrip inference time.
-    inference_rtc_soft_mask_length: int = -1  # The length of the soft mask for RTC (in action steps). If -1, it is set automatically to chunk_size - d - s
+    inference_rtc_d: int = -1  # Inference delay (in action steps). If -1, it is set automatically based on roundtrip inference time.
+    inference_rtc_soft_mask_length: int = -1  # The length of the soft mask for RTC (in action steps). If -1, it is set automatically to chunk_size - d - t
     inference_rtc_beta: float = 5.0  # RTC maximum guidance weight.
 
     def __post_init__(self):

@@ -408,17 +408,22 @@ class SmolVLAPolicy(PreTrainedPolicy):
                 )
 
             rtc_t = async_stats.steps_since_last_chunk_start
-            rtc_d = self.inference_latency_steps_emm
+            if self.config.inference_rtc_d == -1:
+                # Exponential moving maximum of inference latency steps.
+                # When there is a spike in inference latency, we will adapt to it, and slowly return to the nominal value.
+                # emm_beta is a decay factor for the exponential moving maximum.
+                emm_beta = 0.8
+                self.inference_latency_steps_emm = math.ceil(
+                    max(async_stats.inference_latency_steps, emm_beta * self.inference_latency_steps_emm)
+                )
 
-            # Exponential moving maximum of inference latency steps.
-            # When there is a spike in inference latency, we will adapt to it, and slowly return to the nominal value.
-            # emm_beta is a decay factor for the exponential moving maximum.
-            emm_beta = 0.8
-            self.inference_latency_steps_emm = math.ceil(
-                max(async_stats.inference_latency_steps, emm_beta * self.inference_latency_steps_emm)
-            )
+                rtc_d = self.inference_latency_steps_emm
+            else:
+                # Use fixed inference delay if specified
+                rtc_d = self.config.inference_rtc_d
 
-            rtc_soft_mask_length = self.inference_latency_steps_emm
+            rtc_soft_mask_length = self.config.inference_rtc_soft_mask_length
+
         else:
             rtc_t = None
             rtc_d = None
