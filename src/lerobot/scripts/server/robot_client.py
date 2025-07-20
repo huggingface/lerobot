@@ -195,6 +195,8 @@ class RobotClient:
 
         self.logger.info("Starting GetActions loop")
 
+        inference_latency_steps = 0
+
         while self.running:
             get_observation_start = time.perf_counter()
             self.action_queue_lock.acquire()
@@ -214,9 +216,9 @@ class RobotClient:
             raw_observation["task"] = self.config.task
 
             observation = TimedObservation(
-                timestamp=time.time(),  # need time.time() to compare timestamps across client and server
                 observation=raw_observation,
                 timestep=obs_timestep,
+                inference_latency_steps=inference_latency_steps,
             )
 
             observation_bytes = pickle.dumps(observation)
@@ -226,6 +228,7 @@ class RobotClient:
                 break
 
             get_actions_start = time.perf_counter()
+            get_actions_start_timestep = self.latest_action_timestep
             observation_iterator = send_bytes_in_chunks(
                 observation_bytes,
                 services_pb2.Observation,
@@ -236,9 +239,10 @@ class RobotClient:
             )
 
             actions_bytes = self.stub.GetActions(observation_iterator)
+            inference_latency_steps = self.latest_action_timestep - get_actions_start_timestep
             get_actions_time = time.perf_counter() - get_actions_start
 
-            self.logger.info(f"Observation {obs_timestep} | get_observation={get_observation_time:.3f}s | get_actions={get_actions_time:.3f}s")
+            self.logger.info(f"Observation {obs_timestep} | get_observation={get_observation_time:.3f}s | get_actions={get_actions_time:.3f}s | {inference_latency_steps=}")
 
             actions: list[TimedAction] = pickle.loads(actions_bytes.data)
 
@@ -291,7 +295,7 @@ class RobotClient:
             # Periodically log the control loop stats
             if control_loop_end - last_log_time > 1.0:
                 self.logger.info(
-                    f"Ts={timed_action.get_timestamp():.3f} | step=#{timed_action.get_timestep():05d} | control_loop={control_loop_end - control_loop_start:.3f}s | sleep={time_to_sleep:.3f}s | get_action={get_action_end - get_action_start:.3f}s | perform_action={perform_action_end - perform_action_start:.3f}s | action_queue_size={action_queue_size:03d}"
+                    f"step=#{timed_action.get_timestep():05d} | control_loop={control_loop_end - control_loop_start:.3f}s | sleep={time_to_sleep:.3f}s | get_action={get_action_end - get_action_start:.3f}s | perform_action={perform_action_end - perform_action_start:.3f}s | action_queue_size={action_queue_size:03d}"
                 )
                 last_log_time = control_loop_end
 

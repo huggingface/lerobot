@@ -196,19 +196,13 @@ def get_logger(name: str, log_to_file: bool = True) -> logging.Logger:
 
 @dataclass
 class TimedData:
-    """A data object with timestamp and timestep information.
+    """A data object with timestep information.
 
     Args:
-        timestamp: Unix timestamp relative to data's creation.
-        data: The actual data to wrap a timestamp around.
         timestep: The timestep of the data.
     """
 
-    timestamp: float
     timestep: int
-
-    def get_timestamp(self):
-        return self.timestamp
 
     def get_timestep(self):
         return self.timestep
@@ -225,10 +219,13 @@ class TimedAction(TimedData):
 @dataclass
 class TimedObservation(TimedData):
     observation: RawObservation
+    inference_latency_steps: int
 
     def get_observation(self):
         return self.observation
 
+    def get_inference_latency_steps(self):
+        return self.inference_latency_steps
 
 @dataclass
 class RemotePolicyConfig:
@@ -254,7 +251,6 @@ def aggregate_actions(current_queue: Queue[TimedAction], latest_action_timestep:
         # TODO: There is probably a way to do this with broadcasting of the two action tensors
         future_action_queue.put(
             TimedAction(
-                timestamp=new_action.get_timestamp(),
                 timestep=new_action.get_timestep(),
                 action=aggregate_fn(
                     current_action_queue[new_action.get_timestep()], new_action.get_action()

@@ -40,3 +40,10 @@ class DictLike(Protocol):
 class PolicyFeature:
     type: FeatureType
     shape: tuple
+
+@dataclass
+class AsyncStats:
+    # the number of ticks executed since the beginning of the last action chunk
+    steps_since_last_chunk_start: int
+    # round-trip inference latency in ticks.
+    inference_latency_steps: int

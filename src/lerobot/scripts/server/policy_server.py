@@ -17,10 +17,7 @@ Example:
 ```shell
 python src/lerobot/scripts/server/policy_server.py \
      --host=127.0.0.1 \
-     --port=8080 \
-     --fps=30 \
-     --inference_latency=0.033 \
-     --obs_queue_timeout=1
+     --port=8080
 ```
 """
 
@@ -167,13 +164,13 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             self.logger.error(traceback.format_exc())
             raise
 
-    def _time_action_chunk(self, t_0: float, action_chunk: list[torch.Tensor], i_0: int) -> list[TimedAction]:
+    def _time_action_chunk(self, i_0: int, action_chunk: list[torch.Tensor]) -> list[TimedAction]:
         """Turn a chunk of actions into a list of TimedAction instances,
         with the first action corresponding to t_0 and the rest corresponding to
         t_0 + i*environment_dt for i in range(len(action_chunk))
         """
         return [
-            TimedAction(timestamp=t_0 + i * self.config.environment_dt, timestep=i_0 + i, action=action)
+            TimedAction(timestep=i_0 + i, action=action)
             for i, action in enumerate(action_chunk)
         ]
 
@@ -201,22 +198,25 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         """1. Prepare observation"""
         preprocessing_start = time.perf_counter()
         observation = self._prepare_observation(observation_t)
+        inference_latency_steps = observation_t.get_inference_latency_steps()
 
         if self.last_processed_obs is None:
-            steps_since_last_chunk_start = None
-            inference_latency_steps = None
+            async_stats = AsyncStats(
+                steps_since_last_chunk_start=0,
+                inference_latency_steps=inference_latency_steps,
+            )
         else:
-            # the number of ticks executed since the beginning of the last action chunk
-            steps_since_last_chunk_start = observation_t.get_timestep() - self.last_processed_obs.get_timestep()
-            # round-trip inference latency in ticks.
-            inference_latency_steps = 15
+            async_stats = AsyncStats(
+                steps_since_last_chunk_start=observation_t.get_timestep() - self.last_processed_obs.get_timestep(),
+                inference_latency_steps=inference_latency_steps,
+            )
 
         self.last_processed_obs: TimedObservation = observation_t
         preprocessing_end = time.perf_counter()
 
         """2. Get action tensor"""
         inference_start = preprocessing_end
-        action_tensor = self.policy.predict_action_chunk(observation, steps_since_last_chunk_start=steps_since_last_chunk_start, inference_latency_steps=inference_latency_steps)
+        action_tensor = self.policy.predict_action_chunk(observation, async_stats=async_stats)
         if action_tensor.ndim != 3:
             action_tensor = action_tensor.unsqueeze(0)  # adding batch dimension, now shape is (B, chunk_size, action_dim)
         if action_tensor.shape[1] != self.actions_per_chunk:
@@ -231,9 +231,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         # Move to CPU before serializing
         action_tensor = action_tensor.cpu().squeeze(0)  # remove the first dimension
 
-        action_chunk = self._time_action_chunk(
-            observation_t.get_timestamp(), list(action_tensor), observation_t.get_timestep()
-        )
+        action_chunk = self._time_action_chunk(observation_t.get_timestep(), list(action_tensor))
         postprocessing_end = time.perf_counter()
         total_time = postprocessing_end - step_start
 
@@ -243,8 +241,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             f" | Inference: {(inference_end - inference_start):.3f}s"
             f" | Postprocessing: {(postprocessing_end - postprocessing_start):.3f}s"
             f" | Total: {(total_time):.3f}s"
-            f" | {steps_since_last_chunk_start=}"
-            f" | {inference_latency_steps=}"
+            f" | {async_stats=}"
         )
 
         return action_chunk
