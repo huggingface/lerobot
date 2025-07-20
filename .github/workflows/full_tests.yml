@@ -60,7 +60,7 @@ jobs:
 
   # This job runs the E2E tests + pytest with all extras
   # It runs everytime a PR is approved or a push to main
-  full-tests:  
+  full-tests:
     name: Full Tests
     needs: full-tests-gate
     runs-on: ubuntu-latest
