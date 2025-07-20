@@ -1043,7 +1043,7 @@ class VLAFlowMatching(nn.Module):
         #     print(f"WARNING: [RTC] The first {d=} steps of the new chunk are too different from the previous chunk. This may result in jerky motion. {A_tau_d_err=}")
 
         total_time = time.perf_counter() - total_start
-        print(f"RTC denoising total time: {total_time:.2f}s | Denoise: {denoise_time:.2f}s | Grad: {grad_time:.2f}s | {d=} soft_mask={H-d-s} {s=}")
+        print(f"RTC denoising total time: {total_time:.2f}s | Denoise: {denoise_time:.2f}s | Grad: {grad_time:.2f}s | {d=} soft_mask={H-d-s_end} {s=}")
 
         self.prev_chunk = A_tau
         return A_tau
