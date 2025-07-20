@@ -203,11 +203,11 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         observation = self._prepare_observation(observation_t)
 
         if self.last_processed_obs is None:
-            steps_since_chunk_start = None
+            steps_since_last_chunk_start = None
             inference_latency_steps = None
         else:
             # the number of ticks executed since the beginning of the last action chunk
-            steps_since_chunk_start = observation_t.get_timestep() - self.last_processed_obs.get_timestep()
+            steps_since_last_chunk_start = observation_t.get_timestep() - self.last_processed_obs.get_timestep()
             # round-trip inference latency in ticks.
             inference_latency_steps = 15
 
@@ -216,7 +216,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
 
         """2. Get action tensor"""
         inference_start = preprocessing_end
-        action_tensor = self.policy.predict_action_chunk(observation, steps_since_chunk_start=steps_since_chunk_start, inference_latency_steps=inference_latency_steps)
+        action_tensor = self.policy.predict_action_chunk(observation, steps_since_last_chunk_start=steps_since_last_chunk_start, inference_latency_steps=inference_latency_steps)
         if action_tensor.ndim != 3:
             action_tensor = action_tensor.unsqueeze(0)  # adding batch dimension, now shape is (B, chunk_size, action_dim)
         if action_tensor.shape[1] != self.actions_per_chunk:
@@ -243,7 +243,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             f" | Inference: {(inference_end - inference_start):.3f}s"
             f" | Postprocessing: {(postprocessing_end - postprocessing_start):.3f}s"
             f" | Total: {(total_time):.3f}s"
-            f" | {steps_since_chunk_start=}"
+            f" | {steps_since_last_chunk_start=}"
             f" | {inference_latency_steps=}"
         )
 
