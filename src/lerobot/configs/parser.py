@@ -19,7 +19,7 @@ from argparse import ArgumentError
 from collections.abc import Sequence
 from functools import wraps
 from pathlib import Path
-from typing import Type, TypeVar, Optional, Union
+from typing import Optional, Type, TypeVar, Union
 
 import draccus
 
@@ -153,6 +153,7 @@ def get_type_arg(field_name: str, args: Sequence[str] | None = None) -> str | No
 def filter_arg(field_to_filter: str, args: Sequence[str] | None = None) -> list[str]:
     return [arg for arg in args if not arg.startswith(f"--{field_to_filter}=")]
 
+
 def filter_args_recursive(field_name: str, args: Sequence[str] | None = None) -> tuple[list[str], list[str]]:
     with_field = []
     without_field = []
@@ -162,7 +163,7 @@ def filter_args_recursive(field_name: str, args: Sequence[str] | None = None) ->
             with_field.append(arg)
         else:
             without_field.append(arg)
-    
+
     return with_field, without_field
 
 
@@ -198,10 +199,11 @@ def filter_path_args(fields_to_filter: str | list[str], args: Sequence[str] | No
 
     return filtered_args
 
+
 def parse(
-    config_class: Type[T],
-    config_path: Optional[Union[Path, str]] = None,
-    args: Optional[Sequence[str]] = None,
+    config_class: type[T],
+    config_path: Path | str | None = None,
+    args: Sequence[str] | None = None,
 ) -> T:
     """
     HACK: Similar to draccus.wrap but does three additional things:
@@ -232,6 +234,7 @@ def parse(
         cfg = draccus.parse(config_class=config_class, config_path=config_path, args=cli_args)
 
     return cfg
+
 
 def wrap(config_path: Path | None = None):
     def wrapper_outer(fn):

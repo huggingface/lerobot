@@ -18,8 +18,8 @@ import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 from queue import Queue
+from collections.abc import Callable
 
 import torch
 
@@ -227,13 +227,20 @@ class TimedObservation(TimedData):
     def get_inference_latency_steps(self):
         return self.inference_latency_steps
 
+
 @dataclass
 class RemotePolicyConfig:
     server_args: dict[str, list[str]]
     lerobot_features: dict[str, PolicyFeature]
     actions_per_chunk: int
 
-def aggregate_actions(current_queue: Queue[TimedAction], latest_action_timestep: int, incoming_actions: list[TimedAction], aggregate_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor]) -> Queue[TimedAction]:
+
+def aggregate_actions(
+    current_queue: Queue[TimedAction],
+    latest_action_timestep: int,
+    incoming_actions: list[TimedAction],
+    aggregate_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor],
+) -> Queue[TimedAction]:
     future_action_queue: Queue[TimedAction] = Queue()
 
     current_action_queue = {action.get_timestep(): action.get_action() for action in current_queue.queue}
@@ -252,9 +259,7 @@ def aggregate_actions(current_queue: Queue[TimedAction], latest_action_timestep:
         future_action_queue.put(
             TimedAction(
                 timestep=new_action.get_timestep(),
-                action=aggregate_fn(
-                    current_action_queue[new_action.get_timestep()], new_action.get_action()
-                ),
+                action=aggregate_fn(current_action_queue[new_action.get_timestep()], new_action.get_action()),
             )
         )
 

@@ -41,6 +41,7 @@ class PolicyFeature:
     type: FeatureType
     shape: tuple
 
+
 @dataclass
 class AsyncStats:
     # the number of ticks executed since the beginning of the last action chunk

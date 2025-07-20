@@ -390,7 +390,9 @@ class SmolVLAPolicy(PreTrainedPolicy):
     def get_optim_params(self) -> dict:
         return self.parameters()
 
-    def _get_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None, async_stats: AsyncStats | None = None) -> Tensor:
+    def _get_action_chunk(
+        self, batch: dict[str, Tensor], noise: Tensor | None = None, async_stats: AsyncStats | None = None
+    ) -> Tensor:
         for k in batch:
             if k in self._queues:
                 batch[k] = torch.stack(list(self._queues[k]), dim=1)
@@ -401,16 +403,20 @@ class SmolVLAPolicy(PreTrainedPolicy):
 
         if self.config.inference_enable_rtc:
             if async_stats is None:
-                raise ValueError("async_stats must be provided for RTC inference. Are you running in async mode?")
-            
+                raise ValueError(
+                    "async_stats must be provided for RTC inference. Are you running in async mode?"
+                )
+
             rtc_t = async_stats.steps_since_last_chunk_start
             rtc_d = self.inference_latency_steps_emm
-            
+
             # Exponential moving maximum of inference latency steps.
             # When there is a spike in inference latency, we will adapt to it, and slowly return to the nominal value.
             # emm_beta is a decay factor for the exponential moving maximum.
             emm_beta = 0.8
-            self.inference_latency_steps_emm = math.ceil(max(async_stats.inference_latency_steps, emm_beta * self.inference_latency_steps_emm))
+            self.inference_latency_steps_emm = math.ceil(
+                max(async_stats.inference_latency_steps, emm_beta * self.inference_latency_steps_emm)
+            )
 
             rtc_soft_mask_length = self.inference_latency_steps_emm
         else:
@@ -450,7 +456,13 @@ class SmolVLAPolicy(PreTrainedPolicy):
         return batch
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None, async_stats: AsyncStats | None = None, **kwargs) -> Tensor:
+    def predict_action_chunk(
+        self,
+        batch: dict[str, Tensor],
+        noise: Tensor | None = None,
+        async_stats: AsyncStats | None = None,
+        **kwargs,
+    ) -> Tensor:
         self.eval()
 
         batch = self._prepare_batch(batch)
@@ -460,7 +472,13 @@ class SmolVLAPolicy(PreTrainedPolicy):
         return actions
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None, async_stats: AsyncStats | None = None, **kwargs) -> Tensor:
+    def select_action(
+        self,
+        batch: dict[str, Tensor],
+        noise: Tensor | None = None,
+        async_stats: AsyncStats | None = None,
+        **kwargs,
+    ) -> Tensor:
         """Select a single action given environment observations.
 
         This method wraps `select_actions` in order to return one action at a time for execution in the
@@ -640,6 +658,7 @@ def pad_tensor(tensor, max_len, pad_value=0):
 
     return padded_tensor
 
+
 def make_soft_mask(d: int, s_end: int, H: int, device) -> torch.Tensor:
     """
     Soft-mask W (Eq. 5, RTC paper).
@@ -648,9 +667,9 @@ def make_soft_mask(d: int, s_end: int, H: int, device) -> torch.Tensor:
     i = torch.arange(H, device=device, dtype=torch.float32)
 
     # region masks
-    first  = i < d
+    first = i < d
     middle = (i >= d) & (i < s_end)
-    last   = i >= s_end
+    last = i >= s_end
 
     # allocate
     w = torch.zeros(H, device=device, dtype=torch.float32)
@@ -660,11 +679,12 @@ def make_soft_mask(d: int, s_end: int, H: int, device) -> torch.Tensor:
 
     # middle region → c_i * (e^{c_i} − 1) / (e − 1)
     if middle.any():
-        c = (s_end - i[middle]) / (s_end - d + 1)        # c_i ∈ (0,1]
+        c = (s_end - i[middle]) / (s_end - d + 1)  # c_i ∈ (0,1]
         w[middle] = c * (torch.exp(c) - 1.0) / (math.e - 1.0)
 
     # last s steps already 0
     return w
+
 
 class VLAFlowMatching(nn.Module):
     """
@@ -933,7 +953,18 @@ class VLAFlowMatching(nn.Module):
         losses = F.mse_loss(u_t, v_t, reduction="none")
         return losses
 
-    def sample_actions(self, images, img_masks, lang_tokens, lang_masks, state, noise=None, rtc_t=None, rtc_d=None, rtc_soft_mask_length=None) -> Tensor:
+    def sample_actions(
+        self,
+        images,
+        img_masks,
+        lang_tokens,
+        lang_masks,
+        state,
+        noise=None,
+        rtc_t=None,
+        rtc_d=None,
+        rtc_soft_mask_length=None,
+    ) -> Tensor:
         """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
         bsize = state.shape[0]
         device = state.device
@@ -960,13 +991,25 @@ class VLAFlowMatching(nn.Module):
         dt = torch.tensor(dt, dtype=torch.float32, device=device)
 
         if self.config.inference_enable_rtc:
-            x_t = self.rtc_denoise(noise, bsize, dt, prefix_pad_masks, past_key_values, device, t=rtc_t, d=rtc_d, soft_mask_length=rtc_soft_mask_length)
+            x_t = self.rtc_denoise(
+                noise,
+                bsize,
+                dt,
+                prefix_pad_masks,
+                past_key_values,
+                device,
+                t=rtc_t,
+                d=rtc_d,
+                soft_mask_length=rtc_soft_mask_length,
+            )
         else:
             x_t = self.euler_denoise(noise, bsize, dt, prefix_pad_masks, past_key_values, device)
 
         return x_t
 
-    def rtc_denoise(self, noise, bsize, dt, prefix_pad_masks, past_key_values, device, t, d, soft_mask_length):
+    def rtc_denoise(
+        self, noise, bsize, dt, prefix_pad_masks, past_key_values, device, t, d, soft_mask_length
+    ):
         """
         Real-time chunking (RTC) denoising.
 
@@ -989,9 +1032,11 @@ class VLAFlowMatching(nn.Module):
             x_t = self.euler_denoise(noise, bsize, dt, prefix_pad_masks, past_key_values, device)
             self.prev_chunk = x_t
             return x_t
-        
+
         if t is None or d is None or soft_mask_length is None:
-            raise ValueError(f"t, d and soft_mask_length must be provided for RTC denoising (current {t=}, {d=}, {soft_mask_length=}).")
+            raise ValueError(
+                f"t, d and soft_mask_length must be provided for RTC denoising (current {t=}, {d=}, {soft_mask_length=})."
+            )
 
         # Prepare the previous chunk for guidance
         A_prev = self.prev_chunk
@@ -1014,13 +1059,13 @@ class VLAFlowMatching(nn.Module):
 
         # Prepare the guidance mask
         W = make_soft_mask(d, s, H, device)
-        W_row = W[None, :, None]            # broadcast to (B,H,M)
+        W_row = W[None, :, None]  # broadcast to (B,H,M)
 
-        A_tau = noise                         # A^0  ~ 𝒩(0,I)
-        t  = torch.tensor(1.0, device=device)
+        A_tau = noise  # A^0  ~ 𝒩(0,I)
+        t = torch.tensor(1.0, device=device)
 
         while t >= -dt / 2:
-            tau = 1 - t # tau goes from 0 to 1, to be consistent with the paper
+            tau = 1 - t  # tau goes from 0 to 1, to be consistent with the paper
             # ΠGDM guidance
             denoise_start = time.perf_counter()
             v_pi = -self.denoise_step(prefix_pad_masks, past_key_values, A_tau, t.expand(bsize))
@@ -1029,17 +1074,17 @@ class VLAFlowMatching(nn.Module):
             grad_start = time.perf_counter()
             A_tau.requires_grad_(True)
             with torch.enable_grad():
-                A_hat = A_tau + (1 - tau) * v_pi     # Â¹_tau   Eq. 3
-                err   = (A_prev - A_hat) * W_row
+                A_hat = A_tau + (1 - tau) * v_pi  # Â¹_tau   Eq. 3
+                err = (A_prev - A_hat) * W_row
                 grad_outputs = err.clone().detach()
                 g = torch.autograd.grad(A_hat, A_tau, grad_outputs, retain_graph=True)[0]
             grad_time += time.perf_counter() - grad_start
 
-            r_sq = (1 - tau)**2 / (tau**2 + (1 - tau)**2) # Eq. 4
+            r_sq = (1 - tau) ** 2 / (tau**2 + (1 - tau) ** 2)  # Eq. 4
             scale = min(self.config.inference_rtc_beta, (1 - tau) / (tau * r_sq))  # Eq.2
             # integration step  Eq. 1
             A_tau = A_tau - dt * (v_pi + scale * g)
-            A_tau = A_tau.detach() # stop grads before next step
+            A_tau = A_tau.detach()  # stop grads before next step
 
             # For debugging. This makes the code slower
             # A_tau_d_err = (A_prev[:,:d]-A_tau[:,:d]).norm()
@@ -1053,7 +1098,9 @@ class VLAFlowMatching(nn.Module):
         #     print(f"WARNING: [RTC] The first {d=} steps of the new chunk are too different from the previous chunk. This may result in jerky motion. {A_tau_d_err=}")
 
         total_time = time.perf_counter() - total_start
-        print(f"RTC denoising total time: {total_time:.2f}s | Denoise: {denoise_time:.2f}s | Grad: {grad_time:.2f}s | {t=} {d=} soft_mask={H-d-s} {s=}")
+        print(
+            f"RTC denoising total time: {total_time:.2f}s | Denoise: {denoise_time:.2f}s | Grad: {grad_time:.2f}s | {t=} {d=} soft_mask={H - d - s} {s=}"
+        )
 
         self.prev_chunk = A_tau
         return A_tau

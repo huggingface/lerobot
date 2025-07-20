@@ -17,7 +17,6 @@ from dataclasses import dataclass, field
 
 import torch
 
-from lerobot.configs.policies import PreTrainedConfig
 from lerobot.robots.config import RobotConfig
 from lerobot.scripts.server.constants import DEFAULT_FPS
 

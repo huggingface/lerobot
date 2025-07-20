@@ -34,23 +34,20 @@ python src/lerobot/scripts/server/robot_client.py \
 
 import logging
 import pickle  # nosec
-import threading
 import sys
+import threading
 import time
-from collections.abc import Callable
 from dataclasses import asdict
 from pprint import pformat
 from queue import Queue
-from typing import Any
 
 import draccus
 import grpc
 import torch
 
-from lerobot.configs import parser
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
-from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs import parser
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -68,10 +65,10 @@ from lerobot.scripts.server.helpers import (
     RemotePolicyConfig,
     TimedAction,
     TimedObservation,
+    aggregate_actions,
     get_logger,
     map_robot_keys_to_lerobot_features,
     visualize_action_queue_size,
-    aggregate_actions,
 )
 from lerobot.transport import (
     services_pb2,  # type: ignore
@@ -80,13 +77,14 @@ from lerobot.transport import (
 from lerobot.transport.utils import grpc_channel_options, send_bytes_in_chunks
 from lerobot.utils import queue
 from lerobot.utils.process import ProcessSignalHandler
-from lerobot.utils.queue import get_last_item_from_queue
 
 
 class RobotClient:
     prefix = "robot_client"
 
-    def __init__(self, config: RobotClientConfig, server_args: dict[str, list[str]], shutdown_event: threading.Event):
+    def __init__(
+        self, config: RobotClientConfig, server_args: dict[str, list[str]], shutdown_event: threading.Event
+    ):
         """Initialize RobotClient with unified configuration.
 
         Args:
@@ -156,7 +154,9 @@ class RobotClient:
             policy_config_bytes = pickle.dumps(self.policy_config)
             policy_setup = services_pb2.PolicySetup(data=policy_config_bytes)
 
-            self.logger.info(f"Sending policy instructions to policy server. Server args: {self.policy_config.server_args}")
+            self.logger.info(
+                f"Sending policy instructions to policy server. Server args: {self.policy_config.server_args}"
+            )
 
             self.stub.SendPolicyInstructions(policy_setup)
 
@@ -242,15 +242,19 @@ class RobotClient:
             inference_latency_steps = self.latest_action_timestep - get_actions_start_timestep
             get_actions_time = time.perf_counter() - get_actions_start
 
-            self.logger.info(f"Observation {obs_timestep} | get_observation={get_observation_time:.3f}s | get_actions={get_actions_time:.3f}s | {inference_latency_steps=}")
+            self.logger.info(
+                f"Observation {obs_timestep} | get_observation={get_observation_time:.3f}s | get_actions={get_actions_time:.3f}s | {inference_latency_steps=}"
+            )
 
             actions: list[TimedAction] = pickle.loads(actions_bytes.data)
 
             if len(actions) > 0:
                 with self.action_queue_lock:
                     # TODO: use cv
-                    self.action_queue = aggregate_actions(self.action_queue, self.latest_action_timestep, actions, self.config.aggregate_fn)
-            
+                    self.action_queue = aggregate_actions(
+                        self.action_queue, self.latest_action_timestep, actions, self.config.aggregate_fn
+                    )
+
             time.sleep(self.config.environment_dt)
 
         self.logger.info("GetActions loop stopped")
@@ -290,7 +294,10 @@ class RobotClient:
             self.action_queue_size.append(action_queue_size)
             control_loop_end = time.perf_counter()
 
-            time_to_sleep = min(self.config.environment_dt, max(0, self.config.environment_dt - (control_loop_end - control_loop_start)))
+            time_to_sleep = min(
+                self.config.environment_dt,
+                max(0, self.config.environment_dt - (control_loop_end - control_loop_start)),
+            )
 
             # Periodically log the control loop stats
             if control_loop_end - last_log_time > 1.0:
@@ -301,9 +308,10 @@ class RobotClient:
 
             time.sleep(time_to_sleep)
 
+
 def async_client():
     cli_args = sys.argv[1:]
-    
+
     # Filter out args that we simply pass through to the policy server
     server_args = []
     for arg in RobotClientConfig.server_args:

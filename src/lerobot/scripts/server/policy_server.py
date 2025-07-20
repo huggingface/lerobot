@@ -21,19 +21,21 @@ python src/lerobot/scripts/server/policy_server.py \
 ```
 """
 
-from concurrent import futures
-from dataclasses import asdict
 import logging
 import pickle
-from pprint import pformat
 import threading
 import time
+from concurrent import futures
+from dataclasses import asdict
+from pprint import pformat
 
 import draccus
 import grpc
+import torch
+
 from lerobot.configs import parser
-from lerobot.configs.types import AsyncStats
 from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs.types import AsyncStats
 from lerobot.policies.factory import get_policy_class
 from lerobot.scripts.server.configs import PolicyServerConfig
 from lerobot.scripts.server.constants import SUPPORTED_POLICIES
@@ -47,7 +49,6 @@ from lerobot.scripts.server.helpers import (
 )
 from lerobot.transport import services_pb2, services_pb2_grpc
 from lerobot.transport.utils import receive_bytes_in_chunks
-import torch
 
 
 class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
@@ -107,8 +108,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
 
         if policy_config.type not in SUPPORTED_POLICIES:
             raise ValueError(
-                f"Policy type '{policy_config.type}' not supported. "
-                f"Supported policies: {SUPPORTED_POLICIES}"
+                f"Policy type '{policy_config.type}' not supported. Supported policies: {SUPPORTED_POLICIES}"
             )
 
         policy_class = get_policy_class(policy_config.type)
@@ -162,6 +162,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         except Exception as e:
             self.logger.error(f"Error processing observation from client {client_id}: {str(e)}")
             import traceback
+
             self.logger.error(traceback.format_exc())
             raise
 
@@ -170,10 +171,7 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         with the first action corresponding to t_0 and the rest corresponding to
         t_0 + i*environment_dt for i in range(len(action_chunk))
         """
-        return [
-            TimedAction(timestep=i_0 + i, action=action)
-            for i, action in enumerate(action_chunk)
-        ]
+        return [TimedAction(timestep=i_0 + i, action=action) for i, action in enumerate(action_chunk)]
 
     def _prepare_observation(self, observation_t: TimedObservation) -> Observation:
         """
@@ -208,7 +206,8 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
             )
         else:
             async_stats = AsyncStats(
-                steps_since_last_chunk_start=observation_t.get_timestep() - self.last_processed_obs.get_timestep(),
+                steps_since_last_chunk_start=observation_t.get_timestep()
+                - self.last_processed_obs.get_timestep(),
                 inference_latency_steps=inference_latency_steps,
             )
 
@@ -219,7 +218,9 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         inference_start = preprocessing_end
         action_tensor = self.policy.predict_action_chunk(observation, async_stats=async_stats)
         if action_tensor.ndim != 3:
-            action_tensor = action_tensor.unsqueeze(0)  # adding batch dimension, now shape is (B, chunk_size, action_dim)
+            action_tensor = action_tensor.unsqueeze(
+                0
+            )  # adding batch dimension, now shape is (B, chunk_size, action_dim)
         if action_tensor.shape[1] != self.actions_per_chunk:
             raise ValueError(
                 f"Expected action tensor to have {self.actions_per_chunk} actions, got {action_tensor.shape[1]}. {action_tensor.shape=}"
