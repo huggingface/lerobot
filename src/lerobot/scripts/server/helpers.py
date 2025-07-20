@@ -16,10 +16,10 @@ import logging
 import logging.handlers
 import os
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from queue import Queue
-from collections.abc import Callable
 
 import torch
 

@@ -19,7 +19,7 @@ from argparse import ArgumentError
 from collections.abc import Sequence
 from functools import wraps
 from pathlib import Path
-from typing import Optional, Type, TypeVar, Union
+from typing import TypeVar
 
 import draccus
 
