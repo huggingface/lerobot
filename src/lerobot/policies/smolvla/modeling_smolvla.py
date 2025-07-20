@@ -998,9 +998,9 @@ class VLAFlowMatching(nn.Module):
                 prefix_pad_masks,
                 past_key_values,
                 device,
-                t=rtc_t,
-                d=rtc_d,
-                soft_mask_length=rtc_soft_mask_length,
+                rtc_t=rtc_t,
+                rtc_d=rtc_d,
+                rtc_soft_mask_length=rtc_soft_mask_length,
             )
         else:
             x_t = self.euler_denoise(noise, bsize, dt, prefix_pad_masks, past_key_values, device)
@@ -1008,7 +1008,7 @@ class VLAFlowMatching(nn.Module):
         return x_t
 
     def rtc_denoise(
-        self, noise, bsize, dt, prefix_pad_masks, past_key_values, device, t, d, soft_mask_length
+        self, noise, bsize, dt, prefix_pad_masks, past_key_values, device, rtc_t, rtc_d, rtc_soft_mask_length
     ):
         """
         Real-time chunking (RTC) denoising.
@@ -1033,17 +1033,17 @@ class VLAFlowMatching(nn.Module):
             self.prev_chunk = x_t
             return x_t
 
-        if t is None or d is None or soft_mask_length is None:
+        if rtc_t is None or rtc_d is None or rtc_soft_mask_length is None:
             raise ValueError(
-                f"t, d and soft_mask_length must be provided for RTC denoising (current {t=}, {d=}, {soft_mask_length=})."
+                f"rtc_t, rtc_d and rtc_soft_mask_length must be provided for RTC denoising (current {rtc_t=}, {rtc_d=}, {rtc_soft_mask_length=})."
             )
 
         # Prepare the previous chunk for guidance
         A_prev = self.prev_chunk
         # Rotate the second (time) dimension left by `t` steps and pad the right with zeros.
         # Keep the unexecuted part, pad the remainder with zeros.
-        pad = torch.zeros_like(A_prev[:, :t])
-        A_prev = torch.cat([A_prev[:, t:], pad], dim=1)
+        pad = torch.zeros_like(A_prev[:, :rtc_t])
+        A_prev = torch.cat([A_prev[:, rtc_t:], pad], dim=1)
 
         H = self.config.chunk_size
 
@@ -1052,13 +1052,13 @@ class VLAFlowMatching(nn.Module):
         grad_time = 0
 
         # s is the number of steps in the end to not blend with the previous chunk
-        if soft_mask_length == -1:
-            s = t
+        if rtc_soft_mask_length == -1:
+            rtc_s = rtc_t
         else:
-            s = max(0, H - d - soft_mask_length)
+            rtc_s = max(0, H - rtc_d - rtc_soft_mask_length)
 
         # Prepare the guidance mask
-        W = make_soft_mask(d, s, H, device)
+        W = make_soft_mask(rtc_d, rtc_s, H, device)
         W_row = W[None, :, None]  # broadcast to (B,H,M)
 
         A_tau = noise  # A^0  ~ 𝒩(0,I)
@@ -1099,7 +1099,7 @@ class VLAFlowMatching(nn.Module):
 
         total_time = time.perf_counter() - total_start
         print(
-            f"RTC denoising total time: {total_time:.2f}s | Denoise: {denoise_time:.2f}s | Grad: {grad_time:.2f}s | {t=} {d=} soft_mask={H - d - s} {s=}"
+            f"RTC denoising total time: {total_time:.2f}s | Denoise: {denoise_time:.2f}s | Grad: {grad_time:.2f}s | {rtc_t=} {rtc_d=} {rtc_s=}"
         )
 
         self.prev_chunk = A_tau
