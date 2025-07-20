@@ -7,7 +7,6 @@ with larger batch sizes and more complex tensor operations.
 """
 
 import time
-from typing import Dict, Tuple
 
 import numpy as np
 import torch

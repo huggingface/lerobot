@@ -7,7 +7,6 @@ with pre-allocated tensor operations in the PI0 policy.
 """
 
 import time
-from typing import Dict, Tuple
 
 import numpy as np
 import torch
