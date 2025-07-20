@@ -15,7 +15,7 @@
 """
 Replays the actions of an episode from a dataset on a robot.
 
-Example:
+Examples:
 
 ```shell
 python -m lerobot.replay \
@@ -25,6 +25,18 @@ python -m lerobot.replay \
     --dataset.repo_id=aliberts/record-test \
     --dataset.episode=2
 ```
+
+Example replay with bimanual so100:
+```shell
+python -m lerobot.replay \
+  --robot.type=bi_so100_follower \
+  --robot.left_arm_port=/dev/tty.usbmodem5A460851411 \
+  --robot.right_arm_port=/dev/tty.usbmodem5A460812391 \
+  --robot.id=bimanual_follower \
+  --dataset.repo_id=${HF_USER}/bimanual-so100-handover-cube \
+  --dataset.episode=0
+```
+
 """
 
 import logging
@@ -39,6 +51,7 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
+    bi_so100_follower,
     hope_jr,
     koch_follower,
     make_robot_from_config,
