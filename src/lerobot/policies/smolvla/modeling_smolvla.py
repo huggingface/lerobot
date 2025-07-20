@@ -659,7 +659,7 @@ def pad_tensor(tensor, max_len, pad_value=0):
     return padded_tensor
 
 
-def make_soft_mask(d: int, s_end: int, H: int, device) -> torch.Tensor:
+def make_soft_mask(d: int, s: int, H: int, device) -> torch.Tensor:
     """
     Soft-mask W (Eq. 5, RTC paper).
     Returns shape (H,) on `device`.
@@ -668,8 +668,8 @@ def make_soft_mask(d: int, s_end: int, H: int, device) -> torch.Tensor:
 
     # region masks
     first = i < d
-    middle = (i >= d) & (i < s_end)
-    last = i >= s_end
+    middle = (i >= d) & (i < s)
+    last = i >= s
 
     # allocate
     w = torch.zeros(H, device=device, dtype=torch.float32)
@@ -679,7 +679,7 @@ def make_soft_mask(d: int, s_end: int, H: int, device) -> torch.Tensor:
 
     # middle region → c_i * (e^{c_i} − 1) / (e − 1)
     if middle.any():
-        c = (s_end - i[middle]) / (s_end - d + 1)  # c_i ∈ (0,1]
+        c = (s - i[middle]) / (s - d + 1)  # c_i ∈ (0,1]
         w[middle] = c * (torch.exp(c) - 1.0) / (math.e - 1.0)
 
     # last s steps already 0
