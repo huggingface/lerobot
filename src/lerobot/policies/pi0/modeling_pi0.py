@@ -21,6 +21,7 @@
 [Jax code](https://github.com/Physical-Intelligence/openpi)
 
 Designed by Physical Intelligence. Ported from Jax by Hugging Face.
+Disclaimer: It is not expected to perform as well as the original implementation.
 
 Install pi0 extra dependencies:
 ```bash
