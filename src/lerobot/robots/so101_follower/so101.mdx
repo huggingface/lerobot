@@ -34,6 +34,8 @@ The follower arm uses 6x STS3215 motors with 1/345 gearing. The leader, however,
 
 Remove all support material from the 3D-printed parts. The easiest way to do this is using a small screwdriver to get underneath the support material.
 
+It is advisable to install one 3-pin cable in the motor after placing them before continuing assembly.
+
 ### Joint 1
 
 - Place the first motor into the base.
@@ -157,7 +159,7 @@ Remove all support material from the 3D-printed parts. The easiest way to do thi
 
 ### 1. Find the USB ports associated with each arm
 
-To find the port for each bus servo adapter, run this script:
+To find the port for each bus servo adapter, connect MotorBus to your computer via USB and power. Run the following script and disconnect the MotorBus when prompted:
 
 ```bash
 python -m lerobot.find_port
