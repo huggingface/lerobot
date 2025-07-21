@@ -234,11 +234,11 @@ class OpenCVCamera(Camera):
         fourcc_code = cv2.VideoWriter_fourcc(*self.config.fourcc)
         success = self.videocapture.set(cv2.CAP_PROP_FOURCC, fourcc_code)
         actual_fourcc_code = self.videocapture.get(cv2.CAP_PROP_FOURCC)
-        
+
         # Convert actual FOURCC code back to string for comparison
         actual_fourcc_code_int = int(actual_fourcc_code)
         actual_fourcc = "".join([chr((actual_fourcc_code_int >> 8 * i) & 0xFF) for i in range(4)])
-        
+
         if not success or actual_fourcc != self.config.fourcc:
             logger.warning(
                 f"{self} failed to set fourcc={self.config.fourcc} (actual={actual_fourcc}, success={success}). "
@@ -264,7 +264,7 @@ class OpenCVCamera(Camera):
             )
 
     @staticmethod
-    def find_cameras() -> List[Dict[str, Any]]:
+    def find_cameras() -> list[dict[str, Any]]:
         """
         Detects available OpenCV cameras connected to the system.
 
@@ -291,12 +291,12 @@ class OpenCVCamera(Camera):
                 default_height = int(camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
                 default_fps = camera.get(cv2.CAP_PROP_FPS)
                 default_format = camera.get(cv2.CAP_PROP_FORMAT)
-                
+
                 # Get FOURCC code and convert to string
                 default_fourcc_code = camera.get(cv2.CAP_PROP_FOURCC)
                 default_fourcc_code_int = int(default_fourcc_code)
                 default_fourcc = "".join([chr((default_fourcc_code_int >> 8 * i) & 0xFF) for i in range(4)])
-                
+
                 camera_info = {
                     "name": f"OpenCV Camera @ {target}",
                     "type": "OpenCV",
