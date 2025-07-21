@@ -597,9 +597,6 @@ class ReplayBuffer:
             # Add to the dataset's buffer
             lerobot_dataset.add_frame(frame_dict)
 
-            # Move to next frame
-            # frame_idx_in_episode += 1
-
             # If we reached an episode boundary, call save_episode, reset counters
             if self.dones[actual_idx] or self.truncateds[actual_idx]:
                 lerobot_dataset.save_episode()

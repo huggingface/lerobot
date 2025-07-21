@@ -55,6 +55,9 @@ from lerobot.datasets.utils import (
     DEFAULT_DATA_PATH,
     DEFAULT_VIDEO_FILE_SIZE_IN_MB,
     DEFAULT_VIDEO_PATH,
+    LEGACY_EPISODES_PATH,
+    LEGACY_EPISODES_STATS_PATH,
+    LEGACY_TASKS_PATH,
     cast_stats_to_numpy,
     concat_video_files,
     flatten_dict,
@@ -69,12 +72,6 @@ from lerobot.datasets.utils import (
     write_stats,
     write_tasks,
 )
-
-LEGACY_EPISODES_PATH = "meta/episodes.jsonl"
-LEGACY_EPISODES_STATS_PATH = "meta/episodes_stats.jsonl"
-LEGACY_TASKS_PATH = "meta/tasks.jsonl"
-LEGACY_DEFAULT_VIDEO_PATH = "videos/chunk-{episode_chunk:03d}/{video_key}/episode_{episode_index:06d}.mp4"
-LEGACY_DEFAULT_PARQUET_PATH = "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet"
 
 V21 = "v2.1"
 

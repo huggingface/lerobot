@@ -58,7 +58,6 @@ def validate_all_metadata(all_metadata: list[LeRobotDatasetMetadata]):
         ValueError: If any metadata has different fps, robot_type, or features
                    than the first metadata in the list.
     """
-    # validate same fps, robot_type, features
 
     fps = all_metadata[0].fps
     robot_type = all_metadata[0].robot_type
@@ -178,7 +177,6 @@ def aggregate_datasets(
     """
     logging.info("Start aggregate_datasets")
 
-    # Use default constants if parameters not provided
     if data_files_size_in_mb is None:
         data_files_size_in_mb = DEFAULT_DATA_FILE_SIZE_IN_MB
     if video_files_size_in_mb is None:
@@ -186,7 +184,6 @@ def aggregate_datasets(
     if chunk_size is None:
         chunk_size = DEFAULT_CHUNK_SIZE
 
-    # Load metadata
     all_metadata = (
         [LeRobotDatasetMetadata(repo_id) for repo_id in repo_ids]
         if roots is None
@@ -197,7 +194,6 @@ def aggregate_datasets(
     fps, robot_type, features = validate_all_metadata(all_metadata)
     video_keys = [key for key in features if features[key]["dtype"] == "video"]
 
-    # Initialize output dataset metadata
     dst_meta = LeRobotDatasetMetadata.create(
         repo_id=aggr_repo_id,
         fps=fps,
@@ -206,12 +202,10 @@ def aggregate_datasets(
         root=aggr_root,
     )
 
-    # Aggregate task info
     logging.info("Find all tasks")
     unique_tasks = pd.concat([m.tasks for m in all_metadata]).index.unique()
     dst_meta.tasks = pd.DataFrame({"task_index": range(len(unique_tasks))}, index=unique_tasks)
 
-    # Track counters and indices
     meta_idx = {"chunk": 0, "file": 0}
     data_idx = {"chunk": 0, "file": 0}
     videos_idx = {
@@ -220,7 +214,6 @@ def aggregate_datasets(
 
     dst_meta.episodes = {}
 
-    # Process each dataset
     for src_meta in tqdm.tqdm(all_metadata, desc="Copy data and videos"):
         videos_idx = aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chunk_size)
         data_idx = aggregate_data(src_meta, dst_meta, data_idx, data_files_size_in_mb, chunk_size)
@@ -232,11 +225,6 @@ def aggregate_datasets(
 
     finalize_aggregation(dst_meta, all_metadata)
     logging.info("Aggregation complete.")
-
-
-# -------------------------------
-# Helper Functions
-# -------------------------------
 
 
 def aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chunk_size):
@@ -256,7 +244,6 @@ def aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chu
         dict: Updated videos_idx with current chunk and file indices.
     """
     for key, video_idx in videos_idx.items():
-        # Get unique (chunk, file) combinations
         unique_chunk_file_pairs = {
             (chunk, file)
             for chunk, file in zip(
@@ -265,10 +252,8 @@ def aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chu
                 strict=False,
             )
         }
-        # Multiple files should be looped increasing the iteration index
         unique_chunk_file_pairs = sorted(unique_chunk_file_pairs)
 
-        # Current target chunk/file index
         chunk_idx = video_idx["chunk"]
         file_idx = video_idx["file"]
 
@@ -459,10 +444,8 @@ def append_or_create_parquet_file(
     Returns:
         dict: Updated index dictionary with current chunk and file indices.
     """
-    # Initial destination path - use the correct default_path parameter
     dst_path = aggr_root / default_path.format(chunk_index=idx["chunk"], file_index=idx["file"])
 
-    # If destination file doesn't exist, just write the new one
     if not dst_path.exists():
         dst_path.parent.mkdir(parents=True, exist_ok=True)
         if contains_images:
@@ -471,19 +454,16 @@ def append_or_create_parquet_file(
             df.to_parquet(dst_path)
         return idx
 
-    # Otherwise, check if we exceed the size limit
     src_size = get_parquet_file_size_in_mb(src_path)
     dst_size = get_parquet_file_size_in_mb(dst_path)
 
     if dst_size + src_size >= max_mb:
-        # File is too large, move to a new one
         idx["chunk"], idx["file"] = update_chunk_file_indices(idx["chunk"], idx["file"], chunk_size)
         new_path = aggr_root / default_path.format(chunk_index=idx["chunk"], file_index=idx["file"])
         new_path.parent.mkdir(parents=True, exist_ok=True)
         final_df = df
         target_path = new_path
     else:
-        # Append to existing file
         existing_df = pd.read_parquet(dst_path)
         final_df = pd.concat([existing_df, df], ignore_index=True)
         target_path = dst_path
