@@ -108,7 +108,7 @@ class SwanLabLogger:
         # SwanLab doesn't have direct artifact logging like wandb
         # We'll log the model file path as a text log for now
         model_path = str(checkpoint_dir / PRETRAINED_MODEL_DIR / SAFETENSORS_SINGLE_FILE)
-        self._swanlab.log({f"model_checkpoint/{step_id}": model_path})
+        self._swanlab.log({"model_checkpoint": self._swanlab.Text(model_path)}, step=step_id)
 
     def log_dict(
         self, d: dict, step: int | None = None, mode: str = "train", custom_step_key: str | None = None
