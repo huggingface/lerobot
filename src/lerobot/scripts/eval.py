@@ -72,7 +72,7 @@ from lerobot.envs.utils import add_envs_task, check_env_attributes_and_types
 from lerobot.policies.factory import make_policy
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import get_device_from_parameters
-from lerobot.processor import RobotProcessor, TransitionIndex, VanillaObservationProcessor
+from lerobot.processor import RobotProcessor, TransitionKey, VanillaObservationProcessor
 from lerobot.utils.io_utils import write_video
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import (
@@ -160,7 +160,7 @@ def rollout(
         # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
         transition = (observation, None, None, None, None, None, None)
         processed_transition = obs_processor(transition)
-        observation = processed_transition[TransitionIndex.OBSERVATION]
+        observation = processed_transition[TransitionKey.OBSERVATION]
         if return_observations:
             all_observations.append(deepcopy(observation))
 
@@ -211,7 +211,7 @@ def rollout(
     if return_observations:
         transition = (observation, None, None, None, None, None, None)
         processed_transition = obs_processor(transition)
-        observation = processed_transition[TransitionIndex.OBSERVATION]
+        observation = processed_transition[TransitionKey.OBSERVATION]
         all_observations.append(deepcopy(observation))
 
     # Stack the sequence along the first dimension so that we have (batch, sequence, *) tensors.

@@ -22,7 +22,7 @@ from gymnasium.utils.env_checker import check_env
 
 import lerobot
 from lerobot.envs.factory import make_env, make_env_config
-from lerobot.processor import RobotProcessor, TransitionIndex, VanillaObservationProcessor
+from lerobot.processor import RobotProcessor, TransitionKey, VanillaObservationProcessor
 from tests.utils import require_env
 
 OBS_TYPES = ["state", "pixels", "pixels_agent_pos"]
@@ -53,7 +53,7 @@ def test_factory(env_name):
     obs_processor = RobotProcessor([VanillaObservationProcessor()])
     transition = (obs, None, None, None, None, None, None)
     processed_transition = obs_processor(transition)
-    obs = processed_transition[TransitionIndex.OBSERVATION]
+    obs = processed_transition[TransitionKey.OBSERVATION]
 
     # test image keys are float32 in range [0,1]
     for key in obs:
