@@ -306,6 +306,9 @@ class PI0Policy(PreTrainedPolicy):
                 lm_head_key = key
             elif key.endswith(".paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight"):
                 embed_tokens_key = key
+            
+            if lm_head_key and embed_tokens_key:
+                break
 
         # If we have lm_head.weight but not embed_tokens.weight, create the embed_tokens entry
         if lm_head_key and not embed_tokens_key:
