@@ -225,7 +225,6 @@ def say(text: str, blocking: bool = False):
 
 def log_say(text: str, play_sounds: bool = True, blocking: bool = False):
     logging.info(text)
-    print(text)
 
     if play_sounds:
         say(text, blocking)

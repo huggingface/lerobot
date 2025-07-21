@@ -102,10 +102,9 @@ class KochLeader(Teleoperator):
         for motor in self.bus.motors:
             self.bus.write("Operating_Mode", motor, OperatingMode.EXTENDED_POSITION.value)
 
-        # TODO(jackvial): Revert this and create an issue. Inverting drive should be part of config or calibration not hard coded here
-        # self.bus.write("Drive_Mode", "elbow_flex", DriveMode.INVERTED.value)
+        # The elbow flex drive mode was previously set to inverted, this ensures that it's no longer
+        # inverted and motors that had the drive mode inverted will be set back to non-inverted.
         self.bus.write("Drive_Mode", "elbow_flex", DriveMode.NON_INVERTED.value)
-        # drive_modes = {motor: 1 if motor == "elbow_flex" else 0 for motor in self.bus.motors}
         drive_modes = dict.fromkeys(self.bus.motors, 0)
 
         input(f"Move {self} to the middle of its range of motion and press ENTER....")
