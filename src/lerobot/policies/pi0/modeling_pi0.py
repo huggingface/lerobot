@@ -21,24 +21,35 @@
 [Jax code](https://github.com/Physical-Intelligence/openpi)
 
 Designed by Physical Intelligence. Ported from Jax by Hugging Face.
-┌──────────────────────────────┐
-│               actions        │
-│               ▲              │
-│              ┌┴─────┐        │
-│  kv cache    │Gemma │        │
-│  ┌──────────►│Expert│        │
-│  │           │      │        │
-│ ┌┴────────┐  │x 10  │        │
-│ │         │  └▲──▲──┘        │
-│ │PaliGemma│   │  │           │
-│ │         │   │  robot state │
-│ │         │   noise          │
-│ └▲──▲─────┘                  │
-│  │  │                        │
-│  │  image(s)                 │
-│  language tokens             │
-└──────────────────────────────┘
-"""
+
+Disclaimer: It is not expected to perform as well as the original implementation.
+
+Install pi0 extra dependencies:
+```bash
+pip install -e ".[pi0]"
+```
+
+Example of finetuning the pi0 pretrained model (`pi0_base` in `openpi`):
+```bash
+python -m lerobot.scripts.train \
+--policy.path=lerobot/pi0 \
+--dataset.repo_id=danaaubakirova/koch_test
+```
+
+Example of finetuning the pi0 neural network with PaliGemma and expert Gemma
+pretrained with VLM default parameters before pi0 finetuning:
+```bash
+python -m lerobot.scripts.train \
+--policy.type=pi0 \
+--dataset.repo_id=danaaubakirova/koch_test
+```
+
+Example of using the pi0 pretrained model outside LeRobot training framework:
+```python
+policy = Pi0Policy.from_pretrained("lerobot/pi0")
+```
+
+
 
 import math
 from collections import deque
@@ -250,6 +261,16 @@ class PI0Policy(PreTrainedPolicy):
 
     def get_optim_params(self) -> dict:
         return self.parameters()
+
+    @classmethod
+    def from_pretrained(cls, *args, **kwargs):
+        """Override the from_pretrained method to display important disclaimer."""
+        print(
+            "⚠️  DISCLAIMER: The PI0 model is ported from JAX by the Hugging Face team. \n"
+            "   It is not expected to perform as well as the original implementation. \n"
+            "   Original implementation: https://github.com/Physical-Intelligence/openpi"
+        )
+        return super().from_pretrained(*args, **kwargs)
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
