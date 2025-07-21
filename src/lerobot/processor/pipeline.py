@@ -21,7 +21,8 @@ import os
 from dataclasses import dataclass, field
 from enum import IntEnum
 from pathlib import Path
-from typing import Any, Callable, Iterable, Protocol, Sequence
+from typing import Any, Protocol
+from collections.abc import Callable, Iterable, Sequence
 
 import torch
 from huggingface_hub import ModelHubMixin, hf_hub_download
@@ -502,10 +503,10 @@ class RobotProcessor(ModelHubMixin):
             Loading with overrides for non-serializable objects:
             ```python
             import gym
+
             env = gym.make("CartPole-v1")
             processor = RobotProcessor.from_pretrained(
-                "username/cartpole-processor",
-                overrides={"ActionRepeatStep": {"env": env}}
+                "username/cartpole-processor", overrides={"ActionRepeatStep": {"env": env}}
             )
             ```
 
@@ -515,8 +516,8 @@ class RobotProcessor(ModelHubMixin):
                 "path/to/processor",
                 overrides={
                     "CustomStep": {"param1": "new_value"},
-                    "device_processor": {"device": "cuda:1"}  # For registered steps
-                }
+                    "device_processor": {"device": "cuda:1"},  # For registered steps
+                },
             )
             ```
         """
@@ -913,7 +914,7 @@ class InfoProcessor:
 
             def info(self, info):
                 info = info.copy()  # Create a copy to avoid modifying the original
-                info['steps'] = self.step_count
+                info["steps"] = self.step_count
                 self.step_count += 1
                 return info
 
