@@ -17,9 +17,7 @@ import contextlib
 import importlib.resources
 import json
 import logging
-import shutil
 import subprocess
-import tempfile
 from collections.abc import Iterator
 from pathlib import Path
 from pprint import pformat
@@ -107,12 +105,6 @@ def get_hf_dataset_size_in_mb(hf_ds: Dataset) -> int:
     return hf_ds.data.nbytes / (1024**2)
 
 
-def get_pd_dataframe_size_in_mb(df: pandas.DataFrame) -> int:
-    # TODO(rcadene): unused?
-    memory_usage_bytes = df.memory_usage(deep=True).sum()
-    return memory_usage_bytes / (1024**2)
-
-
 def update_chunk_file_indices(chunk_idx: int, file_idx: int, chunks_size: int):
     if file_idx == chunks_size - 1:
         file_idx = 0
@@ -149,40 +141,6 @@ def get_video_size_in_mb(mp4_path: Path):
     file_size_bytes = mp4_path.stat().st_size
     file_size_mb = file_size_bytes / (1024**2)
     return file_size_mb
-
-
-def concat_video_files(paths_to_cat: list[Path], root: Path, video_key: str, chunk_idx: int, file_idx: int):
-    # TODO(rcadene): move to video_utils.py
-    # TODO(rcadene): add docstring
-    tmp_dir = Path(tempfile.mkdtemp(dir=root))
-    # Create a text file with the list of files to concatenate
-    path_concat_video_files = tmp_dir / "concat_video_files.txt"
-    with open(path_concat_video_files, "w") as f:
-        for ep_path in paths_to_cat:
-            f.write(f"file '{str(ep_path)}'\n")
-
-    path_tmp_output = tmp_dir / "tmp_output.mp4"
-    command = [
-        "ffmpeg",
-        "-y",
-        "-f",
-        "concat",
-        "-safe",
-        "0",
-        "-i",
-        str(path_concat_video_files),
-        "-c",
-        "copy",
-        str(path_tmp_output),
-    ]
-    subprocess.run(command, check=True)
-
-    output_path = root / DEFAULT_VIDEO_PATH.format(
-        video_key=video_key, chunk_index=chunk_idx, file_index=file_idx
-    )
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(path_tmp_output), str(output_path))
-    shutil.rmtree(str(tmp_dir))
 
 
 def get_video_duration_in_s(mp4_file: Path):

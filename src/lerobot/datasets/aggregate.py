@@ -31,7 +31,6 @@ from lerobot.datasets.utils import (
     DEFAULT_EPISODES_PATH,
     DEFAULT_VIDEO_FILE_SIZE_IN_MB,
     DEFAULT_VIDEO_PATH,
-    concat_video_files,
     get_parquet_file_size_in_mb,
     get_video_size_in_mb,
     to_parquet_with_hf_images,
@@ -40,6 +39,7 @@ from lerobot.datasets.utils import (
     write_stats,
     write_tasks,
 )
+from lerobot.datasets.video_utils import concat_video_files
 
 
 def validate_all_metadata(all_metadata: list[LeRobotDatasetMetadata]):

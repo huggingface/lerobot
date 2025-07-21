@@ -59,7 +59,6 @@ from lerobot.datasets.utils import (
     LEGACY_EPISODES_STATS_PATH,
     LEGACY_TASKS_PATH,
     cast_stats_to_numpy,
-    concat_video_files,
     flatten_dict,
     get_parquet_file_size_in_mb,
     get_parquet_num_frames,
@@ -72,6 +71,7 @@ from lerobot.datasets.utils import (
     write_stats,
     write_tasks,
 )
+from lerobot.datasets.video_utils import concat_video_files
 
 V21 = "v2.1"
 

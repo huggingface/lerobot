@@ -21,11 +21,7 @@ from tqdm import tqdm
 
 from lerobot.datasets.compute_stats import aggregate_stats, get_feature_stats, sample_indices
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.utils import serialize_dict
-
-### LEGACY FUNCTIONS REMOVED FROM UTILS ###
-
-LEGACY_EPISODES_STATS_PATH = "episodes_stats.jsonl"
+from lerobot.datasets.utils import LEGACY_EPISODES_STATS_PATH, serialize_dict
 
 
 def append_jsonlines(data: dict, fpath: Path) -> None:
@@ -39,9 +35,6 @@ def legacy_write_episode_stats(episode_index: int, episode_stats: dict, local_di
     # is a dictionary of stats and not an integer.
     episode_stats = {"episode_index": episode_index, "stats": serialize_dict(episode_stats)}
     append_jsonlines(episode_stats, local_dir / LEGACY_EPISODES_STATS_PATH)
-
-
-######## END OF LEGACY FUNCTIONS ########
 
 
 def sample_episode_video_frames(dataset: LeRobotDataset, episode_index: int, ft_key: str) -> np.ndarray:

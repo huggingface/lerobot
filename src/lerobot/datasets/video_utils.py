@@ -16,7 +16,9 @@
 import importlib
 import json
 import logging
+import shutil
 import subprocess
+import tempfile
 import warnings
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -28,6 +30,8 @@ import torch
 import torchvision
 from datasets.features.features import register_feature
 from PIL import Image
+
+from lerobot.datasets.utils import DEFAULT_VIDEO_PATH
 
 
 def get_safe_default_codec():
@@ -298,6 +302,59 @@ def encode_video_frames(
             f"Video encoding did not work. File not found: {video_path}. "
             f"Try running the command manually to debug: `{''.join(ffmpeg_cmd)}`"
         )
+
+
+def concat_video_files(paths_to_cat: list[Path], root: Path, video_key: str, chunk_idx: int, file_idx: int):
+    """
+    Concatenate multiple video files into a single video file using ffmpeg.
+
+    This function takes a list of video file paths and concatenates them into a single
+    output video file. It uses ffmpeg's concat demuxer with stream copy mode for fast
+    concatenation without re-encoding.
+
+    Args:
+        paths_to_cat: List of video file paths to concatenate, in order.
+        root: Root directory where temporary files and output will be created.
+        video_key: Video key identifier (e.g., camera name) used in output path.
+        chunk_idx: Chunk index for organizing output files.
+        file_idx: File index within the chunk.
+
+    Note:
+        - Creates a temporary directory for intermediate files that is cleaned up after use.
+        - Uses ffmpeg's concat demuxer which requires all input videos to have the same
+          codec, resolution, and frame rate for proper concatenation.
+        - Output path follows the DEFAULT_VIDEO_PATH pattern with video_key, chunk_idx,
+          and file_idx parameters.
+    """
+
+    tmp_dir = Path(tempfile.mkdtemp(dir=root))
+    path_concat_video_files = tmp_dir / "concat_video_files.txt"
+    with open(path_concat_video_files, "w") as f:
+        for ep_path in paths_to_cat:
+            f.write(f"file '{str(ep_path)}'\n")
+
+    path_tmp_output = tmp_dir / "tmp_output.mp4"
+    command = [
+        "ffmpeg",
+        "-y",
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        str(path_concat_video_files),
+        "-c",
+        "copy",
+        str(path_tmp_output),
+    ]
+    subprocess.run(command, check=True)
+
+    output_path = root / DEFAULT_VIDEO_PATH.format(
+        video_key=video_key, chunk_index=chunk_idx, file_index=file_idx
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(path_tmp_output), str(output_path))
+    shutil.rmtree(str(tmp_dir))
 
 
 @dataclass

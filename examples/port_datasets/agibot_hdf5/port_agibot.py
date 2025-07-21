@@ -14,12 +14,12 @@ from lerobot.datasets.utils import (
     DEFAULT_VIDEO_FILE_SIZE_IN_MB,
     DEFAULT_VIDEO_PATH,
     EPISODES_DIR,
-    concat_video_files,
     get_video_duration_in_s,
     get_video_size_in_mb,
     update_chunk_file_indices,
     write_info,
 )
+from lerobot.datasets.video_utils import concat_video_files
 from lerobot.utils.utils import get_elapsed_time_in_days_hours_minutes_seconds
 
 AGIBOT_FPS = 30

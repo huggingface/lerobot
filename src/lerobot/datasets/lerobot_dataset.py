@@ -43,7 +43,6 @@ from lerobot.datasets.utils import (
     _validate_feature_names,
     check_delta_timestamps,
     check_version_compatibility,
-    concat_video_files,
     create_empty_dataset_info,
     create_lerobot_dataset_card,
     embed_images,
@@ -74,6 +73,7 @@ from lerobot.datasets.utils import (
 )
 from lerobot.datasets.video_utils import (
     VideoFrame,
+    concat_video_files,
     decode_video_frames,
     encode_video_frames,
     get_safe_default_codec,
