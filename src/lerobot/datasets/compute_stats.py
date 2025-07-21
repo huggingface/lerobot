@@ -15,7 +15,7 @@
 # limitations under the License.
 import numpy as np
 
-from lerobot.datasets.utils import load_audio, load_image_as_numpy
+from lerobot.datasets.utils import load_audio_from_path, load_image_as_numpy
 
 DEFAULT_QUANTILES = [0.01, 0.10, 0.50, 0.90, 0.99]
 
@@ -245,10 +245,15 @@ def sample_images(image_paths: list[str]) -> np.ndarray:
     return images
 
 
-def sample_audio(audio_path: str) -> np.ndarray:
-    data = load_audio(audio_path)
+def sample_audio_from_path(audio_path: str) -> np.ndarray:
+    data = load_audio_from_path(audio_path)
     sampled_indices = sample_indices(len(data))
 
+    return data[sampled_indices]
+
+
+def sample_audio_from_data(data: np.ndarray) -> np.ndarray:
+    sampled_indices = sample_indices(len(data))
     return data[sampled_indices]
 
 
@@ -520,7 +525,10 @@ def compute_episode_stats(
             axes_to_reduce = (0, 2, 3)
             keepdims = True
         elif features[key]["dtype"] == "audio":
-            ep_ft_array = sample_audio(data[0])
+            try:
+                ep_ft_array = sample_audio_from_path(data[0])
+            except TypeError:  # Should only be triggered for LeKiwi robot
+                ep_ft_array = sample_audio_from_data(data)
             axes_to_reduce = 0
             keepdims = True
         else:
