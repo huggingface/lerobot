@@ -178,7 +178,7 @@ class KochScrewdriverFollower(Robot):
             self.bus.write("Position_I_Gain", "elbow_flex", 0)
             self.bus.write("Position_D_Gain", "elbow_flex", 600)
 
-        # State variable used by the software clutch / haptic feedback
+        # State variable used by the software clutch
         self._clutch_engaged: bool = False
         self._clutch_release_time: float = 0.0
 
@@ -322,17 +322,3 @@ class KochScrewdriverFollower(Robot):
             return 0
 
         return vel_cmd
-
-    def get_feedback(self) -> dict[str, float]:
-        """Return haptic feedback intensity for the leader.
-
-        * 1.0 when clutch engaged
-        * 0.0 otherwise
-        """
-
-        # Emit haptic only while in cool-down (first half of the window to
-        # avoid spamming).
-        if self._clutch_engaged:
-            if time.perf_counter() < self._clutch_release_time - self.config.clutch_cooldown_s * 0.5:
-                return {"haptic": 1.0}
-        return {"haptic": 0.0}
