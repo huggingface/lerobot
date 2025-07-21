@@ -1264,11 +1264,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 self._save_image(frame[key], img_path, compress_level)
                 self.episode_buffer[key].append(str(img_path))
             elif self.features[key]["dtype"] == "audio":
-                if frame_index == 0:
-                    audio_path = self._get_raw_audio_file_path(
-                        episode_index=self.episode_buffer["episode_index"], audio_key=key
-                    )
-                    self.episode_buffer[key].append(str(audio_path))
+                if self.meta.robot_type == "lekiwi":
+                    self.episode_buffer[key].append(frame[key])
+                else:
+                    if frame_index == 0:
+                        audio_path = self._get_raw_audio_file_path(
+                            episode_index=self.episode_buffer["episode_index"], audio_key=key
+                        )
+                        self.episode_buffer[key].append(str(audio_path))
             else:
                 self.episode_buffer[key].append(frame[key])
 
@@ -1332,7 +1335,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
         for key, ft in self.features.items():
             # index, episode_index, task_index are already processed above, and image and video
             # are processed separately by storing image path and frame info as meta data
-            if key in ["index", "episode_index", "task_index"] or ft["dtype"] in ["image", "video", "audio"]:
+            if key in ["index", "episode_index", "task_index"] or ft["dtype"] in ["image", "video"]:
+                continue
+            elif ft["dtype"] == "audio":
+                if self.meta.robot_type == "lekiwi":
+                    episode_buffer[key] = np.concatenate(episode_buffer[key], axis=0)
                 continue
             episode_buffer[key] = np.stack(episode_buffer[key])
 

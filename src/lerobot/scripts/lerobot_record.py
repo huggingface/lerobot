@@ -306,7 +306,7 @@ def record_loop(
         preprocessor.reset()
         postprocessor.reset()
 
-    if dataset is not None:
+    if dataset is not None and robot.name != "lekiwi":
         for microphone_key, microphone in robot.microphones.items():
             dataset.add_microphone_recording(microphone, microphone_key)
     else:
