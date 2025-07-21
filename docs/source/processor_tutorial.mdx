@@ -3,6 +3,7 @@
 This tutorial will teach you how to use RobotProcessor, a powerful pipeline system for preprocessing robot observations and postprocessing actions. You'll learn how to create modular, composable data transformations that make your robot learning pipelines more maintainable and reproducible.
 
 **You'll learn:**
+
 1. What RobotProcessor is and why it's better than alternatives
 2. How to create and compose processor steps
 3. How to save, load, and share your processors
@@ -13,10 +14,13 @@ This tutorial will teach you how to use RobotProcessor, a powerful pipeline syst
 Before diving into code, let's understand the real problems RobotProcessor solves. If you've worked with robots and learned policies, you've likely encountered these challenges:
 
 ### Observation Key Mismatches
+
 Your environment might output observations with keys like `"rgb_camera_front"` and `"joint_positions"`, but your pre-trained policy expects `"observation.images.wrist"` and `"observation.state"`. You need to rename these keys consistently across your pipeline.
 
 ### Image Preprocessing Requirements
+
 Your robot's camera captures 1920x1080 RGB images, but your policy was trained on 224x224 cropped images focusing on the workspace. You need to:
+
 - Crop out the relevant workspace area
 - Resize to the expected dimensions
 - Convert from uint8 [0,255] to float32 [0,1]
@@ -24,27 +28,35 @@ Your robot's camera captures 1920x1080 RGB images, but your policy was trained o
 - Move everything to GPU efficiently
 
 ### Coordinate System Transformations
+
 Your policy outputs desired end-effector positions in Cartesian space, but your robot expects joint angles. You need to:
+
 - Apply inverse kinematics to convert positions to joint angles
 - Handle singularities and out-of-reach positions
 - Smooth the resulting trajectories to avoid jerky movements
 - Clip values to respect joint limits
 
 ### State Augmentation
+
 Your environment provides joint positions, but your policy also needs velocities and accelerations. You need to:
+
 - Calculate velocities from position differences
 - Maintain a buffer of past states
 - Handle episode boundaries correctly
 
 ### Multi-Robot Deployment
+
 You want to deploy the same policy on different robots with varying:
+
 - Camera setups (different resolutions, positions)
 - Joint configurations (6-DOF vs 7-DOF arms)
 - Control frequencies (10Hz vs 30Hz)
 - Safety limits and workspace boundaries
 
 ### Data Collection and Training
+
 During data collection, you need to:
+
 - Record raw sensor data for dataset creation
 - Apply the same preprocessing as during deployment
 - Ensure reproducibility across different operators
@@ -87,6 +99,7 @@ def preprocess_observation(obs, device='cuda'):
 ```
 
 This approach has several problems:
+
 - **Mixed concerns**: Image processing, tensor conversion, device management all in one function
 - **Hard to test**: Can't test image processing separately from state processing
 - **Device management scattered**: Easy to forget `.to(device)` calls
@@ -345,16 +358,18 @@ for step in range(1000):
 ### When to Use Different Output Formats
 
 **Use EnvTransition tuple output when:**
+
 - Environment interaction and real-time control
 - You need to access individual transition components frequently
 - Performance is critical (avoids dictionary creation overhead)
 - Working with gym environments that expect tuple format
 
 **Use batch dictionary output when:**
+
 - Training with LeRobot datasets
 - Working with DataLoaders and batched processing
 - Interfacing with existing LeRobot training code
-- You need the standardized "next.*" key format
+- You need the standardized "next.\*" key format
 
 ```python
 # For environment interaction - use tuple output
@@ -384,7 +399,7 @@ for step in range(1000):
 
 ### Why "next.reward", "next.done", "next.truncated"?
 
-The default conversion uses "next.*" prefixes because this matches the standard format used by LeRobot datasets and follows the convention that rewards, done flags, and truncated flags are the result of taking an action (i.e., they come from the "next" state):
+The default conversion uses "next.\*" prefixes because this matches the standard format used by LeRobot datasets and follows the convention that rewards, done flags, and truncated flags are the result of taking an action (i.e., they come from the "next" state):
 
 ```python
 # Standard RL transition format
@@ -822,6 +837,7 @@ loaded_processor = RobotProcessor.from_pretrained(
 ### How Overrides Work
 
 The `overrides` parameter is a dictionary where:
+
 - **Keys** are step identifiers (class names for unregistered steps, registry names for registered steps)
 - **Values** are dictionaries of parameter overrides that get merged with saved configurations
 
@@ -833,6 +849,7 @@ overrides = {
 ```
 
 The loading process:
+
 1. Load saved configuration from JSON
 2. For each step, check if overrides exist for that step
 3. Merge override parameters with saved parameters (overrides take precedence)
@@ -981,6 +998,7 @@ real_processor = RobotProcessor.from_pretrained(
 The override system uses exact string matching:
 
 #### For Registered Steps
+
 Use the registry name (the string passed to `@ProcessorStepRegistry.register()`):
 
 ```python
@@ -993,6 +1011,7 @@ overrides = {"my_custom_step": {"param": "value"}}
 ```
 
 #### For Unregistered Steps
+
 Use the exact class name:
 
 ```python
@@ -1008,6 +1027,7 @@ overrides = {"MyUnregisteredStep": {"param": "value"}}
 The override system provides helpful error messages:
 
 #### Invalid Override Keys
+
 ```python
 # This will raise KeyError with helpful message
 overrides = {"NonExistentStep": {"param": "value"}}
@@ -1021,6 +1041,7 @@ except KeyError as e:
 ```
 
 #### Instantiation Errors
+
 ```python
 # Invalid parameter types are caught
 overrides = {"MyStep": {"numeric_param": "not_a_number"}}
@@ -1068,6 +1089,7 @@ overrides = {
 ### Best Practices for Overrides
 
 #### 1. Design Steps for Overrides
+
 When creating steps that need non-serializable objects, design them with overrides in mind:
 
 ```python
@@ -1095,6 +1117,7 @@ class WellDesignedStep:
 ```
 
 #### 2. Use Registry Names for Clarity
+
 Register steps with descriptive names to make overrides clearer:
 
 ```python
@@ -1114,6 +1137,7 @@ overrides = {
 ```
 
 #### 3. Document Override Requirements
+
 Include clear documentation about what overrides are needed:
 
 ```python
@@ -1134,6 +1158,7 @@ class VisionProcessor:
 ```
 
 #### 4. Environment-Specific Configuration Files
+
 Create configuration helpers for different deployment environments:
 
 ```python
@@ -1387,7 +1412,6 @@ class WorkspaceCropper:
         return (obs, *transition[1:])
 ```
 
-
 ### Building Complete Pipelines for Different Robots
 
 Now you can compose these steps into robot-specific pipelines:
@@ -1435,6 +1459,7 @@ processor = RobotProcessor.from_pretrained("my-lab/robot-a-act-processor")
 ```
 
 The beauty of this approach is that:
+
 1. **Each transformation is tested independently** - The IK solver can be validated separately from image cropping
 2. **Configurations are shareable** - Other labs can use your exact preprocessing setup
 3. **Pipelines are composable** - Mix and match steps for different robots
@@ -1443,6 +1468,7 @@ The beauty of this approach is that:
 ## Best Practices for Processor Steps
 
 ### 1. Always Check for None
+
 ```python
 def __call__(self, transition: EnvTransition) -> EnvTransition:
     obs = transition[TransitionIndex.OBSERVATION]
@@ -1457,6 +1483,7 @@ def __call__(self, transition: EnvTransition) -> EnvTransition:
 ```
 
 ### 2. Preserve Transition Structure
+
 ```python
 # Good - preserve all elements
 return (modified_obs, *transition[1:])
@@ -1466,6 +1493,7 @@ return (modified_obs, None, 0.0, False, False, {}, {})
 ```
 
 ### 3. Clone When Storing State
+
 ```python
 def __call__(self, transition: EnvTransition) -> EnvTransition:
     obs = transition[TransitionIndex.OBSERVATION]
@@ -1479,6 +1507,7 @@ def __call__(self, transition: EnvTransition) -> EnvTransition:
 ```
 
 ### 4. Handle Device Transfers in state_dict
+
 ```python
 def state_dict(self) -> Dict[str, torch.Tensor]:
     if self.buffer is None:
@@ -1689,6 +1718,7 @@ RobotProcessor provides a powerful, modular approach to data preprocessing in ro
 - **Flexible conversion**: Customize `to_transition` and `to_output` functions for specific needs
 
 Key advantages of the dual format approach:
+
 - **Environment interaction**: Use tuple format for real-time robot control
 - **Training/evaluation**: Use batch format for dataset processing and model training
 - **Seamless integration**: Same processor works with both formats automatically

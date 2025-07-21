@@ -902,17 +902,17 @@ class MockStepWithNonSerializableParam:
 
         return (obs, action, reward, done, truncated, info, comp_data)
 
-    def get_config(self) -> Dict[str, Any]:
+    def get_config(self) -> dict[str, Any]:
         # Note: env is intentionally NOT included here as it's not serializable
         return {
             "name": self.name,
             "multiplier": self.multiplier,
         }
 
-    def state_dict(self) -> Dict[str, torch.Tensor]:
+    def state_dict(self) -> dict[str, torch.Tensor]:
         return {}
 
-    def load_state_dict(self, state: Dict[str, torch.Tensor]) -> None:
+    def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
         pass
 
     def reset(self) -> None:
@@ -936,16 +936,16 @@ class RegisteredMockStep:
 
         return (obs, action, reward, done, truncated, info, comp_data)
 
-    def get_config(self) -> Dict[str, Any]:
+    def get_config(self) -> dict[str, Any]:
         return {
             "value": self.value,
             "device": self.device,
         }
 
-    def state_dict(self) -> Dict[str, torch.Tensor]:
+    def state_dict(self) -> dict[str, torch.Tensor]:
         return {}
 
-    def load_state_dict(self, state: Dict[str, torch.Tensor]) -> None:
+    def load_state_dict(self, state: dict[str, torch.Tensor]) -> None:
         pass
 
     def reset(self) -> None:
