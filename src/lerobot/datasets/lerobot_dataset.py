@@ -283,11 +283,7 @@ class LeRobotDatasetMetadata:
         for key in self.video_keys:
             if not self.features[key].get("info", None):
                 video_path = self.root / self.get_video_file_path(ep_index=0, vid_key=key)
-                # Only attempt to extract metadata if the video has actually been encoded on disk.
-                # This enables workflows where encoding is postponed until after all episodes have been
-                # recorded (to avoid long blocking calls between episodes).
-                if video_path.is_file():
-                    self.info["features"][key]["info"] = get_video_info(video_path)
+                self.info["features"][key]["info"] = get_video_info(video_path)
 
     def __repr__(self):
         feature_keys = list(self.features)
@@ -814,23 +810,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         self.episode_buffer["size"] += 1
 
-    def save_episode(self, episode_data: dict | None = None, *, encode_videos: bool = True) -> None:
+    def save_episode(self, episode_data: dict | None = None) -> None:
         """
-        Save the current episode to disk.
+        This will save to disk the current episode in self.episode_buffer.
 
-<<<<<<< HEAD
-        Parameters
-        ----------
-        episode_data : dict | None, optional
-            Dict containing the episode data to save. If ``None`` (default) the method will save the
-            content of :pyattr:`episode_buffer` which is progressively filled by
-            :py:meth:`add_frame`.
-        encode_videos : bool, default ``True``
-            Whether to encode the episode images into video files *immediately*.  Setting this to ``False``
-            allows postponing the (potentially long) encoding step until a later call to
-            :py:meth:`encode_videos`, enabling smoother data collection when real-time performance is
-            critical (e.g., during teleoperation).
-=======
         Video encoding is handled automatically based on batch_encoding_size:
         - If batch_encoding_size == 1: Videos are encoded immediately after each episode
         - If batch_encoding_size > 1: Videos are encoded in batches.
@@ -839,7 +822,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
             episode_data (dict | None, optional): Dict containing the episode data to save. If None, this will
                 save the current episode in self.episode_buffer, which is filled with 'add_frame'. Defaults to
                 None.
->>>>>>> main
         """
         if not episode_data:
             episode_buffer = self.episode_buffer
@@ -875,15 +857,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self._save_episode_table(episode_buffer, episode_index)
         ep_stats = compute_episode_stats(episode_buffer, self.features)
 
-<<<<<<< HEAD
-        if encode_videos and len(self.meta.video_keys) > 0:
-            video_paths = self.encode_episode_videos(episode_index)
-            for key in self.meta.video_keys:
-                episode_buffer[key] = video_paths[key]
-=======
         has_video_keys = len(self.meta.video_keys) > 0
         use_batched_encoding = self.batch_encoding_size > 1
->>>>>>> main
 
         if has_video_keys and not use_batched_encoding:
             self.encode_episode_videos(episode_index)
@@ -914,23 +889,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
             self.tolerance_s,
         )
 
-<<<<<<< HEAD
-        # Delete images only if videos have been encoded now. If encoding is deferred, images
-        # must remain on disk so they can be converted later in a batch.
-        if encode_videos and len(self.meta.video_keys) > 0:
-            img_dir = self.root / "images"
-            if img_dir.is_dir():
-                shutil.rmtree(img_dir)
-
-        # After every episode, ensure parquet file count is correct. Video file count is only
-        # checked when videos were encoded immediately.
-        parquet_files = list(self.root.rglob("*.parquet"))
-        assert len(parquet_files) == self.num_episodes
-
-        if encode_videos and len(self.meta.video_keys) > 0:
-            video_files = list(self.root.rglob("*.mp4"))
-            assert len(video_files) == self.num_episodes * len(self.meta.video_keys)
-=======
         # Verify that we have one parquet file per episode and the number of video files matches the number of encoded episodes
         parquet_files = list(self.root.rglob("*.parquet"))
         assert len(parquet_files) == self.num_episodes
@@ -938,7 +896,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         assert len(video_files) == (self.num_episodes - self.episodes_since_last_encoding) * len(
             self.meta.video_keys
         )
->>>>>>> main
 
         if not episode_data:  # Reset the buffer
             self.episode_buffer = self.create_episode_buffer()
