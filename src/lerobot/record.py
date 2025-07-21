@@ -106,6 +106,7 @@ from lerobot.utils.control_utils import (
     sanity_check_dataset_name,
     sanity_check_dataset_robot_compatibility,
 )
+from lerobot.utils.inference_logger import InferenceLogger
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import (
     get_safe_torch_device,
@@ -113,7 +114,6 @@ from lerobot.utils.utils import (
     log_say,
 )
 from lerobot.utils.visualization_utils import _init_rerun, log_rerun_data
-from lerobot.utils.inference_logger import InferenceLogger
 
 
 @dataclass
@@ -256,7 +256,7 @@ def record_loop(
             )
             inference_time = time.perf_counter() - inference_start
             action = {key: action_values[i].item() for i, key in enumerate(robot.action_features)}
-            
+
             # Log inference data if logger is provided
             if inference_logger is not None:
                 inference_logger.log_step_summary(
@@ -265,7 +265,7 @@ def record_loop(
                     robot=robot,
                     policy_output=action_values,
                     inference_time=inference_time,
-                    task=single_task
+                    task=single_task,
                 )
         elif policy is None and isinstance(teleop, Teleoperator):
             action = teleop.get_action()
@@ -354,11 +354,13 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         teleop.connect()
 
     listener, events = init_keyboard_listener()
-    
+
     # Initialize inference logger if requested
     inference_logger = None
     if cfg.log and policy is not None:
-        log_dir = Path("inference_logs") / cfg.dataset.repo_id.replace("/", "_") / time.strftime("%Y%m%d_%H%M%S")
+        log_dir = (
+            Path("inference_logs") / cfg.dataset.repo_id.replace("/", "_") / time.strftime("%Y%m%d_%H%M%S")
+        )
         inference_logger = InferenceLogger(log_dir, robot_name=robot.name)
         print(f"🔬 Inference logging enabled! Data will be saved to: {log_dir}")
 
@@ -411,7 +413,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     robot.disconnect()
     if teleop is not None:
         teleop.disconnect()
-    
+
     # Close inference logger if it was used
     if inference_logger is not None:
         inference_logger.close()

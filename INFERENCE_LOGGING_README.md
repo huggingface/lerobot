@@ -13,8 +13,9 @@ python debug_robot_state.py
 ```
 
 This will show you:
+
 - Current servo positions
-- Raw motor data  
+- Raw motor data
 - Motor temperatures, voltages, currents
 - Robot connection status
 
@@ -37,6 +38,7 @@ python -m lerobot.record \
 ```
 
 **Important Notes:**
+
 - Logging only works when using a policy (not teleoperation)
 - Use lower camera resolution (640x480) to avoid timeout issues
 - The `--log=true` flag enables comprehensive logging
@@ -50,6 +52,7 @@ python analyze_inference_logs.py inference_logs/your_dataset_name/timestamp/
 ```
 
 This generates:
+
 - `servo_positions.png` - Servo trajectories over time
 - `policy_outputs.png` - Policy actions and inference timing
 - `servo_correlation.png` - Correlation matrix between servos
@@ -58,6 +61,7 @@ This generates:
 ## What Gets Logged
 
 ### Robot State (`*_robot_state.csv`)
+
 - Timestamp and step number
 - All servo positions (normalized and raw)
 - Motor temperatures, voltages, currents (if available)
@@ -65,6 +69,7 @@ This generates:
 - Camera information
 
 ### Policy Inference (`*_policy_inference.csv`)
+
 - Timestamp and step number
 - Inference timing (milliseconds)
 - Policy input observations (non-image data)
@@ -73,7 +78,9 @@ This generates:
 - Task description
 
 ### Console Output
+
 During inference, you'll see real-time output like:
+
 ```
 📊 INFERENCE STEP 1 @ 2.35s
 ============================================================
@@ -112,19 +119,24 @@ inference_logs/
 ## Troubleshooting
 
 ### Camera Timeout Issues
+
 If you get camera timeout errors:
+
 1. Use lower resolution: 640x480 instead of 1920x1080
 2. Reduce FPS: try 15 or 10 instead of 30
 3. Try different USB ports
 4. For debugging, use no cameras: `--robot.cameras="{}"`
 
 ### No Logging Output
+
 Make sure:
+
 - You're using a policy (not just teleoperation)
 - The `--log=true` flag is set
 - The policy path is valid and loads correctly
 
 ### Performance Issues
+
 - Logging adds minimal overhead (~1-2ms per inference)
 - CSV files are flushed after each write for safety
 - Large episodes may generate large CSV files
@@ -132,16 +144,18 @@ Make sure:
 ## Example Analysis Workflows
 
 ### Basic Performance Analysis
+
 ```bash
 # Record with logging
 python -m lerobot.record --policy.path=my_policy --log=true ...
 
 # Analyze timing
-python analyze_inference_logs.py inference_logs/my_dataset/timestamp/ 
+python analyze_inference_logs.py inference_logs/my_dataset/timestamp/
 grep "Mean inference time" inference_summary.txt
 ```
 
 ### Servo Trajectory Analysis
+
 ```bash
 # View servo correlations
 python analyze_inference_logs.py inference_logs/my_dataset/timestamp/
@@ -149,6 +163,7 @@ python analyze_inference_logs.py inference_logs/my_dataset/timestamp/
 ```
 
 ### Custom Analysis
+
 ```python
 import pandas as pd
 
@@ -164,8 +179,9 @@ print(f"Servo range of motion: {robot_df['shoulder_pan.pos'].max() - robot_df['s
 ## Integration with Other Tools
 
 The CSV format makes it easy to:
+
 - Import into Excel/Google Sheets
-- Use with pandas/numpy for analysis  
+- Use with pandas/numpy for analysis
 - Visualize with matplotlib/plotly
 - Feed into ML pipelines for analysis
 
@@ -175,4 +191,4 @@ The CSV format makes it easy to:
 2. **Monitor Performance**: Check inference timing doesn't exceed your control loop frequency
 3. **Regular Analysis**: Analyze logs after each session to catch issues early
 4. **Compare Policies**: Use logging to compare different policy performances
-5. **Debug Issues**: Use the debug script first to verify robot connectivity 
+5. **Debug Issues**: Use the debug script first to verify robot connectivity
