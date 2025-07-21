@@ -122,7 +122,7 @@ def is_torch_device_available(try_device: str) -> bool:
 
 
 def is_amp_available(device: str):
-    if device in ["cuda", "cpu"]:
+    if device in ["cuda", "xpu", "cpu"]:
         return True
     elif device == "mps":
         return False
