@@ -93,11 +93,14 @@ def get_safe_dtype(dtype: torch.dtype, device: str | torch.device):
     if device == "mps" and dtype == torch.float64:
         return torch.float32
     if device == "xpu" and dtype == torch.float64:
-        if not torch.xpu.get_device_capability().get("has_fp64", False):
-            print(f"Device {device} does not support float64, using float32 instead.")
+        try:
+            if not torch.xpu.get_device_capability().get("has_fp64", False):
+                print(f"Device {device} does not support float64, using float32 instead.")
+                return torch.float32
+        except AttributeError:
+            print(f"Device {device} capability check failed. Assuming no support for float64, using float32 instead.")
             return torch.float32
-        else:
-            return dtype
+        return dtype
     else:
         return dtype
 
