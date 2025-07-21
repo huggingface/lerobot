@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
-from collections.abc import Mapping
 
 import numpy as np
 import torch
@@ -10,7 +10,7 @@ from torch import Tensor
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.processor.pipeline import EnvTransition, ProcessorStepRegistry, TransitionIndex
+from lerobot.processor.pipeline import EnvTransition, ProcessorStepRegistry, TransitionKey
 
 
 def _convert_stats_to_tensors(stats: dict[str, dict[str, Any]]) -> dict[str, dict[str, Tensor]]:
@@ -166,17 +166,14 @@ class NormalizerProcessor:
         raise ValueError("Action stats must contain either ('mean','std') or ('min','max')")
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        observation = self._normalize_obs(transition[TransitionIndex.OBSERVATION])
-        action = self._normalize_action(transition[TransitionIndex.ACTION])
-        return (
-            observation,
-            action,
-            transition[TransitionIndex.REWARD],
-            transition[TransitionIndex.DONE],
-            transition[TransitionIndex.TRUNCATED],
-            transition[TransitionIndex.INFO],
-            transition[TransitionIndex.COMPLEMENTARY_DATA],
-        )
+        observation = self._normalize_obs(transition.get(TransitionKey.OBSERVATION))
+        action = self._normalize_action(transition.get(TransitionKey.ACTION))
+
+        # Create a new transition with normalized values
+        new_transition = transition.copy()
+        new_transition[TransitionKey.OBSERVATION] = observation
+        new_transition[TransitionKey.ACTION] = action
+        return new_transition
 
     def get_config(self) -> dict[str, Any]:
         config = {
@@ -297,17 +294,14 @@ class UnnormalizerProcessor:
         raise ValueError("Action stats must contain either ('mean','std') or ('min','max')")
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        observation = self._unnormalize_obs(transition[TransitionIndex.OBSERVATION])
-        action = self._unnormalize_action(transition[TransitionIndex.ACTION])
-        return (
-            observation,
-            action,
-            transition[TransitionIndex.REWARD],
-            transition[TransitionIndex.DONE],
-            transition[TransitionIndex.TRUNCATED],
-            transition[TransitionIndex.INFO],
-            transition[TransitionIndex.COMPLEMENTARY_DATA],
-        )
+        observation = self._unnormalize_obs(transition.get(TransitionKey.OBSERVATION))
+        action = self._unnormalize_action(transition.get(TransitionKey.ACTION))
+
+        # Create a new transition with unnormalized values
+        new_transition = transition.copy()
+        new_transition[TransitionKey.OBSERVATION] = observation
+        new_transition[TransitionKey.ACTION] = action
+        return new_transition
 
     def get_config(self) -> dict[str, Any]:
         return {

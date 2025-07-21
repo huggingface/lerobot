@@ -39,7 +39,7 @@ from lerobot.policies.factory import (
 )
 from lerobot.policies.normalize import Normalize, Unnormalize
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.processor import RobotProcessor, TransitionIndex, VanillaObservationProcessor
+from lerobot.processor import RobotProcessor, TransitionKey, VanillaObservationProcessor
 from lerobot.utils.random_utils import seeded_context
 from tests.artifacts.policies.save_policy_to_safetensors import get_policy_stats
 from tests.utils import DEVICE, require_cpu, require_env, require_x86_64_kernel
@@ -188,7 +188,7 @@ def test_policy(ds_repo_id, env_name, env_kwargs, policy_name, policy_kwargs):
     obs_processor = RobotProcessor([VanillaObservationProcessor()])
     transition = (observation, None, None, None, None, None, None)
     processed_transition = obs_processor(transition)
-    observation = processed_transition[TransitionIndex.OBSERVATION]
+    observation = processed_transition[TransitionKey.OBSERVATION]
 
     # send observation to device/gpu
     observation = {key: observation[key].to(DEVICE, non_blocking=True) for key in observation}

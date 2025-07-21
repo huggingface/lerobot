@@ -36,17 +36,25 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
     Returns:
         Dictionary of observation batches with keys renamed to LeRobot format and values as tensors.
     """
-    from lerobot.processor import RobotProcessor, TransitionIndex, VanillaObservationProcessor
+    from lerobot.processor import RobotProcessor, TransitionKey, VanillaObservationProcessor
 
     # Create processor with observation processor
     processor = RobotProcessor([VanillaObservationProcessor()])
 
-    # Create transition tuple and process
-    transition = (observations, None, None, None, None, None, None)
-    processed_transition = processor(transition)
+    # Create transition dictionary and process
+    transition = {
+        TransitionKey.OBSERVATION: observations,
+        TransitionKey.ACTION: None,
+        TransitionKey.REWARD: None,
+        TransitionKey.DONE: None,
+        TransitionKey.TRUNCATED: None,
+        TransitionKey.INFO: None,
+        TransitionKey.COMPLEMENTARY_DATA: None,
+    }
+    result = processor(transition)
 
-    # Return processed observations
-    return processed_transition[TransitionIndex.OBSERVATION]
+    # Extract and return the processed observation
+    return result[TransitionKey.OBSERVATION]
 
 
 def env_to_policy_features(env_cfg: EnvConfig) -> dict[str, PolicyFeature]:

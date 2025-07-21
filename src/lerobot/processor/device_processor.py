@@ -18,7 +18,7 @@ from typing import Any
 
 import torch
 
-from lerobot.processor.pipeline import EnvTransition, TransitionIndex
+from lerobot.processor.pipeline import EnvTransition, TransitionKey
 
 
 @dataclass
@@ -35,30 +35,41 @@ class DeviceProcessor:
         self.non_blocking = "cuda" in self.device
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        observation: dict[str, torch.Tensor] = transition[TransitionIndex.OBSERVATION]
-        action = transition[TransitionIndex.ACTION]
-        reward = transition[TransitionIndex.REWARD]
-        done = transition[TransitionIndex.DONE]
-        truncated = transition[TransitionIndex.TRUNCATED]
-        info = transition[TransitionIndex.INFO]
-        complementary_data = transition[TransitionIndex.COMPLEMENTARY_DATA]
+        # Create a copy of the transition
+        new_transition = transition.copy()
 
+        # Process observation tensors
+        observation = transition.get(TransitionKey.OBSERVATION)
         if observation is not None:
-            observation = {
-                k: v.to(self.device, non_blocking=self.non_blocking) for k, v in observation.items()
+            new_observation = {
+                k: v.to(self.device, non_blocking=self.non_blocking) if isinstance(v, torch.Tensor) else v
+                for k, v in observation.items()
             }
-        if action is not None:
-            action = action.to(self.device)
+            new_transition[TransitionKey.OBSERVATION] = new_observation
 
-        return (
-            observation,
-            action,
-            reward,
-            done,
-            truncated,
-            info,
-            complementary_data,
-        )
+        # Process action tensor
+        action = transition.get(TransitionKey.ACTION)
+        if action is not None and isinstance(action, torch.Tensor):
+            new_transition[TransitionKey.ACTION] = action.to(self.device, non_blocking=self.non_blocking)
+
+        # Process reward tensor
+        reward = transition.get(TransitionKey.REWARD)
+        if reward is not None and isinstance(reward, torch.Tensor):
+            new_transition[TransitionKey.REWARD] = reward.to(self.device, non_blocking=self.non_blocking)
+
+        # Process done tensor
+        done = transition.get(TransitionKey.DONE)
+        if done is not None and isinstance(done, torch.Tensor):
+            new_transition[TransitionKey.DONE] = done.to(self.device, non_blocking=self.non_blocking)
+
+        # Process truncated tensor
+        truncated = transition.get(TransitionKey.TRUNCATED)
+        if truncated is not None and isinstance(truncated, torch.Tensor):
+            new_transition[TransitionKey.TRUNCATED] = truncated.to(
+                self.device, non_blocking=self.non_blocking
+            )
+
+        return new_transition
 
     def get_config(self) -> dict[str, Any]:
         """Return configuration for serialization."""
