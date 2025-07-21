@@ -22,7 +22,7 @@ import platform
 import time
 from pathlib import Path
 from threading import Event, Lock, Thread
-from typing import Any, Dict, List
+from typing import Any
 
 import cv2
 import numpy as np
