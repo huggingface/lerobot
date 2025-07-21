@@ -10,9 +10,6 @@ from line_profiler import profile
 from lerobot.common.constants import HF_LEROBOT_HOME
 from lerobot.common.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDatasetMetadata
 from lerobot.common.datasets.utils import (
-    Backtrackable,
-    LookAheadError,
-    LookBackError,
     check_version_compatibility,
     item_to_torch,
 )
@@ -67,7 +64,6 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         root: str | Path | None = None,
         episodes: list[int] | None = None,
         image_transforms: Callable | None = None,
-        delta_timestamps: dict[list[float]] | None = None,
         tolerance_s: float = 1e-4,
         revision: str | None = None,
         force_cache_sync: bool = False,
@@ -129,17 +125,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         # Check version
         check_version_compatibility(self.repo_id, self.meta._version, CODEBASE_VERSION)
 
-        if delta_timestamps is not None:
-            self._validate_delta_timestamp_keys(delta_timestamps)  # raises ValueError if invalid
-            self.delta_timestamps = delta_timestamps
-
-        self.hf_dataset: datasets.IterableDataset = self.load_hf_dataset()
+        self.hf_dataset = self.load_hf_dataset()
         self.num_shards = min(self.hf_dataset.num_shards, max_num_shards)
-
-        max_backward_steps, max_forward_steps = self._get_window_steps()
-        self.backtrackable_dataset: Backtrackable = Backtrackable(
-            self.hf_dataset, history=max_backward_steps, lookahead=max_forward_steps
-        )
 
     @property
     def fps(self):
@@ -176,6 +163,11 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
 
         # This buffer is populated while iterating on the dataset's shards
         frames_buffer = []
+        idx_to_iterable_dataset = {
+            idx: self._make_iterable_dataset(self.hf_dataset.shard(self.num_shards, index=idx))
+            for idx in range(self.num_shards)
+        }
+
         try:
             while available_shards := list(idx_to_iterable_dataset.keys()):
                 shard_key = next(self._infinite_generator_over_elements(rng, available_shards))
@@ -193,136 +185,48 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             RuntimeError,
             StopIteration,
         ):  # NOTE: StopIteration inside a generator throws a RuntimeError since 3.7
-            del idx_to_backtracktable_dataset[shard_key]  # Remove exhausted shard, onto another shard
+            # Remove exhausted shard
+            del idx_to_iterable_dataset[shard_key]
 
         # Once shards are all exhausted, shuffle the buffer and yield the remaining frames
         rng.shuffle(frames_buffer)
         yield from frames_buffer
 
-    def _make_backtrackable_dataset(self, dataset: datasets.IterableDataset) -> Backtrackable:
-        history, lookahead = self._get_window_steps()
-        return Backtrackable(dataset, history=history, lookahead=lookahead)
-
-    def _make_timestamps_from_indices(
-        self, start_ts: float, indices: dict[str, list[int]] | None = None
-    ) -> dict[str, list[float]]:
-        if indices is not None:
-            return {
-                key: (start_ts + torch.tensor(indices[key]) / self.fps).tolist()
-                for key in self.delta_timestamps
-            }
-        else:
-            return dict.fromkeys(self.delta_timestamps, start_ts)
-
-    def _make_padding_camera_frame(self, camera_key: str):
-        """Variable-shape padding frame for given camera keys, given in (C, H, W)"""
-        return torch.zeros(self.meta.info["features"][camera_key]["shape"]).permute(-1, 0, 1)
-
-    def _pad_retrieved_video_frames(
-        self,
-        video_frames: dict[str, torch.Tensor],
-        query_timestamps: dict[str, list[float]],
-        original_timestamps: dict[str, list[float]],
-    ) -> tuple[dict[str, torch.Tensor], dict[str, torch.BoolTensor]]:
-        padded_video_frames = {}
-        padding_mask = {}
-
-        for video_key, timestamps in original_timestamps.items():
-            if video_key not in video_frames:
-                continue  # only padding on video keys that are available
-            frames = []
-            mask = []
-            padding_frame = self._make_padding_camera_frame(video_key)
-            for ts in timestamps:
-                if ts in query_timestamps[video_key]:
-                    idx = query_timestamps[video_key].index(ts)
-                    frames.append(video_frames[video_key][idx, :])
-                    mask.append(False)
-                else:
-                    frames.append(padding_frame)
-                    mask.append(True)
-
-            padded_video_frames[video_key] = torch.stack(frames)
-            padding_mask[f"{video_key}.pad_masking"] = torch.BoolTensor(mask)
-
-        return padded_video_frames, padding_mask
+    def _make_iterable_dataset(self, dataset: datasets.IterableDataset) -> Iterator:
+        return iter(dataset)
 
     @profile
-    def make_frame(self, dataset_iterator: Backtrackable) -> Generator:
+    def make_frame(self, dataset_iterator: datasets.IterableDataset) -> Generator:
         """Makes a frame starting from a dataset iterator"""
         item = next(dataset_iterator)
         item = item_to_torch(item)
 
-        updates = []  # list of updates to apply to the item
-
         # Get episode index from the item
         ep_idx = item["episode_index"]
 
-        # "timestamp" restarts from 0 for each episode, whereas we need a global timestep within the single .mp4 file (given by index/fps)
-        current_ts = item["index"] / self.fps
-
-        episode_boundaries_ts = {
-            key: (
-                self.meta.episodes[ep_idx][f"videos/{key}/from_timestamp"],
-                self.meta.episodes[ep_idx][f"videos/{key}/to_timestamp"],
-            )
-            for key in self.meta.video_keys
-        }
-
-        # Apply delta querying logic if necessary
-        if self.delta_indices is not None:
-            query_result, padding = self._get_delta_frames(dataset_iterator, item)
-            updates.append(query_result)
-            updates.append(padding)
-
         # Load video frames, when needed
         if len(self.meta.video_keys) > 0:
-            original_timestamps = self._make_timestamps_from_indices(current_ts, self.delta_indices)
-
-            # Some timestamps might not result available considering the episode's boundaries
-            query_timestamps = self._get_query_timestamps(
-                current_ts, self.delta_indices, episode_boundaries_ts
-            )
+            current_ts = item["timestamp"]
+            query_timestamps = self._get_query_timestamps(current_ts, None)
             video_frames = self._query_videos(query_timestamps, ep_idx)
+            item = {**video_frames, **item}
 
-            # We always return the same number of frames. Unavailable frames are padded.
-            padded_video_frames, padding_mask = self._pad_retrieved_video_frames(
-                video_frames, query_timestamps, original_timestamps
-            )
+        # Add task as a string
+        task_idx = item["task_index"]
+        item["task"] = self.meta.tasks.iloc[task_idx].name
 
-            updates.append(video_frames)
-            updates.append(padded_video_frames)
-            updates.append(padding_mask)
-
-        result = item.copy()
-        for update in updates:
-            result.update(update)
-
-        result["task"] = self.meta.tasks.iloc[item["task_index"]].name
-
-        yield result
+        yield item
 
     def _get_query_timestamps(
         self,
         current_ts: float,
         query_indices: dict[str, list[int]] | None = None,
-        episode_boundaries_ts: dict[str, tuple[float, float]] | None = None,
     ) -> dict[str, list[float]]:
         query_timestamps = {}
-        keys_to_timestamps = self._make_timestamps_from_indices(current_ts, query_indices)
         for key in self.meta.video_keys:
             if query_indices is not None and key in query_indices:
-                timestamps = keys_to_timestamps[key]
-                # Filter out timesteps outside of episode boundaries
-                query_timestamps[key] = [
-                    ts
-                    for ts in timestamps
-                    if episode_boundaries_ts[key][0] <= ts <= episode_boundaries_ts[key][1]
-                ]
-
-                if len(query_timestamps[key]) == 0:
-                    raise ValueError(f"No valid timestamps found for key {key} with {query_indices[key]}")
-
+                timestamps = self.hf_dataset.select(query_indices[key])["timestamp"]
+                query_timestamps[key] = torch.stack(timestamps).tolist()
             else:
                 query_timestamps[key] = [current_ts]
 
@@ -336,166 +240,24 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         """
 
         item = {}
-        for video_key, query_ts in query_timestamps.items():
+        for vid_key, query_ts in query_timestamps.items():
             root = self.meta.url_root if self.streaming and not self.streaming_from_local else self.root
-            video_path = f"{root}/{self.meta.get_video_file_path(ep_idx, video_key)}"
+            video_path = f"{root}/{self.meta.get_video_file_path(ep_idx, vid_key)}"
             frames = decode_video_frames_torchcodec(
                 video_path, query_ts, self.tolerance_s, decoder_cache=self.video_decoder_cache
             )
-
-            item[video_key] = frames
+            item[vid_key] = frames.squeeze(0)
 
         return item
-
-    def _make_padding_frame(self, key: str) -> tuple[torch.Tensor, bool]:
-        return torch.zeros(self.meta.info["features"][key]["shape"]), True
-
-    def _get_delta_frames(self, dataset_iterator: Backtrackable, current_item: dict):
-        # TODO(fracapuano): Modularize this function, refactor the code
-        """Get frames with delta offsets using the backtrackable iterator.
-
-        Args:
-            current_item (dict): Current item from the iterator.
-            ep_idx (int): Episode index.
-
-        Returns:
-            tuple: (query_result, padding) - frames at delta offsets and padding info.
-        """
-        current_episode_idx = current_item["episode_index"]
-
-        # Prepare results
-        query_result = {}
-        padding = {}
-
-        for key, delta_indices in self.delta_indices.items():
-            if key in self.meta.video_keys:
-                continue  # visual frames are decoded separately
-
-            target_frames = []
-            is_pad = []
-
-            # Create a results dictionary to store frames in processing order, then reconstruct original order for stacking
-            delta_results = {}
-
-            # Separate and sort deltas by difficulty (easier operations first)
-            negative_deltas = sorted([d for d in delta_indices if d < 0], reverse=True)  # [-1, -2, -3, ...]
-            positive_deltas = sorted([d for d in delta_indices if d > 0])  # [1, 2, 3, ...]
-            zero_deltas = [d for d in delta_indices if d == 0]
-
-            # Process zero deltas (current frame)
-            for delta in zero_deltas:
-                delta_results[delta] = (
-                    current_item[key],
-                    False,
-                )  # unsqueeze to add batch dimension for stacking
-
-            # Process negative deltas in order of increasing difficulty
-            lookback_failed = False
-            for delta in negative_deltas:
-                if lookback_failed:
-                    delta_results[delta] = self._make_padding_frame(key)
-                    continue
-
-                try:
-                    steps_back = abs(delta)
-                    if dataset_iterator.can_peek_back(steps_back):
-                        past_item = dataset_iterator.peek_back(steps_back)
-                        past_item = item_to_torch(past_item)
-
-                        if past_item["episode_index"] == current_episode_idx:
-                            delta_results[delta] = (past_item[key], False)
-                        else:
-                            raise LookBackError("Retrieved frame is from different episode!")
-                    else:
-                        raise LookBackError("Cannot go back further than the history buffer!")
-
-                except LookBackError:
-                    delta_results[delta] = self._make_padding_frame(key)
-                    lookback_failed = True  # All subsequent negative deltas will also fail
-
-            # Process positive deltas in order of increasing difficulty
-            lookahead_failed = False
-            for delta in positive_deltas:
-                if lookahead_failed:
-                    delta_results[delta] = self._make_padding_frame(key)
-                    continue
-
-                try:
-                    if dataset_iterator.can_peek_ahead(delta):
-                        future_item = dataset_iterator.peek_ahead(delta)
-                        future_item = item_to_torch(future_item)
-
-                        if future_item["episode_index"] == current_episode_idx:
-                            delta_results[delta] = (future_item[key], False)
-                        else:
-                            raise LookAheadError("Retrieved frame is from different episode!")
-                    else:
-                        raise LookAheadError("Cannot go ahead further than the lookahead buffer!")
-
-                except LookAheadError:
-                    delta_results[delta] = self._make_padding_frame(key)
-                    lookahead_failed = True  # All subsequent positive deltas will also fail
-
-            # Reconstruct original order for stacking
-            for delta in delta_indices:
-                frame, is_padded = delta_results[delta]
-
-                # add batch dimension for stacking
-                target_frames.append(frame)  # frame.unsqueeze(0))
-                is_pad.append(is_padded)
-
-            # Stack frames and add to results
-            if target_frames:
-                query_result[key] = torch.stack(target_frames)
-                padding[f"{key}.pad_masking"] = torch.BoolTensor(is_pad)
-
-        return query_result, padding
-
-    def _validate_delta_timestamp_keys(self, delta_timestamps: dict[list[float]]) -> None:
-        """
-        Validate that all keys in delta_timestamps correspond to actual features in the dataset.
-
-        Raises:
-            ValueError: If any delta timestamp key doesn't correspond to a dataset feature.
-        """
-        if delta_timestamps is None:
-            return
-
-        # Get all available feature keys from the dataset metadata
-        available_features = set(self.meta.features.keys())
-
-        # Get all keys from delta_timestamps
-        delta_keys = set(delta_timestamps.keys())
-
-        # Find any keys that don't correspond to features
-        invalid_keys = delta_keys - available_features
-
-        if invalid_keys:
-            raise ValueError(
-                f"The following delta_timestamp keys do not correspond to dataset features: {invalid_keys}. "
-                f"Available features are: {sorted(available_features)}"
-            )
 
 
 # Example usage
 if __name__ == "__main__":
-    from tqdm import tqdm
-
     repo_id = "lerobot/aloha_mobile_cabinet"
+    dataset = StreamingLeRobotDataset(repo_id)
 
-    camera_key = "observation.images.cam_right_wrist"
-    fps = 50
+    for i, frame in enumerate(dataset):
+        print(frame)
 
-    delta_timestamps = {
-        # loads 4 images: 1 second before current frame, 500 ms before, 200 ms before, and current frame
-        camera_key: [-1, -0.5, -0.20, 0],
-        # loads 6 state vectors: 1.5 seconds before, 1 second before, ... 200 ms, 100 ms, and current frame
-        "observation.state": [-1.5, -1, -0.5, -0.20, -0.10, 0],
-        # loads 64 action vectors: current frame, 1 frame in the future, 2 frames, ... 63 frames in the future
-        "action": [t / fps for t in range(64)],
-    }
-
-    dataset = StreamingLeRobotDataset(repo_id, delta_timestamps=delta_timestamps)
-
-    for _i, _frame in tqdm(enumerate(dataset)):
-        pass
+        if i > 10:  # only stream first 10 frames
+            break
