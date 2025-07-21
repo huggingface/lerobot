@@ -66,7 +66,7 @@ from lerobot.policies.pi0.paligemma_with_expert import (
     PaliGemmaWithExpertModel,
 )
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.utils.utils import get_safe_dtype
+from lerobot.utils.utils import get_safe_dtype, init_logging
 
 
 def create_sinusoidal_pos_embedding(
@@ -260,44 +260,52 @@ class PI0Policy(PreTrainedPolicy):
 
     @classmethod
     def _transform_state_dict_keys(cls, state_dict: dict) -> dict:
-        """Transform state dict keys to match expected model structure."""
+        """
+        Transform state dict keys to match expected model structure.
+
+        Transformations:
+        - model.paligemma_with_expert.paligemma.language_model.lm_head ->
+          model.paligemma_with_expert.paligemma.lm_head
+        - model.paligemma_with_expert.paligemma.language_model.model ->
+          model.paligemma_with_expert.paligemma.model.language_model
+        - model.paligemma_with_expert.paligemma.vision_tower ->
+          model.paligemma_with_expert.paligemma.model.vision_tower
+        - model.paligemma_with_expert.paligemma.multi_modal_projector ->
+          model.paligemma_with_expert.paligemma.model.multi_modal_projector
+
+        Also handles tied weights between lm_head.weight and
+        embed_tokens.weight.
+        """
         import re
 
         transformed_dict = {}
 
+        transformations = [
+            (
+                re.compile(r"\.paligemma_with_expert\.paligemma\.language_model\.lm_head"),
+                ".paligemma_with_expert.paligemma.lm_head",
+            ),
+            (
+                re.compile(r"\.paligemma_with_expert\.paligemma\.language_model\.model"),
+                ".paligemma_with_expert.paligemma.model.language_model",
+            ),
+            (
+                re.compile(r"\.paligemma_with_expert\.paligemma\.vision_tower"),
+                ".paligemma_with_expert.paligemma.model.vision_tower",
+            ),
+            (
+                re.compile(r"\.paligemma_with_expert\.paligemma\.multi_modal_projector"),
+                ".paligemma_with_expert.paligemma.model.multi_modal_projector",
+            ),
+        ]
+
         for key, value in state_dict.items():
             new_key = key
-            # Apply transformations for PaliGemma components
-            # model.paligemma_with_expert.paligemma.language_model.lm_head -> model.paligemma_with_expert.paligemma.lm_head
-            # model.paligemma_with_expert.paligemma.language_model.model -> model.paligemma_with_expert.paligemma.model.language_model
-            # model.paligemma_with_expert.paligemma.vision_tower -> model.paligemma_with_expert.paligemma.model.vision_tower
-            # model.paligemma_with_expert.paligemma.multi_modal_projector -> model.paligemma_with_expert.paligemma.model.multi_modal_projector
-            transformations = [
-                (
-                    re.compile(r"\.paligemma_with_expert\.paligemma\.language_model\.lm_head"),
-                    ".paligemma_with_expert.paligemma.lm_head",
-                ),
-                (
-                    re.compile(r"\.paligemma_with_expert\.paligemma\.language_model\.model"),
-                    ".paligemma_with_expert.paligemma.model.language_model",
-                ),
-                (
-                    re.compile(r"\.paligemma_with_expert\.paligemma\.vision_tower"),
-                    ".paligemma_with_expert.paligemma.model.vision_tower",
-                ),
-                (
-                    re.compile(r"\.paligemma_with_expert\.paligemma\.multi_modal_projector"),
-                    ".paligemma_with_expert.paligemma.model.multi_modal_projector",
-                ),
-            ]
-
             for pattern, replacement in transformations:
                 new_key = pattern.sub(replacement, new_key)
-
             transformed_dict[new_key] = value
 
         # Handle tied weights: lm_head.weight and embed_tokens.weight share memory
-        # If we have lm_head.weight, also create embed_tokens.weight entry
         lm_head_key = None
         embed_tokens_key = None
 
@@ -306,18 +314,14 @@ class PI0Policy(PreTrainedPolicy):
                 lm_head_key = key
             elif key.endswith(".paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight"):
                 embed_tokens_key = key
-
             if lm_head_key and embed_tokens_key:
                 break
 
-        # If we have lm_head.weight but not embed_tokens.weight, create the embed_tokens entry
         if lm_head_key and not embed_tokens_key:
             embed_tokens_key = lm_head_key.replace(
                 ".lm_head.weight", ".model.language_model.embed_tokens.weight"
             )
             transformed_dict[embed_tokens_key] = transformed_dict[lm_head_key]
-
-        # If we have embed_tokens.weight but not lm_head.weight, create the lm_head entry
         elif embed_tokens_key and not lm_head_key:
             lm_head_key = embed_tokens_key.replace(
                 ".model.language_model.embed_tokens.weight", ".lm_head.weight"
@@ -333,6 +337,7 @@ class PI0Policy(PreTrainedPolicy):
         """Override to apply key transformations before loading."""
         from safetensors.torch import load_file
 
+        init_logging()
         # Load the state dict from file safely
         state_dict = load_file(model_file, device=map_location)
 
