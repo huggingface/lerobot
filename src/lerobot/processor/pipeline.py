@@ -261,6 +261,19 @@ class RobotProcessor(ModelHubMixin):
         after_step_hooks: List of hooks called after each step. Each hook receives the step
             index and transition, and can optionally return a modified transition.
         reset_hooks: List of hooks called during processor reset.
+
+    Hook Semantics:
+        - Hooks are executed sequentially in the order they were registered. There is no way to
+          reorder hooks after registration without creating a new pipeline.
+        - Hooks CAN modify transitions by returning a new transition dict. If a hook returns None,
+          the current transition remains unchanged. While this capability exists, it should be used
+          with EXTREME CAUTION as it can make debugging difficult and create unexpected side effects.
+          IT'S ADVISED TO NOT MODIFY THE TRANSITION IN A HOOK.
+        - All hooks for a given type (before/after) are executed for every step, or none at all if
+          an error occurs. There is no partial execution of hooks.
+        - Hooks should generally be stateless to maintain predictable behavior. If you need stateful
+          processing, consider implementing a proper ProcessorStep instead.
+        - To remove hooks, use the unregister methods. To remove steps, you must create a new pipeline.
     """
 
     steps: Sequence[ProcessorStep] = field(default_factory=list)
@@ -318,6 +331,13 @@ class RobotProcessor(ModelHubMixin):
         if not isinstance(transition, dict):
             raise ValueError(f"EnvTransition must be a dictionary. Got {type(transition).__name__}")
 
+        # Hook execution subtleties:
+        # - Hooks are executed sequentially in the order they were registered (list order)
+        # - Each hook sees the potentially modified transition from the previous hook
+        # - If a hook returns None, the transition remains unchanged
+        # - All hooks for a given type (before/after) run for every step, creating a
+        #   multiplicative effect: N steps × M hooks = N×M hook executions
+        # - Hook execution cannot be interrupted - they all run or none run (on error)
         for idx, processor_step in enumerate(self.steps):
             for hook in self.before_step_hooks:
                 updated = hook(idx, transition)
@@ -638,13 +658,61 @@ class RobotProcessor(ModelHubMixin):
         """Attach fn to be executed before every processor step."""
         self.before_step_hooks.append(fn)
 
+    def unregister_before_step_hook(self, fn: Callable[[int, EnvTransition], EnvTransition | None]):
+        """Remove a previously registered before_step hook.
+
+        Args:
+            fn: The exact function reference that was registered. Must be the same object.
+
+        Raises:
+            ValueError: If the hook is not found in the registered hooks.
+        """
+        try:
+            self.before_step_hooks.remove(fn)
+        except ValueError:
+            raise ValueError(
+                f"Hook {fn} not found in before_step_hooks. Make sure to pass the exact same function reference."
+            ) from None
+
     def register_after_step_hook(self, fn: Callable[[int, EnvTransition], EnvTransition | None]):
         """Attach fn to be executed after every processor step."""
         self.after_step_hooks.append(fn)
 
+    def unregister_after_step_hook(self, fn: Callable[[int, EnvTransition], EnvTransition | None]):
+        """Remove a previously registered after_step hook.
+
+        Args:
+            fn: The exact function reference that was registered. Must be the same object.
+
+        Raises:
+            ValueError: If the hook is not found in the registered hooks.
+        """
+        try:
+            self.after_step_hooks.remove(fn)
+        except ValueError:
+            raise ValueError(
+                f"Hook {fn} not found in after_step_hooks. Make sure to pass the exact same function reference."
+            ) from None
+
     def register_reset_hook(self, fn: Callable[[], None]):
         """Attach fn to be executed when reset is called."""
         self.reset_hooks.append(fn)
+
+    def unregister_reset_hook(self, fn: Callable[[], None]):
+        """Remove a previously registered reset hook.
+
+        Args:
+            fn: The exact function reference that was registered. Must be the same object.
+
+        Raises:
+            ValueError: If the hook is not found in the registered hooks.
+        """
+        try:
+            self.reset_hooks.remove(fn)
+        except ValueError:
+            raise ValueError(
+                f"Hook {fn} not found in reset_hooks. Make sure to pass the exact same function reference."
+            ) from None
 
     def reset(self):
         """Clear state in every step that implements ``reset()`` and fire registered hooks."""
