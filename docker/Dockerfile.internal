@@ -15,7 +15,7 @@
 # This Dockerfile is designed for HuggingFace internal CI environments
 # that require GPU access. It starts from an NVIDIA CUDA base image.
 
-# docker build -f docker/Dockerfile.internal -t lerobot-ci .
+# docker build -f docker/Dockerfile.internal -t lerobot-internal .
 
 # Configure the base image for CI with GPU access
 # TODO(Steven): Bump these versions
