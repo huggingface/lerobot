@@ -1,4 +1,6 @@
-# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#!/usr/bin/env python
+
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,24 +14,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-on:
-  push:
+from dataclasses import dataclass
 
-name: Secret Leaks
+from ..config import TeleoperatorConfig
 
-permissions: {}
 
-jobs:
-  trufflehog:
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      with:
-        fetch-depth: 0
-        persist-credentials: false
-
-    - name: Secret Scanning
-      uses: trufflesecurity/trufflehog@90694bf9af66e7536abc5824e7a87246dbf933cb # v3.88.35
-      with:
-        extra_args: --only-verified
+@TeleoperatorConfig.register_subclass("bi_so100_leader")
+@dataclass
+class BiSO100LeaderConfig(TeleoperatorConfig):
+    left_arm_port: str
+    right_arm_port: str
