@@ -274,7 +274,7 @@ def test_end_to_end_parameters_flow(cfg, data_size):
     if data_size == "small":
         input_params = {"layer.weight": torch.randn(128, 64)}
     else:  # "large"
-        # CHUNK_SIZE is 2MB, so this tensor (4MB) will force chunking
+        # DEFAULT_CHUNK_SIZE is 2MB, so this tensor (4MB) will force chunking
         input_params = {"large_layer.weight": torch.randn(1024, 1024)}
 
     # Simulate learner having new parameters to send

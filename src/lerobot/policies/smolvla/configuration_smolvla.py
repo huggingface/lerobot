@@ -57,6 +57,9 @@ class SmolVLAConfig(PreTrainedConfig):
     # Gripper dimensions will remain in absolute values.
     use_delta_joint_actions_aloha: bool = False
 
+    # Whether to compile parts of the model using torch.compile. Improves inference speed but increases memory usage and startup time.
+    compile_model: bool = False
+
     # Tokenizer
     tokenizer_max_length: int = 48
 
@@ -100,6 +103,15 @@ class SmolVLAConfig(PreTrainedConfig):
 
     min_period: float = 4e-3  # sensitivity range for the timestep used in sine-cosine positional encoding
     max_period: float = 4.0
+
+    # Inference settings
+    inference_enable_rtc: bool = False  # Whether to enable real-time action chunking (RTC): https://www.physicalintelligence.company/research/real_time_chunking
+    inference_rtc_d: int = (
+        -1
+    )  # Inference delay (in action steps). If -1, it is set automatically based on roundtrip inference time.
+    inference_rtc_soft_mask_length: int = -1  # The length of the soft mask for RTC (in action steps). If -1, it is set automatically to chunk_size - d - t
+    inference_rtc_beta: float = 5.0  # RTC maximum guidance weight.
+    inference_rtc_debug: bool = False  # Whether to enable debug mode for RTC. Will print debug information for RTC. RTC denoising will be slower.
 
     def __post_init__(self):
         super().__post_init__()

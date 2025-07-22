@@ -21,80 +21,13 @@ import torch
 
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.scripts.server.helpers import (
-    FPSTracker,
     TimedAction,
     TimedObservation,
-    observations_similar,
     prepare_image,
     prepare_raw_observation,
     raw_observation_to_observation,
     resize_robot_observation_image,
 )
-
-# ---------------------------------------------------------------------
-# FPSTracker
-# ---------------------------------------------------------------------
-
-
-def test_fps_tracker_first_observation():
-    """First observation should initialize timestamp and return 0 FPS."""
-    tracker = FPSTracker(target_fps=30.0)
-    timestamp = 1000.0
-
-    metrics = tracker.calculate_fps_metrics(timestamp)
-
-    assert tracker.first_timestamp == timestamp
-    assert tracker.total_obs_count == 1
-    assert metrics["avg_fps"] == 0.0
-    assert metrics["target_fps"] == 30.0
-
-
-def test_fps_tracker_single_interval():
-    """Two observations 1 second apart should give 1 FPS."""
-    tracker = FPSTracker(target_fps=30.0)
-
-    # First observation at t=0
-    metrics1 = tracker.calculate_fps_metrics(0.0)
-    assert metrics1["avg_fps"] == 0.0
-
-    # Second observation at t=1 (1 second later)
-    metrics2 = tracker.calculate_fps_metrics(1.0)
-    expected_fps = 1.0  # (2-1) observations / 1.0 seconds = 1 FPS
-    assert math.isclose(metrics2["avg_fps"], expected_fps, rel_tol=1e-6)
-
-
-def test_fps_tracker_multiple_intervals():
-    """Multiple observations should calculate correct average FPS."""
-    tracker = FPSTracker(target_fps=30.0)
-
-    # Simulate 5 observations over 2 seconds (should be 2 FPS average)
-    timestamps = [0.0, 0.5, 1.0, 1.5, 2.0]
-
-    for i, ts in enumerate(timestamps):
-        metrics = tracker.calculate_fps_metrics(ts)
-
-        if i == 0:
-            assert metrics["avg_fps"] == 0.0
-        elif i == len(timestamps) - 1:
-            # After 5 observations over 2 seconds: (5-1)/2 = 2 FPS
-            expected_fps = 2.0
-            assert math.isclose(metrics["avg_fps"], expected_fps, rel_tol=1e-6)
-
-
-def test_fps_tracker_irregular_intervals():
-    """FPS calculation should work with irregular time intervals."""
-    tracker = FPSTracker(target_fps=30.0)
-
-    # Irregular timestamps: 0, 0.1, 0.5, 2.0, 3.0 seconds
-    timestamps = [0.0, 0.1, 0.5, 2.0, 3.0]
-
-    for ts in timestamps:
-        metrics = tracker.calculate_fps_metrics(ts)
-
-    # 5 observations over 3 seconds: (5-1)/3 = 1.333... FPS
-    expected_fps = 4.0 / 3.0
-    assert math.isclose(metrics["avg_fps"], expected_fps, rel_tol=1e-6)
-
 
 # ---------------------------------------------------------------------
 # TimedData helpers
@@ -162,44 +95,6 @@ def test_timed_data_deserialization_data_getters():
     assert to_out.must_go is True
     assert to_out.get_observation().keys() == obs_dict.keys()
     torch.testing.assert_close(to_out.get_observation()["observation.state"], obs_dict["observation.state"])
-
-
-# ---------------------------------------------------------------------
-# observations_similar()
-# ---------------------------------------------------------------------
-
-
-def _make_obs(state: torch.Tensor) -> TimedObservation:
-    """Create a TimedObservation with raw robot observation format."""
-    return TimedObservation(
-        timestamp=time.time(),
-        observation={
-            "shoulder": state[0].item() if len(state) > 0 else 0.0,
-            "elbow": state[1].item() if len(state) > 1 else 0.0,
-            "wrist": state[2].item() if len(state) > 2 else 0.0,
-            "gripper": state[3].item() if len(state) > 3 else 0.0,
-        },
-        timestep=0,
-    )
-
-
-def test_observations_similar_true():
-    """Distance below atol → observations considered similar."""
-    # Create mock lerobot features for the similarity check
-    lerobot_features = {
-        "observation.state": {
-            "dtype": "float32",
-            "shape": [4],
-            "names": ["shoulder", "elbow", "wrist", "gripper"],
-        }
-    }
-
-    obs1 = _make_obs(torch.zeros(4))
-    obs2 = _make_obs(0.5 * torch.ones(4))
-    assert observations_similar(obs1, obs2, lerobot_features, atol=2.0)
-
-    obs3 = _make_obs(2.0 * torch.ones(4))
-    assert not observations_similar(obs1, obs3, lerobot_features, atol=2.0)
 
 
 # ---------------------------------------------------------------------

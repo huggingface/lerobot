@@ -139,55 +139,6 @@ def test_time_action_chunk(policy_server):
         assert abs(ta.get_timestamp() - expected_ts) < 1e-6
 
 
-def test_maybe_enqueue_observation_must_go(policy_server):
-    """An observation with `must_go=True` is always enqueued."""
-    obs = _make_obs(torch.zeros(6), must_go=True)
-    assert policy_server._enqueue_observation(obs) is True
-    assert policy_server.observation_queue.qsize() == 1
-    assert policy_server.observation_queue.get_nowait() is obs
-
-
-def test_maybe_enqueue_observation_dissimilar(policy_server):
-    """A dissimilar observation (not `must_go`) is enqueued."""
-    # Set a last predicted observation.
-    policy_server.last_processed_obs = _make_obs(torch.zeros(6))
-    # Create a new, dissimilar observation.
-    new_obs = _make_obs(torch.ones(6) * 5)  # High norm difference
-
-    assert policy_server._enqueue_observation(new_obs) is True
-    assert policy_server.observation_queue.qsize() == 1
-
-
-def test_maybe_enqueue_observation_is_skipped(policy_server):
-    """A similar observation (not `must_go`) is skipped."""
-    # Set a last predicted observation.
-    policy_server.last_processed_obs = _make_obs(torch.zeros(6))
-    # Create a new, very similar observation.
-    new_obs = _make_obs(torch.zeros(6) + 1e-4)
-
-    assert policy_server._enqueue_observation(new_obs) is False
-    assert policy_server.observation_queue.empty() is True
-
-
-def test_obs_sanity_checks(policy_server):
-    """Unit-test the private `_obs_sanity_checks` helper."""
-    prev = _make_obs(torch.zeros(6), timestep=0)
-
-    # Case 1 – timestep already predicted
-    policy_server._predicted_timesteps.add(1)
-    obs_same_ts = _make_obs(torch.ones(6), timestep=1)
-    assert policy_server._obs_sanity_checks(obs_same_ts, prev) is False
-
-    # Case 2 – observation too similar
-    policy_server._predicted_timesteps.clear()
-    obs_similar = _make_obs(torch.zeros(6) + 1e-4, timestep=2)
-    assert policy_server._obs_sanity_checks(obs_similar, prev) is False
-
-    # Case 3 – genuinely new & dissimilar observation passes
-    obs_ok = _make_obs(torch.ones(6) * 5, timestep=3)
-    assert policy_server._obs_sanity_checks(obs_ok, prev) is True
-
-
 def test_predict_action_chunk(monkeypatch, policy_server):
     """End-to-end test of `_predict_action_chunk` with a stubbed _get_action_chunk."""
     # Import only when needed

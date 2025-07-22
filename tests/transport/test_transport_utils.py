@@ -48,10 +48,10 @@ def test_bytes_buffer_size_small_buffer():
 
 @require_package("grpc")
 def test_bytes_buffer_size_large_buffer():
-    from lerobot.transport.utils import CHUNK_SIZE, bytes_buffer_size
+    from lerobot.transport.utils import DEFAULT_CHUNK_SIZE, bytes_buffer_size
 
     """Test with a large buffer."""
-    data = b"x" * (CHUNK_SIZE * 2 + 1000)
+    data = b"x" * (DEFAULT_CHUNK_SIZE * 2 + 1000)
     buffer = io.BytesIO(data)
     assert bytes_buffer_size(buffer) == len(data)
     assert buffer.tell() == 0
@@ -95,16 +95,16 @@ def test_not_silent_mode():
 
 @require_package("grpc")
 def test_send_bytes_in_chunks_large_data():
-    from lerobot.transport.utils import CHUNK_SIZE, send_bytes_in_chunks, services_pb2
+    from lerobot.transport.utils import DEFAULT_CHUNK_SIZE, send_bytes_in_chunks, services_pb2
 
     """Test sending large data."""
-    data = b"x" * (CHUNK_SIZE * 2 + 1000)
+    data = b"x" * (DEFAULT_CHUNK_SIZE * 2 + 1000)
     message_class = services_pb2.InteractionMessage
     chunks = list(send_bytes_in_chunks(data, message_class))
     assert len(chunks) == 3
-    assert chunks[0].data == b"x" * CHUNK_SIZE
+    assert chunks[0].data == b"x" * DEFAULT_CHUNK_SIZE
     assert chunks[0].transfer_state == services_pb2.TransferState.TRANSFER_BEGIN
-    assert chunks[1].data == b"x" * CHUNK_SIZE
+    assert chunks[1].data == b"x" * DEFAULT_CHUNK_SIZE
     assert chunks[1].transfer_state == services_pb2.TransferState.TRANSFER_MIDDLE
     assert chunks[2].data == b"x" * 1000
     assert chunks[2].transfer_state == services_pb2.TransferState.TRANSFER_END
@@ -112,10 +112,10 @@ def test_send_bytes_in_chunks_large_data():
 
 @require_package("grpc")
 def test_send_bytes_in_chunks_large_data_with_exact_chunk_size():
-    from lerobot.transport.utils import CHUNK_SIZE, send_bytes_in_chunks, services_pb2
+    from lerobot.transport.utils import DEFAULT_CHUNK_SIZE, send_bytes_in_chunks, services_pb2
 
     """Test sending large data with exact chunk size."""
-    data = b"x" * CHUNK_SIZE
+    data = b"x" * DEFAULT_CHUNK_SIZE
     message_class = services_pb2.InteractionMessage
     chunks = list(send_bytes_in_chunks(data, message_class))
     assert len(chunks) == 1

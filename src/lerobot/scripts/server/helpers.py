@@ -12,15 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import io
 import logging
 import logging.handlers
 import os
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from threading import Event
-from typing import Any
+from queue import Queue
 
 import torch
 
@@ -31,8 +30,6 @@ from lerobot.datasets.utils import build_dataset_frame, hw_to_dataset_features
 # NOTE: Configs need to be loaded for the client to be able to instantiate the policy config
 from lerobot.policies import ACTConfig, DiffusionConfig, PI0Config, SmolVLAConfig, VQBeTConfig  # noqa: F401
 from lerobot.robots.robot import Robot
-from lerobot.transport import async_inference_pb2
-from lerobot.transport.utils import bytes_buffer_size
 from lerobot.utils.utils import init_logging
 
 Action = torch.Tensor
@@ -59,15 +56,6 @@ def visualize_action_queue_size(action_queue_size: list[int]) -> None:
     ax.grid(True, alpha=0.3)
     ax.plot(range(len(action_queue_size)), action_queue_size)
     plt.show()
-
-
-def validate_robot_cameras_for_policy(
-    lerobot_observation_features: dict[str, dict], policy_image_features: dict[str, PolicyFeature]
-) -> None:
-    image_keys = list(filter(is_image_key, lerobot_observation_features))
-    assert set(image_keys) == set(policy_image_features.keys()), (
-        f"Policy image features must match robot cameras! Received {list(policy_image_features.keys())} != {image_keys}"
-    )
 
 
 def map_robot_keys_to_lerobot_features(robot: Robot) -> dict[str, dict]:
@@ -208,19 +196,13 @@ def get_logger(name: str, log_to_file: bool = True) -> logging.Logger:
 
 @dataclass
 class TimedData:
-    """A data object with timestamp and timestep information.
+    """A data object with timestep information.
 
     Args:
-        timestamp: Unix timestamp relative to data's creation.
-        data: The actual data to wrap a timestamp around.
         timestep: The timestep of the data.
     """
 
-    timestamp: float
     timestep: int
-
-    def get_timestamp(self):
-        return self.timestamp
 
     def get_timestep(self):
         return self.timestep
@@ -237,150 +219,48 @@ class TimedAction(TimedData):
 @dataclass
 class TimedObservation(TimedData):
     observation: RawObservation
-    must_go: bool = False
+    inference_latency_steps: int
 
     def get_observation(self):
         return self.observation
 
-
-@dataclass
-class FPSTracker:
-    """Utility class to track FPS metrics over time."""
-
-    target_fps: float
-    first_timestamp: float = None
-    total_obs_count: int = 0
-
-    def calculate_fps_metrics(self, current_timestamp: float) -> dict[str, float]:
-        """Calculate average FPS vs target"""
-        self.total_obs_count += 1
-
-        # Initialize first observation time
-        if self.first_timestamp is None:
-            self.first_timestamp = current_timestamp
-
-        # Calculate overall average FPS (since start)
-        total_duration = current_timestamp - self.first_timestamp
-        avg_fps = (self.total_obs_count - 1) / total_duration if total_duration > 1e-6 else 0.0
-
-        return {"avg_fps": avg_fps, "target_fps": self.target_fps}
-
-    def reset(self):
-        """Reset the FPS tracker state"""
-        self.first_timestamp = None
-        self.total_obs_count = 0
+    def get_inference_latency_steps(self):
+        return self.inference_latency_steps
 
 
 @dataclass
 class RemotePolicyConfig:
-    policy_type: str
-    pretrained_name_or_path: str
+    server_args: dict[str, list[str]]
     lerobot_features: dict[str, PolicyFeature]
     actions_per_chunk: int
-    device: str = "cpu"
 
 
-def _compare_observation_states(obs1_state: torch.Tensor, obs2_state: torch.Tensor, atol: float) -> bool:
-    """Check if two observation states are similar, under a tolerance threshold"""
-    return bool(torch.linalg.norm(obs1_state - obs2_state) < atol)
+def aggregate_actions(
+    current_queue: Queue[TimedAction],
+    latest_action_timestep: int,
+    incoming_actions: list[TimedAction],
+    aggregate_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor],
+) -> Queue[TimedAction]:
+    future_action_queue: Queue[TimedAction] = Queue()
 
+    current_action_queue = {action.get_timestep(): action.get_action() for action in current_queue.queue}
 
-def observations_similar(
-    obs1: TimedObservation, obs2: TimedObservation, lerobot_features: dict[str, dict], atol: float = 1
-) -> bool:
-    """Check if two observations are similar, under a tolerance threshold. Measures distance between
-    observations as the difference in joint-space between the two observations.
+    for new_action in incoming_actions:
+        # Skip actions that are older than the latest action
+        if new_action.get_timestep() <= latest_action_timestep:
+            continue
 
-    NOTE(fracapuano): This is a very simple check, and it is enough for the current use case.
-    An immediate next step is to use (fast) perceptual difference metrics comparing some camera views,
-    to surpass this joint-space similarity check.
-    """
-    obs1_state = extract_state_from_raw_observation(
-        make_lerobot_observation(obs1.get_observation(), lerobot_features)
-    )
-    obs2_state = extract_state_from_raw_observation(
-        make_lerobot_observation(obs2.get_observation(), lerobot_features)
-    )
+        if new_action.get_timestep() not in current_action_queue:
+            future_action_queue.put(new_action)
+            continue
 
-    return _compare_observation_states(obs1_state, obs2_state, atol=atol)
+        # If the new action's timestep is in the current action queue, aggregate it
+        # TODO: There is probably a way to do this with broadcasting of the two action tensors
+        future_action_queue.put(
+            TimedAction(
+                timestep=new_action.get_timestep(),
+                action=aggregate_fn(current_action_queue[new_action.get_timestep()], new_action.get_action()),
+            )
+        )
 
-
-def send_bytes_in_chunks(
-    buffer: bytes,
-    message_class: Any,
-    log_prefix: str = "",
-    silent: bool = True,
-    chunk_size: int = 3 * 1024 * 1024,
-):
-    # NOTE(fracapuano): Partially copied from lerobot.common.transport.utils.send_bytes_in_chunks. Duplication can't be avoided if we
-    # don't use a unique class for messages sent (due to the different transfer states sent). Also, I'd want more control over the
-    # chunk size as I am using it to send image observations.
-    buffer = io.BytesIO(buffer)
-    size_in_bytes = bytes_buffer_size(buffer)
-
-    sent_bytes = 0
-
-    logging_method = logging.info if not silent else logging.debug
-
-    logging_method(f"{log_prefix} Buffer size {size_in_bytes / 1024 / 1024} MB with")
-
-    while sent_bytes < size_in_bytes:
-        transfer_state = async_inference_pb2.TransferState.TRANSFER_MIDDLE
-
-        if sent_bytes + chunk_size >= size_in_bytes:
-            transfer_state = async_inference_pb2.TransferState.TRANSFER_END
-        elif sent_bytes == 0:
-            transfer_state = async_inference_pb2.TransferState.TRANSFER_BEGIN
-
-        size_to_read = min(chunk_size, size_in_bytes - sent_bytes)
-        chunk = buffer.read(size_to_read)
-
-        yield message_class(transfer_state=transfer_state, data=chunk)
-        sent_bytes += size_to_read
-        logging_method(f"{log_prefix} Sent {sent_bytes}/{size_in_bytes} bytes with state {transfer_state}")
-
-    logging_method(f"{log_prefix} Published {sent_bytes / 1024 / 1024} MB")
-
-
-def receive_bytes_in_chunks(
-    iterator, continue_receiving: Event, logger: logging.Logger, log_prefix: str = ""
-):  # type: ignore
-    # NOTE(fracapuano): Partially copied from lerobot.common.transport.utils.receive_bytes_in_chunks. Duplication can't be avoided if we
-    # don't use a unique class for messages sent (due to the different transfer states sent). Also, on the server side the logic for receiving
-    # is opposite then the HIL-SERL design (my event showcases keeping on running instead of shutdown)
-    bytes_buffer = io.BytesIO()
-    step = 0
-
-    logger.info(f"{log_prefix} Starting receiver")
-    for item in iterator:
-        logger.debug(f"{log_prefix} Received item")
-        if not continue_receiving.is_set():
-            logger.info(f"{log_prefix} Shutting down receiver")
-            return
-
-        if item.transfer_state == async_inference_pb2.TransferState.TRANSFER_BEGIN:
-            bytes_buffer.seek(0)
-            bytes_buffer.truncate(0)
-            bytes_buffer.write(item.data)
-            logger.debug(f"{log_prefix} Received data at step 0")
-
-        elif item.transfer_state == async_inference_pb2.TransferState.TRANSFER_MIDDLE:
-            bytes_buffer.write(item.data)
-            step += 1
-            logger.debug(f"{log_prefix} Received data at step {step}")
-
-        elif item.transfer_state == async_inference_pb2.TransferState.TRANSFER_END:
-            bytes_buffer.write(item.data)
-            logger.debug(f"{log_prefix} Received data at step end size {bytes_buffer_size(bytes_buffer)}")
-
-            complete_bytes = bytes_buffer.getvalue()
-
-            bytes_buffer.seek(0)
-            bytes_buffer.truncate(0)
-
-            logger.debug(f"{log_prefix} Queue updated")
-            return complete_bytes
-
-        else:
-            logger.warning(f"{log_prefix} Received unknown transfer state {item.transfer_state}")
-            raise ValueError(f"Received unknown transfer state {item.transfer_state}")
+    return future_action_queue
