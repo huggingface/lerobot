@@ -336,7 +336,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     listener, events = init_keyboard_listener()
 
     with VideoEncodingManager(dataset):
-        recorded_episodes = 0
+        recorded_episodes = dataset.num_episodes if cfg.resume else 0
         while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
             log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
             record_loop(
