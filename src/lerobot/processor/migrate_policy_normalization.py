@@ -35,7 +35,7 @@ import argparse
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import torch
 from huggingface_hub import HfApi, hf_hub_download
