@@ -109,7 +109,7 @@ def test_read_depth():
     camera = RealSenseCamera(config)
     camera.connect(warmup=False)
 
-    img = camera.read_depth(timeout_ms=1000)  # NOTE(Steven): Reading depth takes longer
+    img = camera.read_depth(timeout_ms=5000)  # NOTE(Steven): Reading depth takes longer in CI environments.
     assert isinstance(img, np.ndarray)
 
 
