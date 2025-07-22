@@ -58,8 +58,8 @@ repos:
         args: [--py310-plus]
 
   ##### Markdown Quality #####
-  - repo: https://github.com/pre-commit/mirrors-prettier
-    rev: v4.0.0-alpha.8
+  - repo: https://github.com/rbubley/mirrors-prettier
+    rev: v3.6.2
     hooks:
       - id: prettier
         name: Format Markdown with Prettier
