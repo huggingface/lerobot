@@ -19,15 +19,14 @@ from dataclasses import dataclass, field
 import gymnasium as gym
 import pytest
 import torch
-from gymnasium.envs.registration import register
-from gymnasium.envs.registration import registry as gym_registry
+from gymnasium.envs.registration import register, registry as gym_registry
 from gymnasium.utils.env_checker import check_env
 
 import lerobot
+from lerobot.configs.types import PolicyFeature
 from lerobot.envs.configs import EnvConfig
 from lerobot.envs.factory import make_env, make_env_config
 from lerobot.envs.utils import preprocess_observation
-from lerobot.configs.types import PolicyFeature
 from tests.utils import require_env
 
 OBS_TYPES = ["state", "pixels", "pixels_agent_pos"]
@@ -99,8 +98,11 @@ def test_factory_custom_gym_id():
         register(id=gym_id, entry_point="gymnasium.envs.classic_control:CartPoleEnv")
 
         cfg = DummyEnv()
-        env = make_env(cfg, n_envs=1)
-        assert env is not None
+        envs_dict = make_env(cfg, n_envs=1)
+        dummy_envs = envs_dict["dummy"]
+        assert len(dummy_envs) == 1
+        env = next(iter(dummy_envs.values()))
+        assert env is not None and isinstance(env, gym.Env)
         env.close()
 
     finally:
