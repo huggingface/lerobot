@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# This workflow handles linting, formatting, and static analysis checks for the codebase.
-name: Quality
+# This workflow handles secret scanning using TruffleHog to detect sensitive information in the codebase.
+name: Security
 permissions:
   contents: read
 
@@ -37,22 +37,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # This job runs pre-commit hooks to check code style and formatting.
-  pre-commit-checks:
-    name: Run Pre-commit Hooks (Lint, Format & Static Analysis)
+  # This job runs TruffleHog to scan the full history of the repository for secrets.
+  trufflehog:
+    name: Secret Leaks Scan
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4 # zizmor: ignore[unpinned-uses]
         with:
+          fetch-depth: 0
           persist-credentials: false
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Secret Scanning
+        uses: trufflesecurity/trufflehog@v3.90.0  # zizmor: ignore[unpinned-uses]
         with:
-          python-version: '3.10'
-
-      - name: Run pre-commit hooks
-        uses: pre-commit/action@v3.0.1 # zizmor: ignore[unpinned-uses]
-        with:
-          extra_args: --all-files --show-diff-on-failure --color=always
+          extra_args: --only-verified

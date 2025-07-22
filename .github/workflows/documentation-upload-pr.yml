@@ -1,0 +1,40 @@
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# This workflow uploads the documentation preview built for a PR and comments the link on the PR.
+name: Documentation PR Upload
+permissions:
+  contents: read
+  pull-requests: write
+
+on:
+  # Triggered by the completion of the main 'Documentation' workflow.
+  workflow_run: # zizmor: ignore[dangerous-triggers] We follow the same pattern as in Transformers
+    workflows: ["Documentation"]
+    types:
+      - completed
+
+jobs:
+  # This job uploads a preview of the documentation for a pull request.
+  upload_and_comment:
+    name: Upload Preview and Comment
+    if: >
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success'
+    uses: huggingface/doc-builder/.github/workflows/upload_pr_documentation.yml@main
+    with:
+      package_name: lerobot
+    secrets:
+      hf_token: ${{ secrets.HF_DOC_BUILD_PUSH }}
+      comment_bot_token: ${{ secrets.COMMENT_BOT_TOKEN }}
