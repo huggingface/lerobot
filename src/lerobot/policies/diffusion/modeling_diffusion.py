@@ -22,7 +22,7 @@ TODO(alexander-soare):
 
 import math
 from collections import deque
-from typing import Callable
+from collections.abc import Callable
 
 import einops
 import numpy as np

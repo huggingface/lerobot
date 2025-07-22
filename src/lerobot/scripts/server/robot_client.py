@@ -36,10 +36,11 @@ import logging
 import pickle  # nosec
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import asdict
 from pprint import pformat
 from queue import Queue
-from typing import Any, Callable, Optional
+from typing import Any
 
 import draccus
 import grpc
@@ -75,7 +76,7 @@ from lerobot.transport import (
     services_pb2,  # type: ignore
     services_pb2_grpc,  # type: ignore
 )
-from lerobot.transport.utils import send_bytes_in_chunks
+from lerobot.transport.utils import grpc_channel_options, send_bytes_in_chunks
 from lerobot.utils import queue
 from lerobot.utils.process import ProcessSignalHandler
 from lerobot.utils.queue import get_last_item_from_queue
@@ -117,7 +118,9 @@ class RobotClient:
             config.actions_per_chunk,
             config.policy_device,
         )
-        self.channel = grpc.insecure_channel(self.server_address)
+        self.channel = grpc.insecure_channel(
+            self.server_address, grpc_channel_options(initial_backoff=f"{config.environment_dt:.4f}s")
+        )
         self.stub = services_pb2_grpc.AsyncInferenceStub(self.channel)
         self.logger.info(f"Initializing client to connect to server at {self.server_address}")
 
@@ -199,7 +202,7 @@ class RobotClient:
     def _aggregate_action_queues(
         self,
         incoming_actions: list[TimedAction],
-        aggregate_fn: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None,
+        aggregate_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] | None = None,
     ):
         """Finds the same timestep actions in the queue and aggregates them using the aggregate_fn"""
         if aggregate_fn is None:
@@ -248,7 +251,7 @@ class RobotClient:
         while True:
             try:
                 bytes = self.actions_bytes_queue.get_nowait()
-                actions = pickle.loads(bytes)
+                actions = pickle.loads(bytes)  # nosec
                 result.extend(actions)
             except queue.Empty:
                 break

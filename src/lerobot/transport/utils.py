@@ -16,10 +16,11 @@
 # limitations under the License.
 
 import io
+import json
 import logging
 import pickle  # nosec B403: Safe usage for internal serialization only
 from multiprocessing import Event, Queue
-from typing import Any, Optional
+from typing import Any
 
 import torch
 
@@ -27,6 +28,7 @@ from lerobot.transport import services_pb2
 from lerobot.utils.transition import Transition
 
 CHUNK_SIZE = 2 * 1024 * 1024  # 2 MB
+MAX_MESSAGE_SIZE = 4 * 1024 * 1024  # 4 MB
 
 
 def bytes_buffer_size(buffer: io.BytesIO) -> int:
@@ -66,7 +68,7 @@ def send_bytes_in_chunks(
     logging_method(f"{log_prefix} Published {sent_bytes / 1024 / 1024} MB")
 
 
-def receive_bytes_in_chunks(iterator, queue: Optional[Queue], shutdown_event: Event, log_prefix: str = ""):
+def receive_bytes_in_chunks(iterator, queue: Queue | None, shutdown_event: Event, log_prefix: str = ""):
     bytes_buffer = io.BytesIO()
     step = 0
 
@@ -144,3 +146,42 @@ def transitions_to_bytes(transitions: list[Transition]) -> bytes:
     buffer = io.BytesIO()
     torch.save(transitions, buffer)
     return buffer.getvalue()
+
+
+def grpc_channel_options(
+    max_receive_message_length: int = MAX_MESSAGE_SIZE,
+    max_send_message_length: int = MAX_MESSAGE_SIZE,
+    enable_retries: bool = True,
+    initial_backoff: str = "0.1s",
+    max_attempts: int = 5,
+    backoff_multiplier: float = 2,
+    max_backoff: str = "2s",
+):
+    service_config = {
+        "methodConfig": [
+            {
+                "name": [{}],  # Applies to ALL methods in ALL services
+                "retryPolicy": {
+                    "maxAttempts": max_attempts,  # Max retries (total attempts = 5)
+                    "initialBackoff": initial_backoff,  # First retry after 0.1s
+                    "maxBackoff": max_backoff,  # Max wait time between retries
+                    "backoffMultiplier": backoff_multiplier,  # Exponential backoff factor
+                    "retryableStatusCodes": [
+                        "UNAVAILABLE",
+                        "DEADLINE_EXCEEDED",
+                    ],  # Retries on network failures
+                },
+            }
+        ]
+    }
+
+    service_config_json = json.dumps(service_config)
+
+    retries_option = 1 if enable_retries else 0
+
+    return [
+        ("grpc.max_receive_message_length", max_receive_message_length),
+        ("grpc.max_send_message_length", max_send_message_length),
+        ("grpc.enable_retries", retries_option),
+        ("grpc.service_config", service_config_json),
+    ]
