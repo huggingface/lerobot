@@ -41,9 +41,7 @@ An `EnvTransition` is a 7-tuple containing:
 
 ## Installation
 
-```bash
-pip install lerobot
-```
+Follow the [installation instructions](https://huggingface.co/docs/lerobot/installation) to install the package.
 
 ## Usage
 
