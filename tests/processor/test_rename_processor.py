@@ -225,7 +225,7 @@ def test_save_and_load_pretrained():
         pipeline.save_pretrained(tmp_dir)
 
         # Check files were created
-        config_path = Path(tmp_dir) / "processor.json"
+        config_path = Path(tmp_dir) / "testrenameprocessor.json"  # Based on name="TestRenameProcessor"
         assert config_path.exists()
 
         # No state files should be created for RenameProcessor
@@ -283,7 +283,7 @@ def test_registry_based_save_load():
         # Verify config uses registry name
         import json
 
-        with open(Path(tmp_dir) / "processor.json") as f:
+        with open(Path(tmp_dir) / "robotprocessor.json") as f:  # Default name is "RobotProcessor"
             config = json.load(f)
 
         assert "registry_name" in config["steps"][0]
