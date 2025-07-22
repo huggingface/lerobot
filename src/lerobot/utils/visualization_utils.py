@@ -358,9 +358,11 @@ class RerunRobotLogger:
         self.root = root
         self.log_rrd = log_rrd
         self.live_display = live_display
+        self.recording_files = []
 
         # if Rerun should be logging data. Call `init()` to start logging.
         self.active = False
+        self.start_time = None
 
     def init(self):
         self._init_rerun()
@@ -379,6 +381,7 @@ class RerunRobotLogger:
                 )
                 self.log_urdf = False
 
+        self.start_time = time.time_ns()
         self.active = True
 
     def cam_info(self):
@@ -401,6 +404,22 @@ class RerunRobotLogger:
 
     def stop_recording(self):
         self.active = False
+        self.start_time = None
+
+    def restart_recording(self):
+        """
+        Restart the Rerun recording by closing the current recording, deleting the file (if it exists) and initializing a new one.
+        This is useful for starting a new episode or session.
+
+        Be sure to call init() again after this method to start a new recording.
+        """
+        self.stop_recording()
+        self.rec = None
+        if self.recording_files:
+            latest_file = self.recording_files[-1]
+            if latest_file.exists():
+                logging.info(f"Deleting previous Rerun recording file: {latest_file}")
+                latest_file.unlink()
 
     def _increment_rrd_path(self) -> Path:
         # Pattern: <prefix>_000000.rrd, <prefix>_000001.rrd, etc.
@@ -433,6 +452,7 @@ class RerunRobotLogger:
         if self.log_rrd:
             rec_file = self._increment_rrd_path()
             rec_file.parent.mkdir(parents=True, exist_ok=True)
+            self.recording_files.append(rec_file)
             logging.info(f"Rerun recording will be saved to {rec_file}")
             sinks.append(rr.FileSink(rec_file))
 
@@ -481,7 +501,7 @@ class RerunRobotLogger:
             video_logger.close()
         rr.rerun_shutdown()
 
-    def log_all(self, observation=None, action=None, sync_time: bool = True):
+    def log_all(self, observation=None, action=None, sync_time: bool = True, timestamp: int | None = None):
         """
         Log all observations, actions, and joint angles to Rerun.
         If `observations` and `actions` are not provided, it will fetch them from the robot and teleoperator instances.
@@ -489,7 +509,11 @@ class RerunRobotLogger:
         This is useful for synchronizing the logs with the robot's time.
         """
         if sync_time:
-            rr.set_time("time", timestamp=np.datetime64(time.time_ns(), "ns"))
+            if timestamp is None or not self.start_time:
+                rr.set_time("time", timestamp=np.datetime64(time.time_ns(), "ns"))
+            else:
+                timestamp = self.start_time + timestamp
+                rr.set_time("time", timestamp=np.datetime64(int(timestamp), "ns"))
 
         if observation is None:
             observation = self.robot.get_observation() if self.robot else {}

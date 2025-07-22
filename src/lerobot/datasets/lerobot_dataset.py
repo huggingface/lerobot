@@ -812,7 +812,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         self.episode_buffer["size"] += 1
 
-    def save_episode(self, episode_data: dict | None = None, rrd_dir: str | Path | None = None) -> None:
+    def save_episode(self, episode_data: dict | None = None, rrd: str | Path | None = None) -> None:
         """
         This will save to disk the current episode in self.episode_buffer.
 
@@ -824,7 +824,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
             episode_data (dict | None, optional): Dict containing the episode data to save. If None, this will
                 save the current episode in self.episode_buffer, which is filled with 'add_frame'. Defaults to
                 None.
-            rrd_dir (str | Path | None, optional): If provided, will attempt to extract videos from RRD files in this directory.
+            rrd (str | Path | None, optional): Directory containing the RRD files for video extraction. If None,
+                it will not use RRD for video extraction. Defaults to None.
         """
         if not episode_data:
             episode_buffer = self.episode_buffer
@@ -860,7 +861,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self._save_episode_table(episode_buffer, episode_index)
         ep_stats = compute_episode_stats(episode_buffer, self.features)
 
-        used_rrd_extraction = self.save_episode_videos_from_rrd(episode_index, rrd_dir)
+        used_rrd_extraction = self.save_episode_videos_from_rrd(episode_index, rrd)
 
         # If not using RRD extraction or it failed, fall back to encoding from images
         has_video_keys = len(self.meta.video_keys) > 0
@@ -957,7 +958,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if self.image_writer is not None:
             self.image_writer.wait_until_done()
 
-    def save_episode_videos_from_rrd(self, episode_index: int, rrd_dir: str | Path | None = None) -> bool:
+    def save_episode_videos_from_rrd(self, episode_index: int, rrd_path: str | Path | None = None) -> bool:
         """
         Extract videos from RRD files and save them to the dataset's video directory.
         This is useful when you have RRD files containing video data and want to convert them to mp4 format.
@@ -965,11 +966,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         Args:
             episode_index (int): Index of the episode to extract videos from.
         """
-        if not rrd_dir or len(self.meta.video_keys) == 0:
+        if not rrd_path or len(self.meta.video_keys) == 0:
             return False
 
-        rrd_filename = f"episode_{episode_index:06d}.rrd"
-        rrd_path = os.path.join(str(rrd_dir), rrd_filename)
         if not os.path.isfile(rrd_path):
             return False
 

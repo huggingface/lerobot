@@ -296,8 +296,13 @@ def record_loop(
             frame = {**observation_frame, **action_frame}
             dataset.add_frame(frame, task=single_task if single_task is not None else "")
 
-        if rerun_logger is not None:
-            rerun_logger.log_all(observation=observation, action=action, sync_time=True)
+            if rerun_logger is not None:
+                if dataset.episode_buffer is not None and dataset.episode_buffer.get("timestamp") is not None:
+                    timestamp_ns = dataset.episode_buffer["timestamp"][-1] * 1e9  # Convert to nanoseconds
+                else:
+                    timestamp_ns = None
+
+                rerun_logger.log_all(observation=observation, action=action, timestamp=timestamp_ns)
 
         dt_s = time.perf_counter() - start_loop_t
         busy_wait(1 / fps - dt_s)
@@ -411,10 +416,16 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 events["rerecord_episode"] = False
                 events["exit_early"] = False
                 dataset.clear_episode_buffer()
+                if rerun_logger is not None:
+                    rerun_logger.restart_recording()
                 continue
 
-            rrd_dir = rerun_logger.get_rrd_dir() if rerun_logger is not None else None
-            dataset.save_episode(rrd_dir=rrd_dir)
+            rrd_file = (
+                rerun_logger.recording_files[-1]
+                if rerun_logger is not None and rerun_logger.recording_files
+                else None
+            )
+            dataset.save_episode(rrd=rrd_file)
             recorded_episodes += 1
 
     log_say("Stop recording", cfg.play_sounds, blocking=True)
