@@ -107,7 +107,7 @@ hopejr = ["lerobot[feetech]", "lerobot[pygame-dep]"]
 lekiwi = ["lerobot[feetech]", "pyzmq>=26.2.1"]
 kinematics = ["lerobot[placo-dep]"]
 intelrealsense = [
-    "pyrealsense2>=2.55.1.6486 ; sys_platform != 'darwin'",
+    "pyrealsense2==2.55.1.6486 ; sys_platform != 'darwin'",
     "pyrealsense2-macosx>=2.54 ; sys_platform == 'darwin'",
 ]
 # stretch = [
