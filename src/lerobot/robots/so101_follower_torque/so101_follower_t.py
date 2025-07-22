@@ -29,7 +29,6 @@ from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.feetech import (
     FeetechMotorsBus,
-    OperatingMode,
 )
 
 from ..robot import Robot
@@ -182,7 +181,6 @@ class SO101FollowerT(Robot):
         for motor in self.bus.motors:
             d[f"{motor}.pos"] = float
             d[f"{motor}.vel"] = float
-            # d[f"{motor}.acc"] = float
             d[f"{motor}.effort"] = float
         return d
 
@@ -375,7 +373,7 @@ class SO101FollowerT(Robot):
         logger.info(f"\nRunning calibration of {self}")
         self.bus.disable_torque()
         for motor in self.bus.motors:
-            self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
+            self.bus.write("Operating_Mode", motor, 2, num_retry=2)  # Set to current mode
 
         input(f"Move {self} to the middle of its range of motion and press ENTER....")
         homing_offsets = self.bus.set_half_turn_homings()
@@ -403,9 +401,10 @@ class SO101FollowerT(Robot):
         print("Calibration saved to", self.calibration_fpath)
 
     def configure(self) -> None:
-        with self.bus.torque_disabled():
-            for motor in self.bus.motors:
-                self.bus.write("Operating_Mode", motor, 2, num_retry=2)  # Set to current mode
+        self.bus.disable_torque()  # here was issue at startup previously
+        for motor in self.bus.motors:
+            self.bus.write("Operating_Mode", motor, 2, num_retry=2)  # Set to current mode
+            self.bus.write("Present_Current", motor, 0, normalize=False, num_retry=5)
 
     def setup_motors(self) -> None:
         for motor in reversed(self.bus.motors):

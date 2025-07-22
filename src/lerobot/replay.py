@@ -32,8 +32,8 @@ python -m lerobot.replay \
     --robot.type=so101_follower_t \
     --robot.port=/dev/tty.usbmodem58760432961 \
     --robot.id=follower_arm_torque \
-    --dataset.repo_id=pepijn223/bilateral-wipe-table \
-    --dataset.episode=0 \
+    --dataset.repo_id=pepijn223/bilateral-wipe-large \
+    --dataset.episode=10 \
     --biteleop=true
 ```
 """
