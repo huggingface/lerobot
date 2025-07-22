@@ -265,10 +265,8 @@ class RobotProcessor(ModelHubMixin):
     Hook Semantics:
         - Hooks are executed sequentially in the order they were registered. There is no way to
           reorder hooks after registration without creating a new pipeline.
-        - Hooks CAN modify transitions by returning a new transition dict. If a hook returns None,
-          the current transition remains unchanged. While this capability exists, it should be used
-          with EXTREME CAUTION as it can make debugging difficult and create unexpected side effects.
-          IT'S ADVISED TO NOT MODIFY THE TRANSITION IN A HOOK.
+        - Hooks are for observation/monitoring only and DO NOT modify transitions. They are called
+          with the step index and current transition for logging, debugging, or monitoring purposes.
         - All hooks for a given type (before/after) are executed for every step, or none at all if
           an error occurs. There is no partial execution of hooks.
         - Hooks should generally be stateless to maintain predictable behavior. If you need stateful
@@ -287,15 +285,10 @@ class RobotProcessor(ModelHubMixin):
         default_factory=lambda: _default_transition_to_batch, repr=False
     )
 
-    # Processor-level hooks
-    # A hook can optionally return a modified transition.  If it returns
-    # ``None`` the current value is left untouched.
-    before_step_hooks: list[Callable[[int, EnvTransition], EnvTransition | None]] = field(
-        default_factory=list, repr=False
-    )
-    after_step_hooks: list[Callable[[int, EnvTransition], EnvTransition | None]] = field(
-        default_factory=list, repr=False
-    )
+    # Processor-level hooks for observation/monitoring
+    # Hooks do not modify transitions - they are called for logging, debugging, or monitoring purposes
+    before_step_hooks: list[Callable[[int, EnvTransition], None]] = field(default_factory=list, repr=False)
+    after_step_hooks: list[Callable[[int, EnvTransition], None]] = field(default_factory=list, repr=False)
     reset_hooks: list[Callable[[], None]] = field(default_factory=list, repr=False)
 
     def __call__(self, data: EnvTransition | dict[str, Any]):
@@ -316,54 +309,34 @@ class RobotProcessor(ModelHubMixin):
         Raises:
             ValueError: If the transition is not a valid EnvTransition format.
         """
+        iterator = self.step_through(data)
+        current_result = next(iterator)  # Get initial state
 
-        # Check if data is already an EnvTransition or needs conversion
-        if isinstance(data, dict) and not all(isinstance(k, TransitionKey) for k in data.keys()):
-            # It's a batch dict, convert it
-            called_with_batch = True
-            transition = self.to_transition(data)
-        else:
-            # It's already an EnvTransition
-            called_with_batch = False
-            transition = data
-
-        # Basic validation
-        if not isinstance(transition, dict):
-            raise ValueError(f"EnvTransition must be a dictionary. Got {type(transition).__name__}")
-
-        # Hook execution subtleties:
-        # - Hooks are executed sequentially in the order they were registered (list order)
-        # - Each hook sees the potentially modified transition from the previous hook
-        # - If a hook returns None, the transition remains unchanged
-        # - All hooks for a given type (before/after) run for every step, creating a
-        #   multiplicative effect: N steps × M hooks = N×M hook executions
-        # - Hook execution cannot be interrupted - they all run or none run (on error)
-        for idx, processor_step in enumerate(self.steps):
+        # Process through all steps with hooks
+        for idx, step_result in enumerate(iterator):
+            # Apply before hooks
             for hook in self.before_step_hooks:
-                updated = hook(idx, transition)
-                if updated is not None:
-                    transition = updated
+                _ = hook(idx, step_result)
 
-            transition = processor_step(transition)
-
+            # Apply after hooks
             for hook in self.after_step_hooks:
-                updated = hook(idx, transition)
-                if updated is not None:
-                    transition = updated
+                _ = hook(idx, step_result)
 
-        return self.to_output(transition) if called_with_batch else transition
+            current_result = step_result
 
-    def step_through(self, data: EnvTransition | dict[str, Any]) -> Iterable[EnvTransition | dict[str, Any]]:
-        """Yield the intermediate results after each processor step.
+        return current_result
 
-        Like __call__, this method accepts either EnvTransition dicts or batch dictionaries
-        and preserves the input format in the yielded results.
+    def _prepare_transition(self, data: EnvTransition | dict[str, Any]) -> tuple[EnvTransition, bool]:
+        """Prepare and validate transition data for processing.
 
         Args:
             data: Either an EnvTransition dict or a batch dictionary to process.
 
-        Yields:
-            The intermediate results after each step, in the same format as the input.
+        Returns:
+            A tuple of (prepared_transition, called_with_batch_flag)
+
+        Raises:
+            ValueError: If the transition is not a valid EnvTransition format.
         """
         # Check if data is already an EnvTransition or needs conversion
         if isinstance(data, dict) and not all(isinstance(k, TransitionKey) for k in data.keys()):
@@ -379,22 +352,32 @@ class RobotProcessor(ModelHubMixin):
         if not isinstance(transition, dict):
             raise ValueError(f"EnvTransition must be a dictionary. Got {type(transition).__name__}")
 
+        return transition, called_with_batch
+
+    def step_through(self, data: EnvTransition | dict[str, Any]) -> Iterable[EnvTransition | dict[str, Any]]:
+        """Yield the intermediate results after each processor step.
+
+        This is a low-level method that does NOT apply hooks. It simply executes each step
+        and yields the intermediate results. This allows users to debug the pipeline or
+        apply custom logic between steps if needed.
+
+        Like __call__, this method accepts either EnvTransition dicts or batch dictionaries
+        and preserves the input format in the yielded results.
+
+        Args:
+            data: Either an EnvTransition dict or a batch dictionary to process.
+
+        Yields:
+            The intermediate results after each step, in the same format as the input.
+        """
+        transition, called_with_batch = self._prepare_transition(data)
+
         # Yield initial state
         yield self.to_output(transition) if called_with_batch else transition
 
-        for idx, processor_step in enumerate(self.steps):
-            for hook in self.before_step_hooks:
-                updated = hook(idx, transition)
-                if updated is not None:
-                    transition = updated
-
+        # Process each step WITHOUT hooks (low-level method)
+        for processor_step in self.steps:
             transition = processor_step(transition)
-
-            for hook in self.after_step_hooks:
-                updated = hook(idx, transition)
-                if updated is not None:
-                    transition = updated
-
             yield self.to_output(transition) if called_with_batch else transition
 
     _CFG_NAME = "processor.json"
@@ -654,11 +637,11 @@ class RobotProcessor(ModelHubMixin):
             return RobotProcessor(self.steps[idx], self.name, self.seed)
         return self.steps[idx]
 
-    def register_before_step_hook(self, fn: Callable[[int, EnvTransition], EnvTransition | None]):
+    def register_before_step_hook(self, fn: Callable[[int, EnvTransition], None]):
         """Attach fn to be executed before every processor step."""
         self.before_step_hooks.append(fn)
 
-    def unregister_before_step_hook(self, fn: Callable[[int, EnvTransition], EnvTransition | None]):
+    def unregister_before_step_hook(self, fn: Callable[[int, EnvTransition], None]):
         """Remove a previously registered before_step hook.
 
         Args:
@@ -674,11 +657,11 @@ class RobotProcessor(ModelHubMixin):
                 f"Hook {fn} not found in before_step_hooks. Make sure to pass the exact same function reference."
             ) from None
 
-    def register_after_step_hook(self, fn: Callable[[int, EnvTransition], EnvTransition | None]):
+    def register_after_step_hook(self, fn: Callable[[int, EnvTransition], None]):
         """Attach fn to be executed after every processor step."""
         self.after_step_hooks.append(fn)
 
-    def unregister_after_step_hook(self, fn: Callable[[int, EnvTransition], EnvTransition | None]):
+    def unregister_after_step_hook(self, fn: Callable[[int, EnvTransition], None]):
         """Remove a previously registered after_step hook.
 
         Args:
