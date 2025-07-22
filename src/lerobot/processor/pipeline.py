@@ -729,6 +729,26 @@ class RobotProcessor(ModelHubMixin):
 
         return profile_results
 
+    def __repr__(self) -> str:
+        """Return a readable string representation of the processor."""
+        step_names = [step.__class__.__name__ for step in self.steps]
+
+        if not step_names:
+            steps_repr = "steps=0: []"
+        elif len(step_names) <= 3:
+            steps_repr = f"steps={len(step_names)}: [{', '.join(step_names)}]"
+        else:
+            # Show first 2 and last 1 with ellipsis for long lists
+            displayed = f"{step_names[0]}, {step_names[1]}, ..., {step_names[-1]}"
+            steps_repr = f"steps={len(step_names)}: [{displayed}]"
+
+        parts = [f"name='{self.name}'", steps_repr]
+
+        if self.seed is not None:
+            parts.append(f"seed={self.seed}")
+
+        return f"RobotProcessor({', '.join(parts)})"
+
 
 class ObservationProcessor:
     """Base class for processors that modify only the observation component of a transition.
