@@ -19,15 +19,14 @@ from dataclasses import dataclass, field
 import gymnasium as gym
 import pytest
 import torch
-from gymnasium.envs.registration import register
-from gymnasium.envs.registration import registry as gym_registry
+from gymnasium.envs.registration import register, registry as gym_registry
 from gymnasium.utils.env_checker import check_env
 
 import lerobot
+from lerobot.configs.types import PolicyFeature
 from lerobot.envs.configs import EnvConfig
 from lerobot.envs.factory import make_env, make_env_config
 from lerobot.envs.utils import preprocess_observation
-from lerobot.configs.types import PolicyFeature
 from tests.utils import require_env
 
 OBS_TYPES = ["state", "pixels", "pixels_agent_pos"]
