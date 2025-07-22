@@ -38,6 +38,9 @@ export default async function ExplorePage({
     return <div className="p-8 text-red-600">Failed to load datasets.</div>;
   }
 
+  // Default to v2.1 revision for dataset loading
+  const DEFAULT_REVISION = "v2.1";
+
   // Fetch episode 0 data for each dataset
   const datasetWithVideos = (
     await Promise.all(
@@ -45,7 +48,7 @@ export default async function ExplorePage({
         try {
           const [org, dataset] = ds.id.split("/");
           const repoId = `${org}/${dataset}`;
-          const jsonUrl = `https://huggingface.co/datasets/${repoId}/resolve/main/meta/info.json`;
+          const jsonUrl = `https://huggingface.co/datasets/${repoId}/resolve/${DEFAULT_REVISION}/meta/info.json`;
           const info = await fetchJson<DatasetMetadata>(jsonUrl);
           const videoEntry = Object.entries(info.features).find(
             ([key, value]) => value.dtype === "video",
@@ -59,7 +62,7 @@ export default async function ExplorePage({
               episode_index: "0".padStart(6, "0"),
             });
             const url =
-              `https://huggingface.co/datasets/${repoId}/resolve/main/` +
+              `https://huggingface.co/datasets/${repoId}/resolve/${DEFAULT_REVISION}/` +
               videoPath;
             // Check if videoUrl exists (status 200)
             try {

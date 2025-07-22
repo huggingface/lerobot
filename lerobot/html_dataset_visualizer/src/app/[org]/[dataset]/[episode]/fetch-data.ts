@@ -10,6 +10,8 @@ import { pick } from "@/utils/pick";
 const DATASET_URL =
   process.env.DATASET_URL || "https://huggingface.co/datasets";
 
+const DEFAULT_REVISION = "v2.1";
+
 const SERIES_NAME_DELIMITER = " | ";
 
 export async function getEpisodeData(
@@ -20,7 +22,7 @@ export async function getEpisodeData(
   const repoId = `${org}/${dataset}`;
   try {
     const episode_chunk = Math.floor(0 / 1000);
-    const jsonUrl = `${DATASET_URL}/${repoId}/resolve/main/meta/info.json`;
+    const jsonUrl = `${DATASET_URL}/${repoId}/resolve/${DEFAULT_REVISION}/meta/info.json`;
 
     const info = await fetchJson<DatasetMetadata>(jsonUrl);
 
@@ -56,7 +58,7 @@ export async function getEpisodeData(
         });
         return {
           filename: key,
-          url: `${DATASET_URL}/${repoId}/resolve/main/` + videoPath,
+          url: `${DATASET_URL}/${repoId}/resolve/${DEFAULT_REVISION}/` + videoPath,
         };
       });
 
@@ -103,7 +105,7 @@ export async function getEpisodeData(
     });
 
     const parquetUrl =
-      `${DATASET_URL}/${repoId}/resolve/main/` +
+      `${DATASET_URL}/${repoId}/resolve/${DEFAULT_REVISION}/` +
       formatStringWithVars(info.data_path, {
         episode_chunk: episode_chunk.toString().padStart(3, "0"),
         episode_index: episodeId.toString().padStart(6, "0"),
