@@ -324,33 +324,6 @@ huggingface-cli upload ${hf_user}/${repo_name} path/to/pretrained_model
 
 See [eval.py](https://github.com/huggingface/lerobot/blob/main/lerobot/scripts/eval.py) for an example of how other people may use your policy.
 
-### Improve your code with profiling
-
-An example of a code snippet to profile the evaluation of a policy:
-
-<!-- prettier-ignore-start -->
-```python
-from torch.profiler import profile, record_function, ProfilerActivity
-
-def trace_handler(prof):
-    prof.export_chrome_trace(f"tmp/trace_schedule_{prof.step_num}.json")
-
-with profile(
-    activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
-    schedule=torch.profiler.schedule(
-        wait=2,
-        warmup=2,
-        active=3,
-    ),
-    on_trace_ready=trace_handler
-) as prof:
-    with record_function("eval_policy"):
-        for i in range(num_episodes):
-            prof.step()
-            # insert code to profile, potentially whole body of eval_policy function
-```
-<!-- prettier-ignore-end -->
-
 ## Citation
 
 If you want, you can cite this work with:
