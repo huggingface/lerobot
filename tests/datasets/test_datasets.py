@@ -527,24 +527,6 @@ def test_backward_compatibility(repo_id):
     load_and_compare(i - 2)
     load_and_compare(i - 1)
 
-    # TODO(rcadene): Enable testing on second and last episode
-    # We currently cant because our test dataset only contains the first episode
-
-    # # test 2 first frames of second episode
-    # i = dataset.meta.episodes["dataset_from_index"][1].item()
-    # load_and_compare(i)
-    # load_and_compare(i + 1)
-
-    # # test 2 last frames of second episode
-    # i = dataset.meta.episodes["dataset_to_index"][1].item()
-    # load_and_compare(i - 2)
-    # load_and_compare(i - 1)
-
-    # # test 2 last frames of last episode
-    # i = dataset.meta.episodes["dataset_to_index"][-1].item()
-    # load_and_compare(i - 2)
-    # load_and_compare(i - 1)
-
 
 @pytest.mark.skip("Requires internet access")
 def test_create_branch():

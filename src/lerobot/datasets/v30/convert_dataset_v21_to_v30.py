@@ -22,7 +22,7 @@ This script will help you convert any LeRobot dataset already pushed to the hub 
 - Check consistency between these new stats and the old ones.
 - Remove the deprecated `stats.json`.
 - Update codebase_version in `info.json`.
-- Push this new version to the hub on the 'main' branch and tags it with "v2.1".
+- Push this new version to the hub on the 'main' branch and tags it with "v3.0".
 
 Usage:
 
@@ -40,9 +40,8 @@ from typing import Any
 
 import jsonlines
 import pandas as pd
-import pyarrow as pa
 import tqdm
-from datasets import Dataset, Features, Image
+from datasets import Dataset, Image, concatenate_datasets
 from huggingface_hub import HfApi, snapshot_download
 from requests import HTTPError
 
@@ -153,24 +152,21 @@ def convert_tasks(root, new_root):
 
 
 def concat_data_files(paths_to_cat, new_root, chunk_idx, file_idx, image_keys):
-    # TODO(rcadene): to save RAM use Dataset.from_parquet(file) and concatenate_datasets
-    dataframes = [pd.read_parquet(file) for file in paths_to_cat]
-    # Concatenate all DataFrames along rows
-    concatenated_df = pd.concat(dataframes, ignore_index=True)
+    # Save RAM by using Dataset.from_parquet and concatenate_datasets
+    datasets = [Dataset.from_parquet(file) for file in paths_to_cat]
+    concatenated_dataset = concatenate_datasets(datasets)
 
     path = new_root / DEFAULT_DATA_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
     path.parent.mkdir(parents=True, exist_ok=True)
 
     if len(image_keys) > 0:
-        schema = pa.Schema.from_pandas(concatenated_df)
-        features = Features.from_arrow_schema(schema)
+        # Handle image features by casting to the appropriate feature types
+        features = concatenated_dataset.features.copy()
         for key in image_keys:
             features[key] = Image()
-        schema = features.arrow_schema
-    else:
-        schema = None
+        concatenated_dataset = concatenated_dataset.cast(features)
 
-    concatenated_df.to_parquet(path, index=False, schema=schema)
+    concatenated_dataset.to_parquet(path)
 
 
 def convert_data(root, new_root):

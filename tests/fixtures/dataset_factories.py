@@ -218,25 +218,6 @@ def stats_factory():
     return _create_stats
 
 
-# @pytest.fixture(scope="session")
-# def episodes_stats_factory(stats_factory):
-#     def _create_episodes_stats(
-#         features: dict[str],
-#         total_episodes: int = 3,
-#     ) -> dict:
-
-#         def _generator(total_episodes):
-#             for ep_idx in range(total_episodes):
-#                 flat_ep_stats = flatten_dict(stats_factory(features))
-#                 flat_ep_stats["episode_index"] = ep_idx
-#                 yield flat_ep_stats
-
-#         # Simpler to rely on generator instead of from_dict
-#         return Dataset.from_generator(lambda: _generator(total_episodes))
-
-#     return _create_episodes_stats
-
-
 @pytest.fixture(scope="session")
 def tasks_factory():
     def _create_tasks(total_tasks: int = 3) -> pd.DataFrame:
