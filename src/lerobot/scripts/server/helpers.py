@@ -12,15 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import io
 import logging
 import logging.handlers
 import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from threading import Event
-from typing import Any
 
 import torch
 
@@ -31,8 +28,6 @@ from lerobot.datasets.utils import build_dataset_frame, hw_to_dataset_features
 # NOTE: Configs need to be loaded for the client to be able to instantiate the policy config
 from lerobot.policies import ACTConfig, DiffusionConfig, PI0Config, SmolVLAConfig, VQBeTConfig  # noqa: F401
 from lerobot.robots.robot import Robot
-from lerobot.transport import async_inference_pb2
-from lerobot.transport.utils import bytes_buffer_size
 from lerobot.utils.utils import init_logging
 
 Action = torch.Tensor
@@ -303,84 +298,3 @@ def observations_similar(
     )
 
     return _compare_observation_states(obs1_state, obs2_state, atol=atol)
-
-
-def send_bytes_in_chunks(
-    buffer: bytes,
-    message_class: Any,
-    log_prefix: str = "",
-    silent: bool = True,
-    chunk_size: int = 3 * 1024 * 1024,
-):
-    # NOTE(fracapuano): Partially copied from lerobot.common.transport.utils.send_bytes_in_chunks. Duplication can't be avoided if we
-    # don't use a unique class for messages sent (due to the different transfer states sent). Also, I'd want more control over the
-    # chunk size as I am using it to send image observations.
-    buffer = io.BytesIO(buffer)
-    size_in_bytes = bytes_buffer_size(buffer)
-
-    sent_bytes = 0
-
-    logging_method = logging.info if not silent else logging.debug
-
-    logging_method(f"{log_prefix} Buffer size {size_in_bytes / 1024 / 1024} MB with")
-
-    while sent_bytes < size_in_bytes:
-        transfer_state = async_inference_pb2.TransferState.TRANSFER_MIDDLE
-
-        if sent_bytes + chunk_size >= size_in_bytes:
-            transfer_state = async_inference_pb2.TransferState.TRANSFER_END
-        elif sent_bytes == 0:
-            transfer_state = async_inference_pb2.TransferState.TRANSFER_BEGIN
-
-        size_to_read = min(chunk_size, size_in_bytes - sent_bytes)
-        chunk = buffer.read(size_to_read)
-
-        yield message_class(transfer_state=transfer_state, data=chunk)
-        sent_bytes += size_to_read
-        logging_method(f"{log_prefix} Sent {sent_bytes}/{size_in_bytes} bytes with state {transfer_state}")
-
-    logging_method(f"{log_prefix} Published {sent_bytes / 1024 / 1024} MB")
-
-
-def receive_bytes_in_chunks(
-    iterator, continue_receiving: Event, logger: logging.Logger, log_prefix: str = ""
-):  # type: ignore
-    # NOTE(fracapuano): Partially copied from lerobot.common.transport.utils.receive_bytes_in_chunks. Duplication can't be avoided if we
-    # don't use a unique class for messages sent (due to the different transfer states sent). Also, on the server side the logic for receiving
-    # is opposite then the HIL-SERL design (my event showcases keeping on running instead of shutdown)
-    bytes_buffer = io.BytesIO()
-    step = 0
-
-    logger.info(f"{log_prefix} Starting receiver")
-    for item in iterator:
-        logger.debug(f"{log_prefix} Received item")
-        if not continue_receiving.is_set():
-            logger.info(f"{log_prefix} Shutting down receiver")
-            return
-
-        if item.transfer_state == async_inference_pb2.TransferState.TRANSFER_BEGIN:
-            bytes_buffer.seek(0)
-            bytes_buffer.truncate(0)
-            bytes_buffer.write(item.data)
-            logger.debug(f"{log_prefix} Received data at step 0")
-
-        elif item.transfer_state == async_inference_pb2.TransferState.TRANSFER_MIDDLE:
-            bytes_buffer.write(item.data)
-            step += 1
-            logger.debug(f"{log_prefix} Received data at step {step}")
-
-        elif item.transfer_state == async_inference_pb2.TransferState.TRANSFER_END:
-            bytes_buffer.write(item.data)
-            logger.debug(f"{log_prefix} Received data at step end size {bytes_buffer_size(bytes_buffer)}")
-
-            complete_bytes = bytes_buffer.getvalue()
-
-            bytes_buffer.seek(0)
-            bytes_buffer.truncate(0)
-
-            logger.debug(f"{log_prefix} Queue updated")
-            return complete_bytes
-
-        else:
-            logger.warning(f"{log_prefix} Received unknown transfer state {item.transfer_state}")
-            raise ValueError(f"Received unknown transfer state {item.transfer_state}")
