@@ -26,6 +26,7 @@ from typing import Any, Protocol, TypedDict
 
 import torch
 from huggingface_hub import ModelHubMixin, hf_hub_download
+from huggingface_hub.errors import HfHubHTTPError
 from safetensors.torch import load_file, save_file
 
 from lerobot.utils.utils import get_safe_torch_device
@@ -293,8 +294,6 @@ class RobotProcessor(ModelHubMixin):
     after_step_hooks: list[Callable[[int, EnvTransition], None]] = field(default_factory=list, repr=False)
     reset_hooks: list[Callable[[], None]] = field(default_factory=list, repr=False)
 
-    _CFG_NAME = "processor.json"
-
     def __call__(self, data: EnvTransition | dict[str, Any]):
         """Process data through all steps.
 
@@ -386,7 +385,9 @@ class RobotProcessor(ModelHubMixin):
 
     def _save_pretrained(self, destination_path: str, **kwargs):
         """Internal save method for ModelHubMixin compatibility."""
-        self.save_pretrained(destination_path)
+        # Extract config_filename from kwargs if provided
+        config_filename = kwargs.pop("config_filename", None)
+        self.save_pretrained(destination_path, config_filename=config_filename)
 
     def _generate_model_card(self, destination_path: str) -> None:
         """Generate README.md from the RobotProcessor model card template."""
@@ -405,9 +406,23 @@ class RobotProcessor(ModelHubMixin):
         with open(readme_path, "w") as f:
             f.write(model_card_content)
 
-    def save_pretrained(self, destination_path: str, **kwargs):
-        """Serialize the processor definition and parameters to *destination_path*."""
+    def save_pretrained(self, destination_path: str, config_filename: str | None = None, **kwargs):
+        """Serialize the processor definition and parameters to *destination_path*.
+
+        Args:
+            destination_path: Directory where the processor will be saved.
+            config_filename: Optional custom config filename. If not provided, defaults to
+                "{self.name}.json" where self.name is sanitized for filesystem compatibility.
+        """
         os.makedirs(destination_path, exist_ok=True)
+
+        # Determine config filename - sanitize the processor name for filesystem
+        if config_filename is None:
+            # Sanitize name - replace any character that's not alphanumeric or underscore
+            import re
+
+            sanitized_name = re.sub(r"[^a-zA-Z0-9_]", "_", self.name.lower())
+            config_filename = f"{sanitized_name}.json"
 
         config: dict[str, Any] = {
             "name": self.name,
@@ -448,9 +463,10 @@ class RobotProcessor(ModelHubMixin):
                     for key, tensor in state.items():
                         cloned_state[key] = tensor.clone()
 
-                    # Use registry name for more meaningful filenames when available
+                    # Always include step index to ensure unique filenames
+                    # This prevents conflicts when the same processor type is used multiple times
                     if registry_name:
-                        state_filename = f"{registry_name}.safetensors"
+                        state_filename = f"step_{step_index}_{registry_name}.safetensors"
                     else:
                         state_filename = f"step_{step_index}.safetensors"
 
@@ -459,7 +475,7 @@ class RobotProcessor(ModelHubMixin):
 
             config["steps"].append(step_entry)
 
-        with open(os.path.join(destination_path, self._CFG_NAME), "w") as file_pointer:
+        with open(os.path.join(destination_path, config_filename), "w") as file_pointer:
             json.dump(config, file_pointer, indent=2)
 
         # Generate README.md from template
@@ -484,12 +500,17 @@ class RobotProcessor(ModelHubMixin):
         return self
 
     @classmethod
-    def from_pretrained(cls, source: str, *, overrides: dict[str, Any] | None = None) -> RobotProcessor:
+    def from_pretrained(
+        cls, source: str, *, config_filename: str | None = None, overrides: dict[str, Any] | None = None
+    ) -> RobotProcessor:
         """Load a serialized processor from source (local path or Hugging Face Hub identifier).
 
         Args:
             source: Local path to a saved processor directory or Hugging Face Hub identifier
                 (e.g., "username/processor-name").
+            config_filename: Optional specific config filename to load. If not provided, will:
+                - For local paths: look for any .json file in the directory (error if multiple found)
+                - For HF Hub: try common names ("processor.json", "preprocessor.json", "postprocessor.json")
             overrides: Optional dictionary mapping step names to configuration overrides.
                 Keys must match exact step class names (for unregistered steps) or registry names
                 (for registered steps). Values are dictionaries containing parameter overrides
@@ -508,6 +529,13 @@ class RobotProcessor(ModelHubMixin):
             Basic loading:
             ```python
             processor = RobotProcessor.from_pretrained("path/to/processor")
+            ```
+
+            Loading specific config file:
+            ```python
+            processor = RobotProcessor.from_pretrained(
+                "username/multi-processor-repo", config_filename="preprocessor.json"
+            )
             ```
 
             Loading with overrides for non-serializable objects:
@@ -534,12 +562,52 @@ class RobotProcessor(ModelHubMixin):
         if Path(source).is_dir():
             # Local path - use it directly
             base_path = Path(source)
-            with open(base_path / cls._CFG_NAME) as file_pointer:
+
+            if config_filename is None:
+                # Look for any .json file in the directory
+                json_files = list(base_path.glob("*.json"))
+                if len(json_files) == 0:
+                    raise FileNotFoundError(f"No .json configuration files found in {source}")
+                elif len(json_files) > 1:
+                    raise ValueError(
+                        f"Multiple .json files found in {source}: {[f.name for f in json_files]}. "
+                        f"Please specify which one to load using the config_filename parameter."
+                    )
+                config_filename = json_files[0].name
+
+            with open(base_path / config_filename) as file_pointer:
                 config: dict[str, Any] = json.load(file_pointer)
         else:
             # Hugging Face Hub - download all required files
-            # First download the config file
-            config_path = hf_hub_download(source, cls._CFG_NAME, repo_type="model")
+            if config_filename is None:
+                # Try common config names
+                common_names = [
+                    "processor.json",
+                    "preprocessor.json",
+                    "postprocessor.json",
+                    "robotprocessor.json",
+                ]
+                config_path = None
+                for name in common_names:
+                    try:
+                        config_path = hf_hub_download(source, name, repo_type="model")
+                        config_filename = name
+                        break
+                    except (FileNotFoundError, OSError, HfHubHTTPError):
+                        # FileNotFoundError: local file issues
+                        # OSError: network/system errors
+                        # HfHubHTTPError: file not found on Hub (404) or other HTTP errors
+                        continue
+
+                if config_path is None:
+                    raise FileNotFoundError(
+                        f"No processor configuration file found in {source}. "
+                        f"Tried: {common_names}. Please specify the config_filename parameter."
+                    )
+            else:
+                # Download specific config file
+                config_path = hf_hub_download(source, config_filename, repo_type="model")
+
             with open(config_path) as file_pointer:
                 config: dict[str, Any] = json.load(file_pointer)
 
