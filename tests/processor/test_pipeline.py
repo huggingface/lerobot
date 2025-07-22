@@ -1531,3 +1531,127 @@ def test_to_device_with_mixed_state_types():
         # Move back to CPU
         pipeline.to("cpu")
         assert step.tensor_data.device.type == "cpu"
+
+
+def test_repr_empty_processor():
+    """Test __repr__ with empty processor."""
+    pipeline = RobotProcessor()
+    repr_str = repr(pipeline)
+
+    expected = "RobotProcessor(name='RobotProcessor', steps=0: [])"
+    assert repr_str == expected
+
+
+def test_repr_single_step():
+    """Test __repr__ with single step."""
+    step = MockStep("test_step")
+    pipeline = RobotProcessor([step])
+    repr_str = repr(pipeline)
+
+    expected = "RobotProcessor(name='RobotProcessor', steps=1: [MockStep])"
+    assert repr_str == expected
+
+
+def test_repr_multiple_steps_under_limit():
+    """Test __repr__ with 2-3 steps (all shown)."""
+    step1 = MockStep("step1")
+    step2 = MockStepWithoutOptionalMethods()
+    pipeline = RobotProcessor([step1, step2])
+    repr_str = repr(pipeline)
+
+    expected = "RobotProcessor(name='RobotProcessor', steps=2: [MockStep, MockStepWithoutOptionalMethods])"
+    assert repr_str == expected
+
+    # Test with 3 steps (boundary case)
+    step3 = MockStepWithTensorState()
+    pipeline = RobotProcessor([step1, step2, step3])
+    repr_str = repr(pipeline)
+
+    expected = "RobotProcessor(name='RobotProcessor', steps=3: [MockStep, MockStepWithoutOptionalMethods, MockStepWithTensorState])"
+    assert repr_str == expected
+
+
+def test_repr_many_steps_truncated():
+    """Test __repr__ with more than 3 steps (truncated with ellipsis)."""
+    step1 = MockStep("step1")
+    step2 = MockStepWithoutOptionalMethods()
+    step3 = MockStepWithTensorState()
+    step4 = MockModuleStep()
+    step5 = MockNonModuleStepWithState()
+
+    pipeline = RobotProcessor([step1, step2, step3, step4, step5])
+    repr_str = repr(pipeline)
+
+    expected = "RobotProcessor(name='RobotProcessor', steps=5: [MockStep, MockStepWithoutOptionalMethods, ..., MockNonModuleStepWithState])"
+    assert repr_str == expected
+
+
+def test_repr_with_custom_name():
+    """Test __repr__ with custom processor name."""
+    step = MockStep("test_step")
+    pipeline = RobotProcessor([step], name="CustomProcessor")
+    repr_str = repr(pipeline)
+
+    expected = "RobotProcessor(name='CustomProcessor', steps=1: [MockStep])"
+    assert repr_str == expected
+
+
+def test_repr_with_seed():
+    """Test __repr__ with seed parameter."""
+    step = MockStep("test_step")
+    pipeline = RobotProcessor([step], seed=42)
+    repr_str = repr(pipeline)
+
+    expected = "RobotProcessor(name='RobotProcessor', steps=1: [MockStep], seed=42)"
+    assert repr_str == expected
+
+
+def test_repr_with_custom_name_and_seed():
+    """Test __repr__ with both custom name and seed."""
+    step1 = MockStep("step1")
+    step2 = MockStepWithoutOptionalMethods()
+    pipeline = RobotProcessor([step1, step2], name="MyProcessor", seed=123)
+    repr_str = repr(pipeline)
+
+    expected = (
+        "RobotProcessor(name='MyProcessor', steps=2: [MockStep, MockStepWithoutOptionalMethods], seed=123)"
+    )
+    assert repr_str == expected
+
+
+def test_repr_without_seed():
+    """Test __repr__ when seed is explicitly None (should not show seed)."""
+    step = MockStep("test_step")
+    pipeline = RobotProcessor([step], name="TestProcessor", seed=None)
+    repr_str = repr(pipeline)
+
+    expected = "RobotProcessor(name='TestProcessor', steps=1: [MockStep])"
+    assert repr_str == expected
+
+
+def test_repr_various_step_types():
+    """Test __repr__ with different types of steps to verify class name extraction."""
+    step1 = MockStep()
+    step2 = MockStepWithTensorState()
+    step3 = MockModuleStep()
+    step4 = MockNonModuleStepWithState()
+
+    pipeline = RobotProcessor([step1, step2, step3, step4], name="MixedSteps")
+    repr_str = repr(pipeline)
+
+    expected = "RobotProcessor(name='MixedSteps', steps=4: [MockStep, MockStepWithTensorState, ..., MockNonModuleStepWithState])"
+    assert repr_str == expected
+
+
+def test_repr_edge_case_long_names():
+    """Test __repr__ handles steps with long class names properly."""
+    step1 = MockStepWithNonSerializableParam()
+    step2 = MockStepWithoutOptionalMethods()
+    step3 = MockStepWithTensorState()
+    step4 = MockNonModuleStepWithState()
+
+    pipeline = RobotProcessor([step1, step2, step3, step4], name="LongNames", seed=999)
+    repr_str = repr(pipeline)
+
+    expected = "RobotProcessor(name='LongNames', steps=4: [MockStepWithNonSerializableParam, MockStepWithoutOptionalMethods, ..., MockNonModuleStepWithState], seed=999)"
+    assert repr_str == expected
