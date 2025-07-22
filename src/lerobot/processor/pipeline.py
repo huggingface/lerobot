@@ -291,6 +291,8 @@ class RobotProcessor(ModelHubMixin):
     after_step_hooks: list[Callable[[int, EnvTransition], None]] = field(default_factory=list, repr=False)
     reset_hooks: list[Callable[[], None]] = field(default_factory=list, repr=False)
 
+    _CFG_NAME = "processor.json"
+
     def __call__(self, data: EnvTransition | dict[str, Any]):
         """Process data through all steps.
 
@@ -379,8 +381,6 @@ class RobotProcessor(ModelHubMixin):
         for processor_step in self.steps:
             transition = processor_step(transition)
             yield self.to_output(transition) if called_with_batch else transition
-
-    _CFG_NAME = "processor.json"
 
     def _save_pretrained(self, destination_path: str, **kwargs):
         """Internal save method for ModelHubMixin compatibility."""
