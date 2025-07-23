@@ -419,6 +419,7 @@ class RobotProcessor(ModelHubMixin):
         # Sanitize processor name for use in filenames
         import re
 
+        # The huggingface hub does not allow special characters in the repo name, so we sanitize the name
         sanitized_name = re.sub(r"[^a-zA-Z0-9_]", "_", self.name.lower())
 
         # Use sanitized name for config if not provided
