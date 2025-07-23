@@ -416,12 +416,13 @@ class RobotProcessor(ModelHubMixin):
         """
         os.makedirs(destination_path, exist_ok=True)
 
-        # Determine config filename - sanitize the processor name for filesystem
-        if config_filename is None:
-            # Sanitize name - replace any character that's not alphanumeric or underscore
-            import re
+        # Sanitize processor name for use in filenames
+        import re
 
-            sanitized_name = re.sub(r"[^a-zA-Z0-9_]", "_", self.name.lower())
+        sanitized_name = re.sub(r"[^a-zA-Z0-9_]", "_", self.name.lower())
+
+        # Use sanitized name for config if not provided
+        if config_filename is None:
             config_filename = f"{sanitized_name}.json"
 
         config: dict[str, Any] = {
@@ -463,12 +464,12 @@ class RobotProcessor(ModelHubMixin):
                     for key, tensor in state.items():
                         cloned_state[key] = tensor.clone()
 
-                    # Always include step index to ensure unique filenames
-                    # This prevents conflicts when the same processor type is used multiple times
+                    # Include pipeline name and step index to ensure unique filenames
+                    # This prevents conflicts when multiple processors are saved in the same directory
                     if registry_name:
-                        state_filename = f"step_{step_index}_{registry_name}.safetensors"
+                        state_filename = f"{sanitized_name}_step_{step_index}_{registry_name}.safetensors"
                     else:
-                        state_filename = f"step_{step_index}.safetensors"
+                        state_filename = f"{sanitized_name}_step_{step_index}.safetensors"
 
                     save_file(cloned_state, os.path.join(destination_path, state_filename))
                     step_entry["state_file"] = state_filename
