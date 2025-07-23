@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from .batch_processor import ToBatchProcessor
 from .device_processor import DeviceProcessor
 from .normalize_processor import NormalizerProcessor, UnnormalizerProcessor
 from .observation_processor import VanillaObservationProcessor
@@ -48,6 +49,7 @@ __all__ = [
     "RenameProcessor",
     "RewardProcessor",
     "RobotProcessor",
+    "ToBatchProcessor",
     "TransitionKey",
     "TruncatedProcessor",
     "VanillaObservationProcessor",
