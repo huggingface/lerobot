@@ -39,6 +39,9 @@ class SO100FollowerConfig(RobotConfig):
 
     # Set to `True` for backward compatibility with previous policies/dataset
     use_degrees: bool = False
+    urdf_path: str | None = None
+    target_frame_name: str | None = None
+    end_effector_bounds: dict[str, list[float]] | None = None
 
 
 @RobotConfig.register_subclass("so100_follower_end_effector")

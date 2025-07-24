@@ -32,6 +32,7 @@ from .config_so100_follower import SO100FollowerEndEffectorConfig
 logger = logging.getLogger(__name__)
 
 
+# TODO(pepijn): Refactor with pipeline and add rotations
 class SO100FollowerEndEffector(SO100Follower):
     """
     SO100Follower robot with end-effector space control.
