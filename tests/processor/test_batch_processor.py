@@ -22,7 +22,7 @@ import pytest
 import torch
 
 from lerobot.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
-from lerobot.processor import EnvTransition, ProcessorStepRegistry, RobotProcessor
+from lerobot.processor import ProcessorStepRegistry, RobotProcessor
 from lerobot.processor.batch_processor import ToBatchProcessor
 from lerobot.processor.pipeline import TransitionKey
 
