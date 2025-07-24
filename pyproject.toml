@@ -69,7 +69,7 @@ dependencies = [
     "opencv-python-headless>=4.9.0",
     "av>=14.2.0",
     "torch>=2.2.1",
-    "torchcodec>=0.2.1; sys_platform != 'win32' and (sys_platform != 'linux' or (platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l')) and (sys_platform != 'darwin' or platform_machine != 'x86_64')",
+    "torchcodec>=0.3.0; sys_platform != 'win32' and (sys_platform != 'linux' or (platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l')) and (sys_platform != 'darwin' or platform_machine != 'x86_64')",
     "torchvision>=0.21.0",
     "jsonlines>=4.0.0",
     "packaging>=24.2",
@@ -123,6 +123,7 @@ hilserl = ["lerobot[transformers-dep]", "gym-hil>=0.1.9", "lerobot[grpcio-dep]",
 
 # Features
 async = ["lerobot[grpcio-dep]", "matplotlib>=3.10.3"]
+audio = ["sounddevice>=0.5.1", "soundfile>=0.13.1", "librosa>=0.11.0", "torchaudio>=2.6.0"]
 
 # Development
 docs = ["hf-doc-builder @ git+https://github.com/huggingface/doc-builder.git@main", "watchdog >= 6.0.0"]
@@ -147,6 +148,7 @@ all = [
     "lerobot[smolvla]",
     "lerobot[hilserl]",
     "lerobot[async]",
+    "lerobot[audio]",
     "lerobot[docs]",
     "lerobot[dev]",
     "lerobot[test]",

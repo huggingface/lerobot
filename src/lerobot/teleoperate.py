@@ -102,7 +102,18 @@ class TeleoperateConfig:
 def teleop_loop(
     teleop: Teleoperator, robot: Robot, fps: int, display_data: bool = False, duration: float | None = None
 ):
+    if display_data:
+        _init_rerun(
+            session_name="teleoperation",
+            robot=robot,
+            reset_time=True,
+        )
+
     display_len = max(len(key) for key in robot.action_features)
+
+    for _, microphone in robot.microphones.items():
+        microphone.start_recording()
+
     start = time.perf_counter()
     while True:
         loop_start = time.perf_counter()
@@ -128,13 +139,14 @@ def teleop_loop(
 
         move_cursor_up(len(action) + 5)
 
+    for _, microphone in robot.microphones.items():
+        microphone.stop_recording()
+
 
 @draccus.wrap()
 def teleoperate(cfg: TeleoperateConfig):
     init_logging()
     logging.info(pformat(asdict(cfg)))
-    if cfg.display_data:
-        _init_rerun(session_name="teleoperation")
 
     teleop = make_teleoperator_from_config(cfg.teleop)
     robot = make_robot_from_config(cfg.robot)
