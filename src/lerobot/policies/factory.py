@@ -16,7 +16,6 @@
 
 import logging
 
-import torch
 from torch import nn
 
 from lerobot.configs.policies import PreTrainedConfig
@@ -35,7 +34,7 @@ from lerobot.policies.sac.reward_model.configuration_classifier import RewardCla
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.policies.tdmpc.configuration_tdmpc import TDMPCConfig
 from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
-from lerobot.processor.pipeline import EnvTransition, IdentityProcessor, RobotProcessor, TransitionIndex
+from lerobot.processor.pipeline import IdentityProcessor, RobotProcessor
 
 
 def get_policy_class(name: str) -> PreTrainedPolicy:
@@ -180,20 +179,6 @@ def make_processor(
 
     else:
         raise NotImplementedError(f"Processor for policy type '{policy_cfg.type}' is not implemented.")
-
-    # Helper hook function to detect NaNs in observation
-    def nan_detection_hook(step_idx: int, transition: EnvTransition) -> None:
-        observation = transition[TransitionIndex.OBSERVATION]
-        if observation is not None:
-            for key, value in observation.items():
-                if isinstance(value, torch.Tensor) and torch.isnan(value).any():
-                    logging.warning(f"NaN detected in observation key '{key}' after step {step_idx}: {value}")
-
-    # Attach the hook to all returned processors
-    if isinstance(processors, RobotProcessor):
-        processors = (processors,)  # Wrap single processor in tuple for consistency
-    for processor in processors:
-        processor.register_after_step_hook(nan_detection_hook)
 
     return processors
 
