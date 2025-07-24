@@ -21,8 +21,8 @@ from typing import Any
 import numpy as np
 
 from lerobot.cameras import make_cameras_from_configs
-from lerobot.microphones import make_microphones_from_configs
 from lerobot.errors import DeviceNotConnectedError
+from lerobot.microphones import make_microphones_from_configs
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.motors import Motor, MotorNormMode
 from lerobot.motors.feetech import FeetechMotorsBus

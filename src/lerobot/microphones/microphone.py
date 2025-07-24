@@ -13,12 +13,13 @@
 # limitations under the License.
 
 import abc
-from typing import Any
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
 from .configs import MicrophoneConfig
+
 
 class Microphone(abc.ABC):
     """Base class for microphone implementations.
@@ -81,7 +82,12 @@ class Microphone(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def start_recording(self, output_file: str | Path | None = None, multiprocessing: bool | None = False, overwrtie: bool | None = True) -> None:
+    def start_recording(
+        self,
+        output_file: str | Path | None = None,
+        multiprocessing: bool | None = False,
+        overwrtie: bool | None = True,
+    ) -> None:
         """Start recording audio from the microphone.
 
         Args:

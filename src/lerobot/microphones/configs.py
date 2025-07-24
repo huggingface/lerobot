@@ -17,6 +17,7 @@ from dataclasses import dataclass
 
 import draccus
 
+
 @dataclass(kw_only=True)
 class MicrophoneConfig(draccus.ChoiceRegistry, abc.ABC):
     sample_rate: int | None = None

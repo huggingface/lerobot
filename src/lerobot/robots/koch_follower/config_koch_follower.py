@@ -15,7 +15,6 @@
 from dataclasses import dataclass, field
 
 from lerobot.cameras import CameraConfig
-
 from lerobot.microphones import MicrophoneConfig
 
 from ..config import RobotConfig

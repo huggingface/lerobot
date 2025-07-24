@@ -76,6 +76,7 @@ def test_sample_images(mock_load):
     assert images.dtype == np.uint8
     assert len(images) == estimate_num_samples(100)
 
+
 @patch("lerobot.datasets.compute_stats.load_audio_from_path", side_effect=mock_load_audio)
 def test_sample_audio_from_path(mock_load):
     audio_path = "audio.wav"
@@ -178,10 +179,9 @@ def test_compute_episode_stats():
         "observation.state": {"dtype": "numeric"},
     }
 
-    with patch(
-        "lerobot.datasets.compute_stats.load_image_as_numpy", side_effect=mock_load_image_as_numpy
-    ), patch(
-        "lerobot.datasets.compute_stats.load_audio_from_path", side_effect=mock_load_audio
+    with (
+        patch("lerobot.datasets.compute_stats.load_image_as_numpy", side_effect=mock_load_image_as_numpy),
+        patch("lerobot.datasets.compute_stats.load_audio_from_path", side_effect=mock_load_audio),
     ):
         stats = compute_episode_stats(episode_data, features)
 

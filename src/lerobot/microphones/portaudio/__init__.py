@@ -12,5 +12,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .microphone_portaudio import PortAudioMicrophone
 from .configuration_portaudio import PortAudioMicrophoneConfig
+from .microphone_portaudio import PortAudioMicrophone

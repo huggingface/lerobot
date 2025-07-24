@@ -57,13 +57,14 @@ python -m lerobot.record \
 ```
 """
 
-from copy import copy
 import logging
 import time
+from copy import copy
 from dataclasses import asdict, dataclass
-import numpy as np
 from pathlib import Path
 from pprint import pformat
+
+import numpy as np
 
 from lerobot.cameras import (  # noqa: F401
     CameraConfig,  # noqa: F401
@@ -74,8 +75,17 @@ from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.datasets.image_writer import safe_stop_image_writer
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.utils import build_dataset_frame, hw_to_dataset_features, DEFAULT_AUDIO_CHUNK_DURATION, DEFAULT_INITIAL_AUDIO_BUFFER_DURATION
+from lerobot.datasets.utils import (
+    DEFAULT_AUDIO_CHUNK_DURATION,
+    DEFAULT_INITIAL_AUDIO_BUFFER_DURATION,
+    build_dataset_frame,
+    hw_to_dataset_features,
+)
 from lerobot.datasets.video_utils import VideoEncodingManager
+from lerobot.microphones.utils import (
+    async_microphones_start_recording,
+    async_microphones_stop_recording,
+)
 from lerobot.policies.factory import make_policy
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.robots import (  # noqa: F401
@@ -87,10 +97,6 @@ from lerobot.robots import (  # noqa: F401
     make_robot_from_config,
     so100_follower,
     so101_follower,
-)
-from lerobot.microphones.utils import (
-    async_microphones_start_recording,
-    async_microphones_stop_recording,
 )
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
@@ -245,7 +251,9 @@ def record_loop(
             for microphone_name, microphone in robot.microphones.items()
         }
 
-    if dataset is not None and not robot.name == "lekiwi":  # For now, LeKiwi only supports frame audio recording (which may lead to audio chunks loss, extended post-processing, increased memory usage)
+    if (
+        dataset is not None and not robot.name == "lekiwi"
+    ):  # For now, LeKiwi only supports frame audio recording (which may lead to audio chunks loss, extended post-processing, increased memory usage)
         for microphone_key, microphone in robot.microphones.items():
             dataset.add_microphone_recording(microphone, microphone_key)
     else:
@@ -253,7 +261,7 @@ def record_loop(
 
     # Fill audio buffers if needed
     if robot.microphones and (policy is not None or dataset is not None):
-       # This initial wait might be longer than the audio chunk duration to (1) ensure that the audio buffers are filled with enough data and (2) add additionnal initial samples to the dataset in case of variable audio chubk duration during training.
+        # This initial wait might be longer than the audio chunk duration to (1) ensure that the audio buffers are filled with enough data and (2) add additionnal initial samples to the dataset in case of variable audio chubk duration during training.
         busy_wait(DEFAULT_INITIAL_AUDIO_BUFFER_DURATION)
 
         for microphone_name, microphone in robot.microphones.items():
@@ -262,7 +270,7 @@ def record_loop(
             buffer_size = audio_buffer[microphone_name].shape[0]
             # Remove as many old audio samples as needed
             audio_buffer[microphone_name] = audio_buffer[microphone_name][len(audio_chunk) :]
-             # Add new audio samples, only the newest if the buffer is already full
+            # Add new audio samples, only the newest if the buffer is already full
             audio_buffer[microphone_name] = np.vstack(
                 (audio_buffer[microphone_name], audio_chunk[-buffer_size:])
             )
@@ -282,7 +290,6 @@ def record_loop(
             observation_frame = build_dataset_frame(dataset.features, observation, prefix="observation")
 
         if policy is not None:
-
             # Transform instantaneous audio samples into a buffer of fixed size
             buffered_observation_frame = copy(observation_frame)
             for name in audio_buffer:
@@ -290,7 +297,9 @@ def record_loop(
                 # Remove as many old audio samples as needed
                 audio_buffer[name] = audio_buffer[name][len(buffered_observation_frame[name]) :]
                 # Add new audio samples
-                audio_buffer[name] = np.vstack((audio_buffer[name], buffered_observation_frame[name][-buffer_size:]))
+                audio_buffer[name] = np.vstack(
+                    (audio_buffer[name], buffered_observation_frame[name][-buffer_size:])
+                )
                 # Add the audio buffer to the observation
                 buffered_observation_frame[name] = audio_buffer[name]
 
@@ -340,6 +349,7 @@ def record_loop(
         timestamp = time.perf_counter() - start_episode_t
 
     async_microphones_stop_recording(robot.microphones)
+
 
 @parser.wrap()
 def record(cfg: RecordConfig) -> LeRobotDataset:

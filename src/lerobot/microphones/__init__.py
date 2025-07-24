@@ -12,6 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .microphone import Microphone
 from .configs import MicrophoneConfig
+from .microphone import Microphone
 from .utils import make_microphones_from_configs

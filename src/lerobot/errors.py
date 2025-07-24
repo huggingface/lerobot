@@ -31,14 +31,14 @@ class DeviceAlreadyConnectedError(ConnectionError):
         self.message = message
         super().__init__(self.message)
 
+
 class DeviceNotRecordingError(Exception):
     """Exception raised when the robot device is not recording."""
 
-    def __init__(
-        self, message="This robot device is not recording. Try calling `start_recording()` first."
-    ):
+    def __init__(self, message="This robot device is not recording. Try calling `start_recording()` first."):
         self.message = message
         super().__init__(self.message)
+
 
 class DeviceAlreadyRecordingError(Exception):
     """Exception raised when the robot device is already recording."""
@@ -49,6 +49,7 @@ class DeviceAlreadyRecordingError(Exception):
     ):
         self.message = message
         super().__init__(self.message)
+
 
 class InvalidActionError(ValueError):
     """Exception raised when an action is already invalid."""

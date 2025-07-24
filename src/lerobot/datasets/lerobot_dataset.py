@@ -23,7 +23,6 @@ import datasets
 import numpy as np
 import packaging.version
 import PIL.Image
-from soundfile import SoundFile
 import torch
 import torch.utils
 from datasets import concatenate_datasets, load_dataset
@@ -33,16 +32,17 @@ from huggingface_hub.errors import RevisionNotFoundError
 from soundfile import SoundFile
 
 from lerobot.constants import HF_LEROBOT_HOME
+from lerobot.datasets.audio_utils import decode_audio, encode_audio, get_audio_info
 from lerobot.datasets.compute_stats import aggregate_stats, compute_episode_stats
 from lerobot.datasets.image_writer import AsyncImageWriter, write_image
 from lerobot.datasets.utils import (
+    DEFAULT_AUDIO_CHUNK_DURATION,
     DEFAULT_FEATURES,
     DEFAULT_IMAGE_PATH,
     DEFAULT_INITIAL_AUDIO_BUFFER_DURATION,
     DEFAULT_RAW_AUDIO_PATH,
     INFO_PATH,
     TASKS_PATH,
-    DEFAULT_AUDIO_CHUNK_DURATION,
     _validate_feature_names,
     append_jsonlines,
     backward_compatible_episodes_stats,
@@ -69,11 +69,6 @@ from lerobot.datasets.utils import (
     write_episode_stats,
     write_info,
     write_json,
-)
-from lerobot.datasets.audio_utils import (
-    encode_audio,
-    decode_audio,
-    get_audio_info
 )
 from lerobot.datasets.video_utils import (
     VideoFrame,
@@ -544,10 +539,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             self.hf_dataset = self.load_hf_dataset()
         except (AssertionError, FileNotFoundError, NotADirectoryError):
             self.revision = get_safe_version(self.repo_id, self.revision)
-            self.download_episodes(
-                download_videos, 
-                download_audio
-            )
+            self.download_episodes(download_videos, download_audio)
             self.hf_dataset = self.load_hf_dataset()
 
         self.episode_data_index = get_episode_data_index(self.meta.episodes, self.episodes)
@@ -580,7 +572,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
     ) -> None:
         ignore_patterns = ["images/"]
         if not push_videos:
-            ignore_patterns.append("videos/") 
+            ignore_patterns.append("videos/")
         if not push_audio:
             ignore_patterns.append("audio/")
 
@@ -927,7 +919,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 self._save_image(frame[key], img_path)
                 self.episode_buffer[key].append(str(img_path))
             elif self.features[key]["dtype"] == "audio":
-                if self.meta.robot_type == "lekiwi":    # Raw data storage should only be triggered for LeKiwi robot, for which audio is stored chunk by chunk in a visual frame-like manner
+                if (
+                    self.meta.robot_type == "lekiwi"
+                ):  # Raw data storage should only be triggered for LeKiwi robot, for which audio is stored chunk by chunk in a visual frame-like manner
                     self.episode_buffer[key].append(frame[key])
                 else:  # Otherwise, only the audio file path is stored in the episode buffer
                     if frame_index == 0:
@@ -1003,7 +997,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
             if key in ["index", "episode_index", "task_index"] or ft["dtype"] in ["image", "video"]:
                 continue
             elif ft["dtype"] == "audio":
-                if self.meta.robot_type == "lekiwi":    # Raw data storage should only be triggered for LeKiwi robot, for which audio is stored chunk by chunk in a visual frame-like manner
+                if (
+                    self.meta.robot_type == "lekiwi"
+                ):  # Raw data storage should only be triggered for LeKiwi robot, for which audio is stored chunk by chunk in a visual frame-like manner
                     episode_buffer[key] = np.concatenate(episode_buffer[key], axis=0)
                 continue
             episode_buffer[key] = np.stack(episode_buffer[key])
@@ -1011,10 +1007,19 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self._wait_image_writer()
         self._save_episode_table(episode_buffer, episode_index)
 
-        if self.meta.robot_type == "lekiwi":    # Raw data storage should only be triggered for LeKiwi robot, for which audio is stored chunk by chunk in a visual frame-like manner
+        if (
+            self.meta.robot_type == "lekiwi"
+        ):  # Raw data storage should only be triggered for LeKiwi robot, for which audio is stored chunk by chunk in a visual frame-like manner
             for key in self.meta.audio_keys:
-                audio_path = self._get_raw_audio_file_path(episode_index=self.episode_buffer["episode_index"][0], audio_key=key)
-                with SoundFile(audio_path, mode='w', samplerate=self.meta.features[key]["info"]["sample_rate"], channels=self.meta.features[key]["shape"][0]) as file:
+                audio_path = self._get_raw_audio_file_path(
+                    episode_index=self.episode_buffer["episode_index"][0], audio_key=key
+                )
+                with SoundFile(
+                    audio_path,
+                    mode="w",
+                    samplerate=self.meta.features[key]["info"]["sample_rate"],
+                    channels=self.meta.features[key]["shape"][0],
+                ) as file:
                     file.write(episode_buffer[key])
 
         ep_stats = compute_episode_stats(episode_buffer, self.features)

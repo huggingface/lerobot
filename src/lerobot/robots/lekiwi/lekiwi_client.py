@@ -282,7 +282,13 @@ class LeKiwiClient(Robot):
                     obs_dict[frame_name] = image
                 elif frame_name in self._microphones_ft:
                     logging.warning("Audio frame is None")
-                    obs_dict[frame_name] = np.zeros((int(self._microphones_ft[frame_name][0]*self.last_frame_delay),self._microphones_ft[frame_name][1]), dtype=np.float32)
+                    obs_dict[frame_name] = np.zeros(
+                        (
+                            int(self._microphones_ft[frame_name][0] * self.last_frame_delay),
+                            self._microphones_ft[frame_name][1],
+                        ),
+                        dtype=np.float32,
+                    )
 
         return obs_dict
 

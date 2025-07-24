@@ -23,7 +23,6 @@ import torchaudio
 import torchcodec
 from numpy import ceil
 
-
 CHANNELS_LAYOUTS_MAPPING = {
     1: "mono",
     2: "stereo",
@@ -36,6 +35,7 @@ CHANNELS_LAYOUTS_MAPPING = {
     16: "hexadecagonal",
     24: "22.2",
 }
+
 
 def decode_audio(
     audio_path: Path | str,
@@ -126,7 +126,6 @@ def decode_audio_torchaudio(
     start_time_s: float | None = 0.0,
     log_loaded_timestamps: bool = False,
 ) -> torch.Tensor:
-
     # TODO(CarolinePascal) : add channels selection
     audio_path = str(audio_path)
 
@@ -138,9 +137,9 @@ def decode_audio_torchaudio(
     # TODO(CarolinePascal) : sort timestamps ?
 
     reader.add_basic_audio_stream(
-        frames_per_chunk=int(ceil(duration * audio_sample_rate)),    # Too much is better than not enough
-        buffer_chunk_size=-1, # No dropping frames
-        format="fltp",    # Format as float32
+        frames_per_chunk=int(ceil(duration * audio_sample_rate)),  # Too much is better than not enough
+        buffer_chunk_size=-1,  # No dropping frames
+        format="fltp",  # Format as float32
     )
 
     audio_chunks = []
@@ -176,7 +175,9 @@ def decode_audio_torchaudio(
                 )
 
         if log_loaded_timestamps:
-            logging.info(f"audio chunk loaded at starting timestamp={current_audio_chunk['pts']:.4f} with duration={len(current_audio_chunk) / audio_sample_rate:.4f}")
+            logging.info(
+                f"audio chunk loaded at starting timestamp={current_audio_chunk['pts']:.4f} with duration={len(current_audio_chunk) / audio_sample_rate:.4f}"
+            )
 
         audio_chunks.append(current_audio_chunk_data)
 
@@ -184,6 +185,7 @@ def decode_audio_torchaudio(
 
     assert len(timestamps) == len(audio_chunks)
     return audio_chunks
+
 
 def encode_audio(
     input_path: Path | str,
@@ -239,6 +241,7 @@ def encode_audio(
 
     if not output_path.exists():
         raise OSError(f"Audio encoding did not work. File not found: {output_path}.")
+
 
 def get_audio_info(video_path: Path | str) -> dict:
     # Set logging level

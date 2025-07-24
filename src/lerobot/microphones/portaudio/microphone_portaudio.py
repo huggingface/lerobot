@@ -16,35 +16,29 @@
 Provides the PortAudioMicrophone class for capturing audio from microphones using the PortAudio library through the sounddevice Python package.
 """
 
-import argparse
 import logging
-import shutil
-import sounddevice as sd
-from soundfile import SoundFile
-import numpy as np
 import time
-from multiprocessing import Event as process_Event
-from multiprocessing import JoinableQueue as process_Queue
-from multiprocessing import Process
-from os import getcwd
+from multiprocessing import Event as process_Event, JoinableQueue as process_Queue, Process
 from pathlib import Path
 from queue import Empty
-from threading import Barrier, Event, Thread
-from threading import Event as thread_Event
+from threading import Barrier, Event, Event as thread_Event, Thread
 from typing import Any
 
-from lerobot.utils.utils import capture_timestamp_utc
-from lerobot.utils.robot_utils import busy_wait
+import numpy as np
+import sounddevice as sd
+from soundfile import SoundFile
 
 from lerobot.errors import (
     DeviceAlreadyConnectedError,
-    DeviceNotConnectedError,
     DeviceAlreadyRecordingError,
+    DeviceNotConnectedError,
     DeviceNotRecordingError,
 )
+from lerobot.utils.utils import capture_timestamp_utc
 
 from ..microphone import Microphone
 from .configuration_portaudio import PortAudioMicrophoneConfig
+
 
 class PortAudioMicrophone(Microphone):
     """
@@ -62,7 +56,7 @@ class PortAudioMicrophone(Microphone):
     microphone.connect()
     microphone.start_recording("some/output/file.wav")
     ...
-    audio_readings = microphone.read()  #Gets all recorded audio data since the last read or since the beginning of the recording. The longer the period the longer the reading time !
+    audio_readings = microphone.read()  # Gets all recorded audio data since the last read or since the beginning of the recording. The longer the period the longer the reading time !
     ...
     microphone.stop_recording()
     microphone.disconnect()
@@ -141,7 +135,7 @@ class PortAudioMicrophone(Microphone):
 
         if not is_index_input:
             found_microphones_info = self.find_microphones()
-            available_microphones = {m["name"] : m["index"] for m in found_microphones_info}
+            available_microphones = {m["name"]: m["index"] for m in found_microphones_info}
             raise OSError(
                 f"Microphone index {self.microphone_index} does not match an input device (microphone). Available input devices : {available_microphones}"
             )
@@ -325,9 +319,7 @@ class PortAudioMicrophone(Microphone):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"Microphone {self.microphone_index} is not connected.")
         if self.is_recording:
-            raise DeviceAlreadyRecordingError(
-                f"Microphone {self.microphone_index} is already recording."
-            )
+            raise DeviceAlreadyRecordingError(f"Microphone {self.microphone_index} is already recording.")
 
         # Reset queues
         self._clear_queue(self.read_queue)

@@ -16,7 +16,6 @@
 import json
 import logging
 import re
-import time
 from copy import deepcopy
 from itertools import chain
 from pathlib import Path
@@ -38,15 +37,22 @@ from lerobot.datasets.lerobot_dataset import (
     MultiLeRobotDataset,
 )
 from lerobot.datasets.utils import (
+    DEFAULT_AUDIO_CHUNK_DURATION,
     create_branch,
     flatten_dict,
     unflatten_dict,
-    DEFAULT_AUDIO_CHUNK_DURATION,
 )
 from lerobot.envs.factory import make_env_config
 from lerobot.policies.factory import make_policy_config
-from tests.fixtures.constants import DUMMY_CHW, DUMMY_HWC, DUMMY_REPO_ID, DUMMY_AUDIO_CHANNELS, DEFAULT_SAMPLE_RATE
+from tests.fixtures.constants import (
+    DEFAULT_SAMPLE_RATE,
+    DUMMY_AUDIO_CHANNELS,
+    DUMMY_CHW,
+    DUMMY_HWC,
+    DUMMY_REPO_ID,
+)
 from tests.utils import require_x86_64_kernel
+
 
 @pytest.fixture
 def image_dataset(tmp_path, empty_lerobot_dataset_factory):
@@ -329,7 +335,14 @@ def test_image_array_to_pil_image_wrong_range_float_0_255():
 
 def test_add_frame_audio(audio_dataset):
     dataset = audio_dataset
-    dataset.add_frame({"audio": np.random.rand(int(DEFAULT_AUDIO_CHUNK_DURATION * DEFAULT_SAMPLE_RATE), DUMMY_AUDIO_CHANNELS)}, task="Dummy task")
+    dataset.add_frame(
+        {
+            "audio": np.random.rand(
+                int(DEFAULT_AUDIO_CHUNK_DURATION * DEFAULT_SAMPLE_RATE), DUMMY_AUDIO_CHANNELS
+            )
+        },
+        task="Dummy task",
+    )
     dataset.save_episode()
 
     assert dataset[0]["audio"].shape == torch.Size(
