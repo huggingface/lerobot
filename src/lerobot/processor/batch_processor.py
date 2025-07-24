@@ -24,15 +24,18 @@ from lerobot.processor.pipeline import EnvTransition, ProcessorStepRegistry, Tra
 @dataclass
 @ProcessorStepRegistry.register(name="to_batch_processor")
 class ToBatchProcessor:
-    """Processor that adds batch dimensions to observations when needed.
+    """Processor that adds batch dimensions to observations and actions when needed.
 
-    This processor ensures that observations have proper batch dimensions for model processing:
+    This processor ensures that observations and actions have proper batch dimensions for model processing:
 
     - For state observations (observation.state, observation.environment_state):
       Adds batch dimension (unsqueeze at dim=0) if tensor is 1-dimensional
 
     - For image observations (observation.image, observation.images.*):
       Adds batch dimension (unsqueeze at dim=0) if tensor is 3-dimensional (H, W, C)
+
+    - For actions:
+      Adds batch dimension (unsqueeze at dim=0) if tensor is 1-dimensional
 
     This is useful when processing single transitions that need to be batched for
     model inference or when converting from unbatched environment outputs to
@@ -45,15 +48,21 @@ class ToBatchProcessor:
         ```python
         # State: (7,) -> (1, 7)
         # Image: (224, 224, 3) -> (1, 224, 224, 3)
+        # Action: (4,) -> (1, 4)
         # Already batched: (1, 7) -> (1, 7) [unchanged]
         ```
     """
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        observation = transition.get(TransitionKey.OBSERVATION)
+        self._process_observation(transition)
+        self._process_action(transition)
+        return transition
 
+    def _process_observation(self, transition: EnvTransition) -> None:
+        """Process observation component in-place, adding batch dimensions where needed."""
+        observation = transition.get(TransitionKey.OBSERVATION)
         if observation is None:
-            return transition
+            return
 
         # Process state observations - add batch dim if 1D
         for state_key in [OBS_STATE, OBS_ENV_STATE]:
@@ -73,7 +82,11 @@ class ToBatchProcessor:
             if key.startswith(f"{OBS_IMAGES}.") and isinstance(value, Tensor) and value.dim() == 3:
                 observation[key] = value.unsqueeze(0)
 
-        return transition
+    def _process_action(self, transition: EnvTransition) -> None:
+        """Process action component in-place, adding batch dimension if needed."""
+        action = transition.get(TransitionKey.ACTION)
+        if action is not None and isinstance(action, Tensor) and action.dim() == 1:
+            transition[TransitionKey.ACTION] = action.unsqueeze(0)
 
     def get_config(self) -> dict[str, Any]:
         """Return configuration for serialization."""
