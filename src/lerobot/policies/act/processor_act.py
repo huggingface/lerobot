@@ -19,6 +19,7 @@ from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.processor import (
     NormalizerProcessor,
     RobotProcessor,
+    ToBatchProcessor,
     UnnormalizerProcessor,
 )
 
@@ -33,6 +34,7 @@ def make_act_processor(
         NormalizerProcessor(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
+        ToBatchProcessor(),
     ]
     output_steps = [
         UnnormalizerProcessor(

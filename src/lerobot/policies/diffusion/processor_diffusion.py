@@ -20,6 +20,7 @@ from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.processor import (
     NormalizerProcessor,
     RobotProcessor,
+    ToBatchProcessor,
     UnnormalizerProcessor,
 )
 
@@ -34,6 +35,7 @@ def make_diffusion_processor(
         NormalizerProcessor(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
+        ToBatchProcessor(),
     ]
     output_steps = [
         UnnormalizerProcessor(
