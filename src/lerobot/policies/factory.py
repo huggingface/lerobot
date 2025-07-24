@@ -18,9 +18,9 @@ from __future__ import annotations
 
 import logging
 from typing import TypedDict
-from typing_extensions import Unpack
 
 from torch import nn
+from typing_extensions import Unpack
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType
@@ -38,7 +38,7 @@ from lerobot.policies.sac.reward_model.configuration_classifier import RewardCla
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.policies.tdmpc.configuration_tdmpc import TDMPCConfig
 from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
-from lerobot.processor.pipeline import IdentityProcessor, RobotProcessor
+from lerobot.processor.pipeline import RobotProcessor
 
 
 def get_policy_class(name: str) -> PreTrainedPolicy:
