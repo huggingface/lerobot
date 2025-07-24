@@ -206,3 +206,5 @@ jobs:
             echo "::error::Failed to delete Docker image. HTTP status: $HTTP_RESPONSE"
             exit 1
           fi
+
+# TODO(Steven): Check dockerimages pull in ubuntu
