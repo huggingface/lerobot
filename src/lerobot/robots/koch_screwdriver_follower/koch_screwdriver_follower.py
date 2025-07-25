@@ -293,7 +293,6 @@ class KochScrewdriverFollower(Robot):
 
         present = abs(self._read_screwdriver_current())
         threshold_on = self._screw_limit * self.config.clutch_ratio  # engage clutch
-        threshold_off = self._screw_limit * (self.config.clutch_ratio * 0.6)  # release clutch (hysteresis)
 
         now = time.perf_counter()
 

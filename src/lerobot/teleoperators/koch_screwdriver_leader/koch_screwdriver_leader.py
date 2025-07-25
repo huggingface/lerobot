@@ -211,14 +211,14 @@ class KochScrewdriverLeader(Teleoperator):
                 #   • GAIN maps the 0-100 gripper position range to an appropriate velocity range.
                 #   • With GAIN = 10 and neutral = 50, the resulting velocity is within ±500.
                 #   • XL330-M077 goal-velocity limit is ±2047 (≈ ±468 RPM at 0.229 RPM/unit).
-                GAIN = 4.0
+                gain = 4.0
 
                 # Invert the sign so sequeezing the gripper will move the screwdriver clockwise
-                vel_cmd = -delta * GAIN
+                vel_cmd = -delta * gain
 
                 # Step 3: Clamp for safety (in case GAIN/neutral is changed)
-                MAX_VEL = 250
-                vel_cmd = max(min(vel_cmd, MAX_VEL), -MAX_VEL)
+                max_vel = 250
+                vel_cmd = max(min(vel_cmd, max_vel), -max_vel)
 
                 # Step 4: Dead-band — stop very small residual motions around neutral
                 if abs(vel_cmd) < 4.0:
