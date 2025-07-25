@@ -158,21 +158,21 @@ def visualize_dataset(
             # display each dimension of action space (e.g. actuators command)
             if "action" in batch:
                 for dim_idx, val in enumerate(batch["action"][i]):
-                    rr.log(f"action/{dim_idx}", rr.Scalar(val.item()))
+                    rr.log(f"action/{dim_idx}", rr.Scalars(val.item()))
 
             # display each dimension of observed state space (e.g. agent position in joint space)
             if "observation.state" in batch:
                 for dim_idx, val in enumerate(batch["observation.state"][i]):
-                    rr.log(f"state/{dim_idx}", rr.Scalar(val.item()))
+                    rr.log(f"state/{dim_idx}", rr.Scalars(val.item()))
 
             if "next.done" in batch:
-                rr.log("next.done", rr.Scalar(batch["next.done"][i].item()))
+                rr.log("next.done", rr.Scalars(batch["next.done"][i].item()))
 
             if "next.reward" in batch:
-                rr.log("next.reward", rr.Scalar(batch["next.reward"][i].item()))
+                rr.log("next.reward", rr.Scalars(batch["next.reward"][i].item()))
 
             if "next.success" in batch:
-                rr.log("next.success", rr.Scalar(batch["next.success"][i].item()))
+                rr.log("next.success", rr.Scalars(batch["next.success"][i].item()))
 
     if mode == "local" and save:
         # save .rrd locally
