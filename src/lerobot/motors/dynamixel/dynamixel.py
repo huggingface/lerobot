@@ -45,6 +45,7 @@ NORMALIZED_DATA = ["Goal_Position", "Present_Position"]
 
 logger = logging.getLogger(__name__)
 
+
 class OperatingMode(Enum):
     # DYNAMIXEL only controls current(torque) regardless of speed and position. This mode is ideal for a
     # gripper or a system that only uses current(torque) control or a system that has additional
@@ -249,7 +250,9 @@ class DynamixelMotorsBus(MotorsBus):
     def _split_into_byte_chunks(self, value: int, length: int) -> list[int]:
         return _split_into_byte_chunks(value, length)
 
-    def broadcast_ping(self, num_retry: int = NUM_READ_RETRY, raise_on_error: bool = False) -> dict[int, int] | None:
+    def broadcast_ping(
+        self, num_retry: int = NUM_READ_RETRY, raise_on_error: bool = False
+    ) -> dict[int, int] | None:
         for n_try in range(1 + num_retry):
             data_list, comm = self.packet_handler.broadcastPing(self.port_handler)
             if self._is_comm_success(comm):

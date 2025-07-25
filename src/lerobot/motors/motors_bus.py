@@ -43,6 +43,7 @@ logger = logging.getLogger(__name__)
 NUM_READ_RETRY = 10
 NUM_WRITE_RETRY = 10
 
+
 def get_ctrl_table(model_ctrl_table: dict[str, dict], model: str) -> dict[str, tuple[int, int]]:
     ctrl_table = model_ctrl_table.get(model)
     if ctrl_table is None:
@@ -559,7 +560,9 @@ class MotorsBus(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def disable_torque(self, motors: int | str | list[str] | None = None, num_retry: int = NUM_WRITE_RETRY) -> None:
+    def disable_torque(
+        self, motors: int | str | list[str] | None = None, num_retry: int = NUM_WRITE_RETRY
+    ) -> None:
         """Disable torque on selected motors.
 
         Disabling Torque allows to write to the motors' permanent memory area (EPROM/EEPROM).
@@ -869,7 +872,9 @@ class MotorsBus(abc.ABC):
         """Convert an integer into a list of byte-sized integers."""
         pass
 
-    def ping(self, motor: NameOrID, num_retry: int = NUM_READ_RETRY, raise_on_error: bool = False) -> int | None:
+    def ping(
+        self, motor: NameOrID, num_retry: int = NUM_READ_RETRY, raise_on_error: bool = False
+    ) -> int | None:
         """Ping a single motor and return its model number.
 
         Args:
@@ -902,7 +907,9 @@ class MotorsBus(abc.ABC):
         return model_number
 
     @abc.abstractmethod
-    def broadcast_ping(self, num_retry: int = NUM_READ_RETRY, raise_on_error: bool = False) -> dict[int, int] | None:
+    def broadcast_ping(
+        self, num_retry: int = NUM_READ_RETRY, raise_on_error: bool = False
+    ) -> dict[int, int] | None:
         """Ping every ID on the bus using the broadcast address.
 
         Args:
@@ -990,7 +997,13 @@ class MotorsBus(abc.ABC):
         return value, comm, error
 
     def write(
-        self, data_name: str, motor: str, value: Value, *, normalize: bool = True, num_retry: int = NUM_WRITE_RETRY
+        self,
+        data_name: str,
+        motor: str,
+        value: Value,
+        *,
+        normalize: bool = True,
+        num_retry: int = NUM_WRITE_RETRY,
     ) -> None:
         """Write a value to a single motor's register.
 
