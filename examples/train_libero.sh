@@ -31,11 +31,11 @@ ENABLE_IMG_TRANSFORM=true
 MAX_NUM_IMAGES=2
 MAX_IMAGE_DIM=1024
 
-echo -e "\033[1;33m[WARNING]\033[0m LIBERO IS not yet supported in this PR!"
+echo -e "\033[1;33m[WARNING]\033[0m LIBERO is not yet fully supported in this PR!"
 # launch
 MUJOCO_GL=egl python src/lerobot/scripts/train.py \
   --policy.type=$POLICY \
-  --dataset.repo_id=$REPO_ID --dataset.local_files_only=true \
+  --dataset.repo_id=$REPO_ID \
   --env.type=libero \
   --env.task=$TASK \
   --output_dir=$OUTPUT_DIR \
@@ -55,5 +55,5 @@ MUJOCO_GL=egl python src/lerobot/scripts/train.py \
   --dataset.image_transforms.enable=$ENABLE_IMG_TRANSFORM \
   --dataset.max_num_images=$MAX_NUM_IMAGES \
   --dataset.max_image_dim=$MAX_IMAGE_DIM \
-  --policy.exclude_image_keys=wrist_image \
+  # --policy.exclude_image_keys=wrist_image \
   --policy.use_env_state=false
