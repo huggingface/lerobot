@@ -56,7 +56,7 @@ def make_env(cfg: EnvConfig, n_envs: int = 1, use_async_envs: bool = False) -> g
 
     # batched version of the env that returns an observation of shape (b, c)
     env_cls = gym.vector.AsyncVectorEnv if use_async_envs else gym.vector.SyncVectorEnv
-    
+
     if "libero" in cfg.type:
         from lerobot.common.envs.libero import create_libero_envs
 

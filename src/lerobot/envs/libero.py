@@ -53,9 +53,9 @@ def create_libero_envs(
             episode_indices = list(range(n_envs))[:n_envs]
             print(f"WARNING: n_envs < len(tasks_id), evaluating only on {tasks_id}")
         print(f"Creating Libero envs with task ids {tasks_id} from suite {task}")
-        assert n_envs == len(
-            tasks_id
-        ), f"len(n_envs) and tasks_id should be the same, got {n_envs} and {len(tasks_id)}"
+        assert n_envs == len(tasks_id), (
+            f"len(n_envs) and tasks_id should be the same, got {n_envs} and {len(tasks_id)}"
+        )
         return env_cls(
             [
                 lambda i=i: LiberoEnv(
