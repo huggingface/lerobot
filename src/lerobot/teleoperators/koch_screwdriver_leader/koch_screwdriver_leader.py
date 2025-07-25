@@ -236,7 +236,7 @@ class KochScrewdriverLeader(Teleoperator):
     def send_feedback(self, feedback: dict[str, float]) -> None:
         # TODO(rcadene, aliberts): Implement force feedback
         raise NotImplementedError
-    
+
     def disconnect(self) -> None:
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
