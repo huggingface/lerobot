@@ -50,6 +50,8 @@ from lerobot.common.robot_devices.robots.utils import Robot
 from lerobot.common.utils.utils import is_valid_numpy_dtype_string
 from lerobot.configs.types import FeatureType, PolicyFeature
 
+import math
+
 DEFAULT_CHUNK_SIZE = 1000  # Max number of files per chunk
 DEFAULT_DATA_FILE_SIZE_IN_MB = 100  # Max size per file
 DEFAULT_VIDEO_FILE_SIZE_IN_MB = 500  # Max size per file
@@ -294,13 +296,62 @@ def load_stats(local_dir: Path) -> dict[str, dict[str, np.ndarray]]:
     return cast_stats_to_numpy(stats)
 
 
-def write_hf_dataset(hf_dataset: Dataset, local_dir: Path):
-    if get_hf_dataset_size_in_mb(hf_dataset) > DEFAULT_DATA_FILE_SIZE_IN_MB:
-        raise NotImplementedError("Contact a maintainer.")
+def write_hf_dataset(hf_dataset: Dataset, local_dir: Path, data_file_size_mb: float | None = None, chunk_size: int | None = None):
+    """
+    Writes a Hugging Face Dataset to one or more Parquet files in a structured directory format.
 
-    path = local_dir / DEFAULT_DATA_PATH.format(chunk_index=0, file_index=0)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    hf_dataset.to_parquet(path)
+    If the dataset size is within `DEFAULT_DATA_FILE_SIZE_IN_MB`, it's saved as a single file.
+    Otherwise, the dataset is split into multiple smaller Parquet files, each not exceeding the size limit.
+    The file and chunk indices are managed to organize the output files in a hierarchical structure,
+    e.g., `data/chunk-000/file-000.parquet`, `data/chunk-000/file-001.parquet`, etc.
+
+    Args:
+        hf_dataset (Dataset): The Hugging Face Dataset to be written to disk.
+        local_dir (Path): The root directory where the dataset files will be stored.
+        data_file_size_mb (float, optional): Maximal size for the parquet data file, in MB. Defaults to DEFAULT_DATA_FILE_SIZE_IN_MB.
+        chunk_size (int, optional): Maximal number of files within a chunk folder before creating another one. Defaults to DEFAULT_CHUNK_SIZE.
+    """
+    if data_file_size_mb is None:
+        data_file_size_mb = DEFAULT_DATA_FILE_SIZE_IN_MB
+    if chunk_size is None:
+        chunk_size = DEFAULT_CHUNK_SIZE
+    
+    dataset_size_in_mb = get_hf_dataset_size_in_mb(hf_dataset)
+
+    if dataset_size_in_mb <= data_file_size_mb:
+        # If the dataset is small enough, write it to a single file.
+        path = local_dir / DEFAULT_DATA_PATH.format(chunk_index=0, file_index=0)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        hf_dataset.to_parquet(path)
+        return
+
+    # If the dataset is too large, split it into smaller chunks.
+    num_splits = math.ceil(dataset_size_in_mb / data_file_size_mb)
+    nrows_per_file = len(hf_dataset) // num_splits
+
+    chunk_idx, file_idx = 0, 0
+
+    for i in range(num_splits):
+        # Determine the start and end indices for the current chunk.
+        start = i * nrows_per_file
+        end = start + nrows_per_file if i < num_splits - 1 else len(hf_dataset)
+
+        # Skip creating empty shards
+        if start >= end:
+            continue
+
+        # Select the portion of the dataset for the current chunk.
+        dataset_shard = hf_dataset.select(range(start, end))
+
+        # Define the path for the current shard and ensure the directory exists.
+        path = local_dir / DEFAULT_DATA_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Write the shard to a Parquet file.
+        dataset_shard.to_parquet(path)
+
+        # Update chunk and file indices for the next iteration.
+        chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, chunk_size)
 
 
 def write_tasks(tasks: pandas.DataFrame, local_dir: Path):
