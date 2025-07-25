@@ -121,12 +121,12 @@ from safetensors.torch import load_file
 
 from lerobot.datasets.utils import (
     DEFAULT_CHUNK_SIZE,
-    DEFAULT_PARQUET_PATH,
-    DEFAULT_VIDEO_PATH,
-    EPISODES_PATH,
     INFO_PATH,
+    LEGACY_DEFAULT_PARQUET_PATH,
+    LEGACY_DEFAULT_VIDEO_PATH,
+    LEGACY_EPISODES_PATH,
+    LEGACY_TASKS_PATH,
     STATS_PATH,
-    TASKS_PATH,
     create_branch,
     create_lerobot_dataset_card,
     flatten_dict,
@@ -290,12 +290,12 @@ def split_parquet_by_episodes(
     for ep_chunk in range(total_chunks):
         ep_chunk_start = DEFAULT_CHUNK_SIZE * ep_chunk
         ep_chunk_end = min(DEFAULT_CHUNK_SIZE * (ep_chunk + 1), total_episodes)
-        chunk_dir = "/".join(DEFAULT_PARQUET_PATH.split("/")[:-1]).format(episode_chunk=ep_chunk)
+        chunk_dir = "/".join(LEGACY_DEFAULT_PARQUET_PATH.split("/")[:-1]).format(episode_chunk=ep_chunk)
         (output_dir / chunk_dir).mkdir(parents=True, exist_ok=True)
         for ep_idx in range(ep_chunk_start, ep_chunk_end):
             ep_table = table.filter(pc.equal(table["episode_index"], ep_idx))
             episode_lengths.insert(ep_idx, len(ep_table))
-            output_file = output_dir / DEFAULT_PARQUET_PATH.format(
+            output_file = output_dir / LEGACY_DEFAULT_PARQUET_PATH.format(
                 episode_chunk=ep_chunk, episode_index=ep_idx
             )
             pq.write_table(ep_table, output_file)
@@ -344,13 +344,13 @@ def move_videos(
         ep_chunk_start = DEFAULT_CHUNK_SIZE * ep_chunk
         ep_chunk_end = min(DEFAULT_CHUNK_SIZE * (ep_chunk + 1), total_episodes)
         for vid_key in video_keys:
-            chunk_dir = "/".join(DEFAULT_VIDEO_PATH.split("/")[:-1]).format(
+            chunk_dir = "/".join(LEGACY_DEFAULT_VIDEO_PATH.split("/")[:-1]).format(
                 episode_chunk=ep_chunk, video_key=vid_key
             )
             (work_dir / chunk_dir).mkdir(parents=True, exist_ok=True)
 
             for ep_idx in range(ep_chunk_start, ep_chunk_end):
-                target_path = DEFAULT_VIDEO_PATH.format(
+                target_path = LEGACY_DEFAULT_VIDEO_PATH.format(
                     episode_chunk=ep_chunk, video_key=vid_key, episode_index=ep_idx
                 )
                 video_file = V1_VIDEO_FILE.format(video_key=vid_key, episode_index=ep_idx)
@@ -418,7 +418,7 @@ def _get_lfs_untracked_videos(work_dir: Path, video_files: list[str]) -> list[st
 def get_videos_info(repo_id: str, local_dir: Path, video_keys: list[str], branch: str) -> dict:
     # Assumes first episode
     video_files = [
-        DEFAULT_VIDEO_PATH.format(episode_chunk=0, video_key=vid_key, episode_index=0)
+        LEGACY_DEFAULT_VIDEO_PATH.format(episode_chunk=0, video_key=vid_key, episode_index=0)
         for vid_key in video_keys
     ]
     hub_api = HfApi()
@@ -495,7 +495,7 @@ def convert_dataset(
 
     assert set(tasks) == {task for ep_tasks in tasks_by_episodes.values() for task in ep_tasks}
     tasks = [{"task_index": task_idx, "task": task} for task_idx, task in enumerate(tasks)]
-    write_jsonlines(tasks, v20_dir / TASKS_PATH)
+    write_jsonlines(tasks, v20_dir / LEGACY_TASKS_PATH)
     features["task_index"] = {
         "dtype": "int64",
         "shape": (1,),
@@ -545,7 +545,7 @@ def convert_dataset(
         {"episode_index": ep_idx, "tasks": tasks_by_episodes[ep_idx], "length": episode_lengths[ep_idx]}
         for ep_idx in episode_indices
     ]
-    write_jsonlines(episodes, v20_dir / EPISODES_PATH)
+    write_jsonlines(episodes, v20_dir / LEGACY_EPISODES_PATH)
 
     # Assemble metadata v2.0
     metadata_v2_0 = {
@@ -559,8 +559,8 @@ def convert_dataset(
         "chunks_size": DEFAULT_CHUNK_SIZE,
         "fps": metadata_v1["fps"],
         "splits": {"train": f"0:{total_episodes}"},
-        "data_path": DEFAULT_PARQUET_PATH,
-        "video_path": DEFAULT_VIDEO_PATH if video_keys else None,
+        "data_path": LEGACY_DEFAULT_PARQUET_PATH,
+        "video_path": LEGACY_DEFAULT_VIDEO_PATH if video_keys else None,
         "features": features,
     }
     write_json(metadata_v2_0, v20_dir / INFO_PATH)

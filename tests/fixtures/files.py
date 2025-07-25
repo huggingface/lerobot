@@ -11,92 +11,82 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import json
 from pathlib import Path
 
 import datasets
-import jsonlines
+import pandas as pd
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
 import pytest
 
 from lerobot.datasets.utils import (
-    EPISODES_PATH,
-    EPISODES_STATS_PATH,
-    INFO_PATH,
-    STATS_PATH,
-    TASKS_PATH,
+    write_episodes,
+    write_hf_dataset,
+    write_info,
+    write_stats,
+    write_tasks,
 )
 
 
 @pytest.fixture(scope="session")
-def info_path(info_factory):
-    def _create_info_json_file(dir: Path, info: dict | None = None) -> Path:
-        if not info:
+def create_info(info_factory):
+    def _create_info(dir: Path, info: dict | None = None):
+        if info is None:
             info = info_factory()
-        fpath = dir / INFO_PATH
-        fpath.parent.mkdir(parents=True, exist_ok=True)
-        with open(fpath, "w") as f:
-            json.dump(info, f, indent=4, ensure_ascii=False)
-        return fpath
+        write_info(info, dir)
 
-    return _create_info_json_file
+    return _create_info
 
 
 @pytest.fixture(scope="session")
-def stats_path(stats_factory):
-    def _create_stats_json_file(dir: Path, stats: dict | None = None) -> Path:
-        if not stats:
+def create_stats(stats_factory):
+    def _create_stats(dir: Path, stats: dict | None = None):
+        if stats is None:
             stats = stats_factory()
-        fpath = dir / STATS_PATH
-        fpath.parent.mkdir(parents=True, exist_ok=True)
-        with open(fpath, "w") as f:
-            json.dump(stats, f, indent=4, ensure_ascii=False)
-        return fpath
+        write_stats(stats, dir)
 
-    return _create_stats_json_file
+    return _create_stats
 
 
-@pytest.fixture(scope="session")
-def episodes_stats_path(episodes_stats_factory):
-    def _create_episodes_stats_jsonl_file(dir: Path, episodes_stats: list[dict] | None = None) -> Path:
-        if not episodes_stats:
-            episodes_stats = episodes_stats_factory()
-        fpath = dir / EPISODES_STATS_PATH
-        fpath.parent.mkdir(parents=True, exist_ok=True)
-        with jsonlines.open(fpath, "w") as writer:
-            writer.write_all(episodes_stats.values())
-        return fpath
+# @pytest.fixture(scope="session")
+# def create_episodes_stats(episodes_stats_factory):
+#     def _create_episodes_stats(dir: Path, episodes_stats: Dataset | None = None):
+#         if episodes_stats is None:
+#             episodes_stats = episodes_stats_factory()
+#         write_episodes_stats(episodes_stats, dir)
 
-    return _create_episodes_stats_jsonl_file
+#     return _create_episodes_stats
 
 
 @pytest.fixture(scope="session")
-def tasks_path(tasks_factory):
-    def _create_tasks_jsonl_file(dir: Path, tasks: list | None = None) -> Path:
-        if not tasks:
+def create_tasks(tasks_factory):
+    def _create_tasks(dir: Path, tasks: pd.DataFrame | None = None):
+        if tasks is None:
             tasks = tasks_factory()
-        fpath = dir / TASKS_PATH
-        fpath.parent.mkdir(parents=True, exist_ok=True)
-        with jsonlines.open(fpath, "w") as writer:
-            writer.write_all(tasks.values())
-        return fpath
+        write_tasks(tasks, dir)
 
-    return _create_tasks_jsonl_file
+    return _create_tasks
 
 
 @pytest.fixture(scope="session")
-def episode_path(episodes_factory):
-    def _create_episodes_jsonl_file(dir: Path, episodes: list | None = None) -> Path:
-        if not episodes:
+def create_episodes(episodes_factory):
+    def _create_episodes(dir: Path, episodes: datasets.Dataset | None = None):
+        if episodes is None:
+            # TODO(rcadene): add features, fps as arguments
             episodes = episodes_factory()
-        fpath = dir / EPISODES_PATH
-        fpath.parent.mkdir(parents=True, exist_ok=True)
-        with jsonlines.open(fpath, "w") as writer:
-            writer.write_all(episodes.values())
-        return fpath
+        write_episodes(episodes, dir)
 
-    return _create_episodes_jsonl_file
+    return _create_episodes
+
+
+@pytest.fixture(scope="session")
+def create_hf_dataset(hf_dataset_factory):
+    def _create_hf_dataset(dir: Path, hf_dataset: datasets.Dataset | None = None):
+        if hf_dataset is None:
+            hf_dataset = hf_dataset_factory()
+        write_hf_dataset(hf_dataset, dir)
+
+    return _create_hf_dataset
 
 
 @pytest.fixture(scope="session")
@@ -104,7 +94,8 @@ def single_episode_parquet_path(hf_dataset_factory, info_factory):
     def _create_single_episode_parquet(
         dir: Path, ep_idx: int = 0, hf_dataset: datasets.Dataset | None = None, info: dict | None = None
     ) -> Path:
-        if not info:
+        raise NotImplementedError()
+        if info is None:
             info = info_factory()
         if hf_dataset is None:
             hf_dataset = hf_dataset_factory()
@@ -127,7 +118,8 @@ def multi_episode_parquet_path(hf_dataset_factory, info_factory):
     def _create_multi_episode_parquet(
         dir: Path, hf_dataset: datasets.Dataset | None = None, info: dict | None = None
     ) -> Path:
-        if not info:
+        raise NotImplementedError()
+        if info is None:
             info = info_factory()
         if hf_dataset is None:
             hf_dataset = hf_dataset_factory()
