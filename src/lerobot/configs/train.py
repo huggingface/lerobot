@@ -35,6 +35,7 @@ TRAIN_CONFIG_NAME = "train_config.json"
 @dataclass
 class TrainPipelineConfig(HubMixin):
     dataset: DatasetConfig
+    use_fast_image_processor: bool = False
     env: envs.EnvConfig | None = None
     policy: PreTrainedConfig | None = None
     # Set `dir` to where you would like to save all of the run outputs. If you run another training session
