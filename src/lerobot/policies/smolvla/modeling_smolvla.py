@@ -385,7 +385,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
 
     def _get_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
         for k in batch:
-            if k in self._queues:
+            if k in self._queues and k != ACTION:
                 batch[k] = torch.stack(list(self._queues[k]), dim=1)
 
         images, img_masks = self.prepare_images(batch)
@@ -631,7 +631,7 @@ class VLAFlowMatching(nn.Module):
     └──────────────────────────────┘
     """
 
-    def __init__(self, config):
+    def __init__(self, config: SmolVLAConfig):
         super().__init__()
         self.config = config
 
