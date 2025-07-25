@@ -32,7 +32,7 @@ class VQBeTConfig(PreTrainedConfig):
     Defaults are configured for training with PushT providing proprioceptive and single camera observations.
 
     The parameters you will most likely need to change are the ones which depend on the environment / sensors.
-    Those are: `input_shapes` and `output_shapes`.
+    Those are: `input_features` and `output_features`.
 
     Notes on the inputs and outputs:
         - "observation.state" is required as an input key.
@@ -46,12 +46,12 @@ class VQBeTConfig(PreTrainedConfig):
             current step and additional steps going back).
         n_action_pred_token: Total number of current token and future tokens that VQ-BeT predicts.
         action_chunk_size: Action chunk size of each action prediction token.
-        input_shapes: A dictionary defining the shapes of the input data for the policy.
+        input_features: A dictionary defining the shapes of the input data for the policy.
             The key represents the input data name, and the value is a list indicating the dimensions
             of the corresponding data. For example, "observation.image" refers to an input from
             a camera with dimensions [3, 96, 96], indicating it has three color channels and 96x96 resolution.
             Importantly, shapes doesnt include batch dimension or temporal dimension.
-        output_shapes: A dictionary defining the shapes of the output data for the policy.
+        output_features: A dictionary defining the shapes of the output data for the policy.
             The key represents the output data name, and the value is a list indicating the dimensions
             of the corresponding data. For example, "action" refers to an output shape of [14], indicating
             14-dimensional actions. Importantly, shapes doesnt include batch dimension or temporal dimension.

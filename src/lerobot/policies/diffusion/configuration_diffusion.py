@@ -30,7 +30,7 @@ class DiffusionConfig(PreTrainedConfig):
     Defaults are configured for training with PushT providing proprioceptive and single camera observations.
 
     The parameters you will most likely need to change are the ones which depend on the environment / sensors.
-    Those are: `input_shapes` and `output_shapes`.
+    Those are: `input_features` and `output_features`.
 
     Notes on the inputs and outputs:
         - "observation.state" is required as an input key.
@@ -48,15 +48,15 @@ class DiffusionConfig(PreTrainedConfig):
         horizon: Diffusion model action prediction size as detailed in `DiffusionPolicy.select_action`.
         n_action_steps: The number of action steps to run in the environment for one invocation of the policy.
             See `DiffusionPolicy.select_action` for more details.
-        input_shapes: A dictionary defining the shapes of the input data for the policy. The key represents
+        input_features: A dictionary defining the shapes of the input data for the policy. The key represents
             the input data name, and the value is a list indicating the dimensions of the corresponding data.
             For example, "observation.image" refers to an input from a camera with dimensions [3, 96, 96],
-            indicating it has three color channels and 96x96 resolution. Importantly, `input_shapes` doesn't
+            indicating it has three color channels and 96x96 resolution. Importantly, `input_features` doesn't
             include batch dimension or temporal dimension.
-        output_shapes: A dictionary defining the shapes of the output data for the policy. The key represents
+        output_features: A dictionary defining the shapes of the output data for the policy. The key represents
             the output data name, and the value is a list indicating the dimensions of the corresponding data.
             For example, "action" refers to an output shape of [14], indicating 14-dimensional actions.
-            Importantly, `output_shapes` doesn't include batch dimension or temporal dimension.
+            Importantly, `output_features` doesn't include batch dimension or temporal dimension.
         input_normalization_modes: A dictionary with key representing the modality (e.g. "observation.state"),
             and the value specifies the normalization mode to apply. The two available modes are "mean_std"
             which subtracts the mean and divides by the standard deviation and "min_max" which rescale in a
