@@ -41,7 +41,19 @@ class DatasetConfig:
 
 @dataclass
 class WandBConfig:
-    enable: bool = False
+    enable: bool = False  # wandb.enable is deprecated, use tracker="wandb" or tracker="both" in train.py, it will be removed in the future
+    # Set to true to disable saving an artifact despite training.save_checkpoint=True
+    disable_artifact: bool = False
+    project: str = "lerobot"
+    entity: str | None = None
+    notes: str | None = None
+    run_id: str | None = None
+    mode: str | None = None  # Allowed values: 'online', 'offline' 'disabled'. Defaults to 'online'
+
+
+@dataclass
+class SwanLabConfig:
+    enable: bool = False  # swanlab.enable is deprecated, use tracker="swanlab" or tracker="both" in train.py, it will be removed in the future
     # Set to true to disable saving an artifact despite training.save_checkpoint=True
     disable_artifact: bool = False
     project: str = "lerobot"
