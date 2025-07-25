@@ -39,6 +39,9 @@ class SO100FollowerConfig(RobotConfig):
 
     # Set to `True` for backward compatibility with previous policies/dataset
     use_degrees: bool = False
+    urdf_path: str | None = None
+    target_frame_name: str | None = None
+    end_effector_bounds: dict[str, list[float]] | None = None
 
 
 @RobotConfig.register_subclass("so100_follower_end_effector")
@@ -62,6 +65,11 @@ class SO100FollowerEndEffectorConfig(SO100FollowerConfig):
         }
     )
 
+    end_effector_rotation_bounds = {
+        "min": [-180.0, -90.0, -180.0],  # min roll, pitch, yaw
+        "max": [180.0, 90.0, 180.0],  # max roll, pitch, yaw
+    }
+
     max_gripper_pos: float = 50
 
     end_effector_step_sizes: dict[str, float] = field(
@@ -69,5 +77,8 @@ class SO100FollowerEndEffectorConfig(SO100FollowerConfig):
             "x": 0.02,
             "y": 0.02,
             "z": 0.02,
+            "roll": 1.0,
+            "pitch": 1.0,
+            "yaw": 1.0,
         }
     )
