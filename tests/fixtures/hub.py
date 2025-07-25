@@ -19,6 +19,8 @@ import pytest
 from huggingface_hub.utils import filter_repo_objects
 
 from lerobot.datasets.utils import (
+    DEFAULT_CHUNK_SIZE,
+    DEFAULT_DATA_FILE_SIZE_IN_MB,
     DEFAULT_DATA_PATH,
     DEFAULT_EPISODES_PATH,
     DEFAULT_TASKS_PATH,
@@ -54,9 +56,11 @@ def mock_snapshot_download_factory(
         tasks: pd.DataFrame | None = None,
         episodes: datasets.Dataset | None = None,
         hf_dataset: datasets.Dataset | None = None,
+        data_files_size_in_mb: float = DEFAULT_DATA_FILE_SIZE_IN_MB,
+        chunks_size: int = DEFAULT_CHUNK_SIZE,
     ):
         if info is None:
-            info = info_factory()
+            info = info_factory(data_files_size_in_mb=data_files_size_in_mb, chunks_size=chunks_size)
         if stats is None:
             stats = stats_factory(features=info["features"])
         if tasks is None:
@@ -132,7 +136,7 @@ def mock_snapshot_download_factory(
             if request_episodes:
                 create_episodes(local_dir, episodes)
             if request_data:
-                create_hf_dataset(local_dir, hf_dataset)
+                create_hf_dataset(local_dir, hf_dataset, data_files_size_in_mb, chunks_size)
             if request_videos:
                 create_videos(root=local_dir, info=info)
 

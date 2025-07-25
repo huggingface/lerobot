@@ -81,10 +81,15 @@ def create_episodes(episodes_factory):
 
 @pytest.fixture(scope="session")
 def create_hf_dataset(hf_dataset_factory):
-    def _create_hf_dataset(dir: Path, hf_dataset: datasets.Dataset | None = None):
+    def _create_hf_dataset(
+        dir: Path,
+        hf_dataset: datasets.Dataset | None = None,
+        data_file_size_in_mb: float | None = None,
+        chunk_size: int | None = None,
+    ):
         if hf_dataset is None:
             hf_dataset = hf_dataset_factory()
-        write_hf_dataset(hf_dataset, dir)
+        write_hf_dataset(hf_dataset, dir, data_file_size_in_mb, chunk_size)
 
     return _create_hf_dataset
 
