@@ -3,6 +3,7 @@
 This tutorial will explain how to train a neural network to control a real robot autonomously.
 
 **You'll learn:**
+
 1. How to record and visualize your dataset.
 2. How to train a policy using your data and prepare it for evaluation.
 3. How to evaluate your policy and visualize the results.
@@ -14,7 +15,10 @@ By following these steps, you'll be able to replicate tasks, such as picking up 
 
 <div class="video-container">
   <video controls width="600">
-    <source src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/lerobot_task.mp4" type="video/mp4" />
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/lerobot_task.mp4"
+      type="video/mp4"
+    />
   </video>
 </div>
 
@@ -51,6 +55,8 @@ python -m lerobot.teleoperate \
 ```
 </hfoption>
 <hfoption id="API example">
+
+<!-- prettier-ignore-start -->
 ```python
 from lerobot.teleoperators.so101_leader import SO101LeaderConfig, SO101Leader
 from lerobot.robots.so101_follower import SO101FollowerConfig, SO101Follower
@@ -74,10 +80,13 @@ while True:
     action = teleop_device.get_action()
     robot.send_action(action)
 ```
+<!-- prettier-ignore-end -->
+
 </hfoption>
 </hfoptions>
 
 The teleoperate command will automatically:
+
 1. Identify any missing calibrations and initiate the calibration procedure.
 2. Connect the robot and teleop device and start teleoperation.
 
@@ -104,6 +113,8 @@ python -m lerobot.teleoperate \
 ```
 </hfoption>
 <hfoption id="API example">
+
+<!-- prettier-ignore-start -->
 ```python
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.teleoperators.koch_leader import KochLeaderConfig, KochLeader
@@ -134,6 +145,8 @@ while True:
     action = teleop_device.get_action()
     robot.send_action(action)
 ```
+<!-- prettier-ignore-end -->
+
 </hfoption>
 </hfoptions>
 
@@ -144,11 +157,13 @@ Once you're familiar with teleoperation, you can record your first dataset.
 We use the Hugging Face hub features for uploading your dataset. If you haven't previously used the Hub, make sure you can login via the cli using a write-access token, this token can be generated from the [Hugging Face settings](https://huggingface.co/settings/tokens).
 
 Add your token to the CLI by running this command:
+
 ```bash
 huggingface-cli login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
 ```
 
 Then store your Hugging Face repository name in a variable:
+
 ```bash
 HF_USER=$(huggingface-cli whoami | head -n 1)
 echo $HF_USER
@@ -174,6 +189,8 @@ python -m lerobot.record \
 ```
 </hfoption>
 <hfoption id="API example">
+
+<!-- prettier-ignore-start -->
 ```python
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -270,40 +287,49 @@ robot.disconnect()
 teleop.disconnect()
 dataset.push_to_hub()
 ```
+<!-- prettier-ignore-end -->
+
 </hfoption>
 </hfoptions>
 
 #### Dataset upload
+
 Locally, your dataset is stored in this folder: `~/.cache/huggingface/lerobot/{repo-id}`. At the end of data recording, your dataset will be uploaded on your Hugging Face page (e.g. https://huggingface.co/datasets/cadene/so101_test) that you can obtain by running:
+
 ```bash
 echo https://huggingface.co/datasets/${HF_USER}/so101_test
 ```
+
 Your dataset will be automatically tagged with `LeRobot` for the community to find it easily, and you can also add custom tags (in this case `tutorial` for example).
 
 You can look for other LeRobot datasets on the hub by searching for `LeRobot` [tags](https://huggingface.co/datasets?other=LeRobot).
 
 You can also push your local dataset to the Hub manually, running:
+
 ```bash
 huggingface-cli upload ${HF_USER}/record-test ~/.cache/huggingface/lerobot/{repo-id} --repo-type dataset
 ```
-
 
 #### Record function
 
 The `record` function provides a suite of tools for capturing and managing data during robot operation:
 
 ##### 1. Data Storage
+
 - Data is stored using the `LeRobotDataset` format and is stored on disk during recording.
 - By default, the dataset is pushed to your Hugging Face page after recording.
   - To disable uploading, use `--dataset.push_to_hub=False`.
 
 ##### 2. Checkpointing and Resuming
+
 - Checkpoints are automatically created during recording.
 - If an issue occurs, you can resume by re-running the same command with `--resume=true`.
 - To start recording from scratch, **manually delete** the dataset directory.
 
 ##### 3. Recording Parameters
+
 Set the flow of data recording using command-line arguments:
+
 - `--dataset.episode_time_s=60`
   Duration of each data recording episode (default: **60 seconds**).
 - `--dataset.reset_time_s=60`
@@ -312,7 +338,9 @@ Set the flow of data recording using command-line arguments:
   Total number of episodes to record (default: **50**).
 
 ##### 4. Keyboard Controls During Recording
+
 Control the data recording flow using keyboard shortcuts:
+
 - Press **Right Arrow (`→`)**: Early stop the current episode or reset time and move to the next.
 - Press **Left Arrow (`←`)**: Cancel the current episode and re-record it.
 - Press **Escape (`ESC`)**: Immediately stop the session, encode videos, and upload the dataset.
@@ -327,13 +355,14 @@ Avoid adding too much variation too quickly, as it may hinder your results.
 
 If you want to dive deeper into this important topic, you can check out the [blog post](https://huggingface.co/blog/lerobot-datasets#what-makes-a-good-dataset) we wrote on what makes a good dataset.
 
-
 #### Troubleshooting:
+
 - On Linux, if the left and right arrow keys and escape key don't have any effect during data recording, make sure you've set the `$DISPLAY` environment variable. See [pynput limitations](https://pynput.readthedocs.io/en/latest/limitations.html#linux).
 
 ## Visualize a dataset
 
 If you uploaded your dataset to the hub with `--control.push_to_hub=true`, you can [visualize your dataset online](https://huggingface.co/spaces/lerobot/visualize_dataset) by copy pasting your repo id given by:
+
 ```bash
 echo ${HF_USER}/so101_test
 ```
@@ -356,6 +385,8 @@ python -m lerobot.replay \
 ```
 </hfoption>
 <hfoption id="API example">
+
+<!-- prettier-ignore-start -->
 ```python
 import time
 
@@ -388,6 +419,8 @@ for idx in range(dataset.num_frames):
 
 robot.disconnect()
 ```
+<!-- prettier-ignore-end -->
+
 </hfoption>
 </hfoptions>
 
@@ -396,6 +429,7 @@ Your robot should replicate movements similar to those you recorded. For example
 ## Train a policy
 
 To train a policy to control your robot, use the [`python -m lerobot.scripts.train`](../src/lerobot/scripts/train.py) script. A few arguments are required. Here is an example command:
+
 ```bash
 python -m lerobot.scripts.train \
   --dataset.repo_id=${HF_USER}/so101_test \
@@ -408,14 +442,16 @@ python -m lerobot.scripts.train \
 ```
 
 Let's explain the command:
+
 1. We provided the dataset as argument with `--dataset.repo_id=${HF_USER}/so101_test`.
 2. We provided the policy with `policy.type=act`. This loads configurations from [`configuration_act.py`](../src/lerobot/policies/act/configuration_act.py). Importantly, this policy will automatically adapt to the number of motor states, motor actions and cameras of your robot (e.g. `laptop` and `phone`) which have been saved in your dataset.
-4. We provided `policy.device=cuda` since we are training on a Nvidia GPU, but you could use `policy.device=mps` to train on Apple silicon.
-5. We provided `wandb.enable=true` to use [Weights and Biases](https://docs.wandb.ai/quickstart) for visualizing training plots. This is optional but if you use it, make sure you are logged in by running `wandb login`.
+3. We provided `policy.device=cuda` since we are training on a Nvidia GPU, but you could use `policy.device=mps` to train on Apple silicon.
+4. We provided `wandb.enable=true` to use [Weights and Biases](https://docs.wandb.ai/quickstart) for visualizing training plots. This is optional but if you use it, make sure you are logged in by running `wandb login`.
 
 Training should take several hours. You will find checkpoints in `outputs/train/act_so101_test/checkpoints`.
 
 To resume training from a checkpoint, below is an example command to resume from `last` checkpoint of the `act_so101_test` policy:
+
 ```bash
 python -m lerobot.scripts.train \
   --config_path=outputs/train/act_so101_test/checkpoints/last/pretrained_model/train_config.json \
@@ -427,17 +463,20 @@ If you do not want to push your model to the hub after training use `--policy.pu
 Additionally you can provide extra `tags` or specify a `license` for your model or make the model repo `private` by adding this: `--policy.private=true --policy.tags=\[ppo,rl\] --policy.license=mit`
 
 #### Train using Collab
+
 If your local computer doesn't have a powerful GPU you could utilize Google Collab to train your model by following the [ACT training notebook](./notebooks#training-act).
 
 #### Upload policy checkpoints
 
 Once training is done, upload the latest checkpoint with:
+
 ```bash
 huggingface-cli upload ${HF_USER}/act_so101_test \
   outputs/train/act_so101_test/checkpoints/last/pretrained_model
 ```
 
 You can also upload intermediate checkpoints with:
+
 ```bash
 CKPT=010000
 huggingface-cli upload ${HF_USER}/act_so101_test${CKPT} \
@@ -467,6 +506,8 @@ python -m lerobot.record  \
 ```
 </hfoption>
 <hfoption id="API example">
+
+<!-- prettier-ignore-start -->
 ```python
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -539,9 +580,12 @@ for episode_idx in range(NUM_EPISODES):
 robot.disconnect()
 dataset.push_to_hub()
 ```
+<!-- prettier-ignore-end -->
+
 </hfoption>
 </hfoptions>
 
 As you can see, it's almost the same command as previously used to record your training dataset. Two things changed:
-1. There is an additional `--control.policy.path` argument which indicates the path to your policy checkpoint with  (e.g. `outputs/train/eval_act_so101_test/checkpoints/last/pretrained_model`). You can also use the model repository if you uploaded a model checkpoint to the hub (e.g. `${HF_USER}/act_so101_test`).
+
+1. There is an additional `--control.policy.path` argument which indicates the path to your policy checkpoint with (e.g. `outputs/train/eval_act_so101_test/checkpoints/last/pretrained_model`). You can also use the model repository if you uploaded a model checkpoint to the hub (e.g. `${HF_USER}/act_so101_test`).
 2. The name of dataset begins by `eval` to reflect that you are running inference (e.g. `${HF_USER}/eval_act_so101_test`).

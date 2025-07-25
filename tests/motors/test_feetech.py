@@ -1,6 +1,22 @@
+#!/usr/bin/env python
+
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import re
 import sys
-from typing import Generator
+from collections.abc import Generator
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -219,7 +235,7 @@ def test__write(addr, length, id_, value, mock_motors, dummy_motors):
 
     comm, error = bus._write(addr, length, id_, value)
 
-    assert mock_motors.stubs[stub].called
+    assert mock_motors.stubs[stub].wait_called()
     assert comm == scs.COMM_SUCCESS
     assert error == 0
 
@@ -371,9 +387,9 @@ def test_reset_calibration(mock_motors, dummy_motors):
 
     bus.reset_calibration()
 
-    assert all(mock_motors.stubs[stub].called for stub in write_homing_stubs)
-    assert all(mock_motors.stubs[stub].called for stub in write_mins_stubs)
-    assert all(mock_motors.stubs[stub].called for stub in write_maxes_stubs)
+    assert all(mock_motors.stubs[stub].wait_called() for stub in write_homing_stubs)
+    assert all(mock_motors.stubs[stub].wait_called() for stub in write_mins_stubs)
+    assert all(mock_motors.stubs[stub].wait_called() for stub in write_maxes_stubs)
 
 
 def test_set_half_turn_homings(mock_motors, dummy_motors):
@@ -410,7 +426,7 @@ def test_set_half_turn_homings(mock_motors, dummy_motors):
 
     bus.reset_calibration.assert_called_once()
     assert mock_motors.stubs[read_pos_stub].called
-    assert all(mock_motors.stubs[stub].called for stub in write_homing_stubs)
+    assert all(mock_motors.stubs[stub].wait_called() for stub in write_homing_stubs)
 
 
 def test_record_ranges_of_motion(mock_motors, dummy_motors):

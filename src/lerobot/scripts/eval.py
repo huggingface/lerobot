@@ -50,12 +50,12 @@ import json
 import logging
 import threading
 import time
+from collections.abc import Callable
 from contextlib import nullcontext
 from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
 from pprint import pformat
-from typing import Callable
 
 import einops
 import gymnasium as gym
