@@ -22,9 +22,9 @@ import pytest
 import torch
 from torch.multiprocessing import Event, Queue
 
-from lerobot.common.policies.sac.configuration_sac import SACConfig
-from lerobot.common.utils.transition import Transition
 from lerobot.configs.train import TrainRLServerPipelineConfig
+from lerobot.policies.sac.configuration_sac import SACConfig
+from lerobot.utils.transition import Transition
 from tests.utils import require_package
 
 
@@ -90,7 +90,6 @@ def cfg():
 @require_package("grpc")
 @pytest.mark.timeout(10)  # force cross-platform watchdog
 def test_end_to_end_transitions_flow(cfg):
-    from lerobot.common.transport.utils import bytes_to_transitions
     from lerobot.scripts.rl.actor import (
         establish_learner_connection,
         learner_service_client,
@@ -98,6 +97,7 @@ def test_end_to_end_transitions_flow(cfg):
         send_transitions,
     )
     from lerobot.scripts.rl.learner import start_learner
+    from lerobot.transport.utils import bytes_to_transitions
     from tests.transport.test_transport_utils import assert_transitions_equal
 
     """Test complete transitions flow from actor to learner."""
@@ -152,13 +152,13 @@ def test_end_to_end_transitions_flow(cfg):
 @require_package("grpc")
 @pytest.mark.timeout(10)
 def test_end_to_end_interactions_flow(cfg):
-    from lerobot.common.transport.utils import bytes_to_python_object, python_object_to_bytes
     from lerobot.scripts.rl.actor import (
         establish_learner_connection,
         learner_service_client,
         send_interactions,
     )
     from lerobot.scripts.rl.learner import start_learner
+    from lerobot.transport.utils import bytes_to_python_object, python_object_to_bytes
 
     """Test complete interactions flow from actor to learner."""
     # Queues for actor-learner communication
@@ -226,9 +226,9 @@ def test_end_to_end_interactions_flow(cfg):
 @pytest.mark.parametrize("data_size", ["small", "large"])
 @pytest.mark.timeout(10)
 def test_end_to_end_parameters_flow(cfg, data_size):
-    from lerobot.common.transport.utils import bytes_to_state_dict, state_to_bytes
     from lerobot.scripts.rl.actor import establish_learner_connection, learner_service_client, receive_policy
     from lerobot.scripts.rl.learner import start_learner
+    from lerobot.transport.utils import bytes_to_state_dict, state_to_bytes
 
     """Test complete parameter flow from learner to actor, with small and large data."""
     # Actor's local queue to receive params
