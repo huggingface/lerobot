@@ -18,6 +18,8 @@ from pathlib import Path
 
 import draccus
 
+from lerobot.utils.utils import import_dynamic_device_based_on_args
+
 
 @dataclass(kw_only=True)
 class RobotConfig(draccus.ChoiceRegistry, abc.ABC):
@@ -34,6 +36,11 @@ class RobotConfig(draccus.ChoiceRegistry, abc.ABC):
                         raise ValueError(
                             f"Specifying '{attr}' is required for the camera to be used in a robot"
                         )
+
+    @classmethod
+    def get_known_choices(cls):
+        import_dynamic_device_based_on_args("robot")
+        return super().get_known_choices()
 
     @property
     def type(self) -> str:
