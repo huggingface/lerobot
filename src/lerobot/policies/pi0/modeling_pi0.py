@@ -21,6 +21,7 @@
 [Jax code](https://github.com/Physical-Intelligence/openpi)
 
 Designed by Physical Intelligence. Ported from Jax by Hugging Face.
+Disclaimer: It is not expected to perform as well as the original implementation.
 
 Install pi0 extra dependencies:
 ```bash
@@ -260,12 +261,22 @@ class PI0Policy(PreTrainedPolicy):
     def get_optim_params(self) -> dict:
         return self.parameters()
 
-    @torch.no_grad
+    @classmethod
+    def from_pretrained(cls, *args, **kwargs):
+        """Override the from_pretrained method to display important disclaimer."""
+        print(
+            "⚠️  DISCLAIMER: The PI0 model is ported from JAX by the Hugging Face team. \n"
+            "   It is not expected to perform as well as the original implementation. \n"
+            "   Original implementation: https://github.com/Physical-Intelligence/openpi"
+        )
+        return super().from_pretrained(*args, **kwargs)
+
+    @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
         """Predict a chunk of actions given environment observations."""
         raise NotImplementedError("Currently not implemented for PI0")
 
-    @torch.no_grad
+    @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
         """Select a single action given environment observations.
 

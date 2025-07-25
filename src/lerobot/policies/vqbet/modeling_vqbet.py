@@ -18,7 +18,7 @@
 
 import warnings
 from collections import deque
-from typing import Callable, List
+from collections.abc import Callable
 
 import einops
 import numpy as np
@@ -124,14 +124,14 @@ class VQBeTPolicy(PreTrainedPolicy):
             ACTION: deque(maxlen=self.config.action_chunk_size),
         }
 
-    @torch.no_grad
+    @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
         batch = {k: torch.stack(list(self._queues[k]), dim=1) for k in batch if k in self._queues}
         actions = self.vqbet(batch, rollout=True)[:, : self.config.action_chunk_size]
         actions = self.unnormalize_outputs({ACTION: actions})[ACTION]
         return actions
 
-    @torch.no_grad
+    @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
         """Select a single action given environment observations.
 
@@ -901,7 +901,7 @@ class MLP(torch.nn.Sequential):
     def __init__(
         self,
         in_channels: int,
-        hidden_channels: List[int],
+        hidden_channels: list[int],
     ):
         layers = []
         in_dim = in_channels

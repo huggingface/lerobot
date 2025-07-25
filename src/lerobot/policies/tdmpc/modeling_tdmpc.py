@@ -24,9 +24,9 @@ The comments in this code may sometimes refer to these references:
 # ruff: noqa: N806
 
 from collections import deque
+from collections.abc import Callable
 from copy import deepcopy
 from functools import partial
-from typing import Callable
 
 import einops
 import numpy as np
@@ -110,7 +110,7 @@ class TDMPCPolicy(PreTrainedPolicy):
         # CEM for the next step.
         self._prev_mean: torch.Tensor | None = None
 
-    @torch.no_grad
+    @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
         """Predict a chunk of actions given environment observations."""
         batch = {key: torch.stack(list(self._queues[key]), dim=1) for key in batch if key in self._queues}
