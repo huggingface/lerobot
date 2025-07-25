@@ -76,10 +76,12 @@ dependencies = [
     "pynput>=1.7.7",
     "pyserial>=3.5",
     "wandb>=0.16.3",
+    "robot-descriptions>=1.19.0",
+    "yourdfpy>=0.0.58",
 
     "draccus==0.10.0", # TODO: Remove ==
     "gymnasium>=0.29.1,<1.0.0", # TODO: Bumb dependency
-    "rerun-sdk>=0.21.0,<0.23.0", # TODO: Bumb dependency
+    "rerun-sdk>=0.24.0", # TODO: Bumb dependency
 
     # Support dependencies
     "deepdiff>=7.0.1,<9.0.0",

@@ -15,6 +15,7 @@
 # limitations under the License.
 import contextlib
 import logging
+import os
 import shutil
 from collections.abc import Callable
 from pathlib import Path
@@ -72,6 +73,7 @@ from lerobot.datasets.video_utils import (
     get_safe_default_codec,
     get_video_info,
 )
+from lerobot.utils.visualization_utils import extract_videos_from_rrd
 
 CODEBASE_VERSION = "v2.1"
 
@@ -810,7 +812,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         self.episode_buffer["size"] += 1
 
-    def save_episode(self, episode_data: dict | None = None) -> None:
+    def save_episode(self, episode_data: dict | None = None, rrd: str | Path | None = None) -> None:
         """
         This will save to disk the current episode in self.episode_buffer.
 
@@ -822,6 +824,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
             episode_data (dict | None, optional): Dict containing the episode data to save. If None, this will
                 save the current episode in self.episode_buffer, which is filled with 'add_frame'. Defaults to
                 None.
+            rrd (str | Path | None, optional): Directory containing the RRD files for video extraction. If None,
+                it will not use RRD for video extraction. Defaults to None.
         """
         if not episode_data:
             episode_buffer = self.episode_buffer
@@ -857,17 +861,21 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self._save_episode_table(episode_buffer, episode_index)
         ep_stats = compute_episode_stats(episode_buffer, self.features)
 
+        used_rrd_extraction = self.save_episode_videos_from_rrd(episode_index, rrd)
+
+        # If not using RRD extraction or it failed, fall back to encoding from images
         has_video_keys = len(self.meta.video_keys) > 0
         use_batched_encoding = self.batch_encoding_size > 1
+        should_encode_now = not used_rrd_extraction and has_video_keys and not use_batched_encoding
+        should_batch_encode = not used_rrd_extraction and has_video_keys and use_batched_encoding
 
-        if has_video_keys and not use_batched_encoding:
+        if should_encode_now:
             self.encode_episode_videos(episode_index)
 
         # `meta.save_episode` should be executed after encoding the videos
         self.meta.save_episode(episode_index, episode_length, episode_tasks, ep_stats)
 
-        # Check if we should trigger batch encoding
-        if has_video_keys and use_batched_encoding:
+        if should_batch_encode:
             self.episodes_since_last_encoding += 1
             if self.episodes_since_last_encoding == self.batch_encoding_size:
                 start_ep = self.num_episodes - self.batch_encoding_size
@@ -950,6 +958,41 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if self.image_writer is not None:
             self.image_writer.wait_until_done()
 
+    def save_episode_videos_from_rrd(self, episode_index: int, rrd_path: str | Path | None = None) -> bool:
+        """
+        Extract videos from RRD files and save them to the dataset's video directory.
+        This is useful when you have RRD files containing video data and want to convert them to mp4 format.
+
+        Args:
+            episode_index (int): Index of the episode to extract videos from.
+        """
+        if not rrd_path or len(self.meta.video_keys) == 0:
+            return False
+
+        if not os.path.isfile(rrd_path):
+            return False
+
+        for key in self.meta.video_keys:
+            entity_name = key.rsplit(".")[-1]  # e.g. 'front'
+            out_file = self.root / self.meta.get_video_file_path(
+                episode_index, key
+            )  # Ensure video file path is set
+            save_path = extract_videos_from_rrd(rrd_path, entity_name, output=out_file)
+            if save_path:  # If extraction succeeded
+                self.episode_buffer[key] = save_path
+            else:
+                logging.warning(
+                    f"Failed to extract video for {key} from RRD file {rrd_path}. "
+                    "Falling back to encoding from images."
+                )
+                return False
+
+        for key in self.meta.video_keys:
+            # We have to do this separately in case the extraction fails, so we don't want to delete images
+            self.delete_image_files(episode_index, key)
+
+        return True
+
     def encode_episode_videos(self, episode_index: int) -> None:
         """
         Use ffmpeg to convert frames stored as png into mp4 videos.
@@ -999,6 +1042,20 @@ class LeRobotDataset(torch.utils.data.Dataset):
             self.encode_episode_videos(ep_idx)
 
         logging.info("Batch video encoding completed")
+
+    def delete_image_files(self, episode_index: int, image_key: str) -> None:
+        """
+        Delete all image files for a given episode and image key.
+
+        Args:
+            episode_index (int): Index of the episode.
+            image_key (str): Key of the image modality.
+        """
+        img_dir = self._get_image_file_path(
+            episode_index=episode_index, image_key=image_key, frame_index=0
+        ).parent
+        if img_dir.is_dir():
+            shutil.rmtree(img_dir)
 
     @classmethod
     def create(
