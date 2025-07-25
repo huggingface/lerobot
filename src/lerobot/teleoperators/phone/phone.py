@@ -40,8 +40,9 @@ class Phone(Teleoperator):
     Phone-based teleoperator using ARKit (iOS via HEBI Mobile I/O App) or the teleop Python package (Android via WebXR API).
     For HEBI Mobile I/O we also expose 8 analog (a1-a8) and 8 digital (b1-b8) inputs.
 
-    After calibration, ``position.{x,y,z}`` report absolute offsets from the calibration
-    pose, while ``delta_{x,y,z}`` report incremental changes between consecutive frames.
+    Press and hold **B1** to enable teleoperation. While enabled, the first B1 press
+    captures a reference pose. Motion is mapped relative to that reference pose using
+    a reference-frame approach (similar to TidyBot++ https://tidybot2.github.io)
     """
 
     config_class = PhoneConfig
@@ -56,25 +57,22 @@ class Phone(Teleoperator):
         self._teleop_thread = None
         self._latest_pose = None
 
-        # Previous position sample (for deltas)
-        self._prev_position: np.ndarray | None = None
-        # Fixed reference position captured at calibration time (for absolute values)
-        self._calib_position: np.ndarray | None = None
+        # Arm control (reference-frame) state
+        self._enabled: bool = False
+        self._arm_ref_pos: np.ndarray | None = None
+        self._arm_ref_rot_inv: Rotation | None = None
+        self._prev_target_offset_pos: np.ndarray | None = None
+        self._prev_target_offset_euler: np.ndarray | None = None
 
     @property
     def action_features(self) -> dict[str, type]:
-        # Absolute position (relative to calibration), incremental deltas, orientation, analog & digital IO
         features = {
-            "position.x": float,
-            "position.y": float,
-            "position.z": float,
-            "delta_x": float,
-            "delta_y": float,
-            "delta_z": float,
-            "orientation.x": float,
-            "orientation.y": float,
-            "orientation.z": float,
-            "orientation.w": float,
+            "delta_x": float,  # Meters
+            "delta_y": float,  # Meters
+            "delta_z": float,  # Meters
+            "delta_roll": float,  # Degrees
+            "delta_pitch": float,  # Degrees
+            "delta_yaw": float,  # Degrees
         }
         # Analog inputs normalized between -1 and 1
         for i in range(1, 9):
@@ -92,7 +90,7 @@ class Phone(Teleoperator):
             return self._teleop is not None
         return False
 
-    def connect(self, calibrate: bool = True) -> None:
+    def connect(self) -> None:
         if self.is_connected:
             raise DeviceAlreadyConnectedError(f"{self} already connected")
 
@@ -115,37 +113,14 @@ class Phone(Teleoperator):
         else:
             raise ValueError(f"Invalid config phone_os: {self.source}")
 
-        if not self.is_calibrated and calibrate:
-            self.calibrate()
-
     @property
     def is_calibrated(self) -> bool:
-        return self._calib_position is not None
+        # No calibration needed for phone teleop
+        return True
 
     def calibrate(self) -> None:
-        """
-        Reads a single phone pose sample and sets it as the reference position for future delta computations.
-        """
-        input(
-            "Please hold the phone still at the desired origin and press Enter to calibrate reference pose..."
-        )
-        logger.info(f"{self} calibrating reference pose...")
-        if self.source == PhoneOS.IOS:
-            fbk = None
-            while fbk is None:
-                fbk = self._group.get_next_feedback()
-            pose = fbk[0]
-            pos = getattr(pose, "ar_position", None)
-        else:
-            while self._latest_pose is None:
-                time.sleep(0.01)
-            pose = self._latest_pose
-            pos = pose[:3, 3]
-        if pos is None:
-            raise RuntimeError("Failed to read position during calibration.")
-        self._calib_position = np.array(pos, dtype=float)
-        self._prev_position = self._calib_position.copy()
-        logger.info(f"{self} reference position set to {self._calib_position}.")
+        # No calibration needed for phone teleop
+        pass
 
     @property
     def feedback_features(self) -> dict[str, type]:
@@ -161,15 +136,12 @@ class Phone(Teleoperator):
         time.sleep(0.001)  # 1ms delay to avoid race condition
 
     def get_action(self) -> dict[str, float]:
-        start = time.perf_counter()
-
         if self.source == PhoneOS.IOS:
             fbk = self._group.get_next_feedback()
             pose = fbk[0]
             position = getattr(pose, "ar_position", None)
             orientation_quat = getattr(pose, "ar_orientation", None)
-            analogs = getattr(pose, "analog_input", None)
-            digitals = getattr(pose, "digital_input", None)
+            io = getattr(pose, "io", None)
         else:
             pose = self._latest_pose
             if pose is None:
@@ -179,47 +151,118 @@ class Phone(Teleoperator):
             r = Rotation.from_matrix(orientation_matrix)
             xyzw = r.as_quat()
             orientation_quat = np.array([xyzw[3], xyzw[0], xyzw[1], xyzw[2]])
-            analogs = getattr(pose, "analog_input", None)
-            digitals = getattr(pose, "digital_input", None)
 
         if position is None or orientation_quat is None:
             return {}
 
+        # Build action with raw IO (so caller can still read buttons/analogs)
+        action: dict[str, float | int] = {}
+
+        if self.source == PhoneOS.IOS:
+            io = getattr(pose, "io", None)
+            if io is not None:
+                bank_a = getattr(io, "a", None)
+                bank_b = getattr(io, "b", None)
+
+                if bank_a is not None:
+                    for ch in range(1, 9):  # 1..8 inclusive
+                        if bank_a.has_float(ch):
+                            action[f"a{ch}"] = float(bank_a.get_float(ch))
+
+                if bank_b is not None:
+                    for ch in range(1, 9):  # 1..8 inclusive
+                        if bank_b.has_int(ch):
+                            action[f"b{ch}"] = int(bank_b.get_int(ch))
+                        elif hasattr(bank_b, "has_bool") and bank_b.has_bool(ch):
+                            action[f"b{ch}"] = int(bank_b.get_bool(ch))
+
+                    if not hasattr(self, "_printed_b_debug"):
+                        logger.info(
+                            "MobileIO bank_b debug: "
+                            + ", ".join(f"b{n}={action.get(f'b{n}', 'NA')}" for n in range(1, 9))
+                        )
+                        self._printed_b_debug = True
+        else:
+            # Android TODO: implement analog/digital inputs
+            pass
+
+        for i in range(1, 9):
+            action.setdefault(f"a{i}", 0.0)
+        for i in range(1, 9):
+            action.setdefault(f"b{i}", 0)
+
+        # Digital button B1 (index 1 in our dictionary). If absent, treat as 0.
+        b1_pressed = bool(action.get("b1", 0))
+
+        # Current phone pose as Rotation object (convert [w,x,y,z] -> [x,y,z,w])
+        r_curr = Rotation.from_quat(orientation_quat[[1, 2, 3, 0]])
         curr_pos = np.array(position, dtype=float)
 
-        # Absolute offset from calibration
-        absolute = curr_pos - self._calib_position
-        # Incremental delta from previous frame
-        delta = curr_pos - self._prev_position
-        self._prev_position = curr_pos.copy()
+        # Rising edge: enable & snapshot reference
+        if b1_pressed and not self._enabled:
+            self._enabled = True
+            self._arm_ref_pos = curr_pos.copy()
+            self._arm_ref_rot_inv = r_curr.inv()
+            self._prev_target_offset_pos = np.zeros(3)
+            self._prev_target_offset_euler = np.zeros(3)
+            logger.info("Phone teleop enabled (B1 pressed) – reference pose captured.")
 
-        action: dict[str, float] = {
-            "position.x": float(absolute[0]),
-            "position.y": float(absolute[1]),
-            "position.z": float(absolute[2]),
-            "delta_x": float(delta[0]),
-            "delta_y": float(delta[1]),
-            "delta_z": float(delta[2]),
-            "orientation.x": float(orientation_quat[1]),
-            "orientation.y": float(orientation_quat[2]),
-            "orientation.z": float(orientation_quat[3]),
-            "orientation.w": float(orientation_quat[0]),
-        }
+        # Falling edge: disable & clear
+        if (not b1_pressed) and self._enabled:
+            self._enabled = False
+            self._reset_arm_reference()
+            logger.info("Phone teleop disabled (B1 released).")
 
-        # TODO(pepijn): add analog and digital inputs for Android
-        action.update({f"a{i}": 0.0 for i in range(1, 9)})
-        if analogs is not None:
-            for i in range(min(8, len(analogs))):
-                action[f"a{i + 1}"] = float(analogs[i])
+        # If not enabled, return only IO state (no movement)
+        if not self._enabled:
+            # Always provide zero deltas so caller can index safely
+            action.update(
+                {
+                    "delta_x": 0.0,
+                    "delta_y": 0.0,
+                    "delta_z": 0.0,
+                    "delta_roll": 0.0,
+                    "delta_pitch": 0.0,
+                    "delta_yaw": 0.0,
+                }
+            )
+            return action
 
-        action.update({f"b{i}": 0 for i in range(1, 9)})
-        if digitals is not None:
-            for i in range(min(8, len(digitals))):
-                action[f"b{i + 1}"] = int(digitals[i])
+        # Enabled: compute relative offsets
+        # Total position offset from reference
+        pos_offset_total = curr_pos - self._arm_ref_pos
 
-        dt_ms = (time.perf_counter() - start) * 1e3
-        logger.info(f"{self} read action: {dt_ms:.1f}ms")
+        # Total orientation offset from reference
+        rot_offset_total = r_curr * self._arm_ref_rot_inv
+        euler_offset_total = rot_offset_total.as_euler("xyz", degrees=True)
+
+        # Incremental deltas = (total - previous_total)
+        delta_pos = pos_offset_total - self._prev_target_offset_pos
+        delta_euler = euler_offset_total - self._prev_target_offset_euler
+
+        # Update stored totals
+        self._prev_target_offset_pos = pos_offset_total
+        self._prev_target_offset_euler = euler_offset_total
+
+        # Package deltas
+        action.update(
+            {
+                "delta_x": float(delta_pos[0]),  # right(+)/left(-)
+                "delta_y": float(delta_pos[1]),  # up(+)/down(-)
+                "delta_z": float(delta_pos[2]),  # backward(+)/forward(-)
+                "delta_roll": float(delta_euler[0]),
+                "delta_pitch": float(delta_euler[1]),
+                "delta_yaw": float(delta_euler[2]),
+            }
+        )
+
         return action
+
+    def _reset_arm_reference(self):
+        self._arm_ref_pos = None
+        self._arm_ref_rot_inv = None
+        self._prev_target_offset_pos = None
+        self._prev_target_offset_euler = None
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
         # We could add haptic feedback (phonevibrations) here, but it's not implemented yet

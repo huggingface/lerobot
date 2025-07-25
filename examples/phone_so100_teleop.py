@@ -28,12 +28,10 @@ robot_config = SO100FollowerEndEffectorConfig(
         "min": [-1.0, -1.0, -1.0],  # min x, y, z
         "max": [1.0, 1.0, 1.0],  # max x, y, z
     },
-    end_effector_step_sizes={
-        "x": 0.25,
-        "y": 0.25,
-        "z": 0.25,
-    },
+    end_effector_step_sizes={"x": 0.25, "y": 0.25, "z": 0.25, "roll": 1.0, "pitch": 1.0, "yaw": 1.0},
 )
+
+# TODO(pepijn): Add LeKiwi example
 
 teleop_config = PhoneConfig(phone_os=PhoneOS.IOS)  # or PhoneOS.ANDROID
 
@@ -52,13 +50,16 @@ while True:
         time.sleep(0.005)
         continue
 
-    # map a3 in [-1,1] to gripper 0..100
-    gripper_cmd = (float(teleop_cmd["a3"]) + 1.0) * 50.0
+    # Interpreted as velocity: +1 = open, -1 = close, 0 = no change
+    gripper_cmd = float(teleop_cmd["a3"])
 
     action = {
         "delta_x": teleop_cmd["delta_x"],
         "delta_y": teleop_cmd["delta_y"],
         "delta_z": teleop_cmd["delta_z"],
+        "delta_roll": teleop_cmd["delta_roll"],
+        "delta_pitch": teleop_cmd["delta_pitch"],
+        "delta_yaw": teleop_cmd["delta_yaw"],
         "gripper": gripper_cmd,
     }
 

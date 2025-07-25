@@ -19,6 +19,7 @@ import time
 from typing import Any
 
 import numpy as np
+from scipy.spatial.transform import Rotation
 
 from lerobot.cameras import make_cameras_from_configs
 from lerobot.errors import DeviceNotConnectedError
@@ -32,7 +33,7 @@ from .config_so100_follower import SO100FollowerEndEffectorConfig
 logger = logging.getLogger(__name__)
 
 
-# TODO(pepijn): Refactor with pipeline and add rotations
+# TODO(pepijn): Refactor with pipelines
 class SO100FollowerEndEffector(SO100Follower):
     """
     SO100Follower robot with end-effector space control.
@@ -89,8 +90,16 @@ class SO100FollowerEndEffector(SO100Follower):
         """
         return {
             "dtype": "float32",
-            "shape": (4,),
-            "names": {"delta_x": 0, "delta_y": 1, "delta_z": 2, "gripper": 3},
+            "shape": (7,),  # dx, dy, dz, droll, dpitch, dyaw, gripper
+            "names": {
+                "delta_x": 0,
+                "delta_y": 1,
+                "delta_z": 2,
+                "delta_roll": 3,
+                "delta_pitch": 4,
+                "delta_yaw": 5,
+                "gripper": 6,
+            },
         }
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
@@ -111,22 +120,31 @@ class SO100FollowerEndEffector(SO100Follower):
         # Convert action to numpy array if not already
         if isinstance(action, dict):
             if all(k in action for k in ["delta_x", "delta_y", "delta_z"]):
-                delta_ee = np.array(
+                pos_delta = np.array(
                     [
-                        action["delta_x"] * self.config.end_effector_step_sizes["x"],
-                        action["delta_y"] * self.config.end_effector_step_sizes["y"],
-                        action["delta_z"] * self.config.end_effector_step_sizes["z"],
+                        action.get("delta_x", 0.0) * self.config.end_effector_step_sizes["x"],
+                        action.get("delta_y", 0.0) * self.config.end_effector_step_sizes["y"],
+                        action.get("delta_z", 0.0) * self.config.end_effector_step_sizes["z"],
                     ],
                     dtype=np.float32,
                 )
-                if "gripper" not in action:
-                    action["gripper"] = [1.0]
-                action = np.append(delta_ee, action["gripper"])
+
+                rpy_delta = np.array(
+                    [
+                        action.get("delta_roll", 0.0) * self.config.end_effector_step_sizes["roll"],
+                        action.get("delta_pitch", 0.0) * self.config.end_effector_step_sizes["pitch"],
+                        action.get("delta_yaw", 0.0) * self.config.end_effector_step_sizes["yaw"],
+                    ],
+                    dtype=np.float32,
+                )
+
+                gripper = float(action.get("gripper", 1.0))
+                action = np.concatenate([pos_delta, rpy_delta, [gripper]]).astype(np.float32)
             else:
                 logger.warning(
-                    f"Expected action keys 'delta_x', 'delta_y', 'delta_z', got {list(action.keys())}"
+                    f"Expected action keys 'delta_x', 'delta_y', 'delta_z', 'delta_roll', 'delta_pitch', 'delta_yaw', got {list(action.keys())}"
                 )
-                action = np.zeros(4, dtype=np.float32)
+                action = np.zeros(7, dtype=np.float32)
 
         if self.current_joint_pos is None:
             # Read current joint positions
@@ -139,10 +157,17 @@ class SO100FollowerEndEffector(SO100Follower):
 
         # Set desired end-effector position by adding delta
         desired_ee_pos = np.eye(4)
-        desired_ee_pos[:3, :3] = self.current_ee_pos[:3, :3]  # Keep orientation
 
-        # Add delta to position and clip to bounds
-        desired_ee_pos[:3, 3] = self.current_ee_pos[:3, 3] + action[:3]
+        # --- Orientation update ---
+        # rpy_delta is in *degrees* after scaling by step_sizes; convert to a rotation matrix
+        delta_r = Rotation.from_euler("xyz", rpy_delta, degrees=True).as_matrix()
+        current_r = self.current_ee_pos[:3, :3] if self.current_ee_pos is not None else np.eye(3)
+        desired_ee_pos[:3, :3] = delta_r @ current_r  # compose incremental rotation
+
+        # --- Translation update ---
+        desired_ee_pos[:3, 3] = (
+            self.current_ee_pos[:3, 3] if self.current_ee_pos is not None else np.zeros(3)
+        ) + action[:3]
         if self.end_effector_bounds is not None:
             desired_ee_pos[:3, 3] = np.clip(
                 desired_ee_pos[:3, 3],
@@ -160,11 +185,17 @@ class SO100FollowerEndEffector(SO100Follower):
             f"{key}.pos": target_joint_values_in_degrees[i] for i, key in enumerate(self.bus.motors.keys())
         }
 
-        # Handle gripper separately if included in action
-        # Gripper delta action is in the range 0 - 2,
-        # We need to shift the action to the range -1, 1 so that we can expand it to -Max_gripper_pos, Max_gripper_pos
+        # Interpret action[-1] as gripper velocity in range [-1, 1]
+        gripper_velocity = float(action[-1])  # already clipped input
+        current_gripper_pos = self.current_joint_pos[-1]
+
+        # Scale gripper velocity by max delta
+        max_delta = 1.0  # tune this value as needed
+        proposed_gripper_pos = current_gripper_pos + gripper_velocity * max_delta
+
+        # Clip to safe range
         joint_action["gripper.pos"] = np.clip(
-            self.current_joint_pos[-1] + (action[-1] - 1) * self.config.max_gripper_pos,
+            proposed_gripper_pos,
             5,
             self.config.max_gripper_pos,
         )
