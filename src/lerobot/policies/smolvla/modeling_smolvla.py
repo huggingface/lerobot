@@ -384,6 +384,11 @@ class SmolVLAPolicy(PreTrainedPolicy):
         return self.parameters()
 
     def _get_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
+        # TODO: Check if this for loop is needed.
+        # Context: In fact, self.queues contains only ACTION field, and in inference, we don't have action in the batch
+        # In the case of offline inference, we have the action in the batch
+        # that why without the k != ACTION check, it will raise an error because we are trying to stack
+        # on an empty container.
         for k in batch:
             if k in self._queues and k != ACTION:
                 batch[k] = torch.stack(list(self._queues[k]), dim=1)
