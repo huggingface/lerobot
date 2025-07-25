@@ -79,6 +79,8 @@ class SO100FollowerEndEffector(SO100Follower):
         # Store the bounds for end-effector position
         self.end_effector_bounds = self.config.end_effector_bounds
 
+        self.reference_ee_pos = None  # Captured when teleop enabled (absolute mode)
+
         self.current_ee_pos = None
         self.current_joint_pos = None
 
@@ -90,17 +92,33 @@ class SO100FollowerEndEffector(SO100Follower):
         """
         return {
             "dtype": "float32",
-            "shape": (7,),  # dx, dy, dz, droll, dpitch, dyaw, gripper
+            "shape": (8,),
             "names": {
-                "delta_x": 0,
-                "delta_y": 1,
-                "delta_z": 2,
-                "delta_roll": 3,
-                "delta_pitch": 4,
-                "delta_yaw": 5,
-                "gripper": 6,
+                "target_x": 0,
+                "target_y": 1,
+                "target_z": 2,
+                "target_qx": 3,
+                "target_qy": 4,
+                "target_qz": 5,
+                "target_qw": 6,
+                "gripper": 7,
             },
         }
+
+    def _ensure_state(self):
+        if self.current_joint_pos is None:
+            current_joint_pos = self.bus.sync_read("Present_Position")
+            self.current_joint_pos = np.array([current_joint_pos[name] for name in self.bus.motors])
+        if self.current_ee_pos is None:
+            self.current_ee_pos = self.kinematics.forward_kinematics(self.current_joint_pos)
+
+    def _apply_gripper_velocity(self, velocity: float) -> float:
+        """Integrate gripper velocity onto cached commanded joint state."""
+        current_gripper_pos = self.current_joint_pos[-1]
+        proposed = current_gripper_pos + velocity
+        new_pos = np.clip(proposed, 5, self.config.max_gripper_pos)
+        self.current_joint_pos[-1] = new_pos
+        return new_pos
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         """
@@ -117,94 +135,71 @@ class SO100FollowerEndEffector(SO100Follower):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        # Convert action to numpy array if not already
-        if isinstance(action, dict):
-            if all(k in action for k in ["delta_x", "delta_y", "delta_z"]):
-                pos_delta = np.array(
-                    [
-                        action.get("delta_x", 0.0) * self.config.end_effector_step_sizes["x"],
-                        action.get("delta_y", 0.0) * self.config.end_effector_step_sizes["y"],
-                        action.get("delta_z", 0.0) * self.config.end_effector_step_sizes["z"],
-                    ],
-                    dtype=np.float32,
-                )
+        if "target_x" not in action:  # basic validation
+            logger.warning("send_action expected absolute target keys; got %s", list(action.keys()))
+            return {}
 
-                rpy_delta = np.array(
-                    [
-                        action.get("delta_roll", 0.0) * self.config.end_effector_step_sizes["roll"],
-                        action.get("delta_pitch", 0.0) * self.config.end_effector_step_sizes["pitch"],
-                        action.get("delta_yaw", 0.0) * self.config.end_effector_step_sizes["yaw"],
-                    ],
-                    dtype=np.float32,
-                )
+        self._ensure_state()
+        enabled = bool(action.get("enabled", 0))
 
-                gripper = float(action.get("gripper", 1.0))
-                action = np.concatenate([pos_delta, rpy_delta, [gripper]]).astype(np.float32)
-            else:
-                logger.warning(
-                    f"Expected action keys 'delta_x', 'delta_y', 'delta_z', 'delta_roll', 'delta_pitch', 'delta_yaw', got {list(action.keys())}"
-                )
-                action = np.zeros(7, dtype=np.float32)
+        if enabled:
+            if self.reference_ee_pos is None:
+                self.reference_ee_pos = self.current_ee_pos.copy()
 
-        if self.current_joint_pos is None:
-            # Read current joint positions
-            current_joint_pos = self.bus.sync_read("Present_Position")
-            self.current_joint_pos = np.array([current_joint_pos[name] for name in self.bus.motors])
-
-        # Calculate current end-effector position using forward kinematics
-        if self.current_ee_pos is None:
-            self.current_ee_pos = self.kinematics.forward_kinematics(self.current_joint_pos)
-
-        # Set desired end-effector position by adding delta
-        desired_ee_pos = np.eye(4)
-
-        # --- Orientation update ---
-        # rpy_delta is in *degrees* after scaling by step_sizes; convert to a rotation matrix
-        delta_r = Rotation.from_euler("xyz", rpy_delta, degrees=True).as_matrix()
-        current_r = self.current_ee_pos[:3, :3] if self.current_ee_pos is not None else np.eye(3)
-        desired_ee_pos[:3, :3] = delta_r @ current_r  # compose incremental rotation
-
-        # --- Translation update ---
-        desired_ee_pos[:3, 3] = (
-            self.current_ee_pos[:3, 3] if self.current_ee_pos is not None else np.zeros(3)
-        ) + action[:3]
-        if self.end_effector_bounds is not None:
-            desired_ee_pos[:3, 3] = np.clip(
-                desired_ee_pos[:3, 3],
-                self.end_effector_bounds["min"],
-                self.end_effector_bounds["max"],
+            # ----- arm IK path -----
+            ref = self.reference_ee_pos
+            desired_ee_pos = np.eye(4)
+            offs = np.array(
+                [
+                    action.get("target_x", 0.0) * self.config.end_effector_step_sizes["x"],
+                    action.get("target_y", 0.0) * self.config.end_effector_step_sizes["y"],
+                    action.get("target_z", 0.0) * self.config.end_effector_step_sizes["z"],
+                ],
+                dtype=np.float32,
             )
+            desired_ee_pos[:3, 3] = ref[:3, 3] + offs
+            if self.end_effector_bounds is not None:
+                desired_ee_pos[:3, 3] = np.clip(
+                    desired_ee_pos[:3, 3],
+                    self.end_effector_bounds["min"],
+                    self.end_effector_bounds["max"],
+                )
+            # Orientation: quaternion delta (reference -> current)
+            q_delta = np.array(
+                [
+                    action.get("target_qx", 0.0),
+                    action.get("target_qy", 0.0),
+                    action.get("target_qz", 0.0),
+                    action.get("target_qw", 1.0),
+                ],
+                dtype=np.float32,
+            )
+            # Normalize & canonicalize
+            if q_delta[3] < 0:
+                q_delta = -q_delta
+            q_delta /= np.linalg.norm(q_delta)
+            delta_r = Rotation.from_quat(q_delta)  # xyzw
+            desired_ee_pos[:3, :3] = ref[:3, :3] @ delta_r.as_matrix()
 
-        # Compute inverse kinematics to get joint positions
-        target_joint_values_in_degrees = self.kinematics.inverse_kinematics(
-            self.current_joint_pos, desired_ee_pos
-        )
+            target_joint_values = self.kinematics.inverse_kinematics(self.current_joint_pos, desired_ee_pos)
+            self.current_joint_pos[:-1] = target_joint_values[:-1]
+            self.current_ee_pos = desired_ee_pos.copy()
+        else:
+            # arm disabled
+            self.reference_ee_pos = None
 
-        # Create joint space action dictionary
-        joint_action = {
-            f"{key}.pos": target_joint_values_in_degrees[i] for i, key in enumerate(self.bus.motors.keys())
-        }
+        # ----- single gripper path (runs in both modes) -----
+        gripper_velocity = float(action.get("gripper", 0.0))
+        new_gripper_pos = self._apply_gripper_velocity(gripper_velocity)
 
-        # Interpret action[-1] as gripper velocity in range [-1, 1]
-        gripper_velocity = float(action[-1])  # already clipped input
-        current_gripper_pos = self.current_joint_pos[-1]
+        # Build outgoing joint_action
+        if enabled:
+            joint_action = {
+                f"{name}.pos": self.current_joint_pos[i] for i, name in enumerate(self.bus.motors.keys())
+            }
+        else:
+            joint_action = {"gripper.pos": new_gripper_pos}
 
-        # Scale gripper velocity by max delta
-        max_delta = 1.0  # tune this value as needed
-        proposed_gripper_pos = current_gripper_pos + gripper_velocity * max_delta
-
-        # Clip to safe range
-        joint_action["gripper.pos"] = np.clip(
-            proposed_gripper_pos,
-            5,
-            self.config.max_gripper_pos,
-        )
-
-        self.current_ee_pos = desired_ee_pos.copy()
-        self.current_joint_pos = target_joint_values_in_degrees.copy()
-        self.current_joint_pos[-1] = joint_action["gripper.pos"]
-
-        # Send joint space action to parent class
         return super().send_action(joint_action)
 
     def get_observation(self) -> dict[str, Any]:

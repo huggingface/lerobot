@@ -34,6 +34,18 @@ from .config_phone import PhoneConfig, PhoneOS
 
 logger = logging.getLogger(__name__)
 
+DEVICE_CAMERA_OFFSET = np.array([0.0, 0.02, -0.04])  # tune per device
+
+# ARKit world: +x right, +y up, +z forward
+# Robot world: +x forward, +y left, +z up
+_R_AR2R = (
+    Rotation.from_euler("z", -90, degrees=True)  # right → fwd
+    * Rotation.from_euler("x", 180, degrees=True)
+)  # fix handedness (det = +1)
+
+# WebXR world: +x right, +y up, +z back (-forward)
+_R_WXR2R = Rotation.from_euler("z", -90, degrees=True)  # right → fwd
+
 
 class Phone(Teleoperator):
     """
@@ -61,18 +73,26 @@ class Phone(Teleoperator):
         self._enabled: bool = False
         self._arm_ref_pos: np.ndarray | None = None
         self._arm_ref_rot_inv: Rotation | None = None
-        self._prev_target_offset_pos: np.ndarray | None = None
-        self._prev_target_offset_euler: np.ndarray | None = None
+
+    def update_base_pose(self, x: float, y: float, yaw: float) -> None:
+        """
+        Update current base pose (in robot/world frame) for teleop compensation.
+        Call this once per loop *before* get_action().
+        """
+        self._base_pose[:] = [x, y, yaw]
 
     @property
     def action_features(self) -> dict[str, type]:
         features = {
-            "delta_x": float,  # Meters
-            "delta_y": float,  # Meters
-            "delta_z": float,  # Meters
-            "delta_roll": float,  # Degrees
-            "delta_pitch": float,  # Degrees
-            "delta_yaw": float,  # Degrees
+            "enabled": bool,
+            "target_x": float,  # meters
+            "target_y": float,
+            "target_z": float,
+            # Relative quaternion (delta) from reference -> current, XYZW
+            "target_qx": float,
+            "target_qy": float,
+            "target_qz": float,
+            "target_qw": float,
         }
         # Analog inputs normalized between -1 and 1
         for i in range(1, 9):
@@ -81,6 +101,18 @@ class Phone(Teleoperator):
         for i in range(1, 9):
             features[f"b{i}"] = int
         return features
+
+    def _map_arkit_to_robot(self, pos_xyz: np.ndarray, quat_wxyz: np.ndarray):
+        r_arkit = Rotation.from_quat(quat_wxyz[[1, 2, 3, 0]])  # wxyz ➜ xyzw
+        r_robot = _R_AR2R * r_arkit
+        robot_pos = _R_AR2R.apply(pos_xyz) + r_robot.apply(DEVICE_CAMERA_OFFSET)
+        return robot_pos, r_robot
+
+    def _map_webxr_to_robot(self, pos_xyz: np.ndarray, quat_wxyz: np.ndarray):
+        r_wxr = Rotation.from_quat(quat_wxyz[[1, 2, 3, 0]])  # wxyz ➜ xyzw
+        r_robot = _R_WXR2R * r_wxr
+        robot_pos = _R_WXR2R.apply(pos_xyz) + r_robot.apply(DEVICE_CAMERA_OFFSET)
+        return robot_pos, r_robot
 
     @property
     def is_connected(self) -> bool:
@@ -139,22 +171,25 @@ class Phone(Teleoperator):
         if self.source == PhoneOS.IOS:
             fbk = self._group.get_next_feedback()
             pose = fbk[0]
-            position = getattr(pose, "ar_position", None)
-            orientation_quat = getattr(pose, "ar_orientation", None)
-            io = getattr(pose, "io", None)
+            ar_pos = getattr(pose, "ar_position", None)
+            ar_quat = getattr(pose, "ar_orientation", None)  # [w,x,y,z]
+            if ar_pos is None or ar_quat is None:
+                return {}
+            curr_pos, r_curr = self._map_arkit_to_robot(
+                np.array(ar_pos, dtype=float), np.array(ar_quat, dtype=float)
+            )
         else:
             pose = self._latest_pose
             if pose is None:
                 return {}
-            position = pose[:3, 3]
-            orientation_matrix = pose[:3, :3]
-            r = Rotation.from_matrix(orientation_matrix)
-            xyzw = r.as_quat()
-            orientation_quat = np.array([xyzw[3], xyzw[0], xyzw[1], xyzw[2]])
-
-        if position is None or orientation_quat is None:
-            return {}
-
+            # teleop library pose: 4x4 matrix in WebXR frame
+            webxr_pos = pose[:3, 3]
+            webxr_r = Rotation.from_matrix(pose[:3, :3])
+            # Convert Rotation back to wxyz for a unified interface
+            webxr_quat_wxyz = np.array([webxr_r.as_quat()[3], *webxr_r.as_quat()[:3]])
+            curr_pos, r_curr = self._map_webxr_to_robot(
+                np.array(webxr_pos, dtype=float), np.array(webxr_quat_wxyz, dtype=float)
+            )
         # Build action with raw IO (so caller can still read buttons/analogs)
         action: dict[str, float | int] = {}
 
@@ -193,76 +228,65 @@ class Phone(Teleoperator):
 
         # Digital button B1 (index 1 in our dictionary). If absent, treat as 0.
         b1_pressed = bool(action.get("b1", 0))
-
-        # Current phone pose as Rotation object (convert [w,x,y,z] -> [x,y,z,w])
-        r_curr = Rotation.from_quat(orientation_quat[[1, 2, 3, 0]])
-        curr_pos = np.array(position, dtype=float)
-
-        # Rising edge: enable & snapshot reference
+        # Rising edge: capture reference
         if b1_pressed and not self._enabled:
             self._enabled = True
             self._arm_ref_pos = curr_pos.copy()
             self._arm_ref_rot_inv = r_curr.inv()
-            self._prev_target_offset_pos = np.zeros(3)
-            self._prev_target_offset_euler = np.zeros(3)
             logger.info("Phone teleop enabled (B1 pressed) – reference pose captured.")
 
-        # Falling edge: disable & clear
+        # Falling edge: disable
         if (not b1_pressed) and self._enabled:
             self._enabled = False
             self._reset_arm_reference()
             logger.info("Phone teleop disabled (B1 released).")
 
-        # If not enabled, return only IO state (no movement)
+        # Always include enabled flag
+        action["enabled"] = int(self._enabled)
+
         if not self._enabled:
-            # Always provide zero deltas so caller can index safely
+            # Zero absolute offsets when disabled
             action.update(
                 {
-                    "delta_x": 0.0,
-                    "delta_y": 0.0,
-                    "delta_z": 0.0,
-                    "delta_roll": 0.0,
-                    "delta_pitch": 0.0,
-                    "delta_yaw": 0.0,
+                    "target_x": 0.0,
+                    "target_y": 0.0,
+                    "target_z": 0.0,
+                    "target_qx": 0.0,
+                    "target_qy": 0.0,
+                    "target_qz": 0.0,
+                    "target_qw": 1.0,
                 }
             )
             return action
 
-        # Enabled: compute relative offsets
-        # Total position offset from reference
-        pos_offset_total = curr_pos - self._arm_ref_pos
+        # Absolute offsets relative to reference
+        delta_world = curr_pos - self._arm_ref_pos
+        # Express in reference frame so translation is phone‑centric
+        pos_offset_total = self._arm_ref_rot_inv.apply(delta_world)
 
-        # Total orientation offset from reference
-        rot_offset_total = r_curr * self._arm_ref_rot_inv
-        euler_offset_total = rot_offset_total.as_euler("xyz", degrees=True)
+        # Relative rotation quaternion (reference -> current)
+        rot_offset_total = r_curr * self._arm_ref_rot_inv  # Rotation object
+        quat_xyzw = rot_offset_total.as_quat()  # xyzw
+        # Canonicalize so qw >= 0
+        if quat_xyzw[3] < 0:
+            quat_xyzw = -quat_xyzw
 
-        # Incremental deltas = (total - previous_total)
-        delta_pos = pos_offset_total - self._prev_target_offset_pos
-        delta_euler = euler_offset_total - self._prev_target_offset_euler
-
-        # Update stored totals
-        self._prev_target_offset_pos = pos_offset_total
-        self._prev_target_offset_euler = euler_offset_total
-
-        # Package deltas
         action.update(
             {
-                "delta_x": float(delta_pos[0]),  # right(+)/left(-)
-                "delta_y": float(delta_pos[1]),  # up(+)/down(-)
-                "delta_z": float(delta_pos[2]),  # backward(+)/forward(-)
-                "delta_roll": float(delta_euler[0]),
-                "delta_pitch": float(delta_euler[1]),
-                "delta_yaw": float(delta_euler[2]),
+                "target_x": float(pos_offset_total[0]),
+                "target_y": float(pos_offset_total[1]),
+                "target_z": float(pos_offset_total[2]),
+                "target_qx": float(quat_xyzw[0]),
+                "target_qy": float(quat_xyzw[1]),
+                "target_qz": float(quat_xyzw[2]),
+                "target_qw": float(quat_xyzw[3]),
             }
         )
-
         return action
 
     def _reset_arm_reference(self):
         self._arm_ref_pos = None
         self._arm_ref_rot_inv = None
-        self._prev_target_offset_pos = None
-        self._prev_target_offset_euler = None
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
         # We could add haptic feedback (phonevibrations) here, but it's not implemented yet

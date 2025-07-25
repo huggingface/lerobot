@@ -45,23 +45,22 @@ print("Starting teleop loop. Move your phone to teleoperate the robot.")
 # TODO(pepijn): Test Android
 while True:
     teleop_cmd = teleop_device.get_action()
-
     if not teleop_cmd:
         time.sleep(0.005)
         continue
 
-    # Interpreted as velocity: +1 = open, -1 = close, 0 = no change
+    # Absolute targets now
     gripper_cmd = float(teleop_cmd["a3"])
-
     action = {
-        "delta_x": teleop_cmd["delta_x"],
-        "delta_y": teleop_cmd["delta_y"],
-        "delta_z": teleop_cmd["delta_z"],
-        "delta_roll": teleop_cmd["delta_roll"],
-        "delta_pitch": teleop_cmd["delta_pitch"],
-        "delta_yaw": teleop_cmd["delta_yaw"],
+        "enabled": teleop_cmd["enabled"],
+        "target_x": teleop_cmd["target_x"],
+        "target_y": teleop_cmd["target_y"],
+        "target_z": teleop_cmd["target_z"],
+        "target_qx": teleop_cmd["target_qx"],
+        "target_qy": teleop_cmd["target_qy"],
+        "target_qz": teleop_cmd["target_qz"],
+        "target_qw": teleop_cmd["target_qw"],
         "gripper": gripper_cmd,
     }
-
     robot.send_action(action)
     time.sleep(0.01)
