@@ -50,8 +50,6 @@ from lerobot.common.robot_devices.robots.utils import Robot
 from lerobot.common.utils.utils import is_valid_numpy_dtype_string
 from lerobot.configs.types import FeatureType, PolicyFeature
 
-import math
-
 DEFAULT_CHUNK_SIZE = 1000  # Max number of files per chunk
 DEFAULT_DATA_FILE_SIZE_IN_MB = 100  # Max size per file
 DEFAULT_VIDEO_FILE_SIZE_IN_MB = 500  # Max size per file
@@ -296,7 +294,12 @@ def load_stats(local_dir: Path) -> dict[str, dict[str, np.ndarray]]:
     return cast_stats_to_numpy(stats)
 
 
-def write_hf_dataset(hf_dataset: Dataset, local_dir: Path, data_file_size_mb: float | None = None, chunk_size: int | None = None):
+def write_hf_dataset(
+    hf_dataset: Dataset,
+    local_dir: Path,
+    data_file_size_mb: float | None = None,
+    chunk_size: int | None = None,
+):
     """
     Writes a Hugging Face Dataset to one or more Parquet files in a structured directory format.
 
@@ -304,6 +307,7 @@ def write_hf_dataset(hf_dataset: Dataset, local_dir: Path, data_file_size_mb: fl
     Otherwise, the dataset is split into multiple smaller Parquet files, each not exceeding the size limit.
     The file and chunk indices are managed to organize the output files in a hierarchical structure,
     e.g., `data/chunk-000/file-000.parquet`, `data/chunk-000/file-001.parquet`, etc.
+    This function ensures that episodes are not split across multiple files.
 
     Args:
         hf_dataset (Dataset): The Hugging Face Dataset to be written to disk.
@@ -315,7 +319,7 @@ def write_hf_dataset(hf_dataset: Dataset, local_dir: Path, data_file_size_mb: fl
         data_file_size_mb = DEFAULT_DATA_FILE_SIZE_IN_MB
     if chunk_size is None:
         chunk_size = DEFAULT_CHUNK_SIZE
-    
+
     dataset_size_in_mb = get_hf_dataset_size_in_mb(hf_dataset)
 
     if dataset_size_in_mb <= data_file_size_mb:
@@ -325,23 +329,45 @@ def write_hf_dataset(hf_dataset: Dataset, local_dir: Path, data_file_size_mb: fl
         hf_dataset.to_parquet(path)
         return
 
-    # If the dataset is too large, split it into smaller chunks.
-    num_splits = math.ceil(dataset_size_in_mb / data_file_size_mb)
-    nrows_per_file = len(hf_dataset) // num_splits
+    # If the dataset is too large, split it into smaller chunks, keeping episodes whole.
+    episode_indices = np.array(hf_dataset["episode_index"])
+    episode_boundaries = np.where(np.diff(episode_indices) != 0)[0] + 1
+    episode_starts = np.concatenate(([0], episode_boundaries))
+    episode_ends = np.concatenate((episode_boundaries, [len(hf_dataset)]))
 
+    num_episodes = len(episode_starts)
+    current_episode_idx = 0
     chunk_idx, file_idx = 0, 0
 
-    for i in range(num_splits):
-        # Determine the start and end indices for the current chunk.
-        start = i * nrows_per_file
-        end = start + nrows_per_file if i < num_splits - 1 else len(hf_dataset)
+    while current_episode_idx < num_episodes:
+        shard_start_row = episode_starts[current_episode_idx]
+        shard_end_row = episode_ends[current_episode_idx]
+        next_episode_to_try_idx = current_episode_idx + 1
 
-        # Skip creating empty shards
-        if start >= end:
-            continue
+        while next_episode_to_try_idx < num_episodes:
+            potential_shard_end_row = episode_ends[next_episode_to_try_idx]
+            dataset_shard_candidate = hf_dataset.select(range(shard_start_row, potential_shard_end_row))
+            shard_size_mb = get_hf_dataset_size_in_mb(dataset_shard_candidate)
 
-        # Select the portion of the dataset for the current chunk.
-        dataset_shard = hf_dataset.select(range(start, end))
+            if shard_size_mb > data_file_size_mb:
+                break
+            else:
+                shard_end_row = potential_shard_end_row
+                next_episode_to_try_idx += 1
+
+        dataset_shard = hf_dataset.select(range(shard_start_row, shard_end_row))
+
+        if (
+            shard_start_row == episode_starts[current_episode_idx]
+            and shard_end_row == episode_ends[current_episode_idx]
+        ):
+            shard_size_mb = get_hf_dataset_size_in_mb(dataset_shard)
+            if shard_size_mb > data_file_size_mb:
+                logging.warning(
+                    f"Episode with index {hf_dataset[shard_start_row.item()]['episode_index']} has size {shard_size_mb:.2f}MB, "
+                    f"which is larger than data_file_size_mb ({data_file_size_mb}MB). "
+                    "Writing it to a separate shard anyway to preserve episode integrity."
+                )
 
         # Define the path for the current shard and ensure the directory exists.
         path = local_dir / DEFAULT_DATA_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
@@ -352,6 +378,7 @@ def write_hf_dataset(hf_dataset: Dataset, local_dir: Path, data_file_size_mb: fl
 
         # Update chunk and file indices for the next iteration.
         chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, chunk_size)
+        current_episode_idx = next_episode_to_try_idx
 
 
 def write_tasks(tasks: pandas.DataFrame, local_dir: Path):
@@ -948,7 +975,7 @@ def validate_episode_buffer(episode_buffer: dict, total_episodes: int, features:
 
 def to_parquet_with_hf_images(df: pandas.DataFrame, path: Path):
     """This function correctly writes to parquet a panda DataFrame that contains images encoded by HF dataset.
-    This way, it can be loaded by HF dataset and correctly formated images are returned.
+    This way, it can be loaded by HF dataset and correctly formatted images are returned.
     """
     # TODO(qlhoest): replace this weird synthax by `df.to_parquet(path)` only
     datasets.Dataset.from_dict(df.to_dict(orient="list")).to_parquet(path)
@@ -1042,18 +1069,19 @@ class Backtrackable(Generic[T]):
     ```
     """
 
-    __slots__ = ("_source", "_back_buf", "_ahead_buf", "_cursor", "_lookahead")
+    __slots__ = ("_source", "_back_buf", "_ahead_buf", "_cursor", "_history", "_lookahead")
 
     def __init__(self, iterable: Iterable[T], *, history: int = 1, lookahead: int = 0):
         if history < 1:
-            raise ValueError("history must be ≥ 1")
-        if lookahead < 0:
-            raise ValueError("lookahead must be ≥ 0")
+            raise ValueError("history must be >= 1")
+        if lookahead <= 0:
+            raise ValueError("lookahead must be > 0")
 
         self._source: Iterator[T] = iter(iterable)
         self._back_buf: Deque[T] = deque(maxlen=history)
         self._ahead_buf: Deque[T] = deque(maxlen=lookahead) if lookahead > 0 else deque()
-        self._cursor: int = 0  # 0 == just after the newest item in back_buf
+        self._cursor: int = 0
+        self._history = history
         self._lookahead = lookahead
 
     def __iter__(self) -> "Backtrackable[T]":
@@ -1088,10 +1116,10 @@ class Backtrackable(Generic[T]):
         """
         Look `n` items back (n=1 == previous item) without moving the cursor.
         """
-        if n < 1 or n > len(self._back_buf) + self._cursor:
+        if n < 0 or n + 1 > len(self._back_buf) + self._cursor:
             raise LookBackError("peek_back distance out of range")
 
-        return self._back_buf[self._cursor - n]
+        return self._back_buf[self._cursor - (n + 1)]
 
     def peek_ahead(self, n: int = 1) -> T:
         """
@@ -1168,3 +1196,15 @@ class Backtrackable(Generic[T]):
         Clear the ahead buffer, discarding any pre-fetched items.
         """
         self._ahead_buf.clear()
+
+    def switch_source_iterable(self, new_source: Iterable[T]) -> None:
+        """
+        Switch the source of the backtrackable to a new iterable, keeping the history.
+
+        This is useful when iterating over a sequence of datasets. The history from the
+        previous source is kept, but the lookahead buffer is cleared. The cursor is reset
+        to the present.
+        """
+        self._source = iter(new_source)
+        self.clear_ahead_buffer()
+        self.reset_cursor()
