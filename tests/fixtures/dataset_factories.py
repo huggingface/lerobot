@@ -509,6 +509,8 @@ def lerobot_dataset_factory(
         tasks: pd.DataFrame | None = None,
         episodes_metadata: datasets.Dataset | None = None,
         hf_dataset: datasets.Dataset | None = None,
+        data_files_size_in_mb: float = DEFAULT_DATA_FILE_SIZE_IN_MB,
+        chunks_size: int = DEFAULT_CHUNK_SIZE,
         **kwargs,
     ) -> LeRobotDataset:
         # Instantiate objects
@@ -518,6 +520,8 @@ def lerobot_dataset_factory(
                 total_frames=total_frames,
                 total_tasks=total_tasks,
                 use_videos=use_videos,
+                data_files_size_in_mb=data_files_size_in_mb,
+                chunks_size=chunks_size,
             )
         if stats is None:
             stats = stats_factory(features=info["features"])
@@ -546,6 +550,8 @@ def lerobot_dataset_factory(
             tasks=tasks,
             episodes=episodes_metadata,
             hf_dataset=hf_dataset,
+            data_files_size_in_mb=data_files_size_in_mb,
+            chunks_size=chunks_size,
         )
         mock_metadata = lerobot_dataset_metadata_factory(
             root=root,
