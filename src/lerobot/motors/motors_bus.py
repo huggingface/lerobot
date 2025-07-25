@@ -40,6 +40,9 @@ Value: TypeAlias = int | float
 
 logger = logging.getLogger(__name__)
 
+NUM_READ_RETRY = 10
+NUM_WRITE_RETRY = 10
+
 
 def get_ctrl_table(model_ctrl_table: dict[str, dict], model: str) -> dict[str, tuple[int, int]]:
     ctrl_table = model_ctrl_table.get(model)
@@ -557,7 +560,9 @@ class MotorsBus(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def disable_torque(self, motors: int | str | list[str] | None = None, num_retry: int = 0) -> None:
+    def disable_torque(
+        self, motors: int | str | list[str] | None = None, num_retry: int = NUM_WRITE_RETRY
+    ) -> None:
         """Disable torque on selected motors.
 
         Disabling Torque allows to write to the motors' permanent memory area (EPROM/EEPROM).
@@ -571,11 +576,11 @@ class MotorsBus(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def _disable_torque(self, motor: int, model: str, num_retry: int = 0) -> None:
+    def _disable_torque(self, motor: int, model: str, num_retry: int = NUM_WRITE_RETRY) -> None:
         pass
 
     @abc.abstractmethod
-    def enable_torque(self, motors: str | list[str] | None = None, num_retry: int = 0) -> None:
+    def enable_torque(self, motors: str | list[str] | None = None, num_retry: int = NUM_WRITE_RETRY) -> None:
         """Enable torque on selected motors.
 
         Args:
@@ -867,7 +872,9 @@ class MotorsBus(abc.ABC):
         """Convert an integer into a list of byte-sized integers."""
         pass
 
-    def ping(self, motor: NameOrID, num_retry: int = 0, raise_on_error: bool = False) -> int | None:
+    def ping(
+        self, motor: NameOrID, num_retry: int = NUM_READ_RETRY, raise_on_error: bool = False
+    ) -> int | None:
         """Ping a single motor and return its model number.
 
         Args:
@@ -900,7 +907,9 @@ class MotorsBus(abc.ABC):
         return model_number
 
     @abc.abstractmethod
-    def broadcast_ping(self, num_retry: int = 0, raise_on_error: bool = False) -> dict[int, int] | None:
+    def broadcast_ping(
+        self, num_retry: int = NUM_READ_RETRY, raise_on_error: bool = False
+    ) -> dict[int, int] | None:
         """Ping every ID on the bus using the broadcast address.
 
         Args:
@@ -919,7 +928,7 @@ class MotorsBus(abc.ABC):
         motor: str,
         *,
         normalize: bool = True,
-        num_retry: int = 0,
+        num_retry: int = NUM_READ_RETRY,
     ) -> Value:
         """Read a register from a motor.
 
@@ -958,7 +967,7 @@ class MotorsBus(abc.ABC):
         length: int,
         motor_id: int,
         *,
-        num_retry: int = 0,
+        num_retry: int = NUM_READ_RETRY,
         raise_on_error: bool = True,
         err_msg: str = "",
     ) -> tuple[int, int]:
@@ -988,7 +997,13 @@ class MotorsBus(abc.ABC):
         return value, comm, error
 
     def write(
-        self, data_name: str, motor: str, value: Value, *, normalize: bool = True, num_retry: int = 0
+        self,
+        data_name: str,
+        motor: str,
+        value: Value,
+        *,
+        normalize: bool = True,
+        num_retry: int = NUM_WRITE_RETRY,
     ) -> None:
         """Write a value to a single motor's register.
 
@@ -1029,7 +1044,7 @@ class MotorsBus(abc.ABC):
         motor_id: int,
         value: int,
         *,
-        num_retry: int = 0,
+        num_retry: int = NUM_WRITE_RETRY,
         raise_on_error: bool = True,
         err_msg: str = "",
     ) -> tuple[int, int]:
@@ -1056,7 +1071,7 @@ class MotorsBus(abc.ABC):
         motors: str | list[str] | None = None,
         *,
         normalize: bool = True,
-        num_retry: int = 0,
+        num_retry: int = NUM_READ_RETRY,
     ) -> dict[str, Value]:
         """Read the same register from several motors at once.
 
@@ -1104,7 +1119,7 @@ class MotorsBus(abc.ABC):
         length: int,
         motor_ids: list[int],
         *,
-        num_retry: int = 0,
+        num_retry: int = NUM_READ_RETRY,
         raise_on_error: bool = True,
         err_msg: str = "",
     ) -> tuple[dict[int, int], int]:
@@ -1151,7 +1166,7 @@ class MotorsBus(abc.ABC):
         values: Value | dict[str, Value],
         *,
         normalize: bool = True,
-        num_retry: int = 0,
+        num_retry: int = NUM_WRITE_RETRY,
     ) -> None:
         """Write the same register on multiple motors.
 
@@ -1192,7 +1207,7 @@ class MotorsBus(abc.ABC):
         addr: int,
         length: int,
         ids_values: dict[int, int],
-        num_retry: int = 0,
+        num_retry: int = NUM_WRITE_RETRY,
         raise_on_error: bool = True,
         err_msg: str = "",
     ) -> int:
