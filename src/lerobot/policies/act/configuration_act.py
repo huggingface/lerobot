@@ -28,7 +28,7 @@ class ACTConfig(PreTrainedConfig):
     Defaults are configured for training on bimanual Aloha tasks like "insertion" or "transfer".
 
     The parameters you will most likely need to change are the ones which depend on the environment / sensors.
-    Those are: `input_features` and 'output_features`.
+    Those are: `input_features` and `output_features`.
 
     Notes on the inputs and outputs:
         - Either:
