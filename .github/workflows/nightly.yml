@@ -62,8 +62,8 @@ jobs:
       - name: Login to Docker Hub
         uses: docker/login-action@v3 # zizmor: ignore[unpinned-uses]
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+          username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
       - name: Build and push Docker image CPU
         uses: docker/build-push-action@v6 # zizmor: ignore[unpinned-uses]
         with:
@@ -96,8 +96,8 @@ jobs:
       - name: Login to Docker Hub
         uses: docker/login-action@v3 # zizmor: ignore[unpinned-uses]
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+          username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
       - name: Build and push Docker image GPU
         uses: docker/build-push-action@v6 # zizmor: ignore[unpinned-uses]
         with:
@@ -120,8 +120,8 @@ jobs:
     container:
       image: ${{ needs.build-docker-cpu-nightly.outputs.image_tag }} # zizmor: ignore[unpinned-images]
       credentials:
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
-        password: ${{ secrets.DOCKERHUB_PASSWORD }}
+        username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
     defaults:
       run:
         shell: bash
@@ -147,8 +147,8 @@ jobs:
       image: ${{ needs.build-docker-gpu-nightly.outputs.image_tag }} # zizmor: ignore[unpinned-images]
       options: --gpus all --shm-size "16gb"
       credentials:
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
-        password: ${{ secrets.DOCKERHUB_PASSWORD }}
+        username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
     defaults:
       run:
         shell: bash

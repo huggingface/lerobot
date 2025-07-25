@@ -74,8 +74,9 @@ from lerobot.datasets.image_writer import safe_stop_image_writer
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import build_dataset_frame, hw_to_dataset_features
 from lerobot.datasets.video_utils import VideoEncodingManager
-from lerobot.policies.factory import make_policy
+from lerobot.policies.factory import make_policy, make_processor
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.processor import RobotProcessor
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -195,6 +196,8 @@ def record_loop(
     dataset: LeRobotDataset | None = None,
     teleop: Teleoperator | list[Teleoperator] | None = None,
     policy: PreTrainedPolicy | None = None,
+    preprocessor: RobotProcessor | None = None,
+    postprocessor: RobotProcessor | None = None,
     control_time_s: int | None = None,
     single_task: str | None = None,
     display_data: bool = False,
@@ -219,9 +222,11 @@ def record_loop(
                 "For multi-teleop, the list must contain exactly one KeyboardTeleop and one arm teleoperator. Currently only supported for LeKiwi robot."
             )
 
-    # if policy is given it needs cleaning up
-    if policy is not None:
+    # Reset policy and processor if they are provided
+    if policy is not None or preprocessor is not None:
         policy.reset()
+        preprocessor.reset()
+        postprocessor.reset()
 
     timestamp = 0
     start_episode_t = time.perf_counter()
@@ -237,12 +242,14 @@ def record_loop(
         if policy is not None or dataset is not None:
             observation_frame = build_dataset_frame(dataset.features, observation, prefix="observation")
 
-        if policy is not None:
+        if policy is not None or preprocessor is not None:
             action_values = predict_action(
-                observation_frame,
-                policy,
-                get_safe_torch_device(policy.config.device),
-                policy.config.use_amp,
+                observation=observation_frame,
+                policy=policy,
+                device=get_safe_torch_device(policy.config.device),
+                preprocessor=preprocessor,
+                postprocessor=postprocessor,
+                use_amp=policy.config.use_amp,
                 task=single_task,
                 robot_type=robot.robot_type,
             )
@@ -267,7 +274,7 @@ def record_loop(
             continue
 
         # Action can eventually be clipped using `max_relative_target`,
-        # so action actually sent is saved in the dataset.
+        # so action actually sent is saved in the dataset. action = postprocessor.process(action)
         sent_action = robot.send_action(action)
 
         if dataset is not None:
@@ -328,6 +335,14 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     # Load pretrained policy
     policy = None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
+    preprocessor = None
+    postprocessor = None
+    if cfg.policy is not None:
+        preprocessor, postprocessor = make_processor(
+            policy_cfg=cfg.policy,
+            pretrained_path=cfg.policy.pretrained_path,
+            dataset_stats=dataset.meta.stats,
+        )
 
     robot.connect()
     if teleop is not None:
@@ -345,6 +360,8 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 fps=cfg.dataset.fps,
                 teleop=teleop,
                 policy=policy,
+                preprocessor=preprocessor,
+                postprocessor=postprocessor,
                 dataset=dataset,
                 control_time_s=cfg.dataset.episode_time_s,
                 single_task=cfg.dataset.single_task,

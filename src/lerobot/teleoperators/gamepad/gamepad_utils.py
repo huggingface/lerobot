@@ -295,8 +295,8 @@ class GamepadController(InputController):
         try:
             # Read joystick axes
             # Left stick X and Y (typically axes 0 and 1)
-            y_input = self.joystick.get_axis(0)  # Left/Right
-            x_input = self.joystick.get_axis(1)  # Up/Down (often inverted)
+            x_input = self.joystick.get_axis(0)  # Left/Right
+            y_input = self.joystick.get_axis(1)  # Up/Down (often inverted)
 
             # Right stick Y (typically axis 3 or 4)
             z_input = self.joystick.get_axis(3)  # Up/Down for Z
@@ -308,7 +308,7 @@ class GamepadController(InputController):
 
             # Calculate deltas (note: may need to invert axes depending on controller)
             delta_x = -x_input * self.x_step_size  # Forward/backward
-            delta_y = -y_input * self.y_step_size  # Left/right
+            delta_y = y_input * self.y_step_size  # Left/right
             delta_z = -z_input * self.z_step_size  # Up/down
 
             return delta_x, delta_y, delta_z
