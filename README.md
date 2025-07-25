@@ -10,17 +10,106 @@
 
 <div align="center">
 
-[![Tests](https://github.com/huggingface/lerobot/actions/workflows/nightly-tests.yml/badge.svg?branch=main)](https://github.com/huggingface/lerobot/actions/workflows/nightly-tests.yml?query=branch%3Amain)
-[![Coverage](https://codecov.io/gh/huggingface/lerobot/branch/main/graph/badge.svg?token=TODO)](https://codecov.io/gh/huggingface/lerobot)
+[![Tests](https://github.com/huggingface/lerobot/actions/workflows/nightly.yml/badge.svg?branch=main)](https://github.com/huggingface/lerobot/actions/workflows/nighty.yml?query=branch%3Amain)
 [![Python versions](https://img.shields.io/pypi/pyversions/lerobot)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/huggingface/lerobot/blob/main/LICENSE)
 [![Status](https://img.shields.io/pypi/status/lerobot)](https://pypi.org/project/lerobot/)
 [![Version](https://img.shields.io/pypi/v/lerobot)](https://pypi.org/project/lerobot/)
-[![Examples](https://img.shields.io/badge/Examples-green.svg)](https://github.com/huggingface/lerobot/tree/main/examples)
-[![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-v2.1%20adopted-ff69b4.svg)](https://github.com/huggingface/lerobot/blob/main/CODE_OF_CONDUCT.md)
+[![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-v2.1-ff69b4.svg)](https://github.com/huggingface/lerobot/blob/main/CODE_OF_CONDUCT.md)
 [![Discord](https://dcbadge.vercel.app/api/server/C5P34WJ68S?style=flat)](https://discord.gg/s3KuuzsPFb)
 
+<!-- [![Coverage](https://codecov.io/gh/huggingface/lerobot/branch/main/graph/badge.svg?token=TODO)](https://codecov.io/gh/huggingface/lerobot) -->
+
 </div>
+
+---
+
+🤗 LeRobot aims to provide models, datasets, and tools for real-world robotics in PyTorch. The goal is to lower the barrier to entry to robotics so that everyone can contribute and benefit from sharing datasets and pretrained models.
+
+🤗 LeRobot contains state-of-the-art approaches that have been shown to transfer to the real-world with a focus on imitation learning and reinforcement learning.
+
+🤗 LeRobot already provides a set of pretrained models, datasets with human collected demonstrations, and simulation environments to get started without assembling a robot. In the coming weeks, the plan is to add more and more support for real-world robotics on the most affordable and capable robots out there.
+
+🤗 LeRobot hosts pretrained models and datasets on this Hugging Face community page: [huggingface.co/lerobot](https://huggingface.co/lerobot)
+
+#### Examples of pretrained models on simulation environments
+
+<table>
+  <tr>
+    <td><img src="media/gym/aloha_act.gif" width="100%" alt="ACT policy on ALOHA env"/></td>
+    <td><img src="media/gym/simxarm_tdmpc.gif" width="100%" alt="TDMPC policy on SimXArm env"/></td>
+    <td><img src="media/gym/pusht_diffusion.gif" width="100%" alt="Diffusion policy on PushT env"/></td>
+  </tr>
+  <tr>
+    <td align="center">ACT policy on ALOHA env</td>
+    <td align="center">TDMPC policy on SimXArm env</td>
+    <td align="center">Diffusion policy on PushT env</td>
+  </tr>
+</table>
+
+## Installation
+
+Download our source code:
+
+```bash
+git clone https://github.com/huggingface/lerobot.git
+cd lerobot
+```
+
+LeRobot works with Python 3.10+ and PyTorch 2.2+.
+Create a virtual environment with Python 3.10 and activate it, e.g. with [`miniconda`](https://docs.anaconda.com/free/miniconda/index.html):
+
+```bash
+conda create -y -n lerobot python=3.10
+conda activate lerobot
+```
+
+When using `miniconda`, install `ffmpeg` in your environment:
+
+```bash
+conda install ffmpeg -c conda-forge
+```
+
+> **NOTE:** This usually installs `ffmpeg 7.X` for your platform compiled with the `libsvtav1` encoder. If `libsvtav1` is not supported (check supported encoders with `ffmpeg -encoders`), you can:
+>
+> - _[On any platform]_ Explicitly install `ffmpeg 7.X` using:
+>
+> ```bash
+> conda install ffmpeg=7.1.1 -c conda-forge
+> ```
+>
+> - _[On Linux only]_ Install [ffmpeg build dependencies](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#GettheDependencies) and [compile ffmpeg from source with libsvtav1](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#libsvtav1), and make sure you use the corresponding ffmpeg binary to your install with `which ffmpeg`.
+
+Install 🤗 LeRobot:
+
+```bash
+pip install lerobot
+```
+
+> **NOTE:** If you encounter build errors, you may need to install additional dependencies (`cmake`, `build-essential`, and `ffmpeg libs`). On Linux, run:
+> `sudo apt-get install cmake build-essential python3-dev pkg-config libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev libswscale-dev libswresample-dev libavfilter-dev`. For other systems, see: [Compiling PyAV](https://pyav.org/docs/develop/overview/installation.html#bring-your-own-ffmpeg)
+
+For simulations, 🤗 LeRobot comes with gymnasium environments that can be installed as extras:
+
+- [aloha](https://github.com/huggingface/gym-aloha)
+- [xarm](https://github.com/huggingface/gym-xarm)
+- [pusht](https://github.com/huggingface/gym-pusht)
+
+For instance, to install 🤗 LeRobot with aloha and pusht, use:
+
+```bash
+pip install -e ".[aloha, pusht]"
+```
+
+To use [Weights and Biases](https://docs.wandb.ai/quickstart) for experiment tracking, log in with
+
+```bash
+wandb login
+```
+
+(note: you will also need to enable WandB in the configuration. See below.)
+
+### Build your own robot
 
 <h2 align="center">
     <p><a href="https://huggingface.co/docs/lerobot/hope_jr">
@@ -84,101 +173,6 @@
 <h3 align="center">
     <p>LeRobot: State-of-the-art AI for real-world robotics</p>
 </h3>
-
----
-
-🤗 LeRobot aims to provide models, datasets, and tools for real-world robotics in PyTorch. The goal is to lower the barrier to entry to robotics so that everyone can contribute and benefit from sharing datasets and pretrained models.
-
-🤗 LeRobot contains state-of-the-art approaches that have been shown to transfer to the real-world with a focus on imitation learning and reinforcement learning.
-
-🤗 LeRobot already provides a set of pretrained models, datasets with human collected demonstrations, and simulation environments to get started without assembling a robot. In the coming weeks, the plan is to add more and more support for real-world robotics on the most affordable and capable robots out there.
-
-🤗 LeRobot hosts pretrained models and datasets on this Hugging Face community page: [huggingface.co/lerobot](https://huggingface.co/lerobot)
-
-#### Examples of pretrained models on simulation environments
-
-<table>
-  <tr>
-    <td><img src="media/gym/aloha_act.gif" width="100%" alt="ACT policy on ALOHA env"/></td>
-    <td><img src="media/gym/simxarm_tdmpc.gif" width="100%" alt="TDMPC policy on SimXArm env"/></td>
-    <td><img src="media/gym/pusht_diffusion.gif" width="100%" alt="Diffusion policy on PushT env"/></td>
-  </tr>
-  <tr>
-    <td align="center">ACT policy on ALOHA env</td>
-    <td align="center">TDMPC policy on SimXArm env</td>
-    <td align="center">Diffusion policy on PushT env</td>
-  </tr>
-</table>
-
-### Acknowledgment
-
-- The LeRobot team 🤗 for building SmolVLA [Paper](https://arxiv.org/abs/2506.01844), [Blog](https://huggingface.co/blog/smolvla).
-- Thanks to Tony Zhao, Zipeng Fu and colleagues for open sourcing ACT policy, ALOHA environments and datasets. Ours are adapted from [ALOHA](https://tonyzhaozh.github.io/aloha) and [Mobile ALOHA](https://mobile-aloha.github.io).
-- Thanks to Cheng Chi, Zhenjia Xu and colleagues for open sourcing Diffusion policy, Pusht environment and datasets, as well as UMI datasets. Ours are adapted from [Diffusion Policy](https://diffusion-policy.cs.columbia.edu) and [UMI Gripper](https://umi-gripper.github.io).
-- Thanks to Nicklas Hansen, Yunhai Feng and colleagues for open sourcing TDMPC policy, Simxarm environments and datasets. Ours are adapted from [TDMPC](https://github.com/nicklashansen/tdmpc) and [FOWM](https://www.yunhaifeng.com/FOWM).
-- Thanks to Antonio Loquercio and Ashish Kumar for their early support.
-- Thanks to [Seungjae (Jay) Lee](https://sjlee.cc/), [Mahi Shafiullah](https://mahis.life/) and colleagues for open sourcing [VQ-BeT](https://sjlee.cc/vq-bet/) policy and helping us adapt the codebase to our repository. The policy is adapted from [VQ-BeT repo](https://github.com/jayLEE0301/vq_bet_official).
-
-## Installation
-
-Download our source code:
-
-```bash
-git clone https://github.com/huggingface/lerobot.git
-cd lerobot
-```
-
-Create a virtual environment with Python 3.10 and activate it, e.g. with [`miniconda`](https://docs.anaconda.com/free/miniconda/index.html):
-
-```bash
-conda create -y -n lerobot python=3.10
-conda activate lerobot
-```
-
-When using `miniconda`, install `ffmpeg` in your environment:
-
-```bash
-conda install ffmpeg -c conda-forge
-```
-
-> **NOTE:** This usually installs `ffmpeg 7.X` for your platform compiled with the `libsvtav1` encoder. If `libsvtav1` is not supported (check supported encoders with `ffmpeg -encoders`), you can:
->
-> - _[On any platform]_ Explicitly install `ffmpeg 7.X` using:
->
-> ```bash
-> conda install ffmpeg=7.1.1 -c conda-forge
-> ```
->
-> - _[On Linux only]_ Install [ffmpeg build dependencies](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#GettheDependencies) and [compile ffmpeg from source with libsvtav1](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#libsvtav1), and make sure you use the corresponding ffmpeg binary to your install with `which ffmpeg`.
-
-Install 🤗 LeRobot:
-
-```bash
-pip install -e .
-```
-
-> **NOTE:** If you encounter build errors, you may need to install additional dependencies (`cmake`, `build-essential`, and `ffmpeg libs`). On Linux, run:
-> `sudo apt-get install cmake build-essential python3-dev pkg-config libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev libswscale-dev libswresample-dev libavfilter-dev`. For other systems, see: [Compiling PyAV](https://pyav.org/docs/develop/overview/installation.html#bring-your-own-ffmpeg)
-
-For simulations, 🤗 LeRobot comes with gymnasium environments that can be installed as extras:
-
-- [aloha](https://github.com/huggingface/gym-aloha)
-- [xarm](https://github.com/huggingface/gym-xarm)
-- [pusht](https://github.com/huggingface/gym-pusht)
-
-For instance, to install 🤗 LeRobot with aloha and pusht, use:
-
-```bash
-pip install -e ".[aloha, pusht]"
-```
-
-To use [Weights and Biases](https://docs.wandb.ai/quickstart) for experiment tracking, log in with
-
-```bash
-wandb login
-```
-
-(note: you will also need to enable WandB in the configuration. See below.)
 
 ### Visualize datasets
 
@@ -305,26 +299,6 @@ reproduces SOTA results for Diffusion Policy on the PushT task.
 
 If you would like to contribute to 🤗 LeRobot, please check out our [contribution guide](https://github.com/huggingface/lerobot/blob/main/CONTRIBUTING.md).
 
-<!-- ### Add a new dataset
-
-To add a dataset to the hub, you need to login using a write-access token, which can be generated from the [Hugging Face settings](https://huggingface.co/settings/tokens):
-```bash
-huggingface-cli login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
-```
-
-Then point to your raw dataset folder (e.g. `data/aloha_static_pingpong_test_raw`), and push your dataset to the hub with:
-```bash
-python lerobot/scripts/push_dataset_to_hub.py \
---raw-dir data/aloha_static_pingpong_test_raw \
---out-dir data \
---repo-id lerobot/aloha_static_pingpong_test \
---raw-format aloha_hdf5
-```
-
-See `python lerobot/scripts/push_dataset_to_hub.py --help` for more instructions.
-
-If your dataset format is not supported, implement your own in `lerobot/datasets/push_dataset_to_hub/${raw_format}_format.py` by copying examples like [pusht_zarr](https://github.com/huggingface/lerobot/blob/main/lerobot/datasets/push_dataset_to_hub/pusht_zarr_format.py), [umi_zarr](https://github.com/huggingface/lerobot/blob/main/lerobot/datasets/push_dataset_to_hub/umi_zarr_format.py), [aloha_hdf5](https://github.com/huggingface/lerobot/blob/main/lerobot/datasets/push_dataset_to_hub/aloha_hdf5_format.py), or [xarm_pkl](https://github.com/huggingface/lerobot/blob/main/lerobot/datasets/push_dataset_to_hub/xarm_pkl_format.py). -->
-
 ### Add a pretrained policy
 
 Once you have trained a policy you may upload it to the Hugging Face hub using a hub id that looks like `${hf_user}/${repo_name}` (e.g. [lerobot/diffusion_pusht](https://huggingface.co/lerobot/diffusion_pusht)).
@@ -343,32 +317,14 @@ huggingface-cli upload ${hf_user}/${repo_name} path/to/pretrained_model
 
 See [eval.py](https://github.com/huggingface/lerobot/blob/main/lerobot/scripts/eval.py) for an example of how other people may use your policy.
 
-### Improve your code with profiling
+### Acknowledgment
 
-An example of a code snippet to profile the evaluation of a policy:
-
-<!-- prettier-ignore-start -->
-```python
-from torch.profiler import profile, record_function, ProfilerActivity
-
-def trace_handler(prof):
-    prof.export_chrome_trace(f"tmp/trace_schedule_{prof.step_num}.json")
-
-with profile(
-    activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
-    schedule=torch.profiler.schedule(
-        wait=2,
-        warmup=2,
-        active=3,
-    ),
-    on_trace_ready=trace_handler
-) as prof:
-    with record_function("eval_policy"):
-        for i in range(num_episodes):
-            prof.step()
-            # insert code to profile, potentially whole body of eval_policy function
-```
-<!-- prettier-ignore-end -->
+- The LeRobot team 🤗 for building SmolVLA [Paper](https://arxiv.org/abs/2506.01844), [Blog](https://huggingface.co/blog/smolvla).
+- Thanks to Tony Zhao, Zipeng Fu and colleagues for open sourcing ACT policy, ALOHA environments and datasets. Ours are adapted from [ALOHA](https://tonyzhaozh.github.io/aloha) and [Mobile ALOHA](https://mobile-aloha.github.io).
+- Thanks to Cheng Chi, Zhenjia Xu and colleagues for open sourcing Diffusion policy, Pusht environment and datasets, as well as UMI datasets. Ours are adapted from [Diffusion Policy](https://diffusion-policy.cs.columbia.edu) and [UMI Gripper](https://umi-gripper.github.io).
+- Thanks to Nicklas Hansen, Yunhai Feng and colleagues for open sourcing TDMPC policy, Simxarm environments and datasets. Ours are adapted from [TDMPC](https://github.com/nicklashansen/tdmpc) and [FOWM](https://www.yunhaifeng.com/FOWM).
+- Thanks to Antonio Loquercio and Ashish Kumar for their early support.
+- Thanks to [Seungjae (Jay) Lee](https://sjlee.cc/), [Mahi Shafiullah](https://mahis.life/) and colleagues for open sourcing [VQ-BeT](https://sjlee.cc/vq-bet/) policy and helping us adapt the codebase to our repository. The policy is adapted from [VQ-BeT repo](https://github.com/jayLEE0301/vq_bet_official).
 
 ## Citation
 
@@ -380,76 +336,6 @@ If you want, you can cite this work with:
     title = {LeRobot: State-of-the-art Machine Learning for Real-World Robotics in Pytorch},
     howpublished = "\url{https://github.com/huggingface/lerobot}",
     year = {2024}
-}
-```
-
-Additionally, if you are using any of the particular policy architecture, pretrained models, or datasets, it is recommended to cite the original authors of the work as they appear below:
-
-- [SmolVLA](https://arxiv.org/abs/2506.01844)
-
-```bibtex
-@article{shukor2025smolvla,
-  title={SmolVLA: A Vision-Language-Action Model for Affordable and Efficient Robotics},
-  author={Shukor, Mustafa and Aubakirova, Dana and Capuano, Francesco and Kooijmans, Pepijn and Palma, Steven and Zouitine, Adil and Aractingi, Michel and Pascal, Caroline and Russi, Martino and Marafioti, Andres and Alibert, Simon and Cord, Matthieu and Wolf, Thomas and Cadene, Remi},
-  journal={arXiv preprint arXiv:2506.01844},
-  year={2025}
-}
-```
-
-- [Diffusion Policy](https://diffusion-policy.cs.columbia.edu)
-
-```bibtex
-@article{chi2024diffusionpolicy,
-	author = {Cheng Chi and Zhenjia Xu and Siyuan Feng and Eric Cousineau and Yilun Du and Benjamin Burchfiel and Russ Tedrake and Shuran Song},
-	title ={Diffusion Policy: Visuomotor Policy Learning via Action Diffusion},
-	journal = {The International Journal of Robotics Research},
-	year = {2024},
-}
-```
-
-- [ACT or ALOHA](https://tonyzhaozh.github.io/aloha)
-
-```bibtex
-@article{zhao2023learning,
-  title={Learning fine-grained bimanual manipulation with low-cost hardware},
-  author={Zhao, Tony Z and Kumar, Vikash and Levine, Sergey and Finn, Chelsea},
-  journal={arXiv preprint arXiv:2304.13705},
-  year={2023}
-}
-```
-
-- [TDMPC](https://www.nicklashansen.com/td-mpc/)
-
-```bibtex
-@inproceedings{Hansen2022tdmpc,
-	title={Temporal Difference Learning for Model Predictive Control},
-	author={Nicklas Hansen and Xiaolong Wang and Hao Su},
-	booktitle={ICML},
-	year={2022}
-}
-```
-
-- [VQ-BeT](https://sjlee.cc/vq-bet/)
-
-```bibtex
-@article{lee2024behavior,
-  title={Behavior generation with latent actions},
-  author={Lee, Seungjae and Wang, Yibin and Etukuru, Haritheja and Kim, H Jin and Shafiullah, Nur Muhammad Mahi and Pinto, Lerrel},
-  journal={arXiv preprint arXiv:2403.03181},
-  year={2024}
-}
-```
-
-- [HIL-SERL](https://hil-serl.github.io/)
-
-```bibtex
-@Article{luo2024hilserl,
-title={Precise and Dexterous Robotic Manipulation via Human-in-the-Loop Reinforcement Learning},
-author={Jianlan Luo and Charles Xu and Jeffrey Wu and Sergey Levine},
-year={2024},
-eprint={2410.21845},
-archivePrefix={arXiv},
-primaryClass={cs.RO}
 }
 ```
 
