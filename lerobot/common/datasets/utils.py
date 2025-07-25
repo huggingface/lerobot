@@ -983,6 +983,17 @@ def item_to_torch(item: dict) -> dict:
     return item
 
 
+def is_float_in_list(target, float_list, threshold=1e-6):
+    return any(abs(target - x) <= threshold for x in float_list)
+
+
+def find_float_index(target, float_list, threshold=1e-6):
+    for i, x in enumerate(float_list):
+        if abs(target - x) <= threshold:
+            return i
+    return -1
+
+
 class LookBackError(Exception):
     """
     Exception raised when trying to look back in the history of a Backtrackable object.
