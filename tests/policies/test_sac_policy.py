@@ -20,10 +20,10 @@ import pytest
 import torch
 from torch import Tensor, nn
 
-from lerobot.common.policies.sac.configuration_sac import SACConfig
-from lerobot.common.policies.sac.modeling_sac import MLP, SACPolicy
-from lerobot.common.utils.random_utils import seeded_context, set_seed
 from lerobot.configs.types import FeatureType, PolicyFeature
+from lerobot.policies.sac.configuration_sac import SACConfig
+from lerobot.policies.sac.modeling_sac import MLP, SACPolicy
+from lerobot.utils.random_utils import seeded_context, set_seed
 
 try:
     import transformers  # noqa: F401
