@@ -20,7 +20,7 @@ from torch import nn
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType
-from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
+from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata, MultiLeRobotDatasetMeta
 from lerobot.datasets.utils import dataset_to_policy_features
 from lerobot.envs.configs import EnvConfig
 from lerobot.envs.utils import env_to_policy_features
@@ -110,7 +110,7 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
 
 def make_policy(
     cfg: PreTrainedConfig,
-    ds_meta: LeRobotDatasetMetadata | None = None,
+    ds_meta: LeRobotDatasetMetadata | MultiLeRobotDatasetMeta | None = None,
     env_cfg: EnvConfig | None = None,
 ) -> PreTrainedPolicy:
     """Make an instance of a policy class.
@@ -121,7 +121,7 @@ def make_policy(
     Args:
         cfg (PreTrainedConfig): The config of the policy to make. If `pretrained_path` is set, the policy will
             be loaded with the weights from that path.
-        ds_meta (LeRobotDatasetMetadata | None, optional): Dataset metadata to take input/output shapes and
+        ds_meta (LeRobotDatasetMetadata | MultiLeRobotDatasetMeta | None, optional): Dataset metadata to take input/output shapes and
             statistics to use for (un)normalization of inputs/outputs in the policy. Defaults to None.
         env_cfg (EnvConfig | None, optional): The config of a gym environment to parse features from. Must be
             provided if ds_meta is not. Defaults to None.

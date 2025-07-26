@@ -434,7 +434,7 @@ def test_multidataset_frames():
         # we ignore padding_mask and dataset_index keys in multi_item
         extra_keys = {k for k in multi_item if "padding_mask" in k}
         filtered_multi_keys = set(multi_item.keys()) - extra_keys
-        assert set(sub_item.keys()) == filtered_multi_keys, f"mismatch in keys"
+        assert set(sub_item.keys()) == filtered_multi_keys, "mismatch in keys"
 
         for k in sub_item:
             if k not in multi_item:
@@ -444,8 +444,6 @@ def test_multidataset_frames():
                 assert torch.equal(v1, v2), f"tensor mismatch on key: {k}"
             else:
                 assert v1 == v2, f"value mismatch on key: {k}"
-
-
 
 
 # TODO(aliberts): Move to more appropriate location
