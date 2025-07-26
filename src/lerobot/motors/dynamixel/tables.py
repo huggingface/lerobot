@@ -110,6 +110,8 @@ X_SERIES_ENCODINGS_TABLE = {
     "Present_PWM": X_SERIES_CONTROL_TABLE["Present_PWM"][1],
     "Present_Current": X_SERIES_CONTROL_TABLE["Present_Current"][1],
     "Present_Velocity": X_SERIES_CONTROL_TABLE["Present_Velocity"][1],
+    "Present_Position": X_SERIES_CONTROL_TABLE["Present_Position"][1],
+    "Goal_Position": X_SERIES_CONTROL_TABLE["Goal_Position"][1],
 }
 
 MODEL_ENCODING_TABLE = {

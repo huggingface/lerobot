@@ -20,28 +20,30 @@ import time
 from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.dynamixel import (
-    DriveMode,
     DynamixelMotorsBus,
     OperatingMode,
 )
 
 from ..teleoperator import Teleoperator
-from .config_koch_leader import KochLeaderConfig
+from .config_koch_screwdriver_leader import KochScrewdriverLeaderConfig
 
 logger = logging.getLogger(__name__)
 
 
-class KochLeader(Teleoperator):
+class KochScrewdriverLeader(Teleoperator):
     """
     - [Koch v1.0](https://github.com/AlexanderKoch-Koch/low_cost_robot), with and without the wrist-to-elbow
         expansion, developed by Alexander Koch from [Tau Robotics](https://tau-robotics.com)
     - [Koch v1.1](https://github.com/jess-moss/koch-v1-1) developed by Jess Moss
     """
 
-    config_class = KochLeaderConfig
-    name = "koch_leader"
+    config_class = KochScrewdriverLeaderConfig
+    name = "koch_screwdriver_leader"
 
-    def __init__(self, config: KochLeaderConfig):
+    # Map the leader motor name to the follower motor and action name
+    motor_to_action_map = {"gripper": "screwdriver"}
+
+    def __init__(self, config: KochScrewdriverLeaderConfig):
         super().__init__(config)
         self.config = config
         self.bus = DynamixelMotorsBus(
@@ -59,7 +61,17 @@ class KochLeader(Teleoperator):
 
     @property
     def action_features(self) -> dict[str, type]:
-        return {f"{motor}.pos": float for motor in self.bus.motors}
+        """
+        Map gripper motor to screwdriver action name for follower compatibility.
+        """
+        features = {}
+        for motor in self.bus.motors:
+            action_name = self.motor_to_action_map.get(motor, motor)
+            if action_name == "screwdriver":
+                features[f"{action_name}.vel"] = float
+            else:
+                features[f"{action_name}.pos"] = float
+        return features
 
     @property
     def feedback_features(self) -> dict[str, type]:
@@ -75,9 +87,6 @@ class KochLeader(Teleoperator):
 
         self.bus.connect()
         if not self.is_calibrated and calibrate:
-            logger.info(
-                "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
-            )
             self.calibrate()
 
         self.configure()
@@ -88,23 +97,15 @@ class KochLeader(Teleoperator):
         return self.bus.is_calibrated
 
     def calibrate(self) -> None:
-        if self.calibration:
-            # Calibration file exists, ask user whether to use it or run new calibration
-            user_input = input(
-                f"Press ENTER to use provided calibration file associated with the id {self.id}, or type 'c' and press ENTER to run calibration: "
-            )
-            if user_input.strip().lower() != "c":
-                logger.info(f"Writing calibration file associated with the id {self.id} to the motors")
-                self.bus.write_calibration(self.calibration)
-                return
+        """
+        Same as the Koch leader but inverting the elbow flex motor has been removed as I don't think it should be
+        hardcoded here, but instead be handled by calibration.
+        """
         logger.info(f"\nRunning calibration of {self}")
         self.bus.disable_torque()
         for motor in self.bus.motors:
             self.bus.write("Operating_Mode", motor, OperatingMode.EXTENDED_POSITION.value)
 
-        # The elbow flex drive mode was previously set to inverted, this ensures that it's no longer
-        # inverted and motors that had the drive mode inverted will be set back to non-inverted.
-        self.bus.write("Drive_Mode", "elbow_flex", DriveMode.NON_INVERTED.value)
         drive_modes = dict.fromkeys(self.bus.motors, 0)
 
         input(f"Move {self} to the middle of its range of motion and press ENTER....")
@@ -167,11 +168,69 @@ class KochLeader(Teleoperator):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
+        # Read all joint positions once.
         start = time.perf_counter()
-        action = self.bus.sync_read("Present_Position")
-        action = {f"{motor}.pos": val for motor, val in action.items()}
+        pos_dict = self.bus.sync_read("Present_Position")
+
+        # Build the action dictionary, converting the screwdriver position into a velocity command.
+        action = {}
+        for motor, pos in pos_dict.items():
+            action_name = self.motor_to_action_map.get(motor, motor)
+
+            if action_name == "screwdriver":
+                # Map the leader gripper position (CURRENT_POSITION mode) to a velocity command for the
+                # follower screwdriver (VELOCITY mode).
+                #
+                # Leader gripper:
+                #   • Position range: 0-100
+                #   • Neutral (open) position: `gripper_open_pos` (default 50)
+                #   • Squeezing  (pos > neutral)   → clockwise rotation  (negative velocity)
+                #   • Opening    (pos < neutral)   → counter-clockwise   (positive velocity)
+                #   • When released, the gripper springs back to the neutral position.
+                #
+                # Follower screwdriver:
+                #   • vel = 0   → no rotation
+                #   • vel > 0   → clockwise
+                #   • vel < 0   → counter-clockwise
+                #
+                # Mapping procedure
+                #   1. delta   = pos - neutral
+                #   2. vel_cmd = -delta * GAIN
+                #   3. Clamp   → vel_cmd ∈ [-MAX_VEL, +MAX_VEL]
+                #   4. Dead-band → |vel_cmd| < THRESHOLD ⇒ vel_cmd = 0
+                #
+                # Example (GAIN = 10, neutral = 50):
+                #   pos = 80  → delta = 30  → vel_cmd = -300
+                #   pos = 10  → delta = -40 → vel_cmd =  400
+                #   pos = 50  → delta = 0   → vel_cmd =    0
+
+                # Step 1: Deviation from neutral position
+                delta = pos - self.config.gripper_open_pos
+
+                # Step 2: Scale delta → velocity
+                #   • GAIN maps the 0-100 gripper position range to an appropriate velocity range.
+                #   • With GAIN = 10 and neutral = 50, the resulting velocity is within ±500.
+                #   • XL330-M077 goal-velocity limit is ±2047 (≈ ±468 RPM at 0.229 RPM/unit).
+                gain = 4.0
+
+                # Invert the sign so sequeezing the gripper will move the screwdriver clockwise
+                vel_cmd = -delta * gain
+
+                # Step 3: Clamp for safety (in case GAIN/neutral is changed)
+                max_vel = 250
+                vel_cmd = max(min(vel_cmd, max_vel), -max_vel)
+
+                # Step 4: Dead-band — stop very small residual motions around neutral
+                if abs(vel_cmd) < 4.0:
+                    vel_cmd = 0.0
+
+                action[f"{action_name}.vel"] = vel_cmd
+            else:
+                action[f"{action_name}.pos"] = pos
+
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read action: {dt_ms:.1f}ms")
+
         return action
 
     def send_feedback(self, feedback: dict[str, float]) -> None:

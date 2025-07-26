@@ -67,6 +67,7 @@ from lerobot.robots import (  # noqa: F401
     bi_so100_follower,
     hope_jr,
     koch_follower,
+    koch_screwdriver_follower,
     make_robot_from_config,
     so100_follower,
     so101_follower,
@@ -78,6 +79,7 @@ from lerobot.teleoperators import (  # noqa: F401
     gamepad,
     homunculus,
     koch_leader,
+    koch_screwdriver_leader,
     make_teleoperator_from_config,
     so100_leader,
     so101_leader,
@@ -112,6 +114,16 @@ def teleop_loop(
             log_rerun_data(observation, action)
 
         robot.send_action(action)
+
+        # Haptic feedback if available
+        if hasattr(robot, "get_feedback"):
+            try:
+                feedback = robot.get_feedback()
+                if feedback:
+                    teleop.send_feedback(feedback)
+            except Exception as e:
+                logging.warning(f"Failed to send feedback: {e}")
+
         dt_s = time.perf_counter() - loop_start
         busy_wait(1 / fps - dt_s)
 
