@@ -56,4 +56,4 @@ MUJOCO_GL=egl python src/lerobot/scripts/train.py \
   --dataset.max_num_images=$MAX_NUM_IMAGES \
   --dataset.max_image_dim=$MAX_IMAGE_DIM \
   # --policy.exclude_image_keys=wrist_image \
-  --policy.use_env_state=false
+  # --policy.use_env_state=false
