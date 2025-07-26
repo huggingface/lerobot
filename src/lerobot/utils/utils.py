@@ -118,7 +118,7 @@ def init_logging(
     file_level: str = "DEBUG",
 ):
     def custom_format(record: logging.LogRecord) -> str:
-        dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        dt = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
         fnameline = f"{record.pathname}:{record.lineno}"
 
         # NOTE: Display PID is useful for multi-process logging.
