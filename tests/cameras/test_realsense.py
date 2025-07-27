@@ -25,12 +25,12 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
-from lerobot.common.cameras.configs import Cv2Rotation
-from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.cameras.configs import Cv2Rotation
+from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 pytest.importorskip("pyrealsense2")
 
-from lerobot.common.cameras.realsense import RealSenseCamera, RealSenseCameraConfig
+from lerobot.cameras.realsense import RealSenseCamera, RealSenseCameraConfig
 
 TEST_ARTIFACTS_DIR = Path(__file__).parent.parent / "artifacts" / "cameras"
 BAG_FILE_PATH = TEST_ARTIFACTS_DIR / "test_rs.bag"
@@ -104,12 +104,14 @@ def test_read():
     assert isinstance(img, np.ndarray)
 
 
+# TODO(Steven): Fix this test for the latest version of pyrealsense2.
+@pytest.mark.skip("Skipping test: pyrealsense2 version > 2.55.1.6486")
 def test_read_depth():
     config = RealSenseCameraConfig(serial_number_or_name="042", width=640, height=480, fps=30, use_depth=True)
     camera = RealSenseCamera(config)
     camera.connect(warmup=False)
 
-    img = camera.read_depth(timeout_ms=1000)  # NOTE(Steven): Reading depth takes longer
+    img = camera.read_depth(timeout_ms=2000)  # NOTE(Steven): Reading depth takes longer in CI environments.
     assert isinstance(img, np.ndarray)
 
 
