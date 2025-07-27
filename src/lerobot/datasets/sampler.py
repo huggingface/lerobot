@@ -13,7 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from typing import Iterator, Union
+from collections.abc import Iterator
 
 import torch
 
@@ -22,7 +22,7 @@ class EpisodeAwareSampler:
     def __init__(
         self,
         episode_data_index: dict,
-        episode_indices_to_use: Union[list, None] = None,
+        episode_indices_to_use: list | None = None,
         drop_n_first_frames: int = 0,
         drop_n_last_frames: int = 0,
         shuffle: bool = False,

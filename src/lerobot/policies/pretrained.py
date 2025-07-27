@@ -12,20 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import abc
+import builtins
 import logging
 import os
 from importlib.resources import files
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import List, Type, TypeVar
+from typing import TypeVar
 
 import packaging
 import safetensors
 from huggingface_hub import HfApi, ModelCard, ModelCardData, hf_hub_download
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from huggingface_hub.errors import HfHubHTTPError
-from safetensors.torch import load_model as load_model_as_safetensor
-from safetensors.torch import save_model as save_model_as_safetensor
+from safetensors.torch import load_model as load_model_as_safetensor, save_model as save_model_as_safetensor
 from torch import Tensor, nn
 
 from lerobot.configs.policies import PreTrainedConfig
@@ -67,7 +67,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
     @classmethod
     def from_pretrained(
-        cls: Type[T],
+        cls: builtins.type[T],
         pretrained_name_or_path: str | Path,
         *,
         config: PreTrainedConfig | None = None,
@@ -223,7 +223,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             logging.info(f"Model pushed to {commit_info.repo_url.url}")
 
     def generate_model_card(
-        self, dataset_repo_id: str, model_type: str, license: str | None, tags: List[str] | None
+        self, dataset_repo_id: str, model_type: str, license: str | None, tags: list[str] | None
     ) -> ModelCard:
         base_model = "lerobot/smolvla_base" if model_type == "smolvla" else None  # Set a base model
 

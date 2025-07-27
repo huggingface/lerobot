@@ -24,9 +24,9 @@ The comments in this code may sometimes refer to these references:
 # ruff: noqa: N806
 
 from collections import deque
+from collections.abc import Callable
 from copy import deepcopy
 from functools import partial
-from typing import Callable
 
 import einops
 import numpy as np
