@@ -21,8 +21,8 @@ import time
 from dataclasses import dataclass, field
 
 import cv2
-import zmq
 import draccus
+import zmq
 
 from .config_lekiwi import LeKiwiConfig, LeKiwiHostConfig
 from .lekiwi import LeKiwi
@@ -31,6 +31,7 @@ from .lekiwi import LeKiwi
 @dataclass
 class LeKiwiServerConfig:
     """Configuration for the LeKiwi host script."""
+
     robot: LeKiwiConfig = field(default_factory=LeKiwiConfig)
     host: LeKiwiHostConfig = field(default_factory=LeKiwiHostConfig)
 
