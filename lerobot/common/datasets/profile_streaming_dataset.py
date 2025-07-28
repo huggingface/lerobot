@@ -165,8 +165,7 @@ def _profile_iteration(dataset, num_samples, stats_file_path):
     profiler.add_function(dataset.make_frame)
     profiler.add_function(dataset._make_backtrackable_dataset)
     profiler.add_function(dataset._get_delta_frames)
-
-    # Profile the iteration
+    profiler.add_function(dataset._query_videos)
 
     # Define the function to profile
     def iterate_dataset(ds, n):
@@ -255,11 +254,8 @@ def profile_dataset(
     fps = 50
 
     delta_timestamps = {
-        # loads 4 images: 1 second before current frame, 500 ms before, 200 ms before, and current frame
         camera_key: [-1, -0.5, -0.20, 0],
-        # loads 6 state vectors: 1.5 seconds before, 1 second before, ... 200 ms, 100 ms, and current frame
         "observation.state": [-1.5, -1, -0.5, -0.20, -0.10, 0],
-        # loads 64 action vectors: current frame, 1 frame in the future, 2 frames, ... 63 frames in the future
         "action": [t / fps for t in range(64)],
     }
 
@@ -284,12 +280,12 @@ def main():
         default="lerobot/aloha_mobile_cabinet",
         help="HuggingFace repository ID for the dataset",
     )
-    parser.add_argument("--num-samples", type=int, default=2_000, help="Number of samples to iterate through")
+    parser.add_argument("--num-samples", type=int, default=100, help="Number of samples to iterate through")
     parser.add_argument("--buffer-size", type=int, default=1000, help="Buffer size for the dataset")
     parser.add_argument("--max-num-shards", type=int, default=1, help="Number of shards to use")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
     parser.add_argument(
-        "--num-runs", type=int, default=10, help="Number of timing runs to perform for statistics"
+        "--num-runs", type=int, default=3, help="Number of timing runs to perform for statistics"
     )
     parser.add_argument(
         "--warmup-iters", type=int, default=1, help="Number of warmup iterations before timing"
