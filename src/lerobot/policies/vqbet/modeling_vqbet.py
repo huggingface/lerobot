@@ -131,7 +131,6 @@ class VQBeTPolicy(PreTrainedPolicy):
         # NOTE: for offline evaluation, we have action in the batch, so we need to pop it out
         if ACTION in batch:
             batch.pop(ACTION)
-        batch = self.normalize_inputs(batch)
         batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
         # NOTE: It's important that this happens after stacking the images into a single key.
         batch["observation.images"] = torch.stack([batch[key] for key in self.config.image_features], dim=-4)

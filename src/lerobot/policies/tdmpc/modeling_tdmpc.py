@@ -138,8 +138,6 @@ class TDMPCPolicy(PreTrainedPolicy):
         if ACTION in batch:
             batch.pop(ACTION)
 
-        batch = self.normalize_inputs(batch)
-
         if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
             batch[OBS_IMAGE] = batch[next(iter(self.config.image_features))]
