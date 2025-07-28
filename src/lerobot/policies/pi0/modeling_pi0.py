@@ -490,8 +490,6 @@ class PI0FlowMatching(nn.Module):
         )
         self.paligemma_with_expert = PaliGemmaWithExpertModel(paligemma_with_export_config)
         
-        self.beta_dist = torch.distributions.Beta(concentration1=1.5, concentration0=1.0)
-
         # Projections are float32
         self.state_proj = nn.Linear(self.config.max_state_dim, self.config.proj_width)
         self.action_in_proj = nn.Linear(self.config.max_action_dim, self.config.proj_width)
@@ -517,7 +515,8 @@ class PI0FlowMatching(nn.Module):
         return noise
 
     def sample_time(self, bsize, device):
-        time_beta = self.BETA_DIST.sample((bsize,)).to(device=device, dtype=torch.float32)
+        beta_dist = torch.distributions.Beta(concentration1=1.5, concentration0=1.0)
+        time_beta = beta_dist.sample((bsize,)).to(device=device, dtype=torch.float32)
         time = time_beta * 0.999 + 0.001
         return time
 
