@@ -286,7 +286,6 @@ def init_third_party_devices():
     for module_info in pkgutil.iter_modules():
         name = module_info.name
         if name.startswith("lerobot_"):
-            print(name)
             try:
                 importlib.import_module(name)
             except Exception as e:
