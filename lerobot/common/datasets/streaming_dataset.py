@@ -368,7 +368,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
                 video_path, query_ts, self.tolerance_s, decoder_cache=self.video_decoder_cache
             )
 
-            item[video_key] = frames
+            item[video_key] = frames.squeeze(0) if len(query_ts) == 1 else frames
 
         return item
 

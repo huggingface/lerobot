@@ -84,7 +84,7 @@ def test_single_frame_consistency(tmp_path, lerobot_dataset_factory):
                 check = left == right
 
             elif isinstance(left, torch.Tensor):
-                check = torch.allclose(left, right)
+                check = torch.allclose(left, right) and left.shape == right.shape
 
             elif isinstance(left, float):
                 check = left == right.item()  # right is a torch.Tensor
@@ -267,7 +267,7 @@ def test_frames_with_delta_consistency(tmp_path, lerobot_dataset_factory, state_
                     left = left[~streaming_frame[f"{key}_is_pad"]]
                     right = right[~target_frame[f"{key}_is_pad"]]
 
-                check = torch.allclose(left, right)
+                check = torch.allclose(left, right) and left.shape == right.shape
 
             key_checks.append((key, check))
 
@@ -363,7 +363,7 @@ def test_frames_with_delta_consistency_with_shards(
                     left = left[~streaming_frame[f"{key}_is_pad"]]
                     right = right[~target_frame[f"{key}_is_pad"]]
 
-                check = torch.allclose(left, right)
+                check = torch.allclose(left, right) and left.shape == right.shape
 
             elif isinstance(left, float):
                 check = left == right.item()  # right is a torch.Tensor
