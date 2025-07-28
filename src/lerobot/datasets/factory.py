@@ -80,6 +80,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
     Returns:
         LeRobotDataset | MultiLeRobotDataset
     """
+    model_repo = "google/paligemma-3b-pt-224"  
     image_transforms = (
         ImageTransforms(cfg.dataset.image_transforms) if cfg.dataset.image_transforms.enable else None
     )
@@ -118,7 +119,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
                 dataset.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
 
     image_proc = AutoImageProcessor.from_pretrained(
-        cfg.dataset.repo_id,
+        model_repo, 
         use_fast=cfg.use_fast_image_processor   # ← NEW
     )
     return dataset

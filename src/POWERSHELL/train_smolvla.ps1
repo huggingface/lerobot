@@ -1,0 +1,11 @@
+python -m lerobot.scripts.train `
+  --policy.repo_id=aiden-li/so101-smolvla-picktape `
+  --policy.path=lerobot/smolvla_base `
+  --dataset.repo_id=aiden-li/so101-picktape `
+  --batch_size=64 `
+  --steps=200000 `
+  --output_dir=outputs/train/so101-smolvla-picktape `
+  --job_name=so101-smolvla-picktape `
+  --policy.device=cuda `
+  --wandb.enable=true `
+  --policy.push_to_hub=true

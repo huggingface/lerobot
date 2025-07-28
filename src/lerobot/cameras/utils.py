@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import platform
+import platform, cv2
 from pathlib import Path
 from typing import TypeAlias
 
@@ -57,9 +57,15 @@ def get_cv2_rotation(rotation: Cv2Rotation) -> int | None:
 
 
 def get_cv2_backend() -> int:
-    import cv2
-
-    if platform.system() == "Windows":
+    """
+    Return a sane default OpenCV back-end.
+    * Windows  → DirectShow (CAP_DSHOW) – works for both USB and virtual cams.
+    * macOS    → AVFoundation       (CAP_AVFOUNDATION)
+    * Linux/*  → let OpenCV decide (CAP_ANY)
+    """
+    system = platform.system()
+    if system == "Windows":
+        return cv2.CAP_DSHOW
+    if system == "Darwin":
         return cv2.CAP_AVFOUNDATION
-    else:
-        return cv2.CAP_ANY
+    return cv2.CAP_ANY

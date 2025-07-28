@@ -477,6 +477,8 @@ class PI0FAST(nn.Module):
                 param.data = param.data.to(dtype=torch_precision)
         self.set_requires_grad()
         self.image_keys = self.config.image_features.keys()
+        if not hasattr(self.pi0_paligemma.config, "ignore_index"):
+            self.pi0_paligemma.config.ignore_index = -100
         self.ignore_index = self.pi0_paligemma.config.ignore_index
         self.padding_side = self.config.padding_side
 
