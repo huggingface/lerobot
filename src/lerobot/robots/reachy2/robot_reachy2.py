@@ -80,7 +80,7 @@ class Reachy2Robot(Robot):
     def observation_features(self) -> dict:
         return {
             "dtype": "float32",
-            "shape": (len(REACHY2_MOTORS),),
+            "shape": len(REACHY2_MOTORS),
             "names": {"motors": list(REACHY2_MOTORS)},
         }
 
