@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from lerobot.utils.utils import make_dynamic_device_from_configs
+from lerobot.utils.utils import make_device_from_device_class
 
 from .config import TeleoperatorConfig
 from .teleoperator import Teleoperator
@@ -67,7 +67,7 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
         from .bi_so100_leader import BiSO100Leader
 
         return BiSO100Leader(config)
-    elif "." in config.type:
-        return make_dynamic_device_from_configs(config)
+    elif hasattr(config, "device_class"):
+        return make_device_from_device_class(config.device_class, config)
     else:
         raise ValueError(config.type)

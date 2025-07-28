@@ -84,7 +84,7 @@ from lerobot.teleoperators import (  # noqa: F401
     keyboard,
 )
 from lerobot.utils.robot_utils import busy_wait
-from lerobot.utils.utils import init_logging, move_cursor_up
+from lerobot.utils.utils import init_logging, init_third_party_devices, move_cursor_up
 from lerobot.utils.visualization_utils import _init_rerun, log_rerun_data
 
 
@@ -153,4 +153,5 @@ def teleoperate(cfg: TeleoperateConfig):
 
 
 if __name__ == "__main__":
+    init_third_party_devices()
     teleoperate()

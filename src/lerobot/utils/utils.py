@@ -21,6 +21,8 @@ import select
 import subprocess
 import sys
 import time
+import pkgutil
+import importlib
 from copy import copy, deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -274,29 +276,21 @@ def move_cursor_up(lines):
     print(f"\033[{lines}A", end="")
 
 
-def make_dynamic_device_from_configs(cfg):
-    module_path, class_name = cfg.type.rsplit(".", 1)
-    module = __import__(module_path, fromlist=[class_name])
-    try:
-        device_class = getattr(module, class_name)
-    except AttributeError as err:
-        raise ImportError(f"Class '{class_name}' not found in module '{module_path}'. Please check the configuration.") from err
-    return device_class(cfg)
+def make_device_from_device_class(device_class, config):
+    module_path, _ = device_class.rsplit(".", 1)
+    module = importlib.import_module(module_path)
+    return getattr(module, _)(config)
 
 
-def import_dynamic_device_based_on_args(device_type: str):
-    if device_type not in ['teleop', 'robot']:
-        raise ValueError(f"Unsupported device type: {device_type}. Supported types are: 'teleop', 'robot'.")
-
-    for arg in sys.argv:
-        if arg.startswith(f"--{device_type}.type="):
-            class_path = arg.split("=")[1]
-            if "." in class_path:
-                module_path, _ = class_path.rsplit(".", 1)
-                try:
-                    __import__(module_path)
-                except ImportError as e:
-                    raise ImportError(f"Failed to import module '{module_path}'. Ensure the module exists and is accessible.") from e
+def init_third_party_devices():
+    for module_info in pkgutil.iter_modules():
+        name = module_info.name
+        if name.startswith("lerobot_"):
+            print(name)
+            try:
+                importlib.import_module(name)
+            except Exception as e:
+                print(f"Could not import {name}: {e}")
 
 
 class TimerManager:

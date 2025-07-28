@@ -18,8 +18,6 @@ from pathlib import Path
 
 import draccus
 
-from lerobot.utils.utils import import_dynamic_device_based_on_args
-
 
 @dataclass(kw_only=True)
 class TeleoperatorConfig(draccus.ChoiceRegistry, abc.ABC):
@@ -27,11 +25,6 @@ class TeleoperatorConfig(draccus.ChoiceRegistry, abc.ABC):
     id: str | None = None
     # Directory to store calibration file
     calibration_dir: Path | None = None
-
-    @classmethod
-    def get_known_choices(cls):
-        import_dynamic_device_based_on_args("teleop")
-        return super().get_known_choices()
 
     @property
     def type(self) -> str:

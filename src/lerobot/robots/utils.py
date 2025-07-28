@@ -16,7 +16,7 @@ import logging
 from pprint import pformat
 
 from lerobot.robots import RobotConfig
-from lerobot.utils.utils import make_dynamic_device_from_configs
+from lerobot.utils.utils import make_device_from_device_class
 
 from .robot import Robot
 
@@ -66,8 +66,8 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from tests.mocks.mock_robot import MockRobot
 
         return MockRobot(config)
-    elif "." in config.type:
-        return make_dynamic_device_from_configs(config)
+    elif hasattr(config, "device_class"):
+        return make_device_from_device_class(config.device_class, config)
     else:
         raise ValueError(config.type)
 

@@ -108,6 +108,7 @@ from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import (
     get_safe_torch_device,
     init_logging,
+    init_third_party_devices,
     log_say,
 )
 from lerobot.utils.visualization_utils import _init_rerun, log_rerun_data
@@ -394,4 +395,5 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
 
 if __name__ == "__main__":
+    init_third_party_devices()
     record()
