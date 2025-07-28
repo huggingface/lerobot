@@ -49,7 +49,6 @@ policy = Pi0Policy.from_pretrained("lerobot/pi0")
 
 """
 
-import logging
 import math
 from collections import deque
 
@@ -66,6 +65,7 @@ from lerobot.policies.pi0.paligemma_with_expert import (
     PaliGemmaWithExpertModel,
 )
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies.utils import log_model_loading_keys
 from lerobot.utils.utils import get_safe_dtype, init_logging
 
 
@@ -348,14 +348,7 @@ class PI0Policy(PreTrainedPolicy):
         msg = model.load_state_dict(transformed_state_dict, strict=strict)
 
         # Log message
-        if hasattr(msg, "missing_keys") and len(msg.missing_keys) > 0:
-            logging.warning("Missing key(s):")
-            for k in msg.missing_keys:
-                logging.warning(f"    {k}")
-        if hasattr(msg, "unexpected_keys") and len(msg.unexpected_keys) > 0:
-            logging.warning("Unexpected key(s):")
-            for k in msg.unexpected_keys:
-                logging.warning(f"    {k}")
+        log_model_loading_keys(msg.missing_keys, msg.unexpected_keys)
         return model
 
     def get_optim_params(self) -> dict:

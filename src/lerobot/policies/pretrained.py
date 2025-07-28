@@ -30,6 +30,7 @@ from torch import Tensor, nn
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.train import TrainPipelineConfig
+from lerobot.policies.utils import log_model_loading_keys
 from lerobot.utils.hub import HubMixin
 
 T = TypeVar("T", bound="PreTrainedPolicy")
@@ -128,31 +129,6 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
     @classmethod
     def _load_as_safetensor(cls, model: T, model_file: str, map_location: str, strict: bool) -> T:
-        if packaging.version.parse(safetensors.__version__) < packaging.version.parse("0.4.3"):
-            missing_keys, unexpected_keys = load_model_as_safetensor(model, model_file, strict=strict)
-            # Log unexpected and missing keys
-            if unexpected_keys:
-                logging.warning(f"Unexpected keys found while loading safetensor: {unexpected_keys}")
-            if missing_keys:
-                logging.warning(f"Missing keys found while loading safetensor: {missing_keys}")
-            if map_location != "cpu":
-                logging.warning(
-                    "Loading model weights on other devices than 'cpu' is not supported natively in your version of safetensors."
-                    " This means that the model is loaded on 'cpu' first and then copied to the device."
-                    " This leads to a slower loading time."
-                    " Please update safetensors to version 0.4.3 or above for improved performance."
-                )
-                model.to(map_location)
-        else:
-            result = safetensors.torch.load_model(model, model_file, strict=strict, device=map_location)
-
-            # Handle the return value - it might be a tuple or None depending on the version
-            if isinstance(result, tuple) and len(result) == 2:
-                missing_keys, unexpected_keys = result
-                if unexpected_keys:
-                    logging.warning(f"Unexpected keys found while loading safetensor: {unexpected_keys}")
-                if missing_keys:
-                    logging.warning(f"Missing keys found while loading safetensor: {missing_keys}")
         # Create base kwargs
         kwargs = {"strict": strict}
 
