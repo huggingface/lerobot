@@ -163,9 +163,9 @@ def _profile_iteration(dataset, num_samples, stats_file_path):
     # Add functions to profile
     profiler.add_function(dataset.__iter__)
     profiler.add_function(dataset.make_frame)
-    profiler.add_function(dataset._make_iterable_dataset)
-
-    # Profile the iteration
+    profiler.add_function(dataset._make_backtrackable_dataset)
+    profiler.add_function(dataset._get_delta_frames)
+    profiler.add_function(dataset._query_videos)
 
     # Define the function to profile
     def iterate_dataset(ds, n):
@@ -250,8 +250,21 @@ def profile_dataset(
     stats_file_path = "streaming_dataset_profile.txt"
 
     print(f"Creating dataset from {repo_id} with buffer_size={buffer_size}, max_num_shards={max_num_shards}")
+    camera_key = "observation.images.cam_right_wrist"
+    fps = 50
+
+    delta_timestamps = {
+        camera_key: [-1, -0.5, -0.20, 0],
+        "observation.state": [-1.5, -1, -0.5, -0.20, -0.10, 0],
+        "action": [t / fps for t in range(64)],
+    }
+
     dataset = StreamingLeRobotDataset(
-        repo_id=repo_id, buffer_size=buffer_size, max_num_shards=max_num_shards, seed=seed
+        repo_id=repo_id,
+        buffer_size=buffer_size,
+        max_num_shards=max_num_shards,
+        seed=seed,
+        delta_timestamps=delta_timestamps,
     )
 
     _time_iterations(dataset, num_samples, num_runs, warmup_iters, stats_file_path)
@@ -267,12 +280,12 @@ def main():
         default="lerobot/aloha_mobile_cabinet",
         help="HuggingFace repository ID for the dataset",
     )
-    parser.add_argument("--num-samples", type=int, default=2_000, help="Number of samples to iterate through")
+    parser.add_argument("--num-samples", type=int, default=100, help="Number of samples to iterate through")
     parser.add_argument("--buffer-size", type=int, default=1000, help="Buffer size for the dataset")
     parser.add_argument("--max-num-shards", type=int, default=1, help="Number of shards to use")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
     parser.add_argument(
-        "--num-runs", type=int, default=10, help="Number of timing runs to perform for statistics"
+        "--num-runs", type=int, default=3, help="Number of timing runs to perform for statistics"
     )
     parser.add_argument(
         "--warmup-iters", type=int, default=1, help="Number of warmup iterations before timing"

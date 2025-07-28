@@ -207,7 +207,12 @@ class VideoDecoderCache:
             return len(self._cache)
 
 
-# Global instance
+class FrameTimestampError(ValueError):
+    """Helper error to indicate the retrieved timestamps exceed the queried ones"""
+
+    pass
+
+
 _default_decoder_cache = VideoDecoderCache()
 
 
@@ -253,7 +258,7 @@ def decode_video_frames_torchcodec(
     # retrieve frames based on indices
     frames_batch = decoder.get_frames_at(indices=frame_indices)
 
-    for frame, pts in zip(frames_batch.data, frames_batch.pts_seconds, strict=False):
+    for frame, pts in zip(frames_batch.data, frames_batch.pts_seconds, strict=True):
         loaded_frames.append(frame)
         loaded_ts.append(pts.item())
         if log_loaded_timestamps:
@@ -284,10 +289,14 @@ def decode_video_frames_torchcodec(
     if log_loaded_timestamps:
         logging.info(f"{closest_ts=}")
 
-    # convert to float32 in [0,1] range (channel first)
-    closest_frames = closest_frames.type(torch.float32) / 255
+    # convert to float32 in [0,1] range
+    closest_frames = (closest_frames / 255.0).type(torch.float32)
 
-    assert len(timestamps) == len(closest_frames)
+    if not len(timestamps) == len(closest_frames):
+        raise FrameTimestampError(
+            f"Retrieved timestamps differ from queried {set(closest_frames) - set(timestamps)}"
+        )
+
     return closest_frames
 
 
