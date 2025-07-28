@@ -37,6 +37,7 @@ from lerobot.policies.utils import get_device_from_parameters
 from lerobot.scripts.eval import eval_policy
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.utils.random_utils import set_seed
+from lerobot.utils.swanlab_utils import SwanLabLogger
 from lerobot.utils.train_utils import (
     get_step_checkpoint_dir,
     get_step_identifier,
@@ -110,10 +111,17 @@ def train(cfg: TrainPipelineConfig):
     cfg.validate()
     logging.info(pformat(cfg.to_dict()))
 
-    if cfg.wandb.enable and cfg.wandb.project:
+    # Initialize loggers based on tracker selection
+    wandb_logger = None
+    swanlab_logger = None
+
+    if cfg.tracker in ["wandb", "both"] and cfg.wandb.project:
         wandb_logger = WandBLogger(cfg)
-    else:
-        wandb_logger = None
+
+    if cfg.tracker in ["swanlab", "both"] and cfg.swanlab.project:
+        swanlab_logger = SwanLabLogger(cfg)
+
+    if cfg.tracker == "none" or (not wandb_logger and not swanlab_logger):
         logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
 
     if cfg.seed is not None:
@@ -235,6 +243,11 @@ def train(cfg: TrainPipelineConfig):
                 if output_dict:
                     wandb_log_dict.update(output_dict)
                 wandb_logger.log_dict(wandb_log_dict, step)
+            if swanlab_logger:
+                swanlab_log_dict = train_tracker.to_dict()
+                if output_dict:
+                    swanlab_log_dict.update(output_dict)
+                swanlab_logger.log_dict(swanlab_log_dict, step)
             train_tracker.reset_averages()
 
         if cfg.save_checkpoint and is_saving_step:
@@ -244,6 +257,8 @@ def train(cfg: TrainPipelineConfig):
             update_last_checkpoint(checkpoint_dir)
             if wandb_logger:
                 wandb_logger.log_policy(checkpoint_dir)
+            if swanlab_logger:
+                swanlab_logger.log_policy(checkpoint_dir)
 
         if cfg.env and is_eval_step:
             step_id = get_step_identifier(step, cfg.steps)
@@ -277,6 +292,10 @@ def train(cfg: TrainPipelineConfig):
                 wandb_log_dict = {**eval_tracker.to_dict(), **eval_info}
                 wandb_logger.log_dict(wandb_log_dict, step, mode="eval")
                 wandb_logger.log_video(eval_info["video_paths"][0], step, mode="eval")
+            if swanlab_logger:
+                swanlab_log_dict = {**eval_tracker.to_dict(), **eval_info}
+                swanlab_logger.log_dict(swanlab_log_dict, step, mode="eval")
+                swanlab_logger.log_video(eval_info["video_paths"][0], step, mode="eval")
 
     if eval_env:
         eval_env.close()
