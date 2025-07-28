@@ -121,9 +121,7 @@ class SO101FollowerT(Robot):
         )
         self.cameras = make_cameras_from_configs(config.cameras)
 
-        self.pin_robot = pin.RobotWrapper.BuildFromURDF(
-            "src/lerobot/SO101/so101_new_calib.urdf", "src/lerobot/SO101"
-        )
+        self.pin_robot = pin.RobotWrapper.BuildFromURDF("urdf/so101_new_calib.urdf", "urdf")
 
         flip = {
             "shoulder_pan": True,
@@ -161,7 +159,6 @@ class SO101FollowerT(Robot):
         for motor in self.bus.motors:
             d[f"{motor}.pos"] = float
             d[f"{motor}.vel"] = float
-            # d[f"{motor}.acc"] = float
             d[f"{motor}.effort"] = float
         return d
 

@@ -116,7 +116,7 @@ packages = [
 [tool.ruff]
 line-length = 110
 target-version = "py310"
-exclude = ["tests/artifacts/**/*.safetensors", "*_pb2.py", "*_pb2_grpc.py"]
+exclude = ["tests/artifacts/**/*.safetensors", "*_pb2.py", "*_pb2_grpc.py", "*.part", "*.stl"]
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "I", "N", "B", "C4", "SIM"]
@@ -146,6 +146,12 @@ default.extend-ignore-identifiers-re = [
     "pn",
     "ser",
     "ein",
+]
+
+[tool.typos.files]
+extend-exclude = [
+  "*.stl",
+  "*.part",
 ]
 
 [build-system]
