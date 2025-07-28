@@ -156,6 +156,17 @@ all = [
     "lerobot[xarm]"
 ]
 
+[project.scripts]
+lerobot-calibrate="lerobot.calibrate:main"
+lerobot-find-cameras="lerobot.find_cameras:main"
+lerobot-find-port="lerobot.find_port:main"
+lerobot-record="lerobot.record:main"
+lerobot-replay="lerobot.replay:main"
+lerobot-setup-motors="lerobot.setup_motors:main"
+lerobot-teleoperate="lerobot.teleoperate:main"
+lerobot-eval="lerobot.scripts.eval:main"
+lerobot-train="lerobot.scripts.train:main"
+
 # ---------------- Tool Configurations ----------------
 [tool.setuptools.packages.find]
 where = ["src"]
