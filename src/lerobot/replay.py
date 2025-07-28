@@ -119,13 +119,11 @@ def replay(cfg: ReplayConfig):
 
         # Bilateral teleoperation
         if cfg.biteleop:
-            # Get current follower robot observation
             obs_f = robot.get_observation()
             pos_f = {j: obs_f[f"{j}.pos"] for j in robot.bus.motors}
             vel_f = {j: obs_f[f"{j}.vel"] for j in robot.bus.motors}
             tau_reaction_f = {j: obs_f[f"{j}.effort"] for j in robot.bus.motors}
 
-            # Get target leader state from the dataset
             pos_l = {j: action_from_ds[f"{j}.pos"] for j in robot.bus.motors}
             vel_l = {j: action_from_ds[f"{j}.vel"] for j in robot.bus.motors}
             # The saved effort in dataset is -tau_reaction_l

@@ -28,9 +28,7 @@ leader = SO101FollowerT(leader_cfg)
 follower.connect()
 leader.connect()
 
-# Initialize Rerun for visualization
 _init_rerun("bilateral_teleoperation")
-
 
 print("Starting 4-channel bilateral teleoperation")
 first_print = True
@@ -47,11 +45,9 @@ while True:
     if dt <= 0.0:
         dt = 0.01  # avoid div-by-zero
 
-    # Simplified model-based bilateral control
     tau_cmd_f, tau_cmd_l = [], []
     debug_info_f, debug_info_l = {}, {}
 
-    # Collect data for all motors
     pos_f = {j: obs_f[f"{j}.pos"] for j in follower.bus.motors}
     vel_f = {j: obs_f[f"{j}.vel"] for j in follower.bus.motors}
     tau_reaction_f = {j: obs_f[f"{j}.effort"] for j in follower.bus.motors}
@@ -60,12 +56,12 @@ while True:
     vel_l = {j: obs_l[f"{j}.vel"] for j in leader.bus.motors}
     tau_reaction_l = {j: obs_l[f"{j}.effort"] for j in leader.bus.motors}
 
-    # Joint-specific control gains for better tracking
+    # Joint-specific control gains
     kp_gains = follower.kp_gains
     kd_gains = follower.kd_gains
     kf_gains = follower.kf_gains
 
-    # Compute torque commands in one line using list comprehension
+    # Compute torque commands
     tau_cmd_f = [
         kp_gains[j] * (pos_l[j] - pos_f[j])  # Position tracking
         + kd_gains[j] * (vel_l[j] - vel_f[j])  # Velocity damping
@@ -80,9 +76,8 @@ while True:
         for j in leader.bus.motors
     ]
 
-    # Store interaction torques and debug info
+    # Store debug info
     for i, j in enumerate(follower.bus.motors):
-        # Store debug info
         debug_info_f[j] = {
             "τ_reaction": tau_reaction_f[j],
             "τ_ref": tau_cmd_f[i],
@@ -102,30 +97,25 @@ while True:
     follower.send_action({f"{m}.effort": tau_cmd_f[i] for i, m in enumerate(follower.bus.motors)})
     leader.send_action({f"{m}.effort": tau_cmd_l[i] for i, m in enumerate(leader.bus.motors)})
 
-    # Observation: follower side only (θ_f, ω_f, τ_ext)
     observation = {
         "follower_joint_angles": pos_f,  # θ_f: current angles
         "follower_angular_velocities": vel_f,  # ω_f: current velocities
         "follower_external_torques": tau_reaction_f,  # τ_ext: measured minus deterministic components
     }
 
-    # Action: leader targets (θ_leader[τ], ω_leader[τ], τ_leader[τ])
     action = {
         "leader_target_angles": pos_l,  # θ_leader[τ]: absolute target angles
         "leader_target_velocities": vel_l,  # ω_leader[τ]: absolute target velocities
         "leader_interaction_torques": tau_reaction_l,  # τ_leader[τ]: cmd minus deterministic components
     }
 
-    # Log data for visualization (100 Hz)
     if loop_count % (FRQ // RERUN_HZ) == 0:
         log_rerun_data(observation, action)
 
-    # Console diagnostics (10 Hz)
     loop_count += 1
     if loop_count % (FRQ // PRINT_HZ) == 0:
         hz = 1.0 / dt
 
-        # Detailed torque analysis mode - LEADER
         lines = [f"Loop {hz:6.1f} Hz    Δt {dt * 1e3:5.2f} ms"]
         lines.append("=" * 106)
         lines.append("LEADER ARM TORQUE ANALYSIS:")

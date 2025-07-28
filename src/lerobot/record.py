@@ -223,10 +223,7 @@ def record_loop(
     events: dict,
     fps: int,
     dataset: LeRobotDataset | None = None,
-    teleop: Teleoperator
-    | List[Teleoperator]
-    | Robot
-    | None = None,  # Allow Robot type for bilateral teleoperation
+    teleop: Teleoperator | List[Teleoperator] | Robot | None = None,
     policy: PreTrainedPolicy | None = None,
     control_time_s: int | None = None,
     single_task: str | None = None,
@@ -236,7 +233,6 @@ def record_loop(
     if dataset is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
 
-    # Check if bilateral teleoperation is enabled and validate robot/teleop types
     if biteleop and policy is None:
         if not isinstance(robot, SO101FollowerT):
             raise ValueError(
@@ -268,9 +264,8 @@ def record_loop(
     timestamp = 0
     start_episode_t = time.perf_counter()
 
-    # For controlling rerun logging frequency
     loop_count = 0
-    rerun_log_freq = max(1, int(fps / 10))  # Log at 10Hz
+    rerun_log_freq = max(1, int(fps / 10))
 
     while control_time_s is not None and timestamp < control_time_s:
         start_loop_t = time.perf_counter()
@@ -290,11 +285,9 @@ def record_loop(
             and isinstance(teleop, SO101FollowerT)
             and policy is None
         ):
-            # Get observations from both arms
             obs_f = observation  # robot is the follower
             obs_l = teleop.get_observation()
 
-            # Collect data for all motors
             pos_f = {j: obs_f[f"{j}.pos"] for j in robot.bus.motors}
             vel_f = {j: obs_f[f"{j}.vel"] for j in robot.bus.motors}
             tau_reaction_f = {j: obs_f[f"{j}.effort"] for j in robot.bus.motors}
@@ -309,7 +302,7 @@ def record_loop(
             kd_gains = robot.kd_gains
             kf_gains = robot.kf_gains
 
-            # Compute torque commands in one line using list comprehension
+            # Compute torque commands
             tau_cmd_f = [
                 (
                     kp_gains[j] * (pos_l[j] - pos_f[j])  # Position tracking
@@ -328,7 +321,6 @@ def record_loop(
                 for j in teleop.bus.motors
             ]
 
-            # Send torque commands
             action = {f"{m}.effort": tau_cmd_f[i] for i, m in enumerate(robot.bus.motors)}
             teleop_action = {f"{m}.effort": tau_cmd_l[i] for i, m in enumerate(teleop.bus.motors)}
             teleop.send_action(teleop_action)
@@ -345,7 +337,6 @@ def record_loop(
             # Override the observation_frame and action for dataset recording
             if dataset is not None:
                 observation_frame = build_dataset_frame(dataset.features, observation, prefix="observation")
-                # Store bilateral_action to be used later when building action_frame
                 action = bilateral_action
 
         elif policy is not None and biteleop and isinstance(robot, SO101FollowerT):
@@ -357,18 +348,16 @@ def record_loop(
                 task=single_task,
                 robot_type=robot.robot_type,
             )
-            # Read robot current state
             pos_f = {j: observation[f"{j}.pos"] for j in robot.bus.motors}
             vel_f = {j: observation[f"{j}.vel"] for j in robot.bus.motors}
             tau_reaction_f = {j: observation[f"{j}.effort"] for j in robot.bus.motors}
 
             # The model returns [pos1, pos2, …, vel1, vel2, …, tau1, tau2, …]
-            motors = robot.bus.motors  # 6 joints in your case
+            motors = robot.bus.motors  # 6 joints
             pos_l, vel_l, neg_tau_reaction_l = split_interleaved_action(
                 action_values, motors
             )  # The model is trained and returns the effort already as negative: -tau_reaction_l
 
-            # Get control gains from the robot instance
             kp, kd, kf = robot.kp_gains, robot.kd_gains, robot.kf_gains
 
             # Compute torque command for the follower robot
@@ -394,7 +383,6 @@ def record_loop(
             # Override the observation_frame and action for dataset recording
             if dataset is not None:
                 observation_frame = build_dataset_frame(dataset.features, observation, prefix="observation")
-                # Store bilateral_action to be used later when building action_frame
                 action = bilateral_action
 
         elif policy is not None and not biteleop:
@@ -462,7 +450,6 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     robot = make_robot_from_config(cfg.robot)
 
-    # For bilateral teleoperation, create teleop as a robot instance
     if cfg.biteleop and cfg.teleop is not None:
         print("Bilateral teleoperation enabled")
         # For bilateral teleoperation, both arms must be SO101FollowerT robots
@@ -472,8 +459,6 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         if cfg.teleop.type != "so101_follower_t":
             raise ValueError("Bilateral teleoperation requires teleop.type to be 'so101_follower_t'")
 
-        # Create teleop as SO101FollowerT robot instance
-        # Access attributes dynamically since they vary by teleop config type
         port = getattr(cfg.teleop, "port", None)
         if port is None:
             raise ValueError("Bilateral teleoperation requires teleop.port to be specified")

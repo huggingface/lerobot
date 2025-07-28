@@ -49,7 +49,7 @@ class SO101FollowerT(Robot):
     _KT_NM_PER_AMP: float = 0.814  # Torque constant Kt [N·m/A] #https://www.feetechrc.com/811177.html
     _MAX_CURRENT_A: float = 4.0  # Safe driver limit
 
-    # Position gains [Nm/rad]
+    # Position gains
     _KP_GAINS = {
         "shoulder_pan": 5.0,
         "shoulder_lift": 7.0,
@@ -59,7 +59,7 @@ class SO101FollowerT(Robot):
         "gripper": 5.0,
     }
 
-    # Velocity gains [Nm⋅s/rad]
+    # Velocity gains
     _KD_GAINS = {
         "shoulder_pan": 0.4,
         "shoulder_lift": 0.6,
@@ -79,7 +79,7 @@ class SO101FollowerT(Robot):
         "gripper": 0.05,
     }
 
-    # Viscous friction coefficient [Nm⋅s/rad] per joint
+    # Viscous friction coefficient
     _FRICTION_VISCOUS = {
         "shoulder_pan": 0.05,
         "shoulder_lift": 0.08,
@@ -89,7 +89,7 @@ class SO101FollowerT(Robot):
         "gripper": 0.05,
     }
 
-    # Coulomb/static friction [Nm] per joint
+    # Coulomb/static friction
     _FRICTION_COULOMB = {
         "shoulder_pan": 0.15,
         "shoulder_lift": 0.25,
@@ -103,7 +103,6 @@ class SO101FollowerT(Robot):
         super().__init__(config)
         self.config = config
 
-        # Ensure calibration is loaded before creating the bus
         if self.calibration_fpath.is_file() and not self.calibration:
             self._load_calibration()
 
@@ -317,7 +316,7 @@ class SO101FollowerT(Robot):
         tau_gravity = self._gravity_from_q(q_rad)
         tau_inertia = self._inertia_from_q_dq(q_rad, dq_rad, ddq_rad)
 
-        # Compute disturbance: what's left after removing known dynamics
+        # Compute disturbance
         tau_disturbance = {}
         tau_friction = {}
         for motor_name in self.bus.motors:
@@ -424,7 +423,7 @@ class SO101FollowerT(Robot):
             self._pos_history[m].append(pos_rad[m])
         self._time_history.append(t_now)
 
-        # Calculate raw velocity using finite differences
+        # Calculate raw velocity
         vel_rad_raw = {}
         if self._prev_pos_rad is None or self._prev_t is None:
             vel_rad_raw = dict.fromkeys(pos_rad, 0.0)

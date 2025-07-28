@@ -224,7 +224,7 @@ class FeetechMotorsBus(MotorsBus):
         for motor in self.motors:
             # By default, Feetech motors have a 500µs delay response time (corresponding to a value of 250 on
             # the 'Return_Delay_Time' address). We ensure this is reduced to the minimum of 2µs (value of 0).
-            # self.write("Return_Delay_Time", motor, 0)
+            # self.write("Return_Delay_Time", motor, 0) # THIS DOES NOT WORK FOR HLS3625
             # Set 'Maximum_Acceleration' to 254 to speedup acceleration and deceleration of the motors.
             if self.protocol_version == 0:
                 self.write("Maximum_Acceleration", motor, maximum_acceleration)
