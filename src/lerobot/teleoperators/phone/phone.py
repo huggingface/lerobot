@@ -34,17 +34,7 @@ from .config_phone import PhoneConfig, PhoneOS
 
 logger = logging.getLogger(__name__)
 
-DEVICE_CAMERA_OFFSET = np.array([0.0, 0.02, -0.04])  # tune per device
-
-# ARKit world: +x right, +y up, +z forward
-# Robot world: +x forward, +y left, +z up
-_R_AR2R = (
-    Rotation.from_euler("z", -90, degrees=True)  # right → fwd
-    * Rotation.from_euler("x", 180, degrees=True)
-)  # fix handedness (det = +1)
-
-# WebXR world: +x right, +y up, +z back (-forward)
-_R_WXR2R = Rotation.from_euler("z", -90, degrees=True)  # right → fwd
+# TODO(pepijn): Add transform to center of phone instead of camera?? (check if this is needed for apple)
 
 
 class Phone(Teleoperator):
@@ -74,12 +64,10 @@ class Phone(Teleoperator):
         self._arm_ref_pos: np.ndarray | None = None
         self._arm_ref_rot_inv: Rotation | None = None
 
-    def update_base_pose(self, x: float, y: float, yaw: float) -> None:
-        """
-        Update current base pose (in robot/world frame) for teleop compensation.
-        Call this once per loop *before* get_action().
-        """
-        self._base_pose[:] = [x, y, yaw]
+        # Calibration origin
+        self._calib_pos: np.ndarray | None = None
+        self._calib_rot: Rotation | None = None
+        self._calib_rot_inv: Rotation | None = None
 
     @property
     def action_features(self) -> dict[str, type]:
@@ -101,18 +89,6 @@ class Phone(Teleoperator):
         for i in range(1, 9):
             features[f"b{i}"] = int
         return features
-
-    def _map_arkit_to_robot(self, pos_xyz: np.ndarray, quat_wxyz: np.ndarray):
-        r_arkit = Rotation.from_quat(quat_wxyz[[1, 2, 3, 0]])  # wxyz ➜ xyzw
-        r_robot = _R_AR2R * r_arkit
-        robot_pos = _R_AR2R.apply(pos_xyz) + r_robot.apply(DEVICE_CAMERA_OFFSET)
-        return robot_pos, r_robot
-
-    def _map_webxr_to_robot(self, pos_xyz: np.ndarray, quat_wxyz: np.ndarray):
-        r_wxr = Rotation.from_quat(quat_wxyz[[1, 2, 3, 0]])  # wxyz ➜ xyzw
-        r_robot = _R_WXR2R * r_wxr
-        robot_pos = _R_WXR2R.apply(pos_xyz) + r_robot.apply(DEVICE_CAMERA_OFFSET)
-        return robot_pos, r_robot
 
     @property
     def is_connected(self) -> bool:
@@ -145,14 +121,72 @@ class Phone(Teleoperator):
         else:
             raise ValueError(f"Invalid config phone_os: {self.source}")
 
+        # Always calibrate on connect
+        self.calibrate()
+
     @property
     def is_calibrated(self) -> bool:
-        # No calibration needed for phone teleop
-        return True
+        return (self._calib_pos is not None) and (self._calib_rot is not None)
 
     def calibrate(self) -> None:
-        # No calibration needed for phone teleop
-        pass
+        """
+        Ask the human to hold the phone in its neutral pose and press B1.
+        """
+        print("\n Phone <-> Robot calibration")
+        print("Hold the phone so that: top edge points forward (robot +x) and screen points up (robot +z)")
+        print("Press and hold B1 to capture this pose...\n")
+
+        while True:
+            ok, pos_r, rot_r = self._read_current_pose()
+            if ok:
+                break
+            time.sleep(0.01)
+
+        # Debounce: require B1 pressed for ~0.3 s
+        consecutive = 0
+        while consecutive < 30:
+            act = self.get_action()
+            if act.get("b1", 0):
+                consecutive += 1
+            else:
+                consecutive = 0
+            time.sleep(0.01)
+
+        # Store calibration transform  ➜  phone frame == robot frame
+        self._calib_pos = pos_r.copy()
+        self._calib_rot = rot_r
+        self._calib_rot_inv = rot_r.inv()
+
+        # Reset reference‑frame state (starts fresh when operator presses B1 later)
+        self._reset_arm_reference()
+        self._enabled = False
+
+        print("Calibration stored. Release B1; press again to drive.\n")
+
+    def _read_current_pose(self) -> tuple[bool, np.ndarray | None, Rotation | None]:
+        if self.source == PhoneOS.IOS:
+            fbk = self._group.get_next_feedback()
+            pose = fbk[0]
+            ar_pos = getattr(pose, "ar_position", None)
+            ar_quat = getattr(pose, "ar_orientation", None)  # w‑x‑y‑z
+            if ar_pos is None or ar_quat is None:
+                return False, None, None
+            # convert [w, x, y, z] → [x, y, z, w] for scipy
+            quat_xyzw = np.concatenate((ar_quat[1:], [ar_quat[0]]))
+            rot = Rotation.from_quat(quat_xyzw)
+            return True, ar_pos, rot
+        else:  # Android
+            p = self._latest_pose
+            if p is None:
+                return False, None, None
+            webxr_pos = p[:3, 3]
+            webxr_rot = Rotation.from_matrix(p[:3, :3])
+            webxr_wxyz = np.array([webxr_rot.as_quat()[3], *webxr_rot.as_quat()[:3]])
+            pos_r, rot_r = self._map_webxr_to_robot(
+                np.array(webxr_pos, dtype=float),
+                webxr_wxyz,
+            )
+        return True, pos_r, rot_r
 
     @property
     def feedback_features(self) -> dict[str, type]:
@@ -167,6 +201,13 @@ class Phone(Teleoperator):
         self._latest_pose = pose
         time.sleep(0.001)  # 1ms delay to avoid race condition
 
+    def _apply_calibration(self, pos: np.ndarray, rot: Rotation) -> tuple[np.ndarray, Rotation]:
+        if not self.is_calibrated:
+            return pos, rot
+        pos_cal = self._calib_rot_inv.apply(pos - self._calib_pos)
+        rot_cal = self._calib_rot_inv * rot
+        return pos_cal, rot_cal
+
     def get_action(self) -> dict[str, float]:
         if self.source == PhoneOS.IOS:
             fbk = self._group.get_next_feedback()
@@ -175,21 +216,15 @@ class Phone(Teleoperator):
             ar_quat = getattr(pose, "ar_orientation", None)  # [w,x,y,z]
             if ar_pos is None or ar_quat is None:
                 return {}
-            curr_pos, r_curr = self._map_arkit_to_robot(
-                np.array(ar_pos, dtype=float), np.array(ar_quat, dtype=float)
-            )
+            curr_pos = np.array(ar_pos, dtype=float)
+            r_curr = Rotation.from_quat(ar_quat[[1, 2, 3, 0]])  # wxyz→xyzw
+            curr_pos, r_curr = self._apply_calibration(curr_pos, r_curr)
         else:
             pose = self._latest_pose
             if pose is None:
                 return {}
-            # teleop library pose: 4x4 matrix in WebXR frame
-            webxr_pos = pose[:3, 3]
-            webxr_r = Rotation.from_matrix(pose[:3, :3])
-            # Convert Rotation back to wxyz for a unified interface
-            webxr_quat_wxyz = np.array([webxr_r.as_quat()[3], *webxr_r.as_quat()[:3]])
-            curr_pos, r_curr = self._map_webxr_to_robot(
-                np.array(webxr_pos, dtype=float), np.array(webxr_quat_wxyz, dtype=float)
-            )
+            curr_pos, r_curr = self._apply_calibration(curr_pos, r_curr)
+
         # Build action with raw IO (so caller can still read buttons/analogs)
         action: dict[str, float | int] = {}
 
@@ -254,7 +289,7 @@ class Phone(Teleoperator):
                     "target_qx": 0.0,
                     "target_qy": 0.0,
                     "target_qz": 0.0,
-                    "target_qw": 1.0,
+                    "target_qw": 0.0,
                 }
             )
             return action
@@ -273,12 +308,12 @@ class Phone(Teleoperator):
 
         action.update(
             {
-                "target_x": float(pos_offset_total[0]),
-                "target_y": float(pos_offset_total[1]),
+                "target_x": -1.0 * float(pos_offset_total[1]),
+                "target_y": float(pos_offset_total[0]),
                 "target_z": float(pos_offset_total[2]),
-                "target_qx": float(quat_xyzw[0]),
-                "target_qy": float(quat_xyzw[1]),
-                "target_qz": float(quat_xyzw[2]),
+                "target_qx": float(quat_xyzw[1]),
+                "target_qy": float(quat_xyzw[0]),
+                "target_qz": -1.0 * float(quat_xyzw[2]),
                 "target_qw": float(quat_xyzw[3]),
             }
         )

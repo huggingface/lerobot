@@ -28,7 +28,7 @@ robot_config = SO100FollowerEndEffectorConfig(
         "min": [-1.0, -1.0, -1.0],  # min x, y, z
         "max": [1.0, 1.0, 1.0],  # max x, y, z
     },
-    end_effector_step_sizes={"x": 0.25, "y": 0.25, "z": 0.25, "roll": 1.0, "pitch": 1.0, "yaw": 1.0},
+    end_effector_step_sizes={"x": 0.5, "y": 0.5, "z": 0.5, "roll": 1.0, "pitch": 1.0, "yaw": 1.0},
 )
 
 # TODO(pepijn): Add LeKiwi example
@@ -62,5 +62,20 @@ while True:
         "target_qw": teleop_cmd["target_qw"],
         "gripper": gripper_cmd,
     }
+
+    # print one line with x,y,z and quaternion
+    print(
+        "\r"
+        f"x={teleop_cmd['target_x']:.3f}, "
+        f"y={teleop_cmd['target_y']:.3f}, "
+        f"z={teleop_cmd['target_z']:.3f}, "
+        f"qx={teleop_cmd['target_qx']:.3f}, "
+        f"qy={teleop_cmd['target_qy']:.3f}, "
+        f"qz={teleop_cmd['target_qz']:.3f}, "
+        f"qw={teleop_cmd['target_qw']:.3f}",
+        end="",
+        flush=True,
+    )
+
     robot.send_action(action)
     time.sleep(0.01)
