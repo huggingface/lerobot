@@ -78,11 +78,15 @@ class Reachy2Robot(Robot):
 
     @property
     def observation_features(self) -> dict:
-        return {
-            "dtype": "float32",
-            "shape": len(REACHY2_MOTORS),
-            "names": {"motors": list(REACHY2_MOTORS)},
-        }
+        return dict.fromkeys(
+            REACHY2_MOTORS.keys(),
+            float,
+        )
+        # return {
+        #     "dtype": "float32",
+        #     "shape": len(REACHY2_MOTORS),
+        #     "names": {"motors": list(REACHY2_MOTORS)},
+        # }
 
     @property
     def action_features(self) -> dict:
