@@ -124,7 +124,6 @@ class DiffusionPolicy(PreTrainedPolicy):
         if ACTION in batch:
             batch.pop(ACTION)
 
-        batch = self.normalize_inputs(batch)
         if self.config.image_features:
             batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
             batch[OBS_IMAGES] = torch.stack([batch[key] for key in self.config.image_features], dim=-4)
