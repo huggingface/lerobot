@@ -44,7 +44,7 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
 @EnvConfig.register_subclass("aloha")
 @dataclass
 class AlohaEnv(EnvConfig):
-    task: str = "AlohaInsertion-v0"
+    task: str | None = "AlohaInsertion-v0"
     fps: int = 50
     episode_length: int = 400
     obs_type: str = "pixels_agent_pos"
@@ -82,7 +82,7 @@ class AlohaEnv(EnvConfig):
 @EnvConfig.register_subclass("pusht")
 @dataclass
 class PushtEnv(EnvConfig):
-    task: str = "PushT-v0"
+    task: str | None = "PushT-v0"
     fps: int = 10
     episode_length: int = 300
     obs_type: str = "pixels_agent_pos"
@@ -124,7 +124,7 @@ class PushtEnv(EnvConfig):
 @EnvConfig.register_subclass("xarm")
 @dataclass
 class XarmEnv(EnvConfig):
-    task: str = "XarmLift-v0"
+    task: str | None = "XarmLift-v0"
     fps: int = 15
     episode_length: int = 200
     obs_type: str = "pixels_agent_pos"
@@ -200,10 +200,10 @@ class HILSerlRobotEnvConfig(EnvConfig):
     wrapper: EnvTransformConfig | None = None
     fps: int = 10
     name: str = "real_robot"
-    mode: str = None  # Either "record", "replay", None
+    mode: str | None = None  # Either "record", "replay", None
     repo_id: str | None = None
     dataset_root: str | None = None
-    task: str = ""
+    task: str | None = ""
     num_episodes: int = 10  # only for record mode
     episode: int = 0
     device: str = "cuda"
@@ -213,6 +213,7 @@ class HILSerlRobotEnvConfig(EnvConfig):
     # For the reward classifier, to record more positive examples after a success
     number_of_steps_after_success: int = 0
 
+    @property
     def gym_kwargs(self) -> dict:
         return {}
 
@@ -222,9 +223,8 @@ class HILSerlRobotEnvConfig(EnvConfig):
 class HILEnvConfig(EnvConfig):
     """Configuration for the HIL environment."""
 
-    type: str = "hil"
     name: str = "PandaPickCube"
-    task: str = "PandaPickCubeKeyboard-v0"
+    task: str | None = "PandaPickCubeKeyboard-v0"
     use_viewer: bool = True
     gripper_penalty: float = 0.0
     use_gamepad: bool = True
@@ -252,7 +252,7 @@ class HILEnvConfig(EnvConfig):
     robot_config: RobotConfig | None = None
     teleop_config: TeleoperatorConfig | None = None
     wrapper: EnvTransformConfig | None = None
-    mode: str = None  # Either "record", "replay", None
+    mode: str | None = None  # Either "record", "replay", None
     repo_id: str | None = None
     dataset_root: str | None = None
     num_episodes: int = 10  # only for record mode
