@@ -139,7 +139,6 @@ class Reachy2Robot(Robot):
         # Read Reachy 2 state
         before_read_t = time.perf_counter()
         state = self._get_state()
-        print(state)
         self.logs["read_pos_dt_s"] = time.perf_counter() - before_read_t
 
         state = np.asarray(list(state.values()))
