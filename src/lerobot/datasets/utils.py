@@ -259,13 +259,91 @@ def load_stats(local_dir: Path) -> dict[str, dict[str, np.ndarray]]:
     return cast_stats_to_numpy(stats)
 
 
-def write_hf_dataset(hf_dataset: Dataset, local_dir: Path):
-    if get_hf_dataset_size_in_mb(hf_dataset) > DEFAULT_DATA_FILE_SIZE_IN_MB:
-        raise NotImplementedError("Contact a maintainer.")
+def write_hf_dataset(
+    hf_dataset: Dataset,
+    local_dir: Path,
+    data_file_size_mb: float | None = None,
+    chunk_size: int | None = None,
+):
+    """
+    Writes a Hugging Face Dataset to one or more Parquet files in a structured directory format.
 
-    path = local_dir / DEFAULT_DATA_PATH.format(chunk_index=0, file_index=0)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    hf_dataset.to_parquet(path)
+    If the dataset size is within `DEFAULT_DATA_FILE_SIZE_IN_MB`, it's saved as a single file.
+    Otherwise, the dataset is split into multiple smaller Parquet files, each not exceeding the size limit.
+    The file and chunk indices are managed to organize the output files in a hierarchical structure,
+    e.g., `data/chunk-000/file-000.parquet`, `data/chunk-000/file-001.parquet`, etc.
+    This function ensures that episodes are not split across multiple files.
+
+    Args:
+        hf_dataset (Dataset): The Hugging Face Dataset to be written to disk.
+        local_dir (Path): The root directory where the dataset files will be stored.
+        data_file_size_mb (float, optional): Maximal size for the parquet data file, in MB. Defaults to DEFAULT_DATA_FILE_SIZE_IN_MB.
+        chunk_size (int, optional): Maximal number of files within a chunk folder before creating another one. Defaults to DEFAULT_CHUNK_SIZE.
+    """
+    if data_file_size_mb is None:
+        data_file_size_mb = DEFAULT_DATA_FILE_SIZE_IN_MB
+    if chunk_size is None:
+        chunk_size = DEFAULT_CHUNK_SIZE
+
+    dataset_size_in_mb = get_hf_dataset_size_in_mb(hf_dataset)
+
+    if dataset_size_in_mb <= data_file_size_mb:
+        # If the dataset is small enough, write it to a single file.
+        path = local_dir / DEFAULT_DATA_PATH.format(chunk_index=0, file_index=0)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        hf_dataset.to_parquet(path)
+        return
+
+    # If the dataset is too large, split it into smaller chunks, keeping episodes whole.
+    episode_indices = np.array(hf_dataset["episode_index"])
+    episode_boundaries = np.where(np.diff(episode_indices) != 0)[0] + 1
+    episode_starts = np.concatenate(([0], episode_boundaries))
+    episode_ends = np.concatenate((episode_boundaries, [len(hf_dataset)]))
+
+    num_episodes = len(episode_starts)
+    current_episode_idx = 0
+    chunk_idx, file_idx = 0, 0
+
+    while current_episode_idx < num_episodes:
+        shard_start_row = episode_starts[current_episode_idx]
+        shard_end_row = episode_ends[current_episode_idx]
+        next_episode_to_try_idx = current_episode_idx + 1
+
+        while next_episode_to_try_idx < num_episodes:
+            potential_shard_end_row = episode_ends[next_episode_to_try_idx]
+            dataset_shard_candidate = hf_dataset.select(range(shard_start_row, potential_shard_end_row))
+            shard_size_mb = get_hf_dataset_size_in_mb(dataset_shard_candidate)
+
+            if shard_size_mb > data_file_size_mb:
+                break
+            else:
+                shard_end_row = potential_shard_end_row
+                next_episode_to_try_idx += 1
+
+        dataset_shard = hf_dataset.select(range(shard_start_row, shard_end_row))
+
+        if (
+            shard_start_row == episode_starts[current_episode_idx]
+            and shard_end_row == episode_ends[current_episode_idx]
+        ):
+            shard_size_mb = get_hf_dataset_size_in_mb(dataset_shard)
+            if shard_size_mb > data_file_size_mb:
+                logging.warning(
+                    f"Episode with index {hf_dataset[shard_start_row.item()]['episode_index']} has size {shard_size_mb:.2f}MB, "
+                    f"which is larger than data_file_size_mb ({data_file_size_mb}MB). "
+                    "Writing it to a separate shard anyway to preserve episode integrity."
+                )
+
+        # Define the path for the current shard and ensure the directory exists.
+        path = local_dir / DEFAULT_DATA_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Write the shard to a Parquet file.
+        dataset_shard.to_parquet(path)
+
+        # Update chunk and file indices for the next iteration.
+        chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, chunk_size)
+        current_episode_idx = next_episode_to_try_idx
 
 
 def write_tasks(tasks: pandas.DataFrame, local_dir: Path):
