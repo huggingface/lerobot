@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 
 import torch
 
+from lerobot.configs.default import WandBConfig
 from lerobot.robots.config import RobotConfig
 from lerobot.scripts.server.constants import (
     DEFAULT_FPS,
@@ -130,15 +131,13 @@ class RobotClientConfig:
     chunk_size_threshold: float = field(default=0.5, metadata={"help": "Threshold for chunk size control"})
     fps: int = field(default=DEFAULT_FPS, metadata={"help": "Frames per second"})
 
+    # WandB configuration
+    wandb: WandBConfig = field(default_factory=WandBConfig)
+
     # Aggregate function configuration (CLI-compatible)
     aggregate_fn_name: str = field(
         default="weighted_average",
         metadata={"help": f"Name of aggregate function to use. Options: {list(AGGREGATE_FUNCTIONS.keys())}"},
-    )
-
-    # Debug configuration
-    debug_visualize_queue_size: bool = field(
-        default=False, metadata={"help": "Visualize the action queue size"}
     )
 
     # Verification configuration

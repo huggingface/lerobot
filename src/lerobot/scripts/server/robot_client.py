@@ -70,7 +70,6 @@ from lerobot.scripts.server.helpers import (
     get_logger,
     map_robot_keys_to_lerobot_features,
     validate_robot_cameras_for_policy,
-    visualize_action_queue_size,
 )
 from lerobot.transport import (
     services_pb2,  # type: ignore
@@ -80,6 +79,7 @@ from lerobot.transport.utils import grpc_channel_options, send_bytes_in_chunks
 from lerobot.utils import queue
 from lerobot.utils.process import ProcessSignalHandler
 from lerobot.utils.queue import get_last_item_from_queue
+from lerobot.utils.wandb_utils import WandBLogger
 
 
 class RobotClient:
@@ -95,6 +95,7 @@ class RobotClient:
 
         # Store configuration
         self.config = config
+        self.setup_wandb()
         self.robot = make_robot_from_config(config.robot)
         self.robot.connect()
 
@@ -134,7 +135,6 @@ class RobotClient:
 
         self.actions_bytes_queue = Queue()
         self.action_queue = Queue()
-        self.action_queue_size = []
 
         # FPS measurement
         self.fps_tracker = FPSTracker(target_fps=self.config.fps)
@@ -147,6 +147,12 @@ class RobotClient:
     def setup_logger(self):
         self.logger = get_logger(self.prefix)
         self.logger.setLevel(logging.DEBUG)
+
+    def setup_wandb(self):
+        self.wandb_logger = None
+
+        if self.config.wandb.enable and self.config.wandb.project:
+            self.wandb_logger = WandBLogger(self.config)
 
     @property
     def running(self):
@@ -316,9 +322,14 @@ class RobotClient:
         if len(actions_from_policy_server) > 0:
             self._aggregate_action_queues(actions_from_policy_server, self.config.aggregate_fn)
 
-    def track_action_queue_size(self):
-        self.action_queue_size.append(self.action_queue.qsize())
-        self.logger.debug(f"Action queue size: {self.action_queue_size[-1]}")
+    def track_action_queue_size(self, inference_step: int):
+        size = self.action_queue.qsize()
+        self.wandb_logger.log_dict(
+            {"action_queue_size": size},
+            step=inference_step,
+            mode="eval",
+        )
+        self.logger.debug(f"Action queue size: {size}")
 
     def apply_action(self) -> dict[str, Any]:
         """Reading and performing actions in local queue"""
@@ -373,6 +384,8 @@ class RobotClient:
         # Wait at barrier for synchronized start
         self.logger.info("Control loop thread starting")
 
+        inference_step = 0
+
         while self.running:
             control_loop_start = time.perf_counter()
 
@@ -380,7 +393,7 @@ class RobotClient:
 
             control_loop_after_action_update = time.perf_counter()
 
-            self.track_action_queue_size()
+            self.track_action_queue_size(inference_step)
 
             control_loop_after_action_update = time.perf_counter()
 
@@ -400,6 +413,8 @@ class RobotClient:
             )
 
             self._sleep(control_loop_start, self.config.environment_dt)
+
+            inference_step += 1
 
     def _sleep(self, control_loop_start: float, max_sleep_time: float):
         time_to_sleep = max(0, self.config.environment_dt - (time.perf_counter() - control_loop_start))
@@ -433,9 +448,6 @@ def async_client(cfg: RobotClientConfig):
     client.stop()
     client.join_communication_thread()
     client.logger.info("Communication thread joined")
-
-    if cfg.debug_visualize_queue_size:
-        visualize_action_queue_size(client.action_queue_size)
 
     client.logger.info("Client stopped")
 
