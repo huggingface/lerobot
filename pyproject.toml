@@ -75,7 +75,7 @@ dependencies = [
     "packaging>=24.2",
     "pynput>=1.7.7",
     "pyserial>=3.5",
-    "wandb>=0.16.3",
+    "wandb>=0.20.0",
 
     "draccus==0.10.0", # TODO: Remove ==
     "gymnasium>=0.29.1,<1.0.0", # TODO: Bumb dependency
