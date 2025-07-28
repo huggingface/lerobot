@@ -489,7 +489,7 @@ class PI0FlowMatching(nn.Module):
             attention_implementation=self.config.attention_implementation,
         )
         self.paligemma_with_expert = PaliGemmaWithExpertModel(paligemma_with_export_config)
-        
+
         self.beta_dist = torch.distributions.Beta(concentration1=1.5, concentration0=1.0)
 
         # Projections are float32
