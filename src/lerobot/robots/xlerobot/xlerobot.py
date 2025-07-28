@@ -22,7 +22,6 @@ from typing import Any
 import numpy as np
 
 from lerobot.cameras.utils import make_cameras_from_configs
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.feetech import (
     FeetechMotorsBus,
@@ -32,7 +31,6 @@ from lerobot.robots.so100_follower import SO100Follower
 from lerobot.robots.so100_follower.config_so100_follower import SO100FollowerConfig
 
 from ..robot import Robot
-from ..utils import ensure_safe_goal_position
 from .config_xlerobot import XLeRobotConfig
 
 logger = logging.getLogger(__name__)
@@ -41,7 +39,7 @@ logger = logging.getLogger(__name__)
 class XLeRobot(Robot):
     """
     XLeRobot: A bimanual robot with SO-100 Follower Arms plus additional head joints and base motors.
-    
+
     Left arm: SO100Follower + 2 positional control motors as head joints
     Right arm: SO100Follower + 3 velocity control motors as base (similar to lekiwi)
     """
@@ -106,20 +104,20 @@ class XLeRobot(Robot):
     def _motors_ft(self) -> dict[str, type]:
         # Left arm motors (positional control)
         left_motors = {f"left_{motor}.pos": float for motor in self.left_arm.bus.motors}
-        
+
         # Right arm motors (positional control)
         right_motors = {f"right_{motor}.pos": float for motor in self.right_arm.bus.motors}
-        
+
         # Head motors (positional control)
         head_motors = {f"head_{motor}.pos": float for motor in self.head_bus.motors}
-        
+
         # Base motors (velocity control)
         base_motors = {
             "x.vel": float,
             "y.vel": float,
             "theta.vel": float,
         }
-        
+
         return left_motors | right_motors | head_motors | base_motors
 
     @property
@@ -149,12 +147,12 @@ class XLeRobot(Robot):
     def connect(self, calibrate: bool = True) -> None:
         self.left_arm.connect(calibrate)
         self.right_arm.connect(calibrate)
-        
+
         # Connect head bus
         if not self.head_bus.is_connected:
             self.head_bus.connect()
             logger.info(f"{self} head bus connected")
-        
+
         # Connect base bus
         if not self.base_bus.is_connected:
             self.base_bus.connect()
@@ -166,7 +164,7 @@ class XLeRobot(Robot):
     @property
     def is_calibrated(self) -> bool:
         return (
-            self.left_arm.is_calibrated 
+            self.left_arm.is_calibrated
             and self.right_arm.is_calibrated
             and self.head_bus.is_calibrated
             and self.base_bus.is_calibrated
@@ -174,8 +172,8 @@ class XLeRobot(Robot):
 
     def calibrate(self) -> None:
         print("开始校准XLeRobot...")
-        print("="*50)
-        
+        print("=" * 50)
+
         print("1. 校准左臂 (左手 + 头部设备)")
         print("   请确保左臂和头部设备已正确连接")
         input("按Enter键开始校准左臂...")
@@ -186,10 +184,10 @@ class XLeRobot(Robot):
             print(f"✗ 左臂校准失败: {e}")
             print("请检查左臂连接，或跳过左臂校准")
             retry = input("是否重试左臂校准? (y/n): ").strip().lower()
-            if retry in ['y', 'yes', '是']:
+            if retry in ["y", "yes", "是"]:
                 self.left_arm.calibrate()
                 print("✓ 左臂校准成功")
-        
+
         print("\n2. 校准右臂 (右手 + 底盘设备)")
         print("   请确保右臂和底盘设备已正确连接")
         input("按Enter键开始校准右臂...")
@@ -200,15 +198,15 @@ class XLeRobot(Robot):
             print(f"✗ 右臂校准失败: {e}")
             print("请检查右臂连接，或跳过右臂校准")
             retry = input("是否重试右臂校准? (y/n): ").strip().lower()
-            if retry in ['y', 'yes', '是']:
+            if retry in ["y", "yes", "是"]:
                 self.right_arm.calibrate()
                 print("✓ 右臂校准成功")
-        
+
         print("\n3. 校准底盘电机")
         print("   底盘电机与右臂共用端口")
         print("   注意: 底盘电机使用简单校准，设置默认范围")
         input("按Enter键开始校准底盘电机...")
-        
+
         try:
             # 参考LeKiwi的做法，为底盘电机设置简单校准
             if self.base_bus.calibration:
@@ -218,9 +216,9 @@ class XLeRobot(Robot):
                     self.base_bus.write_calibration(self.base_bus.calibration)
                     print("使用现有底盘电机校准文件")
                     return
-            
+
             print("为底盘电机设置默认校准...")
-            
+
             # 为底盘电机设置默认校准（参考LeKiwi）
             base_calibration = {}
             for motor_name, motor in self.base_bus.motors.items():
@@ -228,18 +226,18 @@ class XLeRobot(Robot):
                     id=motor.id,
                     drive_mode=0,
                     homing_offset=0,  # 底盘电机不需要homing offset
-                    range_min=0,       # 最小范围
-                    range_max=4095,    # 最大范围
+                    range_min=0,  # 最小范围
+                    range_max=4095,  # 最大范围
                 )
-            
+
             self.base_bus.write_calibration(base_calibration)
             print("✓ 底盘电机校准完成（使用默认设置）")
-            
+
         except Exception as e:
             print(f"✗ 底盘电机校准失败: {e}")
             print("请检查底盘电机连接，或跳过底盘校准")
             retry = input("是否重试底盘校准? (y/n): ").strip().lower()
-            if retry in ['y', 'yes', '是']:
+            if retry in ["y", "yes", "是"]:
                 # 重试底盘校准
                 base_calibration = {}
                 for motor_name, motor in self.base_bus.motors.items():
@@ -252,15 +250,15 @@ class XLeRobot(Robot):
                     )
                 self.base_bus.write_calibration(base_calibration)
                 print("✓ 底盘电机校准完成（使用默认设置）")
-        
+
         print("\nXLeRobot校准完成！")
         print("注意: 头部电机不需要校准，使用默认设置")
-        print("="*50)
+        print("=" * 50)
 
     def configure(self) -> None:
         self.left_arm.configure()
         self.right_arm.configure()
-        
+
         # Configure head motors (position mode)
         with self.head_bus.torque_disabled():
             self.head_bus.configure_motors()
@@ -271,7 +269,7 @@ class XLeRobot(Robot):
                 # Set I_Coefficient and D_Coefficient to default value 0 and 32
                 self.head_bus.write("I_Coefficient", motor, 0)
                 self.head_bus.write("D_Coefficient", motor, 32)
-        
+
         # Configure base motors (velocity mode)
         with self.base_bus.torque_disabled():
             self.base_bus.configure_motors()
@@ -285,18 +283,18 @@ class XLeRobot(Robot):
 
     def setup_motors(self) -> None:
         print("开始设置XLeRobot电机...")
-        print("="*50)
-        
+        print("=" * 50)
+
         print("1. 设置左臂电机 (左手 + 头部设备)")
         print("   请确保左臂和头部设备已正确连接")
         input("按Enter键开始设置左臂电机...")
         self.left_arm.setup_motors()
-        
+
         print("\n2. 设置右臂电机 (右手 + 底盘设备)")
         print("   请确保右臂和底盘设备已正确连接")
         input("按Enter键开始设置右臂电机...")
         self.right_arm.setup_motors()
-        
+
         print("\n3. 设置底盘电机")
         print("   底盘电机与右臂共用端口")
         print("   注意: 底盘电机使用默认设置，无需复杂设置")
@@ -304,10 +302,10 @@ class XLeRobot(Robot):
             input(f"请连接控制器板到底盘电机 '{motor}' 并按Enter键...")
             self.base_bus.setup_motor(motor)
             print(f"底盘电机 '{motor}' ID设置为 {self.base_bus.motors[motor].id}")
-        
+
         print("\nXLeRobot电机设置完成！")
         print("注意: 头部电机使用默认设置，无需单独设置")
-        print("="*50)
+        print("=" * 50)
 
     @staticmethod
     def _degps_to_raw(degps: float) -> int:
@@ -331,15 +329,15 @@ class XLeRobot(Robot):
     ) -> dict:
         """
         Convert body frame velocity commands to wheel speed commands.
-        
+
         Args:
             x: Forward velocity (m/s)
-            y: Lateral velocity (m/s) 
+            y: Lateral velocity (m/s)
             theta: Angular velocity (rad/s)
             wheel_radius: Wheel radius in meters
             base_radius: Distance from center to wheel in meters
             max_raw: Maximum raw speed value
-            
+
         Returns:
             Dictionary with wheel speed commands
         """
@@ -347,12 +345,12 @@ class XLeRobot(Robot):
         left_wheel_speed = (x - theta * base_radius) / wheel_radius
         back_wheel_speed = (y + theta * base_radius) / wheel_radius
         right_wheel_speed = (x + theta * base_radius) / wheel_radius
-        
+
         # Convert to raw values and clamp
         left_raw = np.clip(self._degps_to_raw(np.degrees(left_wheel_speed)), -max_raw, max_raw)
         back_raw = np.clip(self._degps_to_raw(np.degrees(back_wheel_speed)), -max_raw, max_raw)
         right_raw = np.clip(self._degps_to_raw(np.degrees(right_wheel_speed)), -max_raw, max_raw)
-        
+
         return {
             "base_left_wheel": left_raw,
             "base_back_wheel": back_raw,
@@ -369,14 +367,14 @@ class XLeRobot(Robot):
     ) -> dict[str, Any]:
         """
         Convert wheel speed commands to body frame velocity.
-        
+
         Args:
             left_wheel_speed: Left wheel speed (raw)
             back_wheel_speed: Back wheel speed (raw)
             right_wheel_speed: Right wheel speed (raw)
             wheel_radius: Wheel radius in meters
             base_radius: Distance from center to wheel in meters
-            
+
         Returns:
             Dictionary with body frame velocities
         """
@@ -384,12 +382,12 @@ class XLeRobot(Robot):
         left_radps = np.radians(self._raw_to_degps(left_wheel_speed))
         back_radps = np.radians(self._raw_to_degps(back_wheel_speed))
         right_radps = np.radians(self._raw_to_degps(right_wheel_speed))
-        
+
         # Convert to body frame velocities
         x_vel = (left_radps + right_radps) * wheel_radius / 2
         y_vel = back_radps * wheel_radius
         theta_vel = (right_radps - left_radps) * wheel_radius / (2 * base_radius)
-        
+
         return {
             "x.vel": x_vel,
             "y.vel": y_vel,
@@ -446,7 +444,7 @@ class XLeRobot(Robot):
         head_action = {
             key.removeprefix("head_"): value for key, value in action.items() if key.startswith("head_")
         }
-        
+
         # Handle base velocity commands
         base_velocities = {}
         if "x.vel" in action and "y.vel" in action and "theta.vel" in action:
@@ -459,14 +457,14 @@ class XLeRobot(Robot):
         # Send actions to respective components
         send_action_left = self.left_arm.send_action(left_action)
         send_action_right = self.right_arm.send_action(right_action)
-        
+
         # Send head actions (without calibration)
         if head_action:
             self.head_bus.sync_write("Goal_Position", head_action, normalize=False)
             send_action_head = {f"head_{key}.pos": value for key, value in head_action.items()}
         else:
             send_action_head = {}
-        
+
         # Send base actions (without calibration)
         if base_velocities:
             self.base_bus.sync_write("Goal_Velocity", base_velocities, normalize=False)
@@ -505,4 +503,4 @@ class XLeRobot(Robot):
         self.base_bus.disconnect()
 
         for cam in self.cameras.values():
-            cam.disconnect() 
+            cam.disconnect()

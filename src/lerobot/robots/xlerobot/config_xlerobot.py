@@ -33,20 +33,20 @@ class XLeRobotConfig(RobotConfig):
     left_arm_disable_torque_on_disconnect: bool = True
     left_arm_max_relative_target: int | None = None
     left_arm_use_degrees: bool = False
-    
+
     # Right arm (SO100Follower + base motors)
     right_arm_disable_torque_on_disconnect: bool = True
     right_arm_max_relative_target: int | None = None
     right_arm_use_degrees: bool = False
-    
+
     # Head joints (positional control)
     head_disable_torque_on_disconnect: bool = True
     head_max_relative_target: int | None = None
     head_use_degrees: bool = False
-    
+
     # Base motors (velocity control)
     base_disable_torque_on_disconnect: bool = True
     base_use_degrees: bool = False
 
     # cameras (shared between both arms)
-    cameras: dict[str, CameraConfig] = field(default_factory=dict) 
+    cameras: dict[str, CameraConfig] = field(default_factory=dict)

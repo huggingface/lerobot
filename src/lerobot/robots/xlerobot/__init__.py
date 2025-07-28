@@ -14,5 +14,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from .config_xlerobot import XLeRobotConfig
 from .xlerobot import XLeRobot
-from .config_xlerobot import XLeRobotConfig 
