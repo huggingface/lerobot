@@ -1,178 +1,241 @@
-This tutorial will explain the training script, how to use it, and particularly the use of Hydra to configure everything needed for the training run.
+This tutorial will explain the training script, how to use it, and particularly how to configure everything needed for the training run.
+
+> **Note:** The following assumes you're running these commands on a machine equipped with a cuda GPU. If you don't have one (or if you're using a Mac), you can add `--policy.device=cpu` (`--policy.device=mps` respectively). However, be advised that the code executes much slower on cpu.
 
 ## The training script
 
-LeRobot offers a training script at [`lerobot/scripts/train.py`](../../lerobot/scripts/train.py). At a high level it does the following:
+LeRobot offers a training script at [`lerobot/scripts/train.py`](../src/lerobot/scripts/train.py). At a high level it does the following:
 
-- Loads a Hydra configuration file for the following steps (more on Hydra in a moment).
-- Makes a simulation environment.
-- Makes a dataset corresponding to that simulation environment.
-- Makes a policy.
+- Initialize/load a configuration for the following steps using.
+- Instantiates a dataset.
+- (Optional) Instantiates a simulation environment corresponding to that dataset.
+- Instantiates a policy.
 - Runs a standard training loop with forward pass, backward pass, optimization step, and occasional logging, evaluation (of the policy on the environment), and checkpointing.
 
-## Basics of how we use Hydra
+## Overview of the configuration system
 
-Explaining the ins and outs of [Hydra](https://hydra.cc/docs/intro/) is beyond the scope of this document, but here we'll share the main points you need to know.
+In the training script, the main function `train` expects a `TrainPipelineConfig` object:
 
-First, `lerobot/configs` has a directory structure like this:
-
-```
-.
-├── default.yaml
-├── env
-│   ├── aloha.yaml
-│   ├── pusht.yaml
-│   └── xarm.yaml
-└── policy
-    ├── act.yaml
-    ├── diffusion.yaml
-    └── tdmpc.yaml
-```
-
-**_For brevity, in the rest of this document we'll drop the leading `lerobot/configs` path. So `default.yaml` really refers to `lerobot/configs/default.yaml`._**
-
-When you run the training script with
-
+<!-- prettier-ignore-start -->
 ```python
-python lerobot/scripts/train.py
+# train.py
+@parser.wrap()
+def train(cfg: TrainPipelineConfig):
 ```
+<!-- prettier-ignore-end -->
 
-Hydra is set up to read `default.yaml` (via the `@hydra.main` decorator). If you take a look at the `@hydra.main`'s arguments you will see `config_path="../configs", config_name="default"`. At the top of `default.yaml`, is a `defaults` section which looks likes this:
+You can inspect the `TrainPipelineConfig` defined in [`lerobot/configs/train.py`](../src/lerobot/configs/train.py) (which is heavily commented and meant to be a reference to understand any option)
 
-```yaml
-defaults:
-  - _self_
-  - env: pusht
-  - policy: diffusion
+When running the script, inputs for the command line are parsed thanks to the `@parser.wrap()` decorator and an instance of this class is automatically generated. Under the hood, this is done with [Draccus](https://github.com/dlwh/draccus) which is a tool dedicated to this purpose. If you're familiar with Hydra, Draccus can similarly load configurations from config files (.json, .yaml) and also override their values through command line inputs. Unlike Hydra, these configurations are pre-defined in the code through dataclasses rather than being defined entirely in config files. This allows for more rigorous serialization/deserialization, typing, and to manipulate configuration as objects directly in the code and not as dictionaries or namespaces (which enables nice features in an IDE such as autocomplete, jump-to-def, etc.)
+
+Let's have a look at a simplified example. Amongst other attributes, the training config has the following attributes:
+
+<!-- prettier-ignore-start -->
+```python
+@dataclass
+class TrainPipelineConfig:
+    dataset: DatasetConfig
+    env: envs.EnvConfig | None = None
+    policy: PreTrainedConfig | None = None
 ```
+<!-- prettier-ignore-end -->
 
-This logic tells Hydra to incorporate configuration parameters from `env/pusht.yaml` and `policy/diffusion.yaml`. _Note: Be aware of the order as any configuration parameters with the same name will be overidden. Thus, `default.yaml` is overridden by `env/pusht.yaml`  which is overidden by `policy/diffusion.yaml`_.
+in which `DatasetConfig` for example is defined as such:
 
-Then, `default.yaml` also contains common configuration parameters such as `device: cuda` or `use_amp: false` (for enabling fp16 training). Some other parameters are set to `???` which indicates that they are expected to be set in additional yaml files. For instance, `training.offline_steps: ???` in `default.yaml` is set to `200000` in `diffusion.yaml`.
+<!-- prettier-ignore-start -->
+```python
+@dataclass
+class DatasetConfig:
+    repo_id: str
+    episodes: list[int] | None = None
+    video_backend: str = "pyav"
+```
+<!-- prettier-ignore-end -->
 
-Thanks to this `defaults` section in `default.yaml`, if you want to train Diffusion Policy with PushT, you really only need to run:
+This creates a hierarchical relationship where, for example assuming we have a `cfg` instance of `TrainPipelineConfig`, we can access the `repo_id` value with `cfg.dataset.repo_id`.
+From the command line, we can specify this value by using a very similar syntax `--dataset.repo_id=repo/id`.
+
+By default, every field takes its default value specified in the dataclass. If a field doesn't have a default value, it needs to be specified either from the command line or from a config file – which path is also given in the command line (more in this below). In the example above, the `dataset` field doesn't have a default value which means it must be specified.
+
+## Specifying values from the CLI
+
+Let's say that we want to train [Diffusion Policy](../src/lerobot/policies/diffusion) on the [pusht](https://huggingface.co/datasets/lerobot/pusht) dataset, using the [gym_pusht](https://github.com/huggingface/gym-pusht) environment for evaluation. The command to do so would look like this:
 
 ```bash
-python lerobot/scripts/train.py
+python -m lerobot.scripts.train \
+    --dataset.repo_id=lerobot/pusht \
+    --policy.type=diffusion \
+    --env.type=pusht
 ```
 
-However, you can be more explicit and launch the exact same Diffusion Policy training on PushT with:
+Let's break this down:
+
+- To specify the dataset, we just need to specify its `repo_id` on the hub which is the only required argument in the `DatasetConfig`. The rest of the fields have default values and in this case we are fine with those so we can just add the option `--dataset.repo_id=lerobot/pusht`.
+- To specify the policy, we can just select diffusion policy using `--policy` appended with `.type`. Here, `.type` is a special argument which allows us to select config classes inheriting from `draccus.ChoiceRegistry` and that have been decorated with the `register_subclass()` method. To have a better explanation of this feature, have a look at this [Draccus demo](https://github.com/dlwh/draccus?tab=readme-ov-file#more-flexible-configuration-with-choice-types). In our code, we use this mechanism mainly to select policies, environments, robots, and some other components like optimizers. The policies available to select are located in [lerobot/policies](../src/lerobot/policies)
+- Similarly, we select the environment with `--env.type=pusht`. The different environment configs are available in [`lerobot/envs/configs.py`](../src/lerobot/envs/configs.py)
+
+Let's see another example. Let's say you've been training [ACT](../src/lerobot/policies/act) on [lerobot/aloha_sim_insertion_human](https://huggingface.co/datasets/lerobot/aloha_sim_insertion_human) using the [gym-aloha](https://github.com/huggingface/gym-aloha) environment for evaluation with:
 
 ```bash
-python lerobot/scripts/train.py policy=diffusion env=pusht
+python -m lerobot.scripts.train \
+    --policy.type=act \
+    --dataset.repo_id=lerobot/aloha_sim_insertion_human \
+    --env.type=aloha \
+    --output_dir=outputs/train/act_aloha_insertion
 ```
 
-This way of overriding defaults via the CLI is especially useful when you want to change the policy and/or environment. For instance, you can train ACT on the default Aloha environment with:
+> Notice we added `--output_dir` to explicitly tell where to write outputs from this run (checkpoints, training state, configs etc.). This is not mandatory and if you don't specify it, a default directory will be created from the current date and time, env.type and policy.type. This will typically look like `outputs/train/2025-01-24/16-10-05_aloha_act`.
+
+We now want to train a different policy for aloha on another task. We'll change the dataset and use [lerobot/aloha_sim_transfer_cube_human](https://huggingface.co/datasets/lerobot/aloha_sim_transfer_cube_human) instead. Of course, we also need to change the task of the environment as well to match this other task.
+Looking at the [`AlohaEnv`](../src/lerobot/envs/configs.py) config, the task is `"AlohaInsertion-v0"` by default, which corresponds to the task we trained on in the command above. The [gym-aloha](https://github.com/huggingface/gym-aloha?tab=readme-ov-file#description) environment also has the `AlohaTransferCube-v0` task which corresponds to this other task we want to train on. Putting this together, we can train this new policy on this different task using:
 
 ```bash
-python lerobot/scripts/train.py policy=act env=aloha
+python -m lerobot.scripts.train \
+    --policy.type=act \
+    --dataset.repo_id=lerobot/aloha_sim_transfer_cube_human \
+    --env.type=aloha \
+    --env.task=AlohaTransferCube-v0 \
+    --output_dir=outputs/train/act_aloha_transfer
 ```
 
-There are two things to note here:
-- Config overrides are passed as `param_name=param_value`.
-- Here we have overridden the defaults section. `policy=act` tells Hydra to use `policy/act.yaml`, and `env=aloha` tells Hydra to use `env/aloha.yaml`.
+## Loading from a config file
 
-_As an aside: we've set up all of our configurations so that they reproduce state-of-the-art results from papers in the literature._
+Now, let's assume that we want to reproduce the run just above. That run has produced a `train_config.json` file in its checkpoints, which serializes the `TrainPipelineConfig` instance it used:
 
-## Overriding configuration parameters in the CLI
-
-Now let's say that we want to train on a different task in the Aloha environment. If you look in `env/aloha.yaml` you will see something like:
-
-```yaml
-# lerobot/configs/env/aloha.yaml
-env:
-  task: AlohaInsertion-v0
+```json
+{
+    "dataset": {
+        "repo_id": "lerobot/aloha_sim_transfer_cube_human",
+        "episodes": null,
+        ...
+    },
+    "env": {
+        "type": "aloha",
+        "task": "AlohaTransferCube-v0",
+        "fps": 50,
+        ...
+    },
+    "policy": {
+        "type": "act",
+        "n_obs_steps": 1,
+        ...
+    },
+    ...
+}
 ```
 
-And if you look in `policy/act.yaml` you will see something like:
-
-```yaml
-# lerobot/configs/policy/act.yaml
-dataset_repo_id: lerobot/aloha_sim_insertion_human
-```
-
-But our Aloha environment actually supports a cube transfer task as well. To train for this task, you could manually modify the two yaml configuration files respectively.
-
-First, we'd need to switch to using the cube transfer task for the ALOHA environment.
-
-```diff
-# lerobot/configs/env/aloha.yaml
-env:
--  task: AlohaInsertion-v0
-+  task: AlohaTransferCube-v0
-```
-
-Then, we'd also need to switch to using the cube transfer dataset.
-
-```diff
-# lerobot/configs/policy/act.yaml
--dataset_repo_id: lerobot/aloha_sim_insertion_human
-+dataset_repo_id: lerobot/aloha_sim_transfer_cube_human
-```
-
-Then, you'd be able to run:
+We can then simply load the config values from this file using:
 
 ```bash
-python lerobot/scripts/train.py policy=act env=aloha
+python -m lerobot.scripts.train \
+    --config_path=outputs/train/act_aloha_transfer/checkpoints/last/pretrained_model/ \
+    --output_dir=outputs/train/act_aloha_transfer_2
 ```
 
-and you'd be training and evaluating on the cube transfer task.
+`--config_path` is also a special argument which allows to initialize the config from a local config file. It can point to a directory that contains `train_config.json` or to the config file itself directly.
 
-An alternative approach to editing the yaml configuration files, would be to override the defaults via the command line:
+Similarly to Hydra, we can still override some parameters in the CLI if we want to, e.g.:
 
 ```bash
-python lerobot/scripts/train.py \
-    policy=act \
-    dataset_repo_id=lerobot/aloha_sim_transfer_cube_human \
-    env=aloha \
-    env.task=AlohaTransferCube-v0
+python -m lerobot.scripts.train \
+    --config_path=outputs/train/act_aloha_transfer/checkpoints/last/pretrained_model/ \
+    --output_dir=outputs/train/act_aloha_transfer_2
+    --policy.n_action_steps=80
 ```
 
-There's something new here. Notice the `.` delimiter used to traverse the configuration hierarchy. _But be aware that the `defaults` section is an exception. As you saw above, we didn't need to write `defaults.policy=act` in the CLI. `policy=act` was enough._
+> Note: While `--output_dir` is not required in general, in this case we need to specify it since it will otherwise take the value from the `train_config.json` (which is `outputs/train/act_aloha_transfer`). In order to prevent accidental deletion of previous run checkpoints, we raise an error if you're trying to write in an existing directory. This is not the case when resuming a run, which is what you'll learn next.
 
-Putting all that knowledge together, here's the command that was used to train https://huggingface.co/lerobot/act_aloha_sim_transfer_cube_human.
+`--config_path` can also accept the repo_id of a repo on the hub that contains a `train_config.json` file, e.g. running:
 
 ```bash
-python lerobot/scripts/train.py \
-    hydra.run.dir=outputs/train/act_aloha_sim_transfer_cube_human \
-    device=cuda
-    env=aloha \
-    env.task=AlohaTransferCube-v0 \
-    dataset_repo_id=lerobot/aloha_sim_transfer_cube_human \
-    policy=act \
-    training.eval_freq=10000 \
-    training.log_freq=250 \
-    training.offline_steps=100000 \
-    training.save_model=true \
-    training.save_freq=25000 \
-    eval.n_episodes=50 \
-    eval.batch_size=50 \
-    wandb.enable=false \
+python -m lerobot.scripts.train --config_path=lerobot/diffusion_pusht
 ```
 
-There's one new thing here: `hydra.run.dir=outputs/train/act_aloha_sim_transfer_cube_human`, which specifies where to save the training output.
+will start a training run with the same configuration used for training [lerobot/diffusion_pusht](https://huggingface.co/lerobot/diffusion_pusht)
 
-## Using a configuration file not in `lerobot/configs`
+## Resume training
 
-Above we discusses the our training script is set up such that Hydra looks for `default.yaml` in `lerobot/configs`. But, if you have a configuration file elsewhere in your filesystem you may use:
+Being able to resume a training run is important in case it crashed or aborted for any reason. We'll demonstrate how to do that here.
+
+Let's reuse the command from the previous run and add a few more options:
 
 ```bash
-python lerobot/scripts/train.py --config-dir PARENT/PATH --config-name FILE_NAME_WITHOUT_EXTENSION
+python -m lerobot.scripts.train \
+    --policy.type=act \
+    --dataset.repo_id=lerobot/aloha_sim_transfer_cube_human \
+    --env.type=aloha \
+    --env.task=AlohaTransferCube-v0 \
+    --log_freq=25 \
+    --save_freq=100 \
+    --output_dir=outputs/train/run_resumption
 ```
 
-Note: here we use regular syntax for providing CLI arguments to a Python script, not Hydra's `param_name=param_value` syntax.
+Here we've taken care to set up the log frequency and checkpointing frequency to low numbers so we can showcase resumption. You should be able to see some logging and have a first checkpoint within 1 minute (depending on hardware). Wait for the first checkpoint to happen, you should see a line that looks like this in your terminal:
 
-As a concrete example, this becomes particularly handy when you have a folder with training outputs, and would like to re-run the training. For example, say you previously ran the training script with one of the earlier commands and have `outputs/train/my_experiment/checkpoints/pretrained_model/config.yaml`. This `config.yaml` file will have the full set of configuration parameters within it. To run the training with the same configuration again, do:
+```
+INFO 2025-01-24 16:10:56 ts/train.py:263 Checkpoint policy after step 100
+```
+
+Now let's simulate a crash by killing the process (hit `ctrl`+`c`). We can then simply resume this run from the last checkpoint available with:
 
 ```bash
-python lerobot/scripts/train.py --config-dir outputs/train/my_experiment/checkpoints/last/pretrained_model --config-name config
+python -m lerobot.scripts.train \
+    --config_path=outputs/train/run_resumption/checkpoints/last/pretrained_model/ \
+    --resume=true
 ```
 
-Note that you may still use the regular syntax for config parameter overrides (eg: by adding `training.offline_steps=200000`).
+You should see from the logging that your training picks up from where it left off.
+
+Another reason for which you might want to resume a run is simply to extend training and add more training steps. The number of training steps is set by the option `--steps`, which is 100 000 by default.
+You could double the number of steps of the previous run with:
+
+```bash
+python -m lerobot.scripts.train \
+    --config_path=outputs/train/run_resumption/checkpoints/last/pretrained_model/ \
+    --resume=true \
+    --steps=200000
+```
+
+## Outputs of a run
+
+In the output directory, there will be a folder called `checkpoints` with the following structure:
+
+```bash
+outputs/train/run_resumption/checkpoints
+├── 000100  # checkpoint_dir for training step 100
+│   ├── pretrained_model/
+│   │   ├── config.json  # policy config
+│   │   ├── model.safetensors  # policy weights
+│   │   └── train_config.json  # train config
+│   └── training_state/
+│       ├── optimizer_param_groups.json  #  optimizer param groups
+│       ├── optimizer_state.safetensors  # optimizer state
+│       ├── rng_state.safetensors  # rng states
+│       ├── scheduler_state.json  # scheduler state
+│       └── training_step.json  # training step
+├── 000200
+└── last -> 000200  # symlink to the last available checkpoint
+```
+
+## Fine-tuning a pre-trained policy
+
+In addition to the features currently in Draccus, we've added a special `.path` argument for the policy, which allows to load a policy as you would with `PreTrainedPolicy.from_pretrained()`. In that case, `path` can be a local directory that contains a checkpoint or a repo_id pointing to a pretrained policy on the hub.
+
+For example, we could fine-tune a [policy pre-trained on the aloha transfer task](https://huggingface.co/lerobot/act_aloha_sim_transfer_cube_human) on the aloha insertion task. We can achieve this with:
+
+```bash
+python -m lerobot.scripts.train \
+    --policy.path=lerobot/act_aloha_sim_transfer_cube_human \
+    --dataset.repo_id=lerobot/aloha_sim_insertion_human \
+    --env.type=aloha \
+    --env.task=AlohaInsertion-v0
+```
+
+When doing so, keep in mind that the features of the fine-tuning dataset would have to match the input/output features of the pretrained policy.
 
 ## Typical logs and metrics
 
-When you start the training process, you will first see your full configuration being printed in the terminal. You can check it to make sure that you config it correctly and your config is not overrided by other files. The final configuration will also be saved with the checkpoint.
+When you start the training process, you will first see your full configuration being printed in the terminal. You can check it to make sure that you configured your run correctly. The final configuration will also be saved with the checkpoint.
 
 After that, you will see training log like this one:
 
@@ -180,7 +243,7 @@ After that, you will see training log like this one:
 INFO 2024-08-14 13:35:12 ts/train.py:192 step:0 smpl:64 ep:1 epch:0.00 loss:1.112 grdn:15.387 lr:2.0e-07 updt_s:1.738 data_s:4.774
 ```
 
-or evaluation log like:
+or evaluation log:
 
 ```
 INFO 2024-08-14 13:38:45 ts/train.py:226 step:100 smpl:6K ep:52 epch:0.25 ∑rwrd:20.693 success:0.0% eval_s:120.266
@@ -200,14 +263,49 @@ These logs will also be saved in wandb if `wandb.enable` is set to `true`. Here 
 
 Some metrics are useful for initial performance profiling. For example, if you find the current GPU utilization is low via the `nvidia-smi` command and `data_s` sometimes is too high, you may need to modify batch size or number of dataloading workers to accelerate dataloading. We also recommend [pytorch profiler](https://github.com/huggingface/lerobot?tab=readme-ov-file#improve-your-code-with-profiling) for detailed performance probing.
 
----
+## In short
 
-So far we've seen how to train Diffusion Policy for PushT and ACT for ALOHA. Now, what if we want to train ACT for PushT? Well, there are aspects of the ACT configuration that are specific to the ALOHA environments, and these happen to be incompatible with PushT. Therefore, trying to run the following will almost certainly raise an exception of sorts (eg: feature dimension mismatch):
+We'll summarize here the main use cases to remember from this tutorial.
+
+#### Train a policy from scratch – CLI
 
 ```bash
-python lerobot/scripts/train.py policy=act env=pusht dataset_repo_id=lerobot/pusht
+python -m lerobot.scripts.train \
+    --policy.type=act \  # <- select 'act' policy
+    --env.type=pusht \  # <- select 'pusht' environment
+    --dataset.repo_id=lerobot/pusht  # <- train on this dataset
 ```
 
-Please, head on over to our [advanced tutorial on adapting policy configuration to various environments](./advanced/train_act_pusht/train_act_pusht.md) to learn more.
+#### Train a policy from scratch - config file + CLI
 
-Or in the meantime, happy coding! 🤗
+```bash
+python -m lerobot.scripts.train \
+    --config_path=path/to/pretrained_model \  # <- can also be a repo_id
+    --policy.n_action_steps=80  # <- you may still override values
+```
+
+#### Resume/continue a training run
+
+```bash
+python -m lerobot.scripts.train \
+    --config_path=checkpoint/pretrained_model/ \
+    --resume=true \
+    --steps=200000  # <- you can change some training parameters
+```
+
+#### Fine-tuning
+
+```bash
+python -m lerobot.scripts.train \
+    --policy.path=lerobot/act_aloha_sim_transfer_cube_human \  # <- can also be a local path to a checkpoint
+    --dataset.repo_id=lerobot/aloha_sim_insertion_human \
+    --env.type=aloha \
+    --env.task=AlohaInsertion-v0
+```
+
+---
+
+Now that you know the basics of how to train a policy, you might want to know how to apply this knowledge to actual robots, or how to record your own datasets and train policies on your specific task?
+If that's the case, head over to the next tutorial [`7_get_started_with_real_robot.md`](./7_get_started_with_real_robot.md).
+
+Or in the meantime, happy training! 🤗

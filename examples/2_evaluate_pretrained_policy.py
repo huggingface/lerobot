@@ -1,6 +1,25 @@
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
-This scripts demonstrates how to evaluate a pretrained policy from the HuggingFace Hub or from your local
+This script demonstrates how to evaluate a pretrained policy from the HuggingFace Hub or from your local
 training outputs directory. In the latter case, you might want to run examples/3_train_policy.py first.
+
+It requires the installation of the 'gym_pusht' simulation environment. Install it by running:
+```bash
+pip install -e ".[pusht]"
+```
 """
 
 from pathlib import Path
@@ -10,33 +29,22 @@ import gymnasium as gym
 import imageio
 import numpy
 import torch
-from huggingface_hub import snapshot_download
 
-from lerobot.common.policies.diffusion.modeling_diffusion import DiffusionPolicy
+from lerobot.policies.diffusion.modeling_diffusion import DiffusionPolicy
 
 # Create a directory to store the video of the evaluation
 output_directory = Path("outputs/eval/example_pusht_diffusion")
 output_directory.mkdir(parents=True, exist_ok=True)
 
-# Download the diffusion policy for pusht environment
-pretrained_policy_path = Path(snapshot_download("lerobot/diffusion_pusht"))
-# OR uncomment the following to evaluate a policy from the local outputs/train folder.
+# Select your device
+device = "cuda"
+
+# Provide the [hugging face repo id](https://huggingface.co/lerobot/diffusion_pusht):
+pretrained_policy_path = "lerobot/diffusion_pusht"
+# OR a path to a local outputs/train folder.
 # pretrained_policy_path = Path("outputs/train/example_pusht_diffusion")
 
 policy = DiffusionPolicy.from_pretrained(pretrained_policy_path)
-policy.eval()
-
-# Check if GPU is available
-if torch.cuda.is_available():
-    device = torch.device("cuda")
-    print("GPU is available. Device set to:", device)
-else:
-    device = torch.device("cpu")
-    print(f"GPU is not available. Device set to: {device}. Inference will be slower than on GPU.")
-    # Decrease the number of reverse-diffusion steps (trades off a bit of quality for 10x speed)
-    policy.diffusion.num_inference_steps = 10
-
-policy.to(device)
 
 # Initialize evaluation environment to render two observation types:
 # an image of the scene and state/position of the agent. The environment
@@ -47,7 +55,17 @@ env = gym.make(
     max_episode_steps=300,
 )
 
-# Reset the policy and environmens to prepare for rollout
+# We can verify that the shapes of the features expected by the policy match the ones from the observations
+# produced by the environment
+print(policy.config.input_features)
+print(env.observation_space)
+
+# Similarly, we can check that the actions produced by the policy will match the actions expected by the
+# environment
+print(policy.config.output_features)
+print(env.action_space)
+
+# Reset the policy and environments to prepare for rollout
 policy.reset()
 numpy_observation, info = env.reset(seed=42)
 
@@ -101,7 +119,7 @@ while not done:
     rewards.append(reward)
     frames.append(env.render())
 
-    # The rollout is considered done when the success state is reach (i.e. terminated is True),
+    # The rollout is considered done when the success state is reached (i.e. terminated is True),
     # or the maximum number of iterations is reached (i.e. truncated is True)
     done = terminated | truncated | done
     step += 1

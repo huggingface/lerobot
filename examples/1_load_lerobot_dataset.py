@@ -1,3 +1,17 @@
+# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 This script demonstrates the use of `LeRobotDataset` class for handling and processing robotic datasets from Hugging Face.
 It illustrates how to load datasets, manipulate them, and apply transformations suitable for machine learning tasks in PyTorch.
@@ -18,7 +32,7 @@ import torch
 from huggingface_hub import HfApi
 
 import lerobot
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
+from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
 
 # We ported a number of existing datasets ourselves, use this to see the list:
 print("List of available datasets:")
@@ -105,7 +119,7 @@ print(dataset.features[camera_key]["shape"])
 delta_timestamps = {
     # loads 4 images: 1 second before current frame, 500 ms before, 200 ms before, and current frame
     camera_key: [-1, -0.5, -0.20, 0],
-    # loads 8 state vectors: 1.5 seconds before, 1 second before, ... 200 ms, 100 ms, and current frame
+    # loads 6 state vectors: 1.5 seconds before, 1 second before, ... 200 ms, 100 ms, and current frame
     "observation.state": [-1.5, -1, -0.5, -0.20, -0.10, 0],
     # loads 64 action vectors: current frame, 1 frame in the future, 2 frames, ... 63 frames in the future
     "action": [t / dataset.fps for t in range(64)],
@@ -129,6 +143,6 @@ dataloader = torch.utils.data.DataLoader(
 
 for batch in dataloader:
     print(f"{batch[camera_key].shape=}")  # (32, 4, c, h, w)
-    print(f"{batch['observation.state'].shape=}")  # (32, 5, c)
+    print(f"{batch['observation.state'].shape=}")  # (32, 6, c)
     print(f"{batch['action'].shape=}")  # (32, 64, c)
     break

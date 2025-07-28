@@ -1,0 +1,312 @@
+# Asynchronous Inference
+
+With our [SmolVLA](https://huggingface.co/papers/2506.01844) we introduced a new way to run inference on real-world robots, **decoupling action prediction from action execution**.
+In this tutorial, we'll show how to use asynchronous inference (_async inference_) using a finetuned version of SmolVLA, and all the policies supported by LeRobot.
+**Try async inference with all the policies** supported by LeRobot!
+
+**What you'll learn:**
+
+1. Why asynchronous inference matters and how it compares to, more traditional, sequential inference.
+2. How to spin-up a `PolicyServer` and connect a `RobotClient` from the same machine, and even over the network.
+3. How to tune key parameters (`actions_per_chunk`, `chunk_size_threshold`) for your robot and policy.
+
+If you get stuck, hop into our [Discord community](https://discord.gg/s3KuuzsPFb)!
+
+In a nutshell: with _async inference_, your robot keeps acting while the policy server is already busy computing the next chunk of actions---eliminating "wait-for-inference" lags and unlocking smoother, more reactive behaviours.
+This is fundamentally different from synchronous inference (sync), where the robot stays idle while the policy computes the next chunk of actions.
+
+---
+
+## Getting started with async inference
+
+You can read more information on asynchronous inference in our [blogpost](https://huggingface.co/blog/async-robot-inference). This guide is designed to help you quickly set up and run asynchronous inference in your environment.
+
+First, install `lerobot` with the `async` tag, to install the extra dependencies required to run async inference.
+
+```shell
+pip install -e ".[async]"
+```
+
+Then, spin up a policy server (in one terminal, or in a separate machine) specifying the host address and port for the client to connect to.
+You can spin up a policy server running:
+
+```shell
+python src/lerobot/scripts/server/policy_server.py \
+    --host=127.0.0.1 \
+    --port=8080 \
+```
+
+This will start a policy server listening on `127.0.0.1:8080` (`localhost`, port 8080). At this stage, the policy server is empty, as all information related to which policy to run and with which parameters are specified during the first handshake with the client. Spin up a client with:
+
+```shell
+python src/lerobot/scripts/server/robot_client.py \
+    --server_address=127.0.0.1:8080 \ # SERVER: the host address and port of the policy server
+    --robot.type=so100_follower \ # ROBOT: your robot type
+    --robot.port=/dev/tty.usbmodem585A0076841 \ # ROBOT: your robot port
+    --robot.id=follower_so100 \ # ROBOT: your robot id, to load calibration file
+    --robot.cameras="{ laptop: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}, phone: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \ # POLICY: the cameras used to acquire frames, with keys matching the keys expected by the policy
+    --task="dummy" \ # POLICY: The task to run the policy on (`Fold my t-shirt`). Not necessarily defined for all policies, such as `act`
+    --policy_type=your_policy_type \ # POLICY: the type of policy to run (smolvla, act, etc)
+    --pretrained_name_or_path=user/model \ # POLICY: the model name/path on server to the checkpoint to run (e.g., lerobot/smolvla_base)
+    --policy_device=mps \ # POLICY: the device to run the policy on, on the server
+    --actions_per_chunk=50 \ # POLICY: the number of actions to output at once
+    --chunk_size_threshold=0.5 \ # CLIENT: the threshold for the chunk size before sending a new observation to the server
+    --aggregate_fn_name=weighted_average \ # CLIENT: the function to aggregate actions on overlapping portions
+    --debug_visualize_queue_size=True # CLIENT: whether to visualize the queue size at runtime
+```
+
+In summary, you need to specify instructions for:
+
+- `SERVER`: the address and port of the policy server
+- `ROBOT`: the type of robot to connect to, the port to connect to, and the local `id` of the robot
+- `POLICY`: the type of policy to run, and the model name/path on server to the checkpoint to run. You also need to specify which device should the sever be using, and how many actions to output at once (capped at the policy max actions value).
+- `CLIENT`: the threshold for the chunk size before sending a new observation to the server, and the function to aggregate actions on overlapping portions. Optionally, you can also visualize the queue size at runtime, to help you tune the `CLIENT` parameters.
+
+Importantly,
+
+- `actions_per_chunk` and `chunk_size_threshold` are key parameters to tune for your setup.
+- `aggregate_fn_name` is the function to aggregate actions on overlapping portions. You can either add a new one to a registry of functions, or add your own in `robot_client.py` (see [here](NOTE:addlinktoLOC))
+- `debug_visualize_queue_size` is a useful tool to tune the `CLIENT` parameters.
+
+## Done! You should see your robot moving around by now 😉
+
+## Async vs. synchronous inference
+
+Synchronous inference relies on interleaving action chunk prediction and action execution. This inherently results in _idle frames_, frames where the robot awaits idle the policy's output: a new action chunk.
+In turn, inference is plagued by evident real-time lags, where the robot simply stops acting due to the lack of available actions.
+With robotics models increasing in size, this problem risks becoming only more severe.
+
+<p align="center">
+  <img
+    src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/async-inference/sync.png"
+    width="80%"
+  ></img>
+</p>
+<p align="center">
+  <i>Synchronous inference</i> makes the robot idle while the policy is
+  computing the next chunk of actions.
+</p>
+
+To overcome this, we design async inference, a paradigm where action planning and execution are decoupled, resulting in (1) higher adaptability and, most importantly, (2) no idle frames.
+Crucially, with async inference, the next action chunk is computed _before_ the current one is exhausted, resulting in no idleness.
+Higher adaptability is ensured by aggregating the different action chunks on overlapping portions, obtaining an up-to-date plan and a tighter control loop.
+
+<p align="center">
+  <img
+    src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/async-inference/async.png"
+    width="80%"
+  ></img>
+</p>
+<p align="center">
+  <i>Asynchronous inference</i> results in no idleness because the next chunk is
+  computed before the current chunk is exhausted.
+</p>
+
+---
+
+## Start the Policy Server
+
+Policy servers are wrappers around a `PreTrainedPolicy` interfacing them with observations coming from a robot client.
+Policy servers are initialized as empty containers which are populated with the requested policy specified in the initial handshake between the robot client and the policy server.
+As such, spinning up a policy server is as easy as specifying the host address and port. If you're running the policy server on the same machine as the robot client, you can use `localhost` as the host address.
+
+<hfoptions id="start_policy_server">
+<hfoption id="Command">
+```bash
+python -m lerobot.scripts.server.policy_server \
+    --host="localhost" \
+    --port=8080
+```
+</hfoption>
+<hfoption id="API example">
+
+<!-- prettier-ignore-start -->
+```python
+from lerobot.scripts.server.configs import PolicyServerConfig
+from lerobot.scripts.server.policy_server import serve
+
+config = PolicyServerConfig(
+    host="localhost",
+    port=8080,
+)
+serve(config)
+```
+<!-- prettier-ignore-end -->
+
+</hfoption>
+</hfoptions>
+
+This listens on `localhost:8080` for an incoming connection from the associated`RobotClient`, which will communicate which policy to run during the first client-server handshake.
+
+---
+
+## Launch the Robot Client
+
+`RobotClient` is a wrapper around a `Robot` instance, which `RobotClient` connects to the (possibly remote) `PolicyServer`.
+The `RobotClient` streams observations to the `PolicyServer`, and receives action chunks obtained running inference on the server (which we assume to have better computational resources than the robot controller).
+
+<hfoptions id="start_robot_client">
+<hfoption id="Command">
+```bash
+python src/lerobot/scripts/server/robot_client.py \
+    --server_address=127.0.0.1:8080 \ # SERVER: the host address and port of the policy server
+    --robot.type=so100_follower \ # ROBOT: your robot type
+    --robot.port=/dev/tty.usbmodem585A0076841 \ # ROBOT: your robot port
+    --robot.id=follower_so100 \ # ROBOT: your robot id, to load calibration file
+    --robot.cameras="{ laptop: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}, phone: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \ # POLICY: the cameras used to acquire frames, with keys matching the keys expected by the policy
+    --task="dummy" \ # POLICY: The task to run the policy on (`Fold my t-shirt`). Not necessarily defined for all policies, such as `act`
+    --policy_type=your_policy_type \ # POLICY: the type of policy to run (smolvla, act, etc)
+    --pretrained_name_or_path=user/model \ # POLICY: the model name/path on server to the checkpoint to run (e.g., lerobot/smolvla_base)
+    --policy_device=mps \ # POLICY: the device to run the policy on, on the server
+    --actions_per_chunk=50 \ # POLICY: the number of actions to output at once
+    --chunk_size_threshold=0.5 \ # CLIENT: the threshold for the chunk size before sending a new observation to the server
+    --aggregate_fn_name=weighted_average \ # CLIENT: the function to aggregate actions on overlapping portions
+    --debug_visualize_queue_size=True # CLIENT: whether to visualize the queue size at runtime
+```
+</hfoption>
+<hfoption id="API example">
+
+<!-- prettier-ignore-start -->
+```python
+import threading
+from lerobot.robots.so100_follower import SO100FollowerConfig
+from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
+from lerobot.scripts.server.configs import RobotClientConfig
+from lerobot.scripts.server.robot_client import RobotClient
+from lerobot.scripts.server.helpers import visualize_action_queue_size
+
+# 1. Create the robot instance
+"""Check out the cameras available in your setup by running `python lerobot/find_cameras.py`"""
+# these cameras must match the ones expected by the policy
+# check the config.json on the Hub for the policy you are using
+camera_cfg = {
+    "top": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=30),
+    "side": OpenCVCameraConfig(index_or_path=1, width=640, height=480, fps=30)
+}
+
+robot_cfg = SO100FollowerConfig(
+  port="/dev/tty.usbmodem585A0076841",
+  id="follower_so100",
+  cameras=camera_cfg
+)
+
+# 3. Create client configuration
+client_cfg = RobotClientConfig(
+    robot=robot_cfg,
+    server_address="localhost:8080",
+    policy_device="mps",
+    policy_type="smolvla",
+    pretrained_name_or_path="fracapuano/smolvla_async",
+    chunk_size_threshold=0.5,
+    actions_per_chunk=50,  # make sure this is less than the max actions of the policy
+)
+
+# 4. Create and start client
+client = RobotClient(client_cfg)
+
+# 5. Specify the task
+task = "Don't do anything, stay still"
+
+if client.start():
+    # Start action receiver thread
+    action_receiver_thread = threading.Thread(target=client.receive_actions, daemon=True)
+    action_receiver_thread.start()
+
+    try:
+        # Run the control loop
+        client.control_loop(task)
+    except KeyboardInterrupt:
+        client.stop()
+        action_receiver_thread.join()
+        # (Optionally) plot the action queue size
+        visualize_action_queue_size(client.action_queue_size)
+```
+<!-- prettier-ignore-end -->
+
+</hfoption>
+</hfoptions>
+
+The following two parameters are key in every setup:
+
+<table>
+  <thead>
+    <tr>
+      <th>Hyperparameter</th>
+      <th>Default</th>
+      <th>What it does</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>
+        <code>actions_per_chunk</code>
+      </td>
+      <td>50</td>
+      <td>
+        How many actions the policy outputs at once. Typical values: 10-50.
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <code>chunk_size_threshold</code>
+      </td>
+      <td>0.7</td>
+      <td>
+        When the queue is ≤ 50% full, the client sends a fresh observation.
+        Value in [0, 1].
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<Tip>
+  Different values of `actions_per_chunk` and `chunk_size_threshold` do result
+  in different behaviours.
+</Tip>
+
+On the one hand, increasing the value of `actions_per_chunk` will result in reducing the likelihood of ending up with no actions to execute, as more actions will be available when the new chunk is computed.
+However, larger values of `actions_per_chunk` might also result in less precise actions, due to the compounding errors consequent to predicting actions over longer timespans.
+
+On the other hand, increasing the value of `chunk_size_threshold` will result in sending out to the `PolicyServer` observations for inference more often, resulting in a larger number of updates action chunks, overlapping on significant portions. This results in high adaptability, in the limit predicting one action chunk for each observation, which is in turn only marginally consumed while a new one is produced.
+This option does also put more pressure on the inference pipeline, as a consequence of the many requests. Conversely, values of `chunk_size_threshold` close to 0.0 collapse to the synchronous edge case, whereby new observations are only sent out whenever the current chunk is exhausted.
+
+We found the default values of `actions_per_chunk` and `chunk_size_threshold` to work well in the experiments we developed for the [SmolVLA paper](https://huggingface.co/papers/2506.01844), but recommend experimenting with different values to find the best fit for your setup.
+
+### Tuning async inference for your setup
+
+1. **Choose your computational resources carefully.** [PI0](https://huggingface.co/lerobot/pi0) occupies 14GB of memory at inference time, while [SmolVLA](https://huggingface.co/lerobot/smolvla_base) requires only ~2GB. You should identify the best computational resource for your use case keeping in mind smaller policies require less computational resources. The combination of policy and device used (CPU-intensive, using MPS, or the number of CUDA cores on a given NVIDIA GPU) directly impacts the average inference latency you should expect.
+2. **Adjust your `fps` based on inference latency.** While the server generates a new action chunk, the client is not idle and is stepping through its current action queue. If the two processes happen at fundamentally different speeds, the client might end up with an empty queue. As such, you should reduce your fps if you consistently run out of actions in queue.
+3. **Adjust `chunk_size_threshold`**.
+   - Values closer to `0.0` result in almost sequential behavior. Values closer to `1.0` → send observation every step (more bandwidth, relies on good world-model).
+   - We found values around 0.5-0.6 to work well. If you want to tweak this, spin up a `RobotClient` setting the `--debug-visualize-queue-size` to `True`. This will plot the action queue size evolution at runtime, and you can use it to find the value of `chunk_size_threshold` that works best for your setup.
+
+<p align="center">
+  <img
+    src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/async-inference/queues.png"
+    width="80%"
+  ></img>
+</p>
+<p align="center">
+  <i>
+    The action queue size is plotted at runtime when the
+    `--debug-visualize-queue-size` flag is passed, for various levels of
+    `chunk_size_threshold` (`g` in the SmolVLA paper).
+  </i>
+</p>
+
+---
+
+## Conclusion
+
+Asynchronous inference represents a significant advancement in real-time robotics control, addressing the fundamental challenge of inference latency that has long plagued robotics applications. Through this tutorial, you've learned how to implement a complete async inference pipeline that eliminates idle frames and enables smoother, more reactive robot behaviors.
+
+**Key Takeaways:**
+
+- **Paradigm Shift**: Async inference decouples action prediction from execution, allowing robots to continue acting while new action chunks are computed in parallel
+- **Performance Benefits**: Eliminates "wait-for-inference" lags that are inherent in synchronous approaches, becoming increasingly important as policy models grow larger
+- **Flexible Architecture**: The server-client design enables distributed computing, where inference can run on powerful remote hardware while maintaining real-time robot control
+- **Tunable Parameters**: Success depends on properly configuring `actions_per_chunk` and `chunk_size_threshold` for your specific hardware, policy, and task requirements
+- **Universal Compatibility**: Works with all LeRobot-supported policies, from lightweight ACT models to vision-language models like SmolVLA
+
+Start experimenting with the default parameters, monitor your action queue sizes, and iteratively refine your setup to achieve optimal performance for your specific use case.
+If you want to discuss this further, hop into our [Discord community](https://discord.gg/s3KuuzsPFb), or open an issue on our [GitHub repository](https://github.com/lerobot/lerobot/issues).

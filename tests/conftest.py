@@ -19,15 +19,14 @@ import traceback
 import pytest
 from serial import SerialException
 
-from lerobot import available_cameras, available_motors, available_robots
-from lerobot.common.utils.utils import init_hydra_config
-from tests.utils import DEVICE, ROBOT_CONFIG_PATH_TEMPLATE, make_camera, make_motors_bus
+from tests.utils import DEVICE
 
 # Import fixture modules as plugins
 pytest_plugins = [
     "tests.fixtures.dataset_factories",
     "tests.fixtures.files",
     "tests.fixtures.hub",
+    "tests.fixtures.optimizers",
 ]
 
 
@@ -35,82 +34,28 @@ def pytest_collection_finish():
     print(f"\nTesting with {DEVICE=}")
 
 
-@pytest.fixture
-def is_robot_available(robot_type):
-    if robot_type not in available_robots:
+def _check_component_availability(component_type, available_components, make_component):
+    """Generic helper to check if a hardware component is available"""
+    if component_type not in available_components:
         raise ValueError(
-            f"The robot type '{robot_type}' is not valid. Expected one of these '{available_robots}"
+            f"The {component_type} type is not valid. Expected one of these '{available_components}'"
         )
 
     try:
-        from lerobot.common.robot_devices.robots.factory import make_robot
-
-        config_path = ROBOT_CONFIG_PATH_TEMPLATE.format(robot=robot_type)
-        robot_cfg = init_hydra_config(config_path)
-        robot = make_robot(robot_cfg)
-        robot.connect()
-        del robot
+        component = make_component(component_type)
+        component.connect()
+        del component
         return True
 
     except Exception as e:
-        print(f"\nA {robot_type} robot is not available.")
+        print(f"\nA {component_type} is not available.")
 
         if isinstance(e, ModuleNotFoundError):
             print(f"\nInstall module '{e.name}'")
         elif isinstance(e, SerialException):
-            print("\nNo physical motors bus detected.")
-        else:
-            traceback.print_exc()
-
-        return False
-
-
-@pytest.fixture
-def is_camera_available(camera_type):
-    if camera_type not in available_cameras:
-        raise ValueError(
-            f"The camera type '{camera_type}' is not valid. Expected one of these '{available_cameras}"
-        )
-
-    try:
-        camera = make_camera(camera_type)
-        camera.connect()
-        del camera
-        return True
-
-    except Exception as e:
-        print(f"\nA {camera_type} camera is not available.")
-
-        if isinstance(e, ModuleNotFoundError):
-            print(f"\nInstall module '{e.name}'")
-        elif isinstance(e, ValueError) and "camera_index" in e.args[0]:
+            print("\nNo physical device detected.")
+        elif isinstance(e, ValueError) and "camera_index" in str(e):
             print("\nNo physical camera detected.")
-        else:
-            traceback.print_exc()
-
-        return False
-
-
-@pytest.fixture
-def is_motor_available(motor_type):
-    if motor_type not in available_motors:
-        raise ValueError(
-            f"The motor type '{motor_type}' is not valid. Expected one of these '{available_motors}"
-        )
-
-    try:
-        motors_bus = make_motors_bus(motor_type)
-        motors_bus.connect()
-        del motors_bus
-        return True
-
-    except Exception as e:
-        print(f"\nA {motor_type} motor is not available.")
-
-        if isinstance(e, ModuleNotFoundError):
-            print(f"\nInstall module '{e.name}'")
-        elif isinstance(e, SerialException):
-            print("\nNo physical motors bus detected.")
         else:
             traceback.print_exc()
 
