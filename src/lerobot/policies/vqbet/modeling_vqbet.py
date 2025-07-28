@@ -139,11 +139,14 @@ class VQBeTPolicy(PreTrainedPolicy):
         environment. It works by managing the actions in a queue and only calling `select_actions` when the
         queue is empty.
         """
-
+        # NOTE: for offline evaluation, we have action in the batch, so we need to pop it out
+        if ACTION in batch:
+            batch.pop(ACTION)
         batch = self.normalize_inputs(batch)
         batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
+        # NOTE: It's important that this happens after stacking the images into a single key.
         batch["observation.images"] = torch.stack([batch[key] for key in self.config.image_features], dim=-4)
-        # Note: It's important that this happens after stacking the images into a single key.
+
         self._queues = populate_queues(self._queues, batch)
 
         if not self.vqbet.action_head.vqvae_model.discretized.item():
