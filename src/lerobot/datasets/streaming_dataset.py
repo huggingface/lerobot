@@ -1,11 +1,10 @@
+from collections.abc import Callable, Generator, Iterator
 from pathlib import Path
-from typing import Callable, Dict, Generator, Iterator
 
 import datasets
 import numpy as np
 import torch
 from datasets import load_dataset
-from line_profiler import profile
 
 from lerobot.constants import HF_LEROBOT_HOME
 from lerobot.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDatasetMetadata
@@ -171,7 +170,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
     # The current sequential iteration is a bottleneck. A producer-consumer pattern
     # could be used with a ThreadPoolExecutor to run `make_frame` (especially video decoding)
     # in parallel, feeding a queue from which this iterator will yield processed items.
-    def __iter__(self) -> Iterator[Dict[str, torch.Tensor]]:
+    def __iter__(self) -> Iterator[dict[str, torch.Tensor]]:
         # keep the same seed across exhaustions if shuffle is False, otherwise shuffle data across exhaustions
         rng = np.random.default_rng(self.seed) if not self.shuffle else self.rng
 
@@ -276,7 +275,6 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
 
         return padding_mask
 
-    @profile
     def make_frame(
         self, dataset_iterator: Backtrackable, previous_dataset_iterator: Backtrackable | None = None
     ) -> Generator:
