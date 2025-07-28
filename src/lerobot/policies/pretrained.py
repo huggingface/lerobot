@@ -155,15 +155,15 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                     logging.warning(f"Missing keys found while loading safetensor: {missing_keys}")
         # Create base kwargs
         kwargs = {"strict": strict}
-        
+
         # Add device parameter for newer versions that support it
         if packaging.version.parse(safetensors.__version__) >= packaging.version.parse("0.4.3"):
             kwargs["device"] = map_location
-        
+
         # Load the model with appropriate kwargs
         missing_keys, unexpected_keys = load_model_as_safetensor(model, model_file, **kwargs)
         log_model_loading_keys(missing_keys, unexpected_keys)
-        
+
         # For older versions, manually move to device if needed
         if "device" not in kwargs and map_location != "cpu":
             logging.warning(
