@@ -32,7 +32,7 @@ from .config_reachy2_fake_teleoperator import Reachy2FakeTeleoperatorConfig
 logger = logging.getLogger(__name__)
 
 # {lerobot_keys: reachy2_sdk_keys}
-REACHY2_MOTORS = {
+REACHY2_JOINTS = {
     "neck_yaw.pos": "head.neck.yaw",
     "neck_pitch.pos": "head.neck.pitch",
     "neck_roll.pos": "head.neck.roll",
@@ -54,9 +54,12 @@ REACHY2_MOTORS = {
     "l_gripper.pos": "l_arm.gripper",
     "l_antenna.pos": "head.l_antenna",
     "r_antenna.pos": "head.r_antenna",
-    # "mobile_base.vx": "mobile_base.vx",
-    # "mobile_base.vy": "mobile_base.vy",
-    # "mobile_base.vtheta": "mobile_base.vtheta",
+}
+
+REACHY2_VEL = {
+    "mobile_base.vx": "x",
+    "mobile_base.vy": "y",
+    "mobile_base.vtheta": "theta",
 }
 
 
@@ -75,10 +78,13 @@ class Reachy2FakeTeleoperator(Teleoperator):
 
     @property
     def action_features(self) -> dict[str, type]:
-        return dict.fromkeys(
-            REACHY2_MOTORS.keys(),
+        return {**dict.fromkeys(
+            REACHY2_JOINTS.keys(),
             float,
-        )
+        ), **dict.fromkeys(
+            REACHY2_VEL.keys(),
+            float,
+        )}
 
     @property
     def feedback_features(self) -> dict[str, type]:
@@ -107,10 +113,11 @@ class Reachy2FakeTeleoperator(Teleoperator):
 
     def get_action(self) -> dict[str, float]:
         start = time.perf_counter()
-        action = {k: self.reachy.joints[v].goal_position for k, v in REACHY2_MOTORS.items()}
+        joint_action = {k: self.reachy.joints[v].goal_position for k, v in REACHY2_JOINTS.items()}
+        vel_action = {k: self.reachy.mobile_base.last_cmd_vel[v] for k, v in REACHY2_VEL.items()}
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read action: {dt_ms:.1f}ms")
-        return action
+        return {**joint_action, **vel_action}
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
         # TODO(rcadene, aliberts): Implement force feedback
