@@ -551,6 +551,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
             if force_cache_sync:
                 raise FileNotFoundError
             self.hf_dataset = self.load_hf_dataset()
+            # Check if cached dataset contains all requested episodes
+            if not self._check_cached_episodes_sufficient():
+                raise FileNotFoundError("Cached dataset doesn't contain all requested episodes")
         except (AssertionError, FileNotFoundError, NotADirectoryError):
             self.revision = get_safe_version(self.repo_id, self.revision)
             self.download(download_videos)
@@ -665,6 +668,25 @@ class LeRobotDataset(torch.utils.data.Dataset):
         hf_dataset = load_nested_dataset(self.root / "data", features=features)
         hf_dataset.set_transform(hf_transform_to_torch)
         return hf_dataset
+
+    def _check_cached_episodes_sufficient(self) -> bool:
+        """Check if the cached dataset contains all requested episodes."""
+        if self.hf_dataset is None or len(self.hf_dataset) == 0:
+            return False
+
+        # Get available episode indices from cached dataset
+        available_episodes = set(self.hf_dataset["episode_index"])
+
+        # Determine requested episodes
+        if self.episodes is None:
+            # Requesting all episodes - check if we have all episodes from metadata
+            requested_episodes = set(range(self.meta.total_episodes))
+        else:
+            # Requesting specific episodes
+            requested_episodes = set(self.episodes)
+
+        # Check if all requested episodes are available in cached data
+        return requested_episodes.issubset(available_episodes)
 
     def create_hf_dataset(self) -> datasets.Dataset:
         features = get_hf_features_from_features(self.features)
