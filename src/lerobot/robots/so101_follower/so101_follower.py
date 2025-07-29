@@ -169,8 +169,11 @@ class SO101Follower(Robot):
 
         # Read arm position
         start = time.perf_counter()
-        obs_dict = self.bus.sync_read("Present_Position")
-        obs_dict = {f"{motor}.pos": val for motor, val in obs_dict.items()}
+        motor_positions = self.bus.sync_read("Present_Position")
+        # Optimize: direct assignment instead of creating new dict
+        obs_dict = {}
+        for motor, val in motor_positions.items():
+            obs_dict[f"{motor}.pos"] = val
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
 
@@ -199,7 +202,11 @@ class SO101Follower(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
+        # Optimize: avoid dictionary comprehension
+        goal_pos = {}
+        for key, val in action.items():
+            if key.endswith(".pos"):
+                goal_pos[key[:-4]] = val  # Remove last 4 chars (".pos")
 
         # Cap goal position when too far away from present position.
         # /!\ Slower fps expected due to reading from the follower.

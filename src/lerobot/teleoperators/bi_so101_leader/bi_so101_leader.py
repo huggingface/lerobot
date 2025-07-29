@@ -41,13 +41,13 @@ class BiSO101Leader(Teleoperator):
 
         left_arm_config = SO101LeaderConfig(
             id=f"{config.id}_left" if config.id else None,
-            calibration_dir=config.calibration_dir,
+            calibration_dir=self.calibration_dir,  # Use parent's calibration_dir
             port=config.left_arm_port,
         )
 
         right_arm_config = SO101LeaderConfig(
             id=f"{config.id}_right" if config.id else None,
-            calibration_dir=config.calibration_dir,
+            calibration_dir=self.calibration_dir,  # Use parent's calibration_dir
             port=config.right_arm_port,
         )
 
@@ -91,25 +91,28 @@ class BiSO101Leader(Teleoperator):
     def get_action(self) -> dict[str, float]:
         action_dict = {}
 
-        # Add "left_" prefix
+        # Get left action and add prefix - optimized
         left_action = self.left_arm.get_action()
-        action_dict.update({f"left_{key}": value for key, value in left_action.items()})
+        for key, value in left_action.items():
+            action_dict[f"left_{key}"] = value
 
-        # Add "right_" prefix
+        # Get right action and add prefix - optimized
         right_action = self.right_arm.get_action()
-        action_dict.update({f"right_{key}": value for key, value in right_action.items()})
+        for key, value in right_action.items():
+            action_dict[f"right_{key}"] = value
 
         return action_dict
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
-        # Remove "left_" prefix
-        left_feedback = {
-            key.removeprefix("left_"): value for key, value in feedback.items() if key.startswith("left_")
-        }
-        # Remove "right_" prefix
-        right_feedback = {
-            key.removeprefix("right_"): value for key, value in feedback.items() if key.startswith("right_")
-        }
+        # Optimized feedback parsing - single pass through dictionary
+        left_feedback = {}
+        right_feedback = {}
+        
+        for key, value in feedback.items():
+            if key.startswith("left_"):
+                left_feedback[key[5:]] = value  # Remove "left_" prefix (5 chars)
+            elif key.startswith("right_"):
+                right_feedback[key[6:]] = value  # Remove "right_" prefix (6 chars)
 
         if left_feedback:
             self.left_arm.send_feedback(left_feedback)
