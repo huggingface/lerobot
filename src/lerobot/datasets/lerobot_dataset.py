@@ -426,9 +426,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
             - On the Hugging Face Hub at the address https://huggingface.co/datasets/{repo_id} and not on
               your local disk in the 'root' folder. Instantiating this class with this 'repo_id' will download
               the dataset from that address and load it, pending your dataset is compliant with
-              codebase_version v2.0. If your dataset has been created before this new format, you will be
-              prompted to convert it using our conversion script from v1.6 to v2.0, which you can find at
-              lerobot/datasets/v2/convert_dataset_v1_to_v2.py.
+              codebase_version v3.0. If your dataset has been created before this new format, you will be
+              prompted to convert it using our conversion script from v2.1 to v3.0, which you can find at
+              lerobot/datasets/v30/convert_dataset_v21_to_v30.py.
 
 
         2. Your dataset doesn't already exists (either on local disk or on the Hub): you can create an empty
@@ -449,38 +449,47 @@ class LeRobotDataset(torch.utils.data.Dataset):
         .
         ├── data
         │   ├── chunk-000
-        │   │   ├── episode_000000.parquet
-        │   │   ├── episode_000001.parquet
-        │   │   ├── episode_000002.parquet
+        │   │   ├── file-000.parquet
+        │   │   ├── file-001.parquet
         │   │   └── ...
         │   ├── chunk-001
-        │   │   ├── episode_001000.parquet
-        │   │   ├── episode_001001.parquet
-        │   │   ├── episode_001002.parquet
+        │   │   ├── file-000.parquet
+        │   │   ├── file-001.parquet
         │   │   └── ...
         │   └── ...
         ├── meta
-        │   ├── episodes.jsonl
+        │   ├── episodes
+        │   │   ├── chunk-000
+        │   │   │   ├── file-000.parquet
+        │   │   │   ├── file-001.parquet
+        │   │   │   └── ...
+        │   │   ├── chunk-001
+        │   │   │   └── ...
+        │   │   └── ...
         │   ├── info.json
         │   ├── stats.json
-        │   └── tasks.jsonl
+        │   └── tasks.parquet
         └── videos
-            ├── chunk-000
-            │   ├── observation.images.laptop
-            │   │   ├── episode_000000.mp4
-            │   │   ├── episode_000001.mp4
-            │   │   ├── episode_000002.mp4
+            ├── observation.images.laptop
+            │   ├── chunk-000
+            │   │   ├── file-000.mp4
+            │   │   ├── file-001.mp4
             │   │   └── ...
-            │   ├── observation.images.phone
-            │   │   ├── episode_000000.mp4
-            │   │   ├── episode_000001.mp4
-            │   │   ├── episode_000002.mp4
+            │   ├── chunk-001
             │   │   └── ...
-            ├── chunk-001
+            │   └── ...
+            ├── observation.images.phone
+            │   ├── chunk-000
+            │   │   ├── file-000.mp4
+            │   │   ├── file-001.mp4
+            │   │   └── ...
+            │   ├── chunk-001
+            │   │   └── ...
+            │   └── ...
             └── ...
 
-        Note that this file-based structure is designed to be as versatile as possible. The files are split by
-        episodes which allows a more granular control over which episodes one wants to use and download. The
+        Note that this file-based structure is designed to be as versatile as possible. Multiple episodes are
+        consolidated into chunked files which improves storage efficiency and loading performance. The
         structure of the dataset is entirely described in the info.json file, which can be easily downloaded
         or viewed directly on the hub before downloading any actual data. The type of files used are very
         simple and do not need complex tools to be read, it only uses .parquet, .json and .mp4 files (and .md
