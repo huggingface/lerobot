@@ -80,10 +80,11 @@ class Reachy2Robot(Robot):
 
     @property
     def observation_features(self) -> dict:
-        return dict.fromkeys(
-            REACHY2_MOTORS.keys(),
-            float,
-        )
+        return {**self.motors_features, **self.camera_features}
+        # return dict.fromkeys(
+        #     REACHY2_MOTORS.keys(),
+        #     float,
+        # )
         # return {
         #     "dtype": "float32",
         #     "shape": len(REACHY2_MOTORS),
@@ -92,18 +93,28 @@ class Reachy2Robot(Robot):
 
     @property
     def action_features(self) -> dict:
-        return self.observation_features
+        return self.motors_features
 
     @property
     def camera_features(self) -> dict[str, dict]:
-        cam_ft = {}
-        for cam_key, cam in self.cameras.items():
-            cam_ft[cam_key] = {
-                "shape": (cam.height, cam.width, cam.channels),
-                "names": ["height", "width", "channels"],
-                "info": None,
-            }
-        return cam_ft
+        return {
+            cam: (self.cameras[cam].height, self.cameras[cam].width, 3) for cam in self.cameras
+        }
+        # cam_ft = {}
+        # for cam_key, cam in self.cameras.items():
+        #     cam_ft[cam_key] = {
+        #         "shape": (cam.height, cam.width, cam.channels),
+        #         "names": ["height", "width", "channels"],
+        #         "info": None,
+        #     }
+        # return cam_ft
+
+    @property
+    def motors_features(self) -> dict:
+        return dict.fromkeys(
+            REACHY2_MOTORS.keys(),
+            float,
+        )
 
     @property
     def is_connected(self) -> bool:
@@ -115,8 +126,8 @@ class Reachy2Robot(Robot):
             print("Error connecting to Reachy 2.")
             raise ConnectionError()
 
-        # for cam in self.cameras.values():
-        #     cam.connect()
+        for cam in self.cameras.values():
+            cam.connect()
 
         # if not self.is_connected:
         #     print("Could not connect to the cameras, check that all cameras are plugged-in.")
@@ -149,6 +160,9 @@ class Reachy2Robot(Robot):
         # state = np.asarray(list(state.values()))
         # obs_dict[OBS_STATE] = state
 
+        for cam_key, cam in self.cameras.items():
+            obs_dict[cam_key] = cam.async_read()
+
         # Capture images from cameras
         # for cam_key, cam in self.cameras.items():
             # before_camread_t = time.perf_counter()
@@ -178,5 +192,5 @@ class Reachy2Robot(Robot):
     def disconnect(self) -> None:
         self.reachy.turn_off_smoothly()
         self.reachy.disconnect()
-        # for cam in self.cameras.values():
-        #     cam.disconnect()
+        for cam in self.cameras.values():
+            cam.disconnect()

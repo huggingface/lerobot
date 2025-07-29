@@ -15,7 +15,8 @@
 from dataclasses import dataclass, field
 
 from lerobot.cameras import CameraConfig
-from lerobot.cameras.opencv import OpenCVCameraConfig
+# from lerobot.cameras.opencv import OpenCVCameraConfig
+from lerobot.cameras.reachy2_camera import Reachy2CameraConfig
 from lerobot.cameras.configs import ColorMode, Cv2Rotation
 
 from ..config import RobotConfig
@@ -33,19 +34,23 @@ class Reachy2RobotConfig(RobotConfig):
     # cameras
     cameras: dict[str, CameraConfig] = field(
         default_factory=lambda: {
-            # "head": RealSenseCameraConfig(
-            #     name="Intel RealSense D435I",
-            #     fps=30,
-            #     width=640,
-            #     height=480,
-            #     rotation=90,
-            # ),
-            # "wrist": RealSenseCameraConfig(
-            #     name="Intel RealSense D405",
-            #     fps=30,
-            #     width=640,
-            #     height=480,
-            # ),
+        #     "webcam": OpenCVCameraConfig(
+        #         index_or_path="/dev/video0",
+        #         fps=30,
+        #         width=640,
+        #         height=480,
+        #         color_mode=ColorMode.RGB,
+        #         rotation=Cv2Rotation.NO_ROTATION
+        #     ),
+        "teleop_left": Reachy2CameraConfig(
+                name="teleop",
+                image_type="left",
+                fps=30,
+                width=640,
+                height=480,
+                color_mode=ColorMode.RGB,
+                rotation=Cv2Rotation.NO_ROTATION
+            ),
         }
     )
 

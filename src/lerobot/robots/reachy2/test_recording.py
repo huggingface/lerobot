@@ -34,8 +34,8 @@ dataset = LeRobotDataset.create(
     fps=FPS,
     features=dataset_features,
     robot_type=robot.name,
-    # use_videos=True,
-    # image_writer_threads=4,
+    use_videos=True,
+    image_writer_threads=4,
 )
 
 # Initialize the keyboard listener and rerun visualization
