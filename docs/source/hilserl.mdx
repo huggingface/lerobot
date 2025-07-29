@@ -28,7 +28,7 @@ This guide provides step-by-step instructions for training a robot policy using 
 - A gamepad (recommended) or keyboard to control the robot
 - A Nvidia GPU
 - A real robot with a follower and leader arm (optional if you use the keyboard or the gamepad)
-- A URDF file for the robot for the kinematics package (check `lerobot/common/model/kinematics.py`)
+- A URDF file for the robot for the kinematics package (check `lerobot/model/kinematics.py`)
 
 ## What kind of tasks can I train?
 
@@ -477,7 +477,7 @@ Create a training configuration file (example available [here](https://huggingfa
 1. Configure the policy settings (`type="sac"`, `device`, etc.)
 2. Set `dataset` to your cropped dataset
 3. Configure environment settings with crop parameters
-4. Check the other parameters related to SAC in [configuration_sac.py](https://github.com/huggingface/lerobot/blob/19bb621a7d0a31c20cd3cc08b1dbab68d3031454/lerobot/common/policies/sac/configuration_sac.py#L79).
+4. Check the other parameters related to SAC in [configuration_sac.py](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/sac/configuration_sac.py#L79).
 5. Verify that the `policy` config is correct with the right `input_features` and `output_features` for your task.
 
 **Starting the Learner**
