@@ -46,15 +46,10 @@ class VQBeTConfig(PreTrainedConfig):
             current step and additional steps going back).
         n_action_pred_token: Total number of current token and future tokens that VQ-BeT predicts.
         action_chunk_size: Action chunk size of each action prediction token.
-        input_features: A dictionary defining the shapes of the input data for the policy.
-            The key represents the input data name, and the value is a list indicating the dimensions
-            of the corresponding data. For example, "observation.image" refers to an input from
-            a camera with dimensions [3, 96, 96], indicating it has three color channels and 96x96 resolution.
-            Importantly, shapes doesnt include batch dimension or temporal dimension.
-        output_features: A dictionary defining the shapes of the output data for the policy.
-            The key represents the output data name, and the value is a list indicating the dimensions
-            of the corresponding data. For example, "action" refers to an output shape of [14], indicating
-            14-dimensional actions. Importantly, shapes doesnt include batch dimension or temporal dimension.
+        input_features: A dictionary defining the PolicyFeature of the input data for the policy. The key represents
+            the input data name, and the value is PolicyFeature, which consists of FeatureType and shape attributes.
+        output_features: A dictionary defining the PolicyFeature of the output data for the policy. The key represents
+            the output data name, and the value is PolicyFeature, which consists of FeatureType and shape attributes.
         input_normalization_modes: A dictionary with key representing the modality (e.g. "observation.state"),
             and the value specifies the normalization mode to apply. The two available modes are "mean_std"
             which subtracts the mean and divides by the standard deviation and "min_max" which rescale in a
