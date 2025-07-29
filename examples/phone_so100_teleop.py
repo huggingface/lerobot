@@ -33,7 +33,7 @@ robot_config = SO100FollowerEndEffectorConfig(
 
 # TODO(pepijn): Add LeKiwi example
 
-teleop_config = PhoneConfig(phone_os=PhoneOS.IOS)  # or PhoneOS.ANDROID
+teleop_config = PhoneConfig(phone_os=PhoneOS.ANDROID)
 
 robot = SO100FollowerEndEffector(robot_config)
 teleop_device = Phone(teleop_config)

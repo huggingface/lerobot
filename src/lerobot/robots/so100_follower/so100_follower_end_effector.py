@@ -33,7 +33,7 @@ from .config_so100_follower import SO100FollowerEndEffectorConfig
 logger = logging.getLogger(__name__)
 
 
-# TODO(pepijn): Refactor with pipelines
+# TODO(pepijn): Refactor with pipelines, also phone.py and in phone.py set calibration logic etc all in a pipeline, only raw values from phone
 class SO100FollowerEndEffector(SO100Follower):
     """
     SO100Follower robot with end-effector space control.

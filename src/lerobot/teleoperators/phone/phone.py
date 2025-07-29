@@ -34,7 +34,7 @@ from .config_phone import PhoneConfig, PhoneOS
 
 logger = logging.getLogger(__name__)
 
-# TODO(pepijn): Add transform to center of phone instead of camera?? (check if this is needed for apple)
+# TODO(pepijn): specify the phone calibration point as axis of a robot "frame" that is going to be aligned with the normal axis of the back of the phone. at calibration and then each time b1 is pressed again.
 
 
 class Phone(Teleoperator):
@@ -53,56 +53,27 @@ class Phone(Teleoperator):
     def __init__(self, config: PhoneConfig):
         super().__init__(config)
         self.config = config
-        self.source = config.phone_os
         self._group = None
         self._teleop = None
         self._teleop_thread = None
         self._latest_pose = None
-
-        # Arm control (reference-frame) state
         self._enabled: bool = False
-        self._arm_ref_pos: np.ndarray | None = None
-        self._arm_ref_rot_inv: Rotation | None = None
 
-        # Calibration origin
+        # Calibration origins
         self._calib_pos: np.ndarray | None = None
-        self._calib_rot: Rotation | None = None
         self._calib_rot_inv: Rotation | None = None
 
     @property
-    def action_features(self) -> dict[str, type]:
-        features = {
-            "enabled": bool,
-            "target_x": float,  # meters
-            "target_y": float,
-            "target_z": float,
-            # Relative quaternion (delta) from reference -> current, XYZW
-            "target_qx": float,
-            "target_qy": float,
-            "target_qz": float,
-            "target_qw": float,
-        }
-        # Analog inputs normalized between -1 and 1
-        for i in range(1, 9):
-            features[f"a{i}"] = float
-        # Digital inputs 0 or 1
-        for i in range(1, 9):
-            features[f"b{i}"] = int
-        return features
-
-    @property
     def is_connected(self) -> bool:
-        if self.source == PhoneOS.IOS:
-            return self._group is not None
-        elif self.source == PhoneOS.ANDROID:
-            return self._teleop is not None
-        return False
+        return (self.config.phone_os == PhoneOS.IOS and self._group is not None) or (
+            self.config.phone_os == PhoneOS.ANDROID and self._teleop is not None
+        )
 
     def connect(self) -> None:
         if self.is_connected:
             raise DeviceAlreadyConnectedError(f"{self} already connected")
 
-        if self.source == PhoneOS.IOS:
+        if self.config.phone_os == PhoneOS.IOS:
             logger.info("Connecting to IPhone, make sure to open the HEBI Mobile I/O app.")
             lookup = hebi.Lookup()
             time.sleep(2.0)
@@ -111,7 +82,7 @@ class Phone(Teleoperator):
                 raise RuntimeError("Mobile I/O not found — check name/family settings in the app.")
             self._group = group
             logger.info(f"{self} connected to HEBI group with {group.size} module(s).")
-        elif self.source == PhoneOS.ANDROID:
+        elif self.config.phone_os == PhoneOS.ANDROID:
             logger.info("Starting teleop stream for Android...")
             self._teleop = Teleop()
             self._teleop.subscribe(self._android_callback)
@@ -119,74 +90,89 @@ class Phone(Teleoperator):
             self._teleop_thread.start()
             logger.info(f"{self} connected, teleop stream started.")
         else:
-            raise ValueError(f"Invalid config phone_os: {self.source}")
+            raise ValueError(f"Invalid config phone_os: {self.config.phone_os}")
 
         # Always calibrate on connect
         self.calibrate()
 
-    @property
-    def is_calibrated(self) -> bool:
-        return (self._calib_pos is not None) and (self._calib_rot is not None)
-
     def calibrate(self) -> None:
-        """
-        Ask the human to hold the phone in its neutral pose and press B1.
-        """
+        # Ask the human to hold the phone in its neutral pose and press B1.
         print("\n Phone <-> Robot calibration")
         print("Hold the phone so that: top edge points forward (robot +x) and screen points up (robot +z)")
         print("Press and hold B1 to capture this pose...\n")
 
+        pos, rot = self._wait_for_stable_pose()
+        self._wait_for_button_press("b1", 0.3)
+
+        # Store calibration transform: phone frame  is now robot frame
+        self._calib_pos = pos.copy()
+        self._calib_rot_inv = rot.inv()
+        self._enabled = False
+        print("Calibration done\n")
+
+    @property
+    def is_calibrated(self) -> bool:
+        return (self._calib_pos is not None) and (self._calib_rot_inv is not None)
+
+    @property
+    def action_features(self) -> dict[str, type]:
+        features = {
+            "enabled": bool,
+            "target_x": float,  # meters
+            "target_y": float,
+            "target_z": float,
+            "target_qx": float,
+            "target_qy": float,
+            "target_qz": float,
+            "target_qw": float,
+        }
+        for i in range(1, 9):  # Analog inputs between -1 and 1
+            features[f"a{i}"] = float
+
+        for i in range(1, 9):  # Digital inputs 0 or 1
+            features[f"b{i}"] = int
+        return features
+
+    def _wait_for_stable_pose(self) -> tuple[np.ndarray, Rotation]:
         while True:
-            ok, pos_r, rot_r = self._read_current_pose()
+            ok, pos, rot, _ = self._read_current_pose()
             if ok:
-                break
+                return pos, rot
             time.sleep(0.01)
 
-        # Debounce: require B1 pressed for ~0.3 s
+    def _wait_for_button_press(self, button: str, hold_duration: float) -> None:
+        required_count = int(hold_duration / 0.01)
         consecutive = 0
-        while consecutive < 30:
+        while consecutive < required_count:
             act = self.get_action()
-            if act.get("b1", 0):
+            if act.get(button, 0):
                 consecutive += 1
             else:
                 consecutive = 0
             time.sleep(0.01)
 
-        # Store calibration transform  ➜  phone frame == robot frame
-        self._calib_pos = pos_r.copy()
-        self._calib_rot = rot_r
-        self._calib_rot_inv = rot_r.inv()
-
-        # Reset reference‑frame state (starts fresh when operator presses B1 later)
-        self._reset_arm_reference()
-        self._enabled = False
-
-        print("Calibration stored. Release B1; press again to drive.\n")
-
     def _read_current_pose(self) -> tuple[bool, np.ndarray | None, Rotation | None]:
-        if self.source == PhoneOS.IOS:
+        if self.config.phone_os == PhoneOS.IOS:
             fbk = self._group.get_next_feedback()
             pose = fbk[0]
             ar_pos = getattr(pose, "ar_position", None)
-            ar_quat = getattr(pose, "ar_orientation", None)  # w‑x‑y‑z
+            ar_quat = getattr(pose, "ar_orientation", None)  # wxyz
             if ar_pos is None or ar_quat is None:
-                return False, None, None
-            # convert [w, x, y, z] → [x, y, z, w] for scipy
-            quat_xyzw = np.concatenate((ar_quat[1:], [ar_quat[0]]))
+                return False, None, None, None
+            quat_xyzw = np.concatenate((ar_quat[1:], [ar_quat[0]]))  # wxyz to xyzw
             rot = Rotation.from_quat(quat_xyzw)
-            return True, ar_pos, rot
+            pos = ar_pos - rot.apply(self.config.camera_offset)
+            return True, pos, rot, pose
         else:  # Android
             p = self._latest_pose
             if p is None:
-                return False, None, None
+                return False, None, None, None
             webxr_pos = p[:3, 3]
             webxr_rot = Rotation.from_matrix(p[:3, :3])
-            webxr_wxyz = np.array([webxr_rot.as_quat()[3], *webxr_rot.as_quat()[:3]])
-            pos_r, rot_r = self._map_webxr_to_robot(
-                np.array(webxr_pos, dtype=float),
-                webxr_wxyz,
-            )
-        return True, pos_r, rot_r
+            webxr_wxyz = np.array([webxr_rot.as_quat()[3], *webxr_rot.as_quat()[:3]])  # wxyz to xyzw
+            pose = self._latest_pose
+            pos, rot = self._map_webxr_to_robot(np.array(webxr_pos, dtype=float), webxr_wxyz)
+            return True, pos, rot, pose
 
     @property
     def feedback_features(self) -> dict[str, type]:
@@ -203,55 +189,35 @@ class Phone(Teleoperator):
 
     def _apply_calibration(self, pos: np.ndarray, rot: Rotation) -> tuple[np.ndarray, Rotation]:
         if not self.is_calibrated:
-            return pos, rot
+            raise RuntimeError("Phone not calibrated, cannot apply calibration.")
         pos_cal = self._calib_rot_inv.apply(pos - self._calib_pos)
         rot_cal = self._calib_rot_inv * rot
         return pos_cal, rot_cal
 
     def get_action(self) -> dict[str, float]:
-        if self.source == PhoneOS.IOS:
-            fbk = self._group.get_next_feedback()
-            pose = fbk[0]
-            ar_pos = getattr(pose, "ar_position", None)
-            ar_quat = getattr(pose, "ar_orientation", None)  # [w,x,y,z]
-            if ar_pos is None or ar_quat is None:
-                return {}
-            curr_pos = np.array(ar_pos, dtype=float)
-            r_curr = Rotation.from_quat(ar_quat[[1, 2, 3, 0]])  # wxyz→xyzw
-            curr_pos, r_curr = self._apply_calibration(curr_pos, r_curr)
-        else:
-            pose = self._latest_pose
-            if pose is None:
-                return {}
-            curr_pos, r_curr = self._apply_calibration(curr_pos, r_curr)
+        ok, raw_pos, raw_rot, pose = self._read_current_pose()
+        if not ok:
+            return {}
 
-        # Build action with raw IO (so caller can still read buttons/analogs)
         action: dict[str, float | int] = {}
-
-        if self.source == PhoneOS.IOS:
+        if self.config.phone_os == PhoneOS.IOS:
             io = getattr(pose, "io", None)
             if io is not None:
                 bank_a = getattr(io, "a", None)
                 bank_b = getattr(io, "b", None)
 
                 if bank_a is not None:
-                    for ch in range(1, 9):  # 1..8 inclusive
+                    for ch in range(1, 9):
                         if bank_a.has_float(ch):
                             action[f"a{ch}"] = float(bank_a.get_float(ch))
 
                 if bank_b is not None:
-                    for ch in range(1, 9):  # 1..8 inclusive
+                    for ch in range(1, 9):
                         if bank_b.has_int(ch):
                             action[f"b{ch}"] = int(bank_b.get_int(ch))
                         elif hasattr(bank_b, "has_bool") and bank_b.has_bool(ch):
                             action[f"b{ch}"] = int(bank_b.get_bool(ch))
 
-                    if not hasattr(self, "_printed_b_debug"):
-                        logger.info(
-                            "MobileIO bank_b debug: "
-                            + ", ".join(f"b{n}={action.get(f'b{n}', 'NA')}" for n in range(1, 9))
-                        )
-                        self._printed_b_debug = True
         else:
             # Android TODO: implement analog/digital inputs
             pass
@@ -266,23 +232,15 @@ class Phone(Teleoperator):
         # Rising edge: capture reference
         if b1_pressed and not self._enabled:
             self._enabled = True
-            self._arm_ref_pos = curr_pos.copy()
-            self._arm_ref_rot_inv = r_curr.inv()
-            logger.info("Phone teleop enabled (B1 pressed) – reference pose captured.")
 
         # Falling edge: disable
         if (not b1_pressed) and self._enabled:
             self._enabled = False
-            self._reset_arm_reference()
-            logger.info("Phone teleop disabled (B1 released).")
 
-        # Always include enabled flag
-        action["enabled"] = int(self._enabled)
-
-        if not self._enabled:
-            # Zero absolute offsets when disabled
+        if not self._enabled or not self.is_calibrated:
             action.update(
                 {
+                    "enabled": 0,
                     "target_x": 0.0,
                     "target_y": 0.0,
                     "target_z": 0.0,
@@ -294,23 +252,19 @@ class Phone(Teleoperator):
             )
             return action
 
-        # Absolute offsets relative to reference
-        delta_world = curr_pos - self._arm_ref_pos
-        # Express in reference frame so translation is phone‑centric
-        pos_offset_total = self._arm_ref_rot_inv.apply(delta_world)
+        curr_pos, r_curr = self._apply_calibration(raw_pos, raw_rot)
+        quat_xyzw = r_curr.as_quat()
 
-        # Relative rotation quaternion (reference -> current)
-        rot_offset_total = r_curr * self._arm_ref_rot_inv  # Rotation object
-        quat_xyzw = rot_offset_total.as_quat()  # xyzw
-        # Canonicalize so qw >= 0
+        # Canonicalize
         if quat_xyzw[3] < 0:
             quat_xyzw = -quat_xyzw
 
         action.update(
             {
-                "target_x": -1.0 * float(pos_offset_total[1]),
-                "target_y": float(pos_offset_total[0]),
-                "target_z": float(pos_offset_total[2]),
+                "enabled": int(self._enabled),
+                "target_x": -1.0 * float(curr_pos[1]),
+                "target_y": float(curr_pos[0]),
+                "target_z": float(curr_pos[2]),
                 "target_qx": float(quat_xyzw[1]),
                 "target_qy": float(quat_xyzw[0]),
                 "target_qz": -1.0 * float(quat_xyzw[2]),
@@ -319,22 +273,19 @@ class Phone(Teleoperator):
         )
         return action
 
-    def _reset_arm_reference(self):
-        self._arm_ref_pos = None
-        self._arm_ref_rot_inv = None
-
     def send_feedback(self, feedback: dict[str, float]) -> None:
-        # We could add haptic feedback (phonevibrations) here, but it's not implemented yet
+        # We could add haptic feedback (vibrations) here, but it's not implemented yet
         raise NotImplementedError
 
     def disconnect(self) -> None:
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        # TODO(pepijn): Do this in a more clean way
-        if self.source == PhoneOS.IOS:
-            self._group = None  # HEBI has no explicit disconnect
+        if self.config.phone_os == PhoneOS.IOS:
+            self._group = None
         else:
-            self._teleop = None  # Teleop thread will exit on program end
-
-        logger.info(f"{self} disconnected.")
+            self._teleop = None
+            if self._teleop_thread and self._teleop_thread.is_alive():
+                self._teleop_thread.join(timeout=1.0)
+                self._teleop_thread = None
+                self._latest_pose = None
