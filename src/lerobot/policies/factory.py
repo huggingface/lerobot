@@ -14,10 +14,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
+from __future__ import annotations
 
-import torch
+import logging
+from typing import TypedDict
+
 from torch import nn
+from typing_extensions import Unpack
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType
@@ -35,7 +38,7 @@ from lerobot.policies.sac.reward_model.configuration_classifier import RewardCla
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.policies.tdmpc.configuration_tdmpc import TDMPCConfig
 from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
-from lerobot.processor.pipeline import EnvTransition, RobotProcessor, TransitionIndex
+from lerobot.processor.pipeline import RobotProcessor
 
 
 def get_policy_class(name: str) -> PreTrainedPolicy:
@@ -103,10 +106,17 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         raise ValueError(f"Policy type '{policy_type}' is not available.")
 
 
+class ProcessorConfigKwargs(TypedDict, total=False):
+    """Keyword arguments for the processor config."""
+
+    preprocessor_config_filename: str | None
+    postprocessor_config_filename: str | None
+
+
 def make_processor(
     policy_cfg: PreTrainedConfig,
     pretrained_path: str | None = None,
-    **kwargs,
+    **kwargs: Unpack[ProcessorConfigKwargs],
 ) -> tuple[RobotProcessor, RobotProcessor]:
     """Make a processor instance for a given policy type.
 
@@ -128,7 +138,16 @@ def make_processor(
     if pretrained_path:
         # Load a pretrained processor
         # TODO(azouitine): Handle this case.
-        raise NotImplementedError("Loading a pretrained processor is not implemented.")
+        return (
+            RobotProcessor.from_pretrained(
+                source=pretrained_path,
+                config_filename=kwargs.get("preprocessor_config_filename", "preprocessor.json"),
+            ),
+            RobotProcessor.from_pretrained(
+                source=pretrained_path,
+                config_filename=kwargs.get("postprocessor_config_filename", "postprocessor.json"),
+            ),
+        )
 
     # Create a new processor based on policy type
     if policy_cfg.type == "tdmpc":
@@ -178,20 +197,6 @@ def make_processor(
 
     else:
         raise NotImplementedError(f"Processor for policy type '{policy_cfg.type}' is not implemented.")
-
-    # Helper hook function to detect NaNs in observation
-    def nan_detection_hook(step_idx: int, transition: EnvTransition) -> None:
-        observation = transition[TransitionIndex.OBSERVATION]
-        if observation is not None:
-            for key, value in observation.items():
-                if isinstance(value, torch.Tensor) and torch.isnan(value).any():
-                    logging.warning(f"NaN detected in observation key '{key}' after step {step_idx}: {value}")
-
-    # Attach the hook to all returned processors
-    if isinstance(processors, RobotProcessor):
-        processors = (processors,)  # Wrap single processor in tuple for consistency
-    for processor in processors:
-        processor.register_after_step_hook(nan_detection_hook)
 
     return processors
 

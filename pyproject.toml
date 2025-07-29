@@ -61,7 +61,7 @@ dependencies = [
     "datasets>=2.19.0,<4.0.0",
     "deepdiff>=7.0.1",
     "diffusers>=0.27.2",
-    "huggingface-hub[hf-transfer,cli]>=0.27.1",
+    "huggingface-hub[hf-transfer,cli]>=0.27.1,<0.34.0",
 
     # Core dependencies
     "cmake>=3.29.0.1",
@@ -75,7 +75,7 @@ dependencies = [
     "packaging>=24.2",
     "pynput>=1.7.7",
     "pyserial>=3.5",
-    "wandb>=0.16.3",
+    "wandb>=0.20.0",
 
     "draccus==0.10.0", # TODO: Remove ==
     "gymnasium>=0.29.1,<1.0.0", # TODO: Bumb dependency
@@ -157,6 +157,17 @@ all = [
     "lerobot[xarm]",
     "lerobot[phone]",
 ]
+
+[project.scripts]
+lerobot-calibrate="lerobot.calibrate:main"
+lerobot-find-cameras="lerobot.find_cameras:main"
+lerobot-find-port="lerobot.find_port:main"
+lerobot-record="lerobot.record:main"
+lerobot-replay="lerobot.replay:main"
+lerobot-setup-motors="lerobot.setup_motors:main"
+lerobot-teleoperate="lerobot.teleoperate:main"
+lerobot-eval="lerobot.scripts.eval:main"
+lerobot-train="lerobot.scripts.train:main"
 
 # ---------------- Tool Configurations ----------------
 [tool.setuptools.packages.find]

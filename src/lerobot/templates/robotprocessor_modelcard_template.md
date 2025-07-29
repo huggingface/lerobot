@@ -1,9 +1,9 @@
 ---
 library_name: lerobot
 tags:
-- robotics
-- lerobot
-- safetensors
+  - robotics
+  - lerobot
+  - safetensors
 pipeline_tag: robotics
 ---
 
@@ -20,6 +20,7 @@ The RobotProcessor provides a modular architecture for processing robot environm
 ### EnvTransition Structure
 
 An `EnvTransition` is a 7-tuple containing:
+
 1. **observation**: Current state observation
 2. **action**: Action taken (can be None)
 3. **reward**: Reward received (float or None)
@@ -40,9 +41,7 @@ An `EnvTransition` is a 7-tuple containing:
 
 ## Installation
 
-```bash
-pip install lerobot
-```
+Follow the [installation instructions](https://huggingface.co/docs/lerobot/installation) to install the package.
 
 ## Usage
 

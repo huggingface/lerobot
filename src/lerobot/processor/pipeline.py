@@ -18,38 +18,45 @@ from __future__ import annotations
 import importlib
 import json
 import os
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
-from enum import IntEnum
+from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Iterable, Protocol, Sequence
+from typing import Any, Protocol, TypedDict
 
 import torch
 from huggingface_hub import ModelHubMixin, hf_hub_download
+from huggingface_hub.errors import HfHubHTTPError
 from safetensors.torch import load_file, save_file
 
-
-class TransitionIndex(IntEnum):
-    """Explicit indices for EnvTransition tuple components."""
-
-    OBSERVATION = 0
-    ACTION = 1
-    REWARD = 2
-    DONE = 3
-    TRUNCATED = 4
-    INFO = 5
-    COMPLEMENTARY_DATA = 6
+from lerobot.utils.utils import get_safe_torch_device
 
 
-# (observation, action, reward, done, truncated, info, complementary_data)
-EnvTransition = tuple[
-    dict[str, Any] | None,  # observation
-    Any | torch.Tensor | None,  # action
-    float | torch.Tensor | None,  # reward
-    bool | torch.Tensor | None,  # done
-    bool | torch.Tensor | None,  # truncated
-    dict[str, Any] | None,  # info
-    dict[str, Any] | None,  # complementary_data
-]
+class TransitionKey(str, Enum):
+    """Keys for accessing EnvTransition dictionary components."""
+
+    OBSERVATION = "observation"
+    ACTION = "action"
+    REWARD = "reward"
+    DONE = "done"
+    TRUNCATED = "truncated"
+    INFO = "info"
+    COMPLEMENTARY_DATA = "complementary_data"
+
+
+class EnvTransition(TypedDict, total=False):
+    """Environment transition data structure.
+
+    All fields are optional (total=False) to allow flexible usage.
+    """
+
+    observation: dict[str, Any] | None
+    action: Any | torch.Tensor | None
+    reward: float | torch.Tensor | None
+    done: bool | torch.Tensor | None
+    truncated: bool | torch.Tensor | None
+    info: dict[str, Any] | None
+    complementary_data: dict[str, Any] | None
 
 
 class ProcessorStepRegistry:
@@ -164,10 +171,9 @@ class ProcessorStep(Protocol):
 
 def _default_batch_to_transition(batch: dict[str, Any]) -> EnvTransition:  # noqa: D401
     """Convert a *batch* dict coming from Learobot replay/dataset code into an
-    ``EnvTransition`` tuple.
+    ``EnvTransition`` dictionary.
 
-    The function is intentionally **strictly positional** – it maps well known
-    keys to the fixed slot order used inside the pipeline.  Missing keys are
+    The function maps well known keys to the EnvTransition structure. Missing keys are
     filled with sane defaults (``None`` or ``0.0``/``False``).
 
     Keys recognised (case-sensitive):
@@ -192,15 +198,16 @@ def _default_batch_to_transition(batch: dict[str, Any]) -> EnvTransition:  # noq
     task_key = {"task": batch["task"]} if "task" in batch else {}
     complementary_data = {**pad_keys, **task_key} if pad_keys or task_key else {}
 
-    return (
-        observation,
-        batch.get("action"),
-        batch.get("next.reward", 0.0),
-        batch.get("next.done", False),
-        batch.get("next.truncated", False),
-        batch.get("info", {}),
-        complementary_data,
-    )
+    transition: EnvTransition = {
+        TransitionKey.OBSERVATION: observation,
+        TransitionKey.ACTION: batch.get("action"),
+        TransitionKey.REWARD: batch.get("next.reward", 0.0),
+        TransitionKey.DONE: batch.get("next.done", False),
+        TransitionKey.TRUNCATED: batch.get("next.truncated", False),
+        TransitionKey.INFO: batch.get("info", {}),
+        TransitionKey.COMPLEMENTARY_DATA: complementary_data,
+    }
+    return transition
 
 
 def _default_transition_to_batch(transition: EnvTransition) -> dict[str, Any]:  # noqa: D401
@@ -208,25 +215,16 @@ def _default_transition_to_batch(transition: EnvTransition) -> dict[str, Any]:  
     the canonical field names used throughout *LeRobot*.
     """
 
-    (
-        observation,
-        action,
-        reward,
-        done,
-        truncated,
-        info,
-        complementary_data,
-    ) = transition
-
     batch = {
-        "action": action,
-        "next.reward": reward,
-        "next.done": done,
-        "next.truncated": truncated,
-        "info": info,
+        "action": transition.get(TransitionKey.ACTION),
+        "next.reward": transition.get(TransitionKey.REWARD, 0.0),
+        "next.done": transition.get(TransitionKey.DONE, False),
+        "next.truncated": transition.get(TransitionKey.TRUNCATED, False),
+        "info": transition.get(TransitionKey.INFO, {}),
     }
 
     # Add padding and task data from complementary_data
+    complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA)
     if complementary_data:
         pad_data = {k: v for k, v in complementary_data.items() if "_is_pad" in k}
         batch.update(pad_data)
@@ -235,6 +233,7 @@ def _default_transition_to_batch(transition: EnvTransition) -> dict[str, Any]:  
             batch["task"] = complementary_data["task"]
 
     # Handle observation - flatten dict to observation.* keys if it's a dict
+    observation = transition.get(TransitionKey.OBSERVATION)
     if isinstance(observation, dict):
         batch.update(observation)
 
@@ -265,6 +264,17 @@ class RobotProcessor(ModelHubMixin):
         after_step_hooks: List of hooks called after each step. Each hook receives the step
             index and transition, and can optionally return a modified transition.
         reset_hooks: List of hooks called during processor reset.
+
+    Hook Semantics:
+        - Hooks are executed sequentially in the order they were registered. There is no way to
+          reorder hooks after registration without creating a new pipeline.
+        - Hooks are for observation/monitoring only and DO NOT modify transitions. They are called
+          with the step index and current transition for logging, debugging, or monitoring purposes.
+        - All hooks for a given type (before/after) are executed for every step, or none at all if
+          an error occurs. There is no partial execution of hooks.
+        - Hooks should generally be stateless to maintain predictable behavior. If you need stateful
+          processing, consider implementing a proper ProcessorStep instead.
+        - To remove hooks, use the unregister methods. To remove steps, you must create a new pipeline.
     """
 
     steps: Sequence[ProcessorStep] = field(default_factory=list)
@@ -278,109 +288,106 @@ class RobotProcessor(ModelHubMixin):
         default_factory=lambda: _default_transition_to_batch, repr=False
     )
 
-    # Processor-level hooks
-    # A hook can optionally return a modified transition.  If it returns
-    # ``None`` the current value is left untouched.
-    before_step_hooks: list[Callable[[int, EnvTransition], EnvTransition | None]] = field(
-        default_factory=list, repr=False
-    )
-    after_step_hooks: list[Callable[[int, EnvTransition], EnvTransition | None]] = field(
-        default_factory=list, repr=False
-    )
+    # Processor-level hooks for observation/monitoring
+    # Hooks do not modify transitions - they are called for logging, debugging, or monitoring purposes
+    before_step_hooks: list[Callable[[int, EnvTransition], None]] = field(default_factory=list, repr=False)
+    after_step_hooks: list[Callable[[int, EnvTransition], None]] = field(default_factory=list, repr=False)
     reset_hooks: list[Callable[[], None]] = field(default_factory=list, repr=False)
 
     def __call__(self, data: EnvTransition | dict[str, Any]):
         """Process data through all steps.
 
-        The method accepts either the classic EnvTransition tuple or a batch dictionary
+        The method accepts either the classic EnvTransition dict or a batch dictionary
         (like the ones returned by ReplayBuffer or LeRobotDataset). If a dict is supplied
-        it is first converted to the internal tuple format using to_transition; after all
-        steps are executed the tuple is transformed back into a dict with to_batch and the
+        it is first converted to the internal dict format using to_transition; after all
+        steps are executed the dict is transformed back into a batch dict with to_batch and the
         result is returned – thereby preserving the caller's original data type.
 
         Args:
-            data: Either an EnvTransition tuple or a batch dictionary to process.
+            data: Either an EnvTransition dict or a batch dictionary to process.
 
         Returns:
-            The processed data in the same format as the input (tuple or dict).
+            The processed data in the same format as the input (EnvTransition or batch dict).
 
         Raises:
-            ValueError: If the transition is not a valid 7-tuple format.
+            ValueError: If the transition is not a valid EnvTransition format.
         """
+        iterator = self.step_through(data)
+        current_result = next(iterator)  # Get initial state
 
-        called_with_batch = isinstance(data, dict)
-
-        transition = self.to_transition(data) if called_with_batch else data
-
-        # Basic validation with helpful error message for tuple input
-        if not isinstance(transition, tuple) or len(transition) != 7:
-            raise ValueError(
-                "EnvTransition must be a 7-tuple of (observation, action, reward, done, "
-                "truncated, info, complementary_data). "
-                f"Got {type(transition).__name__} with length {len(transition) if hasattr(transition, '__len__') else 'unknown'}."
-            )
-
-        for idx, processor_step in enumerate(self.steps):
+        # Process through all steps with hooks
+        for idx, step_result in enumerate(iterator):
+            # Apply before hooks
             for hook in self.before_step_hooks:
-                updated = hook(idx, transition)
-                if updated is not None:
-                    transition = updated
+                _ = hook(idx, step_result)
 
-            transition = processor_step(transition)
-
+            # Apply after hooks
             for hook in self.after_step_hooks:
-                updated = hook(idx, transition)
-                if updated is not None:
-                    transition = updated
+                _ = hook(idx, step_result)
 
-        return self.to_output(transition) if called_with_batch else transition
+            current_result = step_result
+
+        return current_result
+
+    def _prepare_transition(self, data: EnvTransition | dict[str, Any]) -> tuple[EnvTransition, bool]:
+        """Prepare and validate transition data for processing.
+
+        Args:
+            data: Either an EnvTransition dict or a batch dictionary to process.
+
+        Returns:
+            A tuple of (prepared_transition, called_with_batch_flag)
+
+        Raises:
+            ValueError: If the transition is not a valid EnvTransition format.
+        """
+        # Check if data is already an EnvTransition or needs conversion
+        if isinstance(data, dict) and not all(isinstance(k, TransitionKey) for k in data.keys()):
+            # It's a batch dict, convert it
+            called_with_batch = True
+            transition = self.to_transition(data)
+        else:
+            # It's already an EnvTransition
+            called_with_batch = False
+            transition = data
+
+        # Basic validation
+        if not isinstance(transition, dict):
+            raise ValueError(f"EnvTransition must be a dictionary. Got {type(transition).__name__}")
+
+        return transition, called_with_batch
 
     def step_through(self, data: EnvTransition | dict[str, Any]) -> Iterable[EnvTransition | dict[str, Any]]:
         """Yield the intermediate results after each processor step.
 
-        Like __call__, this method accepts either EnvTransition tuples or batch dictionaries
+        This is a low-level method that does NOT apply hooks. It simply executes each step
+        and yields the intermediate results. This allows users to debug the pipeline or
+        apply custom logic between steps if needed.
+
+        Like __call__, this method accepts either EnvTransition dicts or batch dictionaries
         and preserves the input format in the yielded results.
 
         Args:
-            data: Either an EnvTransition tuple or a batch dictionary to process.
+            data: Either an EnvTransition dict or a batch dictionary to process.
 
         Yields:
             The intermediate results after each step, in the same format as the input.
         """
-        called_with_batch = isinstance(data, dict)
-        transition = self.to_transition(data) if called_with_batch else data
-
-        # Basic validation with helpful error message for tuple input
-        if not isinstance(transition, tuple) or len(transition) != 7:
-            raise ValueError(
-                "EnvTransition must be a 7-tuple of (observation, action, reward, done, "
-                "truncated, info, complementary_data). "
-                f"Got {type(transition).__name__} with length {len(transition) if hasattr(transition, '__len__') else 'unknown'}."
-            )
+        transition, called_with_batch = self._prepare_transition(data)
 
         # Yield initial state
         yield self.to_output(transition) if called_with_batch else transition
 
-        for idx, processor_step in enumerate(self.steps):
-            for hook in self.before_step_hooks:
-                updated = hook(idx, transition)
-                if updated is not None:
-                    transition = updated
-
+        # Process each step WITHOUT hooks (low-level method)
+        for processor_step in self.steps:
             transition = processor_step(transition)
-
-            for hook in self.after_step_hooks:
-                updated = hook(idx, transition)
-                if updated is not None:
-                    transition = updated
-
             yield self.to_output(transition) if called_with_batch else transition
-
-    _CFG_NAME = "processor.json"
 
     def _save_pretrained(self, destination_path: str, **kwargs):
         """Internal save method for ModelHubMixin compatibility."""
-        self.save_pretrained(destination_path)
+        # Extract config_filename from kwargs if provided
+        config_filename = kwargs.pop("config_filename", None)
+        self.save_pretrained(destination_path, config_filename=config_filename)
 
     def _generate_model_card(self, destination_path: str) -> None:
         """Generate README.md from the RobotProcessor model card template."""
@@ -399,9 +406,25 @@ class RobotProcessor(ModelHubMixin):
         with open(readme_path, "w") as f:
             f.write(model_card_content)
 
-    def save_pretrained(self, destination_path: str, **kwargs):
-        """Serialize the processor definition and parameters to *destination_path*."""
+    def save_pretrained(self, destination_path: str, config_filename: str | None = None, **kwargs):
+        """Serialize the processor definition and parameters to *destination_path*.
+
+        Args:
+            destination_path: Directory where the processor will be saved.
+            config_filename: Optional custom config filename. If not provided, defaults to
+                "{self.name}.json" where self.name is sanitized for filesystem compatibility.
+        """
         os.makedirs(destination_path, exist_ok=True)
+
+        # Sanitize processor name for use in filenames
+        import re
+
+        # The huggingface hub does not allow special characters in the repo name, so we sanitize the name
+        sanitized_name = re.sub(r"[^a-zA-Z0-9_]", "_", self.name.lower())
+
+        # Use sanitized name for config if not provided
+        if config_filename is None:
+            config_filename = f"{sanitized_name}.json"
 
         config: dict[str, Any] = {
             "name": self.name,
@@ -442,13 +465,19 @@ class RobotProcessor(ModelHubMixin):
                     for key, tensor in state.items():
                         cloned_state[key] = tensor.clone()
 
-                    state_filename = f"step_{step_index}.safetensors"
+                    # Include pipeline name and step index to ensure unique filenames
+                    # This prevents conflicts when multiple processors are saved in the same directory
+                    if registry_name:
+                        state_filename = f"{sanitized_name}_step_{step_index}_{registry_name}.safetensors"
+                    else:
+                        state_filename = f"{sanitized_name}_step_{step_index}.safetensors"
+
                     save_file(cloned_state, os.path.join(destination_path, state_filename))
                     step_entry["state_file"] = state_filename
 
             config["steps"].append(step_entry)
 
-        with open(os.path.join(destination_path, self._CFG_NAME), "w") as file_pointer:
+        with open(os.path.join(destination_path, config_filename), "w") as file_pointer:
             json.dump(config, file_pointer, indent=2)
 
         # Generate README.md from template
@@ -461,7 +490,7 @@ class RobotProcessor(ModelHubMixin):
         to the target device, and reload it. Only works for steps that implement
         both state_dict() and load_state_dict() methods.
         """
-        device = torch.device(device)
+        device = get_safe_torch_device(device)
 
         for step in self.steps:
             if hasattr(step, "state_dict") and hasattr(step, "load_state_dict"):
@@ -473,12 +502,17 @@ class RobotProcessor(ModelHubMixin):
         return self
 
     @classmethod
-    def from_pretrained(cls, source: str, *, overrides: dict[str, Any] | None = None) -> RobotProcessor:
+    def from_pretrained(
+        cls, source: str, *, config_filename: str | None = None, overrides: dict[str, Any] | None = None
+    ) -> RobotProcessor:
         """Load a serialized processor from source (local path or Hugging Face Hub identifier).
 
         Args:
             source: Local path to a saved processor directory or Hugging Face Hub identifier
                 (e.g., "username/processor-name").
+            config_filename: Optional specific config filename to load. If not provided, will:
+                - For local paths: look for any .json file in the directory (error if multiple found)
+                - For HF Hub: try common names ("processor.json", "preprocessor.json", "postprocessor.json")
             overrides: Optional dictionary mapping step names to configuration overrides.
                 Keys must match exact step class names (for unregistered steps) or registry names
                 (for registered steps). Values are dictionaries containing parameter overrides
@@ -499,13 +533,20 @@ class RobotProcessor(ModelHubMixin):
             processor = RobotProcessor.from_pretrained("path/to/processor")
             ```
 
+            Loading specific config file:
+            ```python
+            processor = RobotProcessor.from_pretrained(
+                "username/multi-processor-repo", config_filename="preprocessor.json"
+            )
+            ```
+
             Loading with overrides for non-serializable objects:
             ```python
             import gym
+
             env = gym.make("CartPole-v1")
             processor = RobotProcessor.from_pretrained(
-                "username/cartpole-processor",
-                overrides={"ActionRepeatStep": {"env": env}}
+                "username/cartpole-processor", overrides={"ActionRepeatStep": {"env": env}}
             )
             ```
 
@@ -515,20 +556,60 @@ class RobotProcessor(ModelHubMixin):
                 "path/to/processor",
                 overrides={
                     "CustomStep": {"param1": "new_value"},
-                    "device_processor": {"device": "cuda:1"}  # For registered steps
-                }
+                    "device_processor": {"device": "cuda:1"},  # For registered steps
+                },
             )
             ```
         """
         if Path(source).is_dir():
             # Local path - use it directly
             base_path = Path(source)
-            with open(base_path / cls._CFG_NAME) as file_pointer:
+
+            if config_filename is None:
+                # Look for any .json file in the directory
+                json_files = list(base_path.glob("*.json"))
+                if len(json_files) == 0:
+                    raise FileNotFoundError(f"No .json configuration files found in {source}")
+                elif len(json_files) > 1:
+                    raise ValueError(
+                        f"Multiple .json files found in {source}: {[f.name for f in json_files]}. "
+                        f"Please specify which one to load using the config_filename parameter."
+                    )
+                config_filename = json_files[0].name
+
+            with open(base_path / config_filename) as file_pointer:
                 config: dict[str, Any] = json.load(file_pointer)
         else:
             # Hugging Face Hub - download all required files
-            # First download the config file
-            config_path = hf_hub_download(source, cls._CFG_NAME, repo_type="model")
+            if config_filename is None:
+                # Try common config names
+                common_names = [
+                    "processor.json",
+                    "preprocessor.json",
+                    "postprocessor.json",
+                    "robotprocessor.json",
+                ]
+                config_path = None
+                for name in common_names:
+                    try:
+                        config_path = hf_hub_download(source, name, repo_type="model")
+                        config_filename = name
+                        break
+                    except (FileNotFoundError, OSError, HfHubHTTPError):
+                        # FileNotFoundError: local file issues
+                        # OSError: network/system errors
+                        # HfHubHTTPError: file not found on Hub (404) or other HTTP errors
+                        continue
+
+                if config_path is None:
+                    raise FileNotFoundError(
+                        f"No processor configuration file found in {source}. "
+                        f"Tried: {common_names}. Please specify the config_filename parameter."
+                    )
+            else:
+                # Download specific config file
+                config_path = hf_hub_download(source, config_filename, repo_type="model")
+
             with open(config_path) as file_pointer:
                 config: dict[str, Any] = json.load(file_pointer)
 
@@ -633,17 +714,65 @@ class RobotProcessor(ModelHubMixin):
             return RobotProcessor(self.steps[idx], self.name, self.seed)
         return self.steps[idx]
 
-    def register_before_step_hook(self, fn: Callable[[int, EnvTransition], EnvTransition | None]):
+    def register_before_step_hook(self, fn: Callable[[int, EnvTransition], None]):
         """Attach fn to be executed before every processor step."""
         self.before_step_hooks.append(fn)
 
-    def register_after_step_hook(self, fn: Callable[[int, EnvTransition], EnvTransition | None]):
+    def unregister_before_step_hook(self, fn: Callable[[int, EnvTransition], None]):
+        """Remove a previously registered before_step hook.
+
+        Args:
+            fn: The exact function reference that was registered. Must be the same object.
+
+        Raises:
+            ValueError: If the hook is not found in the registered hooks.
+        """
+        try:
+            self.before_step_hooks.remove(fn)
+        except ValueError:
+            raise ValueError(
+                f"Hook {fn} not found in before_step_hooks. Make sure to pass the exact same function reference."
+            ) from None
+
+    def register_after_step_hook(self, fn: Callable[[int, EnvTransition], None]):
         """Attach fn to be executed after every processor step."""
         self.after_step_hooks.append(fn)
+
+    def unregister_after_step_hook(self, fn: Callable[[int, EnvTransition], None]):
+        """Remove a previously registered after_step hook.
+
+        Args:
+            fn: The exact function reference that was registered. Must be the same object.
+
+        Raises:
+            ValueError: If the hook is not found in the registered hooks.
+        """
+        try:
+            self.after_step_hooks.remove(fn)
+        except ValueError:
+            raise ValueError(
+                f"Hook {fn} not found in after_step_hooks. Make sure to pass the exact same function reference."
+            ) from None
 
     def register_reset_hook(self, fn: Callable[[], None]):
         """Attach fn to be executed when reset is called."""
         self.reset_hooks.append(fn)
+
+    def unregister_reset_hook(self, fn: Callable[[], None]):
+        """Remove a previously registered reset hook.
+
+        Args:
+            fn: The exact function reference that was registered. Must be the same object.
+
+        Raises:
+            ValueError: If the hook is not found in the registered hooks.
+        """
+        try:
+            self.reset_hooks.remove(fn)
+        except ValueError:
+            raise ValueError(
+                f"Hook {fn} not found in reset_hooks. Make sure to pass the exact same function reference."
+            ) from None
 
     def reset(self):
         """Clear state in every step that implements ``reset()`` and fire registered hooks."""
@@ -653,23 +782,37 @@ class RobotProcessor(ModelHubMixin):
         for fn in self.reset_hooks:
             fn()
 
-    def profile_steps(self, transition: EnvTransition, num_runs: int = 100) -> dict[str, float]:
+    def profile_steps(
+        self, transition: EnvTransition, num_runs: int = 100, warmup_runs: int = 5
+    ) -> dict[str, float]:
         """Profile the execution time of each step for performance optimization."""
+        import copy
         import time
 
         profile_results = {}
 
+        # Make a copy to avoid altering the original transition
+        transition_copy = copy.deepcopy(transition)
+
+        # Get intermediate transitions for each step using step_through
+        intermediate_transitions = list(self.step_through(transition_copy))
+
         for idx, processor_step in enumerate(self.steps):
             step_name = f"step_{idx}_{processor_step.__class__.__name__}"
 
-            # Warm up
-            for _ in range(5):
-                _ = processor_step(transition)
+            # Use the appropriate input transition for this step
+            input_transition = intermediate_transitions[idx]
 
-            # Time the step
+            # Warm up - copy transition for each run to ensure consistent conditions
+            for _ in range(warmup_runs):
+                transition_copy = copy.deepcopy(input_transition)
+                _ = processor_step(transition_copy)
+
+            # Time the step - copy transition for each run to ensure consistent conditions
             start_time = time.perf_counter()
             for _ in range(num_runs):
-                transition = processor_step(transition)
+                transition_copy = copy.deepcopy(input_transition)
+                _ = processor_step(transition_copy)
             end_time = time.perf_counter()
 
             avg_time = (end_time - start_time) / num_runs * 1000  # Convert to milliseconds
@@ -677,13 +820,33 @@ class RobotProcessor(ModelHubMixin):
 
         return profile_results
 
+    def __repr__(self) -> str:
+        """Return a readable string representation of the processor."""
+        step_names = [step.__class__.__name__ for step in self.steps]
+
+        if not step_names:
+            steps_repr = "steps=0: []"
+        elif len(step_names) <= 3:
+            steps_repr = f"steps={len(step_names)}: [{', '.join(step_names)}]"
+        else:
+            # Show first 2 and last 1 with ellipsis for long lists
+            displayed = f"{step_names[0]}, {step_names[1]}, ..., {step_names[-1]}"
+            steps_repr = f"steps={len(step_names)}: [{displayed}]"
+
+        parts = [f"name='{self.name}'", steps_repr]
+
+        if self.seed is not None:
+            parts.append(f"seed={self.seed}")
+
+        return f"RobotProcessor({', '.join(parts)})"
+
 
 class ObservationProcessor:
     """Base class for processors that modify only the observation component of a transition.
 
     Subclasses should override the `observation` method to implement custom observation processing.
     This class handles the boilerplate of extracting and reinserting the processed observation
-    into the transition tuple, eliminating the need to implement the `__call__` method in subclasses.
+    into the transition dict, eliminating the need to implement the `__call__` method in subclasses.
 
     Example:
         ```python
@@ -695,7 +858,7 @@ class ObservationProcessor:
                 return observation * self.scale_factor
         ```
 
-    By inheriting from this class, you avoid writing repetitive code to handle transition tuple
+    By inheriting from this class, you avoid writing repetitive code to handle transition dict
     manipulation, focusing only on the specific observation processing logic.
     """
 
@@ -711,10 +874,12 @@ class ObservationProcessor:
         return observation
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        observation = transition[TransitionIndex.OBSERVATION]
-        observation = self.observation(observation)
-        transition = (observation, *transition[TransitionIndex.ACTION :])
-        return transition
+        observation = transition.get(TransitionKey.OBSERVATION)
+        processed_observation = self.observation(observation)
+        # Create a new transition dict with the processed observation
+        new_transition = transition.copy()
+        new_transition[TransitionKey.OBSERVATION] = processed_observation
+        return new_transition
 
 
 class ActionProcessor:
@@ -722,7 +887,7 @@ class ActionProcessor:
 
     Subclasses should override the `action` method to implement custom action processing.
     This class handles the boilerplate of extracting and reinserting the processed action
-    into the transition tuple, eliminating the need to implement the `__call__` method in subclasses.
+    into the transition dict, eliminating the need to implement the `__call__` method in subclasses.
 
     Example:
         ```python
@@ -735,7 +900,7 @@ class ActionProcessor:
                 return np.clip(action, self.min_val, self.max_val)
         ```
 
-    By inheriting from this class, you avoid writing repetitive code to handle transition tuple
+    By inheriting from this class, you avoid writing repetitive code to handle transition dict
     manipulation, focusing only on the specific action processing logic.
     """
 
@@ -751,10 +916,12 @@ class ActionProcessor:
         return action
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        action = transition[TransitionIndex.ACTION]
-        action = self.action(action)
-        transition = (transition[TransitionIndex.OBSERVATION], action, *transition[TransitionIndex.REWARD :])
-        return transition
+        action = transition.get(TransitionKey.ACTION)
+        processed_action = self.action(action)
+        # Create a new transition dict with the processed action
+        new_transition = transition.copy()
+        new_transition[TransitionKey.ACTION] = processed_action
+        return new_transition
 
 
 class RewardProcessor:
@@ -762,7 +929,7 @@ class RewardProcessor:
 
     Subclasses should override the `reward` method to implement custom reward processing.
     This class handles the boilerplate of extracting and reinserting the processed reward
-    into the transition tuple, eliminating the need to implement the `__call__` method in subclasses.
+    into the transition dict, eliminating the need to implement the `__call__` method in subclasses.
 
     Example:
         ```python
@@ -774,7 +941,7 @@ class RewardProcessor:
                 return reward * self.scale_factor
         ```
 
-    By inheriting from this class, you avoid writing repetitive code to handle transition tuple
+    By inheriting from this class, you avoid writing repetitive code to handle transition dict
     manipulation, focusing only on the specific reward processing logic.
     """
 
@@ -790,15 +957,12 @@ class RewardProcessor:
         return reward
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        reward = transition[TransitionIndex.REWARD]
-        reward = self.reward(reward)
-        transition = (
-            transition[TransitionIndex.OBSERVATION],
-            transition[TransitionIndex.ACTION],
-            reward,
-            *transition[TransitionIndex.DONE :],
-        )
-        return transition
+        reward = transition.get(TransitionKey.REWARD)
+        processed_reward = self.reward(reward)
+        # Create a new transition dict with the processed reward
+        new_transition = transition.copy()
+        new_transition[TransitionKey.REWARD] = processed_reward
+        return new_transition
 
 
 class DoneProcessor:
@@ -806,7 +970,7 @@ class DoneProcessor:
 
     Subclasses should override the `done` method to implement custom done flag processing.
     This class handles the boilerplate of extracting and reinserting the processed done flag
-    into the transition tuple, eliminating the need to implement the `__call__` method in subclasses.
+    into the transition dict, eliminating the need to implement the `__call__` method in subclasses.
 
     Example:
         ```python
@@ -823,7 +987,7 @@ class DoneProcessor:
                 self.steps = 0
         ```
 
-    By inheriting from this class, you avoid writing repetitive code to handle transition tuple
+    By inheriting from this class, you avoid writing repetitive code to handle transition dict
     manipulation, focusing only on the specific done flag processing logic.
     """
 
@@ -839,16 +1003,12 @@ class DoneProcessor:
         return done
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        done = transition[TransitionIndex.DONE]
-        done = self.done(done)
-        transition = (
-            transition[TransitionIndex.OBSERVATION],
-            transition[TransitionIndex.ACTION],
-            transition[TransitionIndex.REWARD],
-            done,
-            *transition[TransitionIndex.TRUNCATED :],
-        )
-        return transition
+        done = transition.get(TransitionKey.DONE)
+        processed_done = self.done(done)
+        # Create a new transition dict with the processed done flag
+        new_transition = transition.copy()
+        new_transition[TransitionKey.DONE] = processed_done
+        return new_transition
 
 
 class TruncatedProcessor:
@@ -856,7 +1016,7 @@ class TruncatedProcessor:
 
     Subclasses should override the `truncated` method to implement custom truncated flag processing.
     This class handles the boilerplate of extracting and reinserting the processed truncated flag
-    into the transition tuple, eliminating the need to implement the `__call__` method in subclasses.
+    into the transition dict, eliminating the need to implement the `__call__` method in subclasses.
 
     Example:
         ```python
@@ -869,7 +1029,7 @@ class TruncatedProcessor:
                 return truncated or some_condition > self.threshold
         ```
 
-    By inheriting from this class, you avoid writing repetitive code to handle transition tuple
+    By inheriting from this class, you avoid writing repetitive code to handle transition dict
     manipulation, focusing only on the specific truncated flag processing logic.
     """
 
@@ -885,17 +1045,12 @@ class TruncatedProcessor:
         return truncated
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        truncated = transition[TransitionIndex.TRUNCATED]
-        truncated = self.truncated(truncated)
-        transition = (
-            transition[TransitionIndex.OBSERVATION],
-            transition[TransitionIndex.ACTION],
-            transition[TransitionIndex.REWARD],
-            transition[TransitionIndex.DONE],
-            truncated,
-            *transition[TransitionIndex.INFO :],
-        )
-        return transition
+        truncated = transition.get(TransitionKey.TRUNCATED)
+        processed_truncated = self.truncated(truncated)
+        # Create a new transition dict with the processed truncated flag
+        new_transition = transition.copy()
+        new_transition[TransitionKey.TRUNCATED] = processed_truncated
+        return new_transition
 
 
 class InfoProcessor:
@@ -903,7 +1058,7 @@ class InfoProcessor:
 
     Subclasses should override the `info` method to implement custom info processing.
     This class handles the boilerplate of extracting and reinserting the processed info
-    into the transition tuple, eliminating the need to implement the `__call__` method in subclasses.
+    into the transition dict, eliminating the need to implement the `__call__` method in subclasses.
 
     Example:
         ```python
@@ -913,7 +1068,7 @@ class InfoProcessor:
 
             def info(self, info):
                 info = info.copy()  # Create a copy to avoid modifying the original
-                info['steps'] = self.step_count
+                info["steps"] = self.step_count
                 self.step_count += 1
                 return info
 
@@ -921,7 +1076,7 @@ class InfoProcessor:
                 self.step_count = 0
         ```
 
-    By inheriting from this class, you avoid writing repetitive code to handle transition tuple
+    By inheriting from this class, you avoid writing repetitive code to handle transition dict
     manipulation, focusing only on the specific info dictionary processing logic.
     """
 
@@ -937,18 +1092,12 @@ class InfoProcessor:
         return info
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        info = transition[TransitionIndex.INFO]
-        info = self.info(info)
-        transition = (
-            transition[TransitionIndex.OBSERVATION],
-            transition[TransitionIndex.ACTION],
-            transition[TransitionIndex.REWARD],
-            transition[TransitionIndex.DONE],
-            transition[TransitionIndex.TRUNCATED],
-            info,
-            *transition[TransitionIndex.COMPLEMENTARY_DATA :],
-        )
-        return transition
+        info = transition.get(TransitionKey.INFO)
+        processed_info = self.info(info)
+        # Create a new transition dict with the processed info
+        new_transition = transition.copy()
+        new_transition[TransitionKey.INFO] = processed_info
+        return new_transition
 
 
 class ComplementaryDataProcessor:
@@ -956,7 +1105,7 @@ class ComplementaryDataProcessor:
 
     Subclasses should override the `complementary_data` method to implement custom complementary data processing.
     This class handles the boilerplate of extracting and reinserting the processed complementary data
-    into the transition tuple, eliminating the need to implement the `__call__` method in subclasses.
+    into the transition dict, eliminating the need to implement the `__call__` method in subclasses.
     """
 
     def complementary_data(self, complementary_data):
@@ -971,18 +1120,12 @@ class ComplementaryDataProcessor:
         return complementary_data
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        complementary_data = transition[TransitionIndex.COMPLEMENTARY_DATA]
-        complementary_data = self.complementary_data(complementary_data)
-        transition = (
-            transition[TransitionIndex.OBSERVATION],
-            transition[TransitionIndex.ACTION],
-            transition[TransitionIndex.REWARD],
-            transition[TransitionIndex.DONE],
-            transition[TransitionIndex.TRUNCATED],
-            transition[TransitionIndex.INFO],
-            complementary_data,
-        )
-        return transition
+        complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA)
+        processed_complementary_data = self.complementary_data(complementary_data)
+        # Create a new transition dict with the processed complementary data
+        new_transition = transition.copy()
+        new_transition[TransitionKey.COMPLEMENTARY_DATA] = processed_complementary_data
+        return new_transition
 
 
 class IdentityProcessor:

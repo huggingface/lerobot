@@ -21,7 +21,8 @@ import numpy as np
 import torch
 from torch import Tensor
 
-from lerobot.processor.pipeline import EnvTransition, ProcessorStepRegistry, TransitionIndex
+from lerobot.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
+from lerobot.processor.pipeline import EnvTransition, ProcessorStepRegistry, TransitionKey
 
 
 @dataclass
@@ -36,39 +37,37 @@ class ImageProcessor:
     """
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        observation = transition[TransitionIndex.OBSERVATION]
+        observation = transition.get(TransitionKey.OBSERVATION)
 
         if observation is None:
             return transition
 
         processed_obs = {}
 
-        # Handle pixels key
-        if "pixels" in observation:
-            if isinstance(observation["pixels"], dict):
-                imgs = {f"observation.images.{key}": img for key, img in observation["pixels"].items()}
-            else:
-                imgs = {"observation.image": observation["pixels"]}
+        # Copy all observations first
+        for key, value in observation.items():
+            processed_obs[key] = value
 
+        # Handle pixels key if present
+        pixels = observation.get("pixels")
+        if pixels is not None:
+            # Remove pixels from processed_obs since we'll replace it with processed images
+            processed_obs.pop("pixels", None)
+            # Determine image mapping
+            if isinstance(pixels, dict):
+                imgs = {f"{OBS_IMAGES}.{key}": img for key, img in pixels.items()}
+            else:
+                imgs = {OBS_IMAGE: pixels}
+
+            # Process each image
             for imgkey, img in imgs.items():
                 processed_img = self._process_single_image(img)
                 processed_obs[imgkey] = processed_img
 
-        # Copy other observations unchanged
-        for key, value in observation.items():
-            if key != "pixels":
-                processed_obs[key] = value
-
         # Return new transition with processed observation
-        return (
-            processed_obs,
-            transition[TransitionIndex.ACTION],
-            transition[TransitionIndex.REWARD],
-            transition[TransitionIndex.DONE],
-            transition[TransitionIndex.TRUNCATED],
-            transition[TransitionIndex.INFO],
-            transition[TransitionIndex.COMPLEMENTARY_DATA],
-        )
+        new_transition = transition.copy()
+        new_transition[TransitionKey.OBSERVATION] = processed_obs
+        return new_transition
 
     def _process_single_image(self, img: np.ndarray) -> Tensor:
         """Process a single image array."""
@@ -124,7 +123,7 @@ class StateProcessor:
     """
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        observation = transition[TransitionIndex.OBSERVATION]
+        observation = transition.get(TransitionKey.OBSERVATION)
 
         if observation is None:
             return transition
@@ -136,7 +135,7 @@ class StateProcessor:
             env_state = torch.from_numpy(observation["environment_state"]).float()
             if env_state.dim() == 1:
                 env_state = env_state.unsqueeze(0)
-            processed_obs["observation.environment_state"] = env_state
+            processed_obs[OBS_ENV_STATE] = env_state
             # Remove original key
             del processed_obs["environment_state"]
 
@@ -145,20 +144,14 @@ class StateProcessor:
             agent_pos = torch.from_numpy(observation["agent_pos"]).float()
             if agent_pos.dim() == 1:
                 agent_pos = agent_pos.unsqueeze(0)
-            processed_obs["observation.state"] = agent_pos
+            processed_obs[OBS_STATE] = agent_pos
             # Remove original key
             del processed_obs["agent_pos"]
 
         # Return new transition with processed observation
-        return (
-            processed_obs,
-            transition[TransitionIndex.ACTION],
-            transition[TransitionIndex.REWARD],
-            transition[TransitionIndex.DONE],
-            transition[TransitionIndex.TRUNCATED],
-            transition[TransitionIndex.INFO],
-            transition[TransitionIndex.COMPLEMENTARY_DATA],
-        )
+        new_transition = transition.copy()
+        new_transition[TransitionKey.OBSERVATION] = processed_obs
+        return new_transition
 
     def get_config(self) -> dict[str, Any]:
         """Return configuration for serialization."""
