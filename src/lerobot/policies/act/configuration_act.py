@@ -52,12 +52,8 @@ class ACTConfig(PreTrainedConfig):
             the input data name, and the value is PolicyFeature, which consists of FeatureType and shape attributes.
         output_features: A dictionary defining the PolicyFeature of the output data for the policy. The key represents
             the output data name, and the value is PolicyFeature, which consists of FeatureType and shape attributes.
-        input_normalization_modes: A dictionary with key representing the modality (e.g. "observation.state"),
-            and the value specifies the normalization mode to apply. The two available modes are "mean_std"
-            which subtracts the mean and divides by the standard deviation and "min_max" which rescale in a
-            [-1, 1] range.
-        output_normalization_modes: Similar dictionary as `normalize_input_modes`, but to unnormalize to the
-            original scale. Note that this is also used for normalizing the training targets.
+        normalization_mapping: A dictionary that maps from a str value of FeatureType (e.g., "STATE", "VISUAL") to
+            a corresponding NormalizationMode (e.g., NormalizationMode.MIN_MAX)
         vision_backbone: Name of the torchvision resnet backbone to use for encoding images.
         pretrained_backbone_weights: Pretrained weights from torchvision to initialize the backbone.
             `None` means no pretrained weights.
