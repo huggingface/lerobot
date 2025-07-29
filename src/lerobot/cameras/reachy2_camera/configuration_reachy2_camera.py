@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from dataclasses import dataclass
-from pathlib import Path
 
 from ..configs import CameraConfig, ColorMode, Cv2Rotation
 

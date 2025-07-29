@@ -34,23 +34,33 @@ class Reachy2RobotConfig(RobotConfig):
     # cameras
     cameras: dict[str, CameraConfig] = field(
         default_factory=lambda: {
-        #     "webcam": OpenCVCameraConfig(
-        #         index_or_path="/dev/video0",
-        #         fps=30,
-        #         width=640,
-        #         height=480,
-        #         color_mode=ColorMode.RGB,
-        #         rotation=Cv2Rotation.NO_ROTATION
-        #     ),
-        "teleop_left": Reachy2CameraConfig(
-                name="teleop",
-                image_type="left",
-                fps=30,
-                width=640,
-                height=480,
-                color_mode=ColorMode.RGB,
-                rotation=Cv2Rotation.NO_ROTATION
-            ),
+                "teleop_left": Reachy2CameraConfig(
+                        name="teleop",
+                        image_type="left",
+                        fps=30,
+                        width=640,
+                        height=480,
+                        color_mode=ColorMode.RGB,
+                        rotation=Cv2Rotation.NO_ROTATION
+                ),
+                "teleop_right": Reachy2CameraConfig(
+                        name="teleop",
+                        image_type="right",
+                        fps=30,
+                        width=640,
+                        height=480,
+                        color_mode=ColorMode.RGB,
+                        rotation=Cv2Rotation.NO_ROTATION
+                ),
+                "torso_rgb": Reachy2CameraConfig(
+                        name="depth",
+                        image_type="rgb",
+                        fps=30,
+                        width=640,
+                        height=480,
+                        color_mode=ColorMode.RGB,
+                        rotation=Cv2Rotation.NO_ROTATION
+                ),
         }
     )
 
