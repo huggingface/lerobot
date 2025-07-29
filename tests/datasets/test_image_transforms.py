@@ -21,7 +21,7 @@ from safetensors.torch import load_file
 from torchvision.transforms import v2
 from torchvision.transforms.v2 import functional as F  # noqa: N812
 
-from lerobot.common.datasets.transforms import (
+from lerobot.datasets.transforms import (
     ImageTransformConfig,
     ImageTransforms,
     ImageTransformsConfig,
@@ -29,11 +29,11 @@ from lerobot.common.datasets.transforms import (
     SharpnessJitter,
     make_transform_from_config,
 )
-from lerobot.common.utils.random_utils import seeded_context
 from lerobot.scripts.visualize_image_transforms import (
     save_all_transforms,
     save_each_transform,
 )
+from lerobot.utils.random_utils import seeded_context
 from tests.artifacts.image_transforms.save_image_transforms_to_safetensors import ARTIFACT_DIR
 from tests.utils import require_x86_64_kernel
 

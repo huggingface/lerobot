@@ -32,7 +32,7 @@ import torch
 from huggingface_hub import HfApi
 
 import lerobot
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
+from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
 
 # We ported a number of existing datasets ourselves, use this to see the list:
 print("List of available datasets:")

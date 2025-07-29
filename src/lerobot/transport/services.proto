@@ -1,0 +1,87 @@
+//  Copyright 2024 The HuggingFace Inc. team.
+//  All rights reserved.
+
+//  Licensed under the Apache License, Version 2.0 (the "License");
+//  you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at
+
+//      http://www.apache.org/licenses/LICENSE-2.0
+
+//  Unless required by applicable law or agreed to in writing, software
+//  distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//  See the License for the specific language governing permissions and
+//  limitations under the License.python -m grpc_tools.protoc -I src --python_out=src --grpc_python_out=src src/lerobot/transport/services.proto
+
+// To generate a classes for transport part (services_pb2.py and services_pb2_grpc.py) use the following command:
+//
+// python -m grpc_tools.protoc -I src --python_out=src --grpc_python_out=src src/lerobot/transport/services.proto
+//
+// The command should be launched from the root of the project.
+
+syntax = "proto3";
+
+package transport;
+
+// LearnerService: the Actor calls this to push transitions.
+// The Learner implements this service.
+service LearnerService {
+  // Actor -> Learner to store transitions
+  rpc StreamParameters(Empty) returns (stream Parameters);
+  rpc SendTransitions(stream Transition) returns (Empty);
+  rpc SendInteractions(stream InteractionMessage) returns (Empty);
+  rpc Ready(Empty) returns (Empty);
+}
+
+// AsyncInference: from Robot perspective
+// Robot send observations to & executes action received from a remote Policy server
+service AsyncInference {
+  // Robot -> Policy to share observations with a remote inference server
+  // Policy -> Robot to share actions predicted for given observations
+  rpc SendObservations(stream Observation) returns (Empty);
+  rpc GetActions(Empty) returns (Actions);
+  rpc SendPolicyInstructions(PolicySetup) returns (Empty);
+  rpc Ready(Empty) returns (Empty);
+}
+
+enum TransferState {
+    TRANSFER_UNKNOWN = 0;
+    TRANSFER_BEGIN = 1;
+    TRANSFER_MIDDLE = 2;
+    TRANSFER_END = 3;
+}
+
+// Messages
+message Transition {
+  TransferState transfer_state = 1;
+  bytes data = 2;
+}
+
+message Parameters {
+  TransferState transfer_state = 1;
+  bytes data = 2;
+}
+
+message InteractionMessage {
+  TransferState transfer_state = 1;
+  bytes data = 2;
+}
+
+// Messages
+message Observation {
+  // sent by Robot, to remote Policy
+  TransferState transfer_state = 1;  // Observations can be streamed exceeding 4MB of size
+  bytes data = 2;
+}
+
+message Actions {
+  // sent by remote Policy, to Robot
+  bytes data = 1;
+}
+
+message PolicySetup {
+  // sent by Robot to remote server, to init Policy
+  bytes data = 1;
+}
+
+message Empty {}
