@@ -30,16 +30,17 @@ from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.utils import cycle, dataset_to_policy_features
 from lerobot.envs.factory import make_env, make_env_config
-from lerobot.envs.utils import preprocess_observation
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies.act.modeling_act import ACTTemporalEnsembler
 from lerobot.policies.factory import (
     get_policy_class,
     make_policy,
     make_policy_config,
+    make_processor,
 )
 from lerobot.policies.normalize import Normalize, Unnormalize
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.processor import RobotProcessor, TransitionIndex, VanillaObservationProcessor
 from lerobot.utils.random_utils import seeded_context
 from tests.artifacts.policies.save_policy_to_safetensors import get_policy_stats
 from tests.utils import DEVICE, require_cpu, require_env, require_x86_64_kernel
@@ -149,6 +150,7 @@ def test_policy(ds_repo_id, env_name, env_kwargs, policy_name, policy_kwargs):
 
     # Check that we can make the policy object.
     dataset = make_dataset(train_cfg)
+    preprocessor, _ = make_processor(train_cfg.policy, None)
     policy = make_policy(train_cfg.policy, ds_meta=dataset.meta)
     assert isinstance(policy, PreTrainedPolicy)
 
@@ -185,7 +187,10 @@ def test_policy(ds_repo_id, env_name, env_kwargs, policy_name, policy_kwargs):
     observation, _ = env.reset(seed=train_cfg.seed)
 
     # apply transform to normalize the observations
-    observation = preprocess_observation(observation)
+    obs_processor = RobotProcessor([VanillaObservationProcessor()])
+    transition = (observation, None, None, None, None, None, None)
+    processed_transition = obs_processor(transition)
+    observation = processed_transition[TransitionIndex.OBSERVATION]
 
     # send observation to device/gpu
     observation = {key: observation[key].to(DEVICE, non_blocking=True) for key in observation}
@@ -222,6 +227,7 @@ def test_act_backbone_lr():
     assert cfg.policy.optimizer_lr_backbone == 0.001
 
     dataset = make_dataset(cfg)
+    preprocessor, _ = make_processor(cfg.policy, None)
     policy = make_policy(cfg.policy, ds_meta=dataset.meta)
     optimizer, _ = make_optimizer_and_scheduler(cfg, policy)
     assert len(optimizer.param_groups) == 2
