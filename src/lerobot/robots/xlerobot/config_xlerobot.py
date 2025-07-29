@@ -14,9 +14,7 @@
 
 from dataclasses import dataclass, field
 
-from lerobot.cameras.configs import CameraConfig, Cv2Rotation, ColorMode
-from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
-from lerobot.cameras.realsense import RealSenseCamera, RealSenseCameraConfig
+from lerobot.cameras.configs import CameraConfig
 
 from ..config import RobotConfig
 
@@ -26,15 +24,12 @@ def xlerobot_cameras_config() -> dict[str, CameraConfig]:
         # "left_wrist": OpenCVCameraConfig(
         #     index_or_path="/dev/video0", fps=30, width=640, height=480, rotation=Cv2Rotation.NO_ROTATION
         # ),
-
         # "right_wrist": OpenCVCameraConfig(
         #     index_or_path="/dev/video2", fps=30, width=640, height=480, rotation=Cv2Rotation.NO_ROTATION
-        # ),  
-
+        # ),
         # "head(RGDB)": OpenCVCameraConfig(
         #     index_or_path="/dev/video5", fps=30, width=640, height=480, rotation=Cv2Rotation.NO_ROTATION
-        # ),                     
-        
+        # ),
         # "head": RealSenseCameraConfig(
         #     serial_number_or_name="125322060037",  # Replace with camera SN
         #     fps=30,
@@ -50,7 +45,6 @@ def xlerobot_cameras_config() -> dict[str, CameraConfig]:
 @RobotConfig.register_subclass("xlerobot")
 @dataclass
 class XLerobotConfig(RobotConfig):
-    
     port1: str = "/dev/ttyACM0"  # port to connect to the bus (so101 + head camera)
     port2: str = "/dev/ttyACM1"  # port to connect to the bus (same as lekiwi setup)
     disable_torque_on_disconnect: bool = True
@@ -83,7 +77,6 @@ class XLerobotConfig(RobotConfig):
     )
 
 
-
 @dataclass
 class XLerobotHostConfig:
     # Network Configuration
@@ -98,6 +91,7 @@ class XLerobotHostConfig:
 
     # If robot jitters decrease the frequency and monitor cpu load with `top` in cmd
     max_loop_freq_hz: int = 30
+
 
 @RobotConfig.register_subclass("xlerobot_client")
 @dataclass

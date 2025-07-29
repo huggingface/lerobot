@@ -1,46 +1,60 @@
 # To Run on the host
-'''python
+"""python
 PYTHONPATH=src python -m lerobot.robots.xlerobot.xlerobot_host --robot.id=my_xlerobot
-'''
+"""
 
 # To Run the teleop:
-'''python
+"""python
 PYTHONPATH=src python -m examples.xlerobot.teleoperate_v2
-'''
+"""
 
-import time
-import numpy as np
 import math
+import time
 
-from lerobot.robots.xlerobot import XLerobotClient, XLerobotClientConfig, XLerobotConfig, XLerobot
-from lerobot.utils.robot_utils import busy_wait
-from lerobot.utils.visualization_utils import _init_rerun, log_rerun_data
+import numpy as np
+
 from lerobot.model.SO101Robot import SO101Kinematics
+from lerobot.robots.xlerobot import XLerobot, XLerobotConfig
 from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop, KeyboardTeleopConfig
+from lerobot.utils.visualization_utils import _init_rerun, log_rerun_data
 
 # Keymaps (semantic action: key)
 LEFT_KEYMAP = {
-    'shoulder_pan+': 'q', 'shoulder_pan-': 'e',
-    'wrist_roll+': 'r', 'wrist_roll-': 'f',
-    'gripper+': 't', 'gripper-': 'g',
-    'x+': 'w', 'x-': 's', 'y+': 'a', 'y-': 'd',
-    'pitch+': 'z', 'pitch-': 'x',
-    'reset': 'c',
+    "shoulder_pan+": "q",
+    "shoulder_pan-": "e",
+    "wrist_roll+": "r",
+    "wrist_roll-": "f",
+    "gripper+": "t",
+    "gripper-": "g",
+    "x+": "w",
+    "x-": "s",
+    "y+": "a",
+    "y-": "d",
+    "pitch+": "z",
+    "pitch-": "x",
+    "reset": "c",
     # For head motors
-    "head_motor_1+": "<", "head_motor_1-": ">",
-    "head_motor_2+": ",", "head_motor_2-": ".",
-    
-    'triangle': 'y',  # Rectangle trajectory key
+    "head_motor_1+": "<",
+    "head_motor_1-": ">",
+    "head_motor_2+": ",",
+    "head_motor_2-": ".",
+    "triangle": "y",  # Rectangle trajectory key
 }
 RIGHT_KEYMAP = {
-    'shoulder_pan+': '7', 'shoulder_pan-': '9',
-    'wrist_roll+': '/', 'wrist_roll-': '*',
-    'gripper+': '+', 'gripper-': '-',
-    'x+': '8', 'x-': '2', 'y+': '4', 'y-': '6',
-    'pitch+': '1', 'pitch-': '3',
-    'reset': '0',
-
-    'triangle': 'Y',  # Rectangle trajectory key
+    "shoulder_pan+": "7",
+    "shoulder_pan-": "9",
+    "wrist_roll+": "/",
+    "wrist_roll-": "*",
+    "gripper+": "+",
+    "gripper-": "-",
+    "x+": "8",
+    "x-": "2",
+    "y+": "4",
+    "y-": "6",
+    "pitch+": "1",
+    "pitch-": "3",
+    "reset": "0",
+    "triangle": "Y",  # Rectangle trajectory key
 }
 
 LEFT_JOINT_MAP = {
@@ -66,68 +80,71 @@ HEAD_MOTOR_MAP = {
     "head_motor_2": "head_motor_2",
 }
 
+
 class RectangularTrajectory:
     """
     Generates a rectangular trajectory on the x-y plane with sinusoidal velocity profiles.
     The rectangle is divided into 4 line segments, each with smooth acceleration/deceleration.
     """
+
     def __init__(self, width=0.06, height=0.06, segment_duration=0.91):
         """
         Initialize rectangular trajectory parameters.
-        
+
         Args:
             width: Rectangle width in meters
-            height: Rectangle height in meters  
+            height: Rectangle height in meters
             segment_duration: Time for each line segment in seconds
         """
         self.width = width
         self.height = height
         self.segment_duration = segment_duration
         self.total_duration = 4 * segment_duration
-        
+
     def get_trajectory_point(self, current_x, current_y, t):
         """
         Get the target x, y position at time t for the rectangular trajectory.
-        
+
         Args:
             current_x: Starting x position
             current_y: Starting y position
             t: Time since trajectory start (0 to total_duration)
-            
+
         Returns:
             tuple: (target_x, target_y)
         """
         # Determine which segment we're in
         segment = int(t / self.segment_duration)
         segment_t = t % self.segment_duration
-        
+
         # Normalize segment time (0 to 1)
         normalized_t = segment_t / self.segment_duration
-        
+
         # Sinusoidal velocity profile: smooth acceleration and deceleration
         # s(t) = 0.5 * (1 - cos(π * t)) gives smooth 0 to 1 transition
         smooth_t = 0.5 * (1 - math.cos(math.pi * normalized_t))
-        
+
         # Define rectangle corners relative to starting position
         corners = [
-            (current_x, current_y),                           # Start (bottom-left)
-            (current_x + self.width, current_y),              # Bottom-right
-            (current_x + self.width, current_y + self.height), # Top-right  
-            (current_x, current_y + self.height),             # Top-left
-            (current_x, current_y)                            # Back to start
+            (current_x, current_y),  # Start (bottom-left)
+            (current_x + self.width, current_y),  # Bottom-right
+            (current_x + self.width, current_y + self.height),  # Top-right
+            (current_x, current_y + self.height),  # Top-left
+            (current_x, current_y),  # Back to start
         ]
-        
+
         # Clamp segment to valid range
         segment = max(0, min(3, segment))
-        
+
         # Interpolate between current corner and next corner
         start_corner = corners[segment]
         end_corner = corners[segment + 1]
-        
+
         target_x = start_corner[0] + smooth_t * (end_corner[0] - start_corner[0])
         target_y = start_corner[1] + smooth_t * (end_corner[1] - start_corner[1])
-        
+
         return target_x, target_y
+
 
 class SimpleHeadControl:
     def __init__(self, initial_obs, kp=0.81):
@@ -146,16 +163,16 @@ class SimpleHeadControl:
         robot.send_action(action)
 
     def handle_keys(self, key_state):
-        if key_state.get('head_motor_1+'):
+        if key_state.get("head_motor_1+"):
             self.target_positions["head_motor_1"] += self.degree_step
             print(f"[HEAD] head_motor_1: {self.target_positions['head_motor_1']}")
-        if key_state.get('head_motor_1-'):
+        if key_state.get("head_motor_1-"):
             self.target_positions["head_motor_1"] -= self.degree_step
             print(f"[HEAD] head_motor_1: {self.target_positions['head_motor_1']}")
-        if key_state.get('head_motor_2+'):
+        if key_state.get("head_motor_2+"):
             self.target_positions["head_motor_2"] += self.degree_step
             print(f"[HEAD] head_motor_2: {self.target_positions['head_motor_2']}")
-        if key_state.get('head_motor_2-'):
+        if key_state.get("head_motor_2-"):
             self.target_positions["head_motor_2"] -= self.degree_step
             print(f"[HEAD] head_motor_2: {self.target_positions['head_motor_2']}")
 
@@ -168,6 +185,7 @@ class SimpleHeadControl:
             control = self.kp * error
             action[f"{HEAD_MOTOR_MAP[motor]}.pos"] = current + control
         return action
+
 
 class SimpleTeleopArm:
     def __init__(self, kinematics, joint_map, initial_obs, prefix="left", kp=0.81):
@@ -201,90 +219,90 @@ class SimpleTeleopArm:
             "gripper": 0.0,
         }
         self.zero_pos = {
-            'shoulder_pan': 0.0,
-            'shoulder_lift': 0.0,
-            'elbow_flex': 0.0,
-            'wrist_flex': 0.0,
-            'wrist_roll': 0.0,
-            'gripper': 0.0
+            "shoulder_pan": 0.0,
+            "shoulder_lift": 0.0,
+            "elbow_flex": 0.0,
+            "wrist_flex": 0.0,
+            "wrist_roll": 0.0,
+            "gripper": 0.0,
         }
-        
+
         # Rectangular trajectory instance
         self.rectangular_trajectory = RectangularTrajectory(
-            width=0.06,          # 6cm wide rectangle
-            height=0.06,         # 4cm tall rectangle  
-            segment_duration=1.01 # 3 seconds per line segment
+            width=0.06,  # 6cm wide rectangle
+            height=0.06,  # 4cm tall rectangle
+            segment_duration=1.01,  # 3 seconds per line segment
         )
 
     def move_to_zero_position(self, robot):
         print(f"[{self.prefix}] Moving to Zero Position: {self.zero_pos} ......")
         self.target_positions = self.zero_pos.copy()  # Use copy to avoid reference issues
-        
+
         # Reset kinematic variables to their initial state
         self.current_x = 0.1629
         self.current_y = 0.1131
         self.pitch = 0.0
-        
+
         # Don't let handle_keys recalculate wrist_flex - set it explicitly
         self.target_positions["wrist_flex"] = 0.0
-        
+
         action = self.p_control_action(robot)
         robot.send_action(action)
 
     def execute_rectangular_trajectory(self, robot, fps=30):
         """
         Execute a blocking rectangular trajectory on the x-y plane.
-        
+
         Args:
             robot: Robot instance to send actions to
             fps: Control loop frequency
         """
         print(f"[{self.prefix}] Starting rectangular trajectory...")
-        print(f"[{self.prefix}] Rectangle: {self.rectangular_trajectory.width:.3f}m x {self.rectangular_trajectory.height:.3f}m")
+        print(
+            f"[{self.prefix}] Rectangle: {self.rectangular_trajectory.width:.3f}m x {self.rectangular_trajectory.height:.3f}m"
+        )
         print(f"[{self.prefix}] Duration: {self.rectangular_trajectory.total_duration:.3f}s total")
-        
+
         # Store starting position
         start_x = self.current_x
         start_y = self.current_y
-        
+
         # Execute trajectory
         start_time = time.time()
         dt = 1.0 / fps
-        
+
         while True:
             current_time = time.time()
             elapsed_time = current_time - start_time
-            
+
             # Check if trajectory is complete
             if elapsed_time >= self.rectangular_trajectory.total_duration:
                 print(f"[{self.prefix}] Rectangular trajectory completed!")
                 break
-                
+
             # Get target position from trajectory
             target_x, target_y = self.rectangular_trajectory.get_trajectory_point(
                 start_x, start_y, elapsed_time
             )
-            
+
             # Update current position
             self.current_x = target_x
             self.current_y = target_y
-            
+
             # Calculate inverse kinematics
             try:
                 joint2, joint3 = self.kinematics.inverse_kinematics(self.current_x, self.current_y)
                 self.target_positions["shoulder_lift"] = joint2
                 self.target_positions["elbow_flex"] = joint3
-                
+
                 # Update wrist_flex coupling
                 self.target_positions["wrist_flex"] = (
-                    -self.target_positions["shoulder_lift"]
-                    -self.target_positions["elbow_flex"]
-                    + self.pitch
+                    -self.target_positions["shoulder_lift"] - self.target_positions["elbow_flex"] + self.pitch
                 )
-                
+
                 # Get action
                 action = self.p_control_action(robot)
-                
+
                 # Determine which arm is executing and send appropriate action structure
                 if self.prefix == "left":
                     # Send left arm action with empty actions for other components
@@ -292,65 +310,65 @@ class SimpleTeleopArm:
                 elif self.prefix == "right":
                     # Send right arm action with empty actions for other components
                     robot_action = {**{}, **action, **{}, **{}}
-                
+
                 # Send action to robot
                 robot.send_action(robot_action)
-                
+
                 # Get observation and log data
                 obs = robot.get_observation()
                 log_rerun_data(obs, robot_action)
-                
+
             except Exception as e:
                 print(f"[{self.prefix}] IK failed at x={self.current_x:.4f}, y={self.current_y:.4f}: {e}")
                 break
-                
+
             # Maintain control frequency
             # busy_wait(dt)
-        
+
         print(f"[{self.prefix}] Trajectory execution finished.")
 
     def handle_keys(self, key_state):
         # Joint increments
-        if key_state.get('shoulder_pan+'):
+        if key_state.get("shoulder_pan+"):
             self.target_positions["shoulder_pan"] += self.degree_step
             print(f"[{self.prefix}] shoulder_pan: {self.target_positions['shoulder_pan']}")
-        if key_state.get('shoulder_pan-'):
+        if key_state.get("shoulder_pan-"):
             self.target_positions["shoulder_pan"] -= self.degree_step
             print(f"[{self.prefix}] shoulder_pan: {self.target_positions['shoulder_pan']}")
-        if key_state.get('wrist_roll+'):
+        if key_state.get("wrist_roll+"):
             self.target_positions["wrist_roll"] += self.degree_step
             print(f"[{self.prefix}] wrist_roll: {self.target_positions['wrist_roll']}")
-        if key_state.get('wrist_roll-'):
+        if key_state.get("wrist_roll-"):
             self.target_positions["wrist_roll"] -= self.degree_step
             print(f"[{self.prefix}] wrist_roll: {self.target_positions['wrist_roll']}")
-        if key_state.get('gripper+'):
+        if key_state.get("gripper+"):
             self.target_positions["gripper"] += self.degree_step
             print(f"[{self.prefix}] gripper: {self.target_positions['gripper']}")
-        if key_state.get('gripper-'):
+        if key_state.get("gripper-"):
             self.target_positions["gripper"] -= self.degree_step
             print(f"[{self.prefix}] gripper: {self.target_positions['gripper']}")
-        if key_state.get('pitch+'):
+        if key_state.get("pitch+"):
             self.pitch += self.degree_step
             print(f"[{self.prefix}] pitch: {self.pitch}")
-        if key_state.get('pitch-'):
+        if key_state.get("pitch-"):
             self.pitch -= self.degree_step
             print(f"[{self.prefix}] pitch: {self.pitch}")
 
         # XY plane (IK)
         moved = False
-        if key_state.get('x+'):
+        if key_state.get("x+"):
             self.current_x += self.xy_step
             moved = True
             print(f"[{self.prefix}] x+: {self.current_x:.4f}, y: {self.current_y:.4f}")
-        if key_state.get('x-'):
+        if key_state.get("x-"):
             self.current_x -= self.xy_step
             moved = True
             print(f"[{self.prefix}] x-: {self.current_x:.4f}, y: {self.current_y:.4f}")
-        if key_state.get('y+'):
+        if key_state.get("y+"):
             self.current_y += self.xy_step
             moved = True
             print(f"[{self.prefix}] x: {self.current_x:.4f}, y+: {self.current_y:.4f}")
-        if key_state.get('y-'):
+        if key_state.get("y-"):
             self.current_y -= self.xy_step
             moved = True
             print(f"[{self.prefix}] x: {self.current_x:.4f}, y-: {self.current_y:.4f}")
@@ -362,9 +380,7 @@ class SimpleTeleopArm:
 
         # Wrist flex is always coupled to pitch and the other two
         self.target_positions["wrist_flex"] = (
-            -self.target_positions["shoulder_lift"]
-            -self.target_positions["elbow_flex"]
-            + self.pitch
+            -self.target_positions["shoulder_lift"] - self.target_positions["elbow_flex"] + self.pitch
         )
         # print(f"[{self.prefix}] wrist_flex: {self.target_positions['wrist_flex']}")
 
@@ -377,7 +393,7 @@ class SimpleTeleopArm:
             control = self.kp * error
             action[f"{self.joint_map[j]}.pos"] = current[j] + control
         return action
-    
+
 
 def main():
     # Teleop parameters
@@ -386,24 +402,24 @@ def main():
     ip = "localhost"
     robot_name = "my_xlerobot_pc"
 
-    #Init the robot instance
+    # Init the robot instance
     # robot_config = XLerobotClientConfig(remote_ip=ip, id=robot_name)
     robot_config = XLerobotConfig()
     # robot = XLerobotClient(robot_config)
     robot = XLerobot(robot_config)
-    
+
     try:
         robot.connect()
-        print(f"[MAIN] Successfully connected to robot")
+        print("[MAIN] Successfully connected to robot")
     except Exception as e:
         print(f"[MAIN] Failed to connect to robot: {e}")
         print(robot_config)
         print(robot)
         return
-        
+
     _init_rerun(session_name="xlerobot_teleop_v2")
 
-    #Init the keyboard instance
+    # Init the keyboard instance
     keyboard_config = KeyboardTeleopConfig()
     keyboard = KeyboardTeleop(keyboard_config)
     keyboard.connect()
@@ -427,29 +443,29 @@ def main():
             right_key_state = {action: (key in pressed_keys) for action, key in RIGHT_KEYMAP.items()}
 
             # Handle rectangular trajectory for left arm (y key)
-            if left_key_state.get('triangle'):
+            if left_key_state.get("triangle"):
                 print("[MAIN] Left arm rectangular trajectory triggered!")
                 left_arm.execute_rectangular_trajectory(robot, fps=FPS)
                 continue
 
-            # Handle rectangular trajectory for right arm (Y key)  
-            if right_key_state.get('triangle'):
+            # Handle rectangular trajectory for right arm (Y key)
+            if right_key_state.get("triangle"):
                 print("[MAIN] Right arm rectangular trajectory triggered!")
                 right_arm.execute_rectangular_trajectory(robot, fps=FPS)
                 continue
 
             # Handle reset for left arm
-            if left_key_state.get('reset'):
+            if left_key_state.get("reset"):
                 left_arm.move_to_zero_position(robot)
-                continue  
+                continue
 
             # Handle reset for right arm
-            if right_key_state.get('reset'):
+            if right_key_state.get("reset"):
                 right_arm.move_to_zero_position(robot)
                 continue
 
             # Handle reset for head motors with '?'
-            if '?' in pressed_keys:
+            if "?" in pressed_keys:
                 head_control.move_to_zero_position(robot)
                 continue
 
@@ -476,6 +492,7 @@ def main():
         robot.disconnect()
         keyboard.disconnect()
         print("Teleoperation ended.")
+
 
 if __name__ == "__main__":
     main()

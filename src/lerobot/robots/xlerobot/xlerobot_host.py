@@ -22,8 +22,8 @@ import time
 import cv2
 import zmq
 
-from .xlerobot import XLerobot
 from .config_xlerobot import XLerobotConfig, XLerobotHostConfig
+from .xlerobot import XLerobot
 
 
 class XLerobotHost:
