@@ -61,6 +61,16 @@ class Reachy2RobotConfig(RobotConfig):
                         color_mode=ColorMode.RGB,
                         rotation=Cv2Rotation.NO_ROTATION
                 ),
+                # "torso_depth": Reachy2CameraConfig(
+                #         name="depth",
+                #         image_type="depth",
+                #         fps=30,
+                #         width=640,
+                #         height=480,
+                #         color_mode=ColorMode.RGB,
+                #         rotation=Cv2Rotation.NO_ROTATION,
+                #         use_depth=True
+                # )
         }
     )
 
