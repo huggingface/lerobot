@@ -193,6 +193,7 @@ python -m lerobot.scripts.visualize_dataset \
 ```
 
 or from a dataset in a local folder with the `--root` and the `--repo-id` option (in the following case the dataset will be searched for in `./my_local_data_dir/lerobot/pusht`)
+
 ```bash
 python -m lerobot.scripts.visualize_dataset \
     --repo-id lerobot/pusht \
