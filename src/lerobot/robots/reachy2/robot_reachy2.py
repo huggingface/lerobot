@@ -60,7 +60,9 @@ REACHY2_MOTORS = {
 
 
 class Reachy2Robot(Robot):
-    """[Reachy 2](https://www.pollen-robotics.com/reachy/), by Pollen Robotics."""
+    """
+    [Reachy 2](https://www.pollen-robotics.com/reachy/), by Pollen Robotics.
+    """
 
     config_class = Reachy2RobotConfig
     name = "reachy2"
@@ -115,11 +117,10 @@ class Reachy2Robot(Robot):
 
         # for cam in self.cameras.values():
         #     cam.connect()
-        #     self.is_connected = self.is_connected and cam.is_connected
 
-        if not self.is_connected:
-            print("Could not connect to the cameras, check that all cameras are plugged-in.")
-            raise ConnectionError()
+        # if not self.is_connected:
+        #     print("Could not connect to the cameras, check that all cameras are plugged-in.")
+        #     raise ConnectionError()
 
         self.configure()
 
@@ -142,17 +143,19 @@ class Reachy2Robot(Robot):
 
         # Read Reachy 2 state
         before_read_t = time.perf_counter()
-        state = self._get_state()
+        obs_dict = self._get_state()
         self.logs["read_pos_dt_s"] = time.perf_counter() - before_read_t
 
-        state = np.asarray(list(state.values()))
-        obs_dict[OBS_STATE] = state
+        # state = np.asarray(list(state.values()))
+        # obs_dict[OBS_STATE] = state
 
         # Capture images from cameras
         # for cam_key, cam in self.cameras.items():
-        #     before_camread_t = time.perf_counter()
-        #     obs_dict[f"{OBS_IMAGES}.{cam_key}"] = cam.async_read()
-        #     self.logs[f"read_camera_{cam_key}_dt_s"] = cam.logs["delta_timestamp_s"]
+            # before_camread_t = time.perf_counter()
+            # frame = cam.async_read(timeout_ms=200)
+            # print(f"Async frame shape:", frame.shape)
+
+            # obs_dict[f"{OBS_IMAGES}.{cam_key}"] = cam.async_read(timeout_ms=200)
         #     self.logs[f"async_read_camera_{cam_key}_dt_s"] = time.perf_counter() - before_camread_t
 
         return obs_dict
@@ -167,7 +170,8 @@ class Reachy2Robot(Robot):
                 raise KeyError(f"Key '{key}' is not a valid motor key in Reachy 2.")
             else:
                 self.reachy.joints[REACHY2_MOTORS[key]].goal_position = val
-        self.reachy.send_goal_positions()
+        # # We don't want the teleoperator reachy2_specific to send the goal positions
+        # self.reachy.send_goal_positions()
         self.logs["write_pos_dt_s"] = time.perf_counter() - before_write_t
         return action
 
