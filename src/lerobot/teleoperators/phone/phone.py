@@ -148,7 +148,7 @@ class Phone(Teleoperator):
                 b = getattr(io, "b", None) if io is not None else None
                 b1 = False
                 if b is not None:
-                    b1 = bool(b.get_bool(1))
+                    b1 = bool(b.get_int(1))
                 if b1:
                     return pos, rot
             else:
