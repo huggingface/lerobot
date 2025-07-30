@@ -112,7 +112,7 @@ def test_record_and_replay(tmp_path):
     )
 
     record(record_cfg)
-    
+
     # Mock the revision to prevent Hub calls during replay
     with (
         patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
