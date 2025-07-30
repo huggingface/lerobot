@@ -34,7 +34,9 @@ from .config_phone import PhoneConfig, PhoneOS
 
 logger = logging.getLogger(__name__)
 
-# TODO(pepijn): specify the phone calibration point as axis of a robot "frame" that is going to be aligned with the normal axis of the back of the phone. at calibration and then each time b1 is pressed again.
+# TODO(pepijn): Make sure each time enabled is clicked we calibrate again and set the axis of the target joint equal to the normal vector of the phone
+# TODO(pepijn): Train pick place with phone teleop and check if code is still easy to use when recording etc now that we have a robot pipeline
+# TODO(pepijn): Add to docs with image etc
 
 
 class Phone(Teleoperator):
@@ -57,6 +59,7 @@ class Phone(Teleoperator):
         self._teleop = None
         self._teleop_thread = None
         self._latest_pose = None
+        self._latest_message = None
         self._enabled: bool = False
 
         # Calibration origins
@@ -92,19 +95,19 @@ class Phone(Teleoperator):
         else:
             raise ValueError(f"Invalid config phone_os: {self.config.phone_os}")
 
-        # Always calibrate on connect
         self.calibrate()
 
     def calibrate(self) -> None:
-        # Ask the human to hold the phone in its neutral pose and press B1.
-        print("\n Phone <-> Robot calibration")
+        # Calibrate when the user explicitly triggers capture.
         print("Hold the phone so that: top edge points forward (robot +x) and screen points up (robot +z)")
-        print("Press and hold B1 to capture this pose...\n")
+        if self.config.phone_os == PhoneOS.IOS:
+            print("Press and hold B1 in the HEBI Mobile I/O app to capture this pose...\n")
+        else:
+            print("Touch and move on the WebXR page to capture this pose...\n")
 
-        pos, rot = self._wait_for_stable_pose()
-        self._wait_for_button_press("b1", 0.3)
+        pos, rot = self._wait_for_capture_trigger()
 
-        # Store calibration transform: phone frame  is now robot frame
+        # Store calibration transform: phone frame is now robot frame
         self._calib_pos = pos.copy()
         self._calib_rot_inv = rot.inv()
         self._enabled = False
@@ -117,7 +120,7 @@ class Phone(Teleoperator):
     @property
     def action_features(self) -> dict[str, type]:
         features = {
-            "enabled": bool,
+            "enabled": bool,  # if true the "enabled" the phone button is pressed
             "target_x": float,  # meters
             "target_y": float,
             "target_z": float,
@@ -125,53 +128,55 @@ class Phone(Teleoperator):
             "target_qy": float,
             "target_qz": float,
             "target_qw": float,
+            "gripper": float,  # gripper velocity in m/s
+            "x": float,  # possible forward/backward
+            "y": float,  # possible left/right
+            "theta": float,  # possible rotation (in radians)
         }
-        for i in range(1, 9):  # Analog inputs between -1 and 1
-            features[f"a{i}"] = float
-
-        for i in range(1, 9):  # Digital inputs 0 or 1
-            features[f"b{i}"] = int
         return features
 
-    def _wait_for_stable_pose(self) -> tuple[np.ndarray, Rotation]:
+    def _wait_for_capture_trigger(self) -> tuple[np.ndarray, Rotation]:
+        """Wait trigger for calibration: iOS: B1. Android: 'move'."""
         while True:
-            ok, pos, rot, _ = self._read_current_pose()
-            if ok:
-                return pos, rot
-            time.sleep(0.01)
+            ok, pos, rot, pose = self._read_current_pose()
+            if not ok:
+                time.sleep(0.01)
+                continue
 
-    def _wait_for_button_press(self, button: str, hold_duration: float) -> None:
-        required_count = int(hold_duration / 0.01)
-        consecutive = 0
-        while consecutive < required_count:
-            act = self.get_action()
-            if act.get(button, 0):
-                consecutive += 1
+            if self.config.phone_os == PhoneOS.IOS:
+                io = getattr(pose, "io", None)
+                b = getattr(io, "b", None) if io is not None else None
+                b1 = False
+                if b is not None:
+                    b1 = bool(b.get_bool(1))
+                if b1:
+                    return pos, rot
             else:
-                consecutive = 0
+                msg = self._latest_message or {}
+                if bool(msg.get("move", False)):
+                    return pos, rot
+
             time.sleep(0.01)
 
-    def _read_current_pose(self) -> tuple[bool, np.ndarray | None, Rotation | None]:
+    def _read_current_pose(self) -> tuple[bool, np.ndarray | None, Rotation | None, object | None]:
         if self.config.phone_os == PhoneOS.IOS:
             fbk = self._group.get_next_feedback()
             pose = fbk[0]
             ar_pos = getattr(pose, "ar_position", None)
-            ar_quat = getattr(pose, "ar_orientation", None)  # wxyz
+            ar_quat = getattr(pose, "ar_orientation", None)
             if ar_pos is None or ar_quat is None:
                 return False, None, None, None
             quat_xyzw = np.concatenate((ar_quat[1:], [ar_quat[0]]))  # wxyz to xyzw
             rot = Rotation.from_quat(quat_xyzw)
             pos = ar_pos - rot.apply(self.config.camera_offset)
             return True, pos, rot, pose
-        else:  # Android
+        else:
             p = self._latest_pose
             if p is None:
                 return False, None, None, None
-            webxr_pos = p[:3, 3]
-            webxr_rot = Rotation.from_matrix(p[:3, :3])
-            webxr_wxyz = np.array([webxr_rot.as_quat()[3], *webxr_rot.as_quat()[:3]])  # wxyz to xyzw
+            rot = Rotation.from_matrix(p[:3, :3])
+            pos = p[:3, 3] - rot.apply(self.config.camera_offset)
             pose = self._latest_pose
-            pos, rot = self._map_webxr_to_robot(np.array(webxr_pos, dtype=float), webxr_wxyz)
             return True, pos, rot, pose
 
     @property
@@ -185,93 +190,52 @@ class Phone(Teleoperator):
 
     def _android_callback(self, pose: np.ndarray, message: dict) -> None:
         self._latest_pose = pose
+        self._latest_message = message
         time.sleep(0.001)  # 1ms delay to avoid race condition
 
-    def _apply_calibration(self, pos: np.ndarray, rot: Rotation) -> tuple[np.ndarray, Rotation]:
-        if not self.is_calibrated:
-            raise RuntimeError("Phone not calibrated, cannot apply calibration.")
-        pos_cal = self._calib_rot_inv.apply(pos - self._calib_pos)
-        rot_cal = self._calib_rot_inv * rot
-        return pos_cal, rot_cal
-
-    def get_action(self) -> dict[str, float]:
+    def get_action(self) -> dict:
         ok, raw_pos, raw_rot, pose = self._read_current_pose()
-        if not ok:
+        if not ok or not self.is_calibrated:
             return {}
 
-        action: dict[str, float | int] = {}
+        # Collect raw inputs (B1 / analogs on iOS, move/scale on Android)
+        raw_inputs: dict[str, float | int | bool] = {}
         if self.config.phone_os == PhoneOS.IOS:
             io = getattr(pose, "io", None)
             if io is not None:
-                bank_a = getattr(io, "a", None)
-                bank_b = getattr(io, "b", None)
-
-                if bank_a is not None:
+                bank_a, bank_b = io.a, io.b
+                if bank_a:
                     for ch in range(1, 9):
                         if bank_a.has_float(ch):
-                            action[f"a{ch}"] = float(bank_a.get_float(ch))
-
-                if bank_b is not None:
+                            raw_inputs[f"a{ch}"] = float(bank_a.get_float(ch))
+                if bank_b:
                     for ch in range(1, 9):
                         if bank_b.has_int(ch):
-                            action[f"b{ch}"] = int(bank_b.get_int(ch))
+                            raw_inputs[f"b{ch}"] = int(bank_b.get_int(ch))
                         elif hasattr(bank_b, "has_bool") and bank_b.has_bool(ch):
-                            action[f"b{ch}"] = int(bank_b.get_bool(ch))
-
+                            raw_inputs[f"b{ch}"] = int(bank_b.get_bool(ch))
         else:
-            # Android TODO: implement analog/digital inputs
-            pass
+            msg = self._latest_message or {}
+            raw_inputs["move"] = bool(msg.get("move", False))
+            raw_inputs["scale"] = float(msg.get("scale", 1.0))
 
-        for i in range(1, 9):
-            action.setdefault(f"a{i}", 0.0)
-        for i in range(1, 9):
-            action.setdefault(f"b{i}", 0)
+        # Apply calibration here
+        pos_cal = self._calib_rot_inv.apply(raw_pos - self._calib_pos)
+        rot_cal = self._calib_rot_inv * raw_rot
 
-        # Digital button B1 (index 1 in our dictionary). If absent, treat as 0.
-        b1_pressed = bool(action.get("b1", 0))
-        # Rising edge: capture reference
-        if b1_pressed and not self._enabled:
-            self._enabled = True
+        if self.config.phone_os == PhoneOS.IOS:
+            b1 = bool(raw_inputs.get("b1", 0))
+            enabled = b1
+        else:
+            enabled = bool(raw_inputs.get("move", False))
+        self._enabled = bool(enabled)
 
-        # Falling edge: disable
-        if (not b1_pressed) and self._enabled:
-            self._enabled = False
-
-        if not self._enabled or not self.is_calibrated:
-            action.update(
-                {
-                    "enabled": 0,
-                    "target_x": 0.0,
-                    "target_y": 0.0,
-                    "target_z": 0.0,
-                    "target_qx": 0.0,
-                    "target_qy": 0.0,
-                    "target_qz": 0.0,
-                    "target_qw": 0.0,
-                }
-            )
-            return action
-
-        curr_pos, r_curr = self._apply_calibration(raw_pos, raw_rot)
-        quat_xyzw = r_curr.as_quat()
-
-        # Canonicalize
-        if quat_xyzw[3] < 0:
-            quat_xyzw = -quat_xyzw
-
-        action.update(
-            {
-                "enabled": int(self._enabled),
-                "target_x": -1.0 * float(curr_pos[1]),
-                "target_y": float(curr_pos[0]),
-                "target_z": float(curr_pos[2]),
-                "target_qx": float(quat_xyzw[1]),
-                "target_qy": float(quat_xyzw[0]),
-                "target_qz": -1.0 * float(quat_xyzw[2]),
-                "target_qw": float(quat_xyzw[3]),
-            }
-        )
-        return action
+        return {
+            "phone.pos": pos_cal,
+            "phone.rot": rot_cal,
+            "phone.raw_inputs": raw_inputs,
+            "phone.enabled": self._enabled,
+        }
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
         # We could add haptic feedback (vibrations) here, but it's not implemented yet
