@@ -26,11 +26,11 @@ export PATH := $(dir $(PYTHON_PATH)):$(PATH)
 
 DEVICE ?= cpu
 
-build-cpu:
-	docker build -t lerobot:latest -f docker/lerobot-cpu/Dockerfile .
+build-user:
+	docker build -f docker/Dockerfile.user -t lerobot-user .
 
-build-gpu:
-	docker build -t lerobot:latest -f docker/lerobot-gpu/Dockerfile .
+build-internal:
+	docker build -f docker/Dockerfile.internal -t lerobot-internal .
 
 test-end-to-end:
 	${MAKE} DEVICE=$(DEVICE) test-act-ete-train

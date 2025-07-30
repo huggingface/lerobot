@@ -19,7 +19,7 @@ Provides the RealSenseCamera class for capturing frames from Intel RealSense cam
 import logging
 import time
 from threading import Event, Lock, Thread
-from typing import Any, Dict, List
+from typing import Any
 
 import cv2
 import numpy as np
@@ -194,7 +194,7 @@ class RealSenseCamera(Camera):
         logger.info(f"{self} connected.")
 
     @staticmethod
-    def find_cameras() -> List[Dict[str, Any]]:
+    def find_cameras() -> list[dict[str, Any]]:
         """
         Detects available Intel RealSense cameras connected to the system.
 
@@ -434,7 +434,7 @@ class RealSenseCamera(Camera):
         if self.color_mode == ColorMode.BGR:
             processed_image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 
-        if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
+        if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE, cv2.ROTATE_180]:
             processed_image = cv2.rotate(processed_image, self.rotation)
 
         return processed_image
