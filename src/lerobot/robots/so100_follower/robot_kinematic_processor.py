@@ -34,8 +34,8 @@ class EEReferenceAndDelta:
     last_ee_pose: np.ndarray | None = field(default=None, init=False, repr=False)
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        observation = transition.get(TransitionKey.OBSERVATION, {}) or {}
-        action = transition.get(TransitionKey.ACTION, {}) or {}
+        observation = transition.get(TransitionKey.OBSERVATION)
+        action = transition.get(TransitionKey.ACTION)
 
         current_joint_pose = np.array([observation[f"{name}.pos"] for name in self.motor_names], dtype=float)
         current_ee_pose = self.kinematics.forward_kinematics(current_joint_pose)
@@ -93,7 +93,7 @@ class EEBoundsAndSafety:
     last_position: np.ndarray | None = field(default=None, init=False, repr=False)
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        act = transition.get(TransitionKey.ACTION, {}) or {}
+        act = transition.get(TransitionKey.ACTION)
         if "desired_ee_pose" not in act:
             return transition
 
@@ -133,8 +133,8 @@ class InverseKinematics:
     gripper_speed_factor: float = 5.0
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        observation = transition.get(TransitionKey.OBSERVATION, {})
-        action = transition.get(TransitionKey.ACTION, {})
+        observation = transition.get(TransitionKey.OBSERVATION)
+        action = transition.get(TransitionKey.ACTION)
 
         current_joint_pose = np.array([observation[f"{name}.pos"] for name in self.motor_names])
 

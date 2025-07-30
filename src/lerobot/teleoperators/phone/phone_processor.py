@@ -28,7 +28,7 @@ class PhoneAxisRemapToAction:
     platform: PhoneOS
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        obs = transition.get(TransitionKey.OBSERVATION, {}) or {}
+        obs = transition.get(TransitionKey.OBSERVATION)
         enabled = int(obs.get("phone.enabled", 0))
         pos = obs.get("phone.pos")
         rot = obs.get("phone.rot")
