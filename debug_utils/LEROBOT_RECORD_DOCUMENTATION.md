@@ -1,6 +1,7 @@
 # LeRobot Record: Complete Inference & Control Documentation
 
 ## 📋 **Table of Contents**
+
 1. [Basic Usage](#basic-usage)
 2. [Core Arguments](#core-arguments)
 3. [Policy Configuration](#policy-configuration)
@@ -32,20 +33,22 @@ python -m lerobot.record \
 ## **Core Arguments**
 
 ### **Control Modes**
-| Argument | Type | Description | Default |
-|----------|------|-------------|---------|
-| `--policy.path` | `str` | Load pretrained policy for autonomous control | `None` |
-| `--teleop.type` | `str` | Enable teleoperation (`so100_leader`, `gamepad`, `keyboard`) | `None` |
-| `--display_data` | `bool` | Enable real-time Rerun visualization | `false` |
-| `--log` | `bool` | **Enable comprehensive inference logging** | `false` |
-| `--play_sounds` | `bool` | Use vocal synthesis for status updates | `true` |
-| `--resume` | `bool` | Resume recording on existing dataset | `false` |
+
+| Argument         | Type   | Description                                                  | Default |
+| ---------------- | ------ | ------------------------------------------------------------ | ------- |
+| `--policy.path`  | `str`  | Load pretrained policy for autonomous control                | `None`  |
+| `--teleop.type`  | `str`  | Enable teleoperation (`so100_leader`, `gamepad`, `keyboard`) | `None`  |
+| `--display_data` | `bool` | Enable real-time Rerun visualization                         | `false` |
+| `--log`          | `bool` | **Enable comprehensive inference logging**                   | `false` |
+| `--play_sounds`  | `bool` | Use vocal synthesis for status updates                       | `true`  |
+| `--resume`       | `bool` | Resume recording on existing dataset                         | `false` |
 
 ---
 
 ## **Policy Configuration**
 
 ### **Loading Models**
+
 ```bash
 # From Hugging Face Hub
 --policy.path=username/model_name
@@ -59,47 +62,52 @@ python -m lerobot.record \
 ```
 
 ### **Policy Arguments**
-| Argument | Type | Description |
-|----------|------|-------------|
-| `--policy.path` | `str` | Model path (HF Hub or local) |
-| `--policy.device` | `str` | Device (`cpu`, `cuda`, `cuda:0`, etc.) |
-| `--policy.use_amp` | `bool` | Use automatic mixed precision |
+
+| Argument           | Type   | Description                            |
+| ------------------ | ------ | -------------------------------------- |
+| `--policy.path`    | `str`  | Model path (HF Hub or local)           |
+| `--policy.device`  | `str`  | Device (`cpu`, `cuda`, `cuda:0`, etc.) |
+| `--policy.use_amp` | `bool` | Use automatic mixed precision          |
 
 ---
 
 ## **Dataset Configuration**
 
 ### **Basic Dataset Settings**
-| Argument | Type | Default | Description |
-|----------|------|---------|-------------|
-| `--dataset.repo_id` | `str` | **Required** | Dataset identifier (`username/dataset_name`) |
-| `--dataset.single_task` | `str` | **Required** | Task description |
-| `--dataset.fps` | `int` | `30` | **Control loop frequency (Hz)** |
-| `--dataset.episode_time_s` | `float` | `60` | Episode duration (seconds) |
-| `--dataset.reset_time_s` | `float` | `60` | Reset phase duration (seconds) |
-| `--dataset.num_episodes` | `int` | `50` | Number of episodes to record |
+
+| Argument                   | Type    | Default      | Description                                  |
+| -------------------------- | ------- | ------------ | -------------------------------------------- |
+| `--dataset.repo_id`        | `str`   | **Required** | Dataset identifier (`username/dataset_name`) |
+| `--dataset.single_task`    | `str`   | **Required** | Task description                             |
+| `--dataset.fps`            | `int`   | `30`         | **Control loop frequency (Hz)**              |
+| `--dataset.episode_time_s` | `float` | `60`         | Episode duration (seconds)                   |
+| `--dataset.reset_time_s`   | `float` | `60`         | Reset phase duration (seconds)               |
+| `--dataset.num_episodes`   | `int`   | `50`         | Number of episodes to record                 |
 
 ### **Storage & Upload Settings**
-| Argument | Type | Default | Description |
-|----------|------|---------|-------------|
-| `--dataset.root` | `str` | `None` | Local storage directory |
-| `--dataset.video` | `bool` | `true` | Encode frames as video |
-| `--dataset.push_to_hub` | `bool` | `true` | Upload to Hugging Face Hub |
-| `--dataset.private` | `bool` | `false` | Create private repository |
-| `--dataset.tags` | `list[str]` | `None` | Add tags (e.g., `'["manipulation", "sim"]'`) |
+
+| Argument                | Type        | Default | Description                                  |
+| ----------------------- | ----------- | ------- | -------------------------------------------- |
+| `--dataset.root`        | `str`       | `None`  | Local storage directory                      |
+| `--dataset.video`       | `bool`      | `true`  | Encode frames as video                       |
+| `--dataset.push_to_hub` | `bool`      | `true`  | Upload to Hugging Face Hub                   |
+| `--dataset.private`     | `bool`      | `false` | Create private repository                    |
+| `--dataset.tags`        | `list[str]` | `None`  | Add tags (e.g., `'["manipulation", "sim"]'`) |
 
 ### **Performance Settings**
-| Argument | Type | Default | Description |
-|----------|------|---------|-------------|
-| `--dataset.num_image_writer_processes` | `int` | `0` | Number of image writer processes |
-| `--dataset.num_image_writer_threads_per_camera` | `int` | `4` | Threads per camera for image saving |
-| `--dataset.video_encoding_batch_size` | `int` | `1` | Episodes per video encoding batch |
+
+| Argument                                        | Type  | Default | Description                         |
+| ----------------------------------------------- | ----- | ------- | ----------------------------------- |
+| `--dataset.num_image_writer_processes`          | `int` | `0`     | Number of image writer processes    |
+| `--dataset.num_image_writer_threads_per_camera` | `int` | `4`     | Threads per camera for image saving |
+| `--dataset.video_encoding_batch_size`           | `int` | `1`     | Episodes per video encoding batch   |
 
 ---
 
 ## **Robot Configuration**
 
 ### **Basic Robot Setup**
+
 ```bash
 --robot.type=so100_follower \
 --robot.id=robot_name \
@@ -107,6 +115,7 @@ python -m lerobot.record \
 ```
 
 ### **Camera Configuration**
+
 ```bash
 --robot.cameras='{
   "gripper": {"type": "opencv", "index_or_path": 0, "width": 1280, "height": 720, "fps": 30},
@@ -115,19 +124,21 @@ python -m lerobot.record \
 ```
 
 ### **Camera Parameters**
-| Parameter | Type | Description | Recommended |
-|-----------|------|-------------|-------------|
-| `type` | `str` | Camera type (`opencv`, `realsense`) | `opencv` |
-| `index_or_path` | `int/str` | Camera index or device path | `0`, `1`, `2` |
-| `width` | `int` | Image width (pixels) | `640-1280` |
-| `height` | `int` | Image height (pixels) | `480-720` |
-| `fps` | `int` | Camera FPS | `25-30` |
+
+| Parameter       | Type      | Description                         | Recommended   |
+| --------------- | --------- | ----------------------------------- | ------------- |
+| `type`          | `str`     | Camera type (`opencv`, `realsense`) | `opencv`      |
+| `index_or_path` | `int/str` | Camera index or device path         | `0`, `1`, `2` |
+| `width`         | `int`     | Image width (pixels)                | `640-1280`    |
+| `height`        | `int`     | Image height (pixels)               | `480-720`     |
+| `fps`           | `int`     | Camera FPS                          | `25-30`       |
 
 ---
 
 ## **Teleoperator Configuration**
 
 ### **Arm Teleoperators**
+
 ```bash
 # SO-100 Leader Arm
 --teleop.type=so100_leader \
@@ -136,11 +147,12 @@ python -m lerobot.record \
 # Gamepad Control
 --teleop.type=gamepad
 
-# Keyboard Control  
+# Keyboard Control
 --teleop.type=keyboard
 ```
 
 ### **Multi-Device Setup (LeKiwi)**
+
 ```bash
 --teleop='[
   {"type": "so100_leader", "port": "/dev/tty.leader"},
@@ -153,22 +165,26 @@ python -m lerobot.record \
 ## **Inference Logging**
 
 ### **Enable Comprehensive Logging**
+
 ```bash
 --log=true
 ```
 
 ### **What Gets Logged**
+
 When `--log=true` is enabled, creates detailed CSV files in `inference_logs/`:
 
 #### **1. Robot State Logging**
+
 - **File**: `{robot_name}_robot_state.csv`
-- **Data**: 
+- **Data**:
   - Timestamp, step count
   - Motor positions for all joints
   - Robot connection status
   - Motor loads, temperatures, voltages
 
-#### **2. Policy Inference Logging**  
+#### **2. Policy Inference Logging**
+
 - **File**: `{robot_name}_policy_inference.csv`
 - **Data**:
   - Inference timing (ms)
@@ -178,13 +194,15 @@ When `--log=true` is enabled, creates detailed CSV files in `inference_logs/`:
   - Task description
 
 #### **3. Trajectory Logging**
-- **File**: `{robot_name}_trajectory.csv`  
+
+- **File**: `{robot_name}_trajectory.csv`
 - **Data**:
   - Complete trajectory waypoints
   - Action sequences over time
   - Episode metadata
 
 ### **Log Directory Structure**
+
 ```
 inference_logs/
 └── dataset_name/
@@ -195,6 +213,7 @@ inference_logs/
 ```
 
 ### **Console Output**
+
 ```
 📊 INFERENCE STEP 1284 @ 59.21s
 ============================================================
@@ -222,11 +241,13 @@ inference_logs/
 ## **Real-time Visualization**
 
 ### **Enable Rerun Display**
+
 ```bash
 --display_data=true
 ```
 
 ### **What You'll See**
+
 - **Camera Feeds**: All configured cameras in real-time
 - **Robot State**: Joint positions, loads, temperatures
 - **Policy Actions**: Target positions and commands
@@ -234,8 +255,9 @@ inference_logs/
 - **Episode Progress**: Current episode, timing, completion
 
 ### **Rerun Interface**
+
 - **Timeline**: Scrub through recorded data
-- **Multi-view**: Multiple camera angles simultaneously  
+- **Multi-view**: Multiple camera angles simultaneously
 - **Data Plots**: Real-time graphs of all scalar data
 - **3D Visualization**: Robot pose visualization (if available)
 
@@ -245,19 +267,22 @@ inference_logs/
 
 ### **Keyboard Controls During Recording**
 
-| Key | Action | Description |
-|-----|--------|-------------|
-| **`→` (Right Arrow)** | Exit Early | End current episode early |
-| **`←` (Left Arrow)** | Re-record | Exit and re-record current episode |
-| **`Esc`** | Stop Recording | Stop entire recording session |
+| Key                   | Action         | Description                        |
+| --------------------- | -------------- | ---------------------------------- |
+| **`→` (Right Arrow)** | Exit Early     | End current episode early          |
+| **`←` (Left Arrow)**  | Re-record      | Exit and re-record current episode |
+| **`Esc`**             | Stop Recording | Stop entire recording session      |
 
 ### **Voice Announcements**
+
 With `--play_sounds=true` (default):
+
 - **Episode Start**: "Recording episode {N}"
-- **Reset Phase**: "Reset the environment"  
+- **Reset Phase**: "Reset the environment"
 - **Re-record**: "Re-record episode"
 
 ### **Episode Management**
+
 - **Automatic Reset**: Built-in reset phase between episodes
 - **Manual Reset**: Use reset time to manually prepare environment
 - **Episode Validation**: Re-record failed episodes with `←` key
@@ -267,11 +292,12 @@ With `--play_sounds=true` (default):
 ## **Performance Optimization**
 
 ### **Control Frequency**
+
 ```bash
 # Standard 30 Hz control
 --dataset.fps=30
 
-# High-frequency control  
+# High-frequency control
 --dataset.fps=60
 
 # Lower frequency for slow systems
@@ -279,6 +305,7 @@ With `--play_sounds=true` (default):
 ```
 
 ### **Camera Optimization**
+
 ```bash
 # Reduce resolution for better performance
 --robot.cameras='{
@@ -293,6 +320,7 @@ With `--play_sounds=true` (default):
 ```
 
 ### **Image Writer Performance**
+
 ```bash
 # For unstable FPS, try processes
 --dataset.num_image_writer_processes=1 \
@@ -304,13 +332,17 @@ With `--play_sounds=true` (default):
 ```
 
 ### **Timing Analysis**
+
 Use the inference logging to analyze performance:
+
 ```bash
 --log=true
 ```
+
 Monitor console output for timing bottlenecks:
+
 - **Inference time**: Policy computation speed
-- **Camera read time**: Image capture speed  
+- **Camera read time**: Image capture speed
 - **Total loop time**: Overall control frequency
 
 ---
@@ -318,17 +350,20 @@ Monitor console output for timing bottlenecks:
 ## **Advanced Features**
 
 ### **Batch Video Encoding**
+
 ```bash
 # Encode videos in batches (less frequent disk I/O)
 --dataset.video_encoding_batch_size=5
 ```
 
 ### **Custom Storage Location**
+
 ```bash
 --dataset.root=/path/to/custom/storage
 ```
 
 ### **Headless Operation**
+
 ```bash
 # Disable visualization and sounds for server deployment
 --display_data=false \
@@ -336,6 +371,7 @@ Monitor console output for timing bottlenecks:
 ```
 
 ### **Development Mode**
+
 ```bash
 # Quick testing with minimal episodes
 --dataset.num_episodes=2 \
@@ -349,6 +385,7 @@ Monitor console output for timing bottlenecks:
 ## **Examples**
 
 ### **1. Autonomous Recording with Logging**
+
 ```bash
 python -m lerobot.record \
   --robot.type=so100_follower \
@@ -369,6 +406,7 @@ python -m lerobot.record \
 ```
 
 ### **2. Teleoperation Recording**
+
 ```bash
 python -m lerobot.record \
   --robot.type=so100_follower \
@@ -383,6 +421,7 @@ python -m lerobot.record \
 ```
 
 ### **3. High-Performance Recording**
+
 ```bash
 python -m lerobot.record \
   --robot.type=so100_follower \
@@ -400,6 +439,7 @@ python -m lerobot.record \
 ```
 
 ### **4. Development/Debug Mode**
+
 ```bash
 python -m lerobot.record \
   --robot.type=so100_follower \
@@ -418,6 +458,7 @@ python -m lerobot.record \
 ```
 
 ### **5. Multi-Modal Recording (LeKiwi)**
+
 ```bash
 python -m lerobot.record \
   --robot.type=lekiwi_client \
@@ -439,16 +480,19 @@ python -m lerobot.record \
 ## **🔧 Troubleshooting**
 
 ### **Performance Issues**
+
 - **Low FPS**: Reduce camera resolution, increase image writer threads
 - **High latency**: Check `--dataset.fps` setting, monitor inference timing
 - **Memory issues**: Reduce batch size, use video encoding
 
-### **Connection Issues**  
+### **Connection Issues**
+
 - **Robot disconnection**: Check USB connections, motor power
 - **Camera errors**: Verify camera indices with `python -m lerobot.find_cameras`
 - **Policy loading**: Ensure model path exists and is accessible
 
 ### **Logging Issues**
+
 - **No inference logs**: Ensure `--log=true` and policy is loaded
 - **CSV errors**: Check disk space and write permissions
 - **Console spam**: Normal during reset phase (policy=None is expected)
@@ -477,4 +521,4 @@ plt.title('Joint Trajectory')
 plt.show()
 ```
 
-This documentation covers all major aspects of `lerobot.record` for inference, control, logging, and visualization! 🚀 
+This documentation covers all major aspects of `lerobot.record` for inference, control, logging, and visualization! 🚀

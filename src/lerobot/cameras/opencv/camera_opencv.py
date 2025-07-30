@@ -498,7 +498,7 @@ class OpenCVCamera(Camera):
             time.sleep(0.1)  # Brief pause
         else:
             was_connected = False
-            
+
         if was_connected:
             self.connect()
             logger.info(f"{self} restarted successfully.")

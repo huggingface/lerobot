@@ -3,6 +3,7 @@
 ## 🎯 **Your Question: Why Does 25 FPS Still Modulate?**
 
 Even with 25 FPS target (40ms per loop), you're seeing:
+
 ```
 24.8, 25.8, 25.8, 23.9, 25.8, 24.4, 26.1 Hz
 ```
@@ -14,34 +15,40 @@ Even with 25 FPS target (40ms per loop), you're seeing:
 ## 🔍 **Root Causes of Frequency Modulation**
 
 ### **1. Variable Camera Processing (15-25ms variation)**
+
 - **USB bandwidth fluctuation**: Multiple cameras compete for USB bus
 - **Image sensor timing**: Different lighting conditions affect exposure
 - **Buffer states**: Camera internal buffers occasionally need clearing
 - **USB controller load**: Other USB devices can cause interference
 
 ### **2. Motor Communication Variance (2-6ms variation)**
+
 - **Serial bus timing**: Feetech motor protocol has variable response times
 - **Motor state**: Motors respond differently based on load/position
 - **Bus congestion**: Multiple motor reads in sequence can queue up
 - **Hardware timing**: Serial port timing varies with system load
 
 ### **3. Neural Network Inference (10-15ms variation)**
+
 - **Model complexity**: Different input patterns require different compute
 - **GPU scheduling**: Shared GPU resources with system processes
 - **Memory allocation**: PyTorch memory management can cause spikes
 - **CUDA context**: GPU context switching introduces variance
 
 ### **4. Python/System Overhead (2-5ms variation)**
+
 - **GIL (Global Interpreter Lock)**: Serializes Python execution
 - **Garbage collection**: Periodic memory cleanup causes spikes
 - **OS scheduling**: Background processes can preempt execution
 - **Thread context switching**: Multiple threads switching consumes time
 
 ### **5. Asynchronous Timing Accumulation**
+
 Each variable component accumulates:
+
 ```
 Base loop: 25-30ms
-+ Camera variance: ±5ms  
++ Camera variance: ±5ms
 + Motor variance: ±2ms
 + Inference variance: ±3ms
 + System variance: ±2ms
@@ -78,11 +85,13 @@ With the enhanced logging, you'll now see:
 ## ✅ **Is This Normal? YES!**
 
 ### **Expected Frequency Ranges:**
+
 - **Perfect world**: Exactly 25.0 Hz
 - **Real world**: 23-27 Hz (±8% variation)
 - **Your system**: 23.9-26.1 Hz (±4% variation) → **EXCELLENT!**
 
 ### **Why 2-3 Hz Variation is Expected:**
+
 1. **Hardware limitations**: USB/Serial timing isn't deterministic
 2. **Software overhead**: Python + PyTorch + OS scheduling
 3. **Competing resources**: Multiple processes sharing CPU/GPU/USB
@@ -93,14 +102,16 @@ With the enhanced logging, you'll now see:
 ## 🎛️ **What You Can Control vs Can't Control**
 
 ### **✅ Can Optimize:**
+
 - **Camera resolution**: Lower res = more consistent timing
 - **System load**: Close background apps
 - **USB configuration**: Use dedicated USB controllers
 - **Model optimization**: Smaller/faster neural networks
 
 ### **❌ Cannot Eliminate:**
+
 - **USB protocol timing**: Hardware-level variance
-- **Serial communication**: Motor protocol has inherent variance  
+- **Serial communication**: Motor protocol has inherent variance
 - **OS scheduling**: System interrupts and context switches
 - **Hardware jitter**: Sensors and actuators have physical limits
 
@@ -109,11 +120,13 @@ With the enhanced logging, you'll now see:
 ## 🔧 **Expected Improvements from Your Setup:**
 
 ### **Current Status:**
+
 - **Target**: 25 Hz (40ms)
 - **Actual**: 24.8±1.1 Hz (≈40.3±1.8ms)
 - **Variance**: ±4.4% (GOOD!)
 
 ### **After Optimizations:**
+
 - **Lower camera res**: ±3% variance
 - **System cleanup**: ±2.5% variance
 - **Best case**: 24.5-25.5 Hz (±2% variance)
@@ -130,4 +143,4 @@ With the enhanced logging, you'll now see:
 4. **Focus on consistency** rather than perfect frequency
 5. **Use the new timing breakdown** to identify bottlenecks
 
-The detailed timing logs will help you see exactly which components are causing the variation on each step! 
+The detailed timing logs will help you see exactly which components are causing the variation on each step!

@@ -285,69 +285,69 @@ class InferenceLogger:
         Shows all variable components that contribute to control loop frequency modulation.
         """
         try:
-            print(f"📊 TIMING BREAKDOWN:")
-            
+            print("📊 TIMING BREAKDOWN:")
+
             # 1. Policy Inference Time
             print(f"   🧠 Policy Inference: {inference_time * 1000:.1f}ms")
-            
+
             # 2. Robot State Reading (from robot logs if available)
-            if hasattr(robot, 'logs'):
+            if hasattr(robot, "logs"):
                 # Motor state reading timing
                 if "read_follower_arm_pos_dt_s" in robot.logs:
                     print(f"   🔧 Motor Read: {robot.logs['read_follower_arm_pos_dt_s'] * 1000:.1f}ms")
-                
+
                 # Legacy format for other robots
-                for name in getattr(robot, 'follower_arms', []):
+                for name in getattr(robot, "follower_arms", []):
                     key = f"read_follower_{name}_pos_dt_s"
                     if key in robot.logs:
                         print(f"   🔧 Motor Read ({name}): {robot.logs[key] * 1000:.1f}ms")
-                
+
                 # Camera reading timing
                 for name in robot.cameras.keys():
                     key = f"read_camera_{name}_dt_s"
                     if key in robot.logs:
                         print(f"   📷 Camera Read ({name}): {robot.logs[key] * 1000:.1f}ms")
-                    
+
                     # Also check async read timing
                     async_key = f"async_read_camera_{name}_dt_s"
                     if async_key in robot.logs:
                         print(f"   📷 Camera Async ({name}): {robot.logs[async_key] * 1000:.1f}ms")
-                
+
                 # Motor writing timing
                 if "write_follower_arm_goal_pos_dt_s" in robot.logs:
                     print(f"   ✍️  Motor Write: {robot.logs['write_follower_arm_goal_pos_dt_s'] * 1000:.1f}ms")
-                    
+
                 # Legacy format for other robots
-                for name in getattr(robot, 'follower_arms', []):
+                for name in getattr(robot, "follower_arms", []):
                     key = f"write_follower_{name}_goal_pos_dt_s"
                     if key in robot.logs:
                         print(f"   ✍️  Motor Write ({name}): {robot.logs[key] * 1000:.1f}ms")
-            
+
             # 3. Calculate total processing time vs target
-            if hasattr(self, '_current_control_loop_freq') and self._current_control_loop_freq > 0:
+            if hasattr(self, "_current_control_loop_freq") and self._current_control_loop_freq > 0:
                 actual_loop_time = 1.0 / self._current_control_loop_freq * 1000  # ms
                 target_loop_time = 1000.0 / self.target_fps  # ms based on target FPS
                 overhead = actual_loop_time - (inference_time * 1000)
-                
+
                 print(f"   ⚙️  Other Overhead: {overhead:.1f}ms")
                 print(f"   🎯 Target Loop Time: {target_loop_time:.1f}ms ({self.target_fps:.0f} Hz)")
                 print(f"   📊 Actual Loop Time: {actual_loop_time:.1f}ms")
-                
+
                 if actual_loop_time > target_loop_time:
                     deficit = actual_loop_time - target_loop_time
                     print(f"   ⚠️  Time Deficit: +{deficit:.1f}ms (why frequency < {self.target_fps:.0f} Hz)")
                 else:
                     surplus = target_loop_time - actual_loop_time
                     print(f"   ✅ Time Surplus: -{surplus:.1f}ms (could run faster)")
-            
+
             # 4. Explain frequency variation causes
-            print(f"   🔄 Frequency Variation Causes:")
-            print(f"      • USB bandwidth fluctuation (cameras)")
-            print(f"      • Serial bus timing (motor communication)")  
-            print(f"      • Neural network execution variance")
-            print(f"      • Python GIL and OS scheduling")
-            print(f"      • System load and background processes")
-            
+            print("   🔄 Frequency Variation Causes:")
+            print("      • USB bandwidth fluctuation (cameras)")
+            print("      • Serial bus timing (motor communication)")
+            print("      • Neural network execution variance")
+            print("      • Python GIL and OS scheduling")
+            print("      • System load and background processes")
+
         except Exception as e:
             logger.debug(f"Error in timing breakdown: {e}")
 
@@ -378,10 +378,10 @@ class InferenceLogger:
             control_loop_freq = 1.0 / step_interval if step_interval > 0 else 0.0
         else:
             control_loop_freq = 0.0  # First step, no frequency yet
-        
+
         # Store for console output
         self._current_control_loop_freq = control_loop_freq
-        
+
         # Update timing for next calculation
         self.last_step_time = current_time
         self.step_count += 1
@@ -412,9 +412,9 @@ class InferenceLogger:
 
         # Print timing info including control loop frequency
         print(f"\n⏱️  TIMING: Inference took {inference_time * 1000:.1f}ms")
-        if hasattr(self, '_current_control_loop_freq') and self._current_control_loop_freq > 0:
+        if hasattr(self, "_current_control_loop_freq") and self._current_control_loop_freq > 0:
             print(f"🔄 CONTROL LOOP: {self._current_control_loop_freq:.1f} Hz")
-            
+
         # Print detailed timing breakdown for terminal (not CSV)
         self._print_timing_breakdown(robot, inference_time)
 
