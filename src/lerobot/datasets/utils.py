@@ -259,15 +259,6 @@ def load_stats(local_dir: Path) -> dict[str, dict[str, np.ndarray]]:
     return cast_stats_to_numpy(stats)
 
 
-def write_hf_dataset(hf_dataset: Dataset, local_dir: Path):
-    if get_hf_dataset_size_in_mb(hf_dataset) > DEFAULT_DATA_FILE_SIZE_IN_MB:
-        raise NotImplementedError("Contact a maintainer.")
-
-    path = local_dir / DEFAULT_DATA_PATH.format(chunk_index=0, file_index=0)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    hf_dataset.to_parquet(path)
-
-
 def write_tasks(tasks: pandas.DataFrame, local_dir: Path):
     path = local_dir / DEFAULT_TASKS_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
