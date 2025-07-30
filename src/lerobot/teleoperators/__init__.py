@@ -18,5 +18,7 @@ from .config import TeleoperatorConfig
 from .teleoperator import Teleoperator
 from .utils import make_teleoperator_from_config
 from .remote_sender import RemoteSender, RemoteSenderConfig
+from .remote_receiver import RemoteReceiver, RemoteReceiverConfig
 
 remote_sender = RemoteSenderConfig
+remote_receiver = RemoteReceiverConfig
