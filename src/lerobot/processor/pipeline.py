@@ -19,10 +19,11 @@ import importlib
 import json
 import os
 from collections.abc import Callable, Iterable, Sequence
+from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Protocol, TypedDict
+from typing import Any, Protocol, TypedDict, runtime_checkable
 
 import torch
 from huggingface_hub import ModelHubMixin, hf_hub_download
@@ -131,6 +132,7 @@ class ProcessorStepRegistry:
         cls._registry.clear()
 
 
+@runtime_checkable
 class ProcessorStep(Protocol):
     """Structural typing interface for a single processor step.
 
@@ -167,6 +169,8 @@ class ProcessorStep(Protocol):
     def load_state_dict(self, state: dict[str, torch.Tensor]) -> None: ...
 
     def reset(self) -> None: ...
+
+    def feature_contract(self, features: dict[str, Any] | None = None) -> dict[str, Any]: ...
 
 
 def _default_batch_to_transition(batch: dict[str, Any]) -> EnvTransition:  # noqa: D401
@@ -839,6 +843,26 @@ class RobotProcessor(ModelHubMixin):
             parts.append(f"seed={self.seed}")
 
         return f"RobotProcessor({', '.join(parts)})"
+
+    def __post_init__(self):
+        # Enforce the processor step contract once at construction time
+        for i, step in enumerate(self.steps):
+            if not isinstance(step, ProcessorStep):
+                raise TypeError(f"Step {i} ({type(step).__name__}) does not implement ProcessorStep protocol")
+
+    def feature_contract(self, *, initial_features: dict[str, Any] | None = None) -> dict[str, Any]:
+        """
+        Apply ALL steps in order. Each step must implement
+        feature_contract(features) and return a dict (full or incremental schema).
+        """
+        features: dict[str, Any] = {} if initial_features is None else deepcopy(initial_features)
+
+        for _, step in enumerate(self.steps):
+            out = step.feature_contract(features)
+            if not isinstance(out, dict):
+                raise TypeError(f"{step.__class__.__name__}.feature_contract must return dict[str, Any]")
+            features = out
+        return features
 
 
 class ObservationProcessor:
