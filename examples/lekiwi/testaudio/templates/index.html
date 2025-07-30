@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>实时双向音频通话 (Web Audio API)</title>
+    <!-- 引入 TailwindCSS via CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入 Socket.IO 客户端库 -->
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+</head>
+<body class="bg-gray-900 text-white flex flex-col items-center justify-center min-h-screen font-sans">
+
+    <div class="p-8 bg-gray-800 rounded-lg shadow-2xl w-full max-w-2xl text-center">
+        <h1 class="text-4xl font-bold mb-4 text-cyan-400">实时双向音频通话</h1>
+        <p class="text-gray-400 mb-6">使用 Web Audio API 实现低延迟通信</p>
+
+        <div id="status" class="mb-6 p-3 rounded-md bg-gray-700 text-lg font-mono">
+            正在连接到服务器...
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div class="bg-gray-700/50 p-6 rounded-lg">
+                <h2 class="text-2xl font-semibold mb-3 text-lime-400">来自服务器的声音</h2>
+                <p id="server-audio-status" class="text-gray-400 h-6">等待音频流...</p>
+            </div>
+            <div class="bg-gray-700/50 p-6 rounded-lg">
+                <h2 class="text-2xl font-semibold mb-3 text-amber-400">发送到服务器的声音</h2>
+                <p id="client-audio-status" class="text-gray-400 h-6">正在初始化音频...</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const statusDiv = document.getElementById('status');
+            const serverAudioStatus = document.getElementById('server-audio-status');
+            const clientAudioStatus = document.getElementById('client-audio-status');
+
+            const socket = io();
+
+            // --- Web Audio API 初始化 ---
+            let audioContext;
+            let scriptProcessor;
+            let nextPlayTime = 0;
+            // 关键：此采样率必须与服务器 `app.py` 中的 RATE 完全匹配
+            const SAMPLE_RATE = 48000; 
+
+            // 诊断标志
+            let serverAudioReceivedLogPrinted = false;
+            let clientAudioSentLogPrinted = false;
+
+            function initAudio() {
+                try {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                        sampleRate: SAMPLE_RATE
+                    });
+                    nextPlayTime = audioContext.currentTime;
+                    clientAudioStatus.textContent = "正在请求麦克风权限...";
+                } catch (e) {
+                    alert('Web Audio API 在您的浏览器中不受支持!');
+                    console.error('Web Audio API 初始化失败:', e);
+                }
+            }
+            initAudio();
+
+            // --- Socket.IO 事件处理 ---
+            socket.on('connect', () => {
+                statusDiv.textContent = '✅ 连接成功！';
+                statusDiv.classList.replace('bg-gray-700', 'bg-green-800/50');
+                console.log('已连接到服务器, SID:', socket.id);
+                // 确保音频上下文已初始化后再启动采集
+                if (audioContext) {
+                    startClientAudioCapture();
+                }
+            });
+
+            socket.on('disconnect', () => {
+                statusDiv.textContent = '❌ 连接已断开';
+                statusDiv.classList.replace('bg-green-800/50', 'bg-gray-700');
+                if (scriptProcessor) {
+                    scriptProcessor.disconnect();
+                }
+                console.log('与服务器断开连接');
+            });
+
+            // 1. 播放来自服务器的音频
+            socket.on('audio_from_server', (data) => {
+                if (!serverAudioReceivedLogPrinted) {
+                    console.log(`✅ [诊断] 浏览器收到第一批来自服务器的 ${data.byteLength} 字节音频数据。`);
+                    serverAudioReceivedLogPrinted = true;
+                }
+                // 'data' 是 ArrayBuffer 格式的原始 Int16 PCM 数据
+                const int16Array = new Int16Array(data);
+                
+                // 将 Int16 数据转换为 Web Audio API 使用的 Float32 数据 (-1.0 to 1.0)
+                const float32Array = new Float32Array(int16Array.length);
+                for (let i = 0; i < int16Array.length; i++) {
+                    float32Array[i] = int16Array[i] / 32767.0;
+                }
+
+                // 创建一个音频缓冲
+                const audioBuffer = audioContext.createBuffer(1, float32Array.length, SAMPLE_RATE);
+                audioBuffer.copyToChannel(float32Array, 0);
+
+                // 创建一个音频源节点并播放
+                const source = audioContext.createBufferSource();
+                source.buffer = audioBuffer;
+                source.connect(audioContext.destination);
+
+                // 精确调度播放，避免卡顿和爆音
+                if (audioContext.currentTime > nextPlayTime) {
+                    nextPlayTime = audioContext.currentTime;
+                }
+                source.start(nextPlayTime);
+                nextPlayTime += audioBuffer.duration;
+                
+                serverAudioStatus.textContent = '正在播放...';
+            });
+
+
+            // 2. 采集客户端音频并发送
+            function startClientAudioCapture() {
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    clientAudioStatus.textContent = '您的浏览器不支持音频采集 API';
+                    console.error('getUserMedia not supported on your browser!');
+                    return;
+                }
+                navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+                    .then(stream => {
+                        clientAudioStatus.textContent = '麦克风已激活，正在发送...';
+                        const source = audioContext.createMediaStreamSource(stream);
+                        
+                        // 创建一个 ScriptProcessorNode 用于实时处理
+                        const bufferSize = 4096; // 缓冲区大小，可以是 2048, 4096, 8192 等
+                        scriptProcessor = audioContext.createScriptProcessor(bufferSize, 1, 1);
+
+                        scriptProcessor.onaudioprocess = (e) => {
+                            // 获取原始的 Float32 PCM 数据
+                            const pcmData = e.inputBuffer.getChannelData(0);
+                            
+                            // 发送给服务器。转成普通数组，因为 Socket.IO 对 TypedArray 支持不一
+                            socket.emit('audio_from_client', { 
+                                audio_data: Array.from(pcmData) 
+                            });
+
+                            // 仅在第一次发送时打印诊断日志
+                            if (!clientAudioSentLogPrinted) {
+                                console.log(`✅ [诊断] 浏览器正在发送第一批 ${pcmData.length} 个音频样本到服务器。`);
+                                clientAudioSentLogPrinted = true;
+                            }
+                        };
+
+                        source.connect(scriptProcessor);
+                        
+                        // 消除本地回声的关键步骤：
+                        // 将处理器连接到一个音量为0的哑节点，而不是直接连接到扬声器。
+                        // 这能确保 onaudioprocess 持续触发，但听不到自己的声音。
+                        const gainNode = audioContext.createGain();
+                        gainNode.gain.setValueAtTime(0, audioContext.currentTime);
+                        scriptProcessor.connect(gainNode);
+                        gainNode.connect(audioContext.destination);
+
+                    }).catch(err => {
+                        clientAudioStatus.textContent = `麦克风错误: ${err.message}`;
+                        console.error('麦克风访问被拒绝或出错: ', err);
+                    });
+            }
+        });
+    </script>
+</body>
+</html>

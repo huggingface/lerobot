@@ -18,12 +18,20 @@ import base64
 import json
 import logging
 import time
+from dataclasses import dataclass
 
 import cv2
+import draccus
 import zmq
 
 from .config_lekiwi import LeKiwiConfig, LeKiwiHostConfig
 from .lekiwi import LeKiwi
+
+
+@dataclass
+class LeKiwiHostMainConfig:
+    robot: LeKiwiConfig
+    host_config: LeKiwiHostConfig = None
 
 
 class LeKiwiHost:
@@ -47,17 +55,18 @@ class LeKiwiHost:
         self.zmq_context.term()
 
 
-def main():
+@draccus.wrap()
+def main(cfg: LeKiwiHostMainConfig):
     logging.info("Configuring LeKiwi")
-    robot_config = LeKiwiConfig()
-    robot = LeKiwi(robot_config)
+    if cfg.host_config is None:
+        cfg.host_config = LeKiwiHostConfig()
+    robot = LeKiwi(cfg.robot)
 
     logging.info("Connecting LeKiwi")
     robot.connect()
 
     logging.info("Starting HostAgent")
-    host_config = LeKiwiHostConfig()
-    host = LeKiwiHost(host_config)
+    host = LeKiwiHost(cfg.host_config)
 
     last_cmd_time = time.time()
     watchdog_active = False

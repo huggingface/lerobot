@@ -152,8 +152,9 @@ class LeKiwi(Robot):
 
         homing_offsets.update(dict.fromkeys(self.base_motors, 0))
 
+        # Only wheels are considered full turn motors, wrist_roll should be calibrated
         full_turn_motor = [
-            motor for motor in motors if any(keyword in motor for keyword in ["wheel", "wrist"])
+            motor for motor in motors if any(keyword in motor for keyword in ["wheel"])
         ]
         unknown_range_motors = [motor for motor in motors if motor not in full_turn_motor]
 

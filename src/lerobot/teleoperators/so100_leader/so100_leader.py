@@ -103,15 +103,17 @@ class SO100Leader(Teleoperator):
         input(f"Move {self} to the middle of its range of motion and press ENTER....")
         homing_offsets = self.bus.set_half_turn_homings()
 
-        full_turn_motor = "wrist_roll"
-        unknown_range_motors = [motor for motor in self.bus.motors if motor != full_turn_motor]
+        # Only wheels are considered full turn motors, wrist_roll should be calibrated
+        full_turn_motors = []
+        unknown_range_motors = [motor for motor in self.bus.motors if motor not in full_turn_motors]
         print(
-            f"Move all joints except '{full_turn_motor}' sequentially through their "
+            f"Move all joints sequentially through their "
             "entire ranges of motion.\nRecording positions. Press ENTER to stop..."
         )
         range_mins, range_maxes = self.bus.record_ranges_of_motion(unknown_range_motors)
-        range_mins[full_turn_motor] = 0
-        range_maxes[full_turn_motor] = 4095
+        for name in full_turn_motors:
+            range_mins[name] = 0
+            range_maxes[name] = 4095
 
         self.calibration = {}
         for motor, m in self.bus.motors.items():

@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>实时音频通话</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        #status { margin-bottom: 20px; }
+        button { padding: 10px 20px; font-size: 16px; margin: 5px; }
+        .button-group { margin: 10px 0; }
+    </style>
+</head>
+<body>
+    <h1>实时音频通话</h1>
+    <div id="status">状态: 未连接</div>
+    
+    <div class="button-group">
+        <button id="startBtn">开始通话</button>
+        <button id="stopBtn" disabled>停止通话</button>
+    </div>
+    
+    <div class="button-group">
+        <button id="stopServerAudioBtn">停止服务器音频播放</button>
+    </div>
+    
+    <audio id="remoteAudio" controls autoplay></audio>
+
+    <script>
+        const socket = io();
+        let audioContext;
+        let mediaStream;
+        let audioProcessor;
+        let isRecording = false;
+        
+        // DOM 元素
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const stopServerAudioBtn = document.getElementById('stopServerAudioBtn');
+        const statusDiv = document.getElementById('status');
+        const remoteAudio = document.getElementById('remoteAudio');
+        
+        // 初始化
+        startBtn.addEventListener('click', startRecording);
+        stopBtn.addEventListener('click', stopRecording);
+        stopServerAudioBtn.addEventListener('click', stopServerAudio);
+        
+        // 监听服务器发来的音频
+        socket.on('audio_output', processIncomingAudio);
+        
+        // 更新状态显示
+        socket.on('connect', () => {
+            statusDiv.textContent = '状态: 已连接服务器';
+        });
+        
+        socket.on('disconnect', () => {
+            statusDiv.textContent = '状态: 服务器断开';
+        });
+        
+        async function startRecording() {
+            try {
+                statusDiv.textContent = '正在获取麦克风权限...';
+                
+                // 获取麦克风权限
+                mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                // 创建音频上下文
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                
+                // 创建音频源
+                const source = audioContext.createMediaStreamSource(mediaStream);
+                
+                // 创建音频处理器
+                audioProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+                
+                // 设置处理回调
+                audioProcessor.onaudioprocess = processAudio;
+                
+                // 连接节点
+                source.connect(audioProcessor);
+                audioProcessor.connect(audioContext.destination);
+                
+                isRecording = true;
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                statusDiv.textContent = '状态: 通话中...';
+                
+            } catch (err) {
+                console.error('麦克风访问错误:', err);
+                statusDiv.textContent = '错误: ' + err.message;
+            }
+        }
+        
+        function stopRecording() {
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+            }
+            if (audioContext) {
+                audioContext.close();
+            }
+            isRecording = false;
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            statusDiv.textContent = '状态: 已停止';
+        }
+        
+        function stopServerAudio() {
+            socket.emit('stop_audio');
+            console.log('已发送停止服务器音频播放请求');
+        }
+        
+        
+        function processAudio(event) {
+            if (!isRecording) return;
+            
+            // 获取音频数据
+            const inputBuffer = event.inputBuffer;
+            const channelData = inputBuffer.getChannelData(0);
+            
+            // 转换为16位PCM
+            const pcmData = convertFloat32ToInt16(channelData);
+            
+            // 发送到服务器
+            socket.emit('audio_data', {
+                audio: arrayBufferToBase64(pcmData.buffer)
+            });
+        }
+        
+        function processIncomingAudio(data) {
+            if (!isRecording) return;
+            
+            // 解码Base64
+            const audioData = base64ToArrayBuffer(data.audio);
+            
+            // 转换为Float32
+            const float32Data = convertInt16ToFloat32(new Int16Array(audioData));
+            
+            // 创建音频缓冲区
+            const buffer = audioContext.createBuffer(1, float32Data.length, audioContext.sampleRate);
+            buffer.copyToChannel(float32Data, 0);
+            
+            // 播放音频
+            const source = audioContext.createBufferSource();
+            source.buffer = buffer;
+            source.connect(audioContext.destination);
+            source.start();
+        }
+        
+        // 工具函数
+        function convertFloat32ToInt16(buffer) {
+            const l = buffer.length;
+            const buf = new Int16Array(l);
+            for (let i = 0; i < l; i++) {
+                buf[i] = Math.min(1, buffer[i]) * 0x7FFF;
+            }
+            return buf;
+        }
+        
+        function convertInt16ToFloat32(buffer) {
+            const l = buffer.length;
+            const buf = new Float32Array(l);
+            for (let i = 0; i < l; i++) {
+                buf[i] = buffer[i] / 0x7FFF;
+            }
+            return buf;
+        }
+        
+        function arrayBufferToBase64(buffer) {
+            let binary = '';
+            const bytes = new Uint8Array(buffer);
+            for (let i = 0; i < bytes.byteLength; i++) {
+                binary += String.fromCharCode(bytes[i]);
+            }
+            return btoa(binary);
+        }
+        
+        function base64ToArrayBuffer(base64) {
+            const binaryString = atob(base64);
+            const len = binaryString.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+            return bytes.buffer;
+        }
+    </script>
+</body>
+</html>
