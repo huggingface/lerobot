@@ -118,7 +118,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         self.buffer_size = buffer_size
 
         # We cache the video decoders to avoid re-initializing them at each frame (avoiding a ~10x slowdown)
-        self.video_decoder_cache = VideoDecoderCache()
+        self.video_decoder_cache = None
 
         # Unused attributes
         self.image_writer = None
@@ -146,6 +146,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             split="train",
             streaming=self.streaming,
             data_files="data/*/*.parquet",
+            revision=self.revision,
         )
 
         self.num_shards = min(self.hf_dataset.num_shards, max_num_shards)
@@ -171,6 +172,9 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
     # could be used with a ThreadPoolExecutor to run `make_frame` (especially video decoding)
     # in parallel, feeding a queue from which this iterator will yield processed items.
     def __iter__(self) -> Iterator[dict[str, torch.Tensor]]:
+        if self.video_decoder_cache is None:
+            self.video_decoder_cache = VideoDecoderCache()
+
         # keep the same seed across exhaustions if shuffle is False, otherwise shuffle data across exhaustions
         rng = np.random.default_rng(self.seed) if not self.shuffle else self.rng
 
