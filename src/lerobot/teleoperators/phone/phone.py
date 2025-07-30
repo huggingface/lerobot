@@ -34,7 +34,6 @@ from .config_phone import PhoneConfig, PhoneOS
 
 logger = logging.getLogger(__name__)
 
-# TODO(pepijn): Make sure each time enabled is clicked we calibrate again and set the axis of the target joint equal to the normal vector of the phone
 # TODO(pepijn): Train pick place with phone teleop and check if code is still easy to use when recording etc now that we have a robot pipeline
 # TODO(pepijn): Add to docs with image etc
 
@@ -45,8 +44,7 @@ class Phone(Teleoperator):
     For HEBI Mobile I/O we also expose 8 analog (a1-a8) and 8 digital (b1-b8) inputs.
 
     Press and hold **B1** to enable teleoperation. While enabled, the first B1 press
-    captures a reference pose. Motion is mapped relative to that reference pose using
-    a reference-frame approach (similar to TidyBot++ https://tidybot2.github.io)
+    captures a reference pose and rotation, when disabled and pressed again the position is reapplied.
     """
 
     config_class = PhoneConfig
@@ -61,8 +59,6 @@ class Phone(Teleoperator):
         self._latest_pose = None
         self._latest_message = None
         self._enabled: bool = False
-
-        # Calibration origins
         self._calib_pos: np.ndarray | None = None
         self._calib_rot_inv: Rotation | None = None
 
@@ -98,7 +94,6 @@ class Phone(Teleoperator):
         self.calibrate()
 
     def calibrate(self) -> None:
-        # Calibrate when the user explicitly triggers capture.
         print("Hold the phone so that: top edge points forward (robot +x) and screen points up (robot +z)")
         if self.config.phone_os == PhoneOS.IOS:
             print("Press and hold B1 in the HEBI Mobile I/O app to capture this pose...\n")
@@ -106,12 +101,13 @@ class Phone(Teleoperator):
             print("Touch and move on the WebXR page to capture this pose...\n")
 
         pos, rot = self._wait_for_capture_trigger()
-
-        # Store calibration transform: phone frame is now robot frame
         self._calib_pos = pos.copy()
         self._calib_rot_inv = rot.inv()
         self._enabled = False
         print("Calibration done\n")
+
+    def _reapply_position_calibration(self, pos: np.ndarray) -> None:
+        self._calib_pos = pos.copy()
 
     @property
     def is_calibrated(self) -> bool:
@@ -219,16 +215,20 @@ class Phone(Teleoperator):
             raw_inputs["move"] = bool(msg.get("move", False))
             raw_inputs["scale"] = float(msg.get("scale", 1.0))
 
-        # Apply calibration here
+        if self.config.phone_os == PhoneOS.IOS:
+            enable = bool(raw_inputs.get("b1", 0))
+        else:
+            enable = bool(raw_inputs.get("move", False))
+
+        # Rising edge then re-capture calibration immediately from *current* raw pose
+        if enable and not self._enabled:
+            self._reapply_position_calibration(raw_pos)
+
+        # Apply calibration
         pos_cal = self._calib_rot_inv.apply(raw_pos - self._calib_pos)
         rot_cal = self._calib_rot_inv * raw_rot
 
-        if self.config.phone_os == PhoneOS.IOS:
-            b1 = bool(raw_inputs.get("b1", 0))
-            enabled = b1
-        else:
-            enabled = bool(raw_inputs.get("move", False))
-        self._enabled = bool(enabled)
+        self._enabled = enable
 
         return {
             "phone.pos": pos_cal,

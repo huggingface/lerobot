@@ -28,19 +28,20 @@ from lerobot.processor import EnvTransition, ProcessorStepRegistry, TransitionKe
 class EEReferenceAndDelta:
     kinematics: RobotKinematics
     end_effector_step_sizes: dict
+    motor_names: list[str]
 
     reference_ee_pose: np.ndarray | None = field(default=None, init=False, repr=False)
     last_ee_pose: np.ndarray | None = field(default=None, init=False, repr=False)
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        obs = transition.get(TransitionKey.OBSERVATION, {}) or {}
-        act = transition.get(TransitionKey.ACTION, {}) or {}
+        observation = transition.get(TransitionKey.OBSERVATION, {}) or {}
+        action = transition.get(TransitionKey.ACTION, {}) or {}
 
-        current_joint_pose = np.array(list(obs.values()))
+        current_joint_pose = np.array([observation[f"{name}.pos"] for name in self.motor_names], dtype=float)
         current_ee_pose = self.kinematics.forward_kinematics(current_joint_pose)
 
-        enabled = bool(act.get("enabled", 0))
-        new_action = dict(act)
+        enabled = bool(action.get("enabled", 0))
+        new_action = dict(action)
 
         if enabled:
             if self.reference_ee_pose is None:
@@ -52,15 +53,15 @@ class EEReferenceAndDelta:
 
             delta = np.array(
                 [
-                    act.get("target_x", 0.0) * self.end_effector_step_sizes["x"],
-                    act.get("target_y", 0.0) * self.end_effector_step_sizes["y"],
-                    act.get("target_z", 0.0) * self.end_effector_step_sizes["z"],
+                    action.get("target_x", 0.0) * self.end_effector_step_sizes["x"],
+                    action.get("target_y", 0.0) * self.end_effector_step_sizes["y"],
+                    action.get("target_z", 0.0) * self.end_effector_step_sizes["z"],
                 ]
             )
             desired_position = ref_pose[:3, 3] + delta
 
             q = [
-                act.get(k, d)
+                action.get(k, d)
                 for k, d in zip(
                     ["target_qx", "target_qy", "target_qz", "target_qw"], [0.0, 0.0, 0.0, 1.0], strict=False
                 )
@@ -149,10 +150,7 @@ class InverseKinematics:
         current_gripper_pos = current_joint_pose[idx]
         current_joint_pose[idx] = np.clip(current_gripper_pos + delta, 0, 100)
 
-        if action.get("enabled", 0):
-            joint_action = {f"{name}.pos": current_joint_pose[i] for i, name in enumerate(self.motor_names)}
-        else:
-            joint_action = {"gripper.pos": current_joint_pose[self.motor_names.index("gripper")]}
+        joint_action = {f"{name}.pos": current_joint_pose[i] for i, name in enumerate(self.motor_names)}
 
         transition[TransitionKey.ACTION] = joint_action
         return transition

@@ -28,10 +28,7 @@ from lerobot.teleoperators.phone.config_phone import PhoneConfig, PhoneOS
 from lerobot.teleoperators.phone.phone import Phone
 from lerobot.teleoperators.phone.phone_processor import PhoneAxisRemapToAction
 
-robot_config = SO100FollowerConfig(
-    port="/dev/tty.usbmodem58760434471",
-    id="so100_follower_end_effector",
-)
+robot_config = SO100FollowerConfig(port="/dev/tty.usbmodem58760434471", id="my_phone_teleop_follower_arm")
 robot = SO100Follower(robot_config)
 
 # TODO(pepijn): Add LeKiwi example
@@ -39,9 +36,7 @@ robot = SO100Follower(robot_config)
 teleop_config = PhoneConfig(phone_os=PhoneOS.IOS)
 teleop_device = Phone(teleop_config)
 
-# Path to URDF file for kinematics
-# NOTE: It is highly recommended to use the urdf in the SO-ARM100 repo:
-# https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf
+# NOTE: It is highly recommended to use the urdf in the SO-ARM100 repo: https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/so101_new_calib.urdf
 kinematics_solver = RobotKinematics(
     urdf_path="./src/lerobot/teleoperators/sim/so101_new_calib.urdf", target_frame_name="gripper_frame_link"
 )
@@ -49,6 +44,7 @@ kinematics_solver = RobotKinematics(
 ee_ref = EEReferenceAndDelta(
     kinematics=kinematics_solver,
     end_effector_step_sizes={"x": 0.5, "y": 0.5, "z": 0.5},
+    motor_names=list(robot.bus.motors.keys()),
 )
 ee_safety = EEBoundsAndSafety(
     end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
@@ -61,9 +57,9 @@ ik_step = InverseKinematics(
 )
 
 # Create the robot pipeline
-robot_pipeline = RobotProcessor(steps=[ee_ref, ee_safety, ik_step], name="so100_phone_teleop_pipeline")
+robot_preprocessor = RobotProcessor(steps=[ee_ref, ee_safety, ik_step], name="so100_phone_teleop_pipeline")
 
-phone_pipeline = RobotProcessor(
+phone_postprocessor = RobotProcessor(
     steps=[PhoneAxisRemapToAction(platform=teleop_config.phone_os)],
     name="phone_mapping_pipeline",
 )
@@ -80,18 +76,18 @@ while True:
         continue
 
     # Map phone obs -> end-effector action
-    tr_phone = {TransitionKey.OBSERVATION: phone_obs}
-    tr_phone = phone_pipeline(tr_phone)
-    ee_action = tr_phone.get(TransitionKey.ACTION, {})
+    transition_phone = {TransitionKey.OBSERVATION: phone_obs}
+    transition_phone = phone_postprocessor(transition_phone)
+    ee_action = transition_phone.get(TransitionKey.ACTION, {})
 
     # Get robot obs and convert EE action -> joint action
     robot_obs = robot.get_observation()
-    tr_robot = {
+    transition_robot = {
         TransitionKey.OBSERVATION: robot_obs,
         TransitionKey.ACTION: ee_action,
     }
-    tr_robot = robot_pipeline(tr_robot)
-    joint_action = tr_robot.get(TransitionKey.ACTION, {})
+    transition_robot = robot_preprocessor(transition_robot)
+    joint_action = transition_robot.get(TransitionKey.ACTION, {})
 
     if joint_action:
         robot.send_action(joint_action)

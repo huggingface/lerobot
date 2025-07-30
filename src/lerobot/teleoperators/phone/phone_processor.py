@@ -68,7 +68,6 @@ class PhoneAxisRemapToAction:
             "theta": theta,
         }
 
-        # When disabled, zero actions
         if not enabled:
             action = {
                 "enabled": 0,
@@ -79,7 +78,7 @@ class PhoneAxisRemapToAction:
                 "target_qy": 0.0,
                 "target_qz": 0.0,
                 "target_qw": 0.0,
-                "gripper": 0.0,
+                "gripper": gripper,  # Still send gripper action when disabled
                 "x": 0.0,
                 "y": 0.0,
                 "theta": 0.0,
