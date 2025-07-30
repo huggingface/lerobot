@@ -492,7 +492,7 @@ class PI0FAST(nn.Module):
         # AttributeError: 'PaliGemmaConfig' object has no attribute 'ignore_index'
         self.ignore_index = self.pi0_paligemma.config.ignore_index
         self.padding_side = self.config.padding_side
-        
+
         # Enable gradient checkpointing for memory optimization
         self.pi0_paligemma.gradient_checkpointing_enable()
 
